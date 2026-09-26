@@ -62,11 +62,7 @@ fn filter_will_echo_and_sga_are_accepted() {
     let mut neg = negotiation::Negotiator::new(DEFAULT_TERMINAL_TYPE);
     let mut resp = Vec::new();
     let mut filter = TelnetFilter::new();
-    let out = filter.filter(
-        &[b'A', IAC, WILL, OPT_ECHO, IAC, WILL],
-        &mut neg,
-        &mut resp,
-    );
+    let out = filter.filter(&[b'A', IAC, WILL, OPT_ECHO, IAC, WILL], &mut neg, &mut resp);
     let out2 = filter.filter(&[OPT_SGA, b'B'], &mut neg, &mut resp);
     assert_eq!([out, out2].concat(), b"AB".to_vec());
     assert_eq!(resp, vec![IAC, DO, OPT_ECHO, IAC, DO, OPT_SGA]);
@@ -86,7 +82,10 @@ async fn e2e_character_mode_accepts_echo_and_sga() {
     assert_eq!(got, vec![IAC, DO, OPT_ECHO]);
     // Keystrokes go out unbuffered and with 0xFF doubled.
     telnet.write(&[b'x', IAC]).expect("write");
-    assert_eq!(read_until(&mut peer, &[b'x', IAC, IAC]), vec![b'x', IAC, IAC]);
+    assert_eq!(
+        read_until(&mut peer, &[b'x', IAC, IAC]),
+        vec![b'x', IAC, IAC]
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

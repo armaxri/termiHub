@@ -509,6 +509,7 @@ async fn drop_without_disconnect_marks_dead_and_closes_socket() {
     let state = ConnectedState {
         writer: Arc::new(Mutex::new(client)),
         negotiator: Arc::new(Mutex::new(Negotiator::new(DEFAULT_TERMINAL_TYPE))),
+        editor: Mutex::new(LineEditor::new()),
         alive: alive.clone(),
         disconnected: false,
     };
@@ -538,6 +539,7 @@ async fn drop_after_disconnect_flag_is_noop() {
     let state = ConnectedState {
         writer: Arc::new(Mutex::new(client)),
         negotiator: Arc::new(Mutex::new(Negotiator::new(DEFAULT_TERMINAL_TYPE))),
+        editor: Mutex::new(LineEditor::new()),
         alive: alive.clone(),
         disconnected: true,
     };

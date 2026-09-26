@@ -7,7 +7,7 @@ use crate::connection::{
 use super::auto_login::{
     DEFAULT_AUTO_LOGIN_TIMEOUT_SECS, DEFAULT_LOGIN_PROMPT, DEFAULT_PASSWORD_PROMPT,
 };
-use super::negotiation::DEFAULT_TERMINAL_TYPE;
+use super::negotiation::{InputMode, DEFAULT_TERMINAL_TYPE};
 use super::AUTH_METHOD_AUTO_LOGIN;
 
 /// Help text shown on the auto-login fields: telnet is unencrypted.
@@ -97,7 +97,41 @@ fn connection_group() -> SettingsGroup {
                 placeholder: Some(DEFAULT_TERMINAL_TYPE.to_string()),
                 ..field("terminalType", "Terminal Type", FieldType::Text)
             },
+            input_mode_field(),
         ],
+    }
+}
+
+fn input_mode_field() -> SettingsField {
+    SettingsField {
+        description: Some("How typed input is echoed and sent".to_string()),
+        help_text: Some(
+            "Character: every keystroke is sent immediately and the server echoes it \
+             (accepts the server's ECHO and SUPPRESS-GO-AHEAD options). Right for \
+             almost every server and network device.\n\nLine: termiHub echoes and \
+             edits the line locally (Backspace, Ctrl+U) and sends it on Enter. Use \
+             this for line-oriented devices that never echo. While the server echoes \
+             (for example at a password prompt) keystrokes are passed straight \
+             through."
+                .to_string(),
+        ),
+        default: Some(serde_json::json!(InputMode::CHARACTER)),
+        ..field(
+            "inputMode",
+            "Input Mode",
+            FieldType::Select {
+                options: vec![
+                    SelectOption {
+                        value: InputMode::CHARACTER.to_string(),
+                        label: "Character (server echo)".to_string(),
+                    },
+                    SelectOption {
+                        value: InputMode::LINE.to_string(),
+                        label: "Line (local echo & editing)".to_string(),
+                    },
+                ],
+            },
+        )
     }
 }
 
