@@ -23,6 +23,7 @@ use crate::credential::vault::ConflictStrategy;
 use crate::embedded_servers::config::EmbeddedServerStore;
 use crate::embedded_servers::secrets::{credential_key, take_passwords};
 use crate::embedded_servers::storage::remove_password_keys;
+use crate::files::bookmarks::FileBookmarkStore;
 use crate::macros::config::MacroStore;
 use crate::network::http_monitor_storage::HttpMonitorsFile;
 use crate::network::monitor_history::HttpMonitorHistoryStore;
@@ -507,6 +508,19 @@ pub static SECTIONS: &[SectionSpec] = &[
         normalize: normalize_versioned::<HttpMonitorHistoryStore>,
         legacy_secrets: None,
         default_doc: || to_doc(&HttpMonitorHistoryStore::default()),
+    },
+    SectionSpec {
+        id: "fileBrowserBookmarks",
+        label: "File browser bookmarks",
+        description: "Directories bookmarked in the file browser, per connection.",
+        file_name: "file-browser-bookmarks.json",
+        current_version: <FileBookmarkStore as VersionedStore>::CURRENT_VERSION,
+        shape: Shape::List { field: "bookmarks" },
+        contains_secrets: false,
+        integrity_sensitive: false,
+        normalize: normalize_versioned::<FileBookmarkStore>,
+        legacy_secrets: None,
+        default_doc: || to_doc(&FileBookmarkStore::default()),
     },
     SectionSpec {
         id: "sshKnownHosts",
