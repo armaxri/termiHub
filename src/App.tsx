@@ -6,6 +6,7 @@ import { StatusBar } from "@/components/StatusBar";
 import { TransferQueue } from "@/components/TransferQueue";
 import { ShellIntegrationBanner } from "@/components/ShellIntegrationBanner";
 import {
+  AgentCrashReportNotice,
   CrashReportNotice,
   CrashReportViewer,
   DiagnosticsExportDialog,
@@ -343,6 +344,7 @@ function App() {
           </div>
           <ShellIntegrationBanner />
           <CrashReportNotice />
+          <AgentCrashReportNotice />
           <TransferQueue />
           {layoutConfig.statusBarVisible && <StatusBar />}
           <PasswordPrompt />

@@ -41,6 +41,7 @@ import type {
   BackupSectionInfo,
 } from "@/types/backup";
 import type {
+  AgentCrashNotice,
   AgentCrashReportRef,
   AgentCrashReports,
   CrashReportNotice,
@@ -1351,6 +1352,24 @@ export async function previewDiagnosticsBundle(): Promise<DiagnosticsBundleEntry
  */
 export async function listAgentCrashReports(): Promise<AgentCrashReports[]> {
   return await invoke<AgentCrashReports[]>("list_agent_crash_reports");
+}
+
+/** Pending "agent crashed since last connect" notices (#3593). */
+export async function getAgentCrashNotices(): Promise<AgentCrashNotice[]> {
+  return await invoke<AgentCrashNotice[]>("get_agent_crash_notices");
+}
+
+/** Mark an agent's crash report (and every older one) as seen so its notice does not repeat. */
+export async function acknowledgeAgentCrashNotice(agentId: string, name: string): Promise<void> {
+  await invoke("acknowledge_agent_crash_notice", { agentId, name });
+}
+
+/**
+ * Read one crash report of an already-connected agent over the existing
+ * connection (#3593) — capped and redacted again on this computer.
+ */
+export async function readAgentCrashReport(agentId: string, name: string): Promise<string> {
+  return await invoke<string>("read_agent_crash_report", { agentId, name });
 }
 
 /**
