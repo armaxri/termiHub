@@ -2,13 +2,21 @@
 
 use super::*;
 use crate::connection::validate_settings;
+use crate::connection::{FieldType, SettingsField};
+use std::io::Read;
 
 /// Filter a single whole chunk through a fresh [`TelnetFilter`].
 ///
 /// Preserves the original whole-chunk test surface; multi-chunk tests use a
 /// persistent [`TelnetFilter`] directly to exercise cross-read state.
-fn filter_telnet_commands(data: &[u8], stream: &mut TcpStream) -> Vec<u8> {
-    TelnetFilter::new().filter(data, stream)
+fn filter_telnet_commands(data: &[u8]) -> Vec<u8> {
+    let (mut neg, mut resp) = test_negotiator();
+    TelnetFilter::new().filter(data, &mut neg, &mut resp)
+}
+
+/// A fresh negotiator plus an empty reply buffer for filter tests.
+fn test_negotiator() -> (Negotiator, Vec<u8>) {
+    (Negotiator::new(DEFAULT_TERMINAL_TYPE), Vec::new())
 }
 
 #[test]
@@ -65,7 +73,8 @@ fn display_name() {
 fn capabilities() {
     let telnet = Telnet::new();
     let caps = telnet.capabilities();
-    assert!(!caps.resize);
+    // Resize is propagated via NAWS (RFC 1073, PROD-027).
+    assert!(caps.resize);
     assert!(!caps.monitoring);
     assert!(!caps.file_browser);
     assert!(!caps.persistent);
@@ -81,15 +90,36 @@ fn not_connected_initially() {
 fn schema_has_all_fields() {
     let telnet = Telnet::new();
     let schema = telnet.settings_schema();
-    assert_eq!(schema.groups.len(), 1);
+    assert_eq!(schema.groups.len(), 2);
     assert_eq!(schema.groups[0].key, "telnet");
     assert_eq!(schema.groups[0].label, "Telnet");
-    let fields = &schema.groups[0].fields;
-    let keys: Vec<&str> = fields.iter().map(|f| f.key.as_str()).collect();
-    assert!(keys.contains(&"host"));
-    assert!(keys.contains(&"port"));
-    assert!(keys.contains(&"connectTimeoutSecs"));
-    assert_eq!(keys.len(), 3);
+    let keys: Vec<&str> = schema.groups[0]
+        .fields
+        .iter()
+        .map(|f| f.key.as_str())
+        .collect();
+    assert_eq!(
+        keys,
+        vec!["host", "port", "connectTimeoutSecs", "terminalType"]
+    );
+    assert_eq!(schema.groups[1].key, "login");
+    let login_keys: Vec<&str> = schema.groups[1]
+        .fields
+        .iter()
+        .map(|f| f.key.as_str())
+        .collect();
+    assert_eq!(
+        login_keys,
+        vec![
+            "authMethod",
+            "username",
+            "password",
+            "savePassword",
+            "loginPrompt",
+            "passwordPrompt",
+            "autoLoginTimeoutSecs",
+        ]
+    );
 }
 
 #[test]
@@ -191,8 +221,7 @@ fn default_creates_disconnected() {
 fn filter_plain_data_unchanged() {
     // No IAC bytes — data passes through unmodified.
     let data = b"Hello, world!";
-    let mut stream = mock_tcp_stream();
-    let result = filter_telnet_commands(data, &mut stream);
+    let result = filter_telnet_commands(data);
     assert_eq!(result, data);
 }
 
@@ -200,8 +229,7 @@ fn filter_plain_data_unchanged() {
 fn filter_escaped_iac() {
     // IAC IAC → single 0xFF byte.
     let data = [IAC, IAC, b'A'];
-    let mut stream = mock_tcp_stream();
-    let result = filter_telnet_commands(&data, &mut stream);
+    let result = filter_telnet_commands(&data);
     assert_eq!(result, vec![IAC, b'A']);
 }
 
@@ -209,8 +237,7 @@ fn filter_escaped_iac() {
 fn filter_do_stripped() {
     // IAC DO <option> should be stripped from output.
     let data = [b'A', IAC, DO, 1, b'B'];
-    let mut stream = mock_tcp_stream();
-    let result = filter_telnet_commands(&data, &mut stream);
+    let result = filter_telnet_commands(&data);
     assert_eq!(result, vec![b'A', b'B']);
 }
 
@@ -218,8 +245,7 @@ fn filter_do_stripped() {
 fn filter_will_stripped() {
     // IAC WILL <option> should be stripped from output.
     let data = [b'A', IAC, WILL, 3, b'B'];
-    let mut stream = mock_tcp_stream();
-    let result = filter_telnet_commands(&data, &mut stream);
+    let result = filter_telnet_commands(&data);
     assert_eq!(result, vec![b'A', b'B']);
 }
 
@@ -227,8 +253,7 @@ fn filter_will_stripped() {
 fn filter_dont_wont_stripped() {
     // IAC DONT/WONT should be silently acknowledged (stripped).
     let data = [IAC, DONT, 1, IAC, WONT, 2, b'X'];
-    let mut stream = mock_tcp_stream();
-    let result = filter_telnet_commands(&data, &mut stream);
+    let result = filter_telnet_commands(&data);
     assert_eq!(result, vec![b'X']);
 }
 
@@ -236,8 +261,7 @@ fn filter_dont_wont_stripped() {
 fn filter_unknown_iac_command_stripped() {
     // Unknown IAC command byte should be stripped.
     let data = [IAC, 240, b'Y'];
-    let mut stream = mock_tcp_stream();
-    let result = filter_telnet_commands(&data, &mut stream);
+    let result = filter_telnet_commands(&data);
     assert_eq!(result, vec![b'Y']);
 }
 
@@ -251,40 +275,40 @@ fn filter_unknown_iac_command_stripped() {
 fn filter_trailing_iac_not_leaked() {
     // A chunk ending in a lone IAC (0xFF) is the start of a command whose
     // remaining bytes arrive later — it must NOT be emitted as raw output.
-    let mut stream = mock_tcp_stream();
+    let (mut neg, mut resp) = test_negotiator();
     let mut filter = TelnetFilter::new();
-    let out = filter.filter(&[b'A', IAC], &mut stream);
+    let out = filter.filter(&[b'A', IAC], &mut neg, &mut resp);
     assert_eq!(out, vec![b'A'], "trailing IAC leaked into terminal output");
 }
 
 #[test]
 fn filter_split_do_across_reads() {
     // `IAC DO <opt>` split so the option byte lands in the next read.
-    let mut stream = mock_tcp_stream();
+    let (mut neg, mut resp) = test_negotiator();
     let mut filter = TelnetFilter::new();
-    let mut out = filter.filter(&[b'A', IAC, DO], &mut stream);
-    out.extend(filter.filter(&[1, b'B'], &mut stream));
+    let mut out = filter.filter(&[b'A', IAC, DO], &mut neg, &mut resp);
+    out.extend(filter.filter(&[1, b'B'], &mut neg, &mut resp));
     assert_eq!(out, vec![b'A', b'B']);
 }
 
 #[test]
 fn filter_split_iac_then_command_and_option() {
     // Worst case: IAC, then WILL, then the option each in separate reads.
-    let mut stream = mock_tcp_stream();
+    let (mut neg, mut resp) = test_negotiator();
     let mut filter = TelnetFilter::new();
-    let mut out = filter.filter(&[IAC], &mut stream);
-    out.extend(filter.filter(&[WILL], &mut stream));
-    out.extend(filter.filter(&[3, b'Z'], &mut stream));
+    let mut out = filter.filter(&[IAC], &mut neg, &mut resp);
+    out.extend(filter.filter(&[WILL], &mut neg, &mut resp));
+    out.extend(filter.filter(&[3, b'Z'], &mut neg, &mut resp));
     assert_eq!(out, vec![b'Z']);
 }
 
 #[test]
 fn filter_split_escaped_iac() {
     // Escaped `IAC IAC` split across reads yields a single 0xFF.
-    let mut stream = mock_tcp_stream();
+    let (mut neg, mut resp) = test_negotiator();
     let mut filter = TelnetFilter::new();
-    let mut out = filter.filter(&[b'A', IAC], &mut stream);
-    out.extend(filter.filter(&[IAC, b'B'], &mut stream));
+    let mut out = filter.filter(&[b'A', IAC], &mut neg, &mut resp);
+    out.extend(filter.filter(&[IAC, b'B'], &mut neg, &mut resp));
     assert_eq!(out, vec![b'A', IAC, b'B']);
 }
 
@@ -294,20 +318,20 @@ fn filter_split_escaped_iac() {
 fn filter_subnegotiation_stripped_whole() {
     // A full subnegotiation in one chunk is discarded, surrounding data kept.
     let data = [b'A', IAC, SB, 24, 1, IAC, SE, b'B'];
-    let mut stream = mock_tcp_stream();
+    let (mut neg, mut resp) = test_negotiator();
     let mut filter = TelnetFilter::new();
-    let out = filter.filter(&data, &mut stream);
+    let out = filter.filter(&data, &mut neg, &mut resp);
     assert_eq!(out, vec![b'A', b'B']);
 }
 
 #[test]
 fn filter_subnegotiation_split_across_reads() {
     // Subnegotiation split mid-payload and mid-terminator across three reads.
-    let mut stream = mock_tcp_stream();
+    let (mut neg, mut resp) = test_negotiator();
     let mut filter = TelnetFilter::new();
-    let mut out = filter.filter(&[b'A', IAC, SB, 24], &mut stream);
-    out.extend(filter.filter(&[1, 2, 3, IAC], &mut stream));
-    out.extend(filter.filter(&[SE, b'B'], &mut stream));
+    let mut out = filter.filter(&[b'A', IAC, SB, 24], &mut neg, &mut resp);
+    out.extend(filter.filter(&[1, 2, 3, IAC], &mut neg, &mut resp));
+    out.extend(filter.filter(&[SE, b'B'], &mut neg, &mut resp));
     assert_eq!(out, vec![b'A', b'B']);
 }
 
@@ -316,9 +340,9 @@ fn filter_escaped_iac_inside_subnegotiation() {
     // `IAC IAC` inside a subnegotiation is escaped payload, not a terminator,
     // so the SB continues until the real `IAC SE`.
     let data = [b'A', IAC, SB, 24, IAC, IAC, 5, IAC, SE, b'B'];
-    let mut stream = mock_tcp_stream();
+    let (mut neg, mut resp) = test_negotiator();
     let mut filter = TelnetFilter::new();
-    let out = filter.filter(&data, &mut stream);
+    let out = filter.filter(&data, &mut neg, &mut resp);
     assert_eq!(out, vec![b'A', b'B']);
 }
 
@@ -478,6 +502,7 @@ async fn drop_without_disconnect_marks_dead_and_closes_socket() {
     let alive = Arc::new(AtomicBool::new(true));
     let state = ConnectedState {
         writer: Arc::new(Mutex::new(client)),
+        negotiator: Arc::new(Mutex::new(Negotiator::new(DEFAULT_TERMINAL_TYPE))),
         alive: alive.clone(),
         disconnected: false,
     };
@@ -506,6 +531,7 @@ async fn drop_after_disconnect_flag_is_noop() {
     let alive = Arc::new(AtomicBool::new(true));
     let state = ConnectedState {
         writer: Arc::new(Mutex::new(client)),
+        negotiator: Arc::new(Mutex::new(Negotiator::new(DEFAULT_TERMINAL_TYPE))),
         alive: alive.clone(),
         disconnected: true,
     };
@@ -518,17 +544,306 @@ async fn drop_after_disconnect_flag_is_noop() {
     );
 }
 
-/// Create a dummy TCP stream for testing `filter_telnet_commands`.
-///
-/// We connect to a loopback address that won't actually be used for
-/// reading — only for the `write_all` calls inside the filter function,
-/// which are best-effort (`let _ = ...`) anyway. This creates a pair of
-/// connected streams via a TCP listener bound to localhost.
-fn mock_tcp_stream() -> TcpStream {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    let stream = TcpStream::connect(addr).unwrap();
-    // Accept the connection so the connect succeeds.
-    let _peer = listener.accept().unwrap();
-    stream
+// --- Schema: terminal type + auto-login (PROD-025) ---------------------
+
+fn schema_field(key: &str) -> SettingsField {
+    Telnet::new()
+        .settings_schema()
+        .groups
+        .into_iter()
+        .flat_map(|g| g.fields)
+        .find(|f| f.key == key)
+        .unwrap_or_else(|| panic!("telnet schema must expose {key}"))
+}
+
+#[test]
+fn schema_terminal_type_defaults_to_xterm_256color() {
+    let field = schema_field("terminalType");
+    assert!(!field.required);
+    assert_eq!(field.default, Some(serde_json::json!("xterm-256color")));
+}
+
+#[test]
+fn schema_auto_login_is_off_by_default() {
+    let field = schema_field("authMethod");
+    assert_eq!(field.default, Some(serde_json::json!("none")));
+    match field.field_type {
+        FieldType::Select { options } => {
+            let values: Vec<&str> = options.iter().map(|o| o.value.as_str()).collect();
+            assert_eq!(values, vec!["none", "password"]);
+        }
+        other => panic!("authMethod must be a select, got {other:?}"),
+    }
+}
+
+#[test]
+fn schema_credential_fields_only_visible_with_auto_login() {
+    for key in [
+        "username",
+        "password",
+        "savePassword",
+        "loginPrompt",
+        "passwordPrompt",
+        "autoLoginTimeoutSecs",
+    ] {
+        let field = schema_field(key);
+        let cond = field
+            .visible_when
+            .unwrap_or_else(|| panic!("{key} must be gated on authMethod"));
+        assert_eq!(cond.field, "authMethod", "{key}");
+        assert_eq!(cond.equals, serde_json::json!("password"), "{key}");
+    }
+    assert!(matches!(
+        schema_field("password").field_type,
+        FieldType::Password
+    ));
+}
+
+#[test]
+fn schema_auto_login_help_warns_about_cleartext() {
+    for key in ["authMethod", "username", "password"] {
+        let help = schema_field(key).help_text.unwrap_or_default();
+        assert!(help.contains("cleartext"), "{key} help must warn: {help}");
+    }
+}
+
+#[test]
+fn password_prompt_info_found_only_with_auto_login() {
+    use crate::connection::schema_defaults::find_password_prompt_info;
+    let schema = Telnet::new().settings_schema();
+    let manual = serde_json::json!({"host": "h", "authMethod": "none"});
+    assert!(
+        find_password_prompt_info(&schema, manual.as_object().unwrap_or(&Default::default()))
+            .is_none()
+    );
+    let auto = serde_json::json!({"host": "h", "authMethod": "password", "username": "u"});
+    let info = find_password_prompt_info(&schema, auto.as_object().unwrap_or(&Default::default()))
+        .expect("auto-login without a password must prompt at connect");
+    assert_eq!(info.password_key, "password");
+    assert_eq!(info.username_key, "username");
+}
+
+#[test]
+fn validation_auto_login_settings_pass() {
+    let schema = Telnet::new().settings_schema();
+    let settings = serde_json::json!({
+        "host": "10.0.0.1",
+        "port": 23,
+        "terminalType": "vt100",
+        "authMethod": "password",
+        "username": "admin",
+        "savePassword": true,
+        "loginPrompt": "login:",
+        "passwordPrompt": "password:",
+        "autoLoginTimeoutSecs": 5,
+    });
+    let errors = validate_settings(&schema, &settings);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+}
+
+// --- Session option parsing --------------------------------------------
+
+#[test]
+fn parse_options_defaults() {
+    let opts = parse_session_options(&serde_json::json!({"host": "h"}));
+    assert_eq!(opts.terminal_type, "xterm-256color");
+    assert!(opts.auto_login.is_none(), "auto-login must be opt-in");
+}
+
+#[test]
+fn parse_options_manual_ignores_credentials() {
+    let opts = parse_session_options(&serde_json::json!({
+        "authMethod": "none", "username": "u", "password": "p",
+    }));
+    assert!(opts.auto_login.is_none());
+}
+
+#[test]
+fn parse_options_auto_login() {
+    let opts = parse_session_options(&serde_json::json!({
+        "terminalType": "vt220",
+        "authMethod": "password",
+        "username": " admin ",
+        "password": "hunter2",
+        "autoLoginTimeoutSecs": "7",
+    }));
+    assert_eq!(opts.terminal_type, "vt220");
+    let cfg = opts.auto_login.expect("auto-login enabled");
+    assert_eq!(cfg.username, "admin");
+    assert_eq!(cfg.password.as_deref(), Some("hunter2"));
+    assert_eq!(cfg.timeout, Duration::from_secs(7));
+    assert!(!format!("{cfg:?}").contains("hunter2"));
+}
+
+#[test]
+fn parse_options_zero_timeout_uses_default() {
+    let opts = parse_session_options(&serde_json::json!({
+        "authMethod": "password", "username": "u", "autoLoginTimeoutSecs": 0,
+    }));
+    let cfg = opts.auto_login.expect("auto-login enabled");
+    assert_eq!(
+        cfg.timeout,
+        Duration::from_secs(DEFAULT_AUTO_LOGIN_TIMEOUT_SECS)
+    );
+}
+
+// --- Filter → negotiator wiring ----------------------------------------
+
+#[test]
+fn filter_do_naws_replies_will_and_size() {
+    let (mut neg, mut resp) = test_negotiator();
+    let mut filter = TelnetFilter::new();
+    let out = filter.filter(&[b'A', IAC, DO, 31, b'B'], &mut neg, &mut resp);
+    assert_eq!(out, vec![b'A', b'B']);
+    assert_eq!(
+        resp,
+        vec![IAC, WILL, 31, IAC, SB, 31, 0, 80, 0, 24, IAC, SE]
+    );
+}
+
+#[test]
+fn filter_ttype_send_split_across_reads_replies_is() {
+    let (mut neg, mut resp) = test_negotiator();
+    let mut filter = TelnetFilter::new();
+    filter.filter(&[IAC, DO, 24], &mut neg, &mut resp);
+    resp.clear();
+    let mut out = filter.filter(&[b'x', IAC, SB, 24], &mut neg, &mut resp);
+    out.extend(filter.filter(&[1, IAC], &mut neg, &mut resp));
+    out.extend(filter.filter(&[SE, b'y'], &mut neg, &mut resp));
+    assert_eq!(out, vec![b'x', b'y']);
+    let mut expected = vec![IAC, SB, 24, 0];
+    expected.extend_from_slice(b"xterm-256color");
+    expected.extend_from_slice(&[IAC, SE]);
+    assert_eq!(resp, expected);
+}
+
+#[test]
+fn filter_runaway_subnegotiation_is_bounded() {
+    let (mut neg, mut resp) = test_negotiator();
+    let mut filter = TelnetFilter::new();
+    let mut data = vec![IAC, SB, 24];
+    data.extend(std::iter::repeat_n(7u8, 10_000));
+    let out = filter.filter(&data, &mut neg, &mut resp);
+    assert!(out.is_empty());
+    assert!(filter.subneg.len() <= MAX_SUBNEG_LEN);
+}
+
+// --- End-to-end against an in-process fake telnet server ---------------
+
+/// Read from `peer` until `expected` appears in the accumulated bytes (or the
+/// 5 s read timeout fires). Returns everything read.
+fn read_until(peer: &mut TcpStream, expected: &[u8]) -> Vec<u8> {
+    peer.set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("set timeout");
+    let mut acc = Vec::new();
+    let mut buf = [0u8; 256];
+    while !acc.windows(expected.len()).any(|w| w == expected) {
+        let n = peer.read(&mut buf).expect("fake server read");
+        assert!(
+            n > 0,
+            "client closed before sending {expected:?}; got {acc:?}"
+        );
+        acc.extend_from_slice(&buf[..n]);
+    }
+    acc
+}
+
+/// Connect a [`Telnet`] to a local fake server and return both ends.
+async fn connect_fake(extra: serde_json::Value) -> (Telnet, TcpStream) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("local_addr").port();
+    let accept = std::thread::spawn(move || listener.accept());
+    let mut settings = serde_json::json!({"host": "127.0.0.1", "port": port});
+    if let (Some(s), Some(e)) = (settings.as_object_mut(), extra.as_object()) {
+        s.extend(e.clone());
+    }
+    let mut telnet = Telnet::new();
+    telnet.connect(settings).await.expect("connect");
+    let (peer, _) = accept.join().expect("accept thread").expect("accept");
+    (telnet, peer)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn e2e_naws_offer_accept_and_resize() {
+    let (telnet, mut peer) = connect_fake(serde_json::json!({})).await;
+    // The client proactively offers NAWS.
+    read_until(&mut peer, &[IAC, WILL, 31]);
+    // Server agrees; client reports the default size without re-sending WILL.
+    peer.write_all(&[IAC, DO, 31]).expect("write");
+    let got = read_until(&mut peer, &[IAC, SE]);
+    assert_eq!(got, vec![IAC, SB, 31, 0, 80, 0, 24, IAC, SE]);
+    // A resize sends a fresh SB NAWS — 255 columns exercises IAC escaping.
+    telnet.resize(255, 50).expect("resize");
+    let got = read_until(&mut peer, &[IAC, SE]);
+    assert_eq!(got, vec![IAC, SB, 31, 0, IAC, IAC, 0, 50, IAC, SE]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn e2e_naws_refused_resize_sends_nothing() {
+    let (telnet, mut peer) = connect_fake(serde_json::json!({})).await;
+    read_until(&mut peer, &[IAC, WILL, 31]);
+    peer.write_all(&[IAC, DONT, 31]).expect("write");
+    // Give the reader thread time to process the refusal.
+    std::thread::sleep(Duration::from_millis(300));
+    telnet
+        .resize(100, 40)
+        .expect("resize must not error when refused");
+    telnet.write(b"!").expect("write marker");
+    // The next byte the server sees is the marker, not an SB NAWS.
+    let got = read_until(&mut peer, b"!");
+    assert_eq!(got, b"!".to_vec());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn e2e_ttype_reports_configured_type() {
+    let (_telnet, mut peer) = connect_fake(serde_json::json!({"terminalType": "vt100"})).await;
+    read_until(&mut peer, &[IAC, WILL, 31]);
+    peer.write_all(&[IAC, DO, 24]).expect("write");
+    read_until(&mut peer, &[IAC, WILL, 24]);
+    peer.write_all(&[IAC, SB, 24, 1, IAC, SE]).expect("write");
+    let got = read_until(&mut peer, &[IAC, SE]);
+    let mut expected = vec![IAC, SB, 24, 0];
+    expected.extend_from_slice(b"vt100");
+    expected.extend_from_slice(&[IAC, SE]);
+    assert_eq!(got, expected);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn e2e_auto_login_sends_username_and_password() {
+    let (telnet, mut peer) = connect_fake(serde_json::json!({
+        "authMethod": "password",
+        "username": "admin",
+        "password": "hunter2",
+    }))
+    .await;
+    let mut rx = telnet.subscribe_output();
+    read_until(&mut peer, &[IAC, WILL, 31]);
+    peer.write_all(b"Welcome\r\nrouter login: ").expect("write");
+    read_until(&mut peer, b"admin\r\n");
+    peer.write_all(b"Password: ").expect("write");
+    read_until(&mut peer, b"hunter2\r\n");
+    // The prompts still reach the terminal.
+    let mut seen = Vec::new();
+    while !seen.windows(9).any(|w| w == b"Password:") {
+        let chunk = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("output in time")
+            .expect("channel open");
+        seen.extend(chunk);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn e2e_manual_login_sends_nothing_at_prompt() {
+    let (telnet, mut peer) = connect_fake(serde_json::json!({
+        "authMethod": "none",
+        "username": "admin",
+        "password": "hunter2",
+    }))
+    .await;
+    read_until(&mut peer, &[IAC, WILL, 31]);
+    peer.write_all(b"login: ").expect("write");
+    std::thread::sleep(Duration::from_millis(300));
+    telnet.write(b"!").expect("write marker");
+    assert_eq!(read_until(&mut peer, b"!"), b"!".to_vec());
 }
