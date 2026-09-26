@@ -123,6 +123,9 @@ import { serializeWorkflows } from "@/services/workflowIo";
 import { resetOnConnectDispatchState } from "@/services/workflowTriggers";
 import { toast } from "@/components/ui";
 import { WORKFLOW_FANOUT_CONCURRENCY } from "./slices/workflowFanout";
+import { executeScheduledRun } from "./scheduledRuns";
+import { activeWorkflowRunCount } from "./slices/workflowRunOnTarget";
+import type { ScheduleFire } from "@/types/schedule";
 
 setupSettingsRegion();
 
@@ -1507,5 +1510,217 @@ describe("appStore — on-connect trigger dispatch (#1855)", () => {
 
     await new Promise((r) => setTimeout(r, 20));
     expect(injected).toEqual([]);
+  });
+});
+
+describe("appStore — scheduled runs (PROD-043)", () => {
+  let injected: { tabId: string; data: string }[];
+  let transport: WorkflowStoreTransport;
+  installSessionLifecycleHarness();
+
+  const store = { getState: useAppStore.getState, setState: useAppStore.setState };
+  const fire = (overrides: Partial<ScheduleFire> = {}): ScheduleFire => ({
+    token: "tok-1",
+    scheduleId: "sch-1",
+    scheduleName: "Health",
+    action: { kind: "workflow", workflowId: "w1" },
+    targets: { kind: "connections", connectionIds: ["conn-a"] },
+    catchUp: false,
+    ...overrides,
+  });
+
+  /** Three connected tabs: conn-a, conn-b, and an ad-hoc tab (the active one). */
+  function seedTabs() {
+    const mk = (id: string, connectionId?: string, isActive = false): TerminalTab => ({
+      id,
+      sessionId: `sess-${id}`,
+      title: id,
+      connectionType: "ssh",
+      contentType: "terminal",
+      config: { type: "ssh", config: {} },
+      panelId: "leaf-1",
+      isActive,
+      ...(connectionId ? { connectionId } : {}),
+    });
+    const tabs = [mk("tab-a", "conn-a"), mk("tab-b", "conn-b"), mk("tab-adhoc", undefined, true)];
+    const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs, activeTabId: "tab-adhoc" };
+    seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
+  }
+
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    savedWorkflows.length = 0;
+    recordedRuns.length = 0;
+    injected = [];
+    invokeRunLocalProcess.mockClear();
+    vi.mocked(apiRecordWorkflowRun).mockClear();
+    transport = new WorkflowStoreTransport();
+    setWorkflowTransportForTest(transport);
+    registerTerminalInputInjector(async (tabId, data) => {
+      injected.push({ tabId, data });
+      return true;
+    });
+    seedTabs();
+  });
+
+  afterEach(() => {
+    registerTerminalInputInjector(null);
+    stopWorkflowSubscription();
+    setWorkflowTransportForTest(null);
+    vi.restoreAllMocks();
+  });
+
+  it("runs only on the target connection's terminal and records a scheduled run", async () => {
+    useAppStore.setState({ workflows: [workflow("w1", [cmd("uptime")])] });
+
+    const report = await executeScheduledRun(fire(), store);
+
+    expect(report).toEqual({ outcome: "completed", targetsRun: 1 });
+    // Never the active ad-hoc tab, never the other connection.
+    expect(injected).toEqual([{ tabId: "tab-a", data: "uptime\n" }]);
+    await vi.waitFor(() => expect(apiRecordWorkflowRun).toHaveBeenCalledTimes(1));
+    const run = vi.mocked(apiRecordWorkflowRun).mock.calls[0][0];
+    expect(run.triggeredBy).toBe("scheduled");
+    expect(run.tabId).toBe("tab-a");
+  });
+
+  it("runs on every member of a broadcast group", async () => {
+    seedSettings({
+      broadcastGroups: [{ id: "g1", name: "Web", connectionIds: ["conn-a", "conn-b"] }],
+    });
+    useAppStore.setState({ workflows: [workflow("w1", [cmd("df -h")])] });
+
+    const report = await executeScheduledRun(
+      fire({ targets: { kind: "broadcast-group", groupId: "g1" } }),
+      store
+    );
+
+    expect(report).toEqual({ outcome: "completed", targetsRun: 2 });
+    expect(injected.map((i) => i.tabId).sort()).toEqual(["tab-a", "tab-b"]);
+  });
+
+  it("skips with a reason when no target connection is connected here", async () => {
+    useAppStore.setState({ workflows: [workflow("w1", [cmd("uptime")])] });
+
+    const report = await executeScheduledRun(
+      fire({ targets: { kind: "connections", connectionIds: ["conn-offline"] } }),
+      store
+    );
+
+    expect(report.outcome).toBe("skipped");
+    expect(report.message).toMatch(/connected/);
+    expect(injected).toEqual([]);
+  });
+
+  it("skips when the workflow or the broadcast group no longer exists", async () => {
+    expect((await executeScheduledRun(fire(), store)).message).toMatch(/workflow no longer/);
+    useAppStore.setState({ workflows: [workflow("w1", [cmd("x")])] });
+    const missingGroup = await executeScheduledRun(
+      fire({ targets: { kind: "broadcast-group", groupId: "gone" } }),
+      store
+    );
+    expect(missingGroup.message).toMatch(/group no longer/);
+    expect(injected).toEqual([]);
+  });
+
+  it("never prompts: a required parameter without a default skips the run", async () => {
+    useAppStore.setState({
+      workflows: [
+        {
+          ...workflow("w1", [cmd("deploy ${env}")]),
+          parameters: [{ name: "env", type: "string", required: true }],
+        },
+      ],
+    });
+
+    const report = await executeScheduledRun(fire(), store);
+
+    expect(report.outcome).toBe("skipped");
+    expect(report.message).toMatch(/env/);
+    expect(useAppStore.getState().workflowParamPrompt).toBeNull();
+    expect(injected).toEqual([]);
+  });
+
+  it("uses parameter defaults when present", async () => {
+    useAppStore.setState({
+      workflows: [
+        {
+          ...workflow("w1", [cmd("deploy ${env}")]),
+          parameters: [{ name: "env", type: "string", required: true, default: "staging" }],
+        },
+      ],
+    });
+
+    await executeScheduledRun(fire(), store);
+
+    expect(injected).toEqual([{ tabId: "tab-a", data: "deploy staging\n" }]);
+  });
+
+  it("never prompts: an un-allowlisted local program is refused and the run fails", async () => {
+    seedSettings({ workflowLocalProcessEnabled: true, workflowLocalProcessAllowlist: [] });
+    useAppStore.setState({
+      workflows: [workflow("w1", [{ kind: "run-local-process", program: "curl", args: [] }])],
+    });
+
+    const report = await executeScheduledRun(fire(), store);
+
+    expect(report.outcome).toBe("failed");
+    expect(useAppStore.getState().localProcessPrompt).toBeNull();
+    expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+  });
+
+  it("does not supersede a run already in progress in this window", async () => {
+    useAppStore.setState({
+      workflows: [
+        workflow("w1", [cmd("uptime")]),
+        workflow("slow", [{ kind: "wait", delayMs: 60 }, cmd("done")]),
+      ],
+    });
+    const manual = useAppStore.getState().runWorkflow("slow", { targetTabId: "tab-b" });
+    await vi.waitFor(() => expect(activeWorkflowRunCount()).toBe(1));
+
+    const report = await executeScheduledRun(fire(), store);
+
+    expect(report.outcome).toBe("skipped");
+    expect(report.message).toMatch(/in progress/);
+    await manual;
+    // The user's run was not cancelled.
+    expect(injected).toEqual([{ tabId: "tab-b", data: "done\n" }]);
+  });
+
+  it("two schedules firing together never both run", async () => {
+    useAppStore.setState({
+      workflows: [workflow("w1", [{ kind: "wait", delayMs: 30 }, cmd("a")])],
+    });
+
+    const [first, second] = await Promise.all([
+      executeScheduledRun(fire(), store),
+      executeScheduledRun(fire({ token: "tok-2", scheduleId: "sch-2" }), store),
+    ]);
+
+    expect(first.outcome).toBe("completed");
+    expect(second.outcome).toBe("skipped");
+    expect(second.message).toMatch(/another scheduled run/);
+    expect(injected).toEqual([{ tabId: "tab-a", data: "a\n" }]);
+  });
+
+  it("plays a scheduled macro into the target terminals", async () => {
+    const macro: Macro = {
+      id: "m1",
+      name: "Ping",
+      tags: [],
+      steps: [{ data: "ping -c1 host\n", delayMs: 0 }],
+      createdAt: "",
+      updatedAt: "",
+    };
+    useAppStore.setState({ macros: [macro] });
+
+    const report = await executeScheduledRun(
+      fire({ action: { kind: "macro", macroId: "m1" } }),
+      store
+    );
+
+    expect(report).toEqual({ outcome: "completed", targetsRun: 1 });
+    expect(injected).toEqual([{ tabId: "tab-a", data: "ping -c1 host\n" }]);
   });
 });

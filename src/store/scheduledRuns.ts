@@ -43,6 +43,22 @@ export interface ScheduledRunStore {
   setState: (partial: Partial<AppState>) => void;
 }
 
+/**
+ * Scheduled runs executing in this window. Claimed synchronously before any
+ * await, so two schedules firing together can never both type into a host.
+ */
+let scheduledInFlight = 0;
+
+/** Whether the user (or another schedule) is already driving a run here. */
+function busyReason(state: AppState): string | null {
+  if (scheduledInFlight > 0) return "Skipped: another scheduled run was in progress";
+  if (activeWorkflowRunCount() > 0 || state.workflowParamPrompt || state.localProcessPrompt) {
+    return "Skipped: another workflow run was in progress";
+  }
+  if (state.macroPlayback) return "Skipped: a macro was playing";
+  return null;
+}
+
 /** A report for a run that did nothing in this window. */
 function skip(message: string): WindowRunReport {
   return { outcome: "skipped", message, targetsRun: 0 };
@@ -110,9 +126,6 @@ async function runScheduledWorkflow(
   if (workflow.steps.length === 0) return skip(`Workflow "${workflow.name}" has no steps`);
   const { targets } = resolveConnectedTargets(store.getState(), tabIds);
   if (targets.length === 0) return skip("None of the target connections is connected");
-  if (activeWorkflowRunCount() > 0) {
-    return skip("Skipped: another workflow run was in progress");
-  }
   const params = unattendedParamValues(workflow.parameters ?? []);
   if ("missing" in params) {
     return skip(`Parameter "${params.missing}" needs a default value to run unattended`);
@@ -170,7 +183,6 @@ async function runScheduledMacro(
   if (!macro) return skip("The macro no longer exists");
   const targets = filterConnectedTerminalTabIds(state, tabIds);
   if (targets.length === 0) return skip("None of the target connections is connected");
-  if (state.macroPlayback) return skip("Skipped: another macro was playing");
   const status = await state.playMacro(macroId, { targetTabIds: targets });
   switch (status) {
     case "completed":
@@ -196,6 +208,9 @@ export async function executeScheduledRun(
   fire: ScheduleFire,
   store: ScheduledRunStore
 ): Promise<WindowRunReport> {
+  const busy = busyReason(store.getState());
+  if (busy) return skip(busy);
+  scheduledInFlight += 1;
   try {
     const connectionIds = resolveTargetConnectionIds(fire.targets, currentBroadcastGroups());
     if (connectionIds === null) return skip("The broadcast group no longer exists");
@@ -210,5 +225,7 @@ export async function executeScheduledRun(
   } catch (err) {
     frontendLog("schedules", `scheduled run ${fire.scheduleId} failed: ${errorMessage(err)}`);
     return { outcome: "failed", message: errorMessage(err), targetsRun: 0 };
+  } finally {
+    scheduledInFlight -= 1;
   }
 }
