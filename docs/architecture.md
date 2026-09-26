@@ -2395,7 +2395,7 @@ terminal sessions for people who expect nothing to leave their machine.
   cap, and **redacts every report again** with its own redactor before writing it. An agent that
   predates the RPC answers "method not found" and is skipped with a note in the preview; reports
   that were selected but could not be fetched are listed in `agents/skipped.txt`. A notice for
-  "an agent crashed since it was last connected" is not implemented yet.
+  "an agent crashed since it was last connected" is tracked in #3593.
 
 **Consequences:**
 
