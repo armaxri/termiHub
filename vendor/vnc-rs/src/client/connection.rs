@@ -602,3 +602,45 @@ where
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_panicking_task_reports_an_error_event_instead_of_dying_silently() {
+        let (tx, mut rx) = channel(4);
+        run_guarded(
+            "decoder",
+            async {
+                panic!("boom");
+            },
+            Some(tx),
+        )
+        .await;
+        match rx.recv().await {
+            Some(VncEvent::Error(msg)) => assert!(msg.contains("boom"), "{msg}"),
+            other => panic!("expected an error event, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_well_behaved_task_reports_nothing() {
+        let (tx, mut rx) = channel(4);
+        run_guarded("decoder", async {}, Some(tx)).await;
+        assert!(rx.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn oversize_desktop_name_is_rejected_before_allocating() {
+        // ServerInit: 1x1, a pixel format, then a 4 GiB name length.
+        let mut server_init = vec![0, 1, 0, 1];
+        server_init.extend(<PixelFormat as Into<Vec<u8>>>::into(PixelFormat::rgba()));
+        server_init.extend_from_slice(&u32::MAX.to_be_bytes());
+        let (mut client, mut server) = tokio::io::duplex(1024);
+        server.write_all(&server_init).await.unwrap();
+        let mut pf = Some(PixelFormat::rgba());
+        let result = read_server_init(&mut client, &mut pf, &|_e| async { Ok(()) }).await;
+        assert!(matches!(result, Err(VncError::Protocol(_))), "{result:?}");
+    }
+}
