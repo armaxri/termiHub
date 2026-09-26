@@ -11,6 +11,10 @@
 //! surface is reached via [`ConnectionType::graphical()`]. Registration is
 //! additive/data-driven, so VNC (#1681) and RDP (#1682) plug in with no edit
 //! here.
+//!
+//! Each session's pumps and its auto-reconnect loop run in one
+//! [`Supervisor`](super::graphical_supervisor::Supervisor) task (#3364), which
+//! drives the unified reconnect engine after an unexpected drop.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -22,11 +26,13 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use termihub_core::connection::{
-    CertPrompt, CertPromptReceiver, ConnectionType, ConnectionTypeRegistry, CursorUpdate,
-    FrameUpdate, GraphicalState, InputEvent, RemoteClipboardFile, SessionStateMachine,
+    auto_reconnect_enabled, CertPrompt, CertPromptReceiver, ConnectionType,
+    ConnectionTypeRegistry, CursorUpdate, FrameUpdate, GraphicalState, InputEvent,
+    RemoteClipboardFile, SessionStateMachine,
 };
 
-use crate::session::frame_guard::{FrameGuard, FrameVerdict, REJECTED_FRAMES_MESSAGE};
+use crate::session::frame_guard::{FrameGuard, FrameVerdict};
+use crate::session::graphical_supervisor::{Generation, LastSize, PumpEnd, Supervisor};
 use crate::session::rdp_trust_store::{RdpTrustStore, TrustLookup};
 use crate::utils::errors::TerminalError;
 
@@ -140,7 +146,7 @@ impl<R: tauri::Runtime> GraphicalEventSink for tauri::AppHandle<R> {
 /// The host + fingerprint of a cert prompt awaiting the user's verdict, held so
 /// [`cert_decision`](GraphicalSessionManager::cert_decision) can persist the
 /// fingerprint on "Accept for host" (#1767).
-type PendingCert = Arc<Mutex<Option<(String, String)>>>;
+pub(crate) type PendingCert = Arc<Mutex<Option<(String, String)>>>;
 
 /// A live graphical session.
 struct GraphicalSession {
@@ -149,8 +155,11 @@ struct GraphicalSession {
     connection: Arc<Mutex<Box<dyn ConnectionType>>>,
     /// The shared lifecycle state machine.
     state: Arc<Mutex<SessionStateMachine>>,
-    /// Frame + cursor (+ optional cert-prompt) pump tasks, aborted on disconnect.
+    /// The session's supervisor task (pumps + auto-reconnect loop, #3364),
+    /// aborted on disconnect — which also aborts its side pumps.
     tasks: Vec<JoinHandle<()>>,
+    /// The last requested pixel size, re-sent after an auto-reconnect.
+    last_size: LastSize,
     /// Backend type id (for diagnostics).
     type_id: String,
     /// The certificate prompt currently awaiting a user decision, if any (#1767).
@@ -234,6 +243,10 @@ impl GraphicalSessionManager {
             .unwrap_or(type_id)
             .to_string();
 
+        // Keep the settings for re-dials only when Auto-Reconnect is on (#3364),
+        // so a session that never re-dials does not retain its credentials.
+        let redial_settings = auto_reconnect_enabled(&settings).then(|| settings.clone());
+
         // Authenticating → establish.
         emit_state(&sink, &session_id, GraphicalState::Authenticating, 0, None);
         if let Err(e) = connection.connect(settings).await {
@@ -253,18 +266,8 @@ impl GraphicalSessionManager {
 
         // Subscribe to the framebuffer surface (and any cert-prompt channel)
         // before marking active.
-        let (frame_rx, cursor_rx, cert_rx) = {
-            let backend = connection.graphical().ok_or_else(|| {
-                TerminalError::ConnectionFailed(
-                    "connected graphical backend did not expose a framebuffer surface".to_string(),
-                )
-            })?;
-            (
-                backend.subscribe_frames(),
-                backend.subscribe_cursor(),
-                backend.subscribe_cert_prompts(),
-            )
-        };
+        let generation =
+            Generation::subscribe(connection.as_ref()).map_err(TerminalError::ConnectionFailed)?;
 
         {
             let mut sm = state.lock().await;
@@ -278,40 +281,30 @@ impl GraphicalSessionManager {
         // `send_cert_decision` on auto-accept) and the command handlers.
         let connection = Arc::new(Mutex::new(connection));
         let pending_cert: PendingCert = Arc::new(Mutex::new(None));
+        let last_size: LastSize = Arc::default();
 
-        // Spawn the frame + cursor pumps.
-        let mut tasks = Vec::new();
-        {
-            let sink = sink.clone();
-            let sid = session_id.clone();
-            let state = state.clone();
-            tasks.push(tokio::spawn(frame_pump(sid, frame_rx, sink, state)));
-        }
-        {
-            let sink = sink.clone();
-            let sid = session_id.clone();
-            tasks.push(tokio::spawn(cursor_pump(sid, cursor_rx, sink)));
-        }
-        // The cert-prompt pump only exists for backends that expose the channel
-        // (RDP); VNC/mock return `None` and never reach this branch (#1767).
-        if let Some(cert_rx) = cert_rx {
-            let sink = sink.clone();
-            let sid = session_id.clone();
-            tasks.push(tokio::spawn(cert_pump(
-                sid,
-                host,
-                cert_rx,
-                sink,
-                connection.clone(),
-                self.trust_store.clone(),
-                pending_cert.clone(),
-            )));
-        }
+        // The supervisor runs the frame + cursor (+ RDP cert-prompt) pumps and,
+        // after an unexpected drop, the auto-reconnect loop (#3364).
+        let supervisor = Supervisor {
+            session_id: session_id.clone(),
+            type_id: type_id.to_string(),
+            host,
+            redial_settings,
+            registry: self.registry.clone(),
+            connection: connection.clone(),
+            state: state.clone(),
+            last_size: last_size.clone(),
+            trust_store: self.trust_store.clone(),
+            pending_cert: pending_cert.clone(),
+            sink,
+        };
+        let tasks = vec![tokio::spawn(supervisor.run(generation))];
 
         let session = GraphicalSession {
             connection,
             state,
             tasks,
+            last_size,
             type_id: type_id.to_string(),
             pending_cert,
         };
@@ -406,7 +399,10 @@ impl GraphicalSessionManager {
         height_px: u16,
         sink: impl GraphicalEventSink,
     ) -> Result<(), TerminalError> {
-        let (conn, state) = self.session_handles(session_id).await?;
+        let (conn, state, last_size) = self.session_handles(session_id).await?;
+        if let Ok(mut size) = last_size.lock() {
+            *size = Some((width_px, height_px));
+        }
         {
             let mut sm = state.lock().await;
             if sm.resize_requested() == GraphicalState::Resizing {
@@ -565,7 +561,7 @@ impl GraphicalSessionManager {
             .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))
     }
 
-    /// Look up a session's connection + state handles.
+    /// Look up a session's connection + state + last-size handles.
     async fn session_handles(
         &self,
         session_id: &str,
@@ -573,6 +569,7 @@ impl GraphicalSessionManager {
         (
             Arc<Mutex<Box<dyn ConnectionType>>>,
             Arc<Mutex<SessionStateMachine>>,
+            LastSize,
         ),
         TerminalError,
     > {
@@ -580,13 +577,13 @@ impl GraphicalSessionManager {
             .lock()
             .await
             .get(session_id)
-            .map(|s| (s.connection.clone(), s.state.clone()))
+            .map(|s| (s.connection.clone(), s.state.clone(), s.last_size.clone()))
             .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))
     }
 }
 
 /// Emit a state event, cloning the small payload.
-fn emit_state<S: GraphicalEventSink>(
+pub(crate) fn emit_state<S: GraphicalEventSink>(
     sink: &S,
     session_id: &str,
     state: GraphicalState,
@@ -602,53 +599,59 @@ fn emit_state<S: GraphicalEventSink>(
 }
 
 /// Pump frame updates from the backend to `remote-desktop-frame` events until
-/// the channel closes.
+/// the channel closes, reporting how the stream ended.
 ///
 /// Every frame passes the shared [`FrameGuard`] first (MOCK-011), so no backend
 /// can push an oversize framebuffer or an out-of-bounds / malformed dirty rect
-/// to the frontend. A persistently invalid stream aborts the pump and drops the
-/// session with [`REJECTED_FRAMES_MESSAGE`].
-async fn frame_pump<S: GraphicalEventSink>(
+/// to the frontend. A persistently invalid stream aborts the pump
+/// ([`PumpEnd::aborted`]); the supervisor then drops the session with
+/// [`REJECTED_FRAMES_MESSAGE`](crate::session::frame_guard::REJECTED_FRAMES_MESSAGE)
+/// and does not auto-reconnect.
+///
+/// `activate` is set for a reconnected generation (#3364): its first admitted
+/// frame proves the reconnect, so the machine goes `Reconnecting` → `Active`
+/// (emitted before that frame, lifting the overlay).
+pub(crate) async fn frame_pump<S: GraphicalEventSink>(
     session_id: String,
     mut frames: termihub_core::connection::FrameReceiver,
     sink: S,
-    state: Arc<Mutex<SessionStateMachine>>,
-) {
+    mut activate: Option<Arc<Mutex<SessionStateMachine>>>,
+) -> PumpEnd {
     let mut guard = FrameGuard::new();
-    let mut aborted = false;
+    let mut end = PumpEnd::default();
     while let Some(frame) = frames.recv().await {
         match guard.admit(&session_id, frame) {
-            FrameVerdict::Emit(frame) => sink.emit_frame(&RemoteDesktopFrameEvent {
-                session_id: session_id.clone(),
-                frame,
-            }),
+            FrameVerdict::Emit(frame) => {
+                if let Some(state) = activate.take() {
+                    let mut sm = state.lock().await;
+                    if sm.state() == GraphicalState::Reconnecting {
+                        sm.transport_up();
+                        let active = sm.activated();
+                        emit_state(&sink, &session_id, active, 0, None);
+                    }
+                }
+                end.painted = true;
+                sink.emit_frame(&RemoteDesktopFrameEvent {
+                    session_id: session_id.clone(),
+                    frame,
+                });
+            }
             FrameVerdict::Drop => {}
             FrameVerdict::Abort => {
                 warn!(session_id = %session_id, "graphical backend sent persistently invalid frames; dropping session");
-                aborted = true;
+                end.aborted = true;
                 break;
             }
         }
     }
     // Close our end so a still-running backend's next send fails and it winds down.
     drop(frames);
-    // Channel closed (or aborted). If the session is still live (not an
-    // intentional disconnect), record the drop so the state reflects it.
-    let mut sm = state.lock().await;
-    if sm.state().is_live() {
-        let dropped = sm.connection_dropped();
-        debug!(session_id = %session_id, ?dropped, aborted, "graphical frame channel closed");
-        sink.emit_state(&RemoteDesktopStateEvent {
-            session_id: session_id.clone(),
-            state: dropped,
-            reconnect_attempt: sm.reconnect_attempts(),
-            message: aborted.then(|| REJECTED_FRAMES_MESSAGE.to_string()),
-        });
-    }
+    debug!(session_id = %session_id, ?end, "graphical frame channel closed");
+    end
 }
 
 /// Pump cursor updates from the backend to `remote-desktop-cursor` events.
-async fn cursor_pump<S: GraphicalEventSink>(
+pub(crate) async fn cursor_pump<S: GraphicalEventSink>(
     session_id: String,
     mut cursors: termihub_core::connection::CursorReceiver,
     sink: S,
@@ -675,7 +678,7 @@ async fn cursor_pump<S: GraphicalEventSink>(
 /// [`cert_decision`](GraphicalSessionManager::cert_decision); `pending` records
 /// the host + fingerprint so that path can persist an "accept for host".
 #[allow(clippy::too_many_arguments)]
-async fn cert_pump<S: GraphicalEventSink>(
+pub(crate) async fn cert_pump<S: GraphicalEventSink>(
     session_id: String,
     host: String,
     mut prompts: CertPromptReceiver,
@@ -751,13 +754,6 @@ mod frame_pump_tests {
         fn emit_cert_prompt(&self, _: &RemoteDesktopCertPromptEvent) {}
     }
 
-    fn active_state() -> Arc<Mutex<SessionStateMachine>> {
-        let mut sm = SessionStateMachine::new();
-        sm.transport_up();
-        sm.activated();
-        Arc::new(Mutex::new(sm))
-    }
-
     fn rect(x: u32, y: u32, w: u32, h: u32) -> DirtyRect {
         DirtyRect {
             x,
@@ -777,15 +773,15 @@ mod frame_pump_tests {
     }
 
     /// Feed `stream` through the pump and return what reached the frontend.
-    async fn pump(stream: Vec<FrameUpdate>) -> Sink {
+    async fn pump(stream: Vec<FrameUpdate>) -> (Sink, PumpEnd) {
         let (tx, rx) = mpsc::channel(stream.len().max(1));
         for f in stream {
             tx.send(f).await.unwrap();
         }
         drop(tx);
         let sink = Sink::default();
-        frame_pump("s1".into(), rx, sink.clone(), active_state()).await;
-        sink
+        let end = frame_pump("s1".into(), rx, sink.clone(), None).await;
+        (sink, end)
     }
 
     #[tokio::test]
@@ -793,7 +789,7 @@ mod frame_pump_tests {
         let good = rect(0, 0, 2, 2);
         let mut short = rect(0, 0, 2, 2);
         short.data.pop();
-        let sink = pump(vec![
+        let (sink, end) = pump(vec![
             // Oversize framebuffer (RFB u16 max) — dropped whole.
             frame(65_535, 65_535, vec![rect(0, 0, 1, 1)]),
             frame(MAX_FRAMEBUFFER_DIMENSION + 1, 10, Vec::new()),
@@ -813,18 +809,24 @@ mod frame_pump_tests {
                 .iter()
                 .all(|r| r.check_within(f.width, f.height).is_ok()));
         }
-        // A few bad frames are survivable: the drop is the normal channel close.
-        let states = sink.states.lock().unwrap();
-        assert_eq!(states.len(), 1);
-        assert_eq!(states[0].message, None);
+        // A few bad frames are survivable: the drop is the normal channel close,
+        // and the pump itself never emits lifecycle state (the supervisor does).
+        assert_eq!(
+            end,
+            PumpEnd {
+                aborted: false,
+                painted: true
+            }
+        );
+        assert!(sink.states.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn persistent_hostile_stream_drops_session_with_typed_error() {
+    async fn persistent_hostile_stream_aborts_the_pump() {
         let bad = frame(MAX_FRAMEBUFFER_DIMENSION * 2, 1, Vec::new());
         let (tx, rx) = mpsc::channel(4);
         let sink = Sink::default();
-        let pump = tokio::spawn(frame_pump("s1".into(), rx, sink.clone(), active_state()));
+        let pump = tokio::spawn(frame_pump("s1".into(), rx, sink.clone(), None));
         // A hostile backend keeps sending; the pump must cut it off rather than
         // consume forever, and closing its end makes further sends fail.
         let mut sent = 0u32;
@@ -835,14 +837,16 @@ mod frame_pump_tests {
                 "pump never aborted"
             );
         }
-        pump.await.unwrap();
+        let end = pump.await.unwrap();
         assert!(sink.frames.lock().unwrap().is_empty());
-        let states = sink.states.lock().unwrap();
-        assert_eq!(states.len(), 1);
-        assert_eq!(states[0].state, GraphicalState::Disconnected);
+        // The pump reports the abort; the supervisor turns it into a terminal
+        // `Disconnected` with the typed message (covered in its tests).
         assert_eq!(
-            states[0].message.as_deref(),
-            Some(crate::session::frame_guard::REJECTED_FRAMES_MESSAGE)
+            end,
+            PumpEnd {
+                aborted: true,
+                painted: false
+            }
         );
     }
 
@@ -858,7 +862,7 @@ mod frame_pump_tests {
         assert!(tx.try_send(frame(6, 6, Vec::new())).is_err());
         drop(tx);
         let sink = Sink::default();
-        frame_pump("s1".into(), rx, sink.clone(), active_state()).await;
+        frame_pump("s1".into(), rx, sink.clone(), None).await;
         let sizes: Vec<_> = sink
             .frames
             .lock()
