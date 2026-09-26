@@ -1296,7 +1296,7 @@ describe("api service", () => {
   // Queued local copies (PARITY-004, #3567).
   describe("localCopyStart", () => {
     it("resolves false without waiting when the backend copied directly", async () => {
-      mockedInvoke.mockResolvedValue(null);
+      mockedInvoke.mockResolvedValue({ queued: [], skipped: [] });
       const onRegistered = vi.fn();
 
       await expect(localCopyStart("/a/small.txt", "/b/small.txt", onRegistered)).resolves.toBe(
@@ -1317,17 +1317,20 @@ describe("api service", () => {
         transferListener?.({
           payload: { transferId: "local-1", phase: "done", transferred: 9_000_000 },
         });
-        return "local-1";
+        return { queued: [{ transferId: "local-1", srcPath: "/a/big.iso" }], skipped: [] };
       });
       const onRegistered = vi.fn();
 
       await expect(localCopyStart("/a/big.iso", "/b/big.iso", onRegistered)).resolves.toBe(true);
-      expect(onRegistered).toHaveBeenCalledWith("local-1");
+      expect(onRegistered).toHaveBeenCalledWith("local-1", "/a/big.iso");
       expect(transferListener).toBeUndefined();
     });
 
     it("rejects with a TransferTerminalError when the queued copy is cancelled", async () => {
-      mockedInvoke.mockResolvedValue("local-2");
+      mockedInvoke.mockResolvedValue({
+        queued: [{ transferId: "local-2", srcPath: "/a/big.iso" }],
+        skipped: [],
+      });
 
       const pending = localCopyStart("/a/big.iso", "/b/big.iso");
       for (let i = 0; i < 50 && !mockedInvoke.mock.calls.length; i++) {
@@ -1338,6 +1341,77 @@ describe("api service", () => {
       transferListener?.({ payload: { transferId: "local-2", phase: "cancelled" } });
 
       await expect(pending).rejects.toBeInstanceOf(TransferTerminalError);
+    });
+
+    // Folder copies queue each large file as its own row (#3605).
+    it("seeds one row per queued file of a folder and waits for all of them", async () => {
+      mockedInvoke.mockResolvedValue({
+        queued: [
+          { transferId: "f-1", srcPath: "/a/dir/one.iso" },
+          { transferId: "f-2", srcPath: "/a/dir/sub/two.iso" },
+        ],
+        skipped: [],
+      });
+      const onRegistered = vi.fn();
+
+      let settled = false;
+      const pending = localCopyStart("/a/dir", "/b/dir", onRegistered).then((tracked) => {
+        settled = true;
+        return tracked;
+      });
+      for (let i = 0; i < 50 && onRegistered.mock.calls.length < 2; i++) {
+        await flushMacrotask();
+      }
+      expect(onRegistered.mock.calls).toEqual([
+        ["f-1", "/a/dir/one.iso"],
+        ["f-2", "/a/dir/sub/two.iso"],
+      ]);
+
+      transferListener?.({ payload: { transferId: "f-1", phase: "done", transferred: 1 } });
+      await flushMacrotask();
+      expect(settled).toBe(false);
+      transferListener?.({ payload: { transferId: "f-2", phase: "done", transferred: 1 } });
+
+      await expect(pending).resolves.toBe(true);
+    });
+
+    it("rejects once every file settled when one file of a folder is cancelled", async () => {
+      mockedInvoke.mockResolvedValue({
+        queued: [
+          { transferId: "c-1", srcPath: "/a/dir/one.iso" },
+          { transferId: "c-2", srcPath: "/a/dir/two.iso" },
+        ],
+        skipped: [],
+      });
+
+      const pending = localCopyStart("/a/dir", "/b/dir");
+      for (let i = 0; i < 50 && !mockedInvoke.mock.calls.length; i++) {
+        await flushMacrotask();
+      }
+      await flushMacrotask();
+      // The backend cancels the folder's other files along with it.
+      transferListener?.({ payload: { transferId: "c-2", phase: "cancelled" } });
+      transferListener?.({ payload: { transferId: "c-1", phase: "cancelled" } });
+
+      await expect(pending).rejects.toBeInstanceOf(TransferTerminalError);
+    });
+
+    it("reports a folder's skipped special files", async () => {
+      mockedInvoke.mockResolvedValue({ queued: [], skipped: ["run/app.sock"] });
+      const onSkipped = vi.fn();
+
+      await expect(localCopyStart("/a/dir", "/b/dir", undefined, onSkipped)).resolves.toBe(false);
+
+      expect(onSkipped).toHaveBeenCalledWith(["run/app.sock"]);
+    });
+
+    it("does not report skipped items when there are none", async () => {
+      mockedInvoke.mockResolvedValue({ queued: [], skipped: [] });
+      const onSkipped = vi.fn();
+
+      await localCopyStart("/a/dir", "/b/dir", undefined, onSkipped);
+
+      expect(onSkipped).not.toHaveBeenCalled();
     });
   });
 });

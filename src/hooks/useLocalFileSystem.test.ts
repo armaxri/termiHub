@@ -663,8 +663,8 @@ describe("useLocalFileSystem — action wiring", () => {
     });
 
     it("pasteEntry of a queued (large) copy seeds a local queue row and defers the toast", async () => {
-      vi.mocked(localCopyStart).mockImplementationOnce(async (_src, _dest, onRegistered) => {
-        onRegistered?.("xfer-1");
+      vi.mocked(localCopyStart).mockImplementationOnce(async (src, _dest, onRegistered) => {
+        onRegistered?.("xfer-1", src);
         return true;
       });
       const api = await mountHook("/dest");
@@ -688,6 +688,76 @@ describe("useLocalFileSystem — action wiring", () => {
       // The transfer-progress event path owns the terminal toast of a tracked copy.
       expect(toastMock.success).not.toHaveBeenCalled();
       expect(toastMock.dismiss).toHaveBeenCalledWith("toast-id");
+    });
+
+    // A folder queues each of its large files as its own row (#3605).
+    it("pasteEntry of a folder seeds one row per queued file, named after that file", async () => {
+      vi.mocked(localCopyStart).mockImplementationOnce(async (_src, _dest, onRegistered) => {
+        onRegistered?.("xfer-a", "/src/photos/a.raw");
+        onRegistered?.("xfer-b", "/src/photos/2024/b.raw");
+        return true;
+      });
+      const api = await mountHook("/dest");
+      act(() => {
+        useAppStore.getState().setFileClipboard({
+          entries: [{ ...fileEntry("photos", "/src"), isDirectory: true }],
+          operation: "copy",
+          sourceMode: "local",
+          sourcePath: "/src",
+        });
+      });
+      await act(async () => {
+        await api.pasteEntry();
+      });
+      expect(vi.mocked(localCopyStart)).toHaveBeenCalledWith(
+        "/src/photos",
+        "/dest/photos",
+        expect.any(Function),
+        expect.any(Function)
+      );
+      expect(seedRowMock.mock.calls).toEqual([
+        [
+          {
+            transferId: "xfer-a",
+            sessionId: "local",
+            direction: "download",
+            remotePath: "/src/photos/a.raw",
+          },
+        ],
+        [
+          {
+            transferId: "xfer-b",
+            sessionId: "local",
+            direction: "download",
+            remotePath: "/src/photos/2024/b.raw",
+          },
+        ],
+      ]);
+    });
+
+    it("pasteEntry of a folder reports the special files it skipped", async () => {
+      vi.mocked(localCopyStart).mockImplementationOnce(
+        async (_src, _dest, _onRegistered, onSkipped) => {
+          onSkipped?.(["run/a.sock", "run/b.sock", "fifo", "dev/null0"]);
+          return false;
+        }
+      );
+      const api = await mountHook("/dest");
+      act(() => {
+        useAppStore.getState().setFileClipboard({
+          entries: [{ ...fileEntry("tree", "/src"), isDirectory: true }],
+          operation: "copy",
+          sourceMode: "local",
+          sourcePath: "/src",
+        });
+      });
+      await act(async () => {
+        await api.pasteEntry();
+      });
+      expect(toastMock.info).toHaveBeenCalledWith(
+        "Skipped 4 special files (sockets, pipes or devices): run/a.sock, run/b.sock, fifo and 1 more"
+      );
+      expect(toastMock.success).toHaveBeenCalledWith('Pasted "tree"', { id: "toast-id" });
     });
 
     it("uploadFileFromPath (OS drop) reports a failed copy instead of rejecting", async () => {
