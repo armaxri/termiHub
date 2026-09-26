@@ -9,7 +9,8 @@
 //!
 //! Pixels are RGBA (`width * height * 4`, row-major), matching what
 //! [`vnc::PixelFormat::rgba`] decodes into and what the shared canvas blits
-//! directly — no channel swap needed.
+//! directly. A 16-bit session's pixels are expanded to RGBA before they reach
+//! the shadow (#3464), so CopyRect always copies RGBA.
 
 /// Upper bound on either framebuffer dimension, in pixels.
 ///

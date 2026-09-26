@@ -4,7 +4,7 @@ use std::io::Read;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tracing::error;
 
-use super::{shl_or_zero, zeroed_vec, zlib::ZlibReader};
+use super::{pixel_value, push_pixel, shl_or_zero, zeroed_vec, zlib::ZlibReader};
 
 const MAX_PALETTE: usize = 256;
 
@@ -15,6 +15,12 @@ pub struct Decoder {
     filter: u8,
     palette: Vec<u8>,
     alpha_shift: u32,
+    /// Wire size of one TPIXEL for the current rectangle's pixel format: 3 for
+    /// the packed 24-bit case, otherwise the format's bytes per pixel.
+    tpixel_len: usize,
+    /// `true` when TPIXELs are full pixels in the negotiated format (every
+    /// true-colour format except 32 bpp with 8-bit channels), emitted as-is.
+    native: bool,
 }
 
 impl Decoder {
@@ -42,17 +48,13 @@ impl Decoder {
         F: Fn(VncEvent) -> Fut,
         Fut: Future<Output = Result<(), VncError>>,
     {
-        // termiHub fork (#3473): Tight emits 32-bpp RGBA; any other pixel format
-        // is a typed error (upstream: `unreachable!()`), and the rectangle size
-        // is bounded before anything is allocated.
-        self.alpha_shift = super::alpha_shift(format)?;
-        // termiHub fork (#3499, upstream 129e7c9): Tight's true-colour and
-        // gradient paths assume three 8-bit channels.
-        if format.true_color_flag == 0
-            || [format.red_max, format.green_max, format.blue_max] != [255; 3]
-        {
-            return Err(VncError::WrongPixelFormat);
-        }
+        // termiHub fork (#3473, #3499, #3464): a 32-bpp format with three 8-bit
+        // channels uses 3-byte TPIXELs expanded to the negotiated layout; every
+        // other valid true-colour format (16-bit high colour, 8-bit true colour)
+        // uses full PIXELs, emitted unchanged in the negotiated format. Colour-map
+        // and malformed formats are a typed error (upstream: `unreachable!()`),
+        // and the rectangle size is bounded before anything is allocated.
+        self.select_layout(format)?;
         super::rect_pixels(rect)?;
 
         let ctrl = input.read_u8().await?;
@@ -93,6 +95,34 @@ impl Decoder {
         }
     }
 
+    /// Pick the TPIXEL layout for `format` (see [`Self::tpixel_len`]).
+    fn select_layout(&mut self, format: &PixelFormat) -> Result<(), VncError> {
+        if format.true_color_flag == 0 {
+            return Err(VncError::WrongPixelFormat);
+        }
+        if format.bits_per_pixel == 32
+            && [format.red_max, format.green_max, format.blue_max] == [255; 3]
+        {
+            self.alpha_shift = super::alpha_shift(format)?;
+            self.tpixel_len = 3;
+            self.native = false;
+        } else {
+            format.validate()?;
+            self.tpixel_len = format.bits_per_pixel as usize / 8;
+            self.native = true;
+        }
+        Ok(())
+    }
+
+    /// Append the negotiated-format pixel for one TPIXEL.
+    fn push_tpixel(&self, format: &PixelFormat, tpixel: &[u8], image: &mut Vec<u8>) {
+        if self.native {
+            image.extend_from_slice(tpixel);
+        } else {
+            image.extend_from_slice(&self.to_true_color(format, tpixel));
+        }
+    }
+
     async fn read_data<S>(&mut self, input: &mut S) -> Result<Vec<u8>, VncError>
     where
         S: AsyncRead + Unpin,
@@ -129,16 +159,18 @@ impl Decoder {
         F: Fn(VncEvent) -> Fut,
         Fut: Future<Output = Result<(), VncError>>,
     {
-        let mut color = [0; 3];
-        input.read_exact(&mut color).await?;
+        let mut color = [0; 4];
+        let color = &mut color[..self.tpixel_len];
+        input.read_exact(color).await?;
         let bpp = format.bits_per_pixel as usize / 8;
         let mut image = Vec::with_capacity(rect.width as usize * rect.height as usize * bpp);
 
-        let true_color = self.to_true_color(format, &color);
+        let mut pixel = Vec::with_capacity(4);
+        self.push_tpixel(format, color, &mut pixel);
 
         for _ in 0..rect.width {
             for _ in 0..rect.height {
-                image.extend_from_slice(&true_color);
+                image.extend_from_slice(&pixel);
             }
         }
         output_func(VncEvent::RawImage(*rect, image)).await?;
@@ -219,7 +251,7 @@ impl Decoder {
         F: Fn(VncEvent) -> Fut,
         Fut: Future<Output = Result<(), VncError>>,
     {
-        let uncompressed_size = rect.width as usize * rect.height as usize * 3;
+        let uncompressed_size = rect.width as usize * rect.height as usize * self.tpixel_len;
         if uncompressed_size == 0 {
             return Ok(());
         };
@@ -227,6 +259,11 @@ impl Decoder {
         let data = self
             .read_tight_data(stream, input, uncompressed_size)
             .await?;
+        if self.native {
+            // termiHub fork (#3464): TPIXELs are already negotiated-format pixels.
+            output_func(VncEvent::RawImage(*rect, data)).await?;
+            return Ok(());
+        }
         let mut image = Vec::with_capacity(uncompressed_size / 3 * 4);
         let mut j = 0;
         while j < uncompressed_size {
@@ -253,7 +290,7 @@ impl Decoder {
         Fut: Future<Output = Result<(), VncError>>,
     {
         let num_colors = input.read_u8().await? as usize + 1;
-        let palette_size = num_colors * 3;
+        let palette_size = num_colors * self.tpixel_len;
 
         self.palette = zeroed_vec(palette_size);
         input.read_exact(&mut self.palette).await?;
@@ -306,12 +343,12 @@ impl Decoder {
             }
             offset -= 1;
             let byte = *data.get(index).ok_or(VncError::InvalidImageData)?;
-            let sp = ((byte >> offset) & 0x01) as usize * 3;
+            let sp = ((byte >> offset) & 0x01) as usize * self.tpixel_len;
             let entry = self
                 .palette
-                .get(sp..sp + 3)
+                .get(sp..sp + self.tpixel_len)
                 .ok_or(VncError::InvalidImageData)?;
-            image.extend_from_slice(&self.to_true_color(format, entry));
+            self.push_tpixel(format, entry, &mut image);
         }
         output_func(VncEvent::RawImage(*rect, image)).await?;
         Ok(())
@@ -334,12 +371,12 @@ impl Decoder {
         for &index in data.iter().take(total) {
             // termiHub fork (#3473): a palette index past the palette the server
             // sent is malformed data, not a panic.
-            let sp = index as usize * 3;
+            let sp = index as usize * self.tpixel_len;
             let entry = self
                 .palette
-                .get(sp..sp + 3)
+                .get(sp..sp + self.tpixel_len)
                 .ok_or(VncError::InvalidImageData)?;
-            image.extend_from_slice(&self.to_true_color(format, entry));
+            self.push_tpixel(format, entry, &mut image);
         }
         output_func(VncEvent::RawImage(*rect, image)).await?;
         Ok(())
@@ -358,13 +395,18 @@ impl Decoder {
         F: Fn(VncEvent) -> Fut,
         Fut: Future<Output = Result<(), VncError>>,
     {
-        let uncompressed_size = rect.width as usize * rect.height as usize * 3;
+        let uncompressed_size = rect.width as usize * rect.height as usize * self.tpixel_len;
         if uncompressed_size == 0 {
             return Ok(());
         };
         let data = self
             .read_tight_data(stream, input, uncompressed_size)
             .await?;
+        if self.native {
+            let image = gradient_native(format, rect, self.tpixel_len, &data)?;
+            output_func(VncEvent::RawImage(*rect, image)).await?;
+            return Ok(());
+        }
         let mut image = Vec::with_capacity(rect.width as usize * rect.height as usize * 4);
 
         let row_len = rect.width as usize * 3 + 3;
@@ -450,4 +492,51 @@ impl Decoder {
             | ((alpha as u32) << self.alpha_shift))
             .to_le_bytes()
     }
+}
+
+/// Undo Tight's gradient filter for a format whose TPIXELs are full pixels
+/// (termiHub fork, #3464; RFC-less Tight spec / libvncclient `FilterGradientBPP`).
+///
+/// Each wire pixel carries, per channel, the difference to the prediction
+/// `up + left - up_left` (clamped to `0..=max`), packed with the format's own
+/// shifts and endianness. The result is a negotiated-format pixel buffer.
+fn gradient_native(
+    format: &PixelFormat,
+    rect: &Rect,
+    bytes_per_pixel: usize,
+    data: &[u8],
+) -> Result<Vec<u8>, VncError> {
+    let width = rect.width as usize;
+    let max = [format.red_max, format.green_max, format.blue_max].map(u32::from);
+    let shift = [format.red_shift, format.green_shift, format.blue_shift];
+    let mut prev_row = vec![[0_u32; 3]; width];
+    let mut this_row = vec![[0_u32; 3]; width];
+    let mut image = Vec::with_capacity(width * rect.height as usize * bytes_per_pixel);
+    let mut sp = 0;
+    for _ in 0..rect.height {
+        for x in 0..width {
+            let wire = data
+                .get(sp..sp + bytes_per_pixel)
+                .ok_or(VncError::InvalidImageData)?;
+            let diff = pixel_value(format, wire);
+            let mut pixel = 0;
+            for c in 0..3 {
+                let (left, up_left) = if x > 0 {
+                    (this_row[x - 1][c], prev_row[x - 1][c])
+                } else {
+                    (0, 0)
+                };
+                let estimate = (i64::from(prev_row[x][c]) + i64::from(left) - i64::from(up_left))
+                    .clamp(0, i64::from(max[c])) as u32;
+                let delta = diff.checked_shr(u32::from(shift[c])).unwrap_or(0) & max[c];
+                let value = estimate.wrapping_add(delta) & max[c];
+                this_row[x][c] = value;
+                pixel |= shl_or_zero(value, shift[c]);
+            }
+            push_pixel(format, pixel, bytes_per_pixel, &mut image);
+            sp += bytes_per_pixel;
+        }
+        std::mem::swap(&mut prev_row, &mut this_row);
+    }
+    Ok(image)
 }

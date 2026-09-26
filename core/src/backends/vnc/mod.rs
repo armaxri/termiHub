@@ -18,6 +18,7 @@ mod config;
 mod frame;
 mod jpeg;
 mod keymap;
+mod pixel;
 mod tunnel;
 
 pub use config::vnc_settings_schema;
@@ -31,8 +32,8 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 use vnc::{
-    ClientKeyEvent, ClientMouseEvent, PixelFormat, TlsVerify, VencryptConfig, VncConnector,
-    VncEncoding, VncError, VncEvent, VncVersion, X11Event,
+    ClientKeyEvent, ClientMouseEvent, TlsVerify, VencryptConfig, VncConnector, VncEncoding,
+    VncError, VncEvent, VncVersion, X11Event,
 };
 
 use crate::connection::{
@@ -47,6 +48,7 @@ use crate::monitoring::MonitoringProvider;
 use budget::{ByteBudgetSender, MAX_QUEUED_CURSOR_BYTES, MAX_QUEUED_FRAME_BYTES};
 use config::VncConfig;
 use frame::FrameShadow;
+use pixel::PixelConverter;
 
 /// Bounded channel depth for frames / cursor updates (backpressure).
 const CHANNEL_DEPTH: usize = 16;
@@ -67,6 +69,9 @@ struct VncShared {
     view_only: bool,
     /// Whether server cursor shapes are rendered.
     show_remote_cursor: bool,
+    /// Converts `RawImage` pixels from the negotiated RFB pixel format (32-bit
+    /// RGBA or 16-bit high color, #3464) into the shared RGBA frame contract.
+    pixels: PixelConverter,
     /// The typed reason the session ended because the server sent data this
     /// client cannot handle (#3479), surfaced through
     /// [`GraphicalBackend::fatal_error`]. Recorded by the driver **before** it
@@ -163,12 +168,18 @@ fn dom_buttons_to_rfb(buttons: u8) -> u8 {
 /// most bandwidth-efficient common encoding, and its photographic sub-rects
 /// arrive as JPEG, decoded via [`jpeg::decode_jpeg_rgba`] into the shared frame
 /// stream (#1715). It is omitted under a raw preference so "Raw" stays truly
-/// uncompressed.
+/// uncompressed. A lossy quality choice adds the Tight JPEG-quality and
+/// compression-level pseudo-encodings (#3464); lossless sends neither, so the
+/// server never switches to JPEG.
 fn encodings_for(cfg: &VncConfig) -> Vec<VncEncoding> {
     let mut encs = Vec::new();
     if !cfg.prefers_raw() {
         encs.push(VncEncoding::Tight);
         encs.push(VncEncoding::Zrle);
+        if let Some((jpeg, compress)) = cfg.tight_levels() {
+            encs.push(VncEncoding::TightJpegQuality(jpeg));
+            encs.push(VncEncoding::TightCompressLevel(compress));
+        }
     }
     encs.push(VncEncoding::CopyRect);
     encs.push(VncEncoding::Raw);
@@ -495,15 +506,12 @@ async fn handle_event(
             if shadow.width() == 0 || shadow.height() == 0 {
                 shadow.resize(x + w, y + h);
             }
-            if data.len() != (w as usize) * (h as usize) * 4 {
-                warn!(
-                    w,
-                    h,
-                    len = data.len(),
-                    "vnc raw image size mismatch — dropped"
-                );
+            let len = data.len();
+            // Negotiated-format pixels → the shared RGBA contract (#3464).
+            let Some(data) = shared.pixels.to_rgba(data, (w as usize) * (h as usize)) else {
+                warn!(w, h, len, "vnc raw image size mismatch — dropped");
                 return true;
-            }
+            };
             shadow.blit(x, y, w, h, &data);
             frame_tx
                 .send(FrameUpdate {
@@ -648,12 +656,16 @@ impl ConnectionType for Vnc {
         // offers security type 19; falls back to VncAuth/None otherwise).
         let vencrypt = build_vencrypt_config(&cfg).await?;
 
-        // Negotiate RFB, decoding into RGBA so the shared canvas blits directly.
+        // Negotiate RFB in the chosen pixel format (32-bit RGBA, which the
+        // shared canvas blits directly, or 16-bit high color, expanded to RGBA
+        // by the pixel converter — #3464).
+        let pixel_format = cfg.pixel_format();
+        let pixels = PixelConverter::new(pixel_format).map_err(SessionError::InvalidConfig)?;
         let password = cfg.password.clone();
         let client = VncConnector::new(stream)
             .set_version(VncVersion::RFB38)
             .set_auth_method(async move { Ok::<_, VncError>(password) })
-            .set_pixel_format(PixelFormat::rgba())
+            .set_pixel_format(pixel_format)
             .allow_shared(true)
             .set_vencrypt(vencrypt);
         let client = encodings_for(&cfg)
@@ -674,6 +686,7 @@ impl ConnectionType for Vnc {
             ptr_y: AtomicU32::new(0),
             view_only: cfg.view_only,
             show_remote_cursor: cfg.show_remote_cursor,
+            pixels,
             failure: StdMutex::new(None),
         });
         let cancel = CancellationToken::new();
@@ -856,6 +869,7 @@ impl GraphicalBackend for Vnc {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vnc::{PixelFormat, Rect};
 
     #[test]
     fn metadata_and_capabilities() {
@@ -926,12 +940,17 @@ mod tests {
     const RED_JPEG_16X16: &[u8] = include_bytes!("testdata/red_16x16.jpg");
 
     fn test_shared() -> Arc<VncShared> {
+        test_shared_with(PixelFormat::rgba())
+    }
+
+    fn test_shared_with(format: PixelFormat) -> Arc<VncShared> {
         Arc::new(VncShared {
             clipboard: Mutex::new(String::new()),
             ptr_x: AtomicU32::new(0),
             ptr_y: AtomicU32::new(0),
             view_only: false,
             show_remote_cursor: true,
+            pixels: PixelConverter::new(format).unwrap(),
             failure: StdMutex::new(None),
         })
     }
@@ -1098,6 +1117,138 @@ mod tests {
         let mut shadow = FrameShadow::new();
         shadow.resize(16, 16);
         assert!(jpeg_dirty_rect(&mut shadow, 0, 0, &[0xff, 0x00, 0x13, 0x37]).is_none());
+    }
+
+    #[test]
+    fn lossless_quality_sends_no_tight_quality_hints() {
+        let encs = encodings_for(&VncConfig::default());
+        assert!(!encs.iter().any(|e| matches!(
+            e,
+            VncEncoding::TightJpegQuality(_) | VncEncoding::TightCompressLevel(_)
+        )));
+    }
+
+    #[test]
+    fn lossy_quality_adds_tight_pseudo_encodings_after_tight() {
+        let cfg = VncConfig {
+            quality: "low".to_string(),
+            ..Default::default()
+        };
+        let encs = encodings_for(&cfg);
+        let tight = encs.iter().position(|e| *e == VncEncoding::Tight).unwrap();
+        let jpeg = encs
+            .iter()
+            .position(|e| *e == VncEncoding::TightJpegQuality(2))
+            .expect("jpeg quality level");
+        let compress = encs
+            .iter()
+            .position(|e| *e == VncEncoding::TightCompressLevel(9))
+            .expect("compression level");
+        assert!(tight < jpeg && tight < compress);
+        assert_eq!(VncEncoding::TightJpegQuality(2).wire_value(), -30);
+        assert_eq!(VncEncoding::TightCompressLevel(9).wire_value(), -247);
+    }
+
+    #[test]
+    fn raw_preference_sends_no_tight_quality_hints() {
+        let cfg = VncConfig {
+            preferred_encoding: "raw".to_string(),
+            quality: "high".to_string(),
+            ..Default::default()
+        };
+        let encs = encodings_for(&cfg);
+        assert!(!encs.contains(&VncEncoding::Tight));
+        assert!(!encs.contains(&VncEncoding::TightJpegQuality(8)));
+    }
+
+    fn rect(x: u16, y: u16, width: u16, height: u16) -> Rect {
+        Rect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    /// Run `events` through [`handle_event`] and collect the emitted frames.
+    async fn frames_for(format: PixelFormat, events: Vec<VncEvent>) -> Vec<FrameUpdate> {
+        let shared = test_shared_with(format);
+        let (frame_tx, mut frame_rx) = mpsc::channel(16);
+        let (cursor_tx, _cursor_rx) = mpsc::channel(16);
+        let mut frame_tx = ByteBudgetSender::new(frame_tx, 1 << 20);
+        let mut cursor_tx = ByteBudgetSender::new(cursor_tx, 1 << 20);
+        let mut shadow = FrameShadow::new();
+        for event in events {
+            assert!(handle_event(event, &mut shadow, &shared, &mut frame_tx, &mut cursor_tx).await);
+        }
+        drop(frame_tx);
+        let mut out = Vec::new();
+        while let Ok(frame) = frame_rx.try_recv() {
+            out.push(frame);
+        }
+        out
+    }
+
+    fn le565(pixels: &[u16]) -> Vec<u8> {
+        pixels.iter().flat_map(|p| p.to_le_bytes()).collect()
+    }
+
+    #[tokio::test]
+    async fn rgb565_raw_image_is_emitted_as_rgba() {
+        let frames = frames_for(
+            PixelFormat::rgb565(),
+            vec![
+                VncEvent::SetResolution((4, 1).into()),
+                VncEvent::RawImage(rect(1, 0, 2, 1), le565(&[0xF800, 0x001F])),
+            ],
+        )
+        .await;
+        let dirty = &frames.last().unwrap().rects[0];
+        assert_eq!((dirty.x, dirty.width, dirty.height), (1, 2, 1));
+        assert_eq!(dirty.data, vec![255, 0, 0, 255, 0, 0, 255, 255]);
+    }
+
+    #[tokio::test]
+    async fn copy_rect_after_rgb565_image_copies_rgba_pixels() {
+        let frames = frames_for(
+            PixelFormat::rgb565(),
+            vec![
+                VncEvent::SetResolution((4, 1).into()),
+                VncEvent::RawImage(rect(0, 0, 2, 1), le565(&[0x07E0, 0xFFFF])),
+                VncEvent::Copy(rect(2, 0, 2, 1), rect(0, 0, 2, 1)),
+            ],
+        )
+        .await;
+        let copied = &frames.last().unwrap().rects[0];
+        assert_eq!((copied.x, copied.width), (2, 2));
+        assert_eq!(copied.data, vec![0, 255, 0, 255, 255, 255, 255, 255]);
+    }
+
+    #[tokio::test]
+    async fn rgb565_raw_image_of_the_wrong_size_is_dropped() {
+        let frames = frames_for(
+            PixelFormat::rgb565(),
+            vec![
+                VncEvent::SetResolution((4, 1).into()),
+                // 32-bit-sized payload for a 16-bit session.
+                VncEvent::RawImage(rect(0, 0, 2, 1), vec![0; 8]),
+            ],
+        )
+        .await;
+        assert_eq!(frames.len(), 1, "only the resize frame is emitted");
+    }
+
+    #[tokio::test]
+    async fn rgba_raw_image_is_passed_through_unchanged() {
+        let frames = frames_for(
+            PixelFormat::rgba(),
+            vec![
+                VncEvent::SetResolution((1, 1).into()),
+                VncEvent::RawImage(rect(0, 0, 1, 1), vec![1, 2, 3, 0]),
+            ],
+        )
+        .await;
+        assert_eq!(frames.last().unwrap().rects[0].data, vec![1, 2, 3, 0]);
     }
 
     #[test]
