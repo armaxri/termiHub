@@ -28,13 +28,23 @@ use crate::files::transfer::registry::{TransferHandle, TransferRegistry};
 use crate::files::transfer::{self, local, TransferDirection};
 use crate::utils::errors::TerminalError;
 
+/// One file copied in the background on the transfer queue.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueuedLocalCopy {
+    /// Its Transfer Queue id.
+    pub transfer_id: String,
+    /// The file being copied (its queue row's name and path).
+    pub src_path: String,
+}
+
 /// What `local_copy_start` started.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalCopyStarted {
-    /// Transfer Queue ids of the files copied in the background, empty when the
-    /// whole copy finished directly.
-    pub transfer_ids: Vec<String>,
+    /// The files copied in the background, empty when the whole copy finished
+    /// directly.
+    pub queued: Vec<QueuedLocalCopy>,
     /// Items of a folder that were not copied (special files such as sockets,
     /// FIFOs and devices), as paths relative to the copied folder.
     pub skipped: Vec<String>,
@@ -111,13 +121,17 @@ pub async fn start(
         return Ok(LocalCopyStarted::default());
     }
     let (transfer_id, handle) = enqueue(registry, app_handle, &src_path, &dest_path, meta.len());
+    let queued = vec![QueuedLocalCopy {
+        transfer_id,
+        src_path: src_path.clone(),
+    }];
     let registry = registry.clone();
     let sink = transfer::app_progress_sink(app_handle.clone());
     tauri::async_runtime::spawn(async move {
         local::run_local_transfer(src_path, dest_path, handle, registry, sink, 0).await;
     });
     Ok(LocalCopyStarted {
-        transfer_ids: vec![transfer_id],
+        queued,
         skipped: Vec::new(),
     })
 }
@@ -168,8 +182,14 @@ async fn start_folder(
             (from, to, handle)
         })
         .collect();
-    let transfer_ids: Vec<String> = jobs.iter().map(|(_, _, h)| h.transfer_id.clone()).collect();
-    let group: Arc<[String]> = Arc::from(transfer_ids.clone());
+    let queued: Vec<QueuedLocalCopy> = jobs
+        .iter()
+        .map(|(from, _, handle)| QueuedLocalCopy {
+            transfer_id: handle.transfer_id.clone(),
+            src_path: from.clone(),
+        })
+        .collect();
+    let group: Arc<[String]> = queued.iter().map(|q| q.transfer_id.clone()).collect();
     for (from, to, handle) in jobs {
         let (registry, group) = (registry.clone(), group.clone());
         let sink = transfer::app_progress_sink(app_handle.clone());
@@ -179,7 +199,7 @@ async fn start_folder(
         });
     }
     Ok(LocalCopyStarted {
-        transfer_ids,
+        queued,
         skipped: plan.skipped.iter().map(|rel| display_rel(rel)).collect(),
     })
 }

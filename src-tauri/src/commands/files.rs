@@ -31,7 +31,7 @@ pub fn sftp_cancel_transfer(transfer_id: String, registry: State<'_, TransferReg
 /// A folder is walked (bounded), its directories, symlinks and small files
 /// copied directly — merging into an existing destination folder — and each of
 /// its large files queued the same way; cancelling one of a folder's queued
-/// files cancels the rest. The result lists the queued transfer ids (one
+/// files cancels the rest. The result lists the queued files (id + source path, one
 /// Transfer Queue row each; empty when everything was copied directly) and any
 /// skipped special files. WSL paths reach this as their host `\\wsl$` UNC
 /// paths, so a local ↔ WSL copy takes the same route. See
