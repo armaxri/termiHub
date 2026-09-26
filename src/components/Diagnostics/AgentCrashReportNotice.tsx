@@ -10,6 +10,11 @@ import { frontendLog } from "@/utils/frontendLog";
 import { openDiagnosticsExport, useDiagnosticsDialogStore } from "./diagnosticsDialogStore";
 import "./Diagnostics.css";
 
+/** Treat a missing or malformed reply as "no notices" rather than crash. */
+function asList(list: AgentCrashNotice[] | null | undefined): AgentCrashNotice[] {
+  return Array.isArray(list) ? list : [];
+}
+
 /**
  * Non-blocking notices for remote agents that crashed since they were last
  * connected (#3593) — one per agent, styled like the local crash notice.
@@ -32,10 +37,10 @@ export function AgentCrashReportNotice() {
     let unlisten: (() => void) | null = null;
     getAgentCrashNotices()
       .then((list) => {
-        if (!cancelled) setNotices(list);
+        if (!cancelled) setNotices(asList(list));
       })
       .catch((e) => frontendLog("crash_report", `agent notice check failed: ${String(e)}`));
-    onAgentCrashNoticesChanged((list) => setNotices(list))
+    onAgentCrashNoticesChanged((list) => setNotices(asList(list)))
       .then((fn) => {
         if (cancelled) fn();
         else unlisten = fn;
