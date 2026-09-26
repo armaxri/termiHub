@@ -3049,3 +3049,7 @@ mod reference_tests;
 #[cfg(test)]
 #[path = "manager_edit_move_tests.rs"]
 mod edit_move_tests;
+
+#[cfg(test)]
+#[path = "manager_jump_host_scope_tests.rs"]
+mod jump_host_scope_tests;
