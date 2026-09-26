@@ -1139,11 +1139,30 @@ to "Latest" (and that desktop update checks and agent self-updates then pick up)
 it afterwards). A tag with a semver prerelease suffix (`vX.Y.Z-beta.1`, `vX.Y.Z-rc.1`) is
 always a prerelease, even with the variable set.
 
+### Post-Release Install Smokes
+
+When the Release workflow succeeds, four separate workflows install and launch the
+just-published artifacts on hosted runners, prereleases included. Each one can be
+re-run against any published release from the Actions tab (`workflow_dispatch` with the
+tag, e.g. `v0.1.0`), and each uploads its logs as a run artifact:
+
+| Workflow                                                                        | Runner(s)                                      | What it asserts                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Release Linux Smoke](../.github/workflows/release-linux-smoke.yml)             | `ubuntu-latest`                                | AppImage extracts and `.deb` installs; both run `--version` and `scripts/smoke-test.sh` headless under Xvfb                                                                                                                                                                                                                                                                                                                         |
+| [Release Linux arm64 Smoke](../.github/workflows/release-linux-arm64-smoke.yml) | `ubuntu-24.04-arm`                             | arm64 `.deb` installs and runs `--version`                                                                                                                                                                                                                                                                                                                                                                                          |
+| [Release macOS Smoke](../.github/workflows/release-macos-smoke.yml)             | `macos-latest` (arm64), `macos-15-intel` (x64) | Both DMGs carry valid provenance, mount, and hold a consistently ad-hoc-signed `termiHub.app` (`codesign --verify --deep --strict`; `spctl` is advisory for the unsigned beta) of the release version and the runner's native architecture; `--version` prints the release version; the launched app's frontend reaches the backend over IPC and the app stays alive; the matching agent binary passes its checksum and `--version` |
+| [Release Windows Smoke](../.github/workflows/release-windows-smoke.yml)         | `windows-latest`                               | The MSI carries valid provenance, installs silently, registers its uninstall entry with the release version, and installs `termihub.exe` + the RDP helper; `--version` prints the release version; the launched app's frontend reaches the backend over IPC and the app stays alive; the agent binary passes its checksum and `--version`; a silent uninstall removes the entry and binaries (msiexec logs are uploaded)            |
+
+The Intel macOS leg is the only place the cross-compiled `macos-x64` DMG is ever
+executed, so treat a red Release macOS Smoke as a broken release, not a flake.
+
 ### Post-Release Verification
 
 After the workflow completes:
 
 - [ ] Check the [GitHub Actions](https://github.com/armaxri/termiHub/actions) page — all jobs should be green
+- [ ] Confirm the four post-release install smokes above are green (Linux x64, Linux arm64,
+      macOS arm64 + x64, Windows x64)
 - [ ] Visit the [Releases page](https://github.com/armaxri/termiHub/releases) — verify the release exists with correct notes
 - [ ] Confirm all platform artifacts are attached (macOS x64, macOS ARM64, Windows x64, Linux x64, Linux ARM64)
 - [ ] Download and smoke-test at least one artifact on your platform
