@@ -1,5 +1,6 @@
 ### Fixed
 
-- Re-opening a persistent agent session you had closed on this desktop no longer silently takes
-  it away from another desktop that opened it in the meantime. The tab now shows "Taken over by
-  another desktop" with **Reclaim**; taking a session over always requires an explicit action.
+- Re-attaching a persistent agent session this desktop had detached from no longer silently takes
+  it away from another desktop that opened it in the meantime. The attach is refused instead and
+  the other desktop keeps the session; taking a session over always requires an explicit
+  **Reclaim** or a confirmed **Take over**.
