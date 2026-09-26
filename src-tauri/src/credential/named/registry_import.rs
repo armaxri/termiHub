@@ -37,19 +37,23 @@ fn unique_import_name(doc: &NamedCredentialStore, base: &str) -> String {
     if !taken(base) {
         return base.to_string();
     }
-    (1..)
-        .map(|n| {
-            let suffix = if n == 1 {
-                format!(" ({IMPORT_SUFFIX})")
-            } else {
-                format!(" ({IMPORT_SUFFIX} {n})")
-            };
-            let room = MAX_NAME_LEN.saturating_sub(suffix.chars().count());
-            let stem: String = base.chars().take(room).collect();
-            format!("{}{suffix}", stem.trim_end())
-        })
-        .find(|candidate| !taken(candidate))
-        .expect("an unbounded suffix sequence always finds a free name")
+    // At most `credentials.len() + 1` candidates can be tried before one is
+    // free, so this loop always terminates.
+    let mut n: usize = 1;
+    loop {
+        let suffix = if n == 1 {
+            format!(" ({IMPORT_SUFFIX})")
+        } else {
+            format!(" ({IMPORT_SUFFIX} {n})")
+        };
+        let room = MAX_NAME_LEN.saturating_sub(suffix.chars().count());
+        let stem: String = base.chars().take(room).collect();
+        let candidate = format!("{}{suffix}", stem.trim_end());
+        if !taken(&candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
 }
 
 impl NamedCredentialRegistry {
