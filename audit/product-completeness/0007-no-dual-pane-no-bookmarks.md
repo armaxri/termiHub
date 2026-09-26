@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/components/Sidebar/FileBrowser
 evidence:
   - src/components/Sidebar/FileBrowser.tsx:1
-status: open
+status: fixed
+resolution: "#3560, #3561 — per-connection persisted file-browser bookmarks (#3560) + dual-pane local<->remote transfer view tab via transfer queue (#3561)"
 ---
 
 ## What
