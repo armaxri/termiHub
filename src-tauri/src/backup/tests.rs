@@ -67,6 +67,14 @@ fn macros_doc(items: &[(&str, &str)]) -> Value {
     at_current("macros.json", json!({"macros": macros}))
 }
 
+fn schedule_doc(id: &str, name: &str) -> Value {
+    json!({"id": id, "name": name,
+           "action": {"kind": "workflow", "workflowId": "wf1"},
+           "targets": {"kind": "connections", "connectionIds": ["c1"]},
+           "rule": {"kind": "daily", "time": "09:00"},
+           "missedRuns": "skip", "enabled": false, "createdAt": "", "updatedAt": ""})
+}
+
 fn fixture_docs() -> Vec<(&'static str, Value)> {
     vec![
         ("connections.json", connections_doc()),
@@ -87,6 +95,10 @@ fn fixture_docs() -> Vec<(&'static str, Value)> {
         (
             "workflows.json",
             json!({"version": "1", "workflows": [{"id": "wf1", "name": "Nightly"}]}),
+        ),
+        (
+            "schedules.json",
+            json!({"version": "1", "paused": false, "schedules": [schedule_doc("sch1", "Health")]}),
         ),
         ("tunnels.json", json!({"version": "1", "tunnels": []})),
         (
@@ -1048,6 +1060,55 @@ fn every_section_file_is_known_to_the_manifest_validator() {
     }
 }
 
+// --- schedules (PROD-043) ---
+
+#[test]
+fn schedules_are_a_backup_section_that_merges_by_id() {
+    let src = tempfile::tempdir().unwrap();
+    populate(src.path());
+    let json = build(src.path(), &options(&["schedules"], true, false), None);
+
+    let dst = tempfile::tempdir().unwrap();
+    write_doc(
+        dst.path(),
+        "schedules.json",
+        &json!({"version": "1", "paused": true, "schedules": [schedule_doc("mine", "Local")]}),
+    );
+    let result = restore_and_boot(
+        &json,
+        dst.path(),
+        &request(vec![choice(
+            "schedules",
+            RestoreMode::Merge,
+            ConflictStrategy::Skip,
+        )]),
+    );
+    assert_eq!(result.sections.len(), 1);
+    assert_eq!(result.sections[0].resulting_count, 2);
+    let doc = read_doc(dst.path(), "schedules.json");
+    // The machine's own pause switch survives a merge.
+    assert_eq!(doc["paused"], json!(true));
+    let ids: Vec<&str> = doc["schedules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["mine", "sch1"]);
+}
+
+#[test]
+fn a_newer_schedules_backup_is_refused() {
+    let spec = sections::spec("schedules").unwrap();
+    let err = spec
+        .normalize(json!({"version": "2", "schedules": []}))
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        sections::NormalizeError::Newer { found: 2, .. }
+    ));
+}
+
 // --- section schema versions follow the owning stores ---
 
 /// Guard: every backup section's schema version is the owning store's own
@@ -1065,6 +1126,7 @@ fn every_section_version_is_its_stores_current_version() {
     use crate::network::http_monitor_storage::HttpMonitorsFile;
     use crate::network::tool_history::NetworkToolHistoryStore;
     use crate::network::wol_storage::WolDevicesFile;
+    use crate::schedules::config::ScheduleStore;
     use crate::tunnel::config::TunnelStore;
     use crate::utils::migrate::{read_version, VersionedStore};
     use crate::workflows::config::WorkflowStore;
@@ -1085,6 +1147,10 @@ fn every_section_version_is_its_stores_current_version() {
         (
             "workflows",
             <WorkflowStore as VersionedStore>::CURRENT_VERSION,
+        ),
+        (
+            "schedules",
+            <ScheduleStore as VersionedStore>::CURRENT_VERSION,
         ),
         ("tunnels", TunnelStore::CURRENT_VERSION),
         ("embeddedServers", EmbeddedServerStore::CURRENT_VERSION),
