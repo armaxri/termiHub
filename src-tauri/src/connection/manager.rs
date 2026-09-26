@@ -1039,7 +1039,44 @@ impl ConnectionManager {
             return Ok(connection);
         }
         let connection = self.read_connection(connection_id, current_source)?;
-        let disk_conn = prepare_for_storage(connection, &*self.credential_store)?;
+        self.relocate(connection, current_source, target_source)
+    }
+
+    /// Save an edited connection whose storage file changed, in one step.
+    ///
+    /// `connection.source_file` names the target file and `current_source` the
+    /// file it is stored in now. The edited connection is written to the target
+    /// and then removed from its current file — the same target-first order as
+    /// [`Self::move_connection_to_file`] — so it ends up exactly once, in the
+    /// target, with the edited fields (#3590). Its id change is reported once.
+    /// When the file did not change this is a plain [`Self::save_connection_routed`].
+    pub fn save_connection_to_file(
+        &self,
+        connection: SavedConnection,
+        current_source: Option<&str>,
+    ) -> Result<SavedConnection> {
+        if current_source == connection.source_file.as_deref() {
+            let mut saved = connection.clone();
+            saved.id = self.save_connection_routed(connection)?;
+            return Ok(saved);
+        }
+        // The connection must still exist where the editor loaded it from.
+        self.read_connection(&connection.id, current_source)?;
+        let target_source = connection.source_file.clone();
+        self.relocate(connection, current_source, target_source)
+    }
+
+    /// Write `connection` to `target_source`, then remove it (by its current
+    /// id) from `current_source`; returns it as written to the target.
+    fn relocate(
+        &self,
+        connection: SavedConnection,
+        current_source: Option<&str>,
+        target_source: Option<String>,
+    ) -> Result<SavedConnection> {
+        let connection_id = connection.id.clone();
+        let mut disk_conn = prepare_for_storage(connection, &*self.credential_store)?;
+        disk_conn.source_file = None; // Strip before writing to disk
 
         let written = match &target_source {
             None => self.place_in_main_store(disk_conn)?,
@@ -1050,8 +1087,8 @@ impl ConnectionManager {
         };
 
         let source_ids = match current_source {
-            None => self.remove_from_main_store(connection_id),
-            Some(file_path) => remove_from_external_file(file_path, connection_id),
+            None => self.remove_from_main_store(&connection_id),
+            Some(file_path) => remove_from_external_file(file_path, &connection_id),
         }
         .with_context(|| {
             format!(
@@ -2904,3 +2941,7 @@ mod id_change_tests;
 #[cfg(test)]
 #[path = "manager_move_credential_tests.rs"]
 mod move_credential_tests;
+
+#[cfg(test)]
+#[path = "manager_edit_move_tests.rs"]
+mod edit_move_tests;
