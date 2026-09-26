@@ -11,7 +11,8 @@ evidence:
   - .github/workflows/code-quality.yml:178
   - .github/workflows/build.yml:53
   - .github/workflows/release.yml:155
-status: open
+status: fixed
+resolution: "#3412 — .github/rust-version single source via setup-rust composite action across all workflows (no rust-toolchain.toml per #2549)"
 ---
 
 ## What

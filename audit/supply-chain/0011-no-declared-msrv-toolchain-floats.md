@@ -9,7 +9,8 @@ subsystem: workspace
 evidence:
   - .github/workflows/code-quality.yml:36
   - .github/workflows/code-quality.yml:178
-status: open
+status: fixed
+resolution: "#3412 — workspace rust-version 1.98.0 inherited by members; sidecar declares it"
 ---
 
 ## What

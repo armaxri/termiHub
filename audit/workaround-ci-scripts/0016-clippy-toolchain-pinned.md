@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: .github/workflows
 evidence:
   - .github/workflows/code-quality.yml:36
-status: open
+status: fixed
+resolution: "#3412 — duplicated clippy pins removed; consistency check in Rust Code Quality"
 ---
 
 ## What
