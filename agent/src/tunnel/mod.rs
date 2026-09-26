@@ -299,6 +299,21 @@ mod tests {
     use super::*;
     use termihub_core::tunnel::config::LocalForwardConfig;
 
+    /// The address an agent-hosted `-L`/`-D` forward's listen socket actually
+    /// bound. Lets a test configure port `0` and learn the OS-assigned port,
+    /// instead of reserving one by binding and dropping it first (#3533).
+    async fn agent_listen_addr(
+        registry: &AgentTunnelRegistry,
+        tunnel_id: &str,
+    ) -> std::net::SocketAddr {
+        let tunnels = registry.tunnels.lock().await;
+        match &tunnels.get(tunnel_id).expect("tunnel running").forwarder {
+            ActiveForwarder::Local(f) => f.local_addr(),
+            ActiveForwarder::Dynamic(f) => f.local_addr(),
+            ActiveForwarder::Remote(_) => panic!("a -R forward listens on the SSH server"),
+        }
+    }
+
     fn loopback_forward(port: u16) -> LocalForwardConfig {
         LocalForwardConfig {
             local_host: "127.0.0.1".to_string(),
@@ -395,16 +410,11 @@ mod tests {
             password: Some("testpass".to_string()),
             ..Default::default()
         };
-        let listen_port = {
-            std::net::TcpListener::bind("127.0.0.1:0")
-                .expect("bind ephemeral")
-                .local_addr()
-                .expect("local addr")
-                .port()
-        };
         let forward = LocalForwardConfig {
             local_host: "127.0.0.1".to_string(),
-            local_port: listen_port,
+            // Port 0: the forwarder binds an OS-assigned port itself and the test
+            // reads it back, so no other test can take it in between (#3533).
+            local_port: 0,
             remote_host: "localhost".to_string(),
             remote_port: 8080,
         };
@@ -415,7 +425,8 @@ mod tests {
             .await
             .expect("agent-hosted local forward should start");
         assert_eq!(outcome.reachable_from, ReachableFrom::AgentOnly);
-        assert_eq!(outcome.bound_address, format!("127.0.0.1:{listen_port}"));
+        let listen_port = agent_listen_addr(&registry, "t-http").await.port();
+        assert_ne!(listen_port, 0, "the forwarder must bind a real port");
         assert_eq!(registry.active_count().await, 1);
         assert!(registry.status("t-http").await.is_some());
 
@@ -644,16 +655,11 @@ mod tests {
             password: Some("testpass".to_string()),
             ..Default::default()
         };
-        let listen_port = {
-            std::net::TcpListener::bind("127.0.0.1:0")
-                .expect("bind ephemeral")
-                .local_addr()
-                .expect("local addr")
-                .port()
-        };
         let forward = DynamicForwardConfig {
             local_host: "127.0.0.1".to_string(),
-            local_port: listen_port,
+            // Port 0: the forwarder binds an OS-assigned port itself and the test
+            // reads it back, so no other test can take it in between (#3533).
+            local_port: 0,
         };
 
         let registry = AgentTunnelRegistry::new();
@@ -666,7 +672,8 @@ mod tests {
             ReachableFrom::AgentOnly,
             "a loopback SOCKS bind is reachable only from the agent"
         );
-        assert_eq!(outcome.bound_address, format!("127.0.0.1:{listen_port}"));
+        let listen_port = agent_listen_addr(&registry, "t-socks").await.port();
+        assert_ne!(listen_port, 0, "the forwarder must bind a real port");
         assert_eq!(registry.active_count().await, 1);
 
         // Drive an HTTP request through the SOCKS proxy: negotiate no-auth, then
