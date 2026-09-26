@@ -95,7 +95,7 @@ jobs:
         continue-on-error: true  # Dev-only advisories: warn, do not fail
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        uses: ./.github/actions/setup-rust
 
       # Prebuilt binary download instead of compiling cargo-audit from source.
       # This job has no rust-cache, so the old `cargo install` recompiled it every

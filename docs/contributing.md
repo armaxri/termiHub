@@ -41,6 +41,10 @@ rustc --version
 cargo --version
 ```
 
+You need Rust **1.98.0 or newer** — the minimum supported Rust version declared as
+`rust-version` in the manifests (see [Rust toolchain version](#rust-toolchain-version)). Any newer
+stable works locally; `rustup update stable` if Cargo reports the package requires a newer rustc.
+
 #### Tauri Prerequisites
 
 Follow the [Tauri v2 prerequisites guide](https://v2.tauri.app/start/prerequisites/) for your platform. The platform-specific sections below summarize the key requirements.
@@ -215,6 +219,38 @@ all earlier merges). **Watch `develop`'s own runs after merging**: a failure the
 is a real regression (or a new advisory) and needs a follow-up fix, since the PR
 that caused it was not gated on it. The nightly system-integration and Docker
 fixture lanes are unchanged.
+
+### Rust toolchain version
+
+CI compiles, tests, lints and releases with **one** exact Rust version, stored in a single file:
+[`.github/rust-version`](../.github/rust-version). Every workflow installs it through the
+[`setup-rust`](../.github/actions/setup-rust/action.yml) composite action — no job floats on
+`stable`, so a new Rust release can neither red PRs with new clippy lints (#2549) nor silently
+change the compiler that builds the shipped binaries. The same version is the declared minimum
+supported Rust version (`rust-version`): in `[workspace.package]` of the root `Cargo.toml`
+(inherited by every first-party member via `rust-version.workspace = true`) and in
+`rdp-sidecar/Cargo.toml` (workspace-excluded, so declared literally). Vendored crates under
+`vendor/` keep their upstream `rust-version`.
+
+This pins **CI only**. There is deliberately no repo-root `rust-toolchain.toml` (rejected
+in #2549): local development keeps whatever stable you have installed, as long as it is at least the
+declared `rust-version`.
+
+[`scripts/internal/check-rust-version.mjs`](../scripts/internal/check-rust-version.mjs) (run by
+Rust Code Quality and `./scripts/check.sh`) fails if the three values disagree, or if any workflow
+calls `dtolnay/rust-toolchain` directly instead of the `setup-rust` action.
+
+**Bumping the toolchain** is a deliberate chore PR (`build: bump rust toolchain to X.Y.Z`), done
+periodically so new lints are adopted on purpose rather than by surprise:
+
+1. Write the new exact version (e.g. `1.99.0`) to `.github/rust-version`.
+2. Set the same value as `rust-version` in the root `Cargo.toml` `[workspace.package]` and in
+   `rdp-sidecar/Cargo.toml`.
+3. Run `node scripts/internal/check-rust-version.mjs` — it must pass.
+4. Install that version locally (`rustup toolchain install X.Y.Z`) and fix what it surfaces:
+   `cargo +X.Y.Z clippy --workspace --all-targets --all-features -- -D warnings` (and the same in
+   `rdp-sidecar/`). Fix new lints in the same PR; the PR's CI then proves build, tests and lints on
+   the new version.
 
 ### Git hooks
 

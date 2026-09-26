@@ -18,6 +18,16 @@ members = [
 exclude = ["rdp-sidecar"]
 resolver = "2"
 
+# Minimum supported Rust version (SUP-011), inherited by every first-party member
+# via `rust-version.workspace = true`. Kept EQUAL to the CI toolchain pinned in
+# `.github/rust-version` — the only compiler CI verifies — and to rdp-sidecar's
+# own `rust-version`; scripts/internal/check-rust-version.mjs fails CI if they
+# drift. It is a floor, not a pin: a newer local rustc still builds (no
+# rust-toolchain.toml, #2549). Bump procedure: docs/contributing.md ->
+# "Rust toolchain version".
+[workspace.package]
+rust-version = "1.98.0"
+
 # Dev/test builds emit no debug info at all. The workspace declared no
 # [profile.dev], so it ran on Cargo's default `debug = true` — full DWARF for
 # every crate in the dependency graph, which was the bulk of the debug target.

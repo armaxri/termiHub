@@ -3,6 +3,7 @@ name = "echo-backend"
 version = "1.0.0"
 description = "Example termiHub native terminal-backend plugin (echoes input back as output)"
 edition = "2021"
+rust-version.workspace = true
 publish = false
 
 [lib]
