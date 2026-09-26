@@ -14,6 +14,7 @@ import { readConfigBoolean, readConfigString } from "@/utils/connectionConfigFie
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { isAuthFailure } from "@/utils/backendErrorCode";
+import { pluginConnectionIssue } from "@/utils/pluginConnectionTypes";
 
 /** Return value of {@link useConnectSavedConnection}. */
 export interface UseConnectSavedConnection {
@@ -39,6 +40,8 @@ export interface UseConnectSavedConnection {
  * - Unlocks the credential store before resolving a stored secret (#1144).
  * - Validates a stored credential with a pre-connect and clears it if stale
  *   (#885/#963), otherwise prompts and optionally persists the entered secret.
+ * - Refuses a connection whose plugin is missing, disabled or untrusted with a
+ *   clear message (#3344), before any tab opens.
  *
  * This hook intentionally contains no UI: callers own any surrounding
  * confirmation (e.g. the sidebar's insecure-FTP warning) and render the shared
@@ -50,6 +53,18 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
 
   const connect = useCallback(
     async (connection: SavedConnection) => {
+      // A connection whose plugin is missing, disabled or not trusted cannot
+      // connect (#3344): say why, with the same wording as the sidebar marker,
+      // instead of opening a tab that fails with a raw "unknown type" error.
+      const { plugins, pluginsLoaded } = useAppStore.getState();
+      const pluginIssue = pluginsLoaded
+        ? pluginConnectionIssue(connection.config.type, plugins)
+        : null;
+      if (pluginIssue) {
+        toast.error(`Cannot connect to ${connection.name}: ${pluginIssue.message}`);
+        return;
+      }
+
       let config = connection.config;
       const cfg = config.config;
 

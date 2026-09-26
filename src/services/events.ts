@@ -197,6 +197,17 @@ export async function onSessionOwnershipChanged(callback: () => void): Promise<U
   return await listen("session-ownership-changed", () => callback());
 }
 
+/**
+ * Listen for backend `plugin-changed` events: the installed-plugin set or a
+ * plugin's state changed (install / uninstall / enable / disable, or a native
+ * plugin trust change — #3296). Fires with no payload; the listener re-fetches
+ * the plugin list so derived UI (e.g. the sidebar's missing-plugin marker,
+ * #3344) updates live.
+ */
+export async function onPluginsChanged(callback: () => void): Promise<UnlistenFn> {
+  return await listen("plugin-changed", () => callback());
+}
+
 /** Payload for {@link onSessionOwnershipSuperseded} (SM-026). */
 export interface SessionOwnershipSupersededPayload {
   /** The session whose ownership moved away from this window. */

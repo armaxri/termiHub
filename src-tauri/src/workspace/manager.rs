@@ -207,6 +207,10 @@ impl WorkspaceManager {
             .lock()
             .map_err(|e| TerminalError::WorkspaceError(e.to_string()))?;
 
+        // Resolve legacy plugin connection-type ids in imported inline tab
+        // configs (PLG-007, #3343), as the `workspaces.json` load pass does.
+        let resolver = self.storage.legacy_type_resolver();
+
         let mut count = 0;
         let mut warnings: Vec<String> = Vec::new();
         for entry in data.workspaces {
@@ -222,7 +226,7 @@ impl WorkspaceManager {
             );
 
             let mut unresolved: Vec<String> = Vec::new();
-            let definition = WorkspaceDefinition {
+            let mut definition = WorkspaceDefinition {
                 id: new_id,
                 name: entry.name,
                 description: entry.description,
@@ -242,6 +246,14 @@ impl WorkspaceManager {
                     .collect(),
                 windows: entry.windows,
             };
+            if let Some(resolver) = &resolver {
+                let what = format!("imported workspace \"{}\"", definition.name);
+                crate::connection::plugin_type_ids::migrate_tab_groups(
+                    &mut definition.tab_groups,
+                    resolver,
+                    &what,
+                );
+            }
 
             // Surface any dangling connection references instead of silently
             // keeping them (PER-009). The tab and its raw ref are preserved above;
@@ -981,5 +993,47 @@ mod tests {
             mgr.take_recovery_warnings().is_empty(),
             "a resolvable ref must not produce a warning"
         );
+    }
+
+    #[test]
+    fn import_resolves_legacy_plugin_type_ids_in_inline_configs() {
+        // PLG-007 follow-up (#3343): an export written before the namespacing
+        // carries legacy plugin type ids in inline tab configs.
+        let dir = TempDir::new().unwrap();
+        crate::connection::plugin_type_ids::write_backend_plugin_manifest(
+            dir.path(),
+            "beta",
+            "k8s",
+        );
+        let mgr = create_test_manager(&dir);
+        let json = r#"{
+            "version": "1",
+            "workspaces": [{
+                "name": "Legacy",
+                "tabGroups": [{
+                    "name": "Main",
+                    "layout": {"type": "leaf", "tabs": [
+                        {"inlineConfig": {"type": "k8s", "config": {}}},
+                        {"inlineConfig": {"type": "mqtt", "config": {}}}
+                    ]}
+                }]
+            }]
+        }"#;
+        let count = mgr
+            .import_json(json, &HashMap::new())
+            .unwrap()
+            .imported_count;
+        assert_eq!(count, 1);
+        let id = mgr.get_workspaces().unwrap()[0].id.clone();
+        let ws = mgr.load_workspace(&id).unwrap();
+        let WorkspaceLayoutNode::Leaf { tabs } = &ws.tab_groups[0].layout else {
+            panic!("leaf expected");
+        };
+        let types: Vec<&str> = tabs
+            .iter()
+            .map(|t| t.inline_config.as_ref().unwrap()["type"].as_str().unwrap())
+            .collect();
+        // Resolved to the installed plugin; a missing plugin's id is kept.
+        assert_eq!(types, ["plugin:beta:k8s", "mqtt"]);
     }
 }

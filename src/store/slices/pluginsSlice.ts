@@ -93,6 +93,12 @@ export interface PluginsSlice {
   /** Installed plugins with their current install/runtime state. */
   plugins: InstalledPlugin[];
   /**
+   * Whether {@link plugins} has been loaded from the backend at least once.
+   * Until then an empty list means "not known yet", not "nothing installed", so
+   * the sidebar's missing-plugin marker (#3344) stays hidden.
+   */
+  pluginsLoaded: boolean;
+  /**
    * Terminal-backend connection types contributed by active plugins, projected
    * from {@link plugins} for the connection-type selector. Derived by
    * {@link loadPlugins}; not set directly.
@@ -152,6 +158,7 @@ export interface PluginsSlice {
 
 export const createPluginsSlice: StateCreator<AppState, [], [], PluginsSlice> = (set, get) => ({
   plugins: [],
+  pluginsLoaded: false,
   pluginBackendTypes: [],
   pluginThemes: [],
 
@@ -163,7 +170,12 @@ export const createPluginsSlice: StateCreator<AppState, [], [], PluginsSlice> = 
       // resolve as soon as the selector renders it.
       const pluginThemes = await loadActivePluginThemes(plugins);
       setRegisteredPluginThemes(pluginThemes);
-      set({ plugins, pluginBackendTypes: derivePluginBackendTypes(plugins), pluginThemes });
+      set({
+        plugins,
+        pluginsLoaded: true,
+        pluginBackendTypes: derivePluginBackendTypes(plugins),
+        pluginThemes,
+      });
       // Load/unload frontend JS plugins — protocol parsers + status-bar
       // widgets (#1998). Reconciles the sandbox against the active set: each
       // plugin's entry point is `importScripts`-ed from the `plugin://` origin,
