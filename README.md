@@ -94,7 +94,7 @@ Prefer to build it yourself? See [Development](#development) below.
 - **Local shells** — zsh, bash, PowerShell, cmd, Git Bash with automatic shell detection
 - **SSH** — Remote terminal sessions with key-based and password authentication, plus jump host / `ProxyJump` chains, X11 forwarding, tunneling, and SFTP
 - **Serial** — Direct serial port connections for hardware debugging and IoT devices
-- **Telnet** — Classic telnet connections with IAC protocol support
+- **Telnet** — Classic telnet connections with window-size (NAWS) and terminal-type negotiation, plus optional prompt-driven auto-login
 - **Docker** — Start a new container from an image and open a shell in it (run-new; attaching to an already-running container is not yet supported)
 - **WSL** — Windows Subsystem for Linux distribution sessions (Windows only)
 - **FTP / FTPS** — File-transfer connections with a managed transfer queue (browse, upload, download, edit)
@@ -205,7 +205,7 @@ termiHub uses a VS Code-inspired three-column layout:
 
 - **Local Shell** — Opens a local terminal using an auto-detected shell (zsh, bash, sh on macOS/Linux; PowerShell, cmd, Git Bash on Windows). Select the shell in the connection editor.
 - **SSH** — Remote terminal via SSH. See [SSH Configuration](#ssh-configuration) below for authentication, jump hosts, X11 forwarding, and SFTP details.
-- **Telnet** — Remote terminal via Telnet protocol. Configure host and port (default: 23).
+- **Telnet** — Remote terminal via Telnet protocol. Configure host and port (default: 23). See [Telnet](#telnet) below for window size, terminal type, and auto-login.
 - **Serial** — Connect to serial devices (USB-to-serial adapters, IoT, networking equipment). Configure port, baud rate, data/stop bits, parity, and flow control. See [Serial Port Setup](#serial-port-setup) below for platform-specific instructions.
 - **Docker** — Start a new container from an image and open a shell in it (run-new; attaching to an already-running container is not yet supported).
 - **WSL** — Open a session in a Windows Subsystem for Linux distribution (Windows only).
@@ -324,6 +324,14 @@ By default the file records **Info** level and above — enough to be readable w
 - **With an environment variable:** set `TERMIHUB_FILE_LOG` before launching to override the level at startup — e.g. `TERMIHUB_FILE_LOG=debug`. This wins over the in-app setting for that run. A support case that truly needs SSH internals can pass an explicit directive such as `TERMIHUB_FILE_LOG="debug,russh=debug"`; otherwise low-level SSH packet logging is kept out of the file even at Debug/Trace.
 
 ---
+
+## Telnet
+
+- **Window size** — termiHub offers NAWS (RFC 1073) on connect and reports the terminal size again after every resize, so full-screen programs (vim, htop, device menus) reflow with the window. Servers that refuse NAWS simply keep their own size.
+- **Terminal type** — reported when the server asks (TERMINAL-TYPE, RFC 1091); it usually becomes `TERM` on the remote side. Defaults to `xterm-256color`; set it to e.g. `vt100` for older devices.
+- **Auto-login (optional, off by default)** — set **Login** to _Auto-login_ and enter a username and password. termiHub types the username when the output ends with a login prompt (default `login:`, `username:`, or `user name:`) and the password at the password prompt (default `password:`). Matching is case-insensitive; alternatives are separated with `|`. A device that asks only for a password gets the password at the first prompt. If a prompt does not appear within the prompt timeout (default 10 s), or the login prompt reappears after the username was sent (the login was rejected), auto-login stops and the session stays interactive — it never retries.
+  - The password is kept in the credential store (keychain or master-password vault) when **Save password** is on and is never written to the connection file or logged. Leave it empty to be asked on connect.
+  - **Telnet is unencrypted**: the username and password travel in cleartext and can be read by anyone on the network path. Only use auto-login on trusted networks and prefer SSH where the device supports it.
 
 ## SSH Configuration
 
