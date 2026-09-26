@@ -56,7 +56,13 @@ export type TabContentType =
    * The tab owns its own graphical session (via `remote_desktop_connect`),
    * separate from the terminal SessionManager (#1680).
    */
-  | "remote-desktop";
+  | "remote-desktop"
+  /**
+   * The dual-pane local ↔ remote transfer view (PROD-007, #3558): a local and a
+   * remote file pane side by side, copying between them through the transfer
+   * queue. The tab carries a {@link TransferViewMeta}.
+   */
+  | "transfer-view";
 
 /**
  * Reference to a session-layer file browser backing a remote editor tab (#1557).
@@ -158,6 +164,20 @@ export type NetworkTool =
   | "traceroute"
   | "wol"
   | "open-ports";
+
+/**
+ * Metadata for a dual-pane transfer-view tab (PROD-007, #3558). The remote pane
+ * follows the terminal tab it was opened for — the tab id, not a session id, so
+ * a reconnect (which swaps the session id) keeps the pane attached.
+ */
+export interface TransferViewMeta {
+  /** The terminal tab whose session backs the remote pane; `null` = pick one. */
+  remoteTabId: string | null;
+  /** The directory the local pane starts in (defaults to the home directory). */
+  localPath?: string;
+  /** The directory the remote pane starts in (defaults to the home directory). */
+  remotePath?: string;
+}
 
 export interface NetworkDiagnosticMeta {
   tool: NetworkTool;
@@ -388,6 +408,7 @@ export interface TerminalTab {
   tunnelEditorMeta?: TunnelEditorMeta;
   workspaceEditorMeta?: WorkspaceEditorMeta;
   networkDiagnosticMeta?: NetworkDiagnosticMeta;
+  transferViewMeta?: TransferViewMeta;
   pluginDetailMeta?: PluginDetailMeta;
   agentErrorMeta?: AgentErrorMeta;
   /** Set when this tab was launched from a workspace agentRef — enables proper workspace capture. */
