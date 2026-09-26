@@ -558,6 +558,7 @@ impl EmbeddedServerService {
             thread_handle: thread::spawn(|| {}),
             stats: AtomicServerStats::with_activity(Arc::clone(&svc.activity)),
             started_at: chrono::Utc::now().to_rfc3339(),
+            local_addr: None,
             error: Arc::new(Mutex::new(None)),
         });
         svc.status = ServiceStatus::Running;

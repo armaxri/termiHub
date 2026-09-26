@@ -183,6 +183,10 @@ pub struct AgentHandler {
     /// This connection's keyboard-interactive prompt relay binding (#3375),
     /// wired by [`with_ki_prompt_relay`](Self::with_ki_prompt_relay).
     ki_binding: Arc<KiBinding>,
+    /// Shared with [`HandlerState`] so tests can read a hosted server's bound
+    /// address (a server started on port `0`, #3533) without an RPC for it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    service_registry: Arc<AgentServiceRegistry>,
 }
 
 impl AgentHandler {
@@ -222,7 +226,7 @@ impl AgentHandler {
             registry_client: registry_client.clone(),
             shutdown_flag: shutdown_flag.clone(),
             tool_registry,
-            service_registry,
+            service_registry: service_registry.clone(),
             tunnel_registry,
             tool_runs: tool_runs.clone(),
             ki_binding: ki_binding.clone(),
@@ -240,6 +244,7 @@ impl AgentHandler {
             registry_client,
             tool_runs,
             ki_binding,
+            service_registry,
         })
     }
 
