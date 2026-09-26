@@ -630,6 +630,11 @@ export interface AppState
     connectionId?: string
   ) => void;
   /**
+   * Open (or focus) the dual-pane local ↔ remote transfer view for the terminal
+   * tab `remoteTabId` (PROD-007, #3558); `null` opens it with no remote chosen.
+   */
+  openTransferViewTab: (meta: import("@/types/terminal").TransferViewMeta) => void;
+  /**
    * Open (or focus) an editor tab for a file.
    *
    * A remote tab is backed by the protocol-agnostic session layer via
@@ -4087,6 +4092,45 @@ export const useAppStore = create<AppState>((set, get, store) => {
           activePanelId: targetPanelId,
           // Track the new tab's content (incl. its diagnostic meta) in the by-id
           // map (part of #2283).
+          tabContent: setTabContentEntry(state.tabContent, newTab),
+        };
+      }),
+
+    openTransferViewTab: (meta) =>
+      setAndReseed((state) => {
+        const allLeaves = getAllLeaves(state.rootPanel);
+        for (const leaf of allLeaves) {
+          const existing = leaf.tabs.find(
+            (t) =>
+              t.contentType === "transfer-view" &&
+              t.transferViewMeta?.remoteTabId === meta.remoteTabId
+          );
+          if (existing) {
+            const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
+              ...l,
+              tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
+              activeTabId: existing.id,
+            }));
+            return { rootPanel, activePanelId: leaf.id };
+          }
+        }
+        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
+        if (!targetPanelId) return state;
+        const remoteTitle = meta.remoteTabId
+          ? state.tabContent[meta.remoteTabId]?.title
+          : undefined;
+        const title = remoteTitle ? `Transfer: ${remoteTitle}` : "File Transfer";
+        const dummyConfig: ConnectionConfig = { type: "local", config: {} };
+        const newTab = createTab(title, "local", dummyConfig, targetPanelId, "transfer-view");
+        newTab.transferViewMeta = meta;
+        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
+          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
+          tabs.push(newTab);
+          return { ...leaf, tabs, activeTabId: newTab.id };
+        });
+        return {
+          rootPanel,
+          activePanelId: targetPanelId,
           tabContent: setTabContentEntry(state.tabContent, newTab),
         };
       }),

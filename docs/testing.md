@@ -2513,6 +2513,33 @@ Covers the pointer gesture, which the jsdom unit tests cannot hit-test.
 7. Right-click a file → **Move to…**, type a folder path, press **Enter** → the
    file moves there. You can do this from the keyboard alone.
 
+### Dual-pane transfer view (#3558, PROD-007)
+
+Covers the pointer drag between panes and real transfers, which the jsdom unit
+tests mock.
+
+1. Open an SSH session, open the file browser on it and click **Open Dual-Pane
+   Transfer View** (columns icon) → a `Transfer: <session>` tab opens with your
+   local home directory on the left and the remote folder from the sidebar on
+   the right.
+2. Click a local file and press the **→** button → a Transfer Queue row appears
+   below the panes with progress. When it finishes, the file shows up in the
+   remote pane.
+3. Drag a remote folder that has a nested subfolder onto the local pane → the
+   local pane highlights while you hover. After you release, one row per file
+   appears and the whole tree lands in the local folder.
+4. Copy the same file again → a **Replace existing items?** dialog appears.
+   **Cancel** leaves the file untouched.
+5. Start copying a large file and press **Cancel** on its row → the transfer
+   stops and no error toast appears.
+6. Keyboard only: **Tab** into the local list, use **↓** / **Enter** to open a
+   folder, **Backspace** to go up, **Space** / **Shift+↓** to select, and
+   **F5** to copy to the remote pane. **Tab** reaches the remote picker, the
+   copy buttons and the remote list.
+7. Close the SSH tab → the remote pane asks you to choose a connection. Reopen
+   the connection and pick it from the **Remote connection** picker → the pane
+   lists it again.
+
 ### File browser drag-out to the OS file manager (#3457)
 
 Covers the native OS drag, which unit tests can only exercise with the drag
