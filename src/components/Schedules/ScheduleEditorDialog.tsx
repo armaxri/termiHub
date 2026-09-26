@@ -93,17 +93,17 @@ export function ScheduleEditorDialog({
   });
 
   // Load the working copy when the dialog opens or switches to another schedule
-  // — keyed on the schedule's id, not the object, so a refresh of the schedules
-  // list (a run, or the backend following a connection rename) never clobbers
-  // the unsaved edits (#3603).
-  const latestSchedule = useRef(schedule);
-  latestSchedule.current = schedule;
+  // — keyed on the ids, not the objects, so a refresh of the schedules list (a
+  // run, or the backend following a connection rename) never clobbers the
+  // unsaved edits (#3603).
+  const latest = useRef({ schedule, initialAction });
+  latest.current = { schedule, initialAction };
   const loadedId = schedule?.id ?? null;
   useEffect(() => {
     if (!open) return;
-    const current = latestSchedule.current;
-    reset(current ? scheduleToForm(current) : blankScheduleForm(initialAction));
-  }, [open, loadedId, initialAction, reset]);
+    const { schedule: current, initialAction: action } = latest.current;
+    reset(current ? scheduleToForm(current) : blankScheduleForm(action));
+  }, [open, scheduleId, loadedId, reset]);
 
   // A connection renamed while the dialog is open: re-point the targets, or
   // saving would write the old id back (#3603).
