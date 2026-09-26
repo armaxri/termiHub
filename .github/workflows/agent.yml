@@ -144,13 +144,20 @@ jobs:
 
       # Same bulk + capped-heavy split as code-quality.yml's test leg (CI-013,
       # #3350), so the PTY / remote-forward suites don't contend with the rest.
+      # The live-agent-TCP tests are skipped here (CI_RUST_TESTS_SPLIT_SERIAL):
+      # on Windows they run serially in code-quality.yml's "Agent Live Tests
+      # (Windows, serial)" job, which also runs on every push (#2495, #3615).
       - name: Run agent/core tests
         shell: bash
+        env:
+          CI_RUST_TESTS_SPLIT_SERIAL: '1'
         run: ./scripts/internal/ci-rust-tests.sh bulk -p termihub-agent -p termihub-core
 
       - name: Run agent/core tests (contention-sensitive suites, capped threads)
         if: ${{ !cancelled() }}
         shell: bash
+        env:
+          CI_RUST_TESTS_SPLIT_SERIAL: '1'
         run: ./scripts/internal/ci-rust-tests.sh heavy -p termihub-agent -p termihub-core
 
       - name: Build

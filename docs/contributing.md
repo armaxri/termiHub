@@ -187,6 +187,7 @@ each job runs only if the PR can affect it:
 | Frontend Code Quality (lint, tsc, prettier, IPC contract) | frontend, Rust, or docs/Markdown changed                  |
 | Run Tests (ubuntu-latest)                                 | Rust and/or frontend changed — runs only the changed half |
 | Run Tests (windows-latest)                                | Rust changed — Rust tests only (no vitest)                |
+| Agent Live Tests (Windows, serial)                        | anything the agent builds from changed (`agent` area)     |
 | Build on ubuntu-latest (release compile)                  | Rust or frontend changed                                  |
 | RDP Sidecar Quality                                       | `rdp-sidecar/` changed                                    |
 | Shell Script Quality                                      | a shell/cmd script changed                                |
@@ -202,6 +203,12 @@ A skipped check reports as **skipped**, which is a pass. The classifier is
 detection job itself runs every per-PR job. An `audit/**`-only PR runs only
 commit-lint; a docs-only PR runs commit-lint plus the Markdown checks.
 
+**Required checks.** Branch protection lives in the repository settings, not in
+the repo. Mark a check required by its job name as listed above (for example
+`Agent Live Tests (Windows, serial)`). Because a path-skipped job reports
+**skipped** and counts as a pass, requiring a gated job does not block PRs that
+cannot affect it.
+
 **So a green PR proves:** formatting, Clippy (Linux and Windows) and lint are
 clean; the PR's Rust tests pass on Linux and Windows; the vitest suite and its
 coverage floors pass (on Linux); the app release-compiles and Vite-bundles on Linux.
@@ -210,13 +217,12 @@ coverage floors pass (on Linux); the app release-compiles and Vite-bundles on Li
 **macOS**; vitest on **Windows**; release compiles/installers on macOS, Windows
 and Linux arm64 (Dev Build); the Windows and macOS agent builds; the workspace
 `cargo audit`/`cargo deny`/`pnpm audit` gate for PRs that do not touch
-dependencies; unified coverage; bundle size; the Windows serial grade (#2495);
-the macOS leg of plugin package-then-load (PLG-011).
+dependencies; unified coverage; bundle size; the macOS leg of plugin package-then-load (PLG-011).
 
 **Post-merge lane.** Every push to `develop` or `main` runs **every** job above
 on **every** platform — Code Quality with the full three-OS test matrix, Security
 Audit (also daily on both branches), Coverage, Bundle Size, the full Agent
-matrix, the Windows serial grade and Dev Build. The newest commit's run is the
+matrix and Dev Build. The newest commit's run is the
 one to read (it covers all earlier merges). **Watch `develop`'s own runs after
 merging**: a failure there is a real regression (or a new advisory) and needs a follow-up fix, since the PR
 that caused it was not gated on it. The nightly system-integration and Docker
@@ -234,8 +240,8 @@ but whether a newer run cancels an in-progress one depends on what the run is fo
   frequent merges, no Code Quality run ever finished. GitHub still keeps only
   the newest _queued_ run per group, so merges that land mid-run are covered by
   the next completed run.
-- **Advisory, heavy or publish-only workflows** — Coverage, Dev Build, the
-  Windows serial grade, Build (PR-only), and the scheduled/manual lanes — keep
+- **Advisory, heavy or publish-only workflows** — Coverage, Dev Build,
+  Build (PR-only), and the scheduled/manual lanes — keep
   `cancel-in-progress: true`. Only the newest commit's result matters for them.
 
 A new workflow that gates correctness post-merge must use the PR-only form.

@@ -415,9 +415,8 @@ actually execute. It first asserts `docker info` succeeds — failing loudly
 rather than letting the suites self-skip to a false green — then runs
 `cargo test -p termihub-agent --test docker_integration --test docker_deferred_update_integration --test self_update_integration -- --ignored`.
 `--ignored` selects exactly those 6 Docker tests (the three files carry no other
-`#[ignore]`; the 5 non-Docker `self_update` tests are filtered out). This mirrors
-the Windows agent serial grade lane (#2495) pattern — `#[ignore]` plus a
-dedicated `-- --ignored` job.
+`#[ignore]`; the 5 non-Docker `self_update` tests are filtered out). This is the
+`#[ignore]`-plus-dedicated-`-- --ignored`-job pattern.
 
 ### `require_docker!` — visible skips and enforceable presence (TBE-006)
 
@@ -480,13 +479,16 @@ The remote agent (`agent/`) is built and tested on Windows via dedicated CI jobs
 - **Build + test** ([`agent.yml`](../.github/workflows/agent.yml)): the `build-windows` job (post-merge only, on push to `develop`/`main` — #3325) runs on `windows-latest`, builds the agent for `x86_64-pc-windows-msvc` (native MSVC — cross-rs cannot build the MSVC ABI), and runs `cargo test -p termihub-agent -p termihub-core --all-features`. The full workspace test suite (a superset of those tests) also runs on `windows-latest` via the [`code-quality.yml`](../.github/workflows/code-quality.yml) `tests` matrix — on every PR that changes Rust, and post-merge.
 - **Release artifact** ([`release.yml`](../.github/workflows/release.yml)): the `agent-binaries-windows` job ships `termihub-agent-windows-x64.exe` and `termihub-agent-windows-arm64.exe` (cross-compiled from the x64 runner) alongside the Linux and macOS agent binaries on every tagged release.
 
-#### Quarantined live-agent-TCP tests + the serial grading lane (#2495)
+#### Live-agent-TCP tests run serially on Windows (#2495, #3615)
 
-16 live-agent-TCP tests — 15 in `agent/tests/local_agent_integration.rs` and 1 (`listening_log_is_a_true_readiness_signal`) in `agent/tests/tcp_listener_readiness.rs` — each spawn a real `termihub-agent --listen` process and drive it over TCP. They flaked **only on the Windows CI leg** with a random `Os { code: 10060, kind: TimedOut }`: the shared `build-windows` leg (`cargo test -p termihub-agent -p termihub-core --all-features`) cold-starts many agents at once **and** runs them alongside the `termihub-core` suite, oversubscribing the runner's few cores until an agent answers past even a generous deadline. Transport fixes (#2492, #2494) and per-process/aggregate concurrency gates (#2501, #2528) reduced but never eliminated it, so those tests are **quarantined on Windows** via `#[cfg_attr(windows, ignore … #2495)]` and the shared leg skips them — keeping unrelated agent PRs unblocked.
+16 live-agent-TCP tests — 15 in `agent/tests/local_agent_integration.rs` and 1 in `agent/tests/tcp_listener_readiness.rs`, all named `live_agent_tcp_*` — each spawn a real `termihub-agent --listen` process and drive it over TCP. They flaked **only on the Windows CI leg** with a random `Os { code: 10060, kind: TimedOut }`: the shared Windows test legs cold-start many agents at once **and** run them alongside the rest of the suite, oversubscribing the runner's few cores until an agent answers past even a generous deadline. Transport fixes (#2492, #2494) and per-process/aggregate concurrency gates (#2501, #2528) reduced but never eliminated it. The root cause is environmental, so the fix is isolation:
 
-The deterministic-by-isolation fix runs them in a **dedicated serial, isolated grading lane** ([`agent-integration-windows-serial-grade.yml`](../.github/workflows/agent-integration-windows-serial-grade.yml)): a `windows-latest` job that runs `cargo test -p termihub-agent --test local_agent_integration --test tcp_listener_readiness --all-features -- --ignored --test-threads=1 --nocapture` (with `TERMIHUB_TEST_TIMING=1`). `--ignored` selects exactly the quarantined 16 (those files carry no other `#[ignore]`); `--test-threads=1` plus running only `-p termihub-agent` means exactly one agent cold-starts at a time on an otherwise-idle runner — removing both the aggregate and the cross-crate contention that gate-tuning could not. It triggers on agent-touching pushes to `develop`/`main` (moved off PRs by #3325) and on `workflow_dispatch`, and is **non-blocking** (`continue-on-error: true`): a red grade cannot fail the workflow or red a PR, and the source quarantine is left in place, so it only _observes_ while a green/red signal accumulates across successive runs.
+- **The shared Windows legs skip them.** Code Quality's `Run Tests (windows-latest)` and `agent.yml`'s post-merge `build-windows` set `CI_RUST_TESTS_SPLIT_SERIAL=1`, which makes [`ci-rust-tests.sh`](../scripts/internal/ci-rust-tests.sh) `bulk`/`heavy` pass `--skip live_agent_tcp_`.
+- **A dedicated, blocking job runs exactly them, serially.** Code Quality's **`Agent Live Tests (Windows, serial)`** job runs `ci-rust-tests.sh serial`, i.e. only the `live_agent_tcp_*` tests with `--test-threads=1` (one agent cold-start at a time, nothing else on the runner) and `TERMIHUB_TEST_TIMING=1`, so a failure names the slow phase (gate wait, cold start or first RPC). It runs on every PR that changes what the agent builds from (the `agent` area in [`ci-changes.mjs`](../scripts/internal/ci-changes.mjs): `agent/`, `core/`, `plugin-api/`, `vendor/`, `.cargo/`, `Cargo.toml`/`Cargo.lock`, the toolchain, and `ci-rust-tests.sh` itself) and on every push to `develop`/`main`. Its non-blocking predecessor was green on 29 of 29 non-cancelled runs before it was made blocking.
+- **It cannot go green by running nothing.** The `serial` phase sums libtest's results and fails if any selected test was ignored or if fewer than `SERIAL_MIN_TESTS` (16) ran. The `live_agent_tcp_` prefix is a naming contract: a new live-agent test must use it (or it runs in the shared parallel leg again), and bump `SERIAL_MIN_TESTS` when you add one.
+- **Linux and macOS are unchanged**: the variable is unset there, so these tests run in the normal `bulk` phase.
 
-**Flipping it to the real fix (the remaining #2495 work):** once the lane is green across **many** consecutive runs (per the chronic-flake bar, 3 green is not enough), (1) remove `continue-on-error: true` from the job so it becomes blocking, and (2) delete the `#[cfg_attr(windows, ignore … #2495)]` attributes from the two test files so the tests run per-PR again — now inside this serial+isolated job rather than the shared parallel leg — then close #2495.
+Reproduce the Windows split locally with `CI_RUST_TESTS_SPLIT_SERIAL=1 scripts/internal/ci-rust-tests.sh list -p termihub-agent -p termihub-core` (proves bulk + heavy + serial partition the suite exactly) and `scripts/internal/ci-rust-tests.sh serial -p termihub-agent`.
 
 > **Platform caveat (ADR-5):** the Python bridge system-test harness runs on all three OSes, but its Docker-backed **infrastructure** fixtures (SSH/telnet/serial containers) run against a Linux Docker daemon, and the smoke test's UI checks use `tauri-driver`, which has no macOS WKWebView driver. Windows **agent** verification is therefore limited to unit/integration tests (the jobs above) plus the manual tests in [`tests/manual/remote-agent.yaml`](../tests/manual/remote-agent.yaml). There is no automated end-to-end coverage of the Windows agent over a live SSH connection.
 
@@ -767,8 +769,7 @@ one `docker info` child per connection oversubscribed the Windows CI runners
 | `TERMIHUB_DOCKER_PROBE_TIMEOUT_MS` | Override the probe timeout in milliseconds (default 2000).                                                                      |
 
 - **Test/CI only (audit finding WA-CI-028).** The integration-test harness sets
-  `TERMIHUB_AGENT_SKIP_DOCKER_PROBE=1` on each agent it spawns; the Windows
-  serial-grade lane documents it too. None of those tests needs Docker.
+  `TERMIHUB_AGENT_SKIP_DOCKER_PROBE=1` on each agent it spawns. None of those tests needs Docker.
 - **Ignored by release builds.** The skip variable is only honoured under
   `debug_assertions` (every `cargo test` / dev build) or with the agent's
   `test-hooks` cargo feature — the same gate as the deferred-update hook below.

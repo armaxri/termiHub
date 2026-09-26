@@ -45,6 +45,7 @@ jobs:
       scripts: ${{ steps.detect.outputs.scripts }}
       harness: ${{ steps.detect.outputs.harness }}
       markdown: ${{ steps.detect.outputs.markdown }}
+      agent: ${{ steps.detect.outputs.agent }}
       test_matrix: ${{ steps.detect.outputs.test_matrix }}
 
     steps:
@@ -665,16 +666,23 @@ jobs:
       # so every test runs exactly once (`ci-rust-tests.sh list` proves it).
       # Windows also pins the live-agent cold-start gate explicitly (its
       # platform default); elsewhere the empty value keeps the default.
+      # On Windows the live-agent-TCP tests (`live_agent_tcp_*`) are SKIPPED here
+      # (CI_RUST_TESTS_SPLIT_SERIAL) and run in the `agent-live-windows` job below
+      # instead — serially, isolated from this leg (#2495, #3615). Linux and
+      # macOS still run them here.
       - name: Run Rust tests
         if: needs.changes.outputs.rust != 'false'
         shell: bash
         env:
           TERMIHUB_AGENT_TEST_MAX_CONCURRENT: ${{ matrix.os == 'windows-latest' && '2' || '' }}
+          CI_RUST_TESTS_SPLIT_SERIAL: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
         run: ./scripts/internal/ci-rust-tests.sh bulk --workspace
 
       - name: Run Rust tests (contention-sensitive suites, capped threads)
         if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
         shell: bash
+        env:
+          CI_RUST_TESTS_SPLIT_SERIAL: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
         run: ./scripts/internal/ci-rust-tests.sh heavy --workspace
 
       # Run coverage-gated tests once (Ubuntu) to enforce the vitest coverage
@@ -705,6 +713,70 @@ jobs:
       - name: Run frontend tests
         if: matrix.os != 'ubuntu-latest' && github.event_name != 'pull_request'
         run: pnpm test
+
+  # Windows live-agent-TCP tests, serial + isolated (#2495, #3615). BLOCKING.
+  #
+  # The 16 `live_agent_tcp_*` tests (agent/tests/local_agent_integration.rs and
+  # tcp_listener_readiness.rs) each cold-start a real `termihub-agent --listen`
+  # and drive it over TCP. In the shared parallel Windows leg — many agents
+  # cold-starting at once, alongside the whole workspace suite — they
+  # oversubscribed the runner and timed out on a random test (10060), so they
+  # were quarantined on Windows. Root cause was environmental, so the fix is
+  # isolation: the Windows "Run Tests" leg (and agent.yml's post-merge Windows
+  # leg) skip them, and this job runs exactly them, one at a time, with nothing
+  # else on the runner. Its non-blocking predecessor (the "Serial Grade" lane)
+  # was green on 29/29 non-cancelled runs before this was made blocking.
+  #
+  # Runs on any PR that touches what the agent builds from (the `agent` area:
+  # agent/, core/, plugin-api/, vendor/, workspace manifests/toolchain, the test
+  # driver script) and on every push to develop/main. A skipped job reports
+  # success, so requiring this check does not block unrelated PRs. The script's
+  # `serial` phase fails if fewer than the expected 16 tests ran or any was
+  # ignored, so the filter can never go green by selecting nothing.
+  agent-live-windows:
+    name: Agent Live Tests (Windows, serial)
+    runs-on: windows-latest
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.agent != 'false' }}
+    # Serial live-agent spawns are slow by construction; the ceiling only stops
+    # a genuinely wedged agent from hanging the job.
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Rust toolchain
+        uses: ./.github/actions/setup-rust
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Restore the warm Windows cache agent.yml's post-merge build-windows
+          # job writes. It builds the same `-p termihub-agent -p termihub-core
+          # --all-features` test binaries as below, so a run starts hot. Read-only
+          # here, so this job adds nothing to the repo cache budget.
+          key: x86_64-pc-windows-msvc
+          save-if: false
+
+      # Compile first so build time is not counted against the test step.
+      - name: Build agent test binaries
+        shell: bash
+        run: cargo test -p termihub-agent -p termihub-core --all-features --lib --bins --tests --no-run
+
+      # Only the `live_agent_tcp_*` tests run (core has none; the core package is
+      # selected purely so the feature set matches the cached build above), with
+      # --test-threads=1: one agent cold-start at a time on an otherwise idle
+      # runner. TERMIHUB_TEST_TIMING prints each test's gate-wait / cold-start /
+      # first-RPC phases, so a failure names the slow phase.
+      - name: Run live-agent tests serially
+        shell: bash
+        env:
+          TERMIHUB_TEST_TIMING: '1'
+          TERMIHUB_AGENT_TEST_MAX_CONCURRENT: '1'
+        run: ./scripts/internal/ci-rust-tests.sh serial -p termihub-agent -p termihub-core
 
   # Python system-test harness — fast "machinery" suite (issue #801).
   # These drive the harness plumbing (bridge server, Driver, protocol, transfer
