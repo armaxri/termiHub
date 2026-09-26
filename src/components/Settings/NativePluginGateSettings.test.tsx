@@ -13,15 +13,16 @@ import type { InstalledPlugin, NativePluginTrust } from "@/types/plugin";
 
 const getNativePluginTrust = vi.fn<() => Promise<NativePluginTrust>>();
 const setNativePluginsEnabled = vi.fn<(enabled: boolean) => Promise<void>>(() => Promise.resolve());
-const acknowledgeNativePlugin = vi.fn<(id: string) => Promise<InstalledPlugin>>(() =>
-  Promise.resolve({} as InstalledPlugin)
-);
+const acknowledgeNativePlugin = vi.fn<
+  (id: string, options?: { acceptUnverifiedToolchain?: boolean }) => Promise<InstalledPlugin>
+>(() => Promise.resolve({} as InstalledPlugin));
 const revokeNativePluginTrust = vi.fn<(id: string) => Promise<void>>(() => Promise.resolve());
 
 vi.mock("@/services/api", () => ({
   getNativePluginTrust: () => getNativePluginTrust(),
   setNativePluginsEnabled: (enabled: boolean) => setNativePluginsEnabled(enabled),
-  acknowledgeNativePlugin: (id: string) => acknowledgeNativePlugin(id),
+  acknowledgeNativePlugin: (id: string, options?: { acceptUnverifiedToolchain?: boolean }) =>
+    acknowledgeNativePlugin(id, options),
   revokeNativePluginTrust: (id: string) => revokeNativePluginTrust(id),
 }));
 
@@ -51,8 +52,11 @@ function query(testId: string): HTMLElement | null {
   return container.querySelector(`[data-testid="${testId}"]`);
 }
 
-/** Build a minimal installed-plugin record; `native` decides the terminalBackend. */
-function plugin(id: string, name: string, native: boolean): InstalledPlugin {
+/**
+ * Build a minimal installed-plugin record; `native` decides the terminalBackend,
+ * `apiVersion` the native ABI it was built for.
+ */
+function plugin(id: string, name: string, native: boolean, apiVersion = "1.1"): InstalledPlugin {
   return {
     manifest: {
       id,
@@ -61,7 +65,7 @@ function plugin(id: string, name: string, native: boolean): InstalledPlugin {
       author: "t",
       description: "",
       license: "MIT",
-      apiVersion: "1.0",
+      apiVersion,
       platforms: ["linux"],
       permissions: native ? ["terminal"] : [],
       extensions: native
@@ -141,7 +145,14 @@ describe("NativePluginGateSettings", () => {
     getNativePluginTrust.mockResolvedValue({
       enabled: true,
       disclosure: "d",
-      acknowledged: [{ id: "echo", librarySha256: "abc", acknowledgedAt: "t" }],
+      acknowledged: [
+        {
+          id: "echo",
+          librarySha256: "abc",
+          acknowledgedAt: "t",
+          unverifiedToolchainAccepted: false,
+        },
+      ],
     });
     mockPlugins = [plugin("echo", "Echo", true)];
     await renderFlushed();
@@ -150,5 +161,48 @@ describe("NativePluginGateSettings", () => {
     expect(query("native-plugin-trust-echo")).toBeNull();
     await act(async () => revoke!.click());
     expect(revokeNativePluginTrust).toHaveBeenCalledWith("echo");
+  });
+
+  it("trusts an ABI 1.1 plugin without accepting an unverified toolchain", async () => {
+    getNativePluginTrust.mockResolvedValue({ enabled: true, disclosure: "d", acknowledged: [] });
+    mockPlugins = [plugin("echo", "Echo", true, "1.1")];
+    await renderFlushed();
+    expect(query("native-plugin-toolchain-warning-echo")).toBeNull();
+    await act(async () => query("native-plugin-trust-echo")!.click());
+    expect(acknowledgeNativePlugin).toHaveBeenCalledWith("echo", {
+      acceptUnverifiedToolchain: false,
+    });
+  });
+
+  it("warns that an ABI 1.0 plugin's toolchain is unverifiable and records the acceptance", async () => {
+    getNativePluginTrust.mockResolvedValue({ enabled: true, disclosure: "d", acknowledged: [] });
+    mockPlugins = [plugin("old", "Old", true, "1.0")];
+    await renderFlushed();
+    expect(query("native-plugin-toolchain-warning-old")!.textContent).toContain("cannot verify");
+    await act(async () => query("native-plugin-trust-old")!.click());
+    expect(acknowledgeNativePlugin).toHaveBeenCalledWith("old", {
+      acceptUnverifiedToolchain: true,
+    });
+  });
+
+  it("offers Trust again for an ABI 1.0 plugin trusted without the toolchain acceptance", async () => {
+    getNativePluginTrust.mockResolvedValue({
+      enabled: true,
+      disclosure: "d",
+      acknowledged: [
+        {
+          id: "old",
+          librarySha256: "abc",
+          acknowledgedAt: "t",
+          unverifiedToolchainAccepted: false,
+        },
+      ],
+    });
+    mockPlugins = [plugin("old", "Old", true, "1.0")];
+    await renderFlushed();
+    // The host refuses it until the acceptance is recorded, so it is not
+    // shown as trusted and the Trust control is offered again.
+    expect(query("native-plugin-trust-old")).not.toBeNull();
+    expect(query("native-plugin-revoke-old")).toBeNull();
   });
 });
