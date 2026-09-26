@@ -1,13 +1,15 @@
 //! Telnet backend implementing [`ConnectionType`](crate::connection::ConnectionType).
 //!
 //! Uses a raw TCP socket with telnet protocol handling: IAC command filtering,
-//! window-size (NAWS, RFC 1073) and terminal-type (RFC 1091) negotiation — see
-//! [`negotiation`] — plus an optional prompt-driven auto-login — see
-//! [`auto_login`]. This is the canonical telnet implementation, used by both
+//! window-size (NAWS, RFC 1073), terminal-type (RFC 1091), ECHO (RFC 857) and
+//! SUPPRESS-GO-AHEAD (RFC 858) negotiation — see [`negotiation`] — an optional
+//! local line-editing input mode — see [`line_editor`] — plus an optional
+//! prompt-driven auto-login — see [`auto_login`]. This is the canonical telnet implementation, used by both
 //! the desktop and agent crates (the desktop crate previously had its own
 //! implementation in `src-tauri/src/terminal/telnet.rs`).
 
 mod auto_login;
+mod line_editor;
 mod negotiation;
 mod reader;
 mod schema;
@@ -34,7 +36,8 @@ use tokio_util::sync::CancellationToken;
 pub use auto_login::{
     AutoLoginConfig, DEFAULT_AUTO_LOGIN_TIMEOUT_SECS, DEFAULT_LOGIN_PROMPT, DEFAULT_PASSWORD_PROMPT,
 };
-pub use negotiation::DEFAULT_TERMINAL_TYPE;
+use line_editor::{prepare_input, LineEditor};
+pub use negotiation::{InputMode, DEFAULT_TERMINAL_TYPE};
 use negotiation::{Negotiator, DO, DONT, IAC, SB, SE, WILL, WONT};
 
 /// Read timeout for the reader thread (allows periodic alive checks and the
@@ -94,6 +97,9 @@ struct ConnectedState {
     /// Option negotiation state, shared with the reader thread. Lock order is
     /// always `negotiator` → `writer` so size reports are written in order.
     negotiator: Arc<Mutex<Negotiator>>,
+    /// Line-mode editor for keyboard input. Lock order is
+    /// `negotiator` → `editor` → `writer`.
+    editor: Mutex<LineEditor>,
     alive: Arc<AtomicBool>,
     /// Set to `true` by a graceful [`disconnect()`](ConnectionType::disconnect)
     /// before the state is dropped, so the [`Drop`] guard below becomes a no-op.
@@ -139,6 +145,28 @@ impl Telnet {
             output_tx: Arc::new(Mutex::new(None)),
         }
     }
+}
+
+impl Telnet {
+    /// Show line-mode local echo on the terminal. Non-blocking: `write()` may
+    /// run on an async worker, so under output backpressure the echo is
+    /// dropped (the typed text is still sent) rather than stalling input.
+    fn echo_locally(&self, echo: Vec<u8>) {
+        let sender = match self.output_tx.lock() {
+            Ok(guard) => guard.clone(),
+            Err(_) => None,
+        };
+        if let Some(sender) = sender {
+            if sender.try_send(echo).is_err() {
+                debug!("Telnet local echo dropped (output channel full or closed)");
+            }
+        }
+    }
+}
+
+/// Map a poisoned-lock error into a [`SessionError`].
+fn lock_error(what: &str, e: impl std::fmt::Display) -> SessionError {
+    SessionError::Io(std::io::Error::other(format!("Failed to lock {what}: {e}")))
 }
 
 impl Default for Telnet {
@@ -274,10 +302,12 @@ impl TelnetFilter {
 }
 
 /// Session options parsed from the settings beyond the transport
-/// ([`TelnetConfig`]): the terminal type and the optional auto-login.
+/// ([`TelnetConfig`]): the terminal type, the input mode and the optional
+/// auto-login.
 #[derive(Debug)]
 struct SessionOptions {
     terminal_type: String,
+    input_mode: InputMode,
     auto_login: Option<AutoLoginConfig>,
 }
 
@@ -295,7 +325,9 @@ fn u64_setting(settings: &serde_json::Value, key: &str) -> Option<u64> {
     })
 }
 
-/// Parse the terminal-type and auto-login settings. Auto-login is enabled
+/// Parse the terminal-type, input-mode and auto-login settings. A missing
+/// `inputMode` (connections saved before the option existed) means character
+/// mode. Auto-login is enabled
 /// only when `authMethod` is `"password"`; the password itself is resolved by
 /// the caller (credential store / prompt) and arrives in `password`.
 fn parse_session_options(settings: &serde_json::Value) -> SessionOptions {
@@ -318,6 +350,7 @@ fn parse_session_options(settings: &serde_json::Value) -> SessionOptions {
         });
     SessionOptions {
         terminal_type,
+        input_mode: InputMode::from_setting(str_setting(settings, "inputMode")),
         auto_login,
     }
 }
@@ -371,7 +404,8 @@ fn write_locked(writer: &Mutex<TcpStream>, data: &[u8]) -> Result<(), SessionErr
     Ok(())
 }
 
-/// Send the negotiator's opening offer (`IAC WILL NAWS`).
+/// Send the negotiator's opening offer (`IAC WILL NAWS`, plus `IAC DO SGA` in
+/// character mode).
 fn send_initial_offer(
     negotiator: &Mutex<Negotiator>,
     writer: &Mutex<TcpStream>,
@@ -493,10 +527,14 @@ impl ConnectionType for Telnet {
 
         let alive = Arc::new(AtomicBool::new(true));
         let writer = Arc::new(Mutex::new(stream));
-        let negotiator = Arc::new(Mutex::new(Negotiator::new(&options.terminal_type)));
+        let negotiator = Arc::new(Mutex::new(
+            Negotiator::new(&options.terminal_type).with_input_mode(options.input_mode),
+        ));
+        debug!(input_mode = ?options.input_mode, "Telnet input mode");
 
         // Proactively offer NAWS so servers that never ask still learn the
-        // window size; a refusing server answers DONT and nothing else changes.
+        // window size (and request SGA in character mode); a refusing server
+        // answers DONT/WONT and nothing else changes.
         send_initial_offer(&negotiator, &writer)?;
 
         // Set up output channel.
@@ -528,6 +566,7 @@ impl ConnectionType for Telnet {
         self.state = Some(ConnectedState {
             writer,
             negotiator,
+            editor: Mutex::new(LineEditor::new()),
             alive,
             disconnected: false,
         });
@@ -566,7 +605,22 @@ impl ConnectionType for Telnet {
             .state
             .as_ref()
             .ok_or_else(|| SessionError::NotRunning("Not connected".to_string()))?;
-        write_locked(&state.writer, data)
+        let local_editing = state
+            .negotiator
+            .lock()
+            .map_err(|e| lock_error("negotiator", e))?
+            .local_line_editing();
+        // Hold the editor lock through the socket write so concurrent writes
+        // reach the wire in the order they were edited.
+        let mut editor = state.editor.lock().map_err(|e| lock_error("editor", e))?;
+        let edited = prepare_input(&mut editor, local_editing, data);
+        if !edited.echo.is_empty() {
+            self.echo_locally(edited.echo);
+        }
+        if edited.send.is_empty() {
+            return Ok(());
+        }
+        write_locked(&state.writer, &edited.send)
     }
 
     /// Report the new window size to the server via `SB NAWS` (RFC 1073).
@@ -610,3 +664,7 @@ impl ConnectionType for Telnet {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "mode_tests.rs"]
+mod mode_tests;
