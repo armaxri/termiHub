@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use tracing::{debug, info};
 
 use crate::connection::config::{
@@ -12,6 +12,7 @@ use crate::connection::recovery::RecoveryWarning;
 use crate::connection::settings::AppSettings;
 use crate::credential::crypto::DecryptError;
 use crate::credential::CredentialManager;
+use crate::files::bookmarks_manager::FileBookmarkManager;
 use crate::utils::errors::TerminalError;
 
 /// Map a connection-config backend failure — persistence, import/export, or
@@ -115,6 +116,12 @@ pub fn delete_connection(
     manager
         .delete_connection_routed(&id, source_file.as_deref())
         .map_err(config_error)?;
+    // Drop the connection's file-browser bookmarks (#3562) here, next to the
+    // delete, so every window's delete prunes them. Only after the delete is
+    // durable, so a rejected delete never loses bookmarks.
+    if let Some(bookmarks) = app.try_state::<FileBookmarkManager>() {
+        bookmarks.prune_deleted_connection(&id);
+    }
     crate::connections_projection::projection::fold_connections_from_manager(&app);
     Ok(())
 }
@@ -276,6 +283,10 @@ pub fn delete_remote_agent(
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), TerminalError> {
     manager.delete_agent(&id).map_err(config_error)?;
+    // Drop the bookmarks of the agent's sessions, every session type (#3562).
+    if let Some(bookmarks) = app.try_state::<FileBookmarkManager>() {
+        bookmarks.prune_deleted_agent(&id);
+    }
     crate::agents_projection::projection::fold_agents_from_manager(&app);
     Ok(())
 }

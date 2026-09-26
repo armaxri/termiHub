@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { ArrowUp, File, Folder, RefreshCw } from "lucide-react";
 import { Button, EmptyState, Input, Spinner, Tooltip } from "@/components/ui";
+import { FileBookmarksMenu } from "@/components/Sidebar/FileBookmarksMenu";
 import type { PaneSide } from "@/services/paneTransfer";
 import type { FileEntry } from "@/types/connection";
 import { formatBytes } from "@/utils/formatters";
@@ -36,6 +37,12 @@ export interface TransferPaneProps {
   headerControls?: React.ReactNode;
   /** Shown instead of the listing when the pane has nothing to list. */
   placeholder?: React.ReactNode;
+  /**
+   * The pane's bookmark scope, keyed like the sidebar file browser's
+   * (`fileBookmarkScope`): `local` for the local pane, the remote tab's scope
+   * for the remote pane (#3562). `null` shows the menu as unavailable.
+   */
+  bookmarkScope: string | null;
 }
 
 interface PaneRowProps {
@@ -111,6 +118,7 @@ export function TransferPane({
   canCopy,
   headerControls,
   placeholder,
+  bookmarkScope,
 }: TransferPaneProps) {
   const { entries, path, loading, error } = listing;
   const baseId = useId();
@@ -256,6 +264,15 @@ export function TransferPane({
             data-testid={`transfer-pane-${side}-refresh`}
           />
         </Tooltip>
+        {!placeholder && (
+          <FileBookmarksMenu
+            scope={bookmarkScope}
+            currentPath={path}
+            onNavigate={(target) => void listing.navigate(target)}
+            label={`${title}: bookmarks`}
+            testId={`transfer-pane-${side}-bookmarks`}
+          />
+        )}
       </div>
       {error && (
         <div

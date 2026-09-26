@@ -14,6 +14,10 @@ export interface FileBookmarksMenuProps {
   currentPath: string;
   /** Navigate the browser to a bookmarked directory. */
   onNavigate: (path: string) => void;
+  /** Accessible label of the trigger (default "Bookmarks"). */
+  label?: string;
+  /** Test id of the trigger, distinct per menu when a view shows several. */
+  testId?: string;
 }
 
 /**
@@ -22,7 +26,13 @@ export interface FileBookmarksMenuProps {
  * open the manage dialog to rename or remove them. The trigger shows a filled
  * bookmark (and `aria-pressed`) while the current folder is bookmarked.
  */
-export function FileBookmarksMenu({ scope, currentPath, onNavigate }: FileBookmarksMenuProps) {
+export function FileBookmarksMenu({
+  scope,
+  currentPath,
+  onNavigate,
+  label = "Bookmarks",
+  testId = "file-browser-bookmarks",
+}: FileBookmarksMenuProps) {
   const allBookmarks = useFileBookmarksStore((s) => s.bookmarks);
   const loaded = useFileBookmarksStore((s) => s.loaded);
   const load = useFileBookmarksStore((s) => s.load);
@@ -66,9 +76,9 @@ export function FileBookmarksMenu({ scope, currentPath, onNavigate }: FileBookma
               variant="ghost"
               size="sm"
               icon={current ? <BookmarkCheck size={14} /> : <Bookmark size={14} />}
-              aria-label="Bookmarks"
+              aria-label={label}
               aria-pressed={current !== null}
-              data-testid="file-browser-bookmarks"
+              data-testid={testId}
             />
           </DropdownMenu.Trigger>
         </Tooltip>

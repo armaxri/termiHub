@@ -82,6 +82,7 @@ vi.mock("@/services/lastSessionApi", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { useFileBookmarksStore } from "./fileBookmarksStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import {
@@ -261,6 +262,34 @@ describe("#1472 — agent mutating actions surface errors", () => {
     useAppStore.getState().deleteRemoteAgent(agent.id);
     await flush();
     expect(toastError).toHaveBeenCalledWith(expect.stringContaining("busy"));
+  });
+
+  it("deleteRemoteAgent drops the agent's bookmarks from the UI cache only on success (#3562)", async () => {
+    const mark = (id: string, scope: string) => ({
+      id,
+      scope,
+      path: `/${id}`,
+      name: id,
+      createdAt: "2026-09-26T00:00:00Z",
+    });
+    const agent = makeAgent({ name: "gone" });
+    const seed = [
+      mark("a", `agent:${agent.id}:local`),
+      mark("b", `agent:${agent.id}:docker`),
+      mark("c", `agent:${agent.id}x:local`),
+      mark("d", "local"),
+    ];
+    useFileBookmarksStore.setState({ bookmarks: seed, loaded: true });
+    seedAgentsRegion({ remoteAgents: [agent] });
+
+    vi.mocked(removeAgent).mockRejectedValueOnce(new Error("busy"));
+    useAppStore.getState().deleteRemoteAgent(agent.id);
+    await flush();
+    expect(useFileBookmarksStore.getState().bookmarks).toHaveLength(4);
+
+    useAppStore.getState().deleteRemoteAgent(agent.id);
+    await flush();
+    expect(useFileBookmarksStore.getState().bookmarks.map((b) => b.id)).toEqual(["c", "d"]);
   });
 
   it("disconnectRemoteAgent toasts on a rejected disconnect", async () => {
