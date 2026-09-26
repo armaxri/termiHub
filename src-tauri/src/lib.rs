@@ -1016,6 +1016,12 @@ pub fn run() -> anyhow::Result<()> {
                     // layout change re-persists without it.
                     wm.forget_layout(label);
                 }
+                // Release the destroyed window's projection client identities
+                // and detach their subscriptions (TAURI-012, #3444), so a later
+                // window can never inherit them and dead sinks do not linger.
+                if let Some(ps) = app_handle.try_state::<commands::projection::ProjectionState>() {
+                    ps.release_principal(label);
+                }
 
                 // App-wide teardown (tunnels, embedded/X servers, transfers, SFTP)
                 // must only run when the *last* window closes — i.e. the app is

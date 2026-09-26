@@ -21,6 +21,7 @@
 
 mod frame;
 mod helpers;
+mod identity;
 mod region;
 
 pub use frame::{
@@ -30,6 +31,7 @@ pub use frame::{
 pub(crate) use helpers::{
     bad_payload, optional_str, optional_typed, required_bool, required_str, required_usize,
 };
+pub use identity::{region_client, ClientIdentities, ClientIdentityError};
 pub use region::ProjectedStore;
 
 use std::collections::HashMap;
@@ -204,7 +206,10 @@ impl Projector {
     /// Snapshot capture and subscriber insertion happen under the region's own
     /// lock, so the returned baseline and the diff stream that follows cannot
     /// interleave (invariant 1: snapshot-on-attach). Idempotent per
-    /// `subscription_id`: a repeated id replaces the existing subscriber's sink.
+    /// `(subscription_id, client_id)`: a repeated pair replaces the existing
+    /// subscriber's sink. The replacement is scoped to the same client so one
+    /// client can never evict another client's subscription by reusing its
+    /// subscription id (TAURI-012).
     pub fn subscribe(
         &self,
         region: &str,
@@ -213,12 +218,15 @@ impl Projector {
         sink: Arc<dyn ProjectionSink>,
     ) -> SnapshotFrame {
         let subscription_id = subscription_id.into();
+        let client_id = client_id.into();
         let handle = self.region_handle(region, || Value::Null);
         let mut state = Self::lock_region(&handle);
-        state.subscribers.retain(|s| s.id != subscription_id);
+        state
+            .subscribers
+            .retain(|s| !(s.id == subscription_id && s.client_id == client_id));
         state.subscribers.push(Subscriber {
             id: subscription_id,
-            client_id: client_id.into(),
+            client_id,
             sink,
         });
         state.snapshot(region)
@@ -231,6 +239,49 @@ impl Projector {
                 .subscribers
                 .retain(|s| s.id != subscription_id);
         }
+    }
+
+    /// Detach `subscription_id` on `region`, but only subscribers whose
+    /// `client_id` satisfies `owned` (TAURI-012: a caller may detach only its
+    /// own subscriptions). Returns how many subscribers were removed; a missing
+    /// id — or one owned by another client — is a no-op returning `0`.
+    pub fn unsubscribe_owned(
+        &self,
+        region: &str,
+        subscription_id: &str,
+        owned: impl Fn(&str) -> bool,
+    ) -> usize {
+        let Some(handle) = self.existing_region(region) else {
+            return 0;
+        };
+        let mut state = Self::lock_region(&handle);
+        let before = state.subscribers.len();
+        state
+            .subscribers
+            .retain(|s| !(s.id == subscription_id && owned(&s.client_id)));
+        before - state.subscribers.len()
+    }
+
+    /// Detach every subscription any of `client_ids` holds, across **all**
+    /// regions (e.g. the owning window was destroyed). Returns how many
+    /// subscribers were removed. Takes the map lock only to snapshot the region
+    /// handles, then each region lock in turn (CONC-005 lock order).
+    pub fn unsubscribe_clients_everywhere(&self, client_ids: &[String]) -> usize {
+        if client_ids.is_empty() {
+            return 0;
+        }
+        let handles: Vec<Arc<Mutex<RegionState>>> = self.map_lock().values().cloned().collect();
+        handles
+            .iter()
+            .map(|handle| {
+                let mut state = Self::lock_region(handle);
+                let before = state.subscribers.len();
+                state
+                    .subscribers
+                    .retain(|s| !client_ids.iter().any(|c| c == &s.client_id));
+                before - state.subscribers.len()
+            })
+            .sum()
     }
 
     /// Detach every subscription a client holds on a region (e.g. on client
