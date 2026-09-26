@@ -3040,17 +3040,17 @@ export async function revokeNativePluginTrust(id: string): Promise<void> {
 
 /** Uninstall the plugin with the given id. */
 export async function uninstallPlugin(pluginId: string): Promise<void> {
-  await invoke("uninstall_plugin", { pluginId });
+  await invoke("uninstall_plugin", { id: pluginId });
 }
 
 /** Enable (activate) the plugin with the given id. */
 export async function enablePlugin(pluginId: string): Promise<void> {
-  await invoke("enable_plugin", { pluginId });
+  await invoke("enable_plugin", { id: pluginId });
 }
 
 /** Disable the plugin with the given id. */
 export async function disablePlugin(pluginId: string): Promise<void> {
-  await invoke("disable_plugin", { pluginId });
+  await invoke("disable_plugin", { id: pluginId });
 }
 
 /**

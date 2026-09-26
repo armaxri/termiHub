@@ -180,20 +180,20 @@ a macOS-only break — surface on `develop` after merge instead of on the PR.
 ([`scripts/internal/ci-changes.mjs`](../scripts/internal/ci-changes.mjs)) and
 each job runs only if the PR can affect it:
 
-| Check                                        | Runs on a PR when…                                        |
-| -------------------------------------------- | --------------------------------------------------------- |
-| Rust Code Quality (fmt, clippy, feature iso) | Rust or `rdp-sidecar/` changed                            |
-| Rust Code Quality (Windows) (clippy)         | Rust changed                                              |
-| Frontend Code Quality (lint, tsc, prettier)  | frontend changed, or docs/Markdown changed                |
-| Run Tests (ubuntu-latest)                    | Rust and/or frontend changed — runs only the changed half |
-| Run Tests (windows-latest)                   | Rust changed — Rust tests only (no vitest)                |
-| Build on ubuntu-latest (release compile)     | Rust or frontend changed                                  |
-| RDP Sidecar Quality                          | `rdp-sidecar/` changed                                    |
-| Shell Script Quality                         | a shell/cmd script changed                                |
-| System-Test Harness / Test-ID Drift Guard    | `tests/system/` changed (drift guard: also frontend)      |
-| Security Audit                               | a dependency manifest/lockfile changed                    |
-| Agent — Linux musl cross-builds              | `agent/`, `core/` or `Cargo.toml` changed                 |
-| Lint Commit Messages                         | always                                                    |
+| Check                                                     | Runs on a PR when…                                        |
+| --------------------------------------------------------- | --------------------------------------------------------- |
+| Rust Code Quality (fmt, clippy, feature iso)              | Rust or `rdp-sidecar/` changed                            |
+| Rust Code Quality (Windows) (clippy)                      | Rust changed                                              |
+| Frontend Code Quality (lint, tsc, prettier, IPC contract) | frontend, Rust, or docs/Markdown changed                  |
+| Run Tests (ubuntu-latest)                                 | Rust and/or frontend changed — runs only the changed half |
+| Run Tests (windows-latest)                                | Rust changed — Rust tests only (no vitest)                |
+| Build on ubuntu-latest (release compile)                  | Rust or frontend changed                                  |
+| RDP Sidecar Quality                                       | `rdp-sidecar/` changed                                    |
+| Shell Script Quality                                      | a shell/cmd script changed                                |
+| System-Test Harness / Test-ID Drift Guard                 | `tests/system/` changed (drift guard: also frontend)      |
+| Security Audit                                            | a dependency manifest/lockfile changed                    |
+| Agent — Linux musl cross-builds                           | `agent/`, `core/` or `Cargo.toml` changed                 |
+| Lint Commit Messages                                      | always                                                    |
 
 A skipped check reports as **skipped**, which is a pass. The classifier is
 **fail-open**: an unrecognised path, any `.github/` change, or a failure of the

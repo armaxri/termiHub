@@ -1307,28 +1307,28 @@ describe("api pass-through wrappers (#2975)", () => {
       expect(mockedInvoke).toHaveBeenCalledWith("revoke_trusted_publisher", { keyId: "k1" });
     });
 
-    it("uninstallPlugin forwards the plugin id", async () => {
+    it("uninstallPlugin forwards the plugin id under the `id` key (#3488)", async () => {
       mockedInvoke.mockResolvedValue(undefined);
 
       await uninstallPlugin("p1");
 
-      expect(mockedInvoke).toHaveBeenCalledWith("uninstall_plugin", { pluginId: "p1" });
+      expect(mockedInvoke).toHaveBeenCalledWith("uninstall_plugin", { id: "p1" });
     });
 
-    it("enablePlugin forwards the plugin id", async () => {
+    it("enablePlugin forwards the plugin id under the `id` key (#3488)", async () => {
       mockedInvoke.mockResolvedValue(undefined);
 
       await enablePlugin("p1");
 
-      expect(mockedInvoke).toHaveBeenCalledWith("enable_plugin", { pluginId: "p1" });
+      expect(mockedInvoke).toHaveBeenCalledWith("enable_plugin", { id: "p1" });
     });
 
-    it("disablePlugin forwards the plugin id", async () => {
+    it("disablePlugin forwards the plugin id under the `id` key (#3488)", async () => {
       mockedInvoke.mockResolvedValue(undefined);
 
       await disablePlugin("p1");
 
-      expect(mockedInvoke).toHaveBeenCalledWith("disable_plugin", { pluginId: "p1" });
+      expect(mockedInvoke).toHaveBeenCalledWith("disable_plugin", { id: "p1" });
     });
 
     it("checkPluginUpdates checks every plugin, or only the given one (PROD-051)", async () => {
