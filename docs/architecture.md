@@ -2453,8 +2453,17 @@ terminal sessions for people who expect nothing to leave their machine.
   (`agents/<agent id>/crash-reports/<name>`), re-applies the per-report cap plus a 1 MiB total
   cap, and **redacts every report again** with its own redactor before writing it. An agent that
   predates the RPC answers "method not found" and is skipped with a note in the preview; reports
-  that were selected but could not be fetched are listed in `agents/skipped.txt`. A notice for
-  "an agent crashed since it was last connected" is tracked in #3593.
+  that were selected but could not be fetched are listed in `agents/skipped.txt`.
+- **"Agent crashed since it was last connected" notice** (#3593). After an agent connects or
+  reconnects, the desktop calls `agent.crash_reports.list` **once** over that same connection,
+  spawned off the connect path (never delays or fails it), bounded by a 10 s timeout, and skipped
+  when the user opted out (`showCrashReportNotice`) or the agent predates the RPC. The newest seen
+  report name per agent id lives in `agent-crash-reports-seen.json` in the config dir (versioned,
+  deliberately **not** a backup section: it is a per-machine "already shown" cursor, and losing it
+  only re-baselines). The **first** check of an agent records its existing reports as seen without
+  a notice, so old reports never spam; later ones raise one dismissible notice per agent until the
+  user acts on it. **View Report** reads it via `agent.crash_reports.read`, capped and redacted
+  again locally (`src-tauri/src/utils/agent_crash_notice.rs`).
 
 **Consequences:**
 

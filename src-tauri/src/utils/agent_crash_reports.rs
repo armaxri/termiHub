@@ -22,16 +22,20 @@
 //! reported as `supported: false` and skipped, never treated as an error.
 
 use std::collections::HashSet;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use termihub_core::diagnostics::crash_report::{self, MAX_REMOTE_REPORTS, MAX_REMOTE_REPORT_BYTES};
+use termihub_core::diagnostics::redact::Redactor;
 use termihub_core::protocol::methods::{
     CrashReportSummary, CrashReportsListResult, CrashReportsReadParams, CrashReportsReadResult,
     AGENT_CRASH_REPORTS_LIST, AGENT_CRASH_REPORTS_READ,
 };
 
 use super::diagnostics_bundle::{BundleEntry, BundleEntryInfo, BundleSource};
+use crate::terminal::agent_manager::AgentRpcClient;
+use crate::utils::errors::TerminalError;
 
 /// Cap on all remote agent crash-report text in one export (1 MiB).
 pub const MAX_TOTAL_AGENT_REPORT_BYTES: u64 = 1024 * 1024;
@@ -55,6 +59,42 @@ pub trait AgentReportSource {
     fn connected_agents(&self) -> Vec<String>;
     /// Send one JSON-RPC request to a connected agent.
     fn call(&self, agent_id: &str, method: &str, params: Value) -> Result<Value, AgentCallError>;
+}
+
+/// Wait bound for one crash-report call to a connected agent (#3574, #3593):
+/// the export and the post-connect notice check are best-effort and must not
+/// stall on an unresponsive agent.
+pub const AGENT_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Adapts the agent connection manager to the narrow [`AgentReportSource`]
+/// the remote crash-report export and the post-connect notice use.
+pub struct ConnectedAgents<'a>(pub &'a dyn AgentRpcClient);
+
+impl AgentReportSource for ConnectedAgents<'_> {
+    fn connected_agents(&self) -> Vec<String> {
+        self.0.connected_agent_ids()
+    }
+
+    fn call(&self, agent_id: &str, method: &str, params: Value) -> Result<Value, AgentCallError> {
+        // Re-check right before the call: never contact an agent that is not
+        // (still) connected.
+        if !self.0.is_connected(agent_id) {
+            return Err(AgentCallError::Failed("agent is not connected".into()));
+        }
+        self.0
+            .send_request_bounded(agent_id, method, params, AGENT_REPORT_TIMEOUT)
+            .map_err(agent_call_error)
+    }
+}
+
+/// An older agent's "method not found" (typed as
+/// [`TerminalError::AgentUnsupported`], classified by code) means "skip this
+/// agent"; everything else is a per-agent failure.
+pub fn agent_call_error(e: TerminalError) -> AgentCallError {
+    match e {
+        TerminalError::AgentUnsupported(_) => AgentCallError::Unsupported,
+        other => AgentCallError::Failed(other.to_string()),
+    }
 }
 
 /// One connected agent's crash reports, for the export preview.
@@ -215,6 +255,39 @@ pub fn fetch_agent_report_entries(
         });
     }
     entries
+}
+
+/// Read one remote report for the in-app viewer (#3593): validated name,
+/// connected agent only, capped to [`MAX_REMOTE_REPORT_BYTES`], and redacted
+/// again with the desktop's `redactor` (the agent redacted it once already).
+pub fn read_agent_report_text(
+    source: &dyn AgentReportSource,
+    agent_id: &str,
+    name: &str,
+    redactor: &Redactor,
+) -> Result<String, String> {
+    if !crash_report::is_plain_report_name(name) {
+        return Err("not a crash report name".into());
+    }
+    let params = serde_json::to_value(CrashReportsReadParams {
+        name: name.to_string(),
+    })
+    .map_err(|e| e.to_string())?;
+    let reply = source
+        .call(agent_id, AGENT_CRASH_REPORTS_READ, params)
+        .map_err(|e| match e {
+            AgentCallError::Unsupported => {
+                "this agent version cannot share crash reports".to_string()
+            }
+            AgentCallError::Failed(m) => m,
+        })?;
+    let read: CrashReportsReadResult =
+        serde_json::from_value(reply).map_err(|_| "malformed reply from the agent".to_string())?;
+    let (mut text, cut) = cap_text(read.text, MAX_REMOTE_REPORT_BYTES);
+    if cut || read.truncated {
+        text.push_str("\n… [truncated by the size cap]\n");
+    }
+    Ok(redactor.redact(&text))
 }
 
 /// `agents/<sanitized agent id>` — one safe path segment per agent.

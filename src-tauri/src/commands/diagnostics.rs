@@ -7,56 +7,20 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use serde::Serialize;
-use serde_json::Value;
 use tauri::State;
 use termihub_core::diagnostics::crash_report;
 use termihub_core::diagnostics::redact::Redactor;
 
 use crate::terminal::agent_manager::AgentRpcClient;
+use crate::utils::agent_crash_notice::{self, AgentCrashNotice, AgentCrashNoticeService};
 use crate::utils::agent_crash_reports::{
-    self, AgentCallError, AgentCrashReportRef, AgentCrashReports, AgentReportSource,
+    self, AgentCrashReportRef, AgentCrashReports, ConnectedAgents,
 };
 use crate::utils::diagnostics_bundle::{self, BuildInfo, BundleEntryInfo};
-use crate::utils::errors::TerminalError;
 use crate::utils::file_log;
-
-/// Wait bound for one crash-report call to a connected agent (#3574): the
-/// export is best-effort and must not stall on an unresponsive agent.
-const AGENT_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// Adapts the agent connection manager to the narrow
-/// [`AgentReportSource`] the remote crash-report export uses (#3574).
-struct ConnectedAgents<'a>(&'a dyn AgentRpcClient);
-
-impl AgentReportSource for ConnectedAgents<'_> {
-    fn connected_agents(&self) -> Vec<String> {
-        self.0.connected_agent_ids()
-    }
-
-    fn call(&self, agent_id: &str, method: &str, params: Value) -> Result<Value, AgentCallError> {
-        // Re-check right before the call: never contact an agent that is not
-        // (still) connected.
-        if !self.0.is_connected(agent_id) {
-            return Err(AgentCallError::Failed("agent is not connected".into()));
-        }
-        self.0
-            .send_request_bounded(agent_id, method, params, AGENT_REPORT_TIMEOUT)
-            .map_err(agent_call_error)
-    }
-}
-
-/// An older agent's "method not found" (typed as
-/// [`TerminalError::AgentUnsupported`], classified by code) means "skip this
-/// agent"; everything else is a per-agent failure shown in the preview.
-fn agent_call_error(e: TerminalError) -> AgentCallError {
-    match e {
-        TerminalError::AgentUnsupported(_) => AgentCallError::Unsupported,
-        other => AgentCallError::Failed(other.to_string()),
-    }
-}
 
 /// The newest crash report the user has not yet been told about.
 #[derive(Debug, Clone, Serialize)]
@@ -137,6 +101,50 @@ pub async fn list_agent_crash_reports(
     .map_err(|e| format!("listing agent crash reports failed: {e}"))
 }
 
+/// Pending "agent crashed since last connect" notices (#3593). Changes are
+/// also pushed as the `agent-crash-notices-changed` event.
+#[tauri::command]
+pub fn get_agent_crash_notices(
+    service: State<'_, Arc<AgentCrashNoticeService>>,
+) -> Vec<AgentCrashNotice> {
+    service.pending()
+}
+
+/// Mark `name` (and every older report) of `agent_id` as seen, so its notice
+/// is not shown again (#3593).
+#[tauri::command]
+pub fn acknowledge_agent_crash_notice(
+    agent_id: String,
+    name: String,
+    app: tauri::AppHandle,
+    service: State<'_, Arc<AgentCrashNoticeService>>,
+) {
+    if service.acknowledge(&agent_id, &name) {
+        agent_crash_notice::emit_pending(&app, &service);
+    }
+}
+
+/// Read one crash report of an already-connected agent for the viewer
+/// (#3593), over the existing connection, capped and redacted again locally.
+#[tauri::command]
+pub async fn read_agent_crash_report(
+    agent_id: String,
+    name: String,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+) -> Result<String, String> {
+    let manager = agent_manager.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        agent_crash_reports::read_agent_report_text(
+            &ConnectedAgents(manager.as_ref()),
+            &agent_id,
+            &name,
+            &Redactor::for_current_environment(),
+        )
+    })
+    .await
+    .map_err(|e| format!("reading the agent crash report failed: {e}"))?
+}
+
 /// Write the redacted diagnostics zip to the user-chosen `destination`.
 ///
 /// `agent_reports` are the remote agent crash reports the user kept selected in
@@ -210,21 +218,6 @@ mod tests {
         assert!(
             validate_destination(tmp.path().join("nope").join("d.zip").to_str().unwrap()).is_err()
         );
-    }
-
-    #[test]
-    fn an_old_agents_method_not_found_means_unsupported() {
-        // `send_request` classifies JSON-RPC -32601 as AgentUnsupported (#3408).
-        let old = crate::terminal::agent_manager::AgentRpcFailure {
-            code: Some(termihub_core::protocol::errors::METHOD_NOT_FOUND),
-            message: "Method not found".into(),
-        }
-        .into_terminal_error();
-        assert_eq!(agent_call_error(old), AgentCallError::Unsupported);
-        assert!(matches!(
-            agent_call_error(TerminalError::RemoteError("timed out".into())),
-            AgentCallError::Failed(m) if m.contains("timed out")
-        ));
     }
 
     #[test]

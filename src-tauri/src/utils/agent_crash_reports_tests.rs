@@ -304,3 +304,70 @@ fn remote_reports_are_re_redacted_in_the_written_bundle() {
         assert!(!text.contains(secret), "{secret} leaked: {text}");
     }
 }
+
+fn alice_redactor() -> Redactor {
+    Redactor::new(RedactionContext {
+        home_dirs: vec!["/Users/alice".into()],
+        usernames: vec!["alice".into()],
+        hostnames: vec!["alice-mbp".into()],
+    })
+}
+
+#[test]
+fn viewer_read_is_redacted_again_locally() {
+    let leaky = "panic at /Users/alice/src/x.rs token=s3cr3tvalue1234 on alice-mbp";
+    let source = MockSource::new(&[(
+        "agent-a",
+        MockAgent::Current(vec![(R1.into(), leaky.into())]),
+    )]);
+    let text = read_agent_report_text(&source, "agent-a", R1, &alice_redactor()).unwrap();
+    assert!(text.contains("panic at"));
+    for secret in ["s3cr3tvalue1234", "alice-mbp", "/Users/alice"] {
+        assert!(!text.contains(secret), "{secret} leaked: {text}");
+    }
+}
+
+#[test]
+fn viewer_read_rejects_bad_names_without_calling_the_agent() {
+    let source = MockSource::new(&[("agent-a", MockAgent::Current(vec![]))]);
+    for bad in ["../etc/passwd", "crash-../../x.txt", "notes.txt", ""] {
+        assert!(read_agent_report_text(&source, "agent-a", bad, &alice_redactor()).is_err());
+    }
+    assert!(source.calls.borrow().is_empty());
+}
+
+#[test]
+fn viewer_read_caps_an_oversized_reply_and_explains_old_agents() {
+    let huge = "x".repeat(usize::try_from(MAX_REMOTE_REPORT_BYTES).unwrap() * 2);
+    let source = MockSource::new(&[
+        (
+            "agent-a",
+            MockAgent::Raw {
+                list: json!({}),
+                text: huge,
+            },
+        ),
+        ("agent-old", MockAgent::Old),
+    ]);
+    let text = read_agent_report_text(&source, "agent-a", R1, &alice_redactor()).unwrap();
+    assert!(text.len() < usize::try_from(MAX_REMOTE_REPORT_BYTES).unwrap() + 100);
+    assert!(text.ends_with("[truncated by the size cap]\n"));
+
+    let err = read_agent_report_text(&source, "agent-old", R1, &alice_redactor()).unwrap_err();
+    assert!(err.contains("cannot share crash reports"), "{err}");
+}
+
+#[test]
+fn an_old_agents_method_not_found_means_unsupported() {
+    // `send_request` classifies JSON-RPC -32601 as AgentUnsupported (#3408).
+    let old = crate::terminal::agent_manager::AgentRpcFailure {
+        code: Some(termihub_core::protocol::errors::METHOD_NOT_FOUND),
+        message: "Method not found".into(),
+    }
+    .into_terminal_error();
+    assert_eq!(agent_call_error(old), AgentCallError::Unsupported);
+    assert!(matches!(
+        agent_call_error(TerminalError::RemoteError("timed out".into())),
+        AgentCallError::Failed(m) if m.contains("timed out")
+    ));
+}
