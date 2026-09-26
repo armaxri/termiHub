@@ -868,6 +868,7 @@ fn seed_rehydrated_transfers(
             total_bytes,
             percent,
             speed_bytes_per_sec: None,
+            eta_seconds: None,
             error: None,
             attempt: None,
             max_attempts: None,

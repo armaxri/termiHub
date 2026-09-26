@@ -41,6 +41,7 @@ fn progress(id: &str, state: TransferQueueState, transferred: u64) -> TransferPr
         message: None,
         state: Some(state),
         speed: None,
+        eta_secs: None,
         total_bytes: Some(1000),
         attempt: None,
         max_attempts: None,
@@ -107,6 +108,87 @@ fn progress_derives_throughput_from_the_byte_time_delta() {
 
     let entry = store.get("t1").unwrap();
     assert_eq!(entry.speed_bytes_per_sec, Some(1000));
+}
+
+#[test]
+fn delta_throughput_is_ema_smoothed_by_elapsed_time() {
+    // PROD-038: a bursty fallback sample is blended, not taken verbatim.
+    let store = TransferStore::new();
+    store.progress(&progress("t1", TransferQueueState::Active, 0), 0);
+    // Seed: 1000 B over 1000 ms → 1000 B/s.
+    store.progress(&progress("t1", TransferQueueState::Active, 1_000), 1_000);
+    assert_eq!(store.get("t1").unwrap().speed_bytes_per_sec, Some(1000));
+    // A 10 ms burst claiming 500 B (→ 50 000 B/s instant) barely moves it:
+    // alpha = 1 - e^(-10/3000) ≈ 0.00333 → ≈ 1163 B/s.
+    store.progress(&progress("t1", TransferQueueState::Active, 1_500), 1_010);
+    let speed = store.get("t1").unwrap().speed_bytes_per_sec.unwrap();
+    assert!(
+        (1100..1250).contains(&speed),
+        "burst-damped speed, got {speed}"
+    );
+    // A long stall with zero progress pulls the rate toward zero.
+    store.progress(&progress("t1", TransferQueueState::Active, 1_500), 31_010);
+    let stalled = store.get("t1").unwrap().speed_bytes_per_sec.unwrap();
+    assert!(stalled < 10, "stalled speed decays, got {stalled}");
+}
+
+#[test]
+fn eta_is_derived_from_remaining_bytes_and_speed() {
+    let store = TransferStore::new();
+    store.progress(&progress("t1", TransferQueueState::Active, 0), 0);
+    let mut p = progress("t1", TransferQueueState::Active, 200);
+    p.speed = Some(100);
+    store.progress(&p, 1_000);
+    // 800 bytes remaining at 100 B/s → 8 s.
+    assert_eq!(store.get("t1").unwrap().eta_seconds, Some(8));
+}
+
+#[test]
+fn backend_eta_is_preferred_and_clamped_to_one_second() {
+    let store = TransferStore::new();
+    let mut p = progress("t1", TransferQueueState::Active, 200);
+    p.speed = Some(100);
+    p.eta_secs = Some(42);
+    store.progress(&p, 1_000);
+    assert_eq!(store.get("t1").unwrap().eta_seconds, Some(42));
+}
+
+#[test]
+fn eta_is_null_when_paused_unknown_total_or_zero_speed() {
+    let store = TransferStore::new();
+    // Paused → no ETA even with a speed/backend ETA.
+    let mut p = progress("t1", TransferQueueState::Paused, 200);
+    p.speed = Some(100);
+    p.eta_secs = Some(8);
+    store.progress(&p, 1_000);
+    assert_eq!(store.get("t1").unwrap().eta_seconds, None);
+    assert_eq!(store.get("t1").unwrap().speed_bytes_per_sec, None);
+
+    // Unknown total → no ETA.
+    let mut p = progress("t2", TransferQueueState::Active, 200);
+    p.total = 0;
+    p.total_bytes = None;
+    p.speed = Some(100);
+    store.progress(&p, 1_000);
+    assert_eq!(store.get("t2").unwrap().eta_seconds, None);
+
+    // First active sample, no speed yet → no ETA.
+    store.progress(&progress("t3", TransferQueueState::Active, 200), 1_000);
+    assert_eq!(store.get("t3").unwrap().eta_seconds, None);
+}
+
+#[test]
+fn resume_restarts_the_rate_and_eta_estimate() {
+    let store = TransferStore::new();
+    store.progress(&progress("t1", TransferQueueState::Active, 0), 0);
+    store.progress(&progress("t1", TransferQueueState::Active, 400), 1_000);
+    assert_eq!(store.get("t1").unwrap().speed_bytes_per_sec, Some(400));
+    store.progress(&progress("t1", TransferQueueState::Paused, 400), 2_000);
+    // First event after resume: prev is paused → no stale speed/ETA carried over.
+    store.progress(&progress("t1", TransferQueueState::Active, 450), 60_000);
+    let entry = store.get("t1").unwrap();
+    assert_eq!(entry.speed_bytes_per_sec, None);
+    assert_eq!(entry.eta_seconds, None);
 }
 
 #[test]
@@ -357,4 +439,5 @@ fn entry_json_omits_absent_optional_fields_but_keeps_nullable_ones() {
     );
     assert_eq!(row["percent"], json!(null));
     assert_eq!(row["speedBytesPerSec"], json!(null));
+    assert_eq!(row["etaSeconds"], json!(null));
 }
