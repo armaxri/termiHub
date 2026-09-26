@@ -24,6 +24,7 @@ import type {
   RemoteDesktopCertPromptPayload,
   ScaleMode,
 } from "@/types/remoteDesktop";
+import { backendErrorMessage, isAuthFailure } from "@/utils/backendErrorCode";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 
 /** Everything a RemoteDesktopTab needs to drive one graphical session. */
@@ -81,6 +82,15 @@ export interface RemoteDesktopSession {
 }
 
 /**
+ * Whether another window of this app controls `sessionId` (#3388). Input,
+ * resize and clipboard are then not sent — the backend drops them too — until
+ * this window explicitly reclaims the session.
+ */
+function isWindowEvicted(sessionId: string): boolean {
+  return useAppStore.getState().isSessionWindowEvicted(sessionId);
+}
+
+/**
  * Owns the lifecycle of one graphical remote-desktop session for a tab (#1680).
  *
  * Protocol-blind: it drives the generic `remote_desktop_*` commands and reacts
@@ -106,6 +116,10 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
   const [awaitingFirstFrame, setAwaitingFirstFrame] = useState(false);
 
   const sessionIdRef = useRef<string | null>(null);
+  // The last pixel size this tab asked the remote for (Match Window), recorded
+  // even while another window controls the session so a Reclaim can re-assert
+  // it (#3388). `null` until the canvas first requests a size.
+  const desiredSizeRef = useRef<{ width: number; height: number } | null>(null);
   // Cancellation token for the on-unmount disconnect, deferred to a microtask so
   // a same-tick effect re-run (React StrictMode's dev unmount→remount) can cancel
   // it before the live session is disconnected. The re-run's effect body flips
@@ -171,8 +185,10 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
         frontendLog("remote_desktop", `session ${id} opened for tab ${tabId}`);
       } catch (err) {
         if (canceled) return;
-        setState("connectFailed");
-        setMessage(String(err));
+        // A rejected credential (typed `auth_failed`, #3390) keeps the
+        // "Authentication failed" overlay instead of the generic connect error.
+        setState(isAuthFailure(err) ? "authFailed" : "connectFailed");
+        setMessage(backendErrorMessage(err));
       }
     };
 
@@ -260,6 +276,33 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     };
   }, [sessionId]);
 
+  // #3388: while another window controls this session (it shows "Taken over by
+  // another window"), frames are emitted only to that window and this canvas
+  // freezes on its last frame. When this window controls the session again —
+  // the explicit Reclaim, or the other window closed and released it — re-send
+  // this tab's size (the other window may have resized the remote) and ask for a
+  // full frame so the stale canvas repaints. Never claims on its own.
+  useEffect(() => {
+    if (!sessionId) return;
+    let wasEvicted = useAppStore.getState().isSessionWindowEvicted(sessionId);
+    return useAppStore.subscribe((store) => {
+      const nowEvicted = store.isSessionWindowEvicted(sessionId);
+      const regained = wasEvicted && !nowEvicted;
+      wasEvicted = nowEvicted;
+      if (!regained || sessionIdRef.current !== sessionId) return;
+      frontendLog("multi_window", `window regained graphical session ${sessionId}; repainting`);
+      const size = desiredSizeRef.current;
+      if (size) {
+        void remoteDesktopResize(sessionId, size.width, size.height).catch((err) =>
+          frontendLog("remote_desktop", `resize after reclaim failed: ${err}`)
+        );
+      }
+      void remoteDesktopRequestFullFrame(sessionId).catch((err) =>
+        frontendLog("remote_desktop", `request_full_frame after reclaim failed: ${err}`)
+      );
+    });
+  }, [sessionId]);
+
   const respondCert = useCallback((accept: boolean, remember: boolean) => {
     const id = sessionIdRef.current;
     // Clear the dialog optimistically; the backend applies the verdict.
@@ -273,7 +316,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
   const sendInput = useCallback(
     (event: RemoteDesktopInput) => {
       const id = sessionIdRef.current;
-      if (!id || viewOnly) return;
+      if (!id || viewOnly || isWindowEvicted(id)) return;
       void remoteDesktopSendInput(id, event).catch((err) =>
         frontendLog("remote_desktop", `send_input failed: ${err}`)
       );
@@ -284,14 +327,19 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
   const resize = useCallback((width: number, height: number) => {
     const id = sessionIdRef.current;
     if (!id || width <= 0 || height <= 0) return;
-    void remoteDesktopResize(id, Math.round(width), Math.round(height)).catch((err) =>
+    const size = { width: Math.round(width), height: Math.round(height) };
+    desiredSizeRef.current = size;
+    // Another window sizes the remote while it controls the session (#3388);
+    // the recorded size is re-asserted on Reclaim instead.
+    if (isWindowEvicted(id)) return;
+    void remoteDesktopResize(id, size.width, size.height).catch((err) =>
       frontendLog("remote_desktop", `resize failed: ${err}`)
     );
   }, []);
 
   const sendClipboard = useCallback((text: string) => {
     const id = sessionIdRef.current;
-    if (!id) return;
+    if (!id || isWindowEvicted(id)) return;
     void remoteDesktopSendClipboard(id, text).catch((err) =>
       frontendLog("remote_desktop", `send_clipboard failed: ${err}`)
     );
@@ -299,7 +347,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
 
   const remoteClipboardFiles = useCallback(async (): Promise<RemoteClipboardFile[]> => {
     const id = sessionIdRef.current;
-    if (!id) return [];
+    if (!id || isWindowEvicted(id)) return [];
     try {
       return await remoteDesktopRemoteClipboardFiles(id);
     } catch (err) {
@@ -310,7 +358,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
 
   const bindClipboardFiles = useCallback(async (): Promise<number> => {
     const id = sessionIdRef.current;
-    if (!id) return 0;
+    if (!id || isWindowEvicted(id)) return 0;
     return await remoteDesktopBindClipboardFiles(id);
   }, []);
 

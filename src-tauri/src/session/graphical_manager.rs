@@ -30,6 +30,7 @@ use termihub_core::connection::{
     CursorUpdate, FrameUpdate, GraphicalState, InputEvent, RemoteClipboardFile,
     SessionStateMachine,
 };
+use termihub_core::errors::SessionError;
 
 use crate::session::frame_guard::{FrameGuard, FrameVerdict};
 use crate::session::graphical_supervisor::{Generation, LastSize, PumpEnd, Supervisor};
@@ -123,21 +124,55 @@ pub trait GraphicalEventSink: Clone + Send + Sync + 'static {
     fn emit_cert_prompt(&self, event: &RemoteDesktopCertPromptEvent);
 }
 
+/// Emit a graphical event only to the window that controls `session_id`
+/// (#3388, SM-003 single-attach for windows), falling back to a broadcast for an
+/// **unclaimed** session — the same PERF-004 targeting `terminal-output` uses.
+///
+/// Used for the session's *content* (frames, cursor, clipboard echo, cert
+/// prompts): a window another window has taken the session over from is
+/// evicted, so it must neither keep streaming the desktop nor see the remote
+/// clipboard. Its canvas simply freezes on the last frame under the "Taken over
+/// by another window" overlay; on Reclaim it re-sends its size and requests a
+/// full frame (`remote_desktop_request_full_frame`), which then targets it.
+/// Lifecycle state stays broadcast (see [`GraphicalEventSink::emit_state`]).
+fn emit_owner_scoped<R: tauri::Runtime, P: Serialize + Clone>(
+    app: &tauri::AppHandle<R>,
+    event: &str,
+    session_id: &str,
+    payload: &P,
+) {
+    use crate::window::{OutputEmitTarget, WindowManager};
+    use tauri::Manager;
+    let target = app
+        .try_state::<WindowManager>()
+        .map(|wm| wm.output_target(session_id))
+        .unwrap_or(OutputEmitTarget::Broadcast);
+    let _ = match target {
+        OutputEmitTarget::Window(label) => {
+            app.emit_to(tauri::EventTarget::labeled(label), event, payload)
+        }
+        OutputEmitTarget::Broadcast => app.emit(event, payload),
+    };
+}
+
 impl<R: tauri::Runtime> GraphicalEventSink for tauri::AppHandle<R> {
     fn emit_frame(&self, event: &RemoteDesktopFrameEvent) {
-        let _ = self.emit("remote-desktop-frame", event);
+        emit_owner_scoped(self, "remote-desktop-frame", &event.session_id, event);
     }
     fn emit_cursor(&self, event: &RemoteDesktopCursorEvent) {
-        let _ = self.emit("remote-desktop-cursor", event);
+        emit_owner_scoped(self, "remote-desktop-cursor", &event.session_id, event);
     }
     fn emit_clipboard(&self, event: &RemoteDesktopClipboardEvent) {
-        let _ = self.emit("remote-desktop-clipboard", event);
+        emit_owner_scoped(self, "remote-desktop-clipboard", &event.session_id, event);
     }
+    /// Broadcast (not owner-scoped): every window rendering the session tracks
+    /// its lifecycle, so an evicted window that reclaims mid-reconnect lands on
+    /// the correct overlay immediately.
     fn emit_state(&self, event: &RemoteDesktopStateEvent) {
         let _ = self.emit("remote-desktop-state", event);
     }
     fn emit_cert_prompt(&self, event: &RemoteDesktopCertPromptEvent) {
-        let _ = self.emit("remote-desktop-cert-prompt", event);
+        emit_owner_scoped(self, "remote-desktop-cert-prompt", &event.session_id, event);
     }
 }
 
@@ -253,15 +288,22 @@ impl GraphicalSessionManager {
             let msg = e.to_string();
             warn!(session_id = %session_id, error = %msg, "graphical connect failed");
             let mut sm = state.lock().await;
-            sm.connect_failed();
-            emit_state(
-                &sink,
-                &session_id,
-                GraphicalState::ConnectFailed,
-                0,
-                Some(msg.clone()),
-            );
-            return Err(TerminalError::ConnectionFailed(msg));
+            // A rejected credential (e.g. a wrong VNC password) is a typed
+            // `AuthFailed`, not a transport failure (#3390): emit the state the
+            // frontend's "Check the credentials" overlay keys on, and return the
+            // coded auth error every other backend uses.
+            let auth = matches!(e, SessionError::AuthFailed);
+            let failed = if auth {
+                sm.auth_failed()
+            } else {
+                sm.connect_failed()
+            };
+            emit_state(&sink, &session_id, failed, 0, Some(msg.clone()));
+            return Err(if auth {
+                TerminalError::AuthFailed(msg)
+            } else {
+                TerminalError::ConnectionFailed(msg)
+            });
         }
 
         // Subscribe to the framebuffer surface (and any cert-prompt channel)

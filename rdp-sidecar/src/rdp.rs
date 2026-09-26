@@ -34,7 +34,9 @@ use ironrdp::pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
 use ironrdp::rdpdr::Rdpdr;
 use ironrdp::rdpsnd::client::{NoopRdpsndBackend, Rdpsnd, RdpsndClientHandler};
 use ironrdp::session::image::DecodedImage;
-use ironrdp::session::{ActiveStage, ActiveStageBuilder, ActiveStageOutput};
+use ironrdp::session::{
+    ActiveStage, ActiveStageBuilder, ActiveStageOutput, GracefulDisconnectReason,
+};
 use ironrdp_tokio::reqwest::ReqwestNetworkClient;
 use ironrdp_tokio::{FramedWrite, TokioFramed};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -55,6 +57,7 @@ use crate::clipboard::{
     build_format_data_response, local_text_formats, ClipboardEvent, SidecarClipboardBackend,
 };
 use crate::drive::DriveRedirectBackend;
+use crate::failure;
 use crate::input;
 
 /// The RDPDR device id used for the single redirected drive (#1757). Any
@@ -135,17 +138,6 @@ fn build_connector_config(cfg: &RdpConfig) -> Result<ConnectorConfig> {
         alternate_shell: String::new(),
         work_dir: String::new(),
     })
-}
-
-/// Whether an error message reads as an authentication rejection (so the caller
-/// can report `AuthFailed` rather than `ConnectFailed`).
-pub fn is_auth_error(msg: &str) -> bool {
-    let lower = msg.to_ascii_lowercase();
-    lower.contains("credssp")
-        || lower.contains("logon")
-        || lower.contains("authenticat")
-        || lower.contains("access denied")
-        || lower.contains("access_denied")
 }
 
 /// Run the IronRDP connect sequence to an active session: TCP → X.224 → TLS →
@@ -400,6 +392,9 @@ fn crop_rect(
 enum Flow {
     Continue,
     Stop,
+    /// The server ended the session gracefully, with this reason (#3390: an
+    /// auth `ERRINFO` reason is reported as an authentication failure).
+    Terminate(GracefulDisconnectReason),
     /// The server sent a Deactivate All PDU (typically after a Display Control
     /// resize): the driver must run the Deactivation-Reactivation Sequence.
     Reactivate,
@@ -478,7 +473,7 @@ where
             }
             ActiveStageOutput::Terminate(reason) => {
                 debug!(%reason, "rdp session terminated by server");
-                return Flow::Stop;
+                return Flow::Terminate(reason);
             }
             ActiveStageOutput::DeactivateAll => {
                 // The server tears the capability set down and rebuilds it — the
@@ -561,11 +556,9 @@ where
         match connect_session(&cfg, ipc_in, ipc_out).await {
             Ok(v) => v,
             Err(e) => {
-                let state = if is_auth_error(&format!("{e:#}")) {
-                    GraphicalState::AuthFailed
-                } else {
-                    GraphicalState::ConnectFailed
-                };
+                // Typed auth-vs-connect classification (#3390); `main` then
+                // reports the matching `SidecarMessage::Failure`.
+                let state = failure::failure_state(failure::classify(&e));
                 let _ = write_message(ipc_out, &SidecarMessage::State(state)).await;
                 return Err(e);
             }
@@ -618,7 +611,7 @@ where
         (readvertise, host_clip_watch)
     };
 
-    drive(
+    let terminated = drive(
         result,
         framed,
         connector_config,
@@ -630,6 +623,14 @@ where
         ipc_out,
     )
     .await;
+
+    // A server that ends the session with a credential / privilege `ERRINFO`
+    // rejected the logon (#3390): report it as an auth failure, not a clean
+    // close, so the desktop does not auto-reconnect into the same rejection.
+    if let Some(reason) = terminated.filter(failure::is_auth_disconnect) {
+        let _ = write_message(ipc_out, &SidecarMessage::State(GraphicalState::AuthFailed)).await;
+        return Err(failure::ServerLogonRejected(reason.description()).into());
+    }
 
     let _ = write_message(
         ipc_out,
@@ -643,6 +644,10 @@ where
 /// `select!`s between decoding server PDUs, applying host input events, and
 /// re-advertising the local file list on a shared-folder change (#1788) or a
 /// host-clipboard file-list change (#1794).
+///
+/// Returns the server's graceful-disconnect reason when the server ended the
+/// session (so the caller can tell an auth `ERRINFO` from a clean close, #3390),
+/// or `None` for any other end (host disconnect, transport error).
 // Each argument is a distinct capability the loop owns (transport halves, config,
 // the CLIPRDR event channel, the folder-watch ticks, the IPC endpoints); bundling
 // them into a struct would only rename them without reducing coupling.
@@ -657,7 +662,8 @@ async fn drive<R, W>(
     mut host_clip_watch: Option<crate::host_clipboard_watch::HostClipboardWatch>,
     ipc_in: &mut R,
     ipc_out: &mut W,
-) where
+) -> Option<GracefulDisconnectReason>
+where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
@@ -695,9 +701,10 @@ async fn drive<R, W>(
     .await
     .is_err()
     {
-        return;
+        return None;
     }
 
+    let mut terminated = None;
     let mut prev_buttons: u8 = 0;
     let mut cursor: (u32, u32) = (0, 0);
     // The latest host clipboard text pushed via `SetClipboard`, served back to the
@@ -728,7 +735,7 @@ async fn drive<R, W>(
                         if events.is_empty() {
                             continue;
                         }
-                        if let Flow::Stop =
+                        if let Flow::Stop | Flow::Terminate(_) =
                             send_input_events(&mut stage, &mut image, &mut writer, &events).await
                         {
                             break;
@@ -841,6 +848,10 @@ async fn drive<R, W>(
                 match handle_outputs(outputs, &image, &mut writer, ipc_out, &mut cursor).await {
                     Flow::Continue => {}
                     Flow::Stop => break,
+                    Flow::Terminate(reason) => {
+                        terminated = Some(reason);
+                        break;
+                    }
                     Flow::Reactivate => {
                         // Reunite the split halves — the reactivation sequence is a
                         // synchronous request/response that owns the whole transport
@@ -950,6 +961,7 @@ async fn drive<R, W>(
             }
         }
     }
+    terminated
 }
 
 /// Re-enumerate and re-advertise the local file offer, then flush the CLIPRDR

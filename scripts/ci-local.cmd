@@ -131,11 +131,12 @@ echo SKIPPED: %~2
 exit /b 0
 
 :core_features
-call cargo test -p termihub-core --no-run || exit /b 1
-call cargo test -p termihub-core --no-run --features ssh || exit /b 1
-call cargo test -p termihub-core --no-run --features telnet || exit /b 1
-call cargo test -p termihub-core --no-run --features ftp || exit /b 1
-call cargo clippy -p termihub-core --features ftp --all-targets -- -D warnings || exit /b 1
+rem Clippy termihub-core with each opt-in feature in isolation (#3318). Mirrors the
+rem CI step; keep this list in sync with core/Cargo.toml [features].
+call cargo clippy -p termihub-core --no-default-features --all-targets -- -D warnings || exit /b 1
+for %%F in (tracing embedded-servers plugin http-monitor serial local-shell telnet ssh docker wsl ftp mock-remote-desktop vnc rdp-sidecar) do (
+  call cargo clippy -p termihub-core --no-default-features --features %%F --all-targets -- -D warnings || exit /b 1
+)
 exit /b 0
 
 :package_plugins

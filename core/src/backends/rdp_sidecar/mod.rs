@@ -68,7 +68,7 @@ use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
 
 use config::RdpConfig;
-use protocol::{read_message, write_message, HostMessage, SidecarMessage};
+use protocol::{read_message, write_message, HostMessage, SidecarFailureKind, SidecarMessage};
 
 /// Bounded channel depth for frames / cursor updates / input (backpressure).
 const CHANNEL_DEPTH: usize = 32;
@@ -288,6 +288,30 @@ struct SidecarShared {
     fetches: StdMutex<HashMap<u64, mpsc::UnboundedSender<FetchEvent>>>,
     /// Suppress input when the session is view-only.
     view_only: bool,
+    /// The typed fatal reason the sidecar reported via
+    /// [`SidecarMessage::Failure`] before exiting (#3390), surfaced through
+    /// [`GraphicalBackend::fatal_error`]. `None` for an ordinary drop — and
+    /// always for an older sidecar that predates the message.
+    failure: StdMutex<Option<(SidecarFailureKind, String)>>,
+}
+
+impl SidecarShared {
+    /// Map the recorded sidecar failure onto the shared typed error (#3390).
+    fn fatal_error(&self) -> Option<SessionError> {
+        let guard = self.failure.lock().ok()?;
+        let (kind, message) = guard.as_ref()?;
+        Some(failure_to_session_error(*kind, message))
+    }
+}
+
+/// The shared [`SessionError`] for a typed sidecar failure (#3390): a credential
+/// rejection is [`SessionError::AuthFailed`] — the same typed discriminant every
+/// other backend reports — and anything else a connect failure.
+fn failure_to_session_error(kind: SidecarFailureKind, message: &str) -> SessionError {
+    match kind {
+        SidecarFailureKind::Auth => SessionError::AuthFailed,
+        SidecarFailureKind::Connect => SessionError::ConnectionFailed(message.to_string()),
+    }
 }
 
 /// Live runtime of a connected sidecar session.
@@ -439,6 +463,16 @@ async fn run_reader<R>(
                     Ok(SidecarMessage::State(state)) => {
                         debug!(?state, "rdp sidecar state");
                     }
+                    Ok(SidecarMessage::Failure { kind, message }) => {
+                        // The typed reason for the fatal `Error` that follows
+                        // (#3390). Record it — the frame channel closes when this
+                        // reader exits, so the supervisor always sees it by then —
+                        // and keep reading until that `Error` / EOF.
+                        warn!(?kind, %message, "rdp sidecar reported a typed failure");
+                        if let Ok(mut failure) = shared.failure.lock() {
+                            *failure = Some((kind, message));
+                        }
+                    }
                     Ok(SidecarMessage::Error(err)) => {
                         warn!(%err, "rdp sidecar reported a fatal error");
                         break;
@@ -484,8 +518,14 @@ async fn run_writer<W>(
     }
 }
 
-/// Own the child process: kill it on cancel, or cancel the session when it
-/// exits on its own.
+/// Own the child process: kill it on cancel, and reap it when it exits on its
+/// own.
+///
+/// A self-exit deliberately does **not** cancel the session: the reader drains
+/// the sidecar's stdout to EOF (which follows the exit) and cancels then.
+/// Cancelling here would race the reader and could drop the sidecar's final
+/// [`SidecarMessage::Failure`] / `Error` frames still buffered in the pipe — the
+/// typed auth-failure signal (#3390).
 async fn supervise(mut child: tokio::process::Child, cancel: CancellationToken) {
     tokio::select! {
         _ = cancel.cancelled() => {
@@ -493,8 +533,7 @@ async fn supervise(mut child: tokio::process::Child, cancel: CancellationToken) 
             let _ = child.wait().await;
         }
         status = child.wait() => {
-            debug!(?status, "rdp sidecar process exited");
-            cancel.cancel();
+            debug!(?status, "rdp sidecar process exited; reader finishes at EOF");
         }
     }
 }
@@ -618,6 +657,7 @@ impl ConnectionType for SidecarRdp {
             remote_clipboard_files: Mutex::new(Vec::new()),
             fetches: StdMutex::new(HashMap::new()),
             view_only,
+            failure: StdMutex::new(None),
         });
         let cancel = CancellationToken::new();
         let (frame_tx, frame_rx) = mpsc::channel(CHANNEL_DEPTH);
@@ -924,6 +964,10 @@ impl GraphicalBackend for SidecarRdp {
             .await
             .map_err(|_| SessionError::NotRunning("rdp session ended".to_string()))
     }
+
+    fn fatal_error(&self) -> Option<SessionError> {
+        self.runtime.as_ref()?.shared.fatal_error()
+    }
 }
 
 #[cfg(test)]
@@ -1204,6 +1248,7 @@ mod tests {
             remote_clipboard_files: Mutex::new(Vec::new()),
             fetches: StdMutex::new(HashMap::new()),
             view_only: false,
+            failure: StdMutex::new(None),
         })
     }
 
@@ -1425,6 +1470,90 @@ mod tests {
         let _ = SidecarMessage::State(GraphicalState::AuthFailed);
     }
 
+    /// Drive the reader over `script` (then EOF) and return the fatal error it
+    /// recorded, plus whether the frame channel closed (#3390).
+    async fn fatal_after(script: Vec<SidecarMessage>) -> (Option<SessionError>, bool) {
+        let (mut sidecar_stdout, host_read) = tokio::io::duplex(1024 * 1024);
+        let (frame_tx, mut frame_rx) = mpsc::channel(CHANNEL_DEPTH);
+        let (cursor_tx, _cursor_rx) = mpsc::channel(CHANNEL_DEPTH);
+        let (cert_tx, _cert_rx) = mpsc::channel(CHANNEL_DEPTH);
+        let shared = test_shared();
+        let reader = tokio::spawn(run_reader(
+            host_read,
+            frame_tx,
+            cursor_tx,
+            cert_tx,
+            shared.clone(),
+            CancellationToken::new(),
+        ));
+        for msg in &script {
+            write_message(&mut sidecar_stdout, msg).await.unwrap();
+        }
+        drop(sidecar_stdout);
+        // The frame channel closing is what the supervisor observes; the typed
+        // reason must already be recorded by then.
+        let closed = frame_rx.recv().await.is_none();
+        let fatal = shared.fatal_error();
+        let _ = reader.await;
+        (fatal, closed)
+    }
+
+    #[tokio::test]
+    async fn typed_auth_failure_maps_to_auth_failed() {
+        let (fatal, closed) = fatal_after(vec![
+            SidecarMessage::State(GraphicalState::AuthFailed),
+            SidecarMessage::Failure {
+                kind: SidecarFailureKind::Auth,
+                message: "CredSSP logon failure".to_string(),
+            },
+            SidecarMessage::Error("CredSSP logon failure".to_string()),
+        ])
+        .await;
+        assert!(closed);
+        assert!(matches!(fatal, Some(SessionError::AuthFailed)), "{fatal:?}");
+    }
+
+    #[tokio::test]
+    async fn typed_connect_failure_maps_to_connection_failed() {
+        let (fatal, _) = fatal_after(vec![
+            SidecarMessage::Failure {
+                kind: SidecarFailureKind::Connect,
+                message: "RDP TCP connect failed".to_string(),
+            },
+            SidecarMessage::Error("RDP TCP connect failed".to_string()),
+        ])
+        .await;
+        match fatal {
+            Some(SessionError::ConnectionFailed(msg)) => {
+                assert_eq!(msg, "RDP TCP connect failed")
+            }
+            other => panic!("expected ConnectionFailed, got {other:?}"),
+        }
+    }
+
+    /// An older sidecar (no `Failure` frame) and an ordinary drop keep today's
+    /// behavior: no typed reason, so the supervisor treats it as a plain drop.
+    #[tokio::test]
+    async fn untyped_error_or_plain_eof_reports_no_fatal_reason() {
+        let (fatal, closed) = fatal_after(vec![
+            SidecarMessage::State(GraphicalState::AuthFailed),
+            SidecarMessage::Error("auth failed".to_string()),
+        ])
+        .await;
+        assert!(closed);
+        assert!(fatal.is_none(), "{fatal:?}");
+
+        let (fatal, closed) =
+            fatal_after(vec![SidecarMessage::State(GraphicalState::Active)]).await;
+        assert!(closed);
+        assert!(fatal.is_none(), "{fatal:?}");
+    }
+
+    #[test]
+    fn disconnected_backend_reports_no_fatal_reason() {
+        assert!(GraphicalBackend::fatal_error(&SidecarRdp::new()).is_none());
+    }
+
     // --- Remote→host delayed rendering (#1793) ---
 
     #[tokio::test]
@@ -1486,6 +1615,7 @@ mod tests {
             }]),
             fetches: StdMutex::new(HashMap::new()),
             view_only: false,
+            failure: StdMutex::new(None),
         });
         let cancel = CancellationToken::new();
         let reader = tokio::spawn(run_reader(

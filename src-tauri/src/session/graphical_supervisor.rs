@@ -39,6 +39,17 @@
 //! - **Authentication rejected** on a re-dial ([`SessionError::AuthFailed`]) →
 //!   `AuthFailed`; an invalid configuration → `ConnectFailed`. The same
 //!   settings can never succeed.
+//! - **Authentication rejected after `connect()` returned** (#3390). The RDP
+//!   sidecar negotiates asynchronously, so a rejected credential surfaces only
+//!   as the stream closing — with the typed reason on
+//!   [`GraphicalBackend::fatal_error`](termihub_core::connection::GraphicalBackend::fatal_error).
+//!   A [`SessionError::AuthFailed`] there rests in `AuthFailed` on the first
+//!   connect and on every re-dial alike, never consuming a retry.
+//! - **First connect failed asynchronously** (#3390): when the initial
+//!   generation ends before painting and the backend reports any other typed
+//!   failure, the session rests in `ConnectFailed` — the same outcome a
+//!   synchronous `connect()` error gets. (On a *re-dial* such a failure is an
+//!   ordinary failed attempt, so an unreachable host is still retried.)
 //! - **Hostile frame stream** (MOCK-011): when the [`FrameGuard`] aborts the
 //!   pump after persistently invalid frames, the session is treated as
 //!   **terminal** — `Disconnected` with [`REJECTED_FRAMES_MESSAGE`] and no
@@ -167,6 +178,11 @@ impl<S: GraphicalEventSink> Supervisor<S> {
         let mut retrying = false;
         loop {
             let end = self.run_generation(generation, retrying).await;
+            if let Some((state, message)) = self.fatal_rest(end, retrying).await {
+                warn!(session_id = %self.session_id, ?state, %message, "graphical session ended with a typed failure; not auto-reconnecting");
+                self.rest(state, Some(message)).await;
+                return;
+            }
             if end.aborted {
                 warn!(session_id = %self.session_id, "hostile frame stream; not auto-reconnecting");
                 self.rest(
@@ -199,6 +215,28 @@ impl<S: GraphicalEventSink> Supervisor<S> {
                 }
                 None => return,
             }
+        }
+    }
+
+    /// Whether the generation that just ended carries a typed, non-retryable
+    /// failure (#3390): the resting state and message, or `None` to fall through
+    /// to the ordinary drop / reconnect handling.
+    ///
+    /// - [`SessionError::AuthFailed`] always rests in `AuthFailed`.
+    /// - Any other typed failure rests in `ConnectFailed` only for the first
+    ///   generation that never painted — the asynchronous twin of a failed
+    ///   initial `connect()`.
+    async fn fatal_rest(&self, end: PumpEnd, retrying: bool) -> Option<(GraphicalState, String)> {
+        let fatal = {
+            let slot = self.connection.lock().await;
+            slot.graphical().and_then(|backend| backend.fatal_error())
+        }?;
+        match fatal {
+            SessionError::AuthFailed => Some((GraphicalState::AuthFailed, fatal.to_string())),
+            other if !retrying && !end.painted && !end.aborted => {
+                Some((GraphicalState::ConnectFailed, other.to_string()))
+            }
+            _ => None,
         }
     }
 
