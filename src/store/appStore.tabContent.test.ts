@@ -190,6 +190,7 @@ describe("appStore — comprehensive tabContent map for every tab type (#2283 sl
     s.openSettingsTab();
     s.openLogViewerTab();
     s.openNetworkDiagnosticTab("ping");
+    s.openTransferViewTab({ remoteTabId: null });
     s.openScratchEditorTab("Notes", "notes.md", "hi");
     s.openConnectionEditorTab("new");
     s.openTunnelEditorTab(null);
@@ -214,6 +215,7 @@ describe("appStore — comprehensive tabContent map for every tab type (#2283 sl
     ["settings", () => useAppStore.getState().openSettingsTab()],
     ["log-viewer", () => useAppStore.getState().openLogViewerTab()],
     ["network-diagnostic", () => useAppStore.getState().openNetworkDiagnosticTab("ping")],
+    ["transfer-view", () => useAppStore.getState().openTransferViewTab({ remoteTabId: null })],
     ["editor", () => useAppStore.getState().openScratchEditorTab("N", "n.md", "x")],
     ["connection-editor", () => useAppStore.getState().openConnectionEditorTab("new")],
     ["tunnel-editor", () => useAppStore.getState().openTunnelEditorTab(null)],
@@ -227,6 +229,21 @@ describe("appStore — comprehensive tabContent map for every tab type (#2283 sl
 
     useAppStore.getState().closeTab(tab.id, tab.panelId);
     expect(useAppStore.getState().tabContent[tab.id]).toBeUndefined();
+  });
+
+  it("openTransferViewTab titles the tab after its remote and focuses an existing one", () => {
+    const s = useAppStore.getState();
+    const sshId = s.addTab("prod", "ssh", { type: "ssh", config: { host: "prod" } });
+    s.openTransferViewTab({ remoteTabId: sshId, remotePath: "/srv" });
+    const views = () => allTabs().filter((t) => t.contentType === "transfer-view");
+    expect(views()).toHaveLength(1);
+    expect(views()[0].title).toBe("Transfer: prod");
+    expect(views()[0].transferViewMeta).toEqual({ remoteTabId: sshId, remotePath: "/srv" });
+
+    useAppStore.getState().setActiveTab(sshId, views()[0].panelId);
+    useAppStore.getState().openTransferViewTab({ remoteTabId: sshId });
+    expect(views()).toHaveLength(1);
+    expect(views()[0].isActive).toBe(true);
   });
 
   it("selectPlugin reuse re-points meta and keeps the map in sync", () => {

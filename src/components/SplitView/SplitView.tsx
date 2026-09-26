@@ -31,6 +31,7 @@ import {
   Puzzle,
   WifiOff,
   X,
+  Columns2,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
@@ -194,6 +195,9 @@ const NetworkDiagnosticPanel = lazy(() =>
   import("@/components/NetworkTools/NetworkDiagnosticPanel").then((m) => ({
     default: m.NetworkDiagnosticPanel,
   }))
+);
+const TransferView = lazy(() =>
+  import("@/components/TransferView").then((m) => ({ default: m.TransferView }))
 );
 const PluginDetailPanel = lazy(() =>
   import("@/components/Plugins/PluginDetailPanel").then((m) => ({ default: m.PluginDetailPanel }))
@@ -481,6 +485,8 @@ export function SplitView() {
                     <LayoutGrid size={14} className="zoom-overlay__icon" />
                   ) : zoomedTab.contentType === "network-diagnostic" ? (
                     <Stethoscope size={14} className="zoom-overlay__icon" />
+                  ) : zoomedTab.contentType === "transfer-view" ? (
+                    <Columns2 size={14} className="zoom-overlay__icon" />
                   ) : zoomedTab.contentType === "plugin-detail" ? (
                     <Puzzle size={14} className="zoom-overlay__icon" />
                   ) : zoomedTab.contentType === "agent-error" ? (
@@ -643,6 +649,12 @@ export function SplitView() {
                     <NetworkDiagnosticPanel
                       key={`zoom-${zoomedTabId}`}
                       meta={zoomedTab.networkDiagnosticMeta}
+                      isVisible={true}
+                    />
+                  ) : zoomedTab.contentType === "transfer-view" && zoomedTab.transferViewMeta ? (
+                    <TransferView
+                      key={`zoom-${zoomedTabId}`}
+                      meta={zoomedTab.transferViewMeta}
                       isVisible={true}
                     />
                   ) : zoomedTab.contentType === "plugin-detail" && zoomedTab.pluginDetailMeta ? (
@@ -972,6 +984,13 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
                 isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
               />
             </Suspense>
+          ) : tab.contentType === "transfer-view" && tab.transferViewMeta ? (
+            <Suspense key={tab.id} fallback={<LazyPanelFallback />}>
+              <TransferView
+                meta={tab.transferViewMeta}
+                isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+              />
+            </Suspense>
           ) : tab.contentType === "plugin-detail" && tab.pluginDetailMeta ? (
             <Suspense key={tab.id} fallback={<LazyPanelFallback />}>
               <PluginDetailPanel
@@ -1291,7 +1310,9 @@ function TabDragOverlay({ tab }: { tab: TerminalTab }) {
                 ? LayoutGrid
                 : tab.contentType === "network-diagnostic"
                   ? Stethoscope
-                  : null;
+                  : tab.contentType === "transfer-view"
+                    ? Columns2
+                    : null;
   return (
     <div className="tab tab--drag-overlay">
       {NonTerminalIcon ? (
