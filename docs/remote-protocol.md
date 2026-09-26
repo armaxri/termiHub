@@ -46,7 +46,7 @@ The remote session management protocol enables the termiHub desktop app to manag
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────┐
 │                  Desktop App                     │
 │                                                  │
@@ -118,7 +118,7 @@ This topology and the tracking model are identical across the **3-platform agent
 
 Messages are **newline-delimited JSON** (NDJSON). Each message is a single line of valid JSON terminated by `\n` (0x0A).
 
-```
+```text
 {"jsonrpc":"2.0","method":"initialize","params":{...},"id":1}\n
 {"jsonrpc":"2.0","result":{...},"id":1}\n
 {"jsonrpc":"2.0","method":"connection.output","params":{...}}\n
@@ -3005,7 +3005,7 @@ For serial sessions:
 
 ### Workflow: Create and Use a Shell Session
 
-```
+```text
 Desktop → Agent:
 {"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"0.2.0","client":"termihub-desktop","clientVersion":"0.1.0"},"id":1}
 
@@ -3039,7 +3039,7 @@ Agent → Desktop (notification — command output):
 
 ### Workflow: Reconnect After Disconnect
 
-```
+```text
 Desktop → Agent (new SSH channel):
 {"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"0.2.0","client":"termihub-desktop","clientVersion":"0.1.0"},"id":1}
 
@@ -3064,7 +3064,7 @@ Agent → Desktop (notification — live output resumes):
 
 ### Workflow: Session Process Exits
 
-```
+```text
 Agent → Desktop (notification — process exited):
 {"jsonrpc":"2.0","method":"connection.exit","params":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d","exit_code":0}}
 

@@ -14,6 +14,19 @@
 //! Text bridging is **both ways** (#1756): CF_UNICODETEXT preferred, CF_TEXT as
 //! a fallback.
 //!
+//! ## Images (PROD-021) — both ways, capped
+//!
+//! A remote image copy (`CF_DIB`, else `CF_DIBV5`) is pasted and converted to
+//! top-down RGBA by [`crate::dib`], then surfaced to the host as
+//! [`ClipboardEvent::RemoteImage`]. The DIB is untrusted: its payload size and
+//! dimensions are checked against the shared clipboard-image caps before any
+//! pixel buffer is allocated, and a violating image is dropped with a warning.
+//! When a copy offers text **and** an image, the text is pasted first and the
+//! image right after (CLIPRDR allows one outstanding data request at a time).
+//! The reverse direction advertises `CF_DIB` for a host image pushed via
+//! `SetClipboardImage` and serves it from [`LocalClipboard::Image`]; view-only
+//! sessions never push one.
+//!
 //! ## File transfer (#1765) — receiving, sandboxed
 //!
 //! When the user opts into clipboard file transfer, the backend advertises the
@@ -88,9 +101,10 @@ use ironrdp::cliprdr::pdu::{
     FileDescriptor, FormatDataRequest, FormatDataResponse, LockDataId,
 };
 use ironrdp::core::AsAny;
-use termihub_core::connection::RemoteClipboardFile;
+use termihub_core::connection::{ClipboardImage, RemoteClipboardFile};
 use tracing::{debug, trace, warn};
 
+use crate::dib::{dib_to_image, image_to_dib};
 use crate::host_clipboard::read_host_clipboard_files;
 
 /// Memory bound for a single in-flight clipboard file-contents transfer. A large
@@ -115,6 +129,9 @@ pub enum ClipboardEvent {
     InitiatePaste(ClipboardFormatId),
     /// Text received from the remote clipboard, ready to hand to the host over IPC.
     RemoteText(String),
+    /// An image received from the remote clipboard (PROD-021), already decoded
+    /// from its DIB and checked against the clipboard-image caps.
+    RemoteImage(ClipboardImage),
     /// The remote wants our local clipboard data in this format; respond with a
     /// `FormatDataResponse` built from the host-provided text.
     ProvideData(ClipboardFormatId),
@@ -171,6 +188,57 @@ pub fn preferred_text_format(formats: &[ClipboardFormat]) -> Option<ClipboardFor
         Some(ClipboardFormatId::CF_TEXT)
     } else {
         None
+    }
+}
+
+/// Pick the image format to paste from a remote copy (PROD-021): `CF_DIB`
+/// preferred (Windows synthesizes it for every bitmap copy), `CF_DIBV5` as a
+/// fallback. `None` when the remote offered no DIB.
+pub fn preferred_image_format(formats: &[ClipboardFormat]) -> Option<ClipboardFormatId> {
+    [ClipboardFormatId::CF_DIB, ClipboardFormatId::CF_DIBV5]
+        .into_iter()
+        .find(|want| formats.iter().any(|f| f.id() == *want))
+}
+
+/// What the host last placed on the local clipboard for the remote to paste:
+/// text (#1756) or an image (PROD-021). The most recent local action wins, as
+/// with a native clipboard.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum LocalClipboard {
+    /// Nothing copied yet.
+    #[default]
+    Empty,
+    /// Host text, served as CF_UNICODETEXT / CF_TEXT.
+    Text(String),
+    /// A host image, pre-encoded as a `CF_DIB` payload.
+    Image(Vec<u8>),
+}
+
+impl LocalClipboard {
+    /// Hold a (validated) host image, encoded once as the DIB served on paste.
+    pub fn image(image: &ClipboardImage) -> Self {
+        Self::Image(image_to_dib(image))
+    }
+
+    /// The formats to advertise to the remote for this clipboard content.
+    pub fn formats(&self) -> Vec<ClipboardFormat> {
+        match self {
+            Self::Empty => Vec::new(),
+            Self::Text(text) => local_text_formats(Some(text)),
+            Self::Image(_) => vec![ClipboardFormat::new(ClipboardFormatId::CF_DIB)],
+        }
+    }
+
+    /// Build the response to a remote `FormatDataRequest`; a format this content
+    /// cannot supply yields an error response (allowed by the spec).
+    pub fn response(&self, format: ClipboardFormatId) -> FormatDataResponse<'static> {
+        match self {
+            Self::Text(text) => build_format_data_response(format, Some(text)),
+            Self::Image(dib) if format == ClipboardFormatId::CF_DIB => {
+                FormatDataResponse::new_data(dib.clone())
+            }
+            _ => FormatDataResponse::new_error(),
+        }
     }
 }
 
@@ -300,6 +368,12 @@ pub struct SidecarClipboardBackend {
     /// The format of the most recent *text* paste we initiated, so the eventual
     /// `on_format_data_response` knows how to decode the bytes.
     pending_paste_format: Option<ClipboardFormatId>,
+    /// The image format of an in-flight image paste (PROD-021), so the eventual
+    /// `on_format_data_response` decodes the bytes as a DIB.
+    pending_image_format: Option<ClipboardFormatId>,
+    /// An image format to paste once the in-flight text paste completes — a copy
+    /// offering both text and an image fetches both, one request at a time.
+    queued_image_format: Option<ClipboardFormatId>,
     /// Destination folder for files received over CLIPRDR file transfer, or
     /// `None` when the feature is disabled. Enabling it flips the advertised
     /// capabilities to include stream-file-clip + long format names (#1765).
@@ -352,6 +426,8 @@ impl std::fmt::Debug for SidecarClipboardBackend {
         f.debug_struct("SidecarClipboardBackend")
             .field("temp_dir", &self.temp_dir)
             .field("pending_paste_format", &self.pending_paste_format)
+            .field("pending_image_format", &self.pending_image_format)
+            .field("queued_image_format", &self.queued_image_format)
             .field("download_dir", &self.download_dir)
             .field("download_queue", &self.download_queue)
             .field("active_download", &self.active_download)
@@ -421,6 +497,8 @@ impl SidecarClipboardBackend {
                 tx,
                 temp_dir,
                 pending_paste_format: None,
+                pending_image_format: None,
+                queued_image_format: None,
                 download_dir,
                 download_queue: VecDeque::new(),
                 active_download: None,
@@ -544,6 +622,12 @@ impl SidecarClipboardBackend {
             Some(files) => self.emit(ClipboardEvent::AdvertiseFiles(files)),
             None => self.emit(ClipboardEvent::AdvertiseLocal),
         }
+    }
+
+    /// Request the remote's image data in `format` (PROD-021).
+    fn start_image_paste(&mut self, format: ClipboardFormatId) {
+        self.pending_image_format = Some(format);
+        self.emit(ClipboardEvent::InitiatePaste(format));
     }
 
     fn emit(&self, event: ClipboardEvent) {
@@ -1282,6 +1366,9 @@ impl CliprdrBackend for SidecarClipboardBackend {
     }
 
     fn on_remote_copy(&mut self, available_formats: &[ClipboardFormat]) {
+        // A newer copy supersedes any image paste still queued or in flight.
+        self.pending_image_format = None;
+        self.queued_image_format = None;
         // A remote file copy takes precedence over text when file receiving is
         // enabled: initiate a paste for the file list, which the channel routes
         // to `on_remote_file_list` (not `on_format_data_response`).
@@ -1294,12 +1381,17 @@ impl CliprdrBackend for SidecarClipboardBackend {
                 return;
             }
         }
+        let image = preferred_image_format(available_formats);
         match preferred_text_format(available_formats) {
             Some(format) => {
                 self.pending_paste_format = Some(format);
+                self.queued_image_format = image;
                 self.emit(ClipboardEvent::InitiatePaste(format));
             }
-            None => trace!("remote clipboard offered no text format; ignoring"),
+            None => match image {
+                Some(format) => self.start_image_paste(format),
+                None => trace!("remote clipboard offered no text or image format; ignoring"),
+            },
         }
     }
 
@@ -1308,14 +1400,29 @@ impl CliprdrBackend for SidecarClipboardBackend {
     }
 
     fn on_format_data_response(&mut self, response: FormatDataResponse<'_>) {
-        let Some(format) = self.pending_paste_format.take() else {
-            trace!("format data response with no pending paste; ignoring");
+        if let Some(format) = self.pending_paste_format.take() {
+            match decode_clipboard_text(format, &response) {
+                Some(text) => self.emit(ClipboardEvent::RemoteText(text)),
+                None => debug!("remote clipboard text unavailable or undecodable"),
+            }
+            // The same copy also offered an image: fetch it next.
+            if let Some(image) = self.queued_image_format.take() {
+                self.start_image_paste(image);
+            }
             return;
-        };
-        match decode_clipboard_text(format, &response) {
-            Some(text) => self.emit(ClipboardEvent::RemoteText(text)),
-            None => debug!("remote clipboard text unavailable or undecodable"),
         }
+        if self.pending_image_format.take().is_some() {
+            if response.is_error() {
+                debug!("remote clipboard image unavailable");
+                return;
+            }
+            match dib_to_image(response.data()) {
+                Ok(image) => self.emit(ClipboardEvent::RemoteImage(image)),
+                Err(e) => warn!(error = %e, "rejected remote clipboard image"),
+            }
+            return;
+        }
+        trace!("format data response with no pending paste; ignoring");
     }
 
     fn on_remote_file_list(&mut self, files: &[FileDescriptor], _clip_data_id: Option<u32>) {
@@ -2941,3 +3048,7 @@ mod tests {
         assert!(req2.flags.contains(FileContentsFlags::RANGE));
     }
 }
+
+#[cfg(test)]
+#[path = "clipboard_image_tests.rs"]
+mod image_tests;

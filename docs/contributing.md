@@ -252,6 +252,23 @@ periodically so new lints are adopted on purpose rather than by surprise:
    `rdp-sidecar/`). Fix new lints in the same PR; the PR's CI then proves build, tests and lints on
    the new version.
 
+### uv version
+
+CI installs [uv](https://docs.astral.sh/uv/) (the Python system-test harness runner) at **one**
+exact version stored in [`.github/uv-version`](../.github/uv-version). Every workflow installs it
+through the [`setup-uv`](../.github/actions/setup-uv/action.yml) composite action. uv is pinned
+because `astral-sh/setup-uv` without an explicit version resolves "latest" through the GitHub
+Releases API, which flakes and fails jobs unrelated to the PR (#1552).
+
+[`scripts/internal/check-uv-version.mjs`](../scripts/internal/check-uv-version.mjs) (run by the
+System-Test Harness job and `./scripts/check.sh`) fails if the file is not an exact `X.Y.Z` or if
+any workflow or other composite action calls `astral-sh/setup-uv` directly — a direct call would
+reintroduce a duplicated pin that drifts.
+
+**Bumping uv** is part of the same periodic toolchain chore as the Rust bump: write the new version
+to `.github/uv-version`, run `node scripts/internal/check-uv-version.mjs`, and let the harness jobs
+prove it. The harness's Python dependencies stay pinned separately in `tests/system/uv.lock`.
+
 ### Git hooks
 
 Committed git hooks (in [`scripts/hooks/`](../scripts/hooks/)) are enabled by `./scripts/setup.sh`
@@ -400,7 +417,7 @@ git checkout -b feature/my-feature
 
 Follow [Conventional Commits](https://www.conventionalcommits.org/):
 
-```
+```text
 <type>(<scope>): <subject>
 
 <body>
@@ -423,7 +440,7 @@ Messages fails. Use `fix(config): resolve the dev port collision`, not
 
 **Examples:**
 
-```
+```text
 feat(terminal): add horizontal scrolling option
 
 Add per-connection horizontal scroll toggle with runtime
@@ -432,7 +449,7 @@ switching via tab context menu.
 Closes #42
 ```
 
-```
+```text
 fix(ssh): handle connection timeout gracefully
 
 Previously, a connection timeout would crash the app.
@@ -580,14 +597,14 @@ The preferred approach for all bug fixes and feature work is **test-driven devel
 
 **Example commit sequence for a bug fix:**
 
-```
+```text
 test(scope): add regression test for <bug description>
 fix(scope): fix <bug description> (Closes #N)
 ```
 
 **Example commit sequence for a new feature:**
 
-```
+```text
 test(scope): add tests for <feature name>
 feat(scope): implement <feature name> (Closes #N)
 ```
@@ -719,7 +736,7 @@ scripts\build-agents.cmd          # Windows
 
 Binaries are placed in:
 
-```
+```text
 agent/target/<triple>/release/termihub-agent
 ```
 
@@ -963,7 +980,7 @@ Then verify:
 
 ### WebKitGTK not found (Linux)
 
-```
+```text
 error: could not find system library 'webkit2gtk-4.1'
 ```
 
@@ -978,7 +995,7 @@ Install the WebKitGTK development package for your distribution (see [Linux](#li
 
 ### Serial port compilation errors (Linux)
 
-```
+```text
 error: could not find system library 'libudev'
 ```
 
@@ -1124,6 +1141,8 @@ Pushing the `vX.Y.Z` tag triggers the [Release workflow](../.github/workflows/re
    checksum and a `.sig` update signature
 5. Attest build provenance for every installer, agent binary and SBOM, and publish
    CycloneDX SBOMs (see [Verifying release artifacts](#verifying-release-artifacts))
+   plus the generated third-party license notices, which every installer also bundles
+   (see [Licensing](licensing.md#generated-third-party-notices))
 6. Verify the complete asset set, including SBOMs and a valid attestation on every artifact
    (`verify-release`) — a release missing either fails here
 7. Mark a stable release as GitHub's **Latest release** (`mark-latest`), only after
@@ -1186,6 +1205,12 @@ The release workflow adds two supply-chain records to every release (CI-022,
   vulnerability response. The frontend SBOM is generated from a `node-linker=hoisted` install
   of the frozen lockfile because `cyclonedx-npm` cannot read pnpm's symlinked store; the job
   fails if any direct production dependency is missing from it.
+
+- **Third-party license notices.** `termiHub-X.Y.Z-THIRD_PARTY_NOTICES.txt` holds the full
+  license text of every Rust crate and npm production package shipped in the desktop app,
+  the agent and the RDP sidecar (the same file every installer bundles for **About →
+  Third-Party Licenses**). Regenerate it with `pnpm notices:generate`; see
+  [Licensing → Generated third-party notices](licensing.md#generated-third-party-notices).
 
 To reproduce the SBOMs locally (no build needed; generated files land next to each crate):
 

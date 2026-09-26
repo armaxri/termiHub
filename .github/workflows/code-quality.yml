@@ -640,15 +640,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
+      # Fails if `.github/uv-version` is malformed or any workflow / composite
+      # action calls astral-sh/setup-uv directly instead of ./.github/actions/setup-uv
+      # (WA-CI-017). Plain Node, preinstalled on the runner.
+      - name: Check uv version pin consistency
+        run: node scripts/internal/check-uv-version.mjs
+
       - name: Setup uv
-        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        # uv version comes from .github/uv-version (#1552, WA-CI-017).
+        uses: ./.github/actions/setup-uv
         with:
-          # Pin uv itself (issue #1552). Without an explicit version the action
-          # resolves "latest" through the GitHub Releases API, which flakes and
-          # fast-fails the whole job on transient API errors — unrelated to the
-          # PR under test. A fixed version skips that lookup entirely and also
-          # makes the toolchain reproducible; bump it deliberately.
-          version: '0.11.29'
           # Pin the interpreter for reproducibility; dependencies are resolved
           # from the committed tests/system/uv.lock (the wrapper uses --frozen).
           python-version: '3.12'

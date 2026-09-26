@@ -37,6 +37,26 @@ impl From<u32> for VncEncoding {
     }
 }
 
+impl VncEncoding {
+    /// Decode an encoding number received from the server, or `None` for one
+    /// this client does not implement (termiHub fork, #3473). The lossy
+    /// `From<u32>` maps unknown numbers to `Raw`, which would decode the
+    /// rectangle with the wrong wire format and desynchronise the stream.
+    pub(crate) fn from_wire(num: u32) -> Option<Self> {
+        match num as i32 {
+            0 => Some(VncEncoding::Raw),
+            1 => Some(VncEncoding::CopyRect),
+            7 => Some(VncEncoding::Tight),
+            15 => Some(VncEncoding::Trle),
+            16 => Some(VncEncoding::Zrle),
+            -239 => Some(VncEncoding::CursorPseudo),
+            -223 => Some(VncEncoding::DesktopSizePseudo),
+            -224 => Some(VncEncoding::LastRectPseudo),
+            _ => None,
+        }
+    }
+}
+
 impl From<VncEncoding> for u32 {
     fn from(e: VncEncoding) -> Self {
         e as u32

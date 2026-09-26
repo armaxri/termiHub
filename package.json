@@ -19,7 +19,9 @@
     "markdownlint": "markdownlint-cli2 \"docs/**/*.md\" \"*.md\"",
     "markdownlint:fix": "markdownlint-cli2 --fix \"docs/**/*.md\" \"*.md\"",
     "knip": "knip",
-    "size": "node scripts/internal/bundle-size.mjs"
+    "size": "node scripts/internal/bundle-size.mjs",
+    "notices:generate": "node scripts/internal/third-party-notices.mjs generate",
+    "notices:check": "node scripts/internal/third-party-notices.mjs check"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -75,7 +77,6 @@
       "dompurify": ">=3.4.12 <4",
       "markdown-it": ">=14.2.0 <15",
       "js-yaml": ">=4.2.0 <5",
-      "serialize-javascript": ">=7.0.5",
       "flatted": ">=3.4.2",
       "fast-uri": ">=3.1.2",
       "rollup": ">=4.59.0",
@@ -83,11 +84,8 @@
       "undici": ">=7.28.0 <8",
       "vite>picomatch": ">=4.0.4",
       "vitest>picomatch": ">=4.0.4",
-      "anymatch>picomatch": "2.3.2",
-      "readdirp>picomatch": "2.3.2",
       "micromatch>picomatch": "2.3.2",
-      "minimatch@3>brace-expansion": "1.1.14",
-      "minimatch@5>brace-expansion": ">=2.0.3"
+      "minimatch@3>brace-expansion": "1.1.14"
     },
     "onlyBuiltDependencies": [
       "esbuild"

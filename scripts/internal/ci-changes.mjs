@@ -113,7 +113,7 @@ function locationAreas(path) {
   // only per-PR check that reads them is ShellCheck over their scripts.
   if (path.startsWith("tests/docker/")) return ["scripts"];
 
-  if (path.startsWith("docs/") || path.endsWith(".md") || path === ".markdownlint.json") {
+  if (path.startsWith("docs/") || path.endsWith(".md") || path.startsWith(".markdownlint")) {
     return ["markdown"];
   }
 

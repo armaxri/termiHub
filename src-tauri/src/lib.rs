@@ -565,6 +565,9 @@ pub fn run() -> anyhow::Result<()> {
             commands::remote_desktop::remote_desktop_get_clipboard,
             commands::remote_desktop::remote_desktop_remote_clipboard_files,
             commands::remote_desktop::remote_desktop_bind_clipboard_files,
+            commands::remote_desktop_image::remote_desktop_clipboard_image_info,
+            commands::remote_desktop_image::remote_desktop_copy_clipboard_image,
+            commands::remote_desktop_image::remote_desktop_send_clipboard_image,
             commands::remote_desktop::remote_desktop_cert_decision,
             commands::remote_desktop::remote_desktop_disconnect,
             commands::remote_desktop::rdp_trust_list,
@@ -899,6 +902,8 @@ pub fn run() -> anyhow::Result<()> {
             commands::portable::resolve_portable_path_cmd,
             commands::portable::export_config_to_portable,
             commands::portable::import_config_from_portable,
+            // About screen: bundled third-party license notices (PKG-009)
+            commands::about::get_third_party_notices,
             // Update checker
             commands::update::get_app_info,
             commands::update::check_for_updates,

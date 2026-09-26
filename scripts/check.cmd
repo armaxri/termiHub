@@ -46,6 +46,18 @@ node scripts\internal\check-rust-version.mjs
 if errorlevel 1 set FAILED=1
 
 echo.
+echo === pnpm overrides documented and live ===
+REM Every pnpm.overrides entry has a row in docs/supply-chain.md; none dead (WA-CI-020).
+node scripts\internal\check-pnpm-overrides.mjs
+if errorlevel 1 set FAILED=1
+
+echo.
+echo === uv version pin consistency ===
+REM .github/uv-version is the only uv pin; no direct astral-sh/setup-uv (WA-CI-017).
+node scripts\internal\check-uv-version.mjs
+if errorlevel 1 set FAILED=1
+
+echo.
 if %FAILED%==1 (
     echo SOME CHECKS FAILED. Run scripts\format.cmd to auto-fix formatting.
     exit /b 1

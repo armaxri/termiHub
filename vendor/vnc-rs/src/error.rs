@@ -29,6 +29,15 @@ pub enum VncError {
     Vencrypt(String),
     #[error("TLS error: {0}")]
     Tls(String),
+    /// The server violated the RFB protocol or exceeded a safety bound (termiHub
+    /// fork, #3473). Ends the session cleanly instead of panicking.
+    #[error("VNC protocol error: {0}")]
+    Protocol(String),
+    /// The server sent a rectangle in an encoding this client does not support
+    /// (termiHub fork, #3473). Upstream silently decoded unknown encodings as
+    /// Raw, desynchronising the stream.
+    #[error("Unsupported VNC encoding: {0}")]
+    UnsupportedEncoding(i32),
 }
 
 impl<T> From<tokio::sync::mpsc::error::SendError<T>> for VncError {

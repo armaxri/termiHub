@@ -1,3 +1,4 @@
+pub mod about;
 pub mod agent;
 pub mod connection;
 pub mod connection_path;
@@ -19,6 +20,7 @@ pub mod projection;
 #[cfg(feature = "test-bridge")]
 pub mod projection_diag;
 pub mod remote_desktop;
+pub mod remote_desktop_image;
 pub mod restore_mode;
 pub mod session;
 pub mod session_history;

@@ -1,7 +1,8 @@
 name: Security Audit
 
 # Dependency security + supply-chain gate (pnpm audit, cargo-audit, cargo-deny)
-# for the workspace lockfiles. Moved out of code-quality.yml (#3325):
+# for the workspace lockfiles, plus the third-party notices gate (PKG-009).
+# Moved out of code-quality.yml (#3325):
 #
 #   * push to develop/main — every merge is audited post-merge; watch develop.
 #   * daily schedule       — RUSTSEC advisories and yanks are TIME-based (the tree
@@ -28,7 +29,17 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'scripts/internal/pnpm-audit-prod-gate.sh'
+      - 'scripts/internal/check-pnpm-overrides.mjs'
+      - 'scripts/internal/pnpm-audit-summary.mjs'
+      - 'docs/supply-chain.md'
       - '.github/workflows/security-audit.yml'
+      # Third-party notices gate (PKG-009): the generator, its config and inputs.
+      - 'rdp-sidecar/Cargo.lock'
+      - 'rdp-sidecar/deny.toml'
+      - 'about.toml'
+      - 'THIRD_PARTY_LICENSES.md'
+      - 'licenses/**'
+      - 'scripts/internal/third-party-notices*.mjs'
       - '.github/actions/setup-pnpm/**'
   push:
     branches: [ main, develop ]
@@ -71,6 +82,12 @@ jobs:
         with:
           node-version: '22'
 
+      # Every package.json pnpm.overrides entry must have a row (advisory +
+      # removal condition) in docs/supply-chain.md, and none may be dead (its
+      # target gone from pnpm-lock.yaml). WA-CI-020 / SUP-008. Offline, no install.
+      - name: Check pnpm overrides are documented and live
+        run: node scripts/internal/check-pnpm-overrides.mjs
+
       # Blocking gate on the RUNTIME dependency tree only. A high/critical
       # advisory that ships to users must fail CI. Scoped to `--prod` so it does
       # not fire on the dev/build toolchain (see the advisory step below) — that
@@ -90,9 +107,16 @@ jobs:
       # which reach the shipped app. Kept non-blocking so they surface in the log
       # without gating the release; promote a fix to the blocking step above once
       # the upstream dev tool patches land.
+      #
+      # Not silent, though (SUP-008): the step writes a per-severity count to the
+      # job summary and raises a warning annotation when any high/critical
+      # advisory is present. See docs/supply-chain.md -> "Audit gates".
       - name: pnpm audit (full tree, advisory)
-        run: pnpm audit --audit-level=moderate
         continue-on-error: true  # Dev-only advisories: warn, do not fail
+        run: |
+          pnpm audit --audit-level=moderate || true
+          pnpm audit --json > "$RUNNER_TEMP/pnpm-audit-full.json" || true
+          node scripts/internal/pnpm-audit-summary.mjs "$RUNNER_TEMP/pnpm-audit-full.json"
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -136,3 +160,52 @@ jobs:
       - name: Cargo Tree (duplicate versions, advisory)
         continue-on-error: true
         run: cargo tree --duplicates --workspace --edges normal || true
+
+  # Third-party license notices gate (PKG-009). release.yml generates and
+  # bundles THIRD_PARTY_NOTICES.txt; this job proves on every dependency change
+  # that the release-time generation will still succeed:
+  #   - `notices:check`: about.toml's accepted list equals deny.toml's allowlist
+  #     (cargo-deny above is what rejects an unapproved Rust license), and every
+  #     npm production dependency resolves to an allowlisted license;
+  #   - `notices:generate`: the pinned cargo-about finds a license text for
+  #     every crate of the desktop app, agent and RDP sidecar (`--fail`), and
+  #     every npm package gets one — a gap cargo-deny does not see.
+  # Dependency licenses do not change over time, so the daily schedule skips it.
+  third-party-notices:
+    name: Third-Party Notices
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup pnpm
+        uses: ./.github/actions/setup-pnpm
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Check license config and npm licenses
+        run: pnpm notices:check
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+
+      # Keep in sync with CARGO_ABOUT_VERSION in scripts/internal/third-party-notices.mjs.
+      - name: Install cargo-about
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        with:
+          tool: cargo-about@0.9.2
+
+      - name: Generate notices (dry run)
+        run: |
+          set -euo pipefail
+          pnpm notices:generate --out "$RUNNER_TEMP/THIRD_PARTY_NOTICES.txt"
+          ls -l "$RUNNER_TEMP/THIRD_PARTY_NOTICES.txt"

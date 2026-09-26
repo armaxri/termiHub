@@ -2580,6 +2580,13 @@ const DOCKER_PROBE_TIMEOUT_ENV: &str = "TERMIHUB_DOCKER_PROBE_TIMEOUT_MS";
 /// time, and across many concurrently-spawned agent processes that compounds the
 /// CI-runner oversubscription behind the Windows 10060 flake. Unset in
 /// production, where the real probe runs.
+///
+/// **Not honoured by release builds** (audit finding WA-CI-028): the env lookup is
+/// only consulted under `debug_assertions` (every `cargo test` / dev build, which
+/// is how the integration tests spawn the agent) or with the `test-hooks` cargo
+/// feature — the same gate as the AGT-008 self-update test hook. A shipping
+/// `cargo build --release` agent always runs the real probe, so a stray variable
+/// in a user's environment can never silently hide Docker support.
 const DOCKER_PROBE_SKIP_ENV: &str = "TERMIHUB_AGENT_SKIP_DOCKER_PROBE";
 
 /// Resolve the Docker probe timeout, honouring the env override when present.
@@ -2634,15 +2641,22 @@ async fn probe_docker_available(program: &str, timeout: Duration) -> bool {
 }
 
 /// Whether the Docker probe is skipped: always in this crate's unit tests, else
-/// when [`DOCKER_PROBE_SKIP_ENV`] opts out.
+/// when [`DOCKER_PROBE_SKIP_ENV`] opts out — in test/dev builds only (see
+/// [`DOCKER_PROBE_SKIP_ENV_HONOURED`]).
 ///
 /// Unit tests skip unconditionally (CI-013, #3350): ~100 dispatch tests call
 /// `initialize`, and on a host with Docker each spawned `docker info` plus
 /// `docker images`, oversubscribing CI runners. No unit test depends on the
 /// real probe; `probe_docker_available` is tested directly against shims.
 fn docker_probe_skipped() -> bool {
-    cfg!(test) || docker_probe_skip_from(std::env::var(DOCKER_PROBE_SKIP_ENV).ok().as_deref())
+    cfg!(test)
+        || (DOCKER_PROBE_SKIP_ENV_HONOURED
+            && docker_probe_skip_from(std::env::var(DOCKER_PROBE_SKIP_ENV).ok().as_deref()))
 }
+
+/// Whether this build honours [`DOCKER_PROBE_SKIP_ENV`] at all: debug builds and
+/// the `test-hooks` feature only, never a default release build (WA-CI-028).
+const DOCKER_PROBE_SKIP_ENV_HONOURED: bool = cfg!(any(debug_assertions, feature = "test-hooks"));
 
 /// Whether a [`DOCKER_PROBE_SKIP_ENV`] value opts out of the Docker probe.
 ///

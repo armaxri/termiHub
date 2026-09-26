@@ -2,7 +2,7 @@ use crate::{PixelFormat, Rect, VncError, VncEvent};
 use std::future::Future;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-use super::uninit_vec;
+use super::zeroed_vec;
 
 pub struct Decoder {}
 
@@ -29,8 +29,9 @@ impl Decoder {
         // | width*height*bytesPerPixel | PIXEL array  | pixels      |
         // +----------------------------+--------------+-------------+
         let bpp = format.bits_per_pixel / 8;
-        let buffer_size = bpp as usize * rect.height as usize * rect.width as usize;
-        let mut pixels = uninit_vec(buffer_size);
+        // termiHub fork (#3473): bound the server-chosen size before allocating.
+        let buffer_size = bpp as usize * super::rect_pixels(rect)?;
+        let mut pixels = zeroed_vec(buffer_size);
         input.read_exact(&mut pixels).await?;
         output_func(VncEvent::RawImage(*rect, pixels)).await?;
         Ok(())

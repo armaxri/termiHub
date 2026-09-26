@@ -22,8 +22,50 @@ See [armaxri/termiHub#1714](https://github.com/armaxri/termiHub/issues/1714).
   anonymous ciphers that rustls does not support and are not negotiated.
 - Adds `VncConnector::set_vencrypt(...)` to opt a connection into VeNCrypt.
 - Adds `VncError::Vencrypt` / `VncError::Tls` variants.
+- Makes the standard RFB clipboard encoding-correct and bounded (PROD-021,
+  `src/client/messages.rs`): `ServerCutText` is decoded as UTF-8 when valid and
+  as Latin-1 (the RFB-specified encoding) otherwise, instead of
+  `from_utf8_lossy`; `ClientCutText` is sent as Latin-1 when every character is
+  representable and as UTF-8 otherwise; and a `ServerCutText` longer than
+  `MAX_SERVER_CUT_TEXT_BYTES` (16 MiB) is skipped in bounded chunks rather than
+  allocated (surfaced as `ServerMsg::ServerCutTextDropped`). The Extended
+  Clipboard pseudo-encoding (UTF-8 / rich formats) is **not** implemented.
 - Drops the GUI dev-dependency (`minifb`) and the doctest example that used it so
   the crate builds as a workspace member without system GUI libraries.
+
+## Hardening against hostile servers (#3473)
+
+A VNC server — buggy or hostile — must never be able to panic the client or make
+it allocate unbounded memory. Upstream `0.5.3` did both; this fork changes:
+
+- **`SetColorMapEntries`** (`src/client/messages.rs`): parsed and discarded
+  (`ServerMsg::SetColorMapEntries`), consuming its `6 x number-of-colors` bytes
+  through a fixed buffer, instead of `unimplemented!()`.
+- **Pixel formats** (`src/codec/mod.rs`): the RGBA-emitting decoders share a
+  checked `alpha_shift` / `pixel_mask` (no `<<` overflow for server shifts, no
+  `unreachable!()` for non-32-bpp formats). Tight returns
+  `VncError::WrongPixelFormat`; the cursor pseudo-encoding consumes its payload
+  and skips the shape.
+- **Encodings** (`src/config.rs`, `src/client/connection.rs`): an encoding number
+  the client does not implement is `VncError::UnsupportedEncoding` instead of
+  being silently decoded as Raw (which desynchronised the stream).
+- **Geometry and lengths**: every pixel-carrying rectangle (and a CopyRect source)
+  must fit the 16-bit coordinate space and stay within `MAX_RECT_PIXELS`
+  (8192 x 8192); ZRLE/TRLE length prefixes are bounded by `MAX_ENCODED_BYTES`;
+  the `ServerInit` desktop name by 64 KiB; RFB/VeNCrypt failure reasons are read
+  length-bounded (`auth::read_reason`) instead of `read_to_string` to EOF. All
+  violations are `VncError::Protocol`.
+- **Decoders**: Tight/ZRLE/TRLE palette indexes and RLE runs are bounds-checked
+  (`VncError::InvalidImageData`), the TRLE/ZRLE tile cursor no longer overflows
+  `u16` on 65535-row rectangles, a Tight one-colour palette is byte-indexed, a
+  zlib stream slot emptied by an earlier failure is an error rather than an
+  `unwrap()`, and the uninitialised-buffer helper and `unsafe` pixel copies were
+  replaced with zeroed / bounds-checked equivalents.
+- **Task boundary**: the internal decoder and connection tasks run behind a
+  `catch_unwind` (`run_guarded`); a panic is logged and reported as
+  `VncEvent::Error` so the consumer ends the session cleanly.
+- Adds `VncError::Protocol` / `VncError::UnsupportedEncoding`. Regression and
+  seeded fuzz tests live in `src/client/hostile_server_tests.rs`.
 
 Everything else is upstream `0.5.3`, under the original MIT/Apache-2.0 licenses
 (`LICENSE-MIT`, `LICENSE-APACHE`).

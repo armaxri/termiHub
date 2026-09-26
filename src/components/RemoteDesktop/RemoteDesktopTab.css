@@ -223,3 +223,23 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+
+/* Image section of the clipboard panel (PROD-021) */
+.rd-clipboard__image {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid var(--border-primary);
+}
+
+.rd-clipboard__image-meta {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.rd-clipboard__image-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}

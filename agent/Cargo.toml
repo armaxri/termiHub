@@ -42,6 +42,9 @@ ftp = ["termihub-core/ftp"]
 # for the system tests (`scripts/build-agents.sh --features test-hooks`, staged
 # into the armed Docker container), which needs the hook present in an optimized
 # binary. It stays OFF for every real release build path.
+#
+# The same gate governs the `TERMIHUB_AGENT_SKIP_DOCKER_PROBE` test hatch
+# (WA-CI-028, `src/handler/dispatch.rs`): a default release agent ignores it.
 test-hooks = []
 
 [dependencies]
