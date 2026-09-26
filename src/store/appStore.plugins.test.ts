@@ -166,6 +166,8 @@ describe("appStore — plugins (#1993)", () => {
   it("starts with empty plugin state", () => {
     expect(useAppStore.getState().plugins).toEqual([]);
     expect(useAppStore.getState().pluginBackendTypes).toEqual([]);
+    // Not loaded yet: an empty list means "unknown", not "none installed" (#3344).
+    expect(useAppStore.getState().pluginsLoaded).toBe(false);
   });
 
   it("loadPlugins populates the list and derives backend types from active plugins only", async () => {
@@ -179,6 +181,7 @@ describe("appStore — plugins (#1993)", () => {
 
     const state = layoutState();
     expect(state.plugins).toHaveLength(3);
+    expect(state.pluginsLoaded).toBe(true);
     // Only the active plugin that declares a terminalBackend is projected.
     expect(state.pluginBackendTypes).toEqual([
       { pluginId: "active-be", connectionType: "active-be", displayName: "Backend active-be" },
