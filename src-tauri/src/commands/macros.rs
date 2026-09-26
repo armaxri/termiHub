@@ -1,6 +1,8 @@
 use tauri::State;
 
 use crate::macros::config::Macro;
+use crate::macros::history::MacroRun;
+use crate::macros::history_manager::MacroRunHistoryManager;
 use crate::macros::manager::MacroManager;
 use crate::utils::errors::TerminalError;
 
@@ -35,4 +37,30 @@ pub fn delete_macro(
     manager: State<'_, MacroManager>,
 ) -> Result<(), TerminalError> {
     manager.delete_macro(&macro_id)
+}
+
+/// List all recorded macro playbacks, most-recent first (#3543).
+#[tauri::command]
+pub fn list_macro_runs(
+    manager: State<'_, MacroRunHistoryManager>,
+) -> Result<Vec<MacroRun>, TerminalError> {
+    manager.list()
+}
+
+/// Record a finished macro playback. Returns the updated (capped,
+/// newest-first) history list.
+#[tauri::command]
+pub fn record_macro_run(
+    run: MacroRun,
+    manager: State<'_, MacroRunHistoryManager>,
+) -> Result<Vec<MacroRun>, TerminalError> {
+    manager.record(run)
+}
+
+/// Clear the entire macro run history.
+#[tauri::command]
+pub fn clear_macro_run_history(
+    manager: State<'_, MacroRunHistoryManager>,
+) -> Result<Vec<MacroRun>, TerminalError> {
+    manager.clear()
 }

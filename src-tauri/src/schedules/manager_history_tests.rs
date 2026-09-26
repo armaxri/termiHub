@@ -68,6 +68,24 @@ fn a_fired_run_records_start_duration_and_workflow_run_ids() {
 }
 
 #[test]
+fn a_fired_macro_run_records_its_macro_run_ids() {
+    let dir = TempDir::new().unwrap();
+    let m = enabled_manager(&dir, MissedRunPolicy::Skip);
+    let w = windows(&["main", "win-1"]);
+    let token = m.tick_all(t(10, 10), &Utc, &w).fires[0].token.clone();
+    let mut a = completed(1);
+    a.macro_run_ids = vec!["mrun-a".into()];
+    m.report(&token, "main", a, t(10, 11)).unwrap();
+    m.report(&token, "win-1", skip_report("not connected"), t(10, 11))
+        .unwrap();
+    let r = &history(&m)[0];
+    assert_eq!(r.macro_run_ids, vec!["mrun-a"]);
+    assert!(r.workflow_run_ids.is_empty());
+    let json = serde_json::to_string(r).unwrap();
+    assert!(json.contains("\"macroRunIds\":[\"mrun-a\"]"));
+}
+
+#[test]
 fn a_skipped_slot_has_no_start_or_duration() {
     let dir = TempDir::new().unwrap();
     let m = enabled_manager(&dir, MissedRunPolicy::Skip);

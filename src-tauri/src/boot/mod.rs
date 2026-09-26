@@ -997,6 +997,23 @@ pub(crate) fn init_secondary_managers(
         }
     }
 
+    // Initialize the macro run-history manager (#3543). On failure the app still
+    // starts; recording is fire-and-forget on the frontend regardless.
+    match macros::history_manager::MacroRunHistoryManager::new(app.handle()) {
+        Ok(manager) => {
+            recovery_warnings.extend(manager.take_recovery_warnings());
+            app.manage(manager);
+        }
+        Err(e) => {
+            tracing::error!("Failed to initialize macro run-history manager: {e}");
+            recovery_warnings.push(RecoveryWarning {
+                file_name: "macro-runs.json".to_string(),
+                message: "Could not initialize macro run-history storage. Macro run history is unavailable until the app is restarted.".to_string(),
+                details: Some(e.to_string()),
+            });
+        }
+    }
+
     // Initialize the session-history manager with recovery loading.
     // On failure, the app still starts but session history is unavailable.
     match session_history::manager::SessionHistoryManager::new(app.handle()) {

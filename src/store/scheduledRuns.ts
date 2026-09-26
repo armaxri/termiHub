@@ -35,6 +35,7 @@ import {
   WORKFLOW_FANOUT_CONCURRENCY,
   type FanoutOutcome,
 } from "./slices/workflowFanout";
+import { newMacroRunId } from "./slices/macroRunHistory";
 import { activeWorkflowRunCount, runWorkflowOnTarget } from "./slices/workflowRunOnTarget";
 
 /** The store access a scheduled run needs. */
@@ -188,17 +189,26 @@ async function runScheduledMacro(
   if (!macro) return skip("The macro no longer exists");
   const targets = filterConnectedTerminalTabIds(state, tabIds);
   if (targets.length === 0) return skip("None of the target connections is connected");
-  const status = await state.playMacro(macroId, { targetTabIds: targets });
+  // Pre-generate the run-history record id so the schedule's attempt log can
+  // link the playback it produced (#3543), as workflow attempts do.
+  const runId = newMacroRunId();
+  const status = await state.playMacro(macroId, {
+    targetTabIds: targets,
+    origin: "scheduled",
+    runId,
+  });
+  const ids = { macroRunIds: [runId] };
   switch (status) {
     case "completed":
-      return { outcome: "completed", targetsRun: targets.length };
+      return { outcome: "completed", targetsRun: targets.length, ...ids };
     case "cancelled":
-      return { outcome: "cancelled", targetsRun: targets.length };
+      return { outcome: "cancelled", targetsRun: targets.length, ...ids };
     case "error":
       return {
         outcome: "failed",
         message: "A target terminal disconnected during playback",
         targetsRun: targets.length,
+        ...ids,
       };
     default:
       return skip("The macro could not be played");

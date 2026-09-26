@@ -159,6 +159,7 @@ fn done(h: &Harness) {
                 message: None,
                 targets_run: 1,
                 workflow_run_ids: Vec::new(),
+                macro_run_ids: Vec::new(),
             },
             h.clock.now(),
         )

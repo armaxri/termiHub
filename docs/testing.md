@@ -4075,6 +4075,22 @@ confirms history survives a real app restart.
    lookup → its **History** says recording is off and lists no new run. Turn it
    back on; **Clear Network Tool History** empties every tool's History.
 
+### Macro run history (#3543)
+
+Recording (manual, palette, workflow step, scheduled), the caps and the History
+panel are covered by unit and component tests (`macros/history*.rs`,
+`appStore.macroRunHistory.test.ts`, `appStore.workflowRun.test.ts`,
+`MacroHistorySection.test.tsx`, `MacroSidebar.test.tsx`). This pass confirms the
+history survives a real app restart.
+
+1. Open a local terminal, then **Macros** → play a macro → the **History** panel
+   at the bottom shows one "Completed" row with `N/N`, "manual" and the tab title.
+2. Play it again from the command palette → a new "palette" row appears on top.
+3. Click another macro's **Recent runs** (clock) action → the panel shows only that
+   macro's runs (or "not been played yet"); the **×** shows all again.
+4. Quit and relaunch the app (`./scripts/dev.sh`) → the rows are still listed.
+   **Clear history** empties the panel.
+
 ### HTTP monitor check history (#3462)
 
 Recording (desktop- and agent-hosted), the caps, the throttled persistence,

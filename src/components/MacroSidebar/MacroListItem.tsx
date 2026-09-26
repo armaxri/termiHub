@@ -1,5 +1,5 @@
 import type React from "react";
-import { Play, Pencil, Copy, Download, Trash2, CalendarClock } from "lucide-react";
+import { Play, Pencil, Copy, Download, Trash2, CalendarClock, History } from "lucide-react";
 import { Button, Tooltip } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import type { Macro } from "@/types/macro";
@@ -11,6 +11,8 @@ interface MacroListItemProps {
   onEdit: (macroId: string) => void;
   /** Open the schedule editor for this macro (PROD-043). */
   onSchedule?: (macroId: string) => void;
+  /** Narrow the run-history panel to this macro's playbacks (#3543). */
+  onShowHistory?: (macroId: string) => void;
   onDuplicate: (macroId: string) => void;
   onExport: (macroId: string) => void;
   onDelete: (macroId: string) => void;
@@ -31,6 +33,7 @@ export function MacroListItem({
   onPlay,
   onEdit,
   onSchedule,
+  onShowHistory,
   onDuplicate,
   onExport,
   onDelete,
@@ -92,6 +95,22 @@ export function MacroListItem({
                 onClick={(e) => {
                   e.stopPropagation();
                   onSchedule(macro.id);
+                }}
+              />
+            </Tooltip>
+          ) : null}
+          {onShowHistory ? (
+            <Tooltip content="Recent runs" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label="Recent runs"
+                data-testid={`macro-history-${macro.id}`}
+                icon={<History size={12} />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onShowHistory(macro.id);
                 }}
               />
             </Tooltip>

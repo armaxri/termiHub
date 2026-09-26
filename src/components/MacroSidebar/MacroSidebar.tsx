@@ -12,6 +12,7 @@ import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import { serializeMacros } from "@/services/macroIo";
 import type { Macro } from "@/types/macro";
 import { MacroListItem } from "./MacroListItem";
+import { MacroHistorySection } from "./MacroHistorySection";
 import { MacroEditorDialog, type MacroEditorResult } from "./MacroEditorDialog";
 import { newId } from "@/services/transport/ids";
 import { slugify } from "@/utils/slugify";
@@ -47,6 +48,9 @@ export function MacroSidebar() {
   const startMacroRecording = useAppStore((s) => s.startMacroRecording);
 
   const [editingId, setEditingId] = useState<string | null>(null);
+  // The macro the run-history panel is narrowed to (#3543); null = every macro.
+  const [historyMacroId, setHistoryMacroId] = useState<string | null>(null);
+  const handleShowAllHistory = useCallback(() => setHistoryMacroId(null), []);
   // Authoring a brand-new macro by hand (PROD-039): opens the editor blank.
   const [creating, setCreating] = useState(false);
   const { query, setQuery, filtered } = useListFilter(macros, nameDescriptionTagsMatcher);
@@ -297,6 +301,7 @@ export function MacroSidebar() {
                 onPlay={handlePlay}
                 onEdit={handleEdit}
                 onSchedule={handleSchedule}
+                onShowHistory={setHistoryMacroId}
                 onDuplicate={handleDuplicate}
                 onExport={handleExportOne}
                 onDelete={handleDelete}
@@ -307,6 +312,7 @@ export function MacroSidebar() {
           })}
         </div>
       )}
+      <MacroHistorySection macroId={historyMacroId} onShowAll={handleShowAllHistory} />
       <MacroEditorDialog
         open={creating || editingMacro !== null}
         macro={creating ? null : editingMacro}

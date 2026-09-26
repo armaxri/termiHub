@@ -1461,10 +1461,10 @@ sequenceDiagram
 - **Attempt history** (`history.rs`, schema v2, #3528) — every settled attempt (a fired run or a
   skipped slot with its reason) becomes `lastResult` and the newest entry of the schedule's
   `history`, capped at the last 20. A fired run records its start time, duration and the ids of
-  the workflow run-history records it produced; a paused slot records nothing. The log stays in
+  the workflow or macro run-history records it produced; a paused slot records nothing. The log stays in
   `schedules.json` (a few KiB per schedule); the v1 → v2 migration seeds it from `lastResult`,
-  and the version bump keeps an older build from overwriting it. Macros have no run-history
-  store of their own: a scheduled macro's attempts live in this log.
+  and the version bump keeps an older build from overwriting it. A scheduled macro's attempt links
+  the record it produced in the macro run history (`macroRunIds`).
 - **Timing** — `timing.rs` is pure and generic over `chrono::TimeZone` (production uses
   `chrono::Local`). Intervals count absolute minutes from when the schedule was enabled; a local
   time that does not exist (spring-forward) fires at the first valid minute after the gap, and a
@@ -1480,8 +1480,13 @@ sequenceDiagram
 - **Execution** (`src/store/scheduledRuns.ts`) — unattended: only already-connected tabs opened
   from a target connection, no connecting, no prompts (a required parameter without a default or
   an un-allowlisted local program makes it skip/fail), and never while another run or macro
-  playback is active in that window. Workflow runs are recorded in the run history with the
-  `scheduled` origin; the status bar shows "N schedules active".
+  playback is active in that window. Workflow runs and macro playbacks are recorded in their run
+  histories with the `scheduled` origin; the status bar shows "N schedules active".
+- **Macro run history** (`src-tauri/src/macros/history*.rs`, #3543) — every started macro
+  playback (manual, command palette, a workflow's `run-macro` step, scheduled) is recorded
+  fire-and-forget in `macro-runs.json`: macro id + name, start/end, outcome, steps played,
+  target count + tab titles, origin. Metadata only — never the macro's recorded input. Capped at
+  the newest 200 records and 90 days; shown in the Macros sidebar's History panel.
 
 #### Unified backup and restore
 
@@ -1490,7 +1495,7 @@ Settings → **Backup & Restore** backs up all app data to one file and restores
 version; the registry in `backup/sections.rs` lists them — connections (with agents; passwords are
 stripped as defence in depth), settings (including custom themes and keyboard shortcuts),
 workspaces, macros, workflows, schedules, tunnels, embedded servers, Wake-on-LAN devices, HTTP
-monitors and network-tool history. Session history, workflow run history, the last session and transfer state
+monitors and network-tool history. Session history, workflow and macro run history, the last session and transfer state
 are deliberately not backed up. The optional **credentials** section is the credential-vault file
 object above, sealed with the backup passphrase and gated exactly like a vault export
 (master-password re-authentication, or a fresh OS user verification in OS-keychain mode —

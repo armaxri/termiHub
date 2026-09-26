@@ -70,6 +70,7 @@ mod tests {
             started_at: None,
             duration_ms: None,
             workflow_run_ids: Vec::new(),
+            macro_run_ids: Vec::new(),
             outcome: ScheduleRunOutcome::Skipped,
             message: Some(format!("skip {i}")),
             catch_up: false,

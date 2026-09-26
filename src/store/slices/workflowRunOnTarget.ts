@@ -47,6 +47,7 @@ import {
   openWorkflowOutputContent,
   setWorkflowOutputProcessResult,
 } from "../workflowRunBridge";
+import { buildMacroRun, macroTargetLabel, recordMacroRun } from "./macroRunHistory";
 import type { LocalProcessAuthDecision, WorkflowRunOutputLine } from "./workflowsSlice";
 
 /**
@@ -234,10 +235,24 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     if (!injector) return false;
     const macro = get().macros.find((m) => m.id === macroId);
     if (!macro || macro.steps.length === 0) return false;
+    const startedAt = new Date();
     const macroHandle = runMacroPlayback(macro.steps, (data) => injector(targetTabId, data), {
       timingMode: "real-time",
     });
     const macroResult = await macroHandle.done;
+    recordMacroRun(
+      set,
+      buildMacroRun({
+        macro,
+        startedAt,
+        endedAt: new Date(),
+        status: macroResult.status,
+        stepsPlayed: macroResult.stepsPlayed,
+        targetLabels: [targetLabel ?? macroTargetLabel(get(), targetTabId)],
+        origin: "workflow-step",
+        error: macroResult.status === "error" ? "The terminal stopped accepting input" : undefined,
+      })
+    );
     return macroResult.status === "completed";
   };
 

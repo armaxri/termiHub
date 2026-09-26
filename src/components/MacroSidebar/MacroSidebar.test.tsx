@@ -145,6 +145,36 @@ describe("MacroSidebar", () => {
     expect(query("macro-name-macro-1")?.textContent).toBe("Deploy sequence");
   });
 
+  it("narrows the run history to a macro from its Recent runs action (#3543)", () => {
+    const base = {
+      startedAt: "2026-09-20T00:00:00Z",
+      endedAt: "2026-09-20T00:00:01Z",
+      status: "completed" as const,
+      stepsPlayed: 1,
+      totalSteps: 1,
+      targetCount: 1,
+      origin: "manual" as const,
+    };
+    useAppStore.setState({
+      macros: sampleMacros,
+      loadMacroRuns: vi.fn().mockResolvedValue(undefined),
+      macroRuns: [
+        { ...base, id: "r1", macroId: "macro-1", macroName: "Deploy sequence" },
+        { ...base, id: "r2", macroId: "macro-2", macroName: "Login banner" },
+      ],
+    });
+    render();
+    expect(query("macro-run-r1")).not.toBeNull();
+    expect(query("macro-run-r2")).not.toBeNull();
+
+    act(() => query("macro-history-macro-2")!.click());
+    expect(query("macro-run-r1")).toBeNull();
+    expect(query("macro-run-r2")).not.toBeNull();
+
+    act(() => query("macro-history-show-all")!.click());
+    expect(query("macro-run-r1")).not.toBeNull();
+  });
+
   it("filters the list by the search query across name/description/tags", () => {
     useAppStore.setState({ macros: sampleMacros });
     render();

@@ -49,6 +49,8 @@ export interface ScheduleRunResult {
   durationMs?: number;
   /** Workflow run-history record ids this attempt produced (workflows only). */
   workflowRunIds?: string[];
+  /** Macro run-history record ids this attempt produced (macros only, #3543). */
+  macroRunIds?: string[];
   outcome: ScheduleRunOutcome;
   /** The skip reason, the failure, or the target count. */
   message?: string;
@@ -121,4 +123,6 @@ export interface WindowRunReport {
   targetsRun: number;
   /** Workflow run-history record ids the run produced in this window. */
   workflowRunIds?: string[];
+  /** Macro run-history record ids the run produced in this window (#3543). */
+  macroRunIds?: string[];
 }

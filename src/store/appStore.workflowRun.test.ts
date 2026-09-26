@@ -78,6 +78,21 @@ vi.mock("@/services/workflowApi", () => ({
   }),
 }));
 
+// Macro run-history recording (#3543): capture what the playback paths record.
+const recordedMacroRuns: import("@/types/macro").MacroRun[] = [];
+vi.mock("@/services/macroApi", () => ({
+  listMacros: vi.fn(() => Promise.resolve([])),
+  getMacro: vi.fn(),
+  saveMacro: vi.fn((m: Macro) => Promise.resolve(m)),
+  deleteMacro: vi.fn(() => Promise.resolve()),
+  listMacroRuns: vi.fn(() => Promise.resolve([...recordedMacroRuns])),
+  recordMacroRun: vi.fn((run: import("@/types/macro").MacroRun) => {
+    recordedMacroRuns.unshift(run);
+    return Promise.resolve([...recordedMacroRuns]);
+  }),
+  clearMacroRunHistory: vi.fn(() => Promise.resolve([])),
+}));
+
 // The guarded local-process backend (#1857) is mocked so no Tauri command runs;
 // `invokeRunLocalProcess` records what it was asked to spawn.
 const invokeRunLocalProcess = vi.fn((_args: { program: string; args: string[] }) =>
@@ -492,6 +507,37 @@ describe("appStore — workflow run slice (#1852)", () => {
     expect(injected).toEqual(["line1\n", "line2\n", "tail -f app.log\n"]);
     expect(regionView().run).toBeNull();
     expect(toast.success).toHaveBeenCalled();
+  });
+
+  it("records a run-macro step's playback in the macro run history (#3543)", async () => {
+    seedConnectedTerminal();
+    recordedMacroRuns.length = 0;
+    const macro: Macro = {
+      id: "m1",
+      name: "tail log",
+      tags: [],
+      steps: [{ data: "tail -f app.log\n", delayMs: 0 }],
+      createdAt: "",
+      updatedAt: "",
+    };
+    useAppStore.setState({
+      macros: [macro],
+      workflows: [workflow("w1", [{ kind: "run-macro", macroId: "m1" }])],
+    });
+
+    await useAppStore.getState().runWorkflow("w1");
+
+    await vi.waitFor(() => expect(recordedMacroRuns).toHaveLength(1));
+    expect(recordedMacroRuns[0]).toMatchObject({
+      macroId: "m1",
+      macroName: "tail log",
+      status: "completed",
+      origin: "workflow-step",
+      stepsPlayed: 1,
+      totalSteps: 1,
+      targetCount: 1,
+    });
+    expect(JSON.stringify(recordedMacroRuns[0])).not.toContain("tail -f");
   });
 
   describe("run-local-process guardrails (#1857)", () => {
@@ -1722,7 +1768,17 @@ describe("appStore — scheduled runs (PROD-043)", () => {
       store
     );
 
-    expect(report).toEqual({ outcome: "completed", targetsRun: 1 });
+    expect(report).toEqual({
+      outcome: "completed",
+      targetsRun: 1,
+      macroRunIds: [expect.any(String)],
+    });
     expect(injected).toEqual([{ tabId: "tab-a", data: "ping -c1 host\n" }]);
+    // The attempt links the scheduled playback's run-history record (#3543).
+    await vi.waitFor(() =>
+      expect(recordedMacroRuns.some((r) => r.id === report.macroRunIds?.[0])).toBe(true)
+    );
+    const recorded = recordedMacroRuns.find((r) => r.id === report.macroRunIds?.[0]);
+    expect(recorded).toMatchObject({ origin: "scheduled", targetLabels: ["tab-a"] });
   });
 });

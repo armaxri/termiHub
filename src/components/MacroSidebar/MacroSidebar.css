@@ -78,3 +78,66 @@
   font-size: var(--font-size-2xs);
   line-height: 16px;
 }
+
+/* Persisted macro run-history panel (#3543), mirroring the workflow one. */
+.macro-history {
+  display: flex;
+  flex-direction: column;
+  max-height: 40%;
+  border-top: 1px solid var(--border-primary);
+}
+
+.macro-history__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-xxs) var(--spacing-sm);
+}
+
+.macro-history__title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.macro-history__filter {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.macro-history__actions {
+  display: inline-flex;
+  align-items: center;
+}
+
+.macro-history__list {
+  overflow-y: auto;
+  padding: var(--spacing-xxs) 0;
+}
+
+.macro-history__empty {
+  padding: var(--spacing-sm) var(--spacing-md);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.macro-history__meta {
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
+}
+
+.macro-history__error {
+  display: block;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
