@@ -1162,7 +1162,7 @@ pub(crate) mod tests {
                 .expect("worker B takes over");
             assert_eq!(next_evicted(&mut rx_a).await, "takeover");
 
-            client_a.attach().await.expect("A reclaims");
+            client_a.take_over().await.expect("A reclaims");
             assert!(!client_a.is_evicted(), "a reclaim clears A's eviction");
             assert_eq!(next_evicted(&mut rx_b).await, "takeover");
             assert!(client_b.is_evicted(), "B is evicted by the reclaim");
