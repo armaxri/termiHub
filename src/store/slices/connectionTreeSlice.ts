@@ -18,10 +18,11 @@ import {
   mirrorConnectionIntent,
   persistConnectionMutation,
 } from "@/store/connectionsBridge";
-import { SavedConnection, ConnectionFolder } from "@/types/connection";
+import { SavedConnection, ConnectionFolder, ConnectionIdChange } from "@/types/connection";
 import { TabContent } from "@/types/terminal";
 import { frontendLog } from "@/utils/frontendLog";
 import { connectionBookmarkScope } from "@/utils/fileBookmarkScope";
+import { remapTabContentConnectionIds } from "@/utils/connectionIdChanges";
 import { useFileBookmarksStore } from "@/store/fileBookmarksStore";
 import { readConfigBoolean, readConfigString } from "@/utils/connectionConfigFields";
 
@@ -84,6 +85,12 @@ export interface ConnectionTreeSlice {
     connection: SavedConnection,
     currentSource: string | null
   ) => Promise<SavedConnection | null>;
+  /**
+   * Re-point open tabs at their connections' new ids after a rename or move
+   * (#3579) — the frontend side of the backend `connection-ids-changed` event.
+   * See `src/utils/connectionIdChanges.ts` for which references follow.
+   */
+  followConnectionIdChanges: (changes: readonly ConnectionIdChange[]) => void;
 }
 
 /**
@@ -205,6 +212,15 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
   };
 
   return {
+    followConnectionIdChanges: (changes) => {
+      // Content-only mutation (#2562), like the delete sweep above: the tabs keep
+      // running; they just point at the connection's new id.
+      set((state) => {
+        const next = remapTabContentConnectionIds(state.tabContent, changes);
+        return next ? { tabContent: next } : {};
+      });
+    },
+
     reloadExternalConnections: async () => {
       try {
         // Re-reads the configured external files and folds the refreshed unified

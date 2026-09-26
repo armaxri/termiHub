@@ -29,6 +29,12 @@ impl DockerFileBrowser {
             container_id,
         }
     }
+
+    /// A cloneable handle to the same container for a background streaming
+    /// transfer that must not hold the session lock (PARITY-004, #3567).
+    pub(crate) fn transfer_target(&self) -> super::transfer::DockerTransferTarget {
+        super::transfer::DockerTransferTarget::new(self.client.clone(), self.container_id.clone())
+    }
 }
 
 /// Environment prefix that pins a stable machine locale for every command run
@@ -55,7 +61,7 @@ const C_LOCALE_PREFIX: [&str; 3] = ["env", "LC_ALL=C", "LANG=C"];
 
 /// Prepend the [`C_LOCALE_PREFIX`] to a command's argv so it runs under a
 /// stable machine locale (see the constant's docs for why).
-fn with_c_locale(cmd: Vec<&str>) -> Vec<&str> {
+pub(super) fn with_c_locale(cmd: Vec<&str>) -> Vec<&str> {
     let mut prefixed = Vec::with_capacity(cmd.len() + C_LOCALE_PREFIX.len());
     prefixed.extend_from_slice(&C_LOCALE_PREFIX);
     prefixed.extend(cmd);
@@ -128,7 +134,7 @@ fn list_dir_argv(path: &str) -> Vec<&str> {
 }
 
 /// Run a command inside the container and return stdout as a string.
-async fn exec_command(
+pub(super) async fn exec_command(
     client: &bollard::Docker,
     container_id: &str,
     cmd: Vec<&str>,
@@ -369,6 +375,13 @@ impl FileBrowser for DockerFileBrowser {
     async fn copy(&self, _src: &str, _dest: &str) -> Result<(), FileError> {
         Err(FileError::NotSupported)
     }
+
+    /// Expose the concrete browser so a session-scoped caller holding only a
+    /// `&dyn FileBrowser` can reach the streaming transfer handle
+    /// ([`docker_transfer_target_of`](super::docker_transfer_target_of)).
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
 }
 
 // --- Parsing helpers (ported from agent/src/files/docker.rs) ---
@@ -502,7 +515,7 @@ fn parse_stat_output(output: &str, path: &str) -> Result<FileEntry, FileError> {
 /// When `stderr` carries a message it is classified via [`map_docker_error`]
 /// (preserving NotFound / PermissionDenied); otherwise a concrete
 /// [`FileError::OperationFailed`] is synthesized from the exit code.
-fn check_exec_exit_code(exit_code: Option<i64>, stderr: &[u8]) -> Result<(), FileError> {
+pub(super) fn check_exec_exit_code(exit_code: Option<i64>, stderr: &[u8]) -> Result<(), FileError> {
     if exit_code == Some(0) {
         return Ok(());
     }

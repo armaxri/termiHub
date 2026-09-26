@@ -106,11 +106,18 @@ export function ExportDialog() {
         ]}
       />
 
+      {mode === "plain" && (
+        <p className="export-dialog__warning" data-testid="export-plain-hint">
+          Shared credentials are exported by name only — the importing machine asks for their
+          secrets. Choose "With credentials" to include them.
+        </p>
+      )}
+
       {mode === "encrypted" && (
         <div className="export-dialog__password-section">
           <p className="export-dialog__warning" data-testid="export-warning">
-            Credentials will be encrypted with AES-256-GCM. You will need this password to import
-            them on another machine.
+            Credentials, including the shared credentials these connections use, will be encrypted
+            with AES-256-GCM. You will need this password to import them on another machine.
           </p>
           <PasswordInput
             className="ui-input"

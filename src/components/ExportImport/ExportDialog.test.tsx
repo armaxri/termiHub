@@ -74,4 +74,11 @@ describe("ExportDialog", () => {
 
     expect(mockedExport).toHaveBeenCalledWith(null, null);
   });
+
+  it("explains that plain mode exports shared credentials by name only", () => {
+    useAppStore.setState({ exportDialogOpen: true });
+    act(() => root.render(<ExportDialog />));
+
+    expect(query("export-plain-hint")?.textContent).toContain("Shared credentials");
+  });
 });

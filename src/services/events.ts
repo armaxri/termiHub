@@ -8,6 +8,7 @@ import { CredentialStoreStatusInfo } from "@/types/credential";
 import { ServerState } from "@/types/embeddedServer";
 import { XServerConsentRequest, XServerProgress } from "@/types/xserver";
 import { SshHostKeyPromptPayload } from "@/types/sshHostKey";
+import type { ConnectionIdChange } from "@/types/connection";
 import type {
   SshKeyboardInteractivePromptClosedPayload,
   SshKeyboardInteractivePromptPayload,
@@ -655,6 +656,24 @@ export async function onPersistentSessionStateChanged(
       attachedTabCount: event.payload.attached_tab_count,
       errorMessage: event.payload.error_message,
     });
+  });
+}
+
+// --- Saved-connection id changes ---
+
+/** Emitted by the backend after saved connections' ids changed (#3579). */
+export const CONNECTION_IDS_CHANGED_EVENT = "connection-ids-changed";
+
+/**
+ * Subscribe to saved-connection id changes — a rename or move of a connection
+ * or of a folder above it changes its path-based id (#3569). The changes of one
+ * callback apply simultaneously (see `connectionIdRemapper`).
+ */
+export async function onConnectionIdsChanged(
+  callback: (changes: ConnectionIdChange[]) => void
+): Promise<UnlistenFn> {
+  return await listen<ConnectionIdChange[]>(CONNECTION_IDS_CHANGED_EVENT, (event) => {
+    callback(event.payload);
   });
 }
 

@@ -8,10 +8,10 @@ import type { DragOutStagingEntry } from "@/services/api";
  * drag.
  *
  * - A **local** row already has a real path, so the native drag starts at once.
- * - A **transfer-queue** session row (SFTP / FTP) — file or folder — is first
+ * - A **transfer-queue** session row (SFTP / FTP / Docker) — file or folder — is first
  *   downloaded into a private staging directory through the transfer queue
  *   (folders are walked recursively, within {@link DRAG_OUT_LIMITS});
- * - a **byte-based** session row (Docker / remote agent) is staged by the
+ * - a **byte-based** session row (remote agent) is staged by the
  *   backend, which reads it through the session into a directory it owns.
  *
  * When staging finishes while the pointer is still held outside the window the
@@ -51,7 +51,7 @@ export type DragOutPlan =
 /**
  * Decide how `entries` can leave the window: local paths go straight to the OS
  * drag; transfer-queue session rows (files and folders) are staged through the
- * queue; byte-based session rows (Docker / agent) are staged by the backend.
+ * queue; byte-based session rows (agent) are staged by the backend.
  */
 export function planDragOut(entries: FileEntry[], source: DragOutSource): DragOutPlan {
   if (entries.length === 0) return { kind: "refuse", message: "Nothing to drag" };

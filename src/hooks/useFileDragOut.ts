@@ -114,7 +114,7 @@ async function stageRemote(sessionId: string, entries: FileEntry[]): Promise<str
 }
 
 /**
- * Stage byte-based session rows (Docker / remote agent — no transfer queue):
+ * Stage byte-based session rows (remote agent — no transfer queue):
  * the backend reads them through the session into a staging directory it owns
  * (#3491). Returns the local copy of each dragged row, or `null` on failure
  * (already surfaced; the backend discards a failed staging dir itself).
@@ -145,8 +145,8 @@ async function stageSessionBytes(
  * Returns the `onDragOut` handler for {@link FileBrowserDndProvider}:
  *
  * - local rows start a native OS file drag of their real paths immediately;
- * - SFTP / FTP rows (files, and folders walked recursively) are downloaded to a
- *   private staging directory through the transfer queue first; Docker / agent
+ * - SFTP / FTP / Docker rows (files, and folders walked recursively) are
+ *   downloaded to a private staging directory through the transfer queue first; agent
  *   rows are staged by the backend through the session (#3491). If the pointer is still held outside the window when
  *   that finishes, the native drag starts right away; otherwise the user is told
  *   the files are ready, and dragging the same unchanged rows out again within

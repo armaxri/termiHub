@@ -30,9 +30,10 @@ const ICON = 14;
  * - `failed` / `cancelled` → Retry, Remove
  *
  * Every Transfer Queue row is a queued transfer on the backend's transfer queue
- * — SFTP (PROD-0012), remote-to-remote SFTP (PROD-0013) and FTP — and all of
- * them honour pause / resume / retry, so these controls render for every row
- * (#3304). Byte-based Docker / remote-agent transfers never create a row.
+ * — SFTP (PROD-0012), remote-to-remote SFTP (PROD-0013), FTP and Docker
+ * (#3567) — and all of them honour pause / resume / retry, so these controls
+ * render for every row (#3304). Byte-based remote-agent transfers never create
+ * a row.
  *
  * Each button composes the shared {@link Button} primitive (ghost, icon-only);
  * async control handlers drive the primitive's pending → error/success

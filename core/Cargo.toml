@@ -359,6 +359,11 @@ docker = [
     # crate. Already compiled into every shipping build (src-tauri + agent both
     # depend on it non-optionally), so this adds no new supply-chain surface.
     "dep:base64",
+    # Local-file streaming for the Docker transfer executor
+    # (files/transfer/docker.rs: local read/append/create/metadata/remove).
+    "tokio/fs",
+    # `StreamReader` adapts the `docker exec` stdout stream into an `AsyncRead`.
+    "tokio-util/io",
 ]
 wsl = ["dep:portable-pty", "dep:tracing", "dep:uuid"]
 ftp = [
