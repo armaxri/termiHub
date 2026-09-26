@@ -269,8 +269,8 @@ fn daily_fires_later_today_or_tomorrow() {
 
 #[test]
 fn daily_uses_local_date_not_utc_date() {
-    // 23:30Z on 1 June is already 01:30 local on 2 June in Berlin: a 00:15
-    // daily run is due 2 June 22:15Z → no wait, 00:15 local on 3 June.
+    // 23:30Z on 1 June is already 01:30 local on 2 June in Berlin, so the next
+    // 00:15 local is on 3 June (22:15Z on 2 June).
     let rule = daily("00:15");
     assert_eq!(
         next(&rule, utc(2026, 6, 1, 23, 30)),

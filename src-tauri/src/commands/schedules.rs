@@ -10,8 +10,6 @@ use crate::schedules::manager::{
 use crate::schedules::runner::EVENT_SCHEDULES_CHANGED;
 use crate::utils::errors::TerminalError;
 
-type Manager<'a> = State<'a, Arc<ScheduleManager>>;
-
 fn notify(app: &AppHandle) {
     if let Err(e) = app.emit(EVENT_SCHEDULES_CHANGED, ()) {
         tracing::warn!("failed to emit {EVENT_SCHEDULES_CHANGED}: {e}");
@@ -21,7 +19,9 @@ fn notify(app: &AppHandle) {
 /// The scheduler state: the global pause switch and every schedule with its
 /// next run time.
 #[tauri::command]
-pub fn list_schedules(manager: Manager<'_>) -> Result<SchedulerState, TerminalError> {
+pub fn list_schedules(
+    manager: State<'_, Arc<ScheduleManager>>,
+) -> Result<SchedulerState, TerminalError> {
     manager.state(chrono::Utc::now(), &chrono::Local)
 }
 
@@ -31,7 +31,7 @@ pub fn list_schedules(manager: Manager<'_>) -> Result<SchedulerState, TerminalEr
 pub fn save_schedule(
     schedule: ScheduleInput,
     app: AppHandle,
-    manager: Manager<'_>,
+    manager: State<'_, Arc<ScheduleManager>>,
 ) -> Result<ScheduleView, TerminalError> {
     let view = manager.save(schedule, chrono::Utc::now(), &chrono::Local)?;
     notify(&app);
@@ -43,7 +43,7 @@ pub fn save_schedule(
 pub fn delete_schedule(
     schedule_id: String,
     app: AppHandle,
-    manager: Manager<'_>,
+    manager: State<'_, Arc<ScheduleManager>>,
 ) -> Result<(), TerminalError> {
     manager.delete(&schedule_id)?;
     notify(&app);
@@ -58,7 +58,7 @@ pub fn set_schedule_enabled(
     enabled: bool,
     confirmed: bool,
     app: AppHandle,
-    manager: Manager<'_>,
+    manager: State<'_, Arc<ScheduleManager>>,
 ) -> Result<ScheduleView, TerminalError> {
     let view = manager.set_enabled(
         &schedule_id,
@@ -76,7 +76,7 @@ pub fn set_schedule_enabled(
 pub fn set_schedules_paused(
     paused: bool,
     app: AppHandle,
-    manager: Manager<'_>,
+    manager: State<'_, Arc<ScheduleManager>>,
 ) -> Result<SchedulerState, TerminalError> {
     let state = manager.set_paused(paused, chrono::Utc::now(), &chrono::Local)?;
     notify(&app);
@@ -90,7 +90,7 @@ pub fn report_schedule_run(
     report: WindowRunReport,
     window: tauri::Window,
     app: AppHandle,
-    manager: Manager<'_>,
+    manager: State<'_, Arc<ScheduleManager>>,
 ) -> Result<(), TerminalError> {
     if manager.report(&token, window.label(), report, chrono::Utc::now())? {
         notify(&app);

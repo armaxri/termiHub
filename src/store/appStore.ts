@@ -135,6 +135,7 @@ import { createTransfersSlice, TransfersSlice } from "./slices/transfersSlice";
 import { createConnectionTreeSlice, ConnectionTreeSlice } from "./slices/connectionTreeSlice";
 import { createMonitoringSlice, MonitoringSlice } from "./slices/monitoringSlice";
 import { createWorkflowsSlice, WorkflowsSlice } from "./slices/workflowsSlice";
+import { createSchedulesSlice, SchedulesSlice } from "./slices/schedulesSlice";
 import { createCredentialStoreSlice, CredentialStoreSlice } from "./slices/credentialStoreSlice";
 import { createUpdateCheckerSlice, UpdateCheckerSlice } from "./slices/updateCheckerSlice";
 import { createPortableModeSlice, PortableModeSlice } from "./slices/portableModeSlice";
@@ -404,6 +405,7 @@ export interface AppState
     ConnectionTreeSlice,
     MonitoringSlice,
     WorkflowsSlice,
+    SchedulesSlice,
     WorkspacesSlice,
     CredentialStoreSlice,
     UpdateCheckerSlice,
@@ -2609,6 +2611,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     ...createConnectionTreeSlice(set, get, store),
     ...createMonitoringSlice(set, get, store),
     ...createWorkflowsSlice(set, get, store),
+    ...createSchedulesSlice(set, get, store),
     ...createWorkspacesSlice(set, get, store),
     ...createCredentialStoreSlice(set, get, store),
     ...createUpdateCheckerSlice(set, get, store),
@@ -5004,6 +5007,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
       get().loadMacros();
       // Load workflows
       get().loadWorkflows();
+      // Load scheduled runs (PROD-043)
+      get().loadSchedules();
       // Load installed plugins (#1997)
       get().loadPlugins();
       // Load app mode (portable vs. installed) for status bar and settings display

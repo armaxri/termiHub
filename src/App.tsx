@@ -34,6 +34,7 @@ import { useSessionOwnershipSuperseded } from "@/hooks/useSessionOwnershipSupers
 import { useTransferReconcile } from "@/hooks/useTransferReconcile";
 import { useEmbeddedServerEvents } from "@/hooks/useEmbeddedServerEvents";
 import { usePluginEvents } from "@/hooks/usePluginEvents";
+import { useScheduledRuns } from "@/hooks/useScheduledRuns";
 import { usePluginUpdateSchedule } from "@/hooks/usePluginUpdateSchedule";
 import { useCredentialStoreEvents } from "@/hooks/useCredentialStoreEvents";
 import { useAgentUpdateEvents } from "@/hooks/useAgentUpdateEvents";
@@ -61,6 +62,7 @@ function App() {
   useTransferReconcile();
   useEmbeddedServerEvents();
   usePluginEvents();
+  useScheduledRuns();
   usePluginUpdateSchedule();
   useCredentialStoreEvents();
   useAgentUpdateEvents();
