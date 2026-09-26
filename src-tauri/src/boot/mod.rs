@@ -1066,7 +1066,17 @@ pub(crate) fn init_secondary_managers(
 
     // Initialize embedded server manager with recovery loading.
     // On failure, the app still starts but embedded servers are unavailable.
-    match embedded_servers::server_manager::EmbeddedServerManager::new(app.handle()) {
+    // Passwords go to the shared credential store (#3514); it is managed by
+    // `init_credentials_and_connections`, which runs first.
+    let credential_store: Arc<dyn credential::CredentialStore> =
+        match app.try_state::<Arc<credential::CredentialManager>>() {
+            Some(manager) => manager.inner().clone(),
+            None => Arc::new(credential::NullStore),
+        };
+    match embedded_servers::server_manager::EmbeddedServerManager::new(
+        app.handle(),
+        credential_store,
+    ) {
         Ok(manager) => {
             recovery_warnings.extend(manager.take_recovery_warnings());
 
