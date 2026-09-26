@@ -446,6 +446,21 @@ pub(crate) fn init_session_managers(
     }
     app.manage(ssh_host_key_verifier);
 
+    // SSH keyboard-interactive (OTP / 2FA / PAM) prompts (#3371): register the
+    // desktop prompter so every SSH connect path (terminal, tunnel, SFTP, jump
+    // hops, Test Connection) can ask the user through the in-app dialog.
+    let ssh_ki_prompter = std::sync::Arc::new(
+        crate::session::ssh_keyboard_interactive::SshKeyboardInteractivePrompter::new(
+            std::sync::Arc::new(app.handle().clone()),
+        ),
+    );
+    if !termihub_core::backends::ssh::keyboard_interactive::set_keyboard_interactive_prompter(
+        ssh_ki_prompter.clone(),
+    ) {
+        tracing::warn!("SSH keyboard-interactive prompter was already registered");
+    }
+    app.manage(ssh_ki_prompter);
+
     // X server provisioning (#1052): register the provisioner so the SSH
     // connect path can ensure a local X server before X11 forwarding
     // starts. The manager itself (#1049) is created and managed above.

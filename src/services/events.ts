@@ -8,6 +8,10 @@ import { CredentialStoreStatusInfo } from "@/types/credential";
 import { ServerState } from "@/types/embeddedServer";
 import { XServerConsentRequest, XServerProgress } from "@/types/xserver";
 import { SshHostKeyPromptPayload } from "@/types/sshHostKey";
+import type {
+  SshKeyboardInteractivePromptClosedPayload,
+  SshKeyboardInteractivePromptPayload,
+} from "@/types/sshKeyboardInteractive";
 import type { TransferProgress } from "@/services/api";
 import type {
   RemoteDesktopFramePayload,
@@ -138,6 +142,38 @@ export async function onSshHostKeyPrompt(
   return await listen<SshHostKeyPromptPayload>("ssh-host-key-prompt", (event) => {
     callback(event.payload);
   });
+}
+
+/**
+ * Subscribe to SSH keyboard-interactive (OTP / 2FA / PAM) prompts (#3371). The
+ * global `SshKeyboardInteractivePrompt` dialog collects the answers and replies
+ * via `sshKeyboardInteractiveRespond`.
+ */
+export async function onSshKeyboardInteractivePrompt(
+  callback: (payload: SshKeyboardInteractivePromptPayload) => void
+): Promise<UnlistenFn> {
+  return await listen<SshKeyboardInteractivePromptPayload>(
+    "ssh-keyboard-interactive-prompt",
+    (event) => {
+      callback(event.payload);
+    }
+  );
+}
+
+/**
+ * Subscribe to "prompt no longer awaited" notices for keyboard-interactive
+ * prompts (#3371) — the connect was cancelled or timed out, so the dialog for
+ * that `prompt_id` must close.
+ */
+export async function onSshKeyboardInteractivePromptClosed(
+  callback: (payload: SshKeyboardInteractivePromptClosedPayload) => void
+): Promise<UnlistenFn> {
+  return await listen<SshKeyboardInteractivePromptClosedPayload>(
+    "ssh-keyboard-interactive-prompt-closed",
+    (event) => {
+      callback(event.payload);
+    }
+  );
 }
 
 /** Subscribe to terminal exit events */

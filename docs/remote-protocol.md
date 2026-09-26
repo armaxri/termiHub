@@ -2648,6 +2648,18 @@ that could reach the port had full agent access — which this handshake closes.
 - The SQLite database should be readable only by the agent user (`chmod 600`)
 - The agent MUST validate all input parameters (session IDs, config values, PTY sizes) before acting on them
 
+### Interactive SSH Authentication on the Agent
+
+When the **agent** authenticates an SSH connection itself (agent-hosted SSH
+sessions, `tunnel.start`'s `sshConfig`, remote monitoring), `authMethod` may be
+`"keyboard-interactive"` and the core SSH backend also falls back to
+keyboard-interactive after a refused password or a partial-success first factor
+(#3371). The agent has **no prompt round-trip to the desktop yet**, so it can
+only answer a round that consists of a single echo-off password prompt, using
+the configured `password`. Any other prompt (OTP / verification code) fails the
+connect with a clear "no prompt is available here" error rather than hanging.
+The prompt notification + response method is tracked in #3375.
+
 ### Threat Model
 
 | Threat              | Mitigation                                          |

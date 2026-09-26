@@ -23,6 +23,7 @@ use super::auth::{
     connect_and_authenticate_cancellable, connect_and_authenticate_over_channel_with_liveness,
 };
 use super::handler::{ForwardedChannelRegistry, LivenessWatch, SshSession};
+use super::prompt_clock::timeout_excluding_prompts;
 use super::session_pool::{shared_gateway_pool, PooledRef, SshGateway};
 
 /// A reference-counted hold on a pooled, shared gateway session.
@@ -252,12 +253,16 @@ where
     F: Future<Output = Result<T, SessionError>>,
 {
     let bounded = async {
-        tokio::time::timeout(timeout, step).await.map_err(|_| {
-            SessionError::SpawnFailed(format!(
-                "Jump host {hop_label} timed out after {}s",
-                timeout.as_secs()
-            ))
-        })?
+        // Keyboard-interactive prompt time is excluded from the hop budget
+        // (#3371), like the direct connect timeout.
+        timeout_excluding_prompts(timeout, step)
+            .await
+            .map_err(|_| {
+                SessionError::SpawnFailed(format!(
+                    "Jump host {hop_label} timed out after {}s",
+                    timeout.as_secs()
+                ))
+            })?
     };
 
     match cancel {
@@ -368,11 +373,14 @@ pub async fn connect_gateway_chain(
     let (mut current, mut registry) =
         connect_and_authenticate_cancellable(&first_cfg, cancel.cloned())
             .await
-            .map_err(|e| {
-                SessionError::SpawnFailed(format!(
-                    "Jump host {}: {e}",
+            .map_err(|e| match e {
+                // A dismissed keyboard-interactive prompt stays typed so the UI
+                // treats it as a cancel, not a failure (#3371).
+                SessionError::AuthCancelled => e,
+                other => SessionError::SpawnFailed(format!(
+                    "Jump host {}: {other}",
                     hop_label(1, &first_cfg.host, first_cfg.port)
-                ))
+                )),
             })?;
     let mut intermediate_sessions: Vec<SshSession> = Vec::new();
 
