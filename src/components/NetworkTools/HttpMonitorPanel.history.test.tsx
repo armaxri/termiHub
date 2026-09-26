@@ -91,6 +91,12 @@ async function mount() {
   await flush();
 }
 
+/** The most recently registered check listener. */
+function lastListener(): (result: HttpCheckResult) => void {
+  const calls = vi.mocked(onHttpMonitorCheck).mock.calls;
+  return calls[calls.length - 1][0];
+}
+
 function historyRows(): number {
   return container.querySelectorAll('[data-testid^="http-monitor-entry-"]').length;
 }
@@ -136,7 +142,7 @@ describe("HttpMonitorPanel — persisted check history (#3462)", () => {
     expect(listHttpMonitorChecks).toHaveBeenCalledWith("mon-1", 120);
     expect(historyRows()).toBe(2);
 
-    const listener = vi.mocked(onHttpMonitorCheck).mock.calls.at(-1)![0];
+    const listener = lastListener();
     await act(async () => {
       listener(check(3));
       listener(check(4, { monitorId: "other" }));
@@ -155,7 +161,7 @@ describe("HttpMonitorPanel — persisted check history (#3462)", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await click("http-monitor-start");
-    const listener = vi.mocked(onHttpMonitorCheck).mock.calls.at(-1)![0];
+    const listener = lastListener();
     await act(async () => {
       listener(check(5, { monitorId: "mon-new" }));
     });
