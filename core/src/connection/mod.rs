@@ -41,7 +41,7 @@ pub use graphical::{
 };
 pub use graphical_resolution::{
     fixed_resolution_fields, fixed_resolution_requested, is_fixed_mode, normalize_fixed_size,
-    RESOLUTION_MODE_KEY,
+    server_resolution_fields, RESOLUTION_MODE_KEY,
 };
 pub use lifecycle::SessionStatus;
 pub use plugin_type_id::{
