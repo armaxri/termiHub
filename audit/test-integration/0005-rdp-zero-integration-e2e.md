@@ -11,7 +11,8 @@ evidence:
   - tests/system/tests/
   - tests/docker/
   - docs/testing.md:1105
-status: open
+status: fixed
+resolution: "#3616 — RDP live suite (core/tests/rdp.rs) vs xrdp+FreeRDP fixture: connect/first frame, fixed res, TLS+NLA wrong password, clipboard, cert prompt, no orphan sidecar; nightly lane; dynamic resize via #3611"
 ---
 
 ## What
