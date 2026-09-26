@@ -3108,11 +3108,11 @@ mod tests {
     /// which additive capabilities (`agent.update_pending`, the `agent.forward.*`
     /// ssh-agent relay, the `tunnel.*` agent-hosted forwarding methods, the
     /// `service.*` agent-hosted embedded servers, the `service.pause/resume`
-    /// in-place monitor pause, and the streaming `tool.start/cancel` runs) may
-    /// now arrive.
+    /// in-place monitor pause, the streaming `tool.start/cancel` runs, and the
+    /// SSH keyboard-interactive prompt relay) may now arrive.
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.9.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.10.0");
     }
 
     // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────
