@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src-tauri/src/credential
 evidence:
   - src-tauri/src/credential/auto_lock.rs:1
-status: open
+status: fixed
+resolution: "#3538 — biometric unlock (Touch ID/Windows Hello) via OS-store wrapping key + OS re-auth before keychain export; Linux unavailable -> blocked"
 ---
 
 ## What
