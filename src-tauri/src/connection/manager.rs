@@ -404,7 +404,7 @@ impl ConnectionManager {
     /// The connections a saved-connection reference may point at (main store,
     /// then every enabled external file) and the external files that are not in
     /// that set — disabled, or enabled but failed to load — for error messages.
-    fn reference_scope(&self) -> Result<(Vec<SavedConnection>, Vec<UnavailableFile>)> {
+    pub(crate) fn reference_scope(&self) -> Result<(Vec<SavedConnection>, Vec<UnavailableFile>)> {
         let view = self.load_unified_view()?;
         let mut unavailable: Vec<UnavailableFile> = view
             .external_errors
