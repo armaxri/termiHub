@@ -38,6 +38,8 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  FolderInput,
+  CopyPlus,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
@@ -77,6 +79,11 @@ import { PermissionsDialog } from "./PermissionsDialog";
 import { OwnerDialog } from "./OwnerDialog";
 import { SymlinkDialog } from "./SymlinkDialog";
 import { FileBrowserPathBar } from "./FileBrowserPathBar";
+import { FileBrowserDndProvider } from "./FileBrowserDndProvider";
+import { FileMoveConflictDialog } from "./FileMoveConflictDialog";
+import { MoveToDialog, type MoveToRequest } from "./MoveToDialog";
+import { useFileRowDnd } from "./fileBrowserDnd";
+import { useFileMoveTransfer } from "@/hooks/useFileMoveTransfer";
 import "./FileBrowser.css";
 
 /**
@@ -121,6 +128,11 @@ interface FileRowProps {
   onRenameSubmit: (entry: FileEntry, newName: string) => void;
   /** Abandon the in-progress rename. */
   onRenameCancel: () => void;
+  /**
+   * What dragging this row carries: the whole selection when the row is part of
+   * a multi-selection, otherwise just the row (PROD-006).
+   */
+  dragEntries: FileEntry[];
 }
 
 /**
@@ -272,6 +284,20 @@ export function FileMenuItems({
       </Item>
       <Item
         className="context-menu__item"
+        onSelect={() => onContextAction(entry, "moveTo")}
+        data-testid={`${testIdPrefix}-move-to`}
+      >
+        <FolderInput size={14} /> Move to…
+      </Item>
+      <Item
+        className="context-menu__item"
+        onSelect={() => onContextAction(entry, "copyTo")}
+        data-testid={`${testIdPrefix}-copy-to`}
+      >
+        <CopyPlus size={14} /> Copy to…
+      </Item>
+      <Item
+        className="context-menu__item"
         onSelect={() => onContextAction(entry, "copyName")}
         data-testid={`${testIdPrefix}-copy-name`}
       >
@@ -371,6 +397,20 @@ export function MultiSelectMenuItems({
         data-testid="multi-select-paste"
       >
         <ClipboardPaste size={14} /> Paste
+      </Item>
+      <Item
+        className="context-menu__item"
+        onSelect={() => onAction("moveTo")}
+        data-testid="multi-select-move-to"
+      >
+        <FolderInput size={14} /> Move to… ({count} items)
+      </Item>
+      <Item
+        className="context-menu__item"
+        onSelect={() => onAction("copyTo")}
+        data-testid="multi-select-copy-to"
+      >
+        <CopyPlus size={14} /> Copy to… ({count} items)
       </Item>
       <Separator className="context-menu__separator" />
       <Item
@@ -515,7 +555,11 @@ function FileRow({
   isRenaming,
   onRenameSubmit,
   onRenameCancel,
+  dragEntries,
 }: FileRowProps) {
+  // Every row is a drag source for drag-to-move; directory rows are also drop
+  // targets (PROD-006). Called before the rename early-return (rules of hooks).
+  const dnd = useFileRowDnd(entry, dragEntries, isRenaming);
   const menuItemProps = {
     entry,
     vscodeAvailable,
@@ -573,7 +617,12 @@ function FileRow({
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
         <div
-          className={`file-browser__row-wrapper${isSelected ? " file-browser__row-wrapper--selected" : ""}`}
+          ref={dnd.setNodeRef}
+          className={`file-browser__row-wrapper${isSelected ? " file-browser__row-wrapper--selected" : ""}${
+            dnd.isDragging ? " file-browser__row-wrapper--dragging" : ""
+          }${dnd.highlight ? ` file-browser__row-wrapper--drop-${dnd.highlight}` : ""}`}
+          data-drop-highlight={dnd.highlight ?? undefined}
+          {...dnd.listeners}
         >
           <button
             ref={rowRef}
@@ -1044,6 +1093,7 @@ export function FileBrowser() {
   const [permissionsTarget, setPermissionsTarget] = useState<FileEntry | null>(null);
   const [ownerTarget, setOwnerTarget] = useState<FileEntry | null>(null);
   const [symlinkTarget, setSymlinkTarget] = useState<FileEntry | null>(null);
+  const [moveToRequest, setMoveToRequest] = useState<MoveToRequest | null>(null);
   const [sort, setSort] = useState<{ key: FileSortKey; dir: SortDirection }>({
     key: "name",
     dir: "asc",
@@ -1180,6 +1230,18 @@ export function FileBrowser() {
   const sessionFileBrowserId = useAppStore((s) => s.sessionFileBrowserId);
   const activeTabConnectionType = useAppStore((s) => getActiveTab(s)?.connectionType ?? null);
 
+  // Drag-to-move / Move to… engine (PROD-006): guards, conflict prompt, and the
+  // shared paste plumbing with a one-shot clipboard.
+  const { requestTransfer, pendingConflict, confirmConflict, cancelConflict } = useFileMoveTransfer(
+    { mode, sessionId: sessionFileBrowserId, pasteEntry }
+  );
+
+  // Entries a drag of a selected row carries (the whole multi-selection).
+  const selectedEntries = useMemo(
+    () => displayEntries.filter((e) => selectedPaths.has(e.path)),
+    [displayEntries, selectedPaths]
+  );
+
   const handleContextAction = useCallback(
     (entry: FileEntry, action: string) => {
       switch (action) {
@@ -1227,6 +1289,13 @@ export function FileBrowser() {
           break;
         case "cut":
           cutEntry([entry]);
+          break;
+        case "moveTo":
+        case "copyTo":
+          setMoveToRequest({
+            entries: [entry],
+            operation: action === "moveTo" ? "move" : "copy",
+          });
           break;
         case "copyName":
           writeClipboard(entry.name)
@@ -1472,6 +1541,10 @@ export function FileBrowser() {
         case "cut":
           cutEntry(entries);
           break;
+        case "moveTo":
+        case "copyTo":
+          setMoveToRequest({ entries, operation: action === "moveTo" ? "move" : "copy" });
+          break;
         case "download": {
           // Reuse the single-download path for each selected entry (PROD-005):
           // every download surfaces its own transfer feedback, and a selected
@@ -1599,361 +1672,371 @@ export function FileBrowser() {
       className={`file-browser${isDragOver ? " file-browser--drag-over" : ""}`}
       ref={containerRef}
     >
-      {isDragOver && (
-        <div className="file-browser__drag-overlay">
-          <Upload size={24} />
-          <span>{mode === "local" ? "Drop to copy here" : "Drop to upload"}</span>
-        </div>
-      )}
-      <div className="file-browser__toolbar">
-        <FileBrowserPathBar currentPath={currentPath} onNavigate={handleNavigatePath} />
-        <div className="file-browser__actions">
-          <Tooltip content="Go Up" side="top">
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<ArrowUp size={14} />}
-              onClick={handleNavigateUp}
-              disabled={currentPath === "/" || /^[A-Za-z]:\/?$/.test(currentPath)}
-              aria-label="Go up one directory"
-              data-testid="file-browser-up"
-            />
-          </Tooltip>
-          <Tooltip content="Go to Terminal CWD" side="top">
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<FolderSync size={14} />}
-              onClick={navigateToCwd}
-              disabled={!hasCwd}
-              aria-label="Go to terminal working directory"
-              data-testid="file-browser-go-to-cwd"
-            />
-          </Tooltip>
-          <Tooltip
-            content={canCd ? `cd to ${currentPath}` : "cd here (no active terminal)"}
-            side="top"
-          >
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<Terminal size={14} />}
-              onClick={cdToCurrentPath}
-              disabled={!canCd}
-              aria-label="Send cd for current path to terminal"
-              data-testid="file-browser-cd-here"
-            />
-          </Tooltip>
-          <Tooltip content="Refresh" side="top">
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={
-                <RefreshCw
-                  size={14}
-                  className={isLoading ? "file-browser__spinner motion-essential-spinner" : ""}
-                />
-              }
-              onClick={refresh}
-              aria-label="Refresh file list"
-              data-testid="file-browser-refresh"
-            />
-          </Tooltip>
-          <Tooltip content={showHiddenFiles ? "Hide hidden files" : "Show hidden files"} side="top">
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={showHiddenFiles ? <Eye size={14} /> : <EyeOff size={14} />}
-              onClick={() => updateLayoutConfig({ showHiddenFiles: !showHiddenFiles })}
-              aria-pressed={showHiddenFiles}
-              aria-label={showHiddenFiles ? "Hide hidden files" : "Show hidden files"}
-              data-testid="file-browser-toggle-hidden"
-            />
-          </Tooltip>
-          {mode === "local" && (
-            <Tooltip content={fileManagerLabel} side="top">
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<ExternalLink size={14} />}
-                onClick={handleOpenInExplorer}
-                aria-label={fileManagerLabel}
-                data-testid="file-browser-open-in-explorer"
-              />
-            </Tooltip>
-          )}
-          {mode === "local" && vscodeAvailable && (
-            <Tooltip content="Open Folder in VS Code" side="top">
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<CodeXml size={14} />}
-                onClick={handleOpenFolderInVscode}
-                aria-label="Open folder in VS Code"
-                data-testid="file-browser-open-folder-vscode"
-              />
-            </Tooltip>
-          )}
-          {mode === "session" && (
-            <Tooltip content="Upload File" side="top">
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<Upload size={14} />}
-                onClick={uploadFile}
-                aria-label="Upload file"
-                data-testid="file-browser-upload"
-              />
-            </Tooltip>
-          )}
-          <Tooltip
-            content={
-              fileClipboard
-                ? fileClipboard.entries.length === 1
-                  ? `Paste "${fileClipboard.entries[0].name}" (${fileClipboard.operation})`
-                  : `Paste ${fileClipboard.entries.length} items (${fileClipboard.operation})`
-                : "Paste"
-            }
-            side="top"
-          >
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<ClipboardPaste size={14} />}
-              onClick={handlePaste}
-              disabled={!fileClipboard}
-              aria-label="Paste"
-              data-testid="file-browser-paste"
-            />
-          </Tooltip>
-          <Tooltip content="New File" side="top">
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<FilePlus size={14} />}
-              onClick={() => setNewFileName("")}
-              aria-label="New file"
-              data-testid="file-browser-new-file"
-            />
-          </Tooltip>
-          <Tooltip content="New Folder" side="top">
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<FolderPlus size={14} />}
-              onClick={() => setNewDirName("")}
-              aria-label="New folder"
-              data-testid="file-browser-new-folder"
-            />
-          </Tooltip>
-        </div>
-      </div>
-
-      <div className="file-browser__subbar">
-        <SearchInput
-          size="sm"
-          value={filterQuery}
-          onValueChange={setFilterQuery}
-          placeholder="Filter"
-          aria-label="Filter files"
-          data-testid="file-browser-filter"
-          clearLabel="Clear filter"
-          clearTestId="file-browser-filter-clear"
-        />
-        <div className="file-browser__columns">
-          <SortHeader
-            label="Name"
-            col="name"
-            activeKey={sort.key}
-            direction={sort.dir}
-            onToggle={toggleSort}
-          />
-          <SortHeader
-            label="Modified"
-            col="modified"
-            activeKey={sort.key}
-            direction={sort.dir}
-            onToggle={toggleSort}
-          />
-          <SortHeader
-            label="Size"
-            col="size"
-            activeKey={sort.key}
-            direction={sort.dir}
-            onToggle={toggleSort}
-          />
-        </div>
-      </div>
-
-      {error && (
-        <div className="file-browser__error">
-          <div className="file-browser__error-message">
-            <AlertCircle size={14} />
-            <span>{error}</span>
+      <FileBrowserDndProvider onDrop={requestTransfer}>
+        {isDragOver && (
+          <div className="file-browser__drag-overlay">
+            <Upload size={24} />
+            <span>{mode === "local" ? "Drop to copy here" : "Drop to upload"}</span>
           </div>
-          <FileBrowserErrorActions
-            onRetry={refresh}
-            onDismiss={dismissError}
-            testIdPrefix="file-browser-error"
-          />
-        </div>
-      )}
-
-      {newFileName !== null && (
-        <div className="file-browser__new-dir">
-          <Input
-            size="sm"
-            placeholder="File name"
-            value={newFileName}
-            onChange={(e) => setNewFileName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleCreateFile();
-              if (e.key === "Escape") setNewFileName(null);
-            }}
-            autoFocus
-            data-testid="file-browser-new-file-input"
-          />
-          <Tooltip content="Create" side="top">
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<FilePlus size={14} />}
-              onClick={handleCreateFile}
-              aria-label="Create file"
-              data-testid="file-browser-new-file-confirm"
-            />
-          </Tooltip>
-        </div>
-      )}
-
-      {newDirName !== null && (
-        <div className="file-browser__new-dir">
-          <Input
-            size="sm"
-            placeholder="Folder name"
-            value={newDirName}
-            onChange={(e) => setNewDirName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleCreateDir();
-              if (e.key === "Escape") setNewDirName(null);
-            }}
-            autoFocus
-            data-testid="file-browser-new-folder-input"
-          />
-          <Tooltip content="Create" side="top">
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<FolderPlus size={14} />}
-              onClick={handleCreateDir}
-              aria-label="Create folder"
-              data-testid="file-browser-new-folder-confirm"
-            />
-          </Tooltip>
-        </div>
-      )}
-
-      <ContextMenu.Root>
-        <ContextMenu.Trigger asChild>
-          {isLoading && fileEntries.length === 0 ? (
-            <div className="file-browser__loading">
-              <Spinner size="md" label={null} />
-              <span>Loading...</span>
-            </div>
-          ) : (
-            <div
-              ref={listRef}
-              className="file-browser__list"
-              data-testid="file-browser-list"
-              onKeyDown={handleListKeyDown}
-              onClick={(e) => {
-                // Clicking empty space (the list itself or the virtual spacer,
-                // never a row) clears the selection.
-                const target = e.target as HTMLElement;
-                if (
-                  target === e.currentTarget ||
-                  target.classList.contains("file-browser__list-inner")
-                ) {
-                  clearSelection();
+        )}
+        <div className="file-browser__toolbar">
+          <FileBrowserPathBar currentPath={currentPath} onNavigate={handleNavigatePath} />
+          <div className="file-browser__actions">
+            <Tooltip content="Go Up" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<ArrowUp size={14} />}
+                onClick={handleNavigateUp}
+                disabled={currentPath === "/" || /^[A-Za-z]:\/?$/.test(currentPath)}
+                aria-label="Go up one directory"
+                data-testid="file-browser-up"
+              />
+            </Tooltip>
+            <Tooltip content="Go to Terminal CWD" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<FolderSync size={14} />}
+                onClick={navigateToCwd}
+                disabled={!hasCwd}
+                aria-label="Go to terminal working directory"
+                data-testid="file-browser-go-to-cwd"
+              />
+            </Tooltip>
+            <Tooltip
+              content={canCd ? `cd to ${currentPath}` : "cd here (no active terminal)"}
+              side="top"
+            >
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<Terminal size={14} />}
+                onClick={cdToCurrentPath}
+                disabled={!canCd}
+                aria-label="Send cd for current path to terminal"
+                data-testid="file-browser-cd-here"
+              />
+            </Tooltip>
+            <Tooltip content="Refresh" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={
+                  <RefreshCw
+                    size={14}
+                    className={isLoading ? "file-browser__spinner motion-essential-spinner" : ""}
+                  />
                 }
-              }}
+                onClick={refresh}
+                aria-label="Refresh file list"
+                data-testid="file-browser-refresh"
+              />
+            </Tooltip>
+            <Tooltip
+              content={showHiddenFiles ? "Hide hidden files" : "Show hidden files"}
+              side="top"
             >
-              {displayEntries.length === 0 ? (
-                <EmptyState
-                  title={filterQuery ? "No files match the filter" : "This folder is empty"}
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={showHiddenFiles ? <Eye size={14} /> : <EyeOff size={14} />}
+                onClick={() => updateLayoutConfig({ showHiddenFiles: !showHiddenFiles })}
+                aria-pressed={showHiddenFiles}
+                aria-label={showHiddenFiles ? "Hide hidden files" : "Show hidden files"}
+                data-testid="file-browser-toggle-hidden"
+              />
+            </Tooltip>
+            {mode === "local" && (
+              <Tooltip content={fileManagerLabel} side="top">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<ExternalLink size={14} />}
+                  onClick={handleOpenInExplorer}
+                  aria-label={fileManagerLabel}
+                  data-testid="file-browser-open-in-explorer"
                 />
-              ) : (
-                <div
-                  className="file-browser__list-inner"
-                  style={{ height: rowVirtualizer.getTotalSize() }}
-                >
-                  {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-                    const index = virtualRow.index;
-                    const entry = displayEntries[index];
-                    if (!entry) return null;
-                    return (
-                      <div
-                        key={virtualRow.key}
-                        className="file-browser__virtual-row"
-                        style={{ transform: `translateY(${virtualRow.start}px)` }}
-                      >
-                        <FileRow
-                          entry={entry}
-                          vscodeAvailable={vscodeAvailable}
-                          canChangePermissions={supportsPermissions && !!entry.permissions}
-                          canChangeOwner={supportsOwner && !!entry.permissions}
-                          canCreateSymlink={supportsSymlink}
-                          onNavigate={handleNavigate}
-                          onContextAction={handleContextAction}
-                          onPaste={handlePaste}
-                          hasClipboard={fileClipboard !== null}
-                          isSelected={selectedPaths.has(entry.path)}
-                          onRowClick={handleRowClick}
-                          selectedCount={selectedPaths.size}
-                          onMultiContextAction={handleMultiAction}
-                          onShareVia={mode === "local" ? handleShareVia : undefined}
-                          tabIndex={index === activeIndex ? 0 : -1}
-                          rowRef={getRowRef(index)}
-                          isRenaming={renamingPath === entry.path}
-                          onRenameSubmit={handleRenameSubmit}
-                          onRenameCancel={handleRenameCancel}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              </Tooltip>
+            )}
+            {mode === "local" && vscodeAvailable && (
+              <Tooltip content="Open Folder in VS Code" side="top">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<CodeXml size={14} />}
+                  onClick={handleOpenFolderInVscode}
+                  aria-label="Open folder in VS Code"
+                  data-testid="file-browser-open-folder-vscode"
+                />
+              </Tooltip>
+            )}
+            {mode === "session" && (
+              <Tooltip content="Upload File" side="top">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<Upload size={14} />}
+                  onClick={uploadFile}
+                  aria-label="Upload file"
+                  data-testid="file-browser-upload"
+                />
+              </Tooltip>
+            )}
+            <Tooltip
+              content={
+                fileClipboard
+                  ? fileClipboard.entries.length === 1
+                    ? `Paste "${fileClipboard.entries[0].name}" (${fileClipboard.operation})`
+                    : `Paste ${fileClipboard.entries.length} items (${fileClipboard.operation})`
+                  : "Paste"
+              }
+              side="top"
+            >
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<ClipboardPaste size={14} />}
+                onClick={handlePaste}
+                disabled={!fileClipboard}
+                aria-label="Paste"
+                data-testid="file-browser-paste"
+              />
+            </Tooltip>
+            <Tooltip content="New File" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<FilePlus size={14} />}
+                onClick={() => setNewFileName("")}
+                aria-label="New file"
+                data-testid="file-browser-new-file"
+              />
+            </Tooltip>
+            <Tooltip content="New Folder" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<FolderPlus size={14} />}
+                onClick={() => setNewDirName("")}
+                aria-label="New folder"
+                data-testid="file-browser-new-folder"
+              />
+            </Tooltip>
+          </div>
+        </div>
+
+        <div className="file-browser__subbar">
+          <SearchInput
+            size="sm"
+            value={filterQuery}
+            onValueChange={setFilterQuery}
+            placeholder="Filter"
+            aria-label="Filter files"
+            data-testid="file-browser-filter"
+            clearLabel="Clear filter"
+            clearTestId="file-browser-filter-clear"
+          />
+          <div className="file-browser__columns">
+            <SortHeader
+              label="Name"
+              col="name"
+              activeKey={sort.key}
+              direction={sort.dir}
+              onToggle={toggleSort}
+            />
+            <SortHeader
+              label="Modified"
+              col="modified"
+              activeKey={sort.key}
+              direction={sort.dir}
+              onToggle={toggleSort}
+            />
+            <SortHeader
+              label="Size"
+              col="size"
+              activeKey={sort.key}
+              direction={sort.dir}
+              onToggle={toggleSort}
+            />
+          </div>
+        </div>
+
+        {error && (
+          <div className="file-browser__error">
+            <div className="file-browser__error-message">
+              <AlertCircle size={14} />
+              <span>{error}</span>
             </div>
-          )}
-        </ContextMenu.Trigger>
-        <ContextMenu.Portal>
-          <ContextMenu.Content className="context-menu__content">
-            <ContextMenu.Item
-              className="context-menu__item"
-              disabled={!fileClipboard}
-              onSelect={handlePaste}
-              data-testid="context-bg-paste"
-            >
-              <ClipboardPaste size={14} /> Paste
-            </ContextMenu.Item>
-            <ContextMenu.Separator className="context-menu__separator" />
-            <ContextMenu.Item
-              className="context-menu__item"
-              onSelect={() => setNewFileName("")}
-              data-testid="context-bg-new-file"
-            >
-              <FilePlus size={14} /> New File
-            </ContextMenu.Item>
-            <ContextMenu.Item
-              className="context-menu__item"
-              onSelect={() => setNewDirName("")}
-              data-testid="context-bg-new-folder"
-            >
-              <FolderPlus size={14} /> New Folder
-            </ContextMenu.Item>
-          </ContextMenu.Content>
-        </ContextMenu.Portal>
-      </ContextMenu.Root>
+            <FileBrowserErrorActions
+              onRetry={refresh}
+              onDismiss={dismissError}
+              testIdPrefix="file-browser-error"
+            />
+          </div>
+        )}
+
+        {newFileName !== null && (
+          <div className="file-browser__new-dir">
+            <Input
+              size="sm"
+              placeholder="File name"
+              value={newFileName}
+              onChange={(e) => setNewFileName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleCreateFile();
+                if (e.key === "Escape") setNewFileName(null);
+              }}
+              autoFocus
+              data-testid="file-browser-new-file-input"
+            />
+            <Tooltip content="Create" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<FilePlus size={14} />}
+                onClick={handleCreateFile}
+                aria-label="Create file"
+                data-testid="file-browser-new-file-confirm"
+              />
+            </Tooltip>
+          </div>
+        )}
+
+        {newDirName !== null && (
+          <div className="file-browser__new-dir">
+            <Input
+              size="sm"
+              placeholder="Folder name"
+              value={newDirName}
+              onChange={(e) => setNewDirName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleCreateDir();
+                if (e.key === "Escape") setNewDirName(null);
+              }}
+              autoFocus
+              data-testid="file-browser-new-folder-input"
+            />
+            <Tooltip content="Create" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<FolderPlus size={14} />}
+                onClick={handleCreateDir}
+                aria-label="Create folder"
+                data-testid="file-browser-new-folder-confirm"
+              />
+            </Tooltip>
+          </div>
+        )}
+
+        <ContextMenu.Root>
+          <ContextMenu.Trigger asChild>
+            {isLoading && fileEntries.length === 0 ? (
+              <div className="file-browser__loading">
+                <Spinner size="md" label={null} />
+                <span>Loading...</span>
+              </div>
+            ) : (
+              <div
+                ref={listRef}
+                className="file-browser__list"
+                data-testid="file-browser-list"
+                onKeyDown={handleListKeyDown}
+                onClick={(e) => {
+                  // Clicking empty space (the list itself or the virtual spacer,
+                  // never a row) clears the selection.
+                  const target = e.target as HTMLElement;
+                  if (
+                    target === e.currentTarget ||
+                    target.classList.contains("file-browser__list-inner")
+                  ) {
+                    clearSelection();
+                  }
+                }}
+              >
+                {displayEntries.length === 0 ? (
+                  <EmptyState
+                    title={filterQuery ? "No files match the filter" : "This folder is empty"}
+                  />
+                ) : (
+                  <div
+                    className="file-browser__list-inner"
+                    style={{ height: rowVirtualizer.getTotalSize() }}
+                  >
+                    {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                      const index = virtualRow.index;
+                      const entry = displayEntries[index];
+                      if (!entry) return null;
+                      return (
+                        <div
+                          key={virtualRow.key}
+                          className="file-browser__virtual-row"
+                          style={{ transform: `translateY(${virtualRow.start}px)` }}
+                        >
+                          <FileRow
+                            entry={entry}
+                            vscodeAvailable={vscodeAvailable}
+                            canChangePermissions={supportsPermissions && !!entry.permissions}
+                            canChangeOwner={supportsOwner && !!entry.permissions}
+                            canCreateSymlink={supportsSymlink}
+                            onNavigate={handleNavigate}
+                            onContextAction={handleContextAction}
+                            onPaste={handlePaste}
+                            hasClipboard={fileClipboard !== null}
+                            isSelected={selectedPaths.has(entry.path)}
+                            onRowClick={handleRowClick}
+                            selectedCount={selectedPaths.size}
+                            onMultiContextAction={handleMultiAction}
+                            onShareVia={mode === "local" ? handleShareVia : undefined}
+                            tabIndex={index === activeIndex ? 0 : -1}
+                            rowRef={getRowRef(index)}
+                            isRenaming={renamingPath === entry.path}
+                            onRenameSubmit={handleRenameSubmit}
+                            onRenameCancel={handleRenameCancel}
+                            dragEntries={
+                              selectedPaths.has(entry.path) && selectedEntries.length > 1
+                                ? selectedEntries
+                                : [entry]
+                            }
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </ContextMenu.Trigger>
+          <ContextMenu.Portal>
+            <ContextMenu.Content className="context-menu__content">
+              <ContextMenu.Item
+                className="context-menu__item"
+                disabled={!fileClipboard}
+                onSelect={handlePaste}
+                data-testid="context-bg-paste"
+              >
+                <ClipboardPaste size={14} /> Paste
+              </ContextMenu.Item>
+              <ContextMenu.Separator className="context-menu__separator" />
+              <ContextMenu.Item
+                className="context-menu__item"
+                onSelect={() => setNewFileName("")}
+                data-testid="context-bg-new-file"
+              >
+                <FilePlus size={14} /> New File
+              </ContextMenu.Item>
+              <ContextMenu.Item
+                className="context-menu__item"
+                onSelect={() => setNewDirName("")}
+                data-testid="context-bg-new-folder"
+              >
+                <FolderPlus size={14} /> New Folder
+              </ContextMenu.Item>
+            </ContextMenu.Content>
+          </ContextMenu.Portal>
+        </ContextMenu.Root>
+      </FileBrowserDndProvider>
       {(mode === "local" || selectedPaths.size > 0) && (
         <div className="file-browser__statusbar">
           {mode === "local" && (
@@ -1994,6 +2077,17 @@ export function FileBrowser() {
         entry={symlinkTarget}
         onApply={handleCreateSymlink}
         onClose={() => setSymlinkTarget(null)}
+      />
+      <MoveToDialog
+        request={moveToRequest}
+        currentPath={currentPath}
+        onSubmit={(req, destDir) => requestTransfer(req.entries, destDir, req.operation)}
+        onClose={() => setMoveToRequest(null)}
+      />
+      <FileMoveConflictDialog
+        pending={pendingConflict}
+        onConfirm={confirmConflict}
+        onCancel={cancelConflict}
       />
       {activeTransfers.length > 0 && (
         <div className="file-browser__transfers" data-testid="file-browser-transfers">
