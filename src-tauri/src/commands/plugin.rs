@@ -17,9 +17,10 @@ use tauri::{AppHandle, Emitter, State};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use termihub_core::plugin::{
-    native_library_hash, InstallOptions, InstalledPlugin, NativeTrustStore, PluginHost,
-    PluginManager, PluginManagerError, PluginManifest, SignerChange, TrustAssessment, TrustLevel,
-    TrustedPublisher, VersionChange, NATIVE_TRUST_DISCLOSURE,
+    check_host_platform, host_target_triple, native_library_hash, validate_package, InstallOptions,
+    InstalledPlugin, NativeTrustStore, PluginHost, PluginManager, PluginManagerError,
+    PluginManifest, SignerChange, TrustAssessment, TrustLevel, TrustedPublisher, VersionChange,
+    NATIVE_TRUST_DISCLOSURE,
 };
 
 /// Event emitted whenever the installed-plugin set or a plugin's state changes.
@@ -50,6 +51,52 @@ pub fn validate_plugin(
     manager
         .validate(std::path::Path::new(&path))
         .map_err(|e| e.to_string())
+}
+
+/// A package's install preview (#3507): its trusted manifest plus whether it
+/// ships a native library for this computer's platform (PLG-011).
+///
+/// Unlike [`validate_plugin`], a multi-platform package that lacks this host's
+/// target triple is **not** an error here: the install dialog shows it with a
+/// friendly "not available for this computer" explanation and the list of
+/// platforms it does support. Installing it is still refused by the manager.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginPackagePreview {
+    /// The package's validated manifest.
+    pub manifest: PluginManifest,
+    /// This host's Rust target triple (e.g. `aarch64-apple-darwin`).
+    pub host_platform: String,
+    /// Whether the package can be installed on this host's platform.
+    pub platform_supported: bool,
+}
+
+/// Build the [`PluginPackagePreview`] for an already-validated manifest.
+fn package_preview(manifest: PluginManifest) -> PluginPackagePreview {
+    let platform_supported = check_host_platform(&manifest).is_ok();
+    PluginPackagePreview {
+        manifest,
+        host_platform: host_target_triple().to_owned(),
+        platform_supported,
+    }
+}
+
+/// Validate a `.termihub-plugin` package at `path` for the install dialog,
+/// returning its manifest and this host's platform support (#3507). A malformed
+/// or incompatible package is an error; a package merely lacking this platform
+/// is not (see [`PluginPackagePreview`]).
+#[tauri::command]
+pub fn preview_plugin(path: String) -> Result<PluginPackagePreview, String> {
+    validate_package(std::path::Path::new(&path))
+        .map(package_preview)
+        .map_err(|e| e.to_string())
+}
+
+/// This host's Rust target triple, used by the UI to mark "this computer" in a
+/// plugin's supported-platform list (#3507).
+#[tauri::command]
+pub fn get_plugin_host_platform() -> String {
+    host_target_triple().to_owned()
 }
 
 /// The trust state of a package, flattened for the install dialog's provenance
@@ -592,5 +639,50 @@ mod tests {
         let confirmed = install_outcome(mgr.install_with(&other, opts(true))).unwrap();
         assert!(matches!(confirmed, InstallPluginResult::Installed { .. }));
         assert_eq!(mgr.get("acme-tool").unwrap().manifest.version, "1.1.0");
+    }
+
+    fn backend_manifest(libraries: &str) -> PluginManifest {
+        serde_json::from_str(&format!(
+            r#"{{
+                "id": "echo", "name": "Echo", "version": "1.0.0", "author": "a",
+                "description": "d", "license": "MIT", "apiVersion": "1.0",
+                "platforms": ["linux", "macos", "windows"], "permissions": ["terminal"],
+                "extensions": {{ "terminalBackend": {{
+                    "connectionType": "echo", "displayName": "Echo", "configSchema": {{}}
+                    {libraries}
+                }} }}
+            }}"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn preview_marks_a_package_without_the_host_triple_unsupported() {
+        let manifest = backend_manifest(
+            r#", "libraries": { "riscv64gc-unknown-linux-gnu": "backend/riscv64gc-unknown-linux-gnu/libecho.so" }"#,
+        );
+        let preview = package_preview(manifest);
+        assert!(!preview.platform_supported);
+        assert_eq!(preview.host_platform, host_target_triple());
+
+        let json = serde_json::to_value(&preview).unwrap();
+        assert_eq!(json["platformSupported"], false);
+        assert_eq!(json["hostPlatform"], host_target_triple());
+        assert!(
+            json["manifest"]["extensions"]["terminalBackend"]["libraries"]
+                ["riscv64gc-unknown-linux-gnu"]
+                .is_string()
+        );
+    }
+
+    #[test]
+    fn preview_marks_host_and_legacy_packages_supported() {
+        let host = host_target_triple();
+        let with_host = backend_manifest(&format!(
+            r#", "libraries": {{ "{host}": "backend/{host}/lib" }}"#
+        ));
+        assert!(package_preview(with_host).platform_supported);
+        assert!(package_preview(backend_manifest("")).platform_supported);
+        assert_eq!(get_plugin_host_platform(), host);
     }
 }

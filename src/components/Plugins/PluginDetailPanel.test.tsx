@@ -13,6 +13,11 @@ import type { InstalledPlugin, PluginManifest, PluginState } from "@/types/plugi
 import { withTooltip } from "@/test/tooltip";
 import { PluginDetailPanel } from "./PluginDetailPanel";
 
+const hostPlatform = vi.hoisted(() => ({ value: "aarch64-apple-darwin" as string | null }));
+vi.mock("@/hooks/usePluginHostPlatform", () => ({
+  usePluginHostPlatform: () => hostPlatform.value,
+}));
+
 function manifest(overrides: Partial<PluginManifest> = {}): PluginManifest {
   return {
     id: "k8s",
@@ -61,6 +66,7 @@ describe("PluginDetailPanel (#1997)", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
+    hostPlatform.value = "aarch64-apple-darwin";
   });
 
   afterEach(() => {
@@ -191,5 +197,81 @@ describe("PluginDetailPanel (#1997)", () => {
       await Promise.resolve();
     });
     expect(uninstallPlugin).toHaveBeenCalledWith("k8s");
+  });
+
+  describe("supported platforms (#3507)", () => {
+    const backend = (libraries?: Record<string, string>) => ({
+      extensions: {
+        terminalBackend: {
+          connectionType: "k8s-exec",
+          displayName: "Kubernetes Exec",
+          configSchema: {},
+          ...(libraries ? { libraries } : {}),
+        },
+      },
+    });
+    const q = (id: string) => container.querySelector(`[data-testid="${id}"]`);
+
+    it("lists a multi-platform plugin's platforms and marks this computer", () => {
+      useAppStore.setState({
+        plugins: [
+          plugin(
+            "active",
+            backend({
+              "aarch64-apple-darwin": "backend/aarch64-apple-darwin/libk8s.dylib",
+              "aarch64-pc-windows-msvc": "backend/aarch64-pc-windows-msvc/k8s.dll",
+              "aarch64-unknown-linux-gnu": "backend/aarch64-unknown-linux-gnu/libk8s.so",
+            })
+          ),
+        ],
+      });
+      render();
+      const mac = q("plugin-detail-platform-aarch64-apple-darwin")!;
+      expect(mac.textContent).toContain("macOS (Apple Silicon)");
+      expect(mac.textContent).toContain("This computer");
+      expect(q("plugin-detail-platform-aarch64-pc-windows-msvc")?.textContent).toContain(
+        "Windows ARM64"
+      );
+      expect(q("plugin-detail-platform-aarch64-unknown-linux-gnu")?.textContent).toContain(
+        "Linux ARM64"
+      );
+      expect(
+        container.querySelectorAll('[data-testid="plugin-detail-platform-current"]')
+      ).toHaveLength(1);
+    });
+
+    it("marks nothing while this computer's platform is unknown", () => {
+      hostPlatform.value = null;
+      useAppStore.setState({
+        plugins: [plugin("active", backend({ "x86_64-apple-darwin": "backend/x/libk8s.dylib" }))],
+      });
+      render();
+      expect(q("plugin-detail-platform-x86_64-apple-darwin")?.textContent).toContain(
+        "macOS (Intel)"
+      );
+      expect(q("plugin-detail-platform-current")).toBeNull();
+    });
+
+    it("labels a legacy single-platform native plugin", () => {
+      useAppStore.setState({ plugins: [plugin("active", backend())] });
+      render();
+      expect(q("plugin-detail-platforms-legacy")?.textContent).toBe(
+        "Current platform only (legacy package)"
+      );
+    });
+
+    it("shows no platform section for a plugin without native code", () => {
+      useAppStore.setState({
+        plugins: [
+          plugin("active", {
+            permissions: [],
+            extensions: { theme: { themes: [{ id: "t", name: "T", file: "t.json" }] } },
+          }),
+        ],
+      });
+      render();
+      expect(q("plugin-detail-platforms")).toBeNull();
+      expect(container.textContent).not.toContain("Supported Platforms");
+    });
   });
 });

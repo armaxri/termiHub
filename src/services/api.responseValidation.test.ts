@@ -41,6 +41,8 @@ import {
   deployAgent,
   updateAgent,
   validatePlugin,
+  previewPlugin,
+  getPluginHostPlatform,
   assessPluginTrust,
   getPluginSettings,
   updatePluginSettings,
@@ -670,6 +672,28 @@ describe("api response-validation (TFE-004)", () => {
         path: "/tmp/p1.termihub-plugin",
       });
       expect(result).toEqual(manifest);
+    });
+
+    it("previewPlugin sends filePath under the `path` key (#3507)", async () => {
+      const preview = {
+        manifest: { id: "p1" },
+        hostPlatform: "aarch64-apple-darwin",
+        platformSupported: false,
+      };
+      mockedInvoke.mockResolvedValue(preview);
+
+      const result = await previewPlugin("/tmp/p1.termihub-plugin");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("preview_plugin", {
+        path: "/tmp/p1.termihub-plugin",
+      });
+      expect(result).toEqual(preview);
+    });
+
+    it("getPluginHostPlatform takes no arguments (#3507)", async () => {
+      mockedInvoke.mockResolvedValue("x86_64-unknown-linux-gnu");
+      await expect(getPluginHostPlatform()).resolves.toBe("x86_64-unknown-linux-gnu");
+      expect(mockedInvoke).toHaveBeenCalledWith("get_plugin_host_platform");
     });
 
     it("assessPluginTrust sends filePath under the `path` key", async () => {

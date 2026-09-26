@@ -8,7 +8,7 @@ import {
   ExternalLink,
   RefreshCw,
 } from "lucide-react";
-import { assessPluginTrust, downloadPluginUpdate, validatePlugin } from "@/services/api";
+import { assessPluginTrust, downloadPluginUpdate, previewPlugin } from "@/services/api";
 import type { InstalledPlugin, PluginManifest, PluginTrustInfo } from "@/types/plugin";
 import { Button, toast } from "@/components/ui";
 import { currentEntry, usePluginUpdateStore } from "@/plugins/pluginUpdateStore";
@@ -28,6 +28,10 @@ interface PendingUpdate {
   filePath: string;
   manifest: PluginManifest;
   trust: PluginTrustInfo;
+  /** This computer's target triple (PLG-011, #3507). */
+  hostPlatform: string;
+  /** Whether the package ships a native library for this computer. */
+  platformSupported: boolean;
 }
 
 /**
@@ -54,12 +58,13 @@ export function PluginUpdateSection({ plugin }: PluginUpdateSectionProps) {
     const toastId = toast.loading(`Downloading ${name} update…`);
     try {
       const filePath = await downloadPluginUpdate(id);
-      const [manifest, trust] = await Promise.all([
-        validatePlugin(filePath),
+      const [preview, trust] = await Promise.all([
+        previewPlugin(filePath),
         assessPluginTrust(filePath),
       ]);
+      const { manifest, hostPlatform, platformSupported } = preview;
       toast.dismiss(toastId);
-      setPending({ filePath, manifest, trust });
+      setPending({ filePath, manifest, trust, hostPlatform, platformSupported });
     } catch (err) {
       frontendLog("plugin_update", `Downloading update for ${id} failed: ${errorMessage(err)}`);
       toast.error(`Could not download the update: ${errorMessage(err)}`, { id: toastId });
@@ -177,6 +182,8 @@ export function PluginUpdateSection({ plugin }: PluginUpdateSectionProps) {
           filePath={pending.filePath}
           manifest={pending.manifest}
           trust={pending.trust}
+          hostPlatform={pending.hostPlatform}
+          platformSupported={pending.platformSupported}
           onClose={() => setPending(null)}
         />
       )}

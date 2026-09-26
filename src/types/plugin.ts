@@ -323,6 +323,22 @@ export type PluginFileReader = (pluginId: string, path: string) => Promise<Uint8
 export type PluginTrustLevel = "untrusted" | "signed" | "verified" | "tampered";
 
 /**
+ * A package's install preview returned by `preview_plugin` (#3507). Mirrors the
+ * Rust `PluginPackagePreview`: the validated manifest plus whether it ships a
+ * native library for this computer's platform (PLG-011). A package that lacks
+ * this platform is previewed (not refused) so the dialog can explain why it
+ * cannot be installed; the install itself is still refused by the backend.
+ */
+export interface PluginPackagePreview {
+  /** The package's validated manifest. */
+  manifest: PluginManifest;
+  /** This computer's Rust target triple (e.g. `aarch64-apple-darwin`). */
+  hostPlatform: string;
+  /** Whether the package can be installed on this computer's platform. */
+  platformSupported: boolean;
+}
+
+/**
  * The provenance/trust assessment of a `.termihub-plugin` package, mirroring the
  * Rust `PluginTrustInfo` returned by `assess_plugin_trust`. Drives the install
  * dialog's four-state provenance banner.

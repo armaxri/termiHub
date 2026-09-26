@@ -592,6 +592,8 @@ pub fn run() -> anyhow::Result<()> {
             // Plugin management layer (#1992)
             commands::plugin::list_plugins,
             commands::plugin::validate_plugin,
+            commands::plugin::preview_plugin,
+            commands::plugin::get_plugin_host_platform,
             commands::plugin::install_plugin,
             commands::plugin::uninstall_plugin,
             commands::plugin::enable_plugin,

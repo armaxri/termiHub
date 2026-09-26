@@ -22,7 +22,7 @@ const checkUpdatesMock = vi.fn();
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: (...a: unknown[]) => openMock(...a) }));
 vi.mock("@/services/api", () => ({
-  validatePlugin: (...a: unknown[]) => validateMock(...a),
+  previewPlugin: (...a: unknown[]) => validateMock(...a),
   assessPluginTrust: (...a: unknown[]) => assessTrustMock(...a),
   checkPluginUpdates: (...a: unknown[]) => checkUpdatesMock(...a),
 }));
@@ -202,7 +202,11 @@ describe("PluginManagerView (#1997)", () => {
 
   it("validates a picked package and opens the install dialog", async () => {
     openMock.mockResolvedValue("/tmp/k8s-exec-1.2.0.termihub-plugin");
-    validateMock.mockResolvedValue(plugin("k8s", "Kubernetes Exec", "1.2.0", "installed").manifest);
+    validateMock.mockResolvedValue({
+      manifest: plugin("k8s", "Kubernetes Exec", "1.2.0", "installed").manifest,
+      hostPlatform: "aarch64-apple-darwin",
+      platformSupported: true,
+    });
     render();
 
     await act(async () => {
@@ -214,6 +218,37 @@ describe("PluginManagerView (#1997)", () => {
 
     expect(validateMock).toHaveBeenCalledWith("/tmp/k8s-exec-1.2.0.termihub-plugin");
     expect(document.querySelector('[data-testid="plugin-install-dialog"]')).not.toBeNull();
+  });
+
+  it("opens the dialog with a not-available explanation for another platform's package", async () => {
+    openMock.mockResolvedValue("/tmp/k8s-exec-1.2.0.termihub-plugin");
+    const manifest = plugin("k8s", "Kubernetes Exec", "1.2.0", "installed").manifest;
+    manifest.extensions.terminalBackend!.libraries = {
+      "x86_64-unknown-linux-gnu": "backend/x86_64-unknown-linux-gnu/libk8s.so",
+    };
+    validateMock.mockResolvedValue({
+      manifest,
+      hostPlatform: "aarch64-apple-darwin",
+      platformSupported: false,
+    });
+    render();
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="plugin-install-from-file"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    const unavailable = document.querySelector(
+      '[data-testid="plugin-install-platform-unavailable"]'
+    );
+    expect(unavailable?.textContent).toContain("macOS (Apple Silicon)");
+    expect(
+      document.querySelector('[data-testid="plugin-install-platform-x86_64-unknown-linux-gnu"]')
+        ?.textContent
+    ).toContain("Linux x64");
+    expect(document.querySelector('[data-testid="plugin-install-confirm"]')).toBeNull();
   });
 
   it("does nothing when the file picker is cancelled", async () => {

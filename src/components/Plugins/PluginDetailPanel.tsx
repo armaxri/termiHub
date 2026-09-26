@@ -18,7 +18,10 @@ import {
   pluginTypeIcon,
   pluginTypeLabel,
 } from "./pluginPresentation";
+import { pluginPlatformSupport } from "./pluginPlatforms";
+import { PluginPlatformList } from "./PluginPlatformList";
 import { PluginUpdateSection } from "./PluginUpdateSection";
+import { usePluginHostPlatform } from "@/hooks/usePluginHostPlatform";
 import "./Plugins.css";
 
 /** Props for {@link PluginDetailPanel}. */
@@ -54,7 +57,8 @@ function useActiveSessionCount(plugin: InstalledPlugin | undefined): number {
 
 /**
  * The plugin detail panel shown in the main area (#1997). Renders a plugin's
- * identity, extension points, requested permissions, and state-appropriate
+ * identity, extension points, supported platforms (native plugins, #3507),
+ * requested permissions, and state-appropriate
  * actions: Enable/Disable, Retry (on error), Settings… (when the plugin declares
  * settings — deep-links into the Plugins settings category, #2000), and Uninstall.
  * Uninstall warns first when the plugin has live sessions.
@@ -71,6 +75,7 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
 
   const [confirmUninstall, setConfirmUninstall] = useState(false);
   const activeSessions = useActiveSessionCount(plugin);
+  const hostPlatform = usePluginHostPlatform();
 
   if (!isVisible) return null;
 
@@ -91,6 +96,7 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
   const isError = dot === "error";
   const isEnabled = dot === "enabled";
   const showSettings = hasSettings(manifest);
+  const platforms = pluginPlatformSupport(manifest, hostPlatform);
 
   const handleUninstall = () => uninstallPlugin(manifest.id);
 
@@ -149,6 +155,13 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
           })}
         </div>
       </div>
+
+      {platforms && (
+        <div className="plugin-detail__block">
+          <div className="plugin-detail__section-title">Supported Platforms</div>
+          <PluginPlatformList support={platforms} testIdBase="plugin-detail" />
+        </div>
+      )}
 
       {manifest.permissions.length > 0 && (
         <div className="plugin-detail__block">
