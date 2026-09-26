@@ -12,8 +12,8 @@ evidence:
   - core/Cargo.toml:104
   - agent/Cargo.toml:41
   - core/Cargo.toml:26
-status: fixed
-resolution: "#3503 — untrusted-input parser watchlist (20 crates) validated against lockfiles + pre-release checklist"
+status: in-progress
+resolution: "#3503 (pending merge) — parser watchlist"
 ---
 
 ## What
