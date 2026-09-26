@@ -42,11 +42,9 @@ impl PixelConverter {
             let max_u32 = u32::from(max);
             (0..=max_u32)
                 .map(|v| {
-                    if max_u32 == 0 {
-                        0
-                    } else {
-                        ((v * 255 + max_u32 / 2) / max_u32) as u8
-                    }
+                    (v * 255 + max_u32 / 2)
+                        .checked_div(max_u32)
+                        .map_or(0, |scaled| scaled as u8)
                 })
                 .collect()
         };
@@ -60,11 +58,6 @@ impl PixelConverter {
             ],
             format,
         })
-    }
-
-    /// Wire bytes per pixel of the negotiated format.
-    pub fn bytes_per_pixel(&self) -> usize {
-        self.bytes_per_pixel
     }
 
     /// Convert `data` (exactly `pixels` negotiated-format pixels) to RGBA, or
@@ -129,7 +122,6 @@ mod tests {
     #[test]
     fn rgba_is_passed_through_untouched() {
         let conv = PixelConverter::new(PixelFormat::rgba()).unwrap();
-        assert_eq!(conv.bytes_per_pixel(), 4);
         let data = vec![1, 2, 3, 0, 4, 5, 6, 0];
         assert_eq!(conv.to_rgba(data.clone(), 2), Some(data));
     }
@@ -145,7 +137,6 @@ mod tests {
     #[test]
     fn rgb565_little_endian_expands_to_full_intensity() {
         let conv = PixelConverter::new(PixelFormat::rgb565()).unwrap();
-        assert_eq!(conv.bytes_per_pixel(), 2);
         let rgba = conv
             .to_rgba(le(&[0xF800, 0x07E0, 0x001F, 0xFFFF, 0x0000]), 5)
             .unwrap();
