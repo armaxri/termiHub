@@ -14,6 +14,7 @@ import { useAppInfo } from "@/hooks/useAppInfo";
 import { buildDebugInfo } from "@/utils/debugInfo";
 import { frontendError } from "@/utils/frontendLog";
 import { KeyPathInput } from "./KeyPathInput";
+import { CrashDiagnosticsFields } from "./CrashDiagnosticsFields";
 import { SettingsField } from "./SettingsField";
 import { errorMessage } from "@/utils/errorMessage";
 
@@ -282,52 +283,60 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
         </div>
       )}
 
-      {show("fileLogLevel") && (
+      {(show("fileLogLevel") || show("showCrashReportNotice")) && (
         <div className="settings-panel__category">
           <h3 className="settings-panel__category-title">Diagnostics</h3>
 
-          <SettingsField
-            label="Log File Verbosity"
-            hint={
-              "How much detail termiHub writes to its log file. Raise it to Debug when reporting a bug, then attach or paste the file. " +
-              "Info is the default; changes apply immediately and persist across restarts. " +
-              (logFilePath ? `Log file: ${logFilePath}. ` : "") +
-              "The TERMIHUB_FILE_LOG environment variable overrides this at startup."
-            }
-          >
-            <Select
-              value={settings.fileLogLevel ?? "info"}
-              onChange={(value) => handleLogLevelChange(value as FileLogLevel)}
-              options={[
-                { value: "off", label: "Off" },
-                { value: "error", label: "Error" },
-                { value: "warn", label: "Warning" },
-                { value: "info", label: "Info (default)" },
-                { value: "debug", label: "Debug" },
-                { value: "trace", label: "Trace" },
-              ]}
-              aria-label="Log file verbosity"
-              data-testid="settings-file-log-level"
-            />
-          </SettingsField>
+          {show("fileLogLevel") && (
+            <>
+              <SettingsField
+                label="Log File Verbosity"
+                hint={
+                  "How much detail termiHub writes to its log file. Raise it to Debug when reporting a bug, then attach or paste the file. " +
+                  "Info is the default; changes apply immediately and persist across restarts. " +
+                  (logFilePath ? `Log file: ${logFilePath}. ` : "") +
+                  "The TERMIHUB_FILE_LOG environment variable overrides this at startup."
+                }
+              >
+                <Select
+                  value={settings.fileLogLevel ?? "info"}
+                  onChange={(value) => handleLogLevelChange(value as FileLogLevel)}
+                  options={[
+                    { value: "off", label: "Off" },
+                    { value: "error", label: "Error" },
+                    { value: "warn", label: "Warning" },
+                    { value: "info", label: "Info (default)" },
+                    { value: "debug", label: "Debug" },
+                    { value: "trace", label: "Trace" },
+                  ]}
+                  aria-label="Log file verbosity"
+                  data-testid="settings-file-log-level"
+                />
+              </SettingsField>
 
-          <SettingsField
-            label="Debug Info"
-            hint={
-              "Copy a consolidated diagnostics summary (app version, build, platform, log file path, and credential store mode) " +
-              "for pasting into a bug report. Secrets are redacted before the text leaves the app."
-            }
-          >
-            <Button
-              variant="secondary"
-              size="sm"
-              icon={<ClipboardCopy size={14} />}
-              onClick={handleCopyDebugInfo}
-              data-testid="settings-copy-debug-info"
-            >
-              Copy debug info
-            </Button>
-          </SettingsField>
+              <SettingsField
+                label="Debug Info"
+                hint={
+                  "Copy a consolidated diagnostics summary (app version, build, platform, log file path, and credential store mode) " +
+                  "for pasting into a bug report. Secrets are redacted before the text leaves the app."
+                }
+              >
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={<ClipboardCopy size={14} />}
+                  onClick={handleCopyDebugInfo}
+                  data-testid="settings-copy-debug-info"
+                >
+                  Copy debug info
+                </Button>
+              </SettingsField>
+            </>
+          )}
+
+          {show("showCrashReportNotice") && (
+            <CrashDiagnosticsFields settings={settings} onChange={onChange} />
+          )}
         </div>
       )}
 

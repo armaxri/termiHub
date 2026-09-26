@@ -666,6 +666,12 @@ export interface AppSettings {
    * startup. `"off"` disables the file log entirely.
    */
   fileLogLevel?: "off" | "error" | "warn" | "info" | "debug" | "trace";
+  /**
+   * Show a non-blocking notice on the next start after a crash, offering to view
+   * or export the local crash report (OBS-010). Defaults to true; the notice's
+   * "Don't show again" turns it off. Can be re-enabled from General settings.
+   */
+  showCrashReportNotice?: boolean;
   /** Linux `/dev` prefixes used when scanning for serial ports. Always present after `get_settings` (expanded from built-in defaults if never saved). */
   serialPortScanPrefixes?: SerialPortScanPrefix[];
   /** Shell context-menu / CLI-spawn integration configuration (epic #1363). */

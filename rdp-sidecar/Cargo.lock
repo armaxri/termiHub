@@ -4313,12 +4313,14 @@ name = "termihub-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "gethostname",
  "hex",
  "hickory-resolver",
  "ipnet",
  "libc",
  "pnet_packet 0.35.0",
  "rand 0.8.7",
+ "regex",
  "ringbuf",
  "rmp-serde",
  "serde",

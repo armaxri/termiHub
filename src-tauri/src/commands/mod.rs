@@ -5,6 +5,7 @@ pub mod connection;
 pub mod connection_path;
 pub mod credential;
 pub mod credential_vault;
+pub mod diagnostics;
 pub mod embedded_servers;
 pub mod file_bookmarks;
 pub mod files;

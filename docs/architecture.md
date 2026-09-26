@@ -446,22 +446,23 @@ graph LR
     PTY_MASTER <--> CHILD
 ```
 
-| Module         | Location                | Responsibility                                                                                                                                                                                                                                                                                                        |
-| -------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Buffer**     | `agent/src/buffer/`     | Shared 1 MiB ring buffer used by session daemons and serial backend for output replay                                                                                                                                                                                                                                 |
-| **Daemon**     | `agent/src/daemon/`     | Binary frame protocol (`[type: 1B][length: 4B BE][payload]`), cross-platform IPC transport (`transport.rs`: Unix socket / Windows named pipe), and session daemon process (PTY allocation, poll-based event loop, transport listener)                                                                                 |
-| **Shell**      | `agent/src/shell/`      | ShellBackend — agent-side daemon client for PTY shell sessions                                                                                                                                                                                                                                                        |
-| **Docker**     | `agent/src/docker/`     | DockerBackend — Docker container sessions via daemon infrastructure                                                                                                                                                                                                                                                   |
-| **SSH**        | `agent/src/ssh/`        | SshBackend — SSH jump host sessions via daemon infrastructure                                                                                                                                                                                                                                                         |
-| **Serial**     | `agent/src/serial/`     | SerialBackend — direct serial port access with ring buffer (no daemon)                                                                                                                                                                                                                                                |
-| **Session**    | `agent/src/session/`    | SessionManager (create, attach, detach, close, recover), session types and snapshots, prepared connection definitions                                                                                                                                                                                                 |
-| **Files**      | `agent/src/files/`      | Connection-scoped file browsing (local filesystem, SFTP relay for SSH targets, Docker exec)                                                                                                                                                                                                                           |
-| **Monitoring** | `agent/src/monitoring/` | System stats collection and parsing — CPU, memory, disk, network for agent host and jump targets                                                                                                                                                                                                                      |
-| **Handler**    | `agent/src/handler/`    | JSON-RPC method dispatcher — routes requests to session, files, monitoring, and agent lifecycle handlers                                                                                                                                                                                                              |
-| **Protocol**   | `agent/src/protocol/`   | Protocol types (configs, capabilities, results, error codes) for all JSON-RPC methods                                                                                                                                                                                                                                 |
-| **State**      | `agent/src/state/`      | Session state persistence (`~/.config/termihub-agent/state.json`) for daemon recovery after agent restart                                                                                                                                                                                                             |
-| **IO**         | `agent/src/io/`         | Transport layer — stdio (production SSH mode) and TCP (development/test mode)                                                                                                                                                                                                                                         |
-| **File log**   | `agent/src/file_log.rs` | Durable, size-bounded, rotating on-disk log (`<config-dir>/logs/termihub-agent.log`, e.g. `~/.config/termihub-agent/logs/`) written for **all** roles — the only retrievable trace for the `--daemon`/`--listen`/`--registry-daemon` roles, whose stderr goes to the remote host with no capture path (audit OBS-003) |
+| Module         | Location                  | Responsibility                                                                                                                                                                                                                                                                                                        |
+| -------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Buffer**     | `agent/src/buffer/`       | Shared 1 MiB ring buffer used by session daemons and serial backend for output replay                                                                                                                                                                                                                                 |
+| **Daemon**     | `agent/src/daemon/`       | Binary frame protocol (`[type: 1B][length: 4B BE][payload]`), cross-platform IPC transport (`transport.rs`: Unix socket / Windows named pipe), and session daemon process (PTY allocation, poll-based event loop, transport listener)                                                                                 |
+| **Shell**      | `agent/src/shell/`        | ShellBackend — agent-side daemon client for PTY shell sessions                                                                                                                                                                                                                                                        |
+| **Docker**     | `agent/src/docker/`       | DockerBackend — Docker container sessions via daemon infrastructure                                                                                                                                                                                                                                                   |
+| **SSH**        | `agent/src/ssh/`          | SshBackend — SSH jump host sessions via daemon infrastructure                                                                                                                                                                                                                                                         |
+| **Serial**     | `agent/src/serial/`       | SerialBackend — direct serial port access with ring buffer (no daemon)                                                                                                                                                                                                                                                |
+| **Session**    | `agent/src/session/`      | SessionManager (create, attach, detach, close, recover), session types and snapshots, prepared connection definitions                                                                                                                                                                                                 |
+| **Files**      | `agent/src/files/`        | Connection-scoped file browsing (local filesystem, SFTP relay for SSH targets, Docker exec)                                                                                                                                                                                                                           |
+| **Monitoring** | `agent/src/monitoring/`   | System stats collection and parsing — CPU, memory, disk, network for agent host and jump targets                                                                                                                                                                                                                      |
+| **Handler**    | `agent/src/handler/`      | JSON-RPC method dispatcher — routes requests to session, files, monitoring, and agent lifecycle handlers                                                                                                                                                                                                              |
+| **Protocol**   | `agent/src/protocol/`     | Protocol types (configs, capabilities, results, error codes) for all JSON-RPC methods                                                                                                                                                                                                                                 |
+| **State**      | `agent/src/state/`        | Session state persistence (`~/.config/termihub-agent/state.json`) for daemon recovery after agent restart                                                                                                                                                                                                             |
+| **IO**         | `agent/src/io/`           | Transport layer — stdio (production SSH mode) and TCP (development/test mode)                                                                                                                                                                                                                                         |
+| **File log**   | `agent/src/file_log.rs`   | Durable, size-bounded, rotating on-disk log (`<config-dir>/logs/termihub-agent.log`, e.g. `~/.config/termihub-agent/logs/`) written for **all** roles — the only retrievable trace for the `--daemon`/`--listen`/`--registry-daemon` roles, whose stderr goes to the remote host with no capture path (audit OBS-003) |
+| **Panic hook** | `agent/src/panic_hook.rs` | Logs a panic and writes a redacted, bounded crash report to `<config-dir>/logs/crash-reports/` on the agent's host (OBS-010, see ADR-16). Never sent anywhere                                                                                                                                                         |
 
 The agent was recently refactored into a **thin proxy** over the core `ConnectionType` registry. All session lifecycle methods now use the `connection.*` JSON-RPC namespace (`connection.create`, `connection.attach`, `connection.detach`, `connection.input`, `connection.resize`, `connection.close`, `connection.list`). The agent's dispatcher routes these generically through the registry — no connection-type-specific dispatch code. See [Remote Protocol](remote-protocol.md) for the full specification and [Agent Concept](concepts/implemented/agent.html) for the design vision.
 
@@ -2352,6 +2353,47 @@ the graceful "incompatible, auto-disabled" path — could not see that skew at a
   (PLG-014) — fit as future **minor** additions instead of breaking bumps.
 - A breaking change now costs a major bump that orphans every plugin, so it is a deliberate
   maintainer decision rather than a routine counter increment.
+
+### ADR-16: Local-Only Diagnosability — No Telemetry, No Phone-Home Crash Reporting
+
+**Context:** A bundled desktop app has nowhere for a crash to go: before OBS-002 a panic left
+nothing in `termihub.log`, and even afterwards crash data was not surfaced to the user or easy to
+attach to a bug report (audit OBS-010). The usual answer — a crash-reporting SDK that uploads
+minidumps or events — is incompatible with a tool that holds SSH credentials, hostnames and
+terminal sessions for people who expect nothing to leave their machine.
+
+**Decision** (maintainer, 2026-09-26, #3571):
+
+- **No network telemetry of any kind.** termiHub never uploads crash reports, logs, usage data or
+  analytics. The only network call it makes on its own is the update check (see the README
+  privacy note), which can be turned off.
+- **Crashes are diagnosable fully offline.** The desktop panic hook (`src-tauri/src/utils/panic_hook.rs`)
+  and the agent panic hook (`agent/src/panic_hook.rs`) log the panic and write one small text report
+  per crash into a `crash-reports/` folder next to the app's log (desktop: the platform log dir,
+  e.g. `~/Library/Logs/com.termihub.app/crash-reports/`; agent: `<config-dir>/logs/crash-reports/`
+  on the agent's own host). The folder is bounded by count (10) and age (30 days).
+- **What a report captures:** app name, version, OS / family / architecture, UTC time, thread,
+  source location, the panic message (capped at 4 KiB) and a backtrace (capped at 64 KiB).
+- **What it never captures:** terminal session content or transcripts, scrollback, connection or
+  workspace configs, the credential store. Every report — and every file in an export — goes
+  through the shared `termihub_core::diagnostics::redact::Redactor`, which masks credentials,
+  keys and tokens, hostnames, IP addresses, MAC addresses, usernames and home-directory paths,
+  biased toward over-redaction.
+- **The user decides what leaves the machine.** On the next start after a crash, a non-blocking
+  notice offers to view the report or export diagnostics (dismissible; "Don't show again" persists
+  `showCrashReportNotice: false`). **Export Diagnostics** (settings menu, or Settings → General →
+  Diagnostics) shows the exact file list first, then writes a redacted zip (logs, crash reports,
+  version/platform info) only to a path the user picks in the save dialog.
+- The desktop does not fetch agent crash reports; they stay on the agent's host. Adding a
+  retrieval RPC is a separate decision.
+
+**Consequences:**
+
+- Crash analysis depends on users choosing to attach a bundle — there is no fleet-wide crash
+  signal. That trade-off is intentional.
+- Redaction is pattern-based, so it can mask harmless text (e.g. a dotted identifier that looks
+  like a host name); the tests in `core/src/diagnostics/redact_tests.rs` pin what must be masked
+  and what must stay readable.
 
 ---
 

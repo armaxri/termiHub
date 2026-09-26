@@ -22,6 +22,7 @@ pub mod backends;
 pub mod buffer;
 pub mod config;
 pub mod connection;
+pub mod diagnostics;
 #[cfg(feature = "embedded-servers")]
 pub mod embedded_servers;
 pub mod errors;

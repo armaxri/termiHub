@@ -5,6 +5,11 @@ import { Sidebar } from "@/components/Sidebar";
 import { StatusBar } from "@/components/StatusBar";
 import { TransferQueue } from "@/components/TransferQueue";
 import { ShellIntegrationBanner } from "@/components/ShellIntegrationBanner";
+import {
+  CrashReportNotice,
+  CrashReportViewer,
+  DiagnosticsExportDialog,
+} from "@/components/Diagnostics";
 import { TerminalView } from "@/components/Terminal";
 import { PasswordPrompt } from "@/components/PasswordPrompt";
 import { SshHostKeyPrompt } from "@/components/SshHostKeyPrompt/SshHostKeyPrompt";
@@ -337,6 +342,7 @@ function App() {
             {layoutConfig.activityBarPosition === "right" && <ActivityBar />}
           </div>
           <ShellIntegrationBanner />
+          <CrashReportNotice />
           <TransferQueue />
           {layoutConfig.statusBarVisible && <StatusBar />}
           <PasswordPrompt />
@@ -348,6 +354,8 @@ function App() {
           <CustomizeLayoutDialog />
           <ExportDialog />
           <ImportDialog />
+          <DiagnosticsExportDialog />
+          <CrashReportViewer />
           <UnlockDialog open={unlockDialogOpen} onOpenChange={setUnlockDialogOpen} />
           <SpawnPicker
             open={spawnPickerVisible}

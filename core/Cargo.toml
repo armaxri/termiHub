@@ -126,6 +126,13 @@ rmp-serde = { version = "1", optional = true }
 # scanning. Behind the optional `rdp-sidecar` feature.
 which = { version = "7", optional = true }
 ringbuf = "0.5.2"
+# Local crash-report / diagnostics redaction (OBS-010): pattern-based masking of
+# credentials, tokens, IPs, hostnames and home paths. Already in the workspace
+# tree (via tracing-subscriber's env-filter), so this adds no new crate.
+regex = "1"
+# The local machine's host name, masked from crash reports and exported logs
+# (OBS-010). Already in the workspace tree, so this adds no new crate.
+gethostname = "1"
 shellexpand = "3.1"
 vte = "0.13"
 # ZIP reader for the `.termihub-plugin` package format (#1989). Used instead of
