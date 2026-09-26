@@ -15,8 +15,10 @@
 //! 3. **No overlap** — if the schedule's previous run is still in flight, the
 //!    due run is skipped with a logged reason.
 //! 4. Otherwise it **fires**: a [`ScheduleFire`] is emitted to every open app
-//!    window, and the run stays in flight until each of those windows reported
-//!    (or closed), or [`STALE_RUN_TIMEOUT`] passed.
+//!    window whose frontend registered as listening (while none has — the app
+//!    is booting — the due run is held). The run stays in flight until each of
+//!    those windows reported, closed, or failed to acknowledge it within
+//!    [`ACK_TIMEOUT`], or [`STALE_RUN_TIMEOUT`] passed.
 //!
 //! Whether the targets are connected is decided by the frontend (it owns the
 //! tabs); a window with no connected target reports `skipped`.
@@ -28,13 +30,11 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use tauri::AppHandle;
 
-use super::config::{
-    MissedRunPolicy, Schedule, ScheduleRunOutcome, ScheduleRunResult, ScheduleStore,
-    ScheduleTargets,
-};
+use super::config::{Schedule, ScheduleStore, ScheduleTargets};
 use super::storage::ScheduleStorage;
+use super::tick::{self, TickContext};
 use super::timing::next_run_after;
-use super::wire::{aggregate, err, skipped, validate_input};
+use super::wire::{aggregate, err, validate_input};
 pub use super::wire::{
     ScheduleFire, ScheduleInput, ScheduleView, SchedulerState, TickResult, WindowRunReport,
 };
@@ -49,26 +49,36 @@ pub const MISSED_GRACE: Duration = Duration::minutes(2);
 /// so a lost report (a crashed webview) cannot block the schedule forever.
 pub const STALE_RUN_TIMEOUT: Duration = Duration::hours(6);
 
+/// A window that has not acknowledged a fired run within this long (it was
+/// reloading, or its listener is gone) is dropped from the run's audience.
+pub const ACK_TIMEOUT: Duration = Duration::seconds(60);
+
 /// A fired run awaiting its windows' reports.
 #[derive(Debug, Clone)]
-struct ActiveRun {
-    token: String,
-    fired_at: DateTime<Utc>,
-    catch_up: bool,
-    pending: BTreeSet<String>,
-    reports: Vec<WindowRunReport>,
+pub(super) struct ActiveRun {
+    pub(super) token: String,
+    pub(super) fired_at: DateTime<Utc>,
+    pub(super) catch_up: bool,
+    /// Windows that still owe a report.
+    pub(super) pending: BTreeSet<String>,
+    /// Windows that acknowledged receiving the fire.
+    pub(super) acked: BTreeSet<String>,
+    pub(super) reports: Vec<WindowRunReport>,
 }
 
 /// In-memory scheduling state of one schedule.
 #[derive(Debug, Default, Clone)]
-struct Runtime {
-    next_due: Option<DateTime<Utc>>,
-    active: Option<ActiveRun>,
+pub(super) struct Runtime {
+    pub(super) next_due: Option<DateTime<Utc>>,
+    pub(super) active: Option<ActiveRun>,
 }
 
 struct Inner {
     store: ScheduleStore,
     runtime: HashMap<String, Runtime>,
+    /// Windows whose frontend is listening for `schedule-fire` (registered
+    /// via `register_schedule_window`). Only these receive runs.
+    ready: BTreeSet<String>,
 }
 
 /// Central schedule manager.
@@ -84,7 +94,7 @@ fn parse_ts(s: Option<&str>) -> Option<DateTime<Utc>> {
 }
 
 /// The interval origin: when the schedule was (last) enabled or re-timed.
-fn anchor_of(s: &Schedule, now: DateTime<Utc>) -> DateTime<Utc> {
+pub(super) fn anchor_of(s: &Schedule, now: DateTime<Utc>) -> DateTime<Utc> {
     parse_ts(s.enabled_at.as_deref())
         .or_else(|| parse_ts(Some(&s.created_at)))
         .unwrap_or(now)
@@ -93,7 +103,11 @@ fn anchor_of(s: &Schedule, now: DateTime<Utc>) -> DateTime<Utc> {
 /// The first due time for a schedule with no in-memory state (app start):
 /// the first slot after the latest point the schedule was known current, so
 /// a slot that passed while the app was closed is detected as missed.
-fn initial_due<Tz: TimeZone>(s: &Schedule, now: DateTime<Utc>, tz: &Tz) -> Option<DateTime<Utc>> {
+pub(super) fn initial_due<Tz: TimeZone>(
+    s: &Schedule,
+    now: DateTime<Utc>,
+    tz: &Tz,
+) -> Option<DateTime<Utc>> {
     let after = [
         parse_ts(s.last_run_at.as_deref()),
         parse_ts(s.enabled_at.as_deref()),
@@ -126,6 +140,7 @@ impl ScheduleManager {
             inner: Mutex::new(Inner {
                 store,
                 runtime: HashMap::new(),
+                ready: BTreeSet::new(),
             }),
             storage,
             recovery_warnings: Mutex::new(warnings),
@@ -417,8 +432,30 @@ impl ScheduleManager {
         Ok(true)
     }
 
+    /// Mark `window` as listening for fired runs (its frontend booted or
+    /// reloaded). Idempotent.
+    pub fn mark_window_ready(&self, window: &str) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.ready.insert(window.to_string());
+        }
+    }
+
+    /// A window acknowledges it received the fired run `token` (it will
+    /// report). Unknown tokens are ignored.
+    pub fn ack(&self, token: &str, window: &str) {
+        let Ok(mut inner) = self.inner.lock() else {
+            return;
+        };
+        for rt in inner.runtime.values_mut() {
+            if let Some(active) = rt.active.as_mut().filter(|a| a.token == token) {
+                active.acked.insert(window.to_string());
+            }
+        }
+    }
+
     /// Advance the scheduler to `now`. `live_windows` are the labels of the
-    /// open app windows (the fire's audience). Pure apart from persistence.
+    /// open app windows; a run goes to those that also registered as ready.
+    /// Pure apart from persistence.
     pub fn tick<Tz: TimeZone>(
         &self,
         now: DateTime<Utc>,
@@ -429,106 +466,23 @@ impl ScheduleManager {
             return TickResult::default();
         };
         let inner = &mut *guard;
-        let mut result = TickResult::default();
         let live: BTreeSet<String> = live_windows.iter().cloned().collect();
-        let paused = inner.store.paused;
-        // A stored field changed (fire / result) → persist.
+        // A closed window must re-register if a window with its label reopens.
+        inner.ready.retain(|w| live.contains(w));
+        let ctx = TickContext {
+            now,
+            paused: inner.store.paused,
+            audience: inner.ready.clone(),
+        };
+        let mut result = TickResult::default();
         let mut dirty = false;
-
         for s in inner.store.schedules.iter_mut() {
             let rt = inner.runtime.entry(s.id.clone()).or_default();
-
-            // Settle an in-flight run whose windows closed, or that went stale.
-            if let Some(active) = rt.active.as_mut() {
-                active.pending.retain(|w| live.contains(w));
-                let stale = now - active.fired_at > STALE_RUN_TIMEOUT;
-                if active.pending.is_empty() || stale {
-                    let settled = if stale {
-                        ScheduleRunResult {
-                            at: now.to_rfc3339(),
-                            outcome: ScheduleRunOutcome::Failed,
-                            message: Some("No completion was reported within 6 hours".to_string()),
-                            catch_up: active.catch_up,
-                        }
-                    } else {
-                        aggregate(&active.reports, active.catch_up, now)
-                    };
-                    tracing::warn!("scheduled run of {} closed: {:?}", s.id, settled.outcome);
-                    s.last_result = Some(settled);
-                    rt.active = None;
-                    result.changed = true;
-                    dirty = true;
-                }
-            }
-
-            if !s.enabled {
-                rt.next_due = None;
-                continue;
-            }
-            let Some(due) = rt.next_due.or_else(|| initial_due(s, now, tz)) else {
-                continue;
-            };
-            rt.next_due = Some(due);
-            if now < due {
-                continue;
-            }
-            let missed = now - due > MISSED_GRACE;
-            rt.next_due = next_run_after(&s.rule, now, anchor_of(s, now), tz);
-            result.changed = true;
-
-            if paused {
-                tracing::info!("schedule {} due but scheduling is paused; skipped", s.id);
-                continue;
-            }
-            if missed && s.missed_runs == MissedRunPolicy::Skip {
-                let msg = format!(
-                    "Missed the run due at {} (termiHub was closed or the computer was asleep)",
-                    due.with_timezone(tz).naive_local().format("%Y-%m-%d %H:%M")
-                );
-                tracing::info!("schedule {}: {msg}", s.id);
-                s.last_result = Some(skipped(now, msg, false));
-                dirty = true;
-                continue;
-            }
-            if rt.active.is_some() {
-                let msg = "Skipped: the previous run was still in progress";
-                tracing::info!("schedule {}: {msg}", s.id);
-                s.last_result = Some(skipped(now, msg, missed));
-                dirty = true;
-                continue;
-            }
-            if live.is_empty() {
-                let msg = "Skipped: no termiHub window was open";
-                tracing::info!("schedule {}: {msg}", s.id);
-                s.last_result = Some(skipped(now, msg, missed));
-                dirty = true;
-                continue;
-            }
-            let token = uuid::Uuid::new_v4().to_string();
-            tracing::info!(
-                "schedule {} fires{} (run {token})",
-                s.id,
-                if missed { " as a catch-up" } else { "" }
-            );
-            rt.active = Some(ActiveRun {
-                token: token.clone(),
-                fired_at: now,
-                catch_up: missed,
-                pending: live.clone(),
-                reports: Vec::new(),
-            });
-            s.last_run_at = Some(now.to_rfc3339());
-            dirty = true;
-            result.fires.push(ScheduleFire {
-                token,
-                schedule_id: s.id.clone(),
-                schedule_name: s.name.clone(),
-                action: s.action.clone(),
-                targets: s.targets.clone(),
-                catch_up: missed,
-            });
+            let step = tick::step(s, rt, &ctx, tz);
+            result.changed |= step.changed;
+            dirty |= step.dirty;
+            result.fires.extend(step.fire);
         }
-
         // Only persist when a stored field changed (a fire / a result); a pure
         // re-computation of the next due time needs no write.
         if dirty {

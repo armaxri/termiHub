@@ -97,3 +97,20 @@ pub fn report_schedule_run(
     }
     Ok(())
 }
+
+/// This window's frontend is listening for `schedule-fire` (called on boot and
+/// after a reload). Fired runs only go to registered windows.
+#[tauri::command]
+pub fn register_schedule_window(window: tauri::Window, manager: State<'_, Arc<ScheduleManager>>) {
+    manager.mark_window_ready(window.label());
+}
+
+/// This window received the fired run `token` and will report its outcome.
+#[tauri::command]
+pub fn ack_schedule_run(
+    token: String,
+    window: tauri::Window,
+    manager: State<'_, Arc<ScheduleManager>>,
+) {
+    manager.ack(&token, window.label());
+}

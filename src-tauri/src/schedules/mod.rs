@@ -21,5 +21,6 @@ pub mod config;
 pub mod manager;
 pub mod runner;
 pub mod storage;
+mod tick;
 pub mod timing;
 pub mod wire;

@@ -1215,9 +1215,11 @@ sequenceDiagram
     participant L as Scheduler loop (15 s tick)
     participant M as ScheduleManager
     participant W as Each app window
+    W->>M: register_schedule_window (on boot / reload)
     L->>M: tick(now, Local, open windows)
     M-->>L: fires (due, enabled, not paused, not overlapping)
     L->>W: schedule-fire {token, action, targets}
+    W->>M: ack_schedule_run(token)
     W->>W: open + connected tabs of the target connections only
     W->>M: report_schedule_run(token, outcome)
     M->>M: all windows reported -> record lastResult
@@ -1237,8 +1239,10 @@ sequenceDiagram
   user's confirmation of the target hosts, and changing the action or targets disables the
   schedule and drops that confirmation; a due run is skipped while the previous one is in flight;
   a run more than 2 minutes late (app closed, machine asleep) is skipped with a logged reason or
-  run once (per schedule); a paused period is never replayed; a run no window settles within
-  6 hours is closed as failed.
+  run once (per schedule); a paused period is never replayed. Runs go only to windows whose
+  frontend registered as listening (a due run is held while none has, e.g. during boot); a window
+  that does not acknowledge a run within 60 s is dropped from it, and a run no window settles
+  within 6 hours is closed as failed.
 - **Execution** (`src/store/scheduledRuns.ts`) — unattended: only already-connected tabs opened
   from a target connection, no connecting, no prompts (a required parameter without a default or
   an un-allowlisted local program makes it skip/fail), and never while another run or macro

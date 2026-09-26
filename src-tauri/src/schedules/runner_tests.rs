@@ -43,10 +43,13 @@ impl Clock for FakeClock {
     }
 }
 
+/// Records what the loop emits and, like a listening window, acknowledges
+/// every fire.
 #[derive(Default)]
 struct RecordingSink {
     fires: Mutex<Vec<ScheduleFire>>,
     changes: Mutex<u32>,
+    manager: Mutex<Option<Arc<ScheduleManager>>>,
 }
 
 impl ScheduleSink for RecordingSink {
@@ -54,6 +57,9 @@ impl ScheduleSink for RecordingSink {
         vec!["main".to_string()]
     }
     fn fire(&self, fire: &ScheduleFire) {
+        if let Some(m) = self.manager.lock().unwrap().as_ref() {
+            m.ack(&fire.token, "main");
+        }
         self.fires.lock().unwrap().push(fire.clone());
     }
     fn changed(&self) {
@@ -110,8 +116,10 @@ fn start(every_minutes: u32, policy: MissedRunPolicy) -> Harness {
         )
         .unwrap();
     manager.set_enabled("s1", true, true, base(), &Utc).unwrap();
+    manager.mark_window_ready("main");
     let clock = Arc::new(FakeClock::new(base()));
     let sink = Arc::new(RecordingSink::default());
+    *sink.manager.lock().unwrap() = Some(manager.clone());
     let task = tokio::spawn(run_loop(
         manager.clone(),
         clock.clone() as Arc<dyn Clock>,

@@ -1,12 +1,29 @@
 //! Scheduler-authority tests: the safety rules and every tick decision.
 
 use super::*;
-use crate::schedules::config::{ScheduleAction, ScheduleRule, ScheduleWeekday};
+use crate::schedules::config::{
+    MissedRunPolicy, ScheduleAction, ScheduleRule, ScheduleRunOutcome, ScheduleRunResult,
+    ScheduleWeekday,
+};
 use chrono::Utc;
 use tempfile::TempDir;
 
 fn t(h: u32, m: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 6, 1, h, m, 0).unwrap()
+}
+
+/// Tick with every given window registered as listening (the normal case).
+trait TickAll {
+    fn tick_all<Tz: TimeZone>(&self, now: DateTime<Utc>, tz: &Tz, w: &[String]) -> TickResult;
+}
+
+impl TickAll for ScheduleManager {
+    fn tick_all<Tz: TimeZone>(&self, now: DateTime<Utc>, tz: &Tz, w: &[String]) -> TickResult {
+        for label in w {
+            self.mark_window_ready(label);
+        }
+        self.tick(now, tz, w)
+    }
 }
 
 fn windows(labels: &[&str]) -> Vec<String> {
@@ -193,7 +210,7 @@ fn delete_removes_and_unknown_id_errors() {
     m.delete("s1").unwrap();
     assert!(m.delete("s1").is_err());
     assert!(m
-        .tick(t(10, 10), &Utc, &windows(&["main"]))
+        .tick_all(t(10, 10), &Utc, &windows(&["main"]))
         .fires
         .is_empty());
 }
@@ -205,8 +222,8 @@ fn fires_when_due_and_not_before() {
     let dir = TempDir::new().unwrap();
     let m = enabled_manager(&dir, MissedRunPolicy::Skip);
     let w = windows(&["main"]);
-    assert!(m.tick(t(10, 9), &Utc, &w).fires.is_empty());
-    let r = m.tick(t(10, 10), &Utc, &w);
+    assert!(m.tick_all(t(10, 9), &Utc, &w).fires.is_empty());
+    let r = m.tick_all(t(10, 10), &Utc, &w);
     assert_eq!(r.fires.len(), 1);
     assert!(r.changed);
     let fire = &r.fires[0];
@@ -233,7 +250,7 @@ fn a_disabled_schedule_never_fires() {
     m.save(input("s1", every(1)), t(10, 0), &Utc).unwrap();
     for minute in 0..30 {
         assert!(m
-            .tick(t(10, minute), &Utc, &windows(&["main"]))
+            .tick_all(t(10, minute), &Utc, &windows(&["main"]))
             .fires
             .is_empty());
     }
@@ -244,9 +261,10 @@ fn no_overlap_skips_while_the_previous_run_is_in_flight() {
     let dir = TempDir::new().unwrap();
     let m = enabled_manager(&dir, MissedRunPolicy::Skip);
     let w = windows(&["main"]);
-    let token = m.tick(t(10, 10), &Utc, &w).fires[0].token.clone();
+    let token = m.tick_all(t(10, 10), &Utc, &w).fires[0].token.clone();
+    m.ack(&token, "main");
     // Next slot while still running → skipped + logged, not fired.
-    let r = m.tick(t(10, 20), &Utc, &w);
+    let r = m.tick_all(t(10, 20), &Utc, &w);
     assert!(r.fires.is_empty());
     let res = last_result(&m);
     assert_eq!(res.outcome, ScheduleRunOutcome::Skipped);
@@ -254,7 +272,7 @@ fn no_overlap_skips_while_the_previous_run_is_in_flight() {
     // Report → settles, and the following slot fires again.
     assert!(m.report(&token, "main", completed(2), t(10, 21)).unwrap());
     assert_eq!(last_result(&m).outcome, ScheduleRunOutcome::Completed);
-    assert_eq!(m.tick(t(10, 30), &Utc, &w).fires.len(), 1);
+    assert_eq!(m.tick_all(t(10, 30), &Utc, &w).fires.len(), 1);
 }
 
 #[test]
@@ -262,7 +280,7 @@ fn a_run_settles_only_after_every_window_reported() {
     let dir = TempDir::new().unwrap();
     let m = enabled_manager(&dir, MissedRunPolicy::Skip);
     let w = windows(&["main", "win-1"]);
-    let token = m.tick(t(10, 10), &Utc, &w).fires[0].token.clone();
+    let token = m.tick_all(t(10, 10), &Utc, &w).fires[0].token.clone();
     assert!(!m
         .report(
             &token,
@@ -284,7 +302,7 @@ fn disconnected_targets_everywhere_record_a_skip_with_the_reason() {
     let dir = TempDir::new().unwrap();
     let m = enabled_manager(&dir, MissedRunPolicy::Skip);
     let w = windows(&["main", "win-1"]);
-    let token = m.tick(t(10, 10), &Utc, &w).fires[0].token.clone();
+    let token = m.tick_all(t(10, 10), &Utc, &w).fires[0].token.clone();
     let reason = "None of the target connections are connected";
     m.report(&token, "main", skip_report(reason), t(10, 10))
         .unwrap();
@@ -300,7 +318,7 @@ fn a_failure_in_any_window_marks_the_run_failed() {
     let dir = TempDir::new().unwrap();
     let m = enabled_manager(&dir, MissedRunPolicy::Skip);
     let w = windows(&["main", "win-1"]);
-    let token = m.tick(t(10, 10), &Utc, &w).fires[0].token.clone();
+    let token = m.tick_all(t(10, 10), &Utc, &w).fires[0].token.clone();
     m.report(&token, "main", completed(2), t(10, 10)).unwrap();
     let failed = WindowRunReport {
         outcome: ScheduleRunOutcome::Failed,
@@ -321,7 +339,7 @@ fn unknown_tokens_and_windows_are_ignored() {
     let dir = TempDir::new().unwrap();
     let m = enabled_manager(&dir, MissedRunPolicy::Skip);
     assert!(!m.report("nope", "main", completed(1), t(10, 0)).unwrap());
-    let token = m.tick(t(10, 10), &Utc, &windows(&["main"])).fires[0]
+    let token = m.tick_all(t(10, 10), &Utc, &windows(&["main"])).fires[0]
         .token
         .clone();
     assert!(!m
@@ -334,12 +352,14 @@ fn unknown_tokens_and_windows_are_ignored() {
 fn a_closed_window_no_longer_blocks_the_run() {
     let dir = TempDir::new().unwrap();
     let m = enabled_manager(&dir, MissedRunPolicy::Skip);
-    let token = m.tick(t(10, 10), &Utc, &windows(&["main", "win-1"])).fires[0]
+    let token = m
+        .tick_all(t(10, 10), &Utc, &windows(&["main", "win-1"]))
+        .fires[0]
         .token
         .clone();
     m.report(&token, "main", completed(1), t(10, 10)).unwrap();
     // win-1 closed before reporting: the next tick prunes it and settles.
-    let r = m.tick(t(10, 11), &Utc, &windows(&["main"]));
+    let r = m.tick_all(t(10, 11), &Utc, &windows(&["main"]));
     assert!(r.changed);
     assert_eq!(last_result(&m).outcome, ScheduleRunOutcome::Completed);
     assert!(!m.state(t(10, 11), &Utc).unwrap().schedules[0].running);
@@ -353,23 +373,75 @@ fn a_run_nobody_settles_is_closed_as_failed_after_the_stale_timeout() {
     m.set_enabled("s1", true, true, t(0, 0), &Utc).unwrap();
     let w = windows(&["main"]);
     let fired = Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap();
-    assert_eq!(m.tick(fired, &Utc, &w).fires.len(), 1);
-    m.tick(fired + Duration::hours(5), &Utc, &w);
+    let token = m.tick_all(fired, &Utc, &w).fires[0].token.clone();
+    m.ack(&token, "main");
+    m.tick_all(fired + Duration::hours(5), &Utc, &w);
     assert!(m.state(fired, &Utc).unwrap().schedules[0].running);
-    m.tick(fired + Duration::hours(6) + Duration::minutes(1), &Utc, &w);
+    m.tick_all(fired + Duration::hours(6) + Duration::minutes(1), &Utc, &w);
     assert!(!m.state(fired, &Utc).unwrap().schedules[0].running);
     assert_eq!(last_result(&m).outcome, ScheduleRunOutcome::Failed);
 }
 
 #[test]
-fn no_window_open_skips_with_a_reason() {
+fn a_due_run_waits_until_a_window_is_listening() {
     let dir = TempDir::new().unwrap();
     let m = enabled_manager(&dir, MissedRunPolicy::Skip);
-    assert!(m.tick(t(10, 10), &Utc, &[]).fires.is_empty());
-    assert!(last_result(&m)
-        .message
-        .unwrap()
-        .contains("no termiHub window"));
+    let w = windows(&["main"]);
+    // The window exists but its frontend has not registered yet (app boot).
+    assert!(m.tick(t(10, 10), &Utc, &w).fires.is_empty());
+    let v = &m.state(t(10, 10), &Utc).unwrap().schedules[0];
+    assert!(v.schedule.last_result.is_none(), "held, not skipped");
+    // It registers a few seconds later: the held slot fires on time.
+    m.mark_window_ready("main");
+    let r = m.tick(t(10, 10) + Duration::seconds(20), &Utc, &w);
+    assert_eq!(r.fires.len(), 1);
+    assert!(!r.fires[0].catch_up);
+}
+
+#[test]
+fn a_window_that_never_acknowledges_is_dropped_from_the_run() {
+    let dir = TempDir::new().unwrap();
+    let m = enabled_manager(&dir, MissedRunPolicy::Skip);
+    let w = windows(&["main", "win-1"]);
+    let fired = t(10, 10);
+    let token = m.tick_all(fired, &Utc, &w).fires[0].token.clone();
+    m.ack(&token, "main");
+    // win-1 was reloading and never received the fire.
+    m.tick(fired + Duration::seconds(30), &Utc, &w);
+    assert!(m.state(fired, &Utc).unwrap().schedules[0].running);
+    m.tick(fired + Duration::seconds(61), &Utc, &w);
+    assert!(
+        m.state(fired, &Utc).unwrap().schedules[0].running,
+        "main still owes a report"
+    );
+    m.report(&token, "main", completed(1), fired + Duration::seconds(62))
+        .unwrap();
+    assert_eq!(last_result(&m).outcome, ScheduleRunOutcome::Completed);
+}
+
+#[test]
+fn a_run_nobody_acknowledges_settles_as_skipped() {
+    let dir = TempDir::new().unwrap();
+    let m = enabled_manager(&dir, MissedRunPolicy::Skip);
+    let w = windows(&["main"]);
+    m.tick_all(t(10, 10), &Utc, &w);
+    m.tick(t(10, 11) + Duration::seconds(5), &Utc, &w);
+    let res = last_result(&m);
+    assert_eq!(res.outcome, ScheduleRunOutcome::Skipped);
+    assert!(!m.state(t(10, 12), &Utc).unwrap().schedules[0].running);
+}
+
+#[test]
+fn a_closed_window_must_register_again() {
+    let dir = TempDir::new().unwrap();
+    let m = enabled_manager(&dir, MissedRunPolicy::Skip);
+    m.mark_window_ready("main");
+    // "main" closed, then a new "main" opened (not yet listening).
+    m.tick(t(10, 5), &Utc, &[]);
+    assert!(m
+        .tick(t(10, 10), &Utc, &windows(&["main"]))
+        .fires
+        .is_empty());
 }
 
 // ── missed runs: skip vs catch-up ───────────────────────────────────────
@@ -378,7 +450,7 @@ fn no_window_open_skips_with_a_reason() {
 fn a_run_within_the_grace_period_is_on_time() {
     let dir = TempDir::new().unwrap();
     let m = enabled_manager(&dir, MissedRunPolicy::Skip);
-    let r = m.tick(t(10, 11), &Utc, &windows(&["main"]));
+    let r = m.tick_all(t(10, 11), &Utc, &windows(&["main"]));
     assert_eq!(r.fires.len(), 1);
     assert!(!r.fires[0].catch_up);
 }
@@ -387,9 +459,9 @@ fn a_run_within_the_grace_period_is_on_time() {
 fn missed_runs_are_skipped_by_default() {
     let dir = TempDir::new().unwrap();
     let m = enabled_manager(&dir, MissedRunPolicy::Skip);
-    m.tick(t(10, 5), &Utc, &windows(&["main"]));
+    m.tick_all(t(10, 5), &Utc, &windows(&["main"]));
     // The machine slept from 10:05 to 11:03: the 10:10 … 11:00 slots passed.
-    let r = m.tick(t(11, 3), &Utc, &windows(&["main"]));
+    let r = m.tick_all(t(11, 3), &Utc, &windows(&["main"]));
     assert!(r.fires.is_empty());
     let res = last_result(&m);
     assert_eq!(res.outcome, ScheduleRunOutcome::Skipped);
@@ -403,22 +475,28 @@ fn missed_runs_are_skipped_by_default() {
         v.next_run_at.as_deref(),
         Some(t(11, 10).to_rfc3339().as_str())
     );
-    assert_eq!(m.tick(t(11, 10), &Utc, &windows(&["main"])).fires.len(), 1);
+    assert_eq!(
+        m.tick_all(t(11, 10), &Utc, &windows(&["main"])).fires.len(),
+        1
+    );
 }
 
 #[test]
 fn run_once_catches_up_exactly_once_however_many_slots_were_missed() {
     let dir = TempDir::new().unwrap();
     let m = enabled_manager(&dir, MissedRunPolicy::RunOnce);
-    m.tick(t(10, 5), &Utc, &windows(&["main"]));
-    let r = m.tick(t(11, 3), &Utc, &windows(&["main"]));
+    m.tick_all(t(10, 5), &Utc, &windows(&["main"]));
+    let r = m.tick_all(t(11, 3), &Utc, &windows(&["main"]));
     assert_eq!(r.fires.len(), 1);
     assert!(r.fires[0].catch_up);
     let token = r.fires[0].token.clone();
     m.report(&token, "main", completed(1), t(11, 4)).unwrap();
     assert!(last_result(&m).catch_up);
     // No second catch-up on the next tick.
-    assert!(m.tick(t(11, 4), &Utc, &windows(&["main"])).fires.is_empty());
+    assert!(m
+        .tick_all(t(11, 4), &Utc, &windows(&["main"]))
+        .fires
+        .is_empty());
 }
 
 #[test]
@@ -435,7 +513,7 @@ fn a_missed_daily_run_is_detected_after_an_app_restart() {
         i.missed_runs = MissedRunPolicy::RunOnce;
         m.save(i, t(8, 0), &Utc).unwrap();
         m.set_enabled("s1", true, true, t(8, 0), &Utc).unwrap();
-        let token = m.tick(t(9, 0), &Utc, &windows(&["main"])).fires[0]
+        let token = m.tick_all(t(9, 0), &Utc, &windows(&["main"])).fires[0]
             .token
             .clone();
         m.report(&token, "main", completed(1), t(9, 1)).unwrap();
@@ -443,7 +521,7 @@ fn a_missed_daily_run_is_detected_after_an_app_restart() {
     // App closed; reopened two days later at 12:00.
     let m = ScheduleManager::new_test(dir.path());
     let later = Utc.with_ymd_and_hms(2026, 6, 3, 12, 0, 0).unwrap();
-    let r = m.tick(later, &Utc, &windows(&["main"]));
+    let r = m.tick_all(later, &Utc, &windows(&["main"]));
     assert_eq!(r.fires.len(), 1, "one catch-up for the missed slots");
     assert!(r.fires[0].catch_up);
     let v = &m.state(later, &Utc).unwrap().schedules[0];
@@ -471,7 +549,10 @@ fn enabling_never_catches_up_on_slots_from_before() {
     i.missed_runs = MissedRunPolicy::RunOnce;
     m.save(i, t(8, 0), &Utc).unwrap();
     m.set_enabled("s1", true, true, t(12, 0), &Utc).unwrap();
-    assert!(m.tick(t(12, 0), &Utc, &windows(&["main"])).fires.is_empty());
+    assert!(m
+        .tick_all(t(12, 0), &Utc, &windows(&["main"]))
+        .fires
+        .is_empty());
 }
 
 // ── global pause ───────────────────────────────────────────────────────
@@ -483,7 +564,7 @@ fn global_pause_stops_firing_and_resume_does_not_replay() {
     let w = windows(&["main"]);
     assert!(m.set_paused(true, t(10, 1), &Utc).unwrap().paused);
     for minute in [10, 20, 30, 40] {
-        assert!(m.tick(t(10, minute), &Utc, &w).fires.is_empty());
+        assert!(m.tick_all(t(10, minute), &Utc, &w).fires.is_empty());
     }
     let state = m.set_paused(false, t(10, 45), &Utc).unwrap();
     assert!(!state.paused);
@@ -491,8 +572,8 @@ fn global_pause_stops_firing_and_resume_does_not_replay() {
         state.schedules[0].next_run_at.as_deref(),
         Some(t(10, 50).to_rfc3339().as_str())
     );
-    assert!(m.tick(t(10, 46), &Utc, &w).fires.is_empty());
-    assert_eq!(m.tick(t(10, 50), &Utc, &w).fires.len(), 1);
+    assert!(m.tick_all(t(10, 46), &Utc, &w).fires.is_empty());
+    assert_eq!(m.tick_all(t(10, 50), &Utc, &w).fires.len(), 1);
 }
 
 #[test]
@@ -505,7 +586,7 @@ fn pause_survives_a_restart() {
     let m = ScheduleManager::new_test(dir.path());
     assert!(m.state(t(10, 1), &Utc).unwrap().paused);
     assert!(m
-        .tick(t(10, 10), &Utc, &windows(&["main"]))
+        .tick_all(t(10, 10), &Utc, &windows(&["main"]))
         .fires
         .is_empty());
 }
@@ -517,7 +598,7 @@ fn state_and_results_persist_across_restarts() {
     let dir = TempDir::new().unwrap();
     {
         let m = enabled_manager(&dir, MissedRunPolicy::Skip);
-        let token = m.tick(t(10, 10), &Utc, &windows(&["main"])).fires[0]
+        let token = m.tick_all(t(10, 10), &Utc, &windows(&["main"])).fires[0]
             .token
             .clone();
         m.report(&token, "main", completed(2), t(10, 11)).unwrap();
@@ -559,5 +640,8 @@ fn weekly_schedule_in_a_dst_zone_reports_local_next_run() {
         v.next_run_at.as_deref(),
         Some(expected.to_rfc3339().as_str())
     );
-    assert_eq!(m.tick(expected, &tz, &windows(&["main"])).fires.len(), 1);
+    assert_eq!(
+        m.tick_all(expected, &tz, &windows(&["main"])).fires.len(),
+        1
+    );
 }

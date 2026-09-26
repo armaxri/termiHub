@@ -44,6 +44,16 @@ export async function setSchedulesPaused(paused: boolean): Promise<SchedulerStat
   return await invoke<SchedulerState>("set_schedules_paused", { paused });
 }
 
+/** Tell the scheduler this window listens for fired runs (boot / reload). */
+export async function registerScheduleWindow(): Promise<void> {
+  await invoke("register_schedule_window");
+}
+
+/** Acknowledge receipt of a fired run (this window will report on it). */
+export async function ackScheduleRun(token: string): Promise<void> {
+  await invoke("ack_schedule_run", { token });
+}
+
 /** Report this window's outcome of a fired run. */
 export async function reportScheduleRun(token: string, report: WindowRunReport): Promise<void> {
   await invoke("report_schedule_run", { token, report });

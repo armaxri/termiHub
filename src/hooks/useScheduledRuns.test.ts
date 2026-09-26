@@ -1,11 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  ackScheduleRun: vi.fn(() => Promise.resolve()),
   reportScheduleRun: vi.fn(),
   executeScheduledRun: vi.fn(),
 }));
 vi.mock("@/services/scheduleApi", () => ({
   reportScheduleRun: mocks.reportScheduleRun,
+  ackScheduleRun: mocks.ackScheduleRun,
+  registerScheduleWindow: vi.fn(() => Promise.resolve()),
   onScheduleFire: vi.fn(() => Promise.resolve(() => {})),
   onSchedulesChanged: vi.fn(() => Promise.resolve(() => {})),
 }));
@@ -34,6 +37,7 @@ describe("handleScheduleFire (PROD-043)", () => {
     mocks.executeScheduledRun.mockResolvedValue(report);
     mocks.reportScheduleRun.mockResolvedValue(undefined);
     await handleScheduleFire(fire);
+    expect(mocks.ackScheduleRun).toHaveBeenCalledWith("tok");
     expect(mocks.executeScheduledRun).toHaveBeenCalledWith(fire, expect.any(Object));
     expect(mocks.reportScheduleRun).toHaveBeenCalledWith("tok", report);
   });

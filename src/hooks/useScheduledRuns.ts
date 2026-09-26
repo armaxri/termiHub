@@ -1,6 +1,12 @@
 import { useEffect } from "react";
 
-import { onScheduleFire, onSchedulesChanged, reportScheduleRun } from "@/services/scheduleApi";
+import {
+  ackScheduleRun,
+  onScheduleFire,
+  onSchedulesChanged,
+  registerScheduleWindow,
+  reportScheduleRun,
+} from "@/services/scheduleApi";
 import { useAppStore } from "@/store/appStore";
 import { executeScheduledRun } from "@/store/scheduledRuns";
 import type { ScheduleFire } from "@/types/schedule";
@@ -10,6 +16,12 @@ import { frontendLog } from "@/utils/frontendLog";
 /** Execute one fired schedule in this window and report the outcome. */
 export async function handleScheduleFire(fire: ScheduleFire): Promise<void> {
   frontendLog("schedules", `schedule ${fire.scheduleId} fired (run ${fire.token})`);
+  // Acknowledge first, so the scheduler waits for this window's report.
+  try {
+    await ackScheduleRun(fire.token);
+  } catch (err) {
+    frontendLog("schedules", `Failed to acknowledge scheduled run: ${errorMessage(err)}`);
+  }
   const report = await executeScheduledRun(fire, {
     getState: useAppStore.getState,
     setState: useAppStore.setState,
@@ -41,7 +53,11 @@ export function useScheduledRuns(): void {
     };
 
     void onScheduleFire((fire) => void handleScheduleFire(fire))
-      .then(keep)
+      .then((off) => {
+        keep(off);
+        // Only now can this window receive runs: register it with the scheduler.
+        if (!disposed) return registerScheduleWindow();
+      })
       .catch((err) =>
         frontendLog("schedules", `schedule-fire listen failed: ${errorMessage(err)}`)
       );
