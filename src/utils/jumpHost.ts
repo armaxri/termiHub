@@ -123,6 +123,12 @@ export interface SavedConnectionOption {
   id: string;
   /** `Folder / Sub / Name` path, disambiguating equally-named connections. */
   label: string;
+  /**
+   * Set when more than one connection file (the main store and/or enabled
+   * external files) holds this id. The backend refuses to resolve such a
+   * reference (#3602), so the picker must not offer it as a choice.
+   */
+  ambiguous?: boolean;
 }
 
 /** Build the `Folder / Sub / Name` path label for a connection. */
@@ -149,15 +155,29 @@ export function connectionPathLabel(
  * SSH-type saved connections offered as jump-host hops, each labelled with its
  * folder path. `excludeId` drops the connection being edited so it cannot
  * reference itself.
+ *
+ * `connections` is the unified view — the main store plus every enabled
+ * external connection file — which is exactly the set the backend resolves
+ * references against (`JumpHostScope`, #3602). Connection ids are tree paths
+ * and not scoped per file, so two files can hold the same id; the backend
+ * refuses such a reference as ambiguous, and this collapses it into a single
+ * option flagged `ambiguous` so the picker and the resolver agree. Connections
+ * in disabled external files are not in the view and so are not offered.
  */
 export function sshJumpHostOptions(
   connections: SavedConnection[],
   folders: ConnectionFolder[],
   excludeId?: string
 ): SavedConnectionOption[] {
-  return connections
-    .filter((c) => c.config.type === "ssh" && c.id !== excludeId)
-    .map((c) => ({ id: c.id, label: connectionPathLabel(c, folders) }))
+  const byId = new Map<string, SavedConnectionOption>();
+  const holders = new Map<string, number>();
+  for (const c of connections) {
+    holders.set(c.id, (holders.get(c.id) ?? 0) + 1);
+    if (c.config.type !== "ssh" || c.id === excludeId || byId.has(c.id)) continue;
+    byId.set(c.id, { id: c.id, label: connectionPathLabel(c, folders) });
+  }
+  return [...byId.values()]
+    .map((opt) => ((holders.get(opt.id) ?? 0) > 1 ? { ...opt, ambiguous: true } : opt))
     .sort((a, b) => compareNames(a.label, b.label));
 }
 
