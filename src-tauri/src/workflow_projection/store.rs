@@ -237,7 +237,9 @@ impl WorkflowRunStore {
     }
 
     /// Legacy single-run `workflow.runStarted` (no `runId`): supersedes every
-    /// in-flight run and clears the output panel. See [`Self::start_run`].
+    /// in-flight run and clears the output panel. A test convenience over
+    /// [`Self::start_run`], which the intent route calls directly.
+    #[cfg(test)]
     pub fn run_started(
         &self,
         client_id: &str,

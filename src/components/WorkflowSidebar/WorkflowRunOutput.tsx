@@ -100,7 +100,7 @@ export function WorkflowRunOutput() {
               aria-label="Stop workflow run"
               data-testid="workflow-run-output-stop"
               icon={<Square size={12} fill="currentColor" />}
-              onClick={cancelRun}
+              onClick={() => cancelRun()}
             />
           </Tooltip>
         ) : (

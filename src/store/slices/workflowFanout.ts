@@ -1,13 +1,78 @@
 /**
- * Multi-target ("run on many") helpers for manual workflow runs (PROD-047):
- * resolving which selected tabs are runnable, and summarising a fan-out's
- * per-target outcomes in one toast.
+ * Multi-target ("run on many") helpers for manual workflow runs (PROD-047,
+ * #3418): resolving which selected tabs are runnable, running the targets
+ * concurrently under a bounded pool, rendering one per-target status toast while
+ * they run, and summarising the per-target outcomes in one toast.
  */
 import { toast } from "@/components/ui";
 import type { WorkflowRunResult } from "@/services/workflowRunner";
 
 import { collectLiveTabs, type AppState } from "../appStore";
 import { currentSessionView, regionExited } from "../sessionBridge";
+
+/**
+ * Maximum number of terminals a fan-out runs a workflow on at the same time
+ * (#3418). Further targets queue and start as earlier ones finish, so a large
+ * broadcast group cannot flood the backend with simultaneous sessions' work.
+ */
+export const WORKFLOW_FANOUT_CONCURRENCY = 8;
+
+/** Clamp a requested fan-out concurrency to `1..WORKFLOW_FANOUT_CONCURRENCY`
+ * (`undefined` → the cap; `1` runs the targets one after another). */
+export function clampFanoutConcurrency(requested: number | undefined): number {
+  if (requested === undefined || !Number.isFinite(requested)) return WORKFLOW_FANOUT_CONCURRENCY;
+  return Math.min(WORKFLOW_FANOUT_CONCURRENCY, Math.max(1, Math.floor(requested)));
+}
+
+/**
+ * Run `worker` over `items` with at most `limit` in flight at once, starting
+ * the next item as soon as a slot frees. Items are started in order; once
+ * `shouldStop()` returns true no further item starts (in-flight ones finish).
+ * Resolves with each item's result by index — `undefined` for an item that
+ * never started. A worker rejection is the worker's to handle: the pool keeps
+ * going and records `undefined` for that item.
+ */
+export async function runWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>,
+  shouldStop: () => boolean = () => false
+): Promise<(R | undefined)[]> {
+  const results: (R | undefined)[] = new Array<R | undefined>(items.length).fill(undefined);
+  let next = 0;
+  const lane = async (): Promise<void> => {
+    while (next < items.length && !shouldStop()) {
+      const index = next++;
+      try {
+        results[index] = await worker(items[index], index);
+      } catch {
+        results[index] = undefined;
+      }
+    }
+  };
+  const lanes = Math.max(1, Math.min(limit, items.length));
+  await Promise.all(Array.from({ length: lanes }, () => lane()));
+  return results;
+}
+
+/** Live status of one fan-out target, for the per-target progress toast. */
+export type FanoutTargetStatus = "queued" | "running" | WorkflowRunResult["status"];
+
+/** Render the compact per-target status line of a running fan-out toast, e.g.
+ * `2 running · 3 queued · 4 done · 1 failed`. Zero counts are omitted. */
+export function describeFanoutProgress(statuses: readonly FanoutTargetStatus[]): string {
+  const count = (s: FanoutTargetStatus) => statuses.filter((x) => x === s).length;
+  const parts: string[] = [];
+  const push = (n: number, label: string) => {
+    if (n > 0) parts.push(`${n} ${label}`);
+  };
+  push(count("running"), "running");
+  push(count("queued"), "queued");
+  push(count("completed"), "done");
+  push(count("failed"), "failed");
+  push(count("cancelled"), "cancelled");
+  return parts.join(" · ");
+}
 
 /** A connected terminal tab a workflow can run against. */
 export interface RunnableTarget {

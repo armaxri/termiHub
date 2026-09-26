@@ -135,7 +135,11 @@ class FakeTransport implements Transport {
 function renderHook(): { get: () => ProjectedWorkflowRunSlice; unmount: () => void } {
   const container = document.createElement("div");
   const root: Root = createRoot(container);
-  let latest: ProjectedWorkflowRunSlice = { workflowRun: null, workflowRunOutput: null };
+  let latest: ProjectedWorkflowRunSlice = {
+    workflowRun: null,
+    workflowRuns: [],
+    workflowRunOutput: null,
+  };
   function Probe() {
     latest = useProjectedWorkflowRun();
     return null;
@@ -162,7 +166,7 @@ describe("useProjectedWorkflowRun", () => {
   it("renders nothing when the region is empty", async () => {
     const hook = renderHook();
     await flush();
-    expect(hook.get()).toEqual({ workflowRun: null, workflowRunOutput: null });
+    expect(hook.get()).toEqual({ workflowRun: null, workflowRuns: [], workflowRunOutput: null });
     hook.unmount();
   });
 
