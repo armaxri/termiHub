@@ -1813,6 +1813,23 @@ backend and dialogs are unit-tested; this checks the native save/open dialogs).
    system authentication … #3433" reason; **Import vault…** with the same file
    works and the credentials land in the OS keychain.
 
+### Unified backup and restore (PROD-068, #3509)
+
+Verifies the backup round trip in the real app, including the restart that applies a restore (the
+backend and dialogs are unit-tested; this checks the native dialogs and the restart).
+
+1. Master Password mode, with a few connections, a macro, a custom theme and a saved password.
+   Settings → **Backup & Restore** → **Back up everything…** → leave everything checked, enter the
+   master password and a 12+ character passphrase twice → **Save backup…** → save the file. Expect a
+   success toast; the file shows only the `termihub-backup` header and ciphertext.
+2. Delete a connection and the macro, and change the theme.
+3. **Restore…** → choose the file → enter the passphrase → **Preview**: every part is listed with
+   counts; Settings says it replaces the current settings.
+4. Keep the defaults (merge) → **Restore and restart**. termiHub restarts; the deleted connection
+   and macro are back, the theme is the backed-up one, and the saved password still connects.
+5. Switch to OS Keychain mode and open **Back up everything…**: Credentials is disabled with the
+   "requires system authentication … #3433" reason; a backup of the rest still saves.
+
 ### Zoomed tab repaints terminal content immediately (#1823)
 
 Verifies that zooming a terminal tab repaints its content at the new size right
