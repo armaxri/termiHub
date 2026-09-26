@@ -316,6 +316,41 @@ describe("EmbeddedServerDialog", () => {
     expect(pass.value).toBe("hunter2");
   });
 
+  it("editing a server with a saved password shows a keep-it hint in the blank field (#3514)", () => {
+    const existing: EmbeddedServerConfig = {
+      id: "srv-4",
+      name: "Uploads",
+      serverType: "ftp",
+      rootDirectory: "/srv/ftp",
+      bindHost: "127.0.0.1",
+      port: 2121,
+      autoStart: false,
+      readOnly: false,
+      // The backend never sends a stored password back to the UI.
+      ftpAuth: { type: "credentials", username: "ops", password: "" },
+    };
+    render(<EmbeddedServerDialog {...baseProps} config={existing} />);
+
+    const pass = document.querySelector(
+      '[data-testid="server-dialog-ftp-password"]'
+    ) as HTMLInputElement;
+    expect(pass.value).toBe("");
+    expect(pass.placeholder).toMatch(/leave blank to keep/i);
+  });
+
+  it("a new server's password field has no keep-it hint (#3514)", () => {
+    render(<EmbeddedServerDialog {...baseProps} />);
+    act(() => {
+      (
+        document.querySelector('[data-testid="server-dialog-http-auth-enable"]') as HTMLElement
+      ).click();
+    });
+    const pass = document.querySelector(
+      '[data-testid="server-dialog-http-password"]'
+    ) as HTMLInputElement;
+    expect(pass.placeholder).toBe("");
+  });
+
   it("switching protocol away from HTTP hides the auth section (PROD-0035)", () => {
     render(<EmbeddedServerDialog {...baseProps} />);
     expect(document.querySelector('[data-testid="server-dialog-http-auth-enable"]')).toBeTruthy();
