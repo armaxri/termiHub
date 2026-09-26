@@ -286,30 +286,44 @@ impl MasterPasswordStore {
 
     /// Change the master password. Verifies the current password, then
     /// re-encrypts all credentials with a fresh salt and the new password.
-    pub fn change_password(&self, current_password: &str, new_password: &str) -> Result<()> {
-        // Verify the current password by re-deriving the key and comparing.
-        let current_salt = {
+    /// Verify `password` against the unlocked store without changing any state.
+    ///
+    /// Re-derives the key from the password with the salt and Argon2 cost the
+    /// in-memory key was derived with, and compares it with that key. Used to
+    /// re-authenticate the user before sensitive operations (changing the
+    /// master password, exporting the vault — PROD-063).
+    ///
+    /// Returns `Ok(false)` for a wrong password and an error when the store is
+    /// locked (there is no in-memory key to compare against).
+    pub fn verify_password(&self, password: &str) -> Result<bool> {
+        let salt = {
             let salt_guard = self.salt.read().unwrap_or_else(|e| e.into_inner());
-            salt_guard
-                .clone()
-                .context("Store is locked — cannot change password")?
+            salt_guard.clone().context("Store is locked")?
         };
         // Re-derive with the cost params the current key was derived with — the
         // vault may carry non-default params — so the verification compares
         // like with like (#2362).
-        let current_cost = {
+        let cost = {
             let cost_guard = self.kdf_cost.read().unwrap_or_else(|e| e.into_inner());
-            cost_guard.context("Store is locked — cannot change password")?
+            cost_guard.context("Store is locked")?
         };
-        let current_key = derive_key_with_cost(current_password, &current_salt, &current_cost)?;
-        {
+        let mut candidate = derive_key_with_cost(password, &salt, &cost)?;
+        let matches = {
             let key_guard = self.derived_key.read().unwrap_or_else(|e| e.into_inner());
-            let stored_key = key_guard
-                .as_ref()
-                .context("Store is locked — cannot change password")?;
-            if current_key.as_slice() != stored_key.as_slice() {
-                bail!("Current password is incorrect");
-            }
+            let stored_key = key_guard.as_ref().context("Store is locked")?;
+            constant_time_eq(candidate.as_slice(), stored_key.as_slice())
+        };
+        candidate.zeroize();
+        Ok(matches)
+    }
+
+    pub fn change_password(&self, current_password: &str, new_password: &str) -> Result<()> {
+        // Verify the current password by re-deriving the key and comparing.
+        let verified = self
+            .verify_password(current_password)
+            .context("Store is locked — cannot change password")?;
+        if !verified {
+            bail!("Current password is incorrect");
         }
 
         // Generate a new salt and derive a new key. Re-keying adopts the current
@@ -420,6 +434,14 @@ impl MasterPasswordStore {
     }
 }
 
+/// Compare two byte slices in time independent of where they first differ.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
 impl CredentialStore for MasterPasswordStore {
     fn get(&self, key: &CredentialKey) -> Result<Option<String>> {
         let creds_guard = self.credentials.read().unwrap_or_else(|e| e.into_inner());
@@ -491,6 +513,50 @@ impl CredentialStore for MasterPasswordStore {
             }
         }
         Ok(keys)
+    }
+
+    /// Atomic batch write: every entry is applied to the in-memory map and the
+    /// vault file is re-sealed **once**. If that save fails, the map is restored
+    /// to its previous values so memory and disk stay consistent — the store
+    /// never ends up half-imported (PROD-063).
+    fn set_many(&self, entries: &[(CredentialKey, String)]) -> Result<()> {
+        let mut previous: Vec<(String, Option<String>)> = Vec::with_capacity(entries.len());
+        {
+            let mut creds_guard = self.credentials.write().unwrap_or_else(|e| e.into_inner());
+            let map = creds_guard
+                .as_mut()
+                .context("Store is locked — unlock before accessing credentials")?;
+            for (key, value) in entries {
+                let map_key = key.to_string();
+                let old = map.insert(map_key.clone(), value.clone());
+                previous.push((map_key, old));
+            }
+        }
+
+        let outcome = self.save_to_disk();
+
+        if outcome.is_err() {
+            let mut creds_guard = self.credentials.write().unwrap_or_else(|e| e.into_inner());
+            if let Some(map) = creds_guard.as_mut() {
+                // Restore newest-first so a key listed twice ends at its original value.
+                for (map_key, old) in previous.iter().rev() {
+                    let replaced = match old {
+                        Some(old_value) => map.insert(map_key.clone(), old_value.clone()),
+                        None => map.remove(map_key),
+                    };
+                    if let Some(mut discarded) = replaced {
+                        discarded.zeroize();
+                    }
+                }
+            }
+        }
+
+        for (_, old) in previous.iter_mut() {
+            if let Some(ref mut old_value) = old {
+                old_value.zeroize();
+            }
+        }
+        outcome.context("Batch credential write failed and was rolled back")
     }
 
     fn status(&self) -> CredentialStoreStatus {
@@ -1070,5 +1136,91 @@ mod tests {
         assert!(CredentialKey::from_map_key("conn:unknown_type").is_none());
         // No colon.
         assert!(CredentialKey::from_map_key("nodelimiter").is_none());
+    }
+
+    // --- PROD-063: re-auth + atomic batch writes for the vault import ---
+
+    #[test]
+    fn verify_password_accepts_correct_and_rejects_wrong() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("correct-pw").unwrap();
+
+        assert!(store.verify_password("correct-pw").unwrap());
+        assert!(!store.verify_password("wrong-pw").unwrap());
+        // Verification must not disturb the unlocked state.
+        assert!(store.is_unlocked());
+    }
+
+    #[test]
+    fn verify_password_errors_when_locked() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("pw").unwrap();
+        store.lock();
+
+        assert!(store.verify_password("pw").is_err());
+    }
+
+    #[test]
+    fn set_many_writes_all_entries_in_one_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("pw").unwrap();
+
+        let a = CredentialKey::new("conn-a", CredentialType::Password);
+        let b = CredentialKey::new("conn-b", CredentialType::KeyPassphrase);
+        store
+            .set_many(&[(a.clone(), "va".to_string()), (b.clone(), "vb".to_string())])
+            .unwrap();
+
+        store.lock();
+        store.unlock("pw").unwrap();
+        assert_eq!(store.get(&a).unwrap(), Some("va".to_string()));
+        assert_eq!(store.get(&b).unwrap(), Some("vb".to_string()));
+    }
+
+    #[test]
+    fn set_many_rolls_back_memory_when_save_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("vault");
+        fs::create_dir(&sub).unwrap();
+        let store = make_store(&sub);
+        store.setup("pw").unwrap();
+
+        let existing = CredentialKey::new("conn-a", CredentialType::Password);
+        store.set(&existing, "original").unwrap();
+
+        // Remove the store's directory so the atomic save cannot write.
+        fs::remove_dir_all(&sub).unwrap();
+
+        let fresh = CredentialKey::new("conn-new", CredentialType::Password);
+        let result = store.set_many(&[
+            (existing.clone(), "overwritten".to_string()),
+            (fresh.clone(), "new".to_string()),
+        ]);
+
+        assert!(result.is_err(), "a failed save must fail the batch");
+        assert_eq!(
+            store.get(&existing).unwrap(),
+            Some("original".to_string()),
+            "an overwritten entry must be restored"
+        );
+        assert_eq!(
+            store.get(&fresh).unwrap(),
+            None,
+            "a newly-added entry must be removed"
+        );
+    }
+
+    #[test]
+    fn set_many_on_locked_store_fails_without_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("pw").unwrap();
+        store.lock();
+
+        let key = CredentialKey::new("conn-a", CredentialType::Password);
+        assert!(store.set_many(&[(key, "v".to_string())]).is_err());
     }
 }

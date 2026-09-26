@@ -38,6 +38,19 @@ impl CredentialType {
         CredentialType::KeyPassphrase,
         CredentialType::SudoPassword,
     ];
+
+    /// Parse the string form produced by [`Display`](fmt::Display)
+    /// (`"password"`, `"key_passphrase"`, `"sudo_password"`).
+    ///
+    /// Returns `None` for an unrecognized string.
+    pub fn from_type_str(s: &str) -> Option<Self> {
+        match s {
+            "password" => Some(CredentialType::Password),
+            "key_passphrase" => Some(CredentialType::KeyPassphrase),
+            "sudo_password" => Some(CredentialType::SudoPassword),
+            _ => None,
+        }
+    }
 }
 
 /// Identifies a specific credential by connection and type.
@@ -61,12 +74,7 @@ impl CredentialKey {
     /// is unrecognized.
     pub fn from_map_key(s: &str) -> Option<Self> {
         let (conn_id, type_str) = s.rsplit_once(':')?;
-        let credential_type = match type_str {
-            "password" => CredentialType::Password,
-            "key_passphrase" => CredentialType::KeyPassphrase,
-            "sudo_password" => CredentialType::SudoPassword,
-            _ => return None,
-        };
+        let credential_type = CredentialType::from_type_str(type_str)?;
         Some(Self::new(conn_id, credential_type))
     }
 }

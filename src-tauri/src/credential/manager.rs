@@ -247,6 +247,18 @@ impl CredentialStore for CredentialManager {
         result
     }
 
+    fn set_many(&self, entries: &[(CredentialKey, String)]) -> Result<()> {
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
+        let result = match *inner {
+            StoreBackend::Null(ref s) => s.set_many(entries),
+            StoreBackend::MasterPassword(ref s) => s.set_many(entries),
+            StoreBackend::OsKeychain(ref s) => s.set_many(entries),
+        };
+        drop(inner);
+        self.record_activity();
+        result
+    }
+
     fn status(&self) -> CredentialStoreStatus {
         let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
         match *inner {
