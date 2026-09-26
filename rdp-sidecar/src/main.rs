@@ -39,7 +39,7 @@ use termihub_core::backends::rdp_sidecar::protocol::{read_message, write_message
 use termihub_core::connection::GraphicalState;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     // Logs go to stderr; stdout is the binary IPC channel and must stay clean.
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
@@ -49,6 +49,27 @@ async fn main() -> Result<()> {
         )
         .init();
 
+    let code = match run().await {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("Error: {e:?}");
+            1
+        }
+    };
+    // Exit explicitly instead of returning from `main` (#3609). Returning drops
+    // the runtime, which waits for its blocking tasks — and `tokio::io::stdin`
+    // keeps one parked in a blocking read of the host pipe for as long as the
+    // host holds it open. When the *server* ends the session (logoff, a
+    // rejected logon on a TLS-only server, a dropped transport) the sidecar
+    // would then linger with its stdout open, so the desktop never saw EOF and
+    // the tab never learned the session was gone. Every IPC message is already
+    // flushed by `write_message`.
+    std::process::exit(code);
+}
+
+/// Run one sidecar session: announce `Connecting`, read the host's `Connect`,
+/// then drive the RDP session until it ends.
+async fn run() -> Result<()> {
     let mut stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
 
