@@ -26,6 +26,8 @@ pub enum WorkflowRunTrigger {
     OnConnect,
     /// Fired by a user-assigned keybinding.
     Hotkey,
+    /// Fired by a schedule (PROD-043).
+    Scheduled,
 }
 
 /// A single persisted, **metadata-only** record of a finished workflow run

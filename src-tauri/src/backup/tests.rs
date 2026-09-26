@@ -47,6 +47,14 @@ fn macros_doc(items: &[(&str, &str)]) -> Value {
     json!({"version": "1", "macros": macros})
 }
 
+fn schedule_doc(id: &str, name: &str) -> Value {
+    json!({"id": id, "name": name,
+           "action": {"kind": "workflow", "workflowId": "wf1"},
+           "targets": {"kind": "connections", "connectionIds": ["c1"]},
+           "rule": {"kind": "daily", "time": "09:00"},
+           "missedRuns": "skip", "enabled": false, "createdAt": "", "updatedAt": ""})
+}
+
 fn fixture_docs() -> Vec<(&'static str, Value)> {
     vec![
         ("connections.json", connections_doc()),
@@ -67,6 +75,10 @@ fn fixture_docs() -> Vec<(&'static str, Value)> {
         (
             "workflows.json",
             json!({"version": "1", "workflows": [{"id": "wf1", "name": "Nightly"}]}),
+        ),
+        (
+            "schedules.json",
+            json!({"version": "1", "paused": false, "schedules": [schedule_doc("sch1", "Health")]}),
         ),
         ("tunnels.json", json!({"version": "1", "tunnels": []})),
         (
@@ -988,4 +1000,50 @@ fn every_section_file_is_known_to_the_manifest_validator() {
         assert_eq!(sections::spec_for_file(spec.file_name).unwrap().id, spec.id);
         assert!(spec.normalize(spec.default_doc()).is_ok(), "{}", spec.id);
     }
+}
+
+// --- schedules (PROD-043) ---
+
+#[test]
+fn schedules_are_a_backup_section_that_merges_by_id() {
+    let src = tempfile::tempdir().unwrap();
+    populate(src.path());
+    let json = build(src.path(), &options(&["schedules"], true, false), None);
+
+    let dst = tempfile::tempdir().unwrap();
+    write_doc(
+        dst.path(),
+        "schedules.json",
+        &json!({"version": "1", "paused": true, "schedules": [schedule_doc("mine", "Local")]}),
+    );
+    let result = restore_and_boot(
+        &json,
+        dst.path(),
+        &request(vec![choice(
+            "schedules",
+            RestoreMode::Merge,
+            ConflictStrategy::Skip,
+        )]),
+    );
+    assert_eq!(result.sections.len(), 1);
+    assert_eq!(result.sections[0].resulting_count, 2);
+    let doc = read_doc(dst.path(), "schedules.json");
+    // The machine's own pause switch survives a merge.
+    assert_eq!(doc["paused"], json!(true));
+    let ids: Vec<&str> = doc["schedules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["mine", "sch1"]);
+}
+
+#[test]
+fn a_newer_schedules_backup_is_refused() {
+    let spec = sections::spec("schedules").unwrap();
+    let err = spec
+        .normalize(json!({"version": "2", "schedules": []}))
+        .unwrap_err();
+    assert!(matches!(err, sections::NormalizeError::Newer { found: 2, .. }));
 }

@@ -1024,6 +1024,24 @@ pub(crate) fn init_secondary_managers(
         }
     }
 
+    // Initialize the schedule manager (PROD-043) and start the scheduler loop.
+    // On failure, the app still starts but scheduled runs are unavailable.
+    match schedules::manager::ScheduleManager::new(app.handle()) {
+        Ok(manager) => {
+            recovery_warnings.extend(manager.take_recovery_warnings());
+            app.manage(Arc::new(manager));
+            schedules::runner::start(app.handle());
+        }
+        Err(e) => {
+            tracing::error!("Failed to initialize schedule manager: {e}");
+            recovery_warnings.push(RecoveryWarning {
+                file_name: "schedules.json".to_string(),
+                message: "Could not initialize schedule storage. Scheduled runs are unavailable until the app is restarted.".to_string(),
+                details: Some(e.to_string()),
+            });
+        }
+    }
+
     // Initialize the network-tool run-history manager (PROD-032). On failure
     // the app still starts; recording from the tool panels is fire-and-forget
     // and the history view shows an error instead of past runs.
