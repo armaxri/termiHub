@@ -258,6 +258,16 @@ export type PersistentRunState =
   | "stopping"
   | "error";
 
+/**
+ * A saved connection's id changed from `oldId` to `newId` — a rename or move of
+ * the connection or of a folder above it (#3569). Payload item of the backend
+ * `connection-ids-changed` event (#3579).
+ */
+export interface ConnectionIdChange {
+  oldId: string;
+  newId: string;
+}
+
 /** Frontend state entry for one persistent connection. */
 export interface PersistentSessionEntry {
   connectionId: string;
