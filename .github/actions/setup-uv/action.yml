@@ -1,0 +1,53 @@
+name: "Setup uv (pinned version)"
+description: >-
+  Install the ONE uv version every CI job uses (WA-CI-017). The version is read
+  from `.github/uv-version` — the single source of truth — so a bump touches one
+  file instead of every workflow. uv is pinned at all (issue #1552) because
+  without an explicit version astral-sh/setup-uv resolves "latest" through the
+  GitHub Releases API, which flakes and fast-fails the whole job on transient API
+  errors unrelated to the PR. `scripts/internal/check-uv-version.mjs` fails if a
+  workflow calls astral-sh/setup-uv directly. Bump procedure:
+  docs/contributing.md -> "uv version".
+
+inputs:
+  python-version:
+    description: "Python interpreter to install (forwarded to astral-sh/setup-uv)"
+    required: false
+    default: ""
+  enable-cache:
+    description: 'Enable the uv cache (forwarded to astral-sh/setup-uv; upstream default "auto")'
+    required: false
+    default: "auto"
+  cache-dependency-glob:
+    description: >-
+      Glob of files whose hash keys the uv cache (forwarded to astral-sh/setup-uv).
+      Required so an empty value never replaces upstream's default glob.
+    required: true
+
+outputs:
+  version:
+    description: 'The pinned uv version that was installed, e.g. "0.11.29"'
+    value: ${{ steps.version.outputs.version }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Read pinned uv version
+      id: version
+      shell: bash
+      run: |
+        file="$GITHUB_ACTION_PATH/../../uv-version"
+        version="$(tr -d '[:space:]' < "$file")"
+        if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "::error file=.github/uv-version::expected an exact X.Y.Z uv version, got '$version'"
+          exit 1
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+    - name: Install uv ${{ steps.version.outputs.version }}
+      uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      with:
+        version: ${{ steps.version.outputs.version }}
+        python-version: ${{ inputs.python-version }}
+        enable-cache: ${{ inputs.enable-cache }}
+        cache-dependency-glob: ${{ inputs.cache-dependency-glob }}

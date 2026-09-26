@@ -72,6 +72,15 @@ else
 fi
 
 echo ""
+echo "=== uv version pin consistency ==="
+# .github/uv-version is the only uv pin; no direct astral-sh/setup-uv (WA-CI-017).
+if node scripts/internal/check-uv-version.mjs; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
 if [ "$FAILED" -ne 0 ]; then
     echo "SOME CHECKS FAILED. Run ./scripts/format.sh to auto-fix formatting."
     exit 1

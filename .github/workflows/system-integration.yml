@@ -175,11 +175,9 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        # uv version comes from .github/uv-version (#1552, WA-CI-017).
+        uses: ./.github/actions/setup-uv
         with:
-          # Pin uv itself (issue #1552): "latest" resolves through the GitHub
-          # Releases API, which flakes and fast-fails unrelated to the run.
-          version: '0.11.29'
           python-version: '3.12'
           enable-cache: true
           cache-dependency-glob: tests/system/uv.lock
@@ -474,9 +472,9 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        # uv version comes from .github/uv-version (#1552, WA-CI-017).
+        uses: ./.github/actions/setup-uv
         with:
-          version: '0.11.29'
           python-version: '3.12'
           enable-cache: true
           cache-dependency-glob: tests/system/uv.lock
