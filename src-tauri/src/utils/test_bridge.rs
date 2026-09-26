@@ -90,7 +90,13 @@ pub fn test_bridge_plugin<R: Runtime>() -> Option<TauriPlugin<R>> {
 /// always-on-top so macOS never fully occludes the webview and throttles its
 /// rendering (see #957). Production launches return `false`.
 pub fn is_test_bridge_enabled() -> bool {
-    parse_port(std::env::var(TEST_BRIDGE_PORT_ENV).ok()).is_some()
+    test_bridge_enabled_from(std::env::var(TEST_BRIDGE_PORT_ENV).ok())
+}
+
+/// Pure core of [`is_test_bridge_enabled`] over the raw env value, so tests can
+/// exercise it without mutating the process-global environment (#3419).
+fn test_bridge_enabled_from(raw: Option<String>) -> bool {
+    parse_port(raw).is_some()
 }
 
 /// Extra `connect-src` sources injected into the CSP under test-bridge mode so
@@ -149,7 +155,13 @@ pub fn relax_csp_policy(csp: &str) -> String {
 /// A `None` CSP (no policy configured) is left as-is — Tauri's default applies
 /// and there is nothing to widen.
 pub fn relax_csp_if_test_bridge(csp: &mut Option<Csp>) {
-    if !is_test_bridge_enabled() {
+    relax_csp_when(is_test_bridge_enabled(), csp);
+}
+
+/// Pure core of [`relax_csp_if_test_bridge`] with the gate passed in, so tests
+/// need not mutate the process-global environment (#3419).
+fn relax_csp_when(enabled: bool, csp: &mut Option<Csp>) {
+    if !enabled {
         return;
     }
     if let Some(policy) = csp.as_mut() {
@@ -161,15 +173,17 @@ pub fn relax_csp_if_test_bridge(csp: &mut Option<Csp>) {
 /// (`TERMIHUB_TEST_NO_ALWAYS_ON_TOP` set to a truthy value). See #2504. Used only
 /// in test-bridge mode; production launches never pin the window regardless.
 pub fn always_on_top_opt_out() -> bool {
-    std::env::var(TEST_NO_ALWAYS_ON_TOP_ENV)
-        .ok()
-        .is_some_and(|raw| flag_is_truthy(&raw))
+    always_on_top_opt_out_from(std::env::var(TEST_NO_ALWAYS_ON_TOP_ENV).ok())
+}
+
+/// Pure core of [`always_on_top_opt_out`] over the raw env value (#3419).
+fn always_on_top_opt_out_from(raw: Option<String>) -> bool {
+    raw.is_some_and(|raw| flag_is_truthy(&raw))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
 
     #[test]
     fn init_script_sets_both_globals() {
@@ -218,26 +232,16 @@ mod tests {
 
     #[test]
     fn always_on_top_opt_out_tracks_truthy_env_var() {
-        // Mutates a process-global env var; no other test reads this key.
-        let key = TEST_NO_ALWAYS_ON_TOP_ENV;
-        let saved = std::env::var(key).ok();
-        unsafe { std::env::remove_var(key) };
+        // Exercised on injected values: never mutate the process-global env,
+        // which concurrently running tests read (#3419).
         assert!(
-            !always_on_top_opt_out(),
+            !always_on_top_opt_out_from(None),
             "unset → do not opt out (pin stays)"
         );
-        unsafe { std::env::set_var(key, "1") };
-        assert!(always_on_top_opt_out());
-        unsafe { std::env::set_var(key, "true") };
-        assert!(always_on_top_opt_out());
-        unsafe { std::env::set_var(key, "0") };
-        assert!(!always_on_top_opt_out());
-        unsafe { std::env::set_var(key, "") };
-        assert!(!always_on_top_opt_out());
-        match saved {
-            Some(v) => unsafe { std::env::set_var(key, v) },
-            None => unsafe { std::env::remove_var(key) },
-        }
+        assert!(always_on_top_opt_out_from(Some("1".into())));
+        assert!(always_on_top_opt_out_from(Some("true".into())));
+        assert!(!always_on_top_opt_out_from(Some("0".into())));
+        assert!(!always_on_top_opt_out_from(Some(String::new())));
     }
 
     /// The exact production `connect-src` from `tauri.conf.json`. If the config
@@ -302,27 +306,22 @@ mod tests {
     }
 
     #[test]
-    #[serial(test_bridge_port_env)]
     fn relax_csp_if_test_bridge_only_widens_when_enabled() {
-        // Serialise on the process-global env var this and the enabled-tracker
-        // test both mutate.
-        let key = TEST_BRIDGE_PORT_ENV;
-        let saved = std::env::var(key).ok();
+        // The gate is injected rather than toggled through the process-global
+        // env var, which other tests (boot paths) read concurrently (#3419).
 
-        // Env unset → CSP left byte-identical to production.
-        unsafe { std::env::remove_var(key) };
+        // Disabled → CSP left byte-identical to production.
         let mut csp = Some(Csp::Policy(PROD_CSP.to_string()));
-        relax_csp_if_test_bridge(&mut csp);
+        relax_csp_when(false, &mut csp);
         assert_eq!(
             csp,
             Some(Csp::Policy(PROD_CSP.to_string())),
-            "unset env must leave the production CSP untouched"
+            "disabled bridge must leave the production CSP untouched"
         );
 
-        // Env set → the ws:// sources are merged in.
-        unsafe { std::env::set_var(key, "48123") };
+        // Enabled → the ws:// sources are merged in.
         let mut csp = Some(Csp::Policy(PROD_CSP.to_string()));
-        relax_csp_if_test_bridge(&mut csp);
+        relax_csp_when(true, &mut csp);
         match csp {
             Some(Csp::Policy(policy)) => {
                 assert!(policy.contains("ws://127.0.0.1:*"));
@@ -333,34 +332,17 @@ mod tests {
 
         // A `None` CSP is never fabricated, even under the test bridge.
         let mut none_csp: Option<Csp> = None;
-        relax_csp_if_test_bridge(&mut none_csp);
+        relax_csp_when(true, &mut none_csp);
         assert_eq!(none_csp, None);
-
-        match saved {
-            Some(v) => unsafe { std::env::set_var(key, v) },
-            None => unsafe { std::env::remove_var(key) },
-        }
     }
 
     #[test]
-    #[serial(test_bridge_port_env)]
     fn is_test_bridge_enabled_tracks_the_env_var() {
-        // Mutates a process-global env var; shared with
-        // `relax_csp_if_test_bridge_only_widens_when_enabled` — serialised via
-        // `#[serial(test_bridge_port_env)]` so the two never race under parallel
-        // `cargo test`.
-        let key = TEST_BRIDGE_PORT_ENV;
-        let saved = std::env::var(key).ok();
-        unsafe { std::env::set_var(key, "48123") };
-        assert!(is_test_bridge_enabled());
-        unsafe { std::env::set_var(key, "0") };
-        assert!(!is_test_bridge_enabled());
-        unsafe { std::env::remove_var(key) };
-        assert!(!is_test_bridge_enabled());
-        match saved {
-            Some(v) => unsafe { std::env::set_var(key, v) },
-            None => unsafe { std::env::remove_var(key) },
-        }
+        // Exercised on injected values instead of mutating the process-global
+        // env var (#3419).
+        assert!(test_bridge_enabled_from(Some("48123".into())));
+        assert!(!test_bridge_enabled_from(Some("0".into())));
+        assert!(!test_bridge_enabled_from(None));
     }
 
     /// Parse a CSP policy string into a directive → source-token map that is

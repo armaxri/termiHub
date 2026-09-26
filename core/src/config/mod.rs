@@ -49,16 +49,31 @@ pub const DEFAULT_FTP_KEEP_ALIVE_SECS: u64 = 60;
 ///
 /// On Unix, reads `$HOME`. On Windows, reads `$USERPROFILE`.
 pub fn home_directory() -> Option<PathBuf> {
+    home_directory_from(&env_lookup)
+}
+
+/// Read a variable from the real process environment (the production lookup).
+fn env_lookup(name: &str) -> Option<String> {
+    std::env::var(name).ok()
+}
+
+/// Pure core of [`home_directory`], reading variables through `lookup`.
+///
+/// Tests pass their own lookup instead of mutating the process-global
+/// environment, which concurrently running tests (local-shell spawns resolving
+/// their working directory) read (#3419).
+fn home_directory_from(lookup: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
     #[cfg(unix)]
     {
-        std::env::var("HOME").ok().map(PathBuf::from)
+        lookup("HOME").map(PathBuf::from)
     }
     #[cfg(windows)]
     {
-        std::env::var("USERPROFILE").ok().map(PathBuf::from)
+        lookup("USERPROFILE").map(PathBuf::from)
     }
     #[cfg(not(any(unix, windows)))]
     {
+        let _ = lookup;
         None
     }
 }
@@ -91,9 +106,16 @@ pub fn expand_tilde_only(path: &str) -> String {
 /// an empty string. Tilde expansion uses [`home_directory`]; `~user` paths
 /// are left unchanged.
 pub fn expand_config_value(value: &str) -> String {
-    let home_dir = || home_directory().map(|p| p.to_string_lossy().into_owned());
+    expand_config_value_with(value, &env_lookup)
+}
+
+/// Pure core of [`expand_config_value`], reading variables (including the home
+/// directory) through `env` rather than the process environment, so tests can
+/// supply values without mutating shared global state (#3419).
+fn expand_config_value_with(value: &str, env: &dyn Fn(&str) -> Option<String>) -> String {
+    let home_dir = || home_directory_from(env).map(|p| p.to_string_lossy().into_owned());
     let lookup = |name: &str| -> Result<Option<String>, std::convert::Infallible> {
-        Ok(Some(std::env::var(name).unwrap_or_default()))
+        Ok(Some(env(name).unwrap_or_default()))
     };
     // Lookup returns Infallible, so shellexpand cannot raise a LookupError here.
     // The `Err` arm is therefore dead; fall back to the unexpanded value rather
@@ -942,12 +964,13 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn home_directory_reads_user_profile_on_windows() {
-        temp_env::with_var("USERPROFILE", Some(r"C:\Users\testuser"), || {
-            assert_eq!(
-                home_directory(),
-                Some(std::path::PathBuf::from(r"C:\Users\testuser"))
-            );
-        });
+        // Inject USERPROFILE instead of mutating the process-global value, which
+        // concurrently running tests read to resolve their home dir (#3419).
+        let env = |name: &str| (name == "USERPROFILE").then(|| r"C:\Users\testuser".to_string());
+        assert_eq!(
+            home_directory_from(&env),
+            Some(std::path::PathBuf::from(r"C:\Users\testuser"))
+        );
     }
 
     #[cfg(windows)]
@@ -956,18 +979,18 @@ mod tests {
         // The SSH backend's default key path "~/.ssh/id_rsa" must resolve under
         // the Windows user profile rather than being left untouched, so a
         // Windows-hosted agent finds the user's keys.
-        temp_env::with_var("USERPROFILE", Some(r"C:\Users\testuser"), || {
-            let expanded = expand_config_value("~/.ssh/id_rsa");
-            assert!(!expanded.starts_with('~'), "got: {expanded}");
-            assert!(
-                expanded.contains(r"C:\Users\testuser") || expanded.contains("C:/Users/testuser"),
-                "expected a USERPROFILE-rooted path, got: {expanded}"
-            );
-            assert!(
-                expanded.ends_with(".ssh/id_rsa") || expanded.ends_with(r".ssh\id_rsa"),
-                "got: {expanded}"
-            );
-        });
+        // Inject USERPROFILE rather than mutating the process-global value (#3419).
+        let env = |name: &str| (name == "USERPROFILE").then(|| r"C:\Users\testuser".to_string());
+        let expanded = expand_config_value_with("~/.ssh/id_rsa", &env);
+        assert!(!expanded.starts_with('~'), "got: {expanded}");
+        assert!(
+            expanded.contains(r"C:\Users\testuser") || expanded.contains("C:/Users/testuser"),
+            "expected a USERPROFILE-rooted path, got: {expanded}"
+        );
+        assert!(
+            expanded.ends_with(".ssh/id_rsa") || expanded.ends_with(r".ssh\id_rsa"),
+            "got: {expanded}"
+        );
     }
 
     #[test]
@@ -1726,23 +1749,24 @@ mod tests {
 
     #[test]
     fn ssh_config_expand_expands_inline_jump_hosts() {
-        // SAFETY: test-only env var, single value.
-        unsafe { std::env::set_var("THUB_JUMP_TEST_HOST", "bastion.expanded") };
-        let cfg = SshConfig {
-            host: "target".into(),
-            username: "u".into(),
-            auth_method: "key".into(),
-            proxy_jump: vec![JumpHostConfig {
-                host: "${THUB_JUMP_TEST_HOST}".into(),
-                username: "admin".into(),
+        // Scoped via temp_env (restored even on panic) with a test-unique name
+        // no other test reads — never a raw `set_var` (#3419).
+        temp_env::with_var("THUB_JUMP_TEST_HOST", Some("bastion.expanded"), || {
+            let cfg = SshConfig {
+                host: "target".into(),
+                username: "u".into(),
                 auth_method: "key".into(),
-                ..Default::default()
-            }],
-            ..SshConfig::default()
-        }
-        .expand();
-        assert_eq!(cfg.proxy_jump[0].host, "bastion.expanded");
-        unsafe { std::env::remove_var("THUB_JUMP_TEST_HOST") };
+                proxy_jump: vec![JumpHostConfig {
+                    host: "${THUB_JUMP_TEST_HOST}".into(),
+                    username: "admin".into(),
+                    auth_method: "key".into(),
+                    ..Default::default()
+                }],
+                ..SshConfig::default()
+            }
+            .expand();
+            assert_eq!(cfg.proxy_jump[0].host, "bastion.expanded");
+        });
     }
 
     // --- secret fields must NOT be env/tilde-expanded (CORE-031 / SEC-001 / PER-007) ---

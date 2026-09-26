@@ -47,7 +47,7 @@ pub mod protocol;
 pub use config::{host_supports_clipboard_delayed_render, rdp_settings_schema};
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -112,7 +112,36 @@ pub const HELPER_BIN_NAME: &str = "termihub-rdp-helper";
 /// refuses to spawn (fail-closed). No divergent binary can execute: spawn of a
 /// bare name searches `PATH` (never CWD), which we just proved is empty.
 pub fn resolve_helper_binary() -> PathBuf {
-    if let Some(p) = std::env::var_os(HELPER_PATH_ENV) {
+    resolve_helper_binary_with(&HelperSearch {
+        override_path: std::env::var_os(HELPER_PATH_ENV),
+        current_exe: std::env::current_exe().ok(),
+        search_path: std::env::var_os("PATH"),
+        cwd: std::env::current_dir().ok(),
+    })
+}
+
+/// The process-environment inputs [`resolve_helper_binary`] consults, gathered
+/// up front so the resolution logic is a pure function of them.
+///
+/// Production fills this from the real environment; tests pass their own
+/// values instead of mutating the process-global environment, which would race
+/// every concurrently running test that reads it (e.g. local-shell PTY spawns
+/// resolving the shell through `PATH` — #3419).
+struct HelperSearch {
+    /// Value of `$TERMIHUB_RDP_HELPER`, if set.
+    override_path: Option<std::ffi::OsString>,
+    /// Path of the running executable, if known.
+    current_exe: Option<PathBuf>,
+    /// Value of `$PATH`, if set.
+    search_path: Option<std::ffi::OsString>,
+    /// Working directory relative `PATH` entries resolve against.
+    cwd: Option<PathBuf>,
+}
+
+/// Pure core of [`resolve_helper_binary`]; see there for the resolution order
+/// and why the fallback must be absolute (CORE-011).
+fn resolve_helper_binary_with(search: &HelperSearch) -> PathBuf {
+    if let Some(p) = &search.override_path {
         let p = PathBuf::from(p);
         if p.is_file() {
             return p;
@@ -122,18 +151,18 @@ pub fn resolve_helper_binary() -> PathBuf {
             "{HELPER_PATH_ENV} is set but is not a file — falling back to default resolution"
         );
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let cand = dir.join(HELPER_BIN_NAME);
-            if cand.is_file() {
-                return cand;
-            }
+    if let Some(dir) = search.current_exe.as_deref().and_then(Path::parent) {
+        let cand = dir.join(HELPER_BIN_NAME);
+        if cand.is_file() {
+            return cand;
         }
     }
     // Resolve the bare name to the absolute path `Command::new` would execute, so
     // hashing and spawning reference the same file (CORE-011). Fall back to the
     // bare name only when it is on no `PATH` entry (fail-closed, see above).
-    which::which(HELPER_BIN_NAME).unwrap_or_else(|_| PathBuf::from(HELPER_BIN_NAME))
+    let cwd = search.cwd.clone().unwrap_or_default();
+    which::which_in(HELPER_BIN_NAME, search.search_path.as_ref(), cwd)
+        .unwrap_or_else(|_| PathBuf::from(HELPER_BIN_NAME))
 }
 
 /// Wrap a message as a [`SessionError::Io`] (its inner type is a
@@ -1179,10 +1208,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let fake = tmp.path().join("termihub-rdp-helper");
         std::fs::write(&fake, b"#!/bin/sh\n").unwrap();
-        // Serialize env mutation: this is the only test touching this var.
-        std::env::set_var(HELPER_PATH_ENV, &fake);
-        let resolved = resolve_helper_binary();
-        std::env::remove_var(HELPER_PATH_ENV);
+        // Inject the override instead of mutating the process environment (#3419).
+        let resolved = resolve_helper_binary_with(&HelperSearch {
+            override_path: Some(fake.clone().into_os_string()),
+            current_exe: None,
+            search_path: None,
+            cwd: None,
+        });
         assert_eq!(resolved, fake);
     }
 
@@ -1214,16 +1246,18 @@ mod tests {
             std::fs::set_permissions(&helper, perms).unwrap();
         }
 
-        // Scope the env mutation so it cannot leak to other tests: unset the
-        // override (so the first branch is skipped) and point PATH only at the
-        // temp dir (so the bare name resolves there and nowhere else).
-        let resolved = temp_env::with_vars(
-            [
-                (HELPER_PATH_ENV, None::<&str>),
-                ("PATH", Some(tmp.path().to_str().unwrap())),
-            ],
-            resolve_helper_binary,
-        );
+        // Inject the search inputs rather than mutating the process-global PATH:
+        // a temporary PATH races every concurrently running test that resolves a
+        // binary through it (local-shell PTY spawns failed to find their shell,
+        // #3419). No override (so the first branch is skipped), no executable dir
+        // (so the second is too), and a search path holding only the temp dir (so
+        // the bare name resolves there and nowhere else).
+        let resolved = resolve_helper_binary_with(&HelperSearch {
+            override_path: None,
+            current_exe: None,
+            search_path: Some(tmp.path().as_os_str().to_owned()),
+            cwd: std::env::current_dir().ok(),
+        });
 
         // The bug returned a bare, relative name; the fix returns an absolute one.
         assert!(
