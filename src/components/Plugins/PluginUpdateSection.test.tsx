@@ -29,7 +29,7 @@ const openUrlMock = vi.fn();
 vi.mock("@/services/api", () => ({
   checkPluginUpdates: (...a: unknown[]) => checkMock(...a),
   downloadPluginUpdate: (...a: unknown[]) => downloadMock(...a),
-  validatePlugin: (...a: unknown[]) => validateMock(...a),
+  previewPlugin: (...a: unknown[]) => validateMock(...a),
   assessPluginTrust: (...a: unknown[]) => assessTrustMock(...a),
 }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: (...a: unknown[]) => openUrlMock(...a) }));
@@ -157,7 +157,11 @@ describe("PluginUpdateSection (PROD-051)", () => {
 
   it("hands the downloaded, validated package to the install dialog", async () => {
     downloadMock.mockResolvedValue("/cache/plugin-updates/demo-1.1.0.termihub-plugin");
-    validateMock.mockResolvedValue({ ...PLUGIN.manifest, version: "1.1.0" });
+    validateMock.mockResolvedValue({
+      manifest: { ...PLUGIN.manifest, version: "1.1.0" },
+      hostPlatform: "aarch64-apple-darwin",
+      platformSupported: true,
+    });
     assessTrustMock.mockResolvedValue({ level: "untrusted", requiresAcceptance: true });
     render({ phase: "checked", outcome: outcome("updateAvailable") });
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Cpu, Package, ShieldAlert } from "lucide-react";
+import { Cpu, MonitorX, Package, ShieldAlert } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import type {
   PluginInstallConfirmations,
@@ -15,6 +15,8 @@ import {
   pluginTypeLabel,
   trustBanner,
 } from "./pluginPresentation";
+import { platformLabel, pluginPlatformSupport } from "./pluginPlatforms";
+import { PluginPlatformList } from "./PluginPlatformList";
 import { PluginSignerChangeDialog } from "./PluginSignerChangeDialog";
 import { PluginVersionChangeDialog } from "./PluginVersionChangeDialog";
 import "./Plugins.css";
@@ -27,6 +29,17 @@ export interface PluginInstallDialogProps {
   manifest: PluginManifest;
   /** The package's assessed trust (from `assess_plugin_trust`). */
   trust: PluginTrustInfo;
+  /**
+   * This computer's Rust target triple (from `preview_plugin`), used to mark
+   * "this computer" in the supported-platform list. `null`/omitted when unknown.
+   */
+  hostPlatform?: string | null;
+  /**
+   * Whether the package ships a native library for this computer (PLG-011).
+   * When `false` the dialog explains why it cannot be installed, lists the
+   * platforms it does support, and offers no install action. Defaults to `true`.
+   */
+  platformSupported?: boolean;
   /** Called after a successful install, or on cancel/close. */
   onClose: () => void;
 }
@@ -86,6 +99,8 @@ export function PluginInstallDialog({
   filePath,
   manifest,
   trust,
+  hostPlatform = null,
+  platformSupported = true,
   onClose,
 }: PluginInstallDialogProps) {
   const installPlugin = useAppStore((s) => s.installPlugin);
@@ -97,8 +112,10 @@ export function PluginInstallDialog({
 
   const banner = trustBanner(trust);
   const BannerIcon = banner.icon;
-  const blocked = trust.isBlocked;
+  const unavailable = !platformSupported;
+  const blocked = trust.isBlocked || unavailable;
   const isNative = pluginHasNativeCode(manifest.extensions);
+  const platforms = pluginPlatformSupport(manifest, hostPlatform);
 
   const runInstall = async (confirmations: PluginInstallConfirmations) => {
     // installPlugin / enablePlugin own their own pending → success/error toasts
@@ -175,32 +192,58 @@ export function PluginInstallDialog({
         )
       }
     >
-      <div
-        className={`plugin-install__banner plugin-install__banner--${banner.tone}`}
-        data-testid={`plugin-install-trust-${trust.level}`}
-      >
-        <BannerIcon className="plugin-install__banner-icon" aria-hidden="true" />
-        <div>
-          <span className="plugin-install__banner-title">{banner.title}</span>{" "}
-          <span className="plugin-install__banner-desc">— {banner.description}</span>
-          {trust.level === "signed" && (
-            <label className="plugin-install__trust-check" htmlFor="plugin-trust-publisher">
-              <Checkbox
-                id="plugin-trust-publisher"
-                checked={trustPublisher}
-                onCheckedChange={setTrustPublisher}
-                data-testid="plugin-install-trust-publisher"
-              />
-              <span>
-                <span className="plugin-install__trust-check-name">Trust this publisher</span>{" "}
-                <span className="plugin-install__banner-desc">
-                  — pin the key so future updates verify automatically
-                </span>
-              </span>
-            </label>
-          )}
+      {unavailable && (
+        <div
+          className="plugin-install__banner plugin-install__banner--danger"
+          data-testid="plugin-install-platform-unavailable"
+        >
+          <MonitorX className="plugin-install__banner-icon" aria-hidden="true" />
+          <div>
+            <span className="plugin-install__banner-title">Not available for this computer</span>{" "}
+            <span className="plugin-install__banner-desc">
+              — {manifest.name} ships its native code only for the platforms listed below
+              {hostPlatform ? `, not for ${platformLabel(hostPlatform)}` : ""}. It cannot be
+              installed here; ask the publisher for a build for this computer.
+            </span>
+          </div>
         </div>
-      </div>
+      )}
+
+      {unavailable && platforms && (
+        <>
+          <div className="plugin-install__perm-title">Supported Platforms</div>
+          <PluginPlatformList support={platforms} testIdBase="plugin-install" />
+        </>
+      )}
+
+      {!unavailable && (
+        <div
+          className={`plugin-install__banner plugin-install__banner--${banner.tone}`}
+          data-testid={`plugin-install-trust-${trust.level}`}
+        >
+          <BannerIcon className="plugin-install__banner-icon" aria-hidden="true" />
+          <div>
+            <span className="plugin-install__banner-title">{banner.title}</span>{" "}
+            <span className="plugin-install__banner-desc">— {banner.description}</span>
+            {trust.level === "signed" && (
+              <label className="plugin-install__trust-check" htmlFor="plugin-trust-publisher">
+                <Checkbox
+                  id="plugin-trust-publisher"
+                  checked={trustPublisher}
+                  onCheckedChange={setTrustPublisher}
+                  data-testid="plugin-install-trust-publisher"
+                />
+                <span>
+                  <span className="plugin-install__trust-check-name">Trust this publisher</span>{" "}
+                  <span className="plugin-install__banner-desc">
+                    — pin the key so future updates verify automatically
+                  </span>
+                </span>
+              </label>
+            )}
+          </div>
+        </div>
+      )}
 
       {!blocked && isNative && (
         <div className="plugin-install__native" data-testid="plugin-install-native-warning">
@@ -244,6 +287,13 @@ export function PluginInstallDialog({
               <span>{typeTitle(manifest)}</span>
             </div>
           </div>
+
+          {platforms && (
+            <>
+              <div className="plugin-install__perm-title">Supported Platforms</div>
+              <PluginPlatformList support={platforms} testIdBase="plugin-install" />
+            </>
+          )}
 
           <div className="plugin-install__perm-title">Requested Permissions</div>
           {manifest.permissions.length === 0 ? (

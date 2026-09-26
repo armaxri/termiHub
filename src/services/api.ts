@@ -58,6 +58,7 @@ import type {
   JsonValue,
   NativePluginTrust,
   PluginManifest,
+  PluginPackagePreview,
   PluginTrustInfo,
   PluginUpdateCheckResult,
   TrustedPublisher,
@@ -3007,6 +3008,21 @@ export async function listPlugins(): Promise<InstalledPlugin[]> {
  */
 export async function validatePlugin(filePath: string): Promise<PluginManifest> {
   return await invoke<PluginManifest>("validate_plugin", { path: filePath });
+}
+
+/**
+ * Preview a `.termihub-plugin` package for the install dialog (#3507): its
+ * validated manifest plus this computer's platform and whether the package
+ * supports it. Unlike {@link validatePlugin}, a multi-platform package lacking
+ * this platform is not an error, so the dialog can explain it.
+ */
+export async function previewPlugin(filePath: string): Promise<PluginPackagePreview> {
+  return await invoke<PluginPackagePreview>("preview_plugin", { path: filePath });
+}
+
+/** This computer's Rust target triple, as plugin native libraries are keyed (#3507). */
+export async function getPluginHostPlatform(): Promise<string> {
+  return await invoke<string>("get_plugin_host_platform");
 }
 
 /**
