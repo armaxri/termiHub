@@ -21,8 +21,22 @@ fi
 echo "=== Building RDP sidecar for bundling ==="
 "$(dirname "$0")/build-rdp-sidecar.sh" --release --tauri-externalbin
 
+# Third-party license notices (PKG-009): bundled as an app resource via the
+# tauri.notices.conf.json fragment when the pinned cargo-about is installed
+# (release.yml always generates them). Without it the build still succeeds;
+# About -> Third-Party Licenses then points to the online attribution page.
+tauri_configs=(--config src-tauri/tauri.sidecar.conf.json)
+if command -v cargo-about >/dev/null 2>&1; then
+    echo "=== Generating third-party notices ==="
+    pnpm notices:generate
+    tauri_configs+=(--config src-tauri/tauri.notices.conf.json)
+else
+    echo "cargo-about not found: skipping bundled third-party notices"
+    echo "  (install: cargo install cargo-about --locked --version 0.9.2)"
+fi
+
 echo "Building termiHub for production..."
-pnpm tauri build --config src-tauri/tauri.sidecar.conf.json
+pnpm tauri build "${tauri_configs[@]}"
 
 # --- Cross-compile agent binaries for Linux (macOS only) ---
 #
