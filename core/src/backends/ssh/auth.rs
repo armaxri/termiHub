@@ -748,7 +748,10 @@ mod tests {
         )
         .await
         .expect_err("rejected");
-        assert!(matches!(err, SessionError::SecondFactorFailed), "got {err:?}");
+        assert!(
+            matches!(err, SessionError::SecondFactorFailed),
+            "got {err:?}"
+        );
     }
 
     /// PAM password fallback with a stale saved password: the auto-answered

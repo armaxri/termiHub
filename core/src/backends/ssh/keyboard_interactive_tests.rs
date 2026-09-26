@@ -252,7 +252,10 @@ async fn wrong_otp_after_auto_answered_password_is_second_factor_failed() {
     )
     .await
     .expect_err("rejected");
-    assert!(matches!(err, SessionError::SecondFactorFailed), "got {err:?}");
+    assert!(
+        matches!(err, SessionError::SecondFactorFailed),
+        "got {err:?}"
+    );
     assert_eq!(observed.lock().unwrap().responses.len(), 2);
 }
 
@@ -274,7 +277,10 @@ async fn wrong_otp_after_auto_answered_password_explicit_is_second_factor_failed
     )
     .await
     .expect_err("rejected");
-    assert!(matches!(err, SessionError::SecondFactorFailed), "got {err:?}");
+    assert!(
+        matches!(err, SessionError::SecondFactorFailed),
+        "got {err:?}"
+    );
 }
 
 /// The auto-answered password itself is rejected: that IS a stored-credential
@@ -297,7 +303,10 @@ async fn rejected_auto_answered_password_is_auth_failed() {
     .await
     .expect_err("rejected");
     assert!(matches!(err, SessionError::AuthFailed), "got {err:?}");
-    assert!(prompter.seen().is_empty(), "the OTP round was never reached");
+    assert!(
+        prompter.seen().is_empty(),
+        "the OTP round was never reached"
+    );
     assert_eq!(observed.lock().unwrap().responses.len(), 1);
 }
 
@@ -320,7 +329,10 @@ async fn wrong_answer_in_second_factor_mode_is_second_factor_failed() {
     )
     .await
     .expect_err("rejected");
-    assert!(matches!(err, SessionError::SecondFactorFailed), "got {err:?}");
+    assert!(
+        matches!(err, SessionError::SecondFactorFailed),
+        "got {err:?}"
+    );
 }
 
 /// With no prompter (headless), an unanswerable prompt fails clearly — and in
