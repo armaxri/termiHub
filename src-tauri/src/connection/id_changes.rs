@@ -8,6 +8,7 @@
 //! [`ConnectionManager`](super::manager::ConnectionManager) reports every change
 //! it persists as a list of [`ConnectionIdChange`]s to a listener.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -93,6 +94,59 @@ pub fn diff_connection_ids(
         .collect()
 }
 
+/// A lookup applying one batch of [`ConnectionIdChange`]s to stored references
+/// (#3596). The changes of a batch apply **simultaneously**: `a→b, b→c` maps `a`
+/// to `b` and `b` to `c` (not `a` to `c`), and a swap `a→b, b→a` exchanges the
+/// two. Ids not in the batch are left alone. Mirrors the frontend's
+/// `connectionIdRemapper` (`src/utils/connectionIdChanges.ts`).
+///
+/// Applying a batch is a one-shot step, not an idempotent one: re-applying a
+/// chain or swap moves the references again. Each batch is reported exactly
+/// once, right after it was persisted, so every store applies it exactly once.
+#[derive(Debug, Clone, Default)]
+pub struct ConnectionIdRemap {
+    by_old: HashMap<String, String>,
+}
+
+impl ConnectionIdRemap {
+    pub fn new(changes: &[ConnectionIdChange]) -> Self {
+        Self {
+            by_old: changes
+                .iter()
+                .filter(|c| c.old_id != c.new_id)
+                .map(|c| (c.old_id.clone(), c.new_id.clone()))
+                .collect(),
+        }
+    }
+
+    /// Whether the batch changes no id at all.
+    pub fn is_empty(&self) -> bool {
+        self.by_old.is_empty()
+    }
+
+    /// The new id of `id`, or `None` when the batch leaves it unchanged.
+    pub fn new_id(&self, id: &str) -> Option<&str> {
+        self.by_old.get(id).map(String::as_str)
+    }
+
+    /// Re-point one stored reference; returns whether it changed.
+    pub fn apply(&self, id: &mut String) -> bool {
+        match self.new_id(id) {
+            Some(new_id) => {
+                *id = new_id.to_string();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Re-point every reference in `ids`; returns whether any changed.
+    pub fn apply_all<'a>(&self, ids: impl IntoIterator<Item = &'a mut String>) -> bool {
+        ids.into_iter()
+            .fold(false, |changed, id| self.apply(id) | changed)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,5 +216,39 @@ mod tests {
             diff_connection_ids(&before, &after, &folders),
             vec![ConnectionIdChange::new("Work/a", "Job/a")]
         );
+    }
+
+    fn remap(changes: &[(&str, &str)]) -> ConnectionIdRemap {
+        let changes: Vec<ConnectionIdChange> = changes
+            .iter()
+            .map(|(o, n)| ConnectionIdChange::new(*o, *n))
+            .collect();
+        ConnectionIdRemap::new(&changes)
+    }
+
+    #[test]
+    fn remap_applies_a_chain_simultaneously() {
+        let r = remap(&[("a", "b"), ("b", "c")]);
+        let mut ids = vec!["a".to_string(), "b".to_string(), "x".to_string()];
+        assert!(r.apply_all(ids.iter_mut()));
+        assert_eq!(ids, ["b", "c", "x"]);
+    }
+
+    #[test]
+    fn remap_exchanges_a_swap() {
+        let r = remap(&[("a", "b"), ("b", "a")]);
+        let mut ids = vec!["a".to_string(), "b".to_string()];
+        assert!(r.apply_all(ids.iter_mut()));
+        assert_eq!(ids, ["b", "a"]);
+    }
+
+    #[test]
+    fn remap_leaves_unknown_ids_alone_and_reports_no_change() {
+        let r = remap(&[("a", "b")]);
+        let mut id = "z".to_string();
+        assert!(!r.apply(&mut id));
+        assert_eq!(id, "z");
+        assert!(remap(&[]).is_empty());
+        assert!(remap(&[("same", "same")]).is_empty());
     }
 }

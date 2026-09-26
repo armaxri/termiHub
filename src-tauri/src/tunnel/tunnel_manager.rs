@@ -574,6 +574,30 @@ impl TunnelManager {
         Ok(())
     }
 
+    /// Re-point every saved tunnel's SSH connection along `remap` (#3596),
+    /// persisting only when a tunnel changed. The write is atomic and memory is
+    /// updated only after it succeeded. A running tunnel keeps running: it holds
+    /// its resolved session; a later start or reconnect re-reads the config.
+    /// Returns whether anything changed.
+    pub fn follow_connection_id_changes(
+        &self,
+        remap: &crate::connection::id_changes::ConnectionIdRemap,
+    ) -> Result<bool, TerminalError> {
+        let mut store = self
+            .tunnel_configs
+            .lock()
+            .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
+        let mut next = store.clone();
+        if !next.follow_connection_id_changes(remap) {
+            return Ok(false);
+        }
+        self.storage
+            .save(&next)
+            .map_err(|e| TerminalError::TunnelError(format!("Failed to save tunnels: {}", e)))?;
+        *store = next;
+        Ok(true)
+    }
+
     /// Delete a tunnel configuration. Stops the tunnel first if active.
     ///
     /// Deleting a chained parent **cascades**: its companion desktop hop is

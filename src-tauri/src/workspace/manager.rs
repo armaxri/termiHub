@@ -5,12 +5,13 @@ use anyhow::{Context, Result};
 use tauri::AppHandle;
 
 use super::config::{
-    count_tabs, WorkspaceDefinition, WorkspaceExportData, WorkspaceExportEntry,
-    WorkspaceImportPreview, WorkspaceImportResult, WorkspaceLayoutNode, WorkspaceStore,
-    WorkspaceSummary, WorkspaceTabDef, WorkspaceTabGroupDef,
+    count_tabs, follow_connection_id_changes_in_groups, WorkspaceDefinition, WorkspaceExportData,
+    WorkspaceExportEntry, WorkspaceImportPreview, WorkspaceImportResult, WorkspaceLayoutNode,
+    WorkspaceStore, WorkspaceSummary, WorkspaceTabDef, WorkspaceTabGroupDef,
 };
 use super::settings::{ActiveWorkspaceInfo, WorkspaceSettings};
 use super::storage::WorkspaceStorage;
+use crate::connection::id_changes::ConnectionIdRemap;
 use crate::connection::recovery::RecoveryWarning;
 use crate::utils::errors::TerminalError;
 
@@ -53,6 +54,22 @@ impl WorkspaceManager {
             recovery_warnings: Mutex::new(result.warnings),
             active_id: Mutex::new(None),
         })
+    }
+
+    /// A manager backed by a file in `dir`. Test-only; production uses `new()`.
+    #[cfg(test)]
+    pub(crate) fn new_for_test(dir: &std::path::Path) -> Self {
+        let storage = WorkspaceStorage::new_test(dir);
+        let store = storage
+            .load_with_recovery()
+            .map(|r| r.data)
+            .unwrap_or_default();
+        Self {
+            store: Mutex::new(store),
+            storage,
+            recovery_warnings: Mutex::new(Vec::new()),
+            active_id: Mutex::new(None),
+        }
     }
 
     /// Mark `id` as the active workspace whose overrides apply to new sessions
@@ -164,6 +181,32 @@ impl WorkspaceManager {
         self.storage
             .save(&store)
             .map_err(|e| TerminalError::WorkspaceError(e.to_string()))
+    }
+
+    /// Re-point every saved workspace's `connectionRef`s along `remap` (#3596),
+    /// persisting the store only when a reference changed. The write is atomic
+    /// and the in-memory store is updated only after it succeeded, so a failure
+    /// leaves memory and disk in agreement. Returns whether anything changed.
+    pub fn follow_connection_id_changes(
+        &self,
+        remap: &ConnectionIdRemap,
+    ) -> Result<bool, TerminalError> {
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|e| TerminalError::WorkspaceError(e.to_string()))?;
+        let mut next = store.clone();
+        let changed = next.workspaces.iter_mut().fold(false, |changed, ws| {
+            follow_connection_id_changes_in_groups(&mut ws.tab_groups, remap) | changed
+        });
+        if !changed {
+            return Ok(false);
+        }
+        self.storage
+            .save(&next)
+            .map_err(|e| TerminalError::WorkspaceError(e.to_string()))?;
+        *store = next;
+        Ok(true)
     }
 
     /// Delete a workspace by ID.
@@ -1308,5 +1351,88 @@ mod tests {
             .collect();
         // Resolved to the installed plugin; a missing plugin's id is kept.
         assert_eq!(types, ["plugin:beta:k8s", "mqtt"]);
+    }
+
+    fn remap(changes: &[(&str, &str)]) -> ConnectionIdRemap {
+        let changes: Vec<crate::connection::id_changes::ConnectionIdChange> = changes
+            .iter()
+            .map(|(o, n)| crate::connection::id_changes::ConnectionIdChange::new(*o, *n))
+            .collect();
+        ConnectionIdRemap::new(&changes)
+    }
+
+    /// Every tab's `connectionRef` of `ws`, in layout order.
+    fn refs_of(ws: &WorkspaceDefinition) -> Vec<Option<String>> {
+        fn walk(node: &WorkspaceLayoutNode, out: &mut Vec<Option<String>>) {
+            match node {
+                WorkspaceLayoutNode::Leaf { tabs } => {
+                    out.extend(tabs.iter().map(|t| t.connection_ref.clone()))
+                }
+                WorkspaceLayoutNode::Split { children, .. } => {
+                    children.iter().for_each(|c| walk(c, out))
+                }
+            }
+        }
+        let mut out = Vec::new();
+        ws.tab_groups.iter().for_each(|g| walk(&g.layout, &mut out));
+        out
+    }
+
+    #[test]
+    fn connection_refs_follow_id_changes_across_groups_and_splits_and_persist() {
+        let dir = TempDir::new().unwrap();
+        let mgr = create_test_manager(&dir);
+        let mut ws = multi_group_definition("ws-1", "Multi");
+        ws.tab_groups[0].layout = WorkspaceLayoutNode::Split {
+            direction: SplitDirection::Horizontal,
+            children: vec![
+                WorkspaceLayoutNode::Leaf {
+                    tabs: vec![WorkspaceTabDef {
+                        connection_ref: Some("conn-1".to_string()),
+                        inline_config: None,
+                        agent_ref: None,
+                        title: None,
+                        initial_command: None,
+                    }],
+                },
+                WorkspaceLayoutNode::Leaf {
+                    tabs: vec![WorkspaceTabDef {
+                        connection_ref: None,
+                        inline_config: Some(serde_json::json!({"type": "local"})),
+                        agent_ref: None,
+                        title: None,
+                        initial_command: None,
+                    }],
+                },
+            ],
+            sizes: None,
+        };
+        mgr.save_workspace(ws).unwrap();
+
+        // A swap: both references exchange in one batch.
+        assert!(mgr
+            .follow_connection_id_changes(&remap(&[("conn-1", "conn-2"), ("conn-2", "conn-1")]))
+            .unwrap());
+
+        let reloaded = WorkspaceManager::new_for_test(dir.path());
+        assert_eq!(
+            refs_of(&reloaded.load_workspace("ws-1").unwrap()),
+            [Some("conn-2".to_string()), None, Some("conn-1".to_string())]
+        );
+    }
+
+    #[test]
+    fn following_unrelated_id_changes_reports_no_change() {
+        let dir = TempDir::new().unwrap();
+        let mgr = create_test_manager(&dir);
+        mgr.save_workspace(sample_definition("ws-1", "One"))
+            .unwrap();
+        assert!(!mgr
+            .follow_connection_id_changes(&remap(&[("zz", "yy")]))
+            .unwrap());
+        assert_eq!(
+            refs_of(&mgr.load_workspace("ws-1").unwrap()),
+            [Some("conn-1".to_string())]
+        );
     }
 }

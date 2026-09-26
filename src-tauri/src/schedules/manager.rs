@@ -295,6 +295,36 @@ impl ScheduleManager {
         Ok(Self::view(inner, &inner.store.schedules[idx], now, tz))
     }
 
+    /// Re-point every schedule's target connections along `remap` (#3596).
+    ///
+    /// A rename or move keeps the connection — the same host — so, unlike an
+    /// edit of the targets in [`Self::save`], it neither disables the schedule
+    /// nor drops its confirmation, and it leaves `updatedAt` alone. The store is
+    /// persisted (atomically) only when a target changed, and memory is updated
+    /// only after the write succeeded. Returns whether anything changed.
+    pub fn follow_connection_id_changes(
+        &self,
+        remap: &crate::connection::id_changes::ConnectionIdRemap,
+    ) -> Result<bool, TerminalError> {
+        let mut inner = self.lock()?;
+        let mut next = inner.store.clone();
+        let changed = next.schedules.iter_mut().fold(false, |changed, s| {
+            let moved = match &mut s.targets {
+                ScheduleTargets::Connections { connection_ids } => {
+                    remap.apply_all(connection_ids.iter_mut())
+                }
+                ScheduleTargets::BroadcastGroup { .. } => false,
+            };
+            moved | changed
+        });
+        if !changed {
+            return Ok(false);
+        }
+        self.persist(&next)?;
+        inner.store = next;
+        Ok(true)
+    }
+
     /// Delete a schedule. An in-flight run is left to finish; its report is
     /// then ignored.
     pub fn delete(&self, id: &str) -> Result<(), TerminalError> {

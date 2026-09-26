@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
+use super::id_changes::ConnectionIdRemap;
 use super::recovery::RecoveryResult;
 use super::shell_integration::ShellIntegrationSettings;
 use crate::utils::config_paths::resolve_config_dir;
@@ -361,6 +362,37 @@ pub struct AppSettings {
     /// flattened empty map contributes nothing to the serialized output.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// The `AppSettings` key holding the persistent named broadcast groups
+/// (PROD-061). Frontend-owned and round-tripped through [`AppSettings::extra`];
+/// each group is `{ id, name, connectionIds: [...] }`.
+pub const BROADCAST_GROUPS_KEY: &str = "broadcastGroups";
+
+impl AppSettings {
+    /// Re-point the saved-connection references these settings hold along
+    /// `remap` (#3596): every broadcast group's `connectionIds` and every
+    /// shell-integration entry's `connectionId`. Returns whether any changed.
+    pub fn follow_connection_id_changes(&mut self, remap: &ConnectionIdRemap) -> bool {
+        let mut changed = false;
+        for entry in &mut self.shell_integration.entries {
+            if let Some(id) = entry.connection_id.as_mut() {
+                changed |= remap.apply(id);
+            }
+        }
+        if let Some(serde_json::Value::Array(groups)) = self.extra.get_mut(BROADCAST_GROUPS_KEY) {
+            for group in groups {
+                if let Some(serde_json::Value::Array(ids)) = group.get_mut("connectionIds") {
+                    let ids = ids.iter_mut().filter_map(|id| match id {
+                        serde_json::Value::String(id) => Some(id),
+                        _ => None,
+                    });
+                    changed |= remap.apply_all(ids);
+                }
+            }
+        }
+        changed
+    }
 }
 
 impl Default for AppSettings {
@@ -1379,6 +1411,77 @@ mod tests {
         assert!(json.contains("shellIntegration"));
         let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.shell_integration, settings.shell_integration);
+    }
+
+    fn remap(changes: &[(&str, &str)]) -> ConnectionIdRemap {
+        let changes: Vec<super::super::id_changes::ConnectionIdChange> = changes
+            .iter()
+            .map(|(o, n)| super::super::id_changes::ConnectionIdChange::new(*o, *n))
+            .collect();
+        ConnectionIdRemap::new(&changes)
+    }
+
+    #[test]
+    fn broadcast_groups_follow_connection_id_changes() {
+        let mut settings: AppSettings = serde_json::from_value(serde_json::json!({
+            "version": "1",
+            "externalConnectionFiles": [],
+            "broadcastGroups": [
+                { "id": "g1", "name": "Web", "connectionIds": ["Work/a", "Work/b", "c"] },
+                { "id": "g2", "name": "Other", "connectionIds": ["c"] }
+            ]
+        }))
+        .unwrap();
+
+        // A folder rename moves `a` and `b`; a swap-like chain is simultaneous.
+        assert!(settings
+            .follow_connection_id_changes(&remap(&[("Work/a", "Job/a"), ("Work/b", "Job/b"),])));
+
+        let json = serde_json::to_value(&settings).unwrap();
+        assert_eq!(
+            json["broadcastGroups"][0]["connectionIds"],
+            serde_json::json!(["Job/a", "Job/b", "c"])
+        );
+        assert_eq!(
+            json["broadcastGroups"][1]["connectionIds"],
+            serde_json::json!(["c"])
+        );
+        assert_eq!(json["broadcastGroups"][0]["name"], "Web");
+    }
+
+    #[test]
+    fn shell_integration_entries_follow_connection_id_changes() {
+        use super::super::shell_integration::ShellEntry;
+        let mut settings = AppSettings::default();
+        let entry: ShellEntry = serde_json::from_value(serde_json::json!({
+            "id": "e1", "name": "Open", "connectionId": "a"
+        }))
+        .unwrap();
+        let unbound: ShellEntry = serde_json::from_value(serde_json::json!({
+            "id": "e2", "name": "Pick"
+        }))
+        .unwrap();
+        settings.shell_integration.entries = vec![entry, unbound];
+
+        assert!(settings.follow_connection_id_changes(&remap(&[("a", "b"), ("b", "a")])));
+        assert_eq!(
+            settings.shell_integration.entries[0]
+                .connection_id
+                .as_deref(),
+            Some("b")
+        );
+        assert_eq!(settings.shell_integration.entries[1].connection_id, None);
+    }
+
+    #[test]
+    fn settings_without_matching_references_report_no_change() {
+        let mut settings: AppSettings = serde_json::from_value(serde_json::json!({
+            "version": "1",
+            "broadcastGroups": [{ "id": "g", "name": "G", "connectionIds": ["x"] }]
+        }))
+        .unwrap();
+        assert!(!settings.follow_connection_id_changes(&remap(&[("a", "b")])));
+        assert!(!AppSettings::default().follow_connection_id_changes(&remap(&[("a", "b")])));
     }
 
     #[test]
