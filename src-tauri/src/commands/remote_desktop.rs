@@ -113,7 +113,12 @@ pub(crate) async fn gated_send_clipboard(
     text: String,
     sink: impl GraphicalEventSink,
 ) -> Result<bool, TerminalError> {
-    if !window_controls(window_manager, session_id, window_label, GatedOp::ClipboardSend) {
+    if !window_controls(
+        window_manager,
+        session_id,
+        window_label,
+        GatedOp::ClipboardSend,
+    ) {
         return Ok(false);
     }
     manager.send_clipboard(session_id, text, sink).await?;
@@ -127,7 +132,12 @@ pub(crate) async fn gated_get_clipboard(
     window_label: &str,
     session_id: &str,
 ) -> Result<Option<String>, TerminalError> {
-    if !window_controls(window_manager, session_id, window_label, GatedOp::ClipboardRead) {
+    if !window_controls(
+        window_manager,
+        session_id,
+        window_label,
+        GatedOp::ClipboardRead,
+    ) {
         return Ok(None);
     }
     manager.get_clipboard(session_id).await
@@ -140,7 +150,12 @@ pub(crate) async fn gated_remote_clipboard_files(
     window_label: &str,
     session_id: &str,
 ) -> Result<Vec<RemoteClipboardFile>, TerminalError> {
-    if !window_controls(window_manager, session_id, window_label, GatedOp::ClipboardRead) {
+    if !window_controls(
+        window_manager,
+        session_id,
+        window_label,
+        GatedOp::ClipboardRead,
+    ) {
         return Ok(Vec::new());
     }
     manager.remote_clipboard_files(session_id).await
@@ -208,9 +223,15 @@ pub async fn remote_desktop_send_input(
     manager: State<'_, GraphicalSessionManager>,
     window_manager: State<'_, WindowManager>,
 ) -> Result<(), TerminalError> {
-    gated_send_input(&manager, &window_manager, window.label(), &session_id, event)
-        .await
-        .map(|_| ())
+    gated_send_input(
+        &manager,
+        &window_manager,
+        window.label(),
+        &session_id,
+        event,
+    )
+    .await
+    .map(|_| ())
 }
 
 /// Push local clipboard text to the remote.
@@ -292,9 +313,9 @@ pub async fn remote_desktop_bind_clipboard_files(
     let files: Vec<RemoteClipboardFile> =
         gated_remote_clipboard_files(&manager, &window_manager, window.label(), &session_id)
             .await?
-        .into_iter()
-        .filter(|f| !f.is_dir)
-        .collect();
+            .into_iter()
+            .filter(|f| !f.is_dir)
+            .collect();
     if files.is_empty() {
         return Ok(0);
     }
@@ -491,9 +512,11 @@ mod tests {
             before,
             "a dropped resize emits no lifecycle state"
         );
-        assert!(gated_resize(&mgr, &wm, "main", &sid, 800, 600, sink.clone())
-            .await
-            .expect("owner resize"));
+        assert!(
+            gated_resize(&mgr, &wm, "main", &sid, 800, 600, sink.clone())
+                .await
+                .expect("owner resize")
+        );
 
         // Clipboard push: only the owner's text lands on the remote.
         assert!(
