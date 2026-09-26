@@ -177,6 +177,10 @@ fn apply_resume_gate(
     }
     let requested = cursor.offset;
     let decision = decide_resume(requested, cursor.baseline, current, present, cursor.total);
+    cursor.offset = decision.offset();
+    if cursor.offset == 0 {
+        rebase_cursor(cursor, handle, current);
+    }
     let id = &handle.transfer_id;
     match decision {
         ResumeDecision::Resume(offset) => {
@@ -185,6 +189,7 @@ fn apply_resume_gate(
         ResumeDecision::Fresh => {}
         ResumeDecision::RestartSourceChanged => {
             info!(transfer_id = %id, requested, ?current, "SFTP source changed; restarting from zero");
+            // Emitted after the rebase, so the event already shows the restart.
             emit(
                 handle,
                 sink,
@@ -196,10 +201,6 @@ fn apply_resume_gate(
         ResumeDecision::RestartUnverified => {
             info!(transfer_id = %id, requested, ?present, "SFTP partial failed byte-verify; restarting from zero");
         }
-    }
-    cursor.offset = decision.offset();
-    if cursor.offset == 0 {
-        rebase_cursor(cursor, handle, current);
     }
 }
 
@@ -232,8 +233,10 @@ async fn settle_writer<W: tokio::io::AsyncWrite + Unpin>(
 ) {
     use tokio::io::AsyncWriteExt;
     if matches!(outcome, ChunkedCopyOutcome::Stopped { .. }) {
-        if let Err(e) = writer.shutdown().await {
-            debug!(error = %e, "could not settle writer after stop (best-effort)");
+        match tokio::time::timeout(STALL_TIMEOUT, writer.shutdown()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => debug!(error = %e, "could not settle writer after stop (best-effort)"),
+            Err(_) => debug!("settling writer after stop timed out (best-effort)"),
         }
     }
 }
@@ -394,6 +397,62 @@ async fn open_local_read(local_path: &str, offset: u64) -> std::io::Result<tokio
         f.seek(std::io::SeekFrom::Start(offset)).await?;
     }
     Ok(f)
+}
+
+/// How long an attempt may go without moving a single byte before it is
+/// abandoned as stalled and retried (PARITY-004, #3567).
+///
+/// Pipelined SFTP writes wait for their acknowledgements with **no** timeout
+/// in `russh-sftp`, and a channel that dies mid-upload never resolves them, so
+/// without this guard a dropped connection hangs the upload forever (and its
+/// pause/cancel with it). Every other SFTP request already times out after
+/// `russh-sftp`'s 10 s default, so this sits comfortably above that.
+pub const STALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// How often [`guard_stall`] samples progress and the cancel flag.
+const STALL_TICK: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Drive one attempt under a stall watchdog: resolves with the attempt's own
+/// result, with [`AttemptOutcome::Stopped`]/`Cancel` as soon as the transfer is
+/// cancelled (even while an I/O call is wedged), or with an error once
+/// `progress` has not moved for `stall_timeout` — which the retry loop treats
+/// like any other failed attempt (backoff, fresh channel, verified resume).
+async fn guard_stall<F>(
+    attempt: F,
+    progress: &AtomicU64,
+    handle: &TransferHandle,
+    stall_timeout: std::time::Duration,
+) -> Result<AttemptOutcome, SftpTransferError>
+where
+    F: std::future::Future<Output = Result<AttemptOutcome, SftpTransferError>>,
+{
+    tokio::pin!(attempt);
+    let mut last = progress.load(Ordering::Relaxed);
+    let mut last_change = Instant::now();
+    let mut tick = tokio::time::interval(STALL_TICK);
+    loop {
+        tokio::select! {
+            result = &mut attempt => return result,
+            _ = tick.tick() => {
+                let now = progress.load(Ordering::Relaxed);
+                if handle.is_cancelled() {
+                    return Ok(AttemptOutcome::Stopped {
+                        transferred: now,
+                        reason: StopReason::Cancel,
+                    });
+                }
+                if now != last {
+                    last = now;
+                    last_change = Instant::now();
+                } else if last_change.elapsed() >= stall_timeout {
+                    return Err(SftpTransferError::Ssh(format!(
+                        "transfer stalled: no data moved for {}s",
+                        stall_timeout.as_secs()
+                    )));
+                }
+            }
+        }
+    }
 }
 
 /// Run one download attempt on a fresh dedicated channel, resuming from
@@ -638,30 +697,33 @@ async fn run_attempts(
             cursor.offset,
         );
         let stop_handle = handle.clone();
-        let result = match direction {
-            TransferDirection::Download => {
-                download_attempt(
-                    &channel,
-                    remote_path,
-                    local_path,
-                    cursor.offset,
-                    |t| reporter.report(t),
-                    move || stop_reason(&stop_handle),
-                )
-                .await
-            }
-            TransferDirection::Upload => {
-                upload_attempt(
-                    &channel,
-                    local_path,
-                    remote_path,
-                    cursor.offset,
-                    |t| reporter.report(t),
-                    move || stop_reason(&stop_handle),
-                )
-                .await
+        let attempt_fut = async {
+            match direction {
+                TransferDirection::Download => {
+                    download_attempt(
+                        &channel,
+                        remote_path,
+                        local_path,
+                        cursor.offset,
+                        |t| reporter.report(t),
+                        move || stop_reason(&stop_handle),
+                    )
+                    .await
+                }
+                TransferDirection::Upload => {
+                    upload_attempt(
+                        &channel,
+                        local_path,
+                        remote_path,
+                        cursor.offset,
+                        |t| reporter.report(t),
+                        move || stop_reason(&stop_handle),
+                    )
+                    .await
+                }
             }
         };
+        let result = guard_stall(attempt_fut, &progress, handle, STALL_TIMEOUT).await;
         cursor.offset = progress.load(Ordering::Relaxed);
 
         if let Some(outcome) = settle_attempt(result, cursor, &mut attempt, handle, sink).await {
@@ -1004,7 +1066,7 @@ async fn run_remote_attempts(
             cursor.offset,
         );
         let stop_handle = handle.clone();
-        let result = remote_copy_attempt(
+        let attempt_fut = remote_copy_attempt(
             &src_channel,
             &dst_channel,
             src_path,
@@ -1012,8 +1074,8 @@ async fn run_remote_attempts(
             cursor.offset,
             |t| reporter.report(t),
             move || stop_reason(&stop_handle),
-        )
-        .await;
+        );
+        let result = guard_stall(attempt_fut, &progress, handle, STALL_TIMEOUT).await;
         cursor.offset = progress.load(Ordering::Relaxed);
 
         if let Some(outcome) = settle_attempt(result, cursor, &mut attempt, handle, sink).await {
@@ -1272,6 +1334,87 @@ mod tests {
         let second = local_fingerprint(path_str).await.expect("fingerprint");
         assert!(!first.same_source(&second));
         assert_eq!(local_size(path_str).await, Some(11));
+    }
+
+    #[tokio::test]
+    async fn guard_stall_passes_through_a_finished_attempt() {
+        let (handle, _, _) = harness();
+        let progress = AtomicU64::new(0);
+        let result = guard_stall(
+            async { Ok(AttemptOutcome::Completed { transferred: 9 }) },
+            &progress,
+            &handle,
+            std::time::Duration::from_secs(5),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Ok(AttemptOutcome::Completed { transferred: 9 })
+        ));
+    }
+
+    #[tokio::test]
+    async fn guard_stall_fails_a_wedged_attempt() {
+        let (handle, _, _) = harness();
+        let progress = AtomicU64::new(42);
+        let result = guard_stall(
+            std::future::pending(),
+            &progress,
+            &handle,
+            std::time::Duration::from_millis(300),
+        )
+        .await;
+        let err = result.expect_err("a wedged attempt must fail as stalled");
+        assert!(err.to_string().contains("stalled"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn guard_stall_tolerates_slow_but_moving_progress() {
+        let (handle, _, _) = harness();
+        let progress = Arc::new(AtomicU64::new(0));
+        let mover = progress.clone();
+        let attempt = async move {
+            // Moves a byte every 200 ms for ~1.2 s: longer than the stall
+            // timeout overall, but never idle for that long.
+            for i in 1..=6u64 {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                mover.store(i, Ordering::Relaxed);
+            }
+            Ok(AttemptOutcome::Completed { transferred: 6 })
+        };
+        let result = guard_stall(
+            attempt,
+            &progress,
+            &handle,
+            std::time::Duration::from_millis(700),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Ok(AttemptOutcome::Completed { transferred: 6 })
+        ));
+    }
+
+    #[tokio::test]
+    async fn guard_stall_cancels_a_wedged_attempt_promptly() {
+        let reg = TransferRegistry::new();
+        let handle = reg.enqueue("c1", "s1", TransferDirection::Upload, "f", "/f", 0);
+        assert!(reg.cancel("c1"));
+        let progress = AtomicU64::new(7);
+        let result = guard_stall(
+            std::future::pending(),
+            &progress,
+            &handle,
+            std::time::Duration::from_secs(60),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Ok(AttemptOutcome::Stopped {
+                transferred: 7,
+                reason: StopReason::Cancel,
+            })
+        ));
     }
 
     #[test]
