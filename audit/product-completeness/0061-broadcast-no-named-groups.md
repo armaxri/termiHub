@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/types/terminal
 evidence:
   - src/types/terminal.ts:337
-status: open
+status: fixed
+resolution: "#3447 — named broadcast groups persisted by connection id; frozen membership on start; paste confirm"
 ---
 
 ## What

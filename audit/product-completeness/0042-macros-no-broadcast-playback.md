@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/store/slices/macrosSlice
 evidence:
   - src/store/slices/macrosSlice.ts:301
-status: open
+status: fixed
+resolution: "#3447 — macro playback targets this/broadcast/all/panel/group with explicit multi-target confirmation"
 ---
 
 ## What
