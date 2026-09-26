@@ -1328,6 +1328,26 @@ the app at it.
    the helper before connecting surfaces an actionable "failed to launch RDP
    helper" error that names `scripts/build-rdp-sidecar.sh` / `TERMIHUB_RDP_HELPER`.
 
+#### Fixed resolution and color depth (#3460, PROD-026)
+
+The config mapping, resize suppression and reconnect behavior are unit-tested
+(`graphical_resolution`, `rdp_sidecar::config`, the sidecar connector config,
+`graphical_manager` / `graphical_supervisor`, `useRemoteDesktopSession`,
+`RemoteDesktopTab.scaling`); what the server actually renders needs a live host:
+
+1. In the RDP connection editor set **Resolution** to _Fixed size_, **Width**
+   `1366`, **Height** `768`, **Color Depth** _16-bit (high color)_; connect.
+   **Expected:** the status bar shows `1366×768 · 16-bit`; the remote desktop is
+   1366×768 (check the remote's display settings).
+2. Resize the tab / window. **Expected:** the canvas rescales locally; the remote
+   resolution stays 1366×768 (no reflow on the remote).
+3. Click the toolbar scaling button repeatedly. **Expected:** it toggles only
+   between _Fit to Tab_ and _1:1 Pixel_ (never _Match Window_).
+4. Drop the network briefly (with Auto-Reconnect on). **Expected:** the session
+   reconnects at 1366×768.
+5. Switch **Resolution** back to _Dynamic_ and reconnect with _Match Window_
+   scaling. **Expected:** the remote follows the tab size as before.
+
 #### Drive redirection (RDPDR, #1757)
 
 Drive redirection is off by default and opt-in per connection. The RDPDR
