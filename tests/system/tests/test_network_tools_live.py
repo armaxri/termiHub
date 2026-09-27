@@ -30,12 +30,13 @@ from __future__ import annotations
 import re
 import socket
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from typing import Iterator
 
 import pytest
 
 from termihub_harness import (
+    LocalThreadingHTTPServer,
     NetworkToolsUi,
     SettingsUi,
     SidebarUi,
@@ -77,7 +78,9 @@ def http_target() -> Iterator[int]:
         def log_message(self, *_args):  # silence per-request stderr logging
             pass
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    # Not ThreadingHTTPServer: its server_bind does a getfqdn() reverse-DNS
+    # lookup that stalls ~35 s on macOS CI (#3665).
+    server = LocalThreadingHTTPServer(("127.0.0.1", 0), _Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
