@@ -1202,8 +1202,9 @@ Before creating a release, run the quality scripts and verify:
 - [ ] All `docs/changes/*.md` fragments have been consolidated into `CHANGELOG.md` and deleted (see [Finalize Changelog](#finalize-changelog))
 - [ ] No known release-blocking issues remain
 - [ ] The [release integration gate](#release-integration-gate) is satisfied on the exact
-      commit you will tag: a green **Release Candidate: Full Integration** run and a green
-      post-merge **Code Quality** push run (the Release workflow refuses to publish otherwise)
+      commit you will tag: a green **Release Candidate: Full Integration** run and green
+      post-merge **Code Quality** and **Dev Build** push runs (the Release workflow refuses to
+      publish otherwise)
 - [ ] Every crate on the [untrusted-input parser watchlist](supply-chain.md#untrusted-input-parser-watchlist)
       is on its latest compatible release, and its advisories and changelog since the last
       release were reviewed (a watchlist advisory outranks any general dependency bump)
@@ -1330,9 +1331,15 @@ exact commit:
 | ------------------------------------------------------------------------------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [Release Candidate: Full Integration](../.github/workflows/release-candidate.yml)          | `workflow_dispatch` | `system-integration.yml` (bridge integration lane on Linux/macOS/Windows, display-critical grades, agent Docker suites) + `integration-fixtures.yml` (no path filter) |
 | [Code Quality](../.github/workflows/code-quality.yml) (post-merge push run on that commit) | `push`              | the full three-OS test matrix and **Agent Live Tests (Windows, serial)**                                                                                              |
+| [Dev Build](../.github/workflows/dev-build.yml) (post-merge push run on that commit)       | `push`              | the full app build on all five platforms plus the agent binaries (CI-015)                                                                                             |
 
 The newest run decides, so a later red re-run outranks an earlier green one. A run that is
 still in progress fails the gate too.
+
+Dev Build is `cancel-in-progress`, so when a newer push lands on the branch before it
+finishes, the release commit's run concludes `cancelled` and blocks the gate. Re-run it
+(`gh run rerun <dev-build run id>`) and wait for green. A _failed_ Dev Build is a broken full
+build on the release commit: fix it and re-tag.
 
 **Before tagging** (the release commit is already on `main`, so its Code Quality push run
 exists), dispatch the candidate run on it and wait for it to go green:

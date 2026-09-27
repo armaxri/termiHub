@@ -60,7 +60,8 @@ jobs:
   # slim lane (#3325) — no bridge integration lane, a path-filtered fixture lane,
   # no agent Docker suites — so per-PR green alone must never ship. The script
   # requires the newest "Release Candidate: Full Integration" run (every lane, no
-  # path filter) and the newest post-merge Code Quality push run on this sha to be
+  # path filter), the newest post-merge Code Quality push run and the newest
+  # post-merge Dev Build push run (full app build, CI-015) on this sha to be
   # green, and otherwise fails with the commands to fix it: dispatch
   # release-candidate.yml on the tag, then re-run this workflow's failed jobs.
   # Every other job depends on create-release, which depends on this job.

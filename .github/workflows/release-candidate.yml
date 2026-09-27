@@ -16,7 +16,7 @@ name: "Release Candidate: Full Integration"
 # The Release workflow's first gate (scripts/internal/release-integration-gate.mjs)
 # refuses to publish unless the newest run of THIS workflow on the tag's commit is
 # green (plus the post-merge Code Quality push run, which carries the Windows agent
-# live tests). Dispatch it on the release ref before (or after) pushing the tag:
+# live tests, and the post-merge Dev Build push run, the full app build). Dispatch it on the release ref before (or after) pushing the tag:
 #
 #   gh workflow run release-candidate.yml --ref main       # or --ref vX.Y.Z
 #
