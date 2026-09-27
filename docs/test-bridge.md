@@ -130,7 +130,8 @@ the WebSocket client alongside the in-process bridge.
 >
 > Any hand-built test app therefore needs **both**:
 > `VITE_TEST_BRIDGE=1 pnpm tauri build --features test-bridge` (plus the usual
-> `--config src-tauri/tauri.test.conf.json` and `--features mock-remote-desktop`).
+> `--features mock-remote-desktop`). No `--config` CSP overlay is needed: the
+> bridge widens `connect-src` itself at startup (#3628).
 > `./scripts/test-system-py.sh` and the nightly `system-integration.yml` pass all
 > of this for you.
 

@@ -8,11 +8,11 @@ boots and a terminal actually renders (output flows back), and asserts the
 frontend saw **zero** CSP violations.
 
 Runs on every non-macOS integration leg (Linux/Windows). The bridge itself needs
-a loopback ``ws://`` that the production CSP forbids; the test build re-adds only
-that one allowance via ``src-tauri/tauri.test.conf.json`` (see the build steps in
-``scripts/test-system-py.sh`` / ``system-integration.yml``). Every other,
-rendering-relevant directive is identical to production, so a broken shipped CSP
-still fails here.
+a loopback ``ws://`` that the production CSP forbids; the test-bridge build
+re-adds only that one allowance to ``connect-src`` at startup
+(``relax_csp_if_test_bridge`` in ``src-tauri/src/utils/test_bridge.rs``, #3628).
+Every other directive, including this platform's IPC origin, is identical to
+production, so a broken shipped CSP still fails here.
 """
 
 import pytest

@@ -245,7 +245,7 @@ uv run pytest -k "roundtrip or protocol"
 
 ```sh
 # from the repo root — build the app once (test flags required; see the note below)
-VITE_TEST_BRIDGE=1 pnpm tauri build --config src-tauri/tauri.test.conf.json --features "mock-remote-desktop test-bridge"
+VITE_TEST_BRIDGE=1 pnpm tauri build --features "mock-remote-desktop test-bridge"
 cargo build --release -p termihub-agent  # only needed for agent tests
 cd tests/system
 uv run pytest -m integration -v -s
@@ -260,7 +260,7 @@ frontend-change → run loop is far tighter:
 
 ```sh
 # quicker than a release build (test flags required; see the note below)
-VITE_TEST_BRIDGE=1 pnpm tauri build --debug --config src-tauri/tauri.test.conf.json --features "mock-remote-desktop test-bridge"
+VITE_TEST_BRIDGE=1 pnpm tauri build --debug --features "mock-remote-desktop test-bridge"
 cd tests/system && ./pytest.sh -m integration -k sftp_infra -x -s
 ```
 
@@ -273,16 +273,16 @@ Point at an arbitrary binary (e.g. a bundle in a non-standard location) with
 >
 > ```sh
 > VITE_TEST_BRIDGE=1 pnpm tauri build \
->   --config src-tauri/tauri.test.conf.json \
 >   --features "mock-remote-desktop test-bridge"
 > ```
 >
 > - **`--features test-bridge` + `VITE_TEST_BRIDGE=1` (SEC-005):** the WebSocket
 >   bridge and its CSP relaxation are compiled out of release builds, and the
 >   frontend ignores the activation signals in a production build unless
->   `VITE_TEST_BRIDGE=1`. Both are required for the bridge to connect.
-> - **`--config src-tauri/tauri.test.conf.json`:** re-adds the loopback `ws://`
->   the bridge client needs (the production CSP drops it, #2059).
+>   `VITE_TEST_BRIDGE=1`. Both are required for the bridge to connect. The
+>   bridge's CSP relaxation re-adds, at startup, only the loopback `ws://` its
+>   client needs (the production CSP drops it, #2059); there is no separate
+>   `--config` CSP overlay any more (#3628).
 > - **`--features mock-remote-desktop` (DEAD-001):** a test/demo backend must not
 >   ship in a release, so a hand-run `pnpm tauri build` no longer registers the
 >   "Mock Remote Desktop" connection type; this opts it back in.
@@ -438,7 +438,7 @@ docker compose -f tests/docker/docker-compose.yml up -d ssh-password ssh-keys
 podman compose -f tests/docker/docker-compose.yml up -d ssh-password ssh-keys
 
 # the app must include the bridge verbs the test uses (test flags required; see the note above)
-VITE_TEST_BRIDGE=1 pnpm tauri build --config src-tauri/tauri.test.conf.json --features "mock-remote-desktop test-bridge"
+VITE_TEST_BRIDGE=1 pnpm tauri build --features "mock-remote-desktop test-bridge"
 cd tests/system && ./pytest.sh -m integration -k ssh -v -s   # or pytest.cmd on Windows
 # (the harness can also bring the containers up itself; CONTAINER_CMD=podman forces Podman)
 ```
