@@ -28,6 +28,7 @@ Mixin → concern:
 - :class:`PluginsUi`         — seed a frontend plugin on disk + the frontend gate
 - :class:`AgentUi`           — remote-agent create / connect / error dialog / setup
 - :class:`WorkflowUi`        — workflow-automation editor + sidebar (author / run)
+- :class:`RemoteDesktopUi`   — VNC/RDP tab: create, overlays, resolution, canvas pixels
 
 The plain name->element store lookups (``find_connection`` / ``find_folder`` /
 testid helpers) stay functions so they remain unit-testable without an app.
@@ -59,6 +60,7 @@ from .monitoring import MonitoringUi
 from .network_tools import NetworkToolsUi
 from .passwordprompt import PasswordPromptUi
 from .plugins import PluginsUi
+from .remote_desktop import RemoteDesktopUi
 from .settings import SETTINGS_REGION, SettingsUi
 from .shell_fs import ShellFsUi
 from .sftp import SftpUi
@@ -88,6 +90,7 @@ __all__ = [
     "ManualUi",
     "NetworkToolsUi",
     "PluginsUi",
+    "RemoteDesktopUi",
     "EmbeddedServicesUi",
     "ShellFsUi",
     "WorkflowUi",
