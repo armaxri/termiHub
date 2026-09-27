@@ -193,10 +193,10 @@ export function formatReport(verdict, { allowlistPath, errors = [] }) {
   } else {
     lines.push(
       "",
-      "A TODO/FIXME/HACK comment in shipped source blocks the release. Either finish the work",
-      "(or move it to a GitHub issue and delete the comment), or, if the marker is meant to",
-      `stay, add an entry with a written reason to ${allowlistPath}. Remove entries that no`,
-      "longer match anything."
+      "A TODO/FIXME/HACK comment in shipped source blocks the release. Either finish the",
+      "work (or move it to a GitHub issue and delete the comment), or, if the marker is",
+      "meant to stay, add an entry with a written reason to",
+      `${allowlistPath}. Remove entries that no longer match anything.`
     );
   }
   return lines;

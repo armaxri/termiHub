@@ -150,7 +150,7 @@ describe("formatReport", () => {
     );
     const out = formatReport(v, { allowlistPath: "allow.json" }).join("\n");
     expect(out).toContain("FAIL: src/b.ts:4: // FIXME");
-    expect(out).toContain("add an entry with a written reason to allow.json");
+    expect(out).toContain("add an entry with a written reason to\nallow.json");
   });
 
   it("fails on allowlist errors even with no markers", () => {
