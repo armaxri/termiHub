@@ -23,6 +23,12 @@ impl DaemonGuard {
     /// Record the process currently serving `endpoint`, or `None` when nothing
     /// is (or its PID cannot be read).
     pub fn discover(endpoint: &str) -> Option<Self> {
+        Self::try_discover(endpoint).ok()
+    }
+
+    /// [`discover`](Self::discover), keeping the reason a lookup failed so a
+    /// test that *requires* the daemon can report it.
+    pub fn try_discover(endpoint: &str) -> std::io::Result<Self> {
         server_pid(endpoint).map(|pid| Self {
             endpoint: endpoint.to_string(),
             pid,
@@ -52,7 +58,7 @@ impl Drop for DaemonGuard {
     fn drop(&mut self) {
         // Verify before killing: only if the endpoint is still served by the
         // very PID we recorded. Gone (exited on its own) → nothing to do.
-        if pid_alive(self.pid) && server_pid(&self.endpoint) == Some(self.pid) {
+        if pid_alive(self.pid) && server_pid(&self.endpoint).ok() == Some(self.pid) {
             kill_pid(self.pid);
         }
     }
@@ -73,12 +79,42 @@ pub fn session_endpoint(session_id: &str) -> String {
     format!(r"\\.\pipe\termihub-session-{session_id}")
 }
 
+/// How long a PID lookup keeps retrying an endpoint that is up but
+/// momentarily busy (see [`retry_while_busy`]).
+const BUSY_RETRY_BUDGET: Duration = Duration::from_secs(10);
+
+/// Run `attempt` until it stops reporting a *busy* endpoint or `budget` runs
+/// out, calling `wait` between tries.
+///
+/// A windows named pipe serves exactly one client per instance, and the
+/// listener stages the next instance only after it has accepted the previous
+/// client — so a connect landing just after the worker's (or a readiness
+/// probe's) connect sees `ERROR_PIPE_BUSY` even though the daemon is up
+/// (#3636). That is the one transient outcome worth retrying; everything else
+/// (success, "no such endpoint", any other error) is final. Unix sockets have a
+/// listen backlog and never report busy, so there the first attempt decides.
+fn retry_while_busy<T>(
+    budget: Duration,
+    mut attempt: impl FnMut() -> std::io::Result<T>,
+    is_busy: impl Fn(&std::io::Error) -> bool,
+    mut wait: impl FnMut(),
+) -> std::io::Result<T> {
+    let deadline = Instant::now() + budget;
+    loop {
+        match attempt() {
+            Err(e) if is_busy(&e) && Instant::now() < deadline => wait(),
+            other => return other,
+        }
+    }
+}
+
 /// PID of the process serving the unix socket at `endpoint`.
 #[cfg(unix)]
-fn server_pid(endpoint: &str) -> Option<u32> {
+fn server_pid(endpoint: &str) -> std::io::Result<u32> {
     use std::os::unix::io::AsRawFd;
-    let stream = std::os::unix::net::UnixStream::connect(endpoint).ok()?;
+    let stream = std::os::unix::net::UnixStream::connect(endpoint)?;
     peer_pid(stream.as_raw_fd())
+        .ok_or_else(|| std::io::Error::other(format!("could not read the peer PID of {endpoint}")))
 }
 
 #[cfg(target_os = "linux")]
@@ -154,20 +190,49 @@ fn kill_pid(pid: u32) {
 }
 
 /// PID of the process serving the named pipe `endpoint`.
+///
+/// Opens a client handle to the pipe and asks the OS for the server end's
+/// process. While every instance is momentarily taken (`ERROR_PIPE_BUSY`, the
+/// listener has not staged its next instance yet) it waits on
+/// `WaitNamedPipeW` and retries — see [`retry_while_busy`].
 #[cfg(windows)]
-fn server_pid(endpoint: &str) -> Option<u32> {
+fn server_pid(endpoint: &str) -> std::io::Result<u32> {
     use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::System::Pipes::GetNamedPipeServerProcessId;
-    let pipe = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(endpoint)
-        .ok()?;
+    use windows_sys::Win32::Foundation::ERROR_PIPE_BUSY;
+    use windows_sys::Win32::System::Pipes::{GetNamedPipeServerProcessId, WaitNamedPipeW};
+
+    let wide: Vec<u16> = endpoint.encode_utf16().chain(std::iter::once(0)).collect();
+    let pipe = retry_while_busy(
+        BUSY_RETRY_BUDGET,
+        || {
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(endpoint)
+        },
+        |e| e.raw_os_error() == Some(ERROR_PIPE_BUSY as i32),
+        || {
+            // Safety: `wide` is a valid NUL-terminated UTF-16 string. Returns
+            // as soon as an instance is free (or after 250 ms); the outcome is
+            // re-checked by the next open, so the result is not needed.
+            unsafe {
+                WaitNamedPipeW(wide.as_ptr(), 250);
+            }
+        },
+    )?;
     let mut pid: u32 = 0;
     // Safety: `pipe` is an open client handle to a named pipe; `pid` is a valid
     // out-param.
     let ok = unsafe { GetNamedPipeServerProcessId(pipe.as_raw_handle() as _, &mut pid) };
-    (ok != 0 && pid != 0).then_some(pid)
+    if ok == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if pid == 0 {
+        return Err(std::io::Error::other(format!(
+            "no server PID reported for {endpoint}"
+        )));
+    }
+    Ok(pid)
 }
 
 #[cfg(windows)]
@@ -200,5 +265,63 @@ fn kill_pid(pid: u32) {
             TerminateProcess(handle, 1);
             CloseHandle(handle);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Error, ErrorKind};
+
+    fn busy(e: &Error) -> bool {
+        e.kind() == ErrorKind::WouldBlock
+    }
+
+    #[test]
+    fn a_busy_endpoint_is_retried_until_it_answers() {
+        let mut attempts = 0;
+        let mut waits = 0;
+        let got = retry_while_busy(
+            Duration::from_secs(5),
+            || {
+                attempts += 1;
+                if attempts < 3 {
+                    Err(Error::from(ErrorKind::WouldBlock))
+                } else {
+                    Ok(42)
+                }
+            },
+            busy,
+            || waits += 1,
+        );
+        assert_eq!(got.unwrap(), 42);
+        assert_eq!((attempts, waits), (3, 2));
+    }
+
+    #[test]
+    fn a_missing_endpoint_fails_at_once() {
+        let mut attempts = 0;
+        let got: std::io::Result<u32> = retry_while_busy(
+            Duration::from_secs(5),
+            || {
+                attempts += 1;
+                Err(Error::from(ErrorKind::NotFound))
+            },
+            busy,
+            || {},
+        );
+        assert_eq!(got.unwrap_err().kind(), ErrorKind::NotFound);
+        assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn an_endpoint_busy_past_the_budget_reports_busy() {
+        let got: std::io::Result<u32> = retry_while_busy(
+            Duration::from_millis(30),
+            || Err(Error::from(ErrorKind::WouldBlock)),
+            busy,
+            || std::thread::sleep(Duration::from_millis(5)),
+        );
+        assert_eq!(got.unwrap_err().kind(), ErrorKind::WouldBlock);
     }
 }

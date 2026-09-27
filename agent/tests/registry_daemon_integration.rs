@@ -678,8 +678,10 @@ fn an_auto_spawned_registry_exits_after_its_only_worker_is_killed() {
         wait_for_endpoint(&endpoint),
         "the worker never spawned its registry"
     );
-    let registry = common::daemon_reaper::DaemonGuard::discover(&endpoint)
-        .expect("could not read the registry daemon's PID off its endpoint");
+    let registry =
+        common::daemon_reaper::DaemonGuard::try_discover(&endpoint).unwrap_or_else(|e| {
+            panic!("could not read the registry daemon's PID off its endpoint: {e}")
+        });
 
     // Kill the worker abruptly: its connection to the registry simply ends.
     let killed_at = Instant::now();
