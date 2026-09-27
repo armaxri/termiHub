@@ -13,6 +13,12 @@
  *   its bookmarks scope (`connection:<id>`), on-connect workflow matching, etc.
  *   Tab content is window-local frontend state (the backend `layout` region holds
  *   the panel structure only), so each window remaps its own tabs.
+ * - **An open connection editor's own connection** (`connectionEditorMeta.connectionId`,
+ *   #3622) — follows like the tab references above, so the editor keeps editing
+ *   (and saving) the renamed connection instead of a now-missing id. A *new*
+ *   connection's target folder (`connectionEditorMeta.folderId`) follows a folder
+ *   rename / move / delete once the tree confirms the old folder is gone — see
+ *   {@link inferFolderFollow} and the connection editor.
  * - **`persistentSessions`** — keyed by the id the *backend* persistent-session
  *   registry uses. Re-keying only the frontend map would desync it from the
  *   backend, so it is left as is until the registry follows too (#3595).
@@ -51,7 +57,8 @@ export function connectionIdRemapper(changes: readonly ConnectionIdChange[]): Co
 }
 
 /**
- * Re-point every tab's `connectionId` / `persistentConnectionId` at its
+ * Re-point every tab's `connectionId` / `persistentConnectionId`, and an open
+ * connection editor's own `connectionEditorMeta.connectionId` (#3622), at its
  * connection's new id. Returns `null` when no tab referenced a changed id, so the
  * caller can skip the store update.
  */
@@ -72,12 +79,63 @@ export function remapTabContentConnectionIds(
       const id = remap(content.persistentConnectionId);
       if (id !== content.persistentConnectionId) patch.persistentConnectionId = id;
     }
+    const meta = content.connectionEditorMeta;
+    // An agent-definition editor's `connectionId` is the agent's id, never a saved
+    // connection's; it cannot appear in a batch, but do not even look.
+    if (meta && meta.agentDefinitionId == null) {
+      const id = remap(meta.connectionId);
+      if (id !== meta.connectionId) patch.connectionEditorMeta = { ...meta, connectionId: id };
+    }
     if (Object.keys(patch).length > 0) {
       next ??= { ...tabContent };
       next[tabId] = { ...content, ...patch };
     }
   }
   return next;
+}
+
+/** A folder id's inferred new id (`null` = the root). */
+export interface FolderFollow {
+  from: string;
+  to: string | null;
+}
+
+/**
+ * Infer where folder `folderId` went from one batch of connection id changes
+ * (#3622). The backend reports connection ids only, so a folder rename / move /
+ * delete is visible as every connection under the folder moving to the same new
+ * parent path with the same relative path (`Work/a/x → Job/a/x`; deleting `Work`
+ * moves its contents up, `Work/x → x`).
+ *
+ * `connectionIdsBefore` is the tree's connection ids *before* the batch applied.
+ * Returns `null` when the folder holds no connection, or when its connections did
+ * not all move the same way.
+ *
+ * The result is a candidate, not a fact: moving each connection out of a folder
+ * one by one looks the same as moving the folder. Apply it only once the tree no
+ * longer has `folderId` (the connection editor does).
+ */
+export function inferFolderFollow(
+  folderId: string,
+  changes: readonly ConnectionIdChange[],
+  connectionIdsBefore: readonly string[]
+): FolderFollow | null {
+  const prefix = `${folderId}/`;
+  const remap = connectionIdRemapper(changes);
+  let to: string | null | undefined;
+  for (const id of connectionIdsBefore) {
+    if (!id.startsWith(prefix)) continue;
+    const rest = id.slice(prefix.length);
+    const next = remap(id);
+    let parent: string | null;
+    if (next === rest) parent = null;
+    else if (next.endsWith(`/${rest}`)) parent = next.slice(0, next.length - rest.length - 1);
+    else return null;
+    if (to !== undefined && to !== parent) return null;
+    to = parent;
+  }
+  if (to === undefined || to === folderId) return null;
+  return { from: folderId, to };
 }
 
 /**

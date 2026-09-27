@@ -154,3 +154,194 @@ describe("ConnectionEditor — jump-host hops follow connection id changes (#360
     ]);
   });
 });
+
+/**
+ * The editor's *own* connection renamed or moved while the editor is open
+ * (#3622): the tab's `connectionEditorMeta` follows the new id, so saving updates
+ * the renamed connection instead of adding a duplicate at the old path, and the
+ * draft (with its dirty state) is kept.
+ */
+describe("ConnectionEditor — follows its own connection's id change (#3622)", () => {
+  const WORK_X: SavedConnection = { ...ssh("Work/x"), folderId: "Work" };
+  const JOB_X: SavedConnection = { ...ssh("Work/x"), id: "Job/x", folderId: "Job" };
+  const folder = (id: string) => ({
+    id,
+    name: id.split("/").pop()!,
+    parentId: null,
+    isExpanded: true,
+  });
+
+  /** Renders the editor from the store's tab content, like SplitView does. */
+  function Host({ tabId }: { tabId: string }) {
+    const meta = useAppStore((s) => s.tabContent[tabId]?.connectionEditorMeta);
+    return meta ? <ConnectionEditor tabId={tabId} meta={meta} isVisible={true} /> : null;
+  }
+
+  function openEditor(connectionId: string, folderId?: string): string {
+    act(() => useAppStore.getState().openConnectionEditorTab(connectionId, folderId));
+    const [tabId] = Object.entries(useAppStore.getState().tabContent).find(
+      ([, c]) => c.contentType === "connection-editor"
+    )!;
+    act(() => {
+      root.render(
+        <TooltipProvider>
+          <Host tabId={tabId} />
+        </TooltipProvider>
+      );
+    });
+    return tabId;
+  }
+
+  /** What the backend does on a rename: announce the batch, then publish the tree. */
+  function renameInBackend(
+    events: ReturnType<typeof installConnectionIdChangesHarness>,
+    changes: { oldId: string; newId: string }[],
+    tree: Parameters<typeof seedConnectionsRegion>[0]
+  ): void {
+    events.emit(changes);
+    act(() => useAppStore.getState().followConnectionIdChanges(changes));
+    act(() => seedConnectionsRegion(tree));
+  }
+
+  function setInput(el: HTMLInputElement, value: string): void {
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )!.set!;
+    act(() => {
+      setter.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  const nameInput = () =>
+    container.querySelector<HTMLInputElement>('[data-testid="connection-editor-name-input"]')!;
+
+  async function save(): Promise<SavedConnection[]> {
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="connection-editor-save"]')!.click();
+    });
+    await flushAsync();
+    return mockedInvoke.mock.calls
+      .filter(([cmd]) => cmd === "save_connection")
+      .map(([, args]) => (args as { connection: SavedConnection }).connection);
+  }
+
+  beforeEach(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    resetRuntimeCache();
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "save_connection") return Promise.resolve();
+      if (cmd === "list_workflows") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connectionTypes: [SSH_TYPE],
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+    });
+    seedConnectionsRegion({ folders: [folder("Work")], connections: [WORK_X] });
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+  });
+
+  it("a folder rename re-points the editor; saving updates the moved connection", async () => {
+    const events = installConnectionIdChangesHarness();
+    const tabId = openEditor("Work/x");
+    await flushAsync();
+    expect(useAppStore.getState().editorDirtyTabs[tabId]).toBe(false);
+
+    renameInBackend(events, [{ oldId: "Work/x", newId: "Job/x" }], {
+      folders: [folder("Job")],
+      connections: [JOB_X],
+    });
+    await flushAsync();
+    expect(useAppStore.getState().tabContent[tabId].connectionEditorMeta?.connectionId).toBe(
+      "Job/x"
+    );
+    expect(useAppStore.getState().editorDirtyTabs[tabId]).toBe(false);
+
+    const saved = await save();
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ id: "Job/x", folderId: "Job", name: "x" });
+  });
+
+  it("keeps unsaved edits across the rename and saves them to the new id", async () => {
+    const events = installConnectionIdChangesHarness();
+    const tabId = openEditor("Work/x");
+    await flushAsync();
+    setInput(nameInput(), "edited");
+    await flushAsync();
+    expect(useAppStore.getState().editorDirtyTabs[tabId]).toBe(true);
+
+    renameInBackend(events, [{ oldId: "Work/x", newId: "Job/x" }], {
+      folders: [folder("Job")],
+      connections: [JOB_X],
+    });
+    await flushAsync();
+    expect(nameInput().value).toBe("edited");
+    expect(useAppStore.getState().editorDirtyTabs[tabId]).toBe(true);
+
+    const saved = await save();
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ id: "Job/x", folderId: "Job", name: "edited" });
+  });
+
+  it("a rename of the connection itself follows the new name while clean", async () => {
+    const events = installConnectionIdChangesHarness();
+    const tabId = openEditor("Work/x");
+    await flushAsync();
+    expect(useAppStore.getState().tabContent[tabId].title).toBe("Edit: x");
+
+    const renamed: SavedConnection = { ...WORK_X, id: "Work/y", name: "y" };
+    renameInBackend(events, [{ oldId: "Work/x", newId: "Work/y" }], {
+      connections: [renamed],
+    });
+    await flushAsync();
+    expect(nameInput().value).toBe("y");
+    expect(useAppStore.getState().editorDirtyTabs[tabId]).toBe(false);
+    expect(useAppStore.getState().tabContent[tabId].title).toBe("Edit: y");
+
+    const saved = await save();
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ id: "Work/y", name: "y" });
+  });
+
+  it("a new connection's target folder follows a folder rename once the folder is gone", async () => {
+    const events = installConnectionIdChangesHarness();
+    const tabId = openEditor("new", "Work");
+    await flushAsync();
+
+    const changes = [{ oldId: "Work/x", newId: "Job/x" }];
+    events.emit(changes);
+    act(() => useAppStore.getState().followConnectionIdChanges(changes));
+    await flushAsync();
+    // The tree still shows `Work`: nothing is retargeted on a guess.
+    expect(useAppStore.getState().tabContent[tabId].connectionEditorMeta?.folderId).toBe("Work");
+
+    act(() => seedConnectionsRegion({ folders: [folder("Job")], connections: [JOB_X] }));
+    await flushAsync();
+    expect(useAppStore.getState().tabContent[tabId].connectionEditorMeta?.folderId).toBe("Job");
+  });
+
+  it("a new connection's folder stays put when only a connection moved out of it", async () => {
+    const events = installConnectionIdChangesHarness();
+    const tabId = openEditor("new", "Work");
+    await flushAsync();
+
+    renameInBackend(events, [{ oldId: "Work/x", newId: "Job/x" }], {
+      folders: [folder("Work"), folder("Job")],
+      connections: [JOB_X],
+    });
+    await flushAsync();
+    expect(useAppStore.getState().tabContent[tabId].connectionEditorMeta?.folderId).toBe("Work");
+  });
+});

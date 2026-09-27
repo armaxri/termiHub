@@ -1031,15 +1031,21 @@ fn check_desktop_size(width: u16, height: u16) -> Result<()> {
 /// capability exchange, then re-point the active stage and decoded image at the
 /// new desktop size. Returns the reunited transport for the driver to re-split.
 ///
+/// Generic over the byte stream so the sequence can be exercised against an
+/// in-memory scripted server in unit tests; production passes the TLS stream.
+///
 /// [Deactivation-Reactivation Sequence]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/dfc234ce-481a-4674-9a5d-2a7bafb14432
-async fn reactivate(
-    mut framed: RdpFramed,
+async fn reactivate<S>(
+    mut framed: TokioFramed<S>,
     connector_config: ConnectorConfig,
     stage: &mut ActiveStage,
     image: &mut DecodedImage,
     io_channel_id: u16,
     user_channel_id: u16,
-) -> Result<RdpFramed> {
+) -> Result<TokioFramed<S>>
+where
+    S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
+{
     let mut activation =
         ConnectionActivationSequence::new(connector_config, io_channel_id, user_channel_id);
     let mut buf = WriteBuf::new();
@@ -1289,6 +1295,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ironrdp::pdu::rdp::headers::{ShareControlHeader, ShareControlPdu, ShareDataPdu};
 
     #[test]
     fn security_flags_map_modes() {
@@ -1578,5 +1585,285 @@ mod tests {
         ] {
             assert!(check_desktop_size(w, h).is_err(), "{w}x{h} must be refused");
         }
+    }
+
+    // ── Deactivate All + Deactivation-Reactivation Sequence (#3611) ──────
+
+    /// MCS channel ids used by the scripted-server tests below.
+    const TEST_IO_CHANNEL: u16 = 1003;
+    const TEST_USER_CHANNEL: u16 = 1007;
+    /// MCS user id a server sends from (the MCS server channel id).
+    const TEST_SERVER_CHANNEL: u16 = 1002;
+
+    /// xrdp's Server Deactivate All PDU: the bare 6-byte Share Control Header —
+    /// `shareID`, `lengthSourceDescriptor` and `sourceDescriptor` omitted
+    /// (`xrdp_rdp_send_deactivate`, xrdp 0.10).
+    const XRDP_SHORT_DEACTIVATE_ALL: [u8; 6] = [
+        0x06, 0x00, // totalLength = 6
+        0x16, 0x00, // pduType = PDUTYPE_DEACTIVATEALLPDU | TS_PROTOCOL_VERSION
+        0xEA, 0x03, // pduSource = 1002
+    ];
+
+    /// The full MS-RDPBCGR 2.2.3.1 form: header + shareID + a 1-byte source
+    /// descriptor with its 2-byte length.
+    const FULL_DEACTIVATE_ALL: [u8; 13] = [
+        0x0D, 0x00, // totalLength = 13
+        0x16, 0x00, // pduType
+        0xEA, 0x03, // pduSource
+        0xDD, 0xCC, 0xBB, 0xAA, // shareID
+        0x01, 0x00, // lengthSourceDescriptor = 1
+        0x00, // sourceDescriptor
+    ];
+
+    /// Wrap `user_data` (a Share Control PDU) the way a server sends it on the
+    /// IO channel: TPKT + X.224 Data + MCS Send Data Indication.
+    fn server_io_frame(user_data: Vec<u8>) -> Vec<u8> {
+        use ironrdp::pdu::mcs::SendDataIndication;
+        use ironrdp::pdu::x224::X224;
+        ironrdp::core::encode_vec(&X224(SendDataIndication {
+            initiator_id: TEST_SERVER_CHANNEL,
+            channel_id: TEST_IO_CHANNEL,
+            user_data: std::borrow::Cow::Owned(user_data),
+        }))
+        .unwrap()
+    }
+
+    fn server_share_control(share_id: u32, pdu: ShareControlPdu) -> Vec<u8> {
+        server_io_frame(
+            ironrdp::core::encode_vec(&ShareControlHeader {
+                share_control_pdu: pdu,
+                pdu_source: TEST_SERVER_CHANNEL,
+                share_id,
+            })
+            .unwrap(),
+        )
+    }
+
+    fn server_share_data(share_id: u32, pdu: ShareDataPdu) -> Vec<u8> {
+        use ironrdp::pdu::rdp::client_info::CompressionType;
+        use ironrdp::pdu::rdp::headers::{CompressionFlags, ShareDataHeader, StreamPriority};
+        server_share_control(
+            share_id,
+            ShareControlPdu::Data(ShareDataHeader {
+                share_data_pdu: pdu,
+                stream_priority: StreamPriority::Medium,
+                compression_flags: CompressionFlags::empty(),
+                compression_type: CompressionType::K8,
+            }),
+        )
+    }
+
+    fn test_active_stage(share_id: u32) -> ActiveStage {
+        ActiveStageBuilder {
+            static_channels: ironrdp::svc::StaticChannelSet::new(),
+            user_channel_id: TEST_USER_CHANNEL,
+            io_channel_id: TEST_IO_CHANNEL,
+            message_channel_id: None,
+            share_id,
+            compression_type: None,
+            enable_server_pointer: true,
+            pointer_software_rendering: true,
+        }
+        .build()
+    }
+
+    fn test_connector_config() -> ConnectorConfig {
+        build_connector_config(&RdpConfig {
+            host: "h".to_string(),
+            username: "user".to_string(),
+            password: "pw".to_string(),
+            security_mode: "tls".to_string(),
+            ..Default::default()
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn short_deactivate_all_header_decodes_with_share_id_zero() {
+        // Upstream ironrdp-pdu 0.9.0 fails this with
+        // `NotEnoughBytes { received: 6, expected: 10 }` — the vendored fork's fix.
+        let header: ShareControlHeader =
+            ironrdp::core::decode(&XRDP_SHORT_DEACTIVATE_ALL).expect("xrdp's 6-byte PDU");
+        assert!(matches!(
+            header.share_control_pdu,
+            ShareControlPdu::ServerDeactivateAll(_)
+        ));
+        assert_eq!(header.share_id, 0);
+        assert_eq!(header.pdu_source, TEST_SERVER_CHANNEL);
+    }
+
+    #[test]
+    fn full_deactivate_all_header_decodes_with_its_share_id() {
+        let header: ShareControlHeader =
+            ironrdp::core::decode(&FULL_DEACTIVATE_ALL).expect("full-form PDU");
+        assert!(matches!(
+            header.share_control_pdu,
+            ShareControlPdu::ServerDeactivateAll(_)
+        ));
+        assert_eq!(header.share_id, 0xAABB_CCDD);
+    }
+
+    #[test]
+    fn deactivate_all_with_share_id_but_no_source_descriptor_decodes() {
+        // shareID present, the optional length/descriptor pair absent.
+        let header: ShareControlHeader =
+            ironrdp::core::decode(&FULL_DEACTIVATE_ALL[..10]).expect("10-byte PDU");
+        assert!(matches!(
+            header.share_control_pdu,
+            ShareControlPdu::ServerDeactivateAll(_)
+        ));
+        assert_eq!(header.share_id, 0xAABB_CCDD);
+    }
+
+    #[test]
+    fn truncated_share_control_header_is_still_rejected() {
+        for len in 0..6 {
+            assert!(
+                ironrdp::core::decode::<ShareControlHeader>(&XRDP_SHORT_DEACTIVATE_ALL[..len])
+                    .is_err(),
+                "a {len}-byte Share Control Header must not decode"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn short_deactivate_all_on_the_io_channel_asks_for_reactivation() {
+        for pdu in [&XRDP_SHORT_DEACTIVATE_ALL[..], &FULL_DEACTIVATE_ALL[..]] {
+            let mut stage = test_active_stage(0x0001_03EA);
+            let mut image = DecodedImage::new(PixelFormat::RgbA32, 1280, 800);
+            let outputs = stage
+                .process(
+                    &mut image,
+                    ironrdp::pdu::Action::X224,
+                    &server_io_frame(pdu.to_vec()),
+                )
+                .expect("a Deactivate All PDU must not be a session error");
+            assert!(
+                outputs
+                    .iter()
+                    .any(|o| matches!(o, ActiveStageOutput::DeactivateAll)),
+                "expected DeactivateAll output"
+            );
+
+            let (transport, _peer) = tokio::io::duplex(1024);
+            let mut transport = TokioFramed::new(transport);
+            let mut ipc_out = Vec::new();
+            let mut cursor = (0, 0);
+            let flow =
+                handle_outputs(outputs, &image, &mut transport, &mut ipc_out, &mut cursor).await;
+            assert!(matches!(flow, Flow::Reactivate));
+        }
+    }
+
+    /// Script the server half of a Deactivation-Reactivation Sequence: a Demand
+    /// Active for the new desktop size under a new share id, then the
+    /// finalization PDUs (Synchronize, Cooperate, Granted Control, Font Map).
+    fn scripted_reactivation(share_id: u32, width: u16, height: u16) -> Vec<u8> {
+        use ironrdp::pdu::rdp::capability_sets::{
+            Bitmap, BitmapDrawingFlags, CapabilitySet, DemandActive, ServerDemandActive,
+        };
+        use ironrdp::pdu::rdp::finalization_messages::{
+            ControlAction, ControlPdu, FontPdu, SynchronizePdu,
+        };
+
+        let demand_active = ShareControlPdu::ServerDemandActive(ServerDemandActive {
+            pdu: DemandActive {
+                source_descriptor: "RDP".to_string(),
+                capability_sets: vec![CapabilitySet::Bitmap(Bitmap {
+                    pref_bits_per_pix: 32,
+                    desktop_width: width,
+                    desktop_height: height,
+                    desktop_resize_flag: true,
+                    drawing_flags: BitmapDrawingFlags::empty(),
+                })],
+            },
+        });
+        let mut script = server_share_control(share_id, demand_active);
+        for pdu in [
+            ShareDataPdu::Synchronize(SynchronizePdu {
+                target_user_id: TEST_USER_CHANNEL,
+            }),
+            ShareDataPdu::Control(ControlPdu {
+                action: ControlAction::Cooperate,
+                grant_id: 0,
+                control_id: 0,
+            }),
+            ShareDataPdu::Control(ControlPdu {
+                action: ControlAction::GrantedControl,
+                grant_id: TEST_USER_CHANNEL,
+                control_id: u32::from(TEST_SERVER_CHANNEL),
+            }),
+            ShareDataPdu::FontMap(FontPdu::default()),
+        ] {
+            script.extend(server_share_data(share_id, pdu));
+        }
+        script
+    }
+
+    #[tokio::test]
+    async fn reactivation_adopts_the_servers_new_desktop_size() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (client, mut server) = tokio::io::duplex(64 * 1024);
+        let script = scripted_reactivation(0x0002_03EA, 1100, 700);
+        let server_task = tokio::spawn(async move {
+            server.write_all(&script).await.unwrap();
+            // Collect what the client sends back (Confirm Active + finalization).
+            let mut sent = Vec::new();
+            let _ = server.read_to_end(&mut sent).await;
+            sent
+        });
+
+        let mut stage = test_active_stage(0x0001_03EA);
+        let mut image = DecodedImage::new(PixelFormat::RgbA32, 1280, 800);
+        let framed = reactivate(
+            TokioFramed::new(client),
+            test_connector_config(),
+            &mut stage,
+            &mut image,
+            TEST_IO_CHANNEL,
+            TEST_USER_CHANNEL,
+        )
+        .await
+        .expect("the reactivation sequence must complete");
+
+        assert_eq!((image.width(), image.height()), (1100, 700));
+
+        // The client must have answered the Demand Active with a Confirm Active
+        // under the server's new share id, advertising the new desktop size.
+        drop(framed);
+        let sent = server_task.await.unwrap();
+        let first_len = ironrdp::pdu::find_size(&sent).unwrap().unwrap().length;
+        let request: ironrdp::pdu::x224::X224<ironrdp::pdu::mcs::SendDataRequest<'_>> =
+            ironrdp::core::decode(&sent[..first_len]).unwrap();
+        assert_eq!(request.0.channel_id, TEST_IO_CHANNEL);
+        let header: ShareControlHeader = ironrdp::core::decode(&request.0.user_data).unwrap();
+        assert_eq!(header.share_id, 0x0002_03EA);
+        let ShareControlPdu::ClientConfirmActive(confirm) = header.share_control_pdu else {
+            panic!("expected a Client Confirm Active PDU");
+        };
+        let bitmap = confirm
+            .pdu
+            .capability_sets
+            .iter()
+            .find_map(|c| match c {
+                ironrdp::pdu::rdp::capability_sets::CapabilitySet::Bitmap(b) => Some(b),
+                _ => None,
+            })
+            .expect("Confirm Active carries a Bitmap capability set");
+        assert_eq!((bitmap.desktop_width, bitmap.desktop_height), (1100, 700));
+
+        // The rebuilt stage decodes the next short Deactivate All just the same,
+        // so a second resize reactivates again.
+        let outputs = stage
+            .process(
+                &mut image,
+                ironrdp::pdu::Action::X224,
+                &server_io_frame(XRDP_SHORT_DEACTIVATE_ALL.to_vec()),
+            )
+            .unwrap();
+        assert!(outputs
+            .iter()
+            .any(|o| matches!(o, ActiveStageOutput::DeactivateAll)));
     }
 }

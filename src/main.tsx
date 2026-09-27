@@ -3,6 +3,9 @@
 // notably `uplot`, whose module-scope `new Intl.NumberFormat(navigator.language)`
 // would otherwise crash the whole bundle before React mounts (#2646).
 import "./utils/ensureValidLocale";
+// Before any zod schema parses: stop zod probing `new Function`, which the CSP
+// refuses and reports as a violation (#3627).
+import "./security/zodJitless";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";

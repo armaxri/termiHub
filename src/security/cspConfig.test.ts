@@ -1,97 +1,202 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  CSP_PLATFORMS,
+  effectiveCsp,
+  readTauriConfig,
+  toCspMap,
+  type CspPlatform,
+} from "@/test/tauriCsp";
 
 /**
- * Static guards on the shipped Content-Security-Policy (#2048/#2059).
+ * Static guards on the shipped Content-Security-Policy (#2048/#2059/#3627).
  *
- * These assert invariants on `tauri.conf.json` (the production CSP) and
- * `tauri.test.conf.json` (the test-build overlay) as plain data, so an
- * accidental loosening — a re-added `ws://`, an `'unsafe-inline'`/`'unsafe-eval'`
- * creeping into `script-src` — fails fast in per-PR CI, without needing a full
- * app build. The runtime "app boots + terminal renders + zero violations under
- * the CSP" check lives in the integration lane (`tests/system/tests/test_csp.py`).
+ * These assert invariants on `tauri.conf.json` (the base production CSP), the
+ * per-platform overlay `tauri.windows.conf.json`, and `tauri.test.conf.json`
+ * (the system-test build overlay) as plain data, so an accidental loosening
+ * fails fast in per-PR CI without a full app build. The runtime "app boots +
+ * terminal renders + zero violations under the CSP" check lives in the
+ * integration lane (`tests/system/tests/test_csp.py`).
+ *
+ * The allow-list below is the reviewed sign-off for every source the shipped
+ * policy carries (WA-CI-035, recorded in docs/architecture.md → "The policy").
+ * A new directive or source anywhere in the effective policy of any platform
+ * fails this test until it is added here **with a reason** and documented.
  */
 
-function readCsp(relPath: string): string {
-  // Vitest runs with the repo root as cwd, so the config lives at src-tauri/<file>.
-  const path = resolve(process.cwd(), "src-tauri", relPath);
-  const conf = JSON.parse(readFileSync(path, "utf8")) as {
-    app: { security: { csp: string } };
-  };
-  return conf.app.security.csp;
+interface AllowedSource {
+  /** Why the source is needed — the evidence reviewed in #3627. */
+  reason: string;
+  /** Restrict the source to these platforms. Omitted = every platform. */
+  platforms?: readonly CspPlatform[];
 }
 
-/** Parse a CSP string into a `directive -> sources[]` map. */
-function parseCsp(csp: string): Record<string, string[]> {
-  const out: Record<string, string[]> = {};
-  for (const clause of csp.split(";")) {
-    const [directive, ...sources] = clause.trim().split(/\s+/).filter(Boolean);
-    if (directive) out[directive] = sources;
-  }
-  return out;
-}
+const ALLOW_LIST: Record<string, Record<string, AllowedSource>> = {
+  "default-src": { "'self'": { reason: "baseline: only the app's own bundle" } },
+  "script-src": {
+    "'self'": { reason: "the app's own bundle" },
+    "plugin://localhost": {
+      reason: "frontend-plugin sandbox importScripts origin (custom scheme on WebKit)",
+      platforms: ["macos", "linux"],
+    },
+    "http://plugin.localhost": {
+      reason: "frontend-plugin sandbox importScripts origin (WebView2 form of the scheme)",
+      platforms: ["windows"],
+    },
+    "'wasm-unsafe-eval'": {
+      reason: "Shiki's Oniguruma engine and @xterm/addon-image's sixel decoder instantiate WASM",
+    },
+  },
+  "style-src": {
+    "'self'": { reason: "bundled stylesheets" },
+    "'unsafe-inline'": {
+      reason:
+        "runtime <style> elements (xterm, Monaco, sonner, react-remove-scroll) and React style props",
+    },
+  },
+  "img-src": {
+    "'self'": { reason: "bundled images" },
+    "data:": { reason: "Monaco's stylesheet embeds data: SVG/PNG backgrounds" },
+    "blob:": { reason: "@xterm/addon-image renders inline (iTerm2/sixel) images from blob URLs" },
+  },
+  "font-src": { "'self'": { reason: "bundled Geist / Meslo / codicon fonts" } },
+  "connect-src": {
+    "'self'": { reason: "same-origin fetches" },
+    "ipc:": { reason: "Tauri IPC custom protocol (macOS/Linux)" },
+    "http://ipc.localhost": { reason: "Tauri IPC custom protocol (Windows)" },
+  },
+  "worker-src": {
+    "'self'": { reason: "Monaco language workers and the plugin sandbox worker" },
+    "blob:": { reason: "Monaco's blob: worker bootstrap fallback" },
+  },
+  "child-src": {
+    "'self'": { reason: "worker fallback for engines without worker-src" },
+    "blob:": { reason: "worker fallback for engines without worker-src" },
+  },
+  "object-src": { "'none'": { reason: "no plugins/embeds" } },
+  "frame-src": { "'none'": { reason: "no frames" } },
+  "base-uri": { "'self'": { reason: "no <base> hijack" } },
+  "form-action": { "'none'": { reason: "no form submissions" } },
+};
 
-const prodCsp = readCsp("tauri.conf.json");
-const testCsp = readCsp("tauri.test.conf.json");
-const prod = parseCsp(prodCsp);
-const test = parseCsp(testCsp);
+/** Sources that must never appear in any directive, whatever the allow-list says. */
+const FORBIDDEN_EVERYWHERE = ["'unsafe-eval'", "*", "http:", "https:", "ws:", "wss:"];
 
-describe("production CSP (tauri.conf.json)", () => {
-  it("has no 'unsafe-inline' or 'unsafe-eval' in script-src", () => {
-    expect(prod["script-src"]).toBeDefined();
-    expect(prod["script-src"]).not.toContain("'unsafe-inline'");
-    expect(prod["script-src"]).not.toContain("'unsafe-eval'");
+describe.each(CSP_PLATFORMS)("production CSP on %s", (platform) => {
+  const csp = effectiveCsp(platform);
+
+  it("carries only allow-listed directives and sources", () => {
+    const unexpected: string[] = [];
+    for (const [directive, sources] of Object.entries(csp)) {
+      const allowed = ALLOW_LIST[directive];
+      if (!allowed) {
+        unexpected.push(`${directive} (directive not on the allow-list)`);
+        continue;
+      }
+      for (const source of sources) {
+        const entry = allowed[source];
+        if (!entry || (entry.platforms && !entry.platforms.includes(platform))) {
+          unexpected.push(`${directive} ${source}`);
+        }
+      }
+    }
+    expect(
+      unexpected,
+      "unreviewed CSP relaxation — add it to ALLOW_LIST with a reason and document it in " +
+        "docs/architecture.md, or remove it"
+    ).toEqual([]);
   });
 
-  it("no longer allows blob: in script-src — plugin code loads from plugin:// (#2266)", () => {
-    // The sandbox worker used to `importScripts` a `blob:` URL; it now loads each
-    // plugin entry point from the app-controlled `plugin://` origin (served
-    // already-wrapped by the protocol handler), so `blob:` must not remain a
-    // script source. It stays in worker-src/child-src for Monaco/xterm.
-    expect(prod["script-src"]).not.toContain("blob:");
+  it("carries every directive of the reviewed baseline", () => {
+    expect(Object.keys(csp).sort()).toEqual(Object.keys(ALLOW_LIST).sort());
   });
 
-  it("allows the plugin origin(s) in script-src, in both platform forms (#2266)", () => {
-    // Tauri assigns the custom scheme a different webview origin per platform:
-    // `plugin://localhost` (macOS/iOS/Linux) and `http://plugin.localhost`
-    // (Windows/Android). Both must be listed so the worker's importScripts is
-    // allowed on every platform.
-    expect(prod["script-src"]).toContain("plugin://localhost");
-    expect(prod["script-src"]).toContain("http://plugin.localhost");
+  it("never carries a forbidden source", () => {
+    for (const [directive, sources] of Object.entries(csp)) {
+      for (const bad of FORBIDDEN_EVERYWHERE) {
+        expect(sources, `${directive} must not allow ${bad}`).not.toContain(bad);
+      }
+    }
   });
 
-  it("allows no WebSocket (ws://) origin in connect-src — the bridge allowance is test-only (#2059)", () => {
-    expect(prod["connect-src"]).toBeDefined();
-    expect(prod["connect-src"].some((s) => s.startsWith("ws://") || s.startsWith("wss://"))).toBe(
+  it("has no 'unsafe-inline', 'unsafe-eval' or blob: in script-src", () => {
+    expect(csp["script-src"]).toBeDefined();
+    expect(csp["script-src"]).not.toContain("'unsafe-inline'");
+    expect(csp["script-src"]).not.toContain("'unsafe-eval'");
+    // Plugin code loads from the plugin:// origin, not a blob: URL (#2266).
+    expect(csp["script-src"]).not.toContain("blob:");
+  });
+
+  it("allows exactly this platform's plugin origin in script-src (#2266/#3627)", () => {
+    // Tauri assigns the custom scheme a different webview origin per platform.
+    // Only the native form is allowed, so macOS/Linux never trust a loopback
+    // http://plugin.localhost server and Windows never lists a dead scheme.
+    const expected = platform === "windows" ? "http://plugin.localhost" : "plugin://localhost";
+    const other = platform === "windows" ? "plugin://localhost" : "http://plugin.localhost";
+    expect(csp["script-src"]).toContain(expected);
+    expect(csp["script-src"]).not.toContain(other);
+  });
+
+  it("allows no WebSocket origin in connect-src — the bridge allowance is test-only (#2059)", () => {
+    expect(csp["connect-src"]).toBeDefined();
+    expect(csp["connect-src"].some((s) => s.startsWith("ws://") || s.startsWith("wss://"))).toBe(
       false
     );
   });
 
   it("keeps object-src / frame-src locked down", () => {
-    expect(prod["object-src"]).toEqual(["'none'"]);
-    expect(prod["frame-src"]).toEqual(["'none'"]);
+    expect(csp["object-src"]).toEqual(["'none'"]);
+    expect(csp["frame-src"]).toEqual(["'none'"]);
   });
 
-  it("keeps the Worker sandbox substrate (worker-src / child-src 'self' blob:) available", () => {
-    // Frontend plugins execute in a Web Worker loaded from 'self' (#2136); the
-    // worker itself, and Monaco/xterm's blob workers, still need `blob:` here. This
-    // locks that substrate so a later CSP tidy-up cannot silently remove it —
-    // independently of `script-src`, which no longer carries `blob:` (#2266).
-    expect(prod["worker-src"]).toEqual(["'self'", "blob:"]);
-    expect(prod["child-src"]).toEqual(["'self'", "blob:"]);
+  it("keeps the worker substrate (worker-src / child-src 'self' blob:) available", () => {
+    expect(csp["worker-src"]).toEqual(["'self'", "blob:"]);
+    expect(csp["child-src"]).toEqual(["'self'", "blob:"]);
   });
 });
 
-describe("test-build CSP overlay (tauri.test.conf.json)", () => {
-  it("re-adds ONLY the loopback ws:// bridge allowance to connect-src", () => {
-    const added = test["connect-src"].filter((s) => !prod["connect-src"].includes(s));
-    expect(added).toEqual(["ws://127.0.0.1:*", "ws://localhost:*"]);
+describe("platform overlays", () => {
+  it("the base config is a directive map, so overlays can patch single directives", () => {
+    const base = readTauriConfig("tauri.conf.json") as {
+      app: { security: { csp: unknown } };
+    };
+    const csp = base.app.security.csp;
+    expect(typeof csp === "object" && csp !== null && !Array.isArray(csp)).toBe(true);
   });
 
-  it("is otherwise byte-identical to production — every non-connect-src directive matches", () => {
-    // Drift lock: editing the production CSP must be mirrored in the overlay, or
-    // the test build would ship a different rendering-relevant policy than prod.
+  it("the Windows overlay touches only script-src", () => {
+    const win = readTauriConfig("tauri.windows.conf.json") as {
+      app: { security: Record<string, unknown> };
+    };
+    expect(Object.keys(win)).toEqual(expect.arrayContaining(["app"]));
+    expect(Object.keys(win.app)).toEqual(["security"]);
+    expect(Object.keys(win.app.security)).toEqual(["csp"]);
+    expect(Object.keys(toCspMap(win.app.security.csp as Parameters<typeof toCspMap>[0]))).toEqual([
+      "script-src",
+    ]);
+  });
+
+  it("no macOS/Linux overlay changes the CSP (none exists today)", () => {
+    for (const platform of ["macos", "linux"] as const) {
+      const conf = readTauriConfig(`tauri.${platform}.conf.json`) as {
+        app?: { security?: { csp?: unknown } };
+      } | null;
+      expect(conf?.app?.security?.csp, `tauri.${platform}.conf.json`).toBeUndefined();
+    }
+  });
+});
+
+describe.each(CSP_PLATFORMS)("test-build CSP overlay (tauri.test.conf.json) on %s", (platform) => {
+  const prod = effectiveCsp(platform);
+  const test = effectiveCsp(platform, { testBuild: true });
+
+  it("re-adds ONLY the loopback ws:// bridge allowance to connect-src", () => {
+    const added = test["connect-src"].filter((s) => !prod["connect-src"].includes(s));
+    const removed = prod["connect-src"].filter((s) => !test["connect-src"].includes(s));
+    expect(added).toEqual(["ws://127.0.0.1:*", "ws://localhost:*"]);
+    expect(removed).toEqual([]);
+  });
+
+  it("is otherwise identical to production — every non-connect-src directive matches", () => {
     const directives = new Set([...Object.keys(prod), ...Object.keys(test)]);
     for (const d of directives) {
       if (d === "connect-src") continue;

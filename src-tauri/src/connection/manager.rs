@@ -12,7 +12,9 @@ use super::config::{
 use super::credential_migration::follow_id_changes;
 use super::id_changes::{diff_connection_ids, ConnectionIdRemap};
 pub use super::id_changes::{ConnectionIdChange, ConnectionIdChangeListener};
-use super::jump_host_resolver::{follow_jump_host_refs_in, JumpHostScope, UnavailableFile};
+use super::jump_host_resolver::{
+    follow_jump_host_refs_in, JumpHostScope, ReferenceRole, UnavailableFile,
+};
 use super::placement::{place_connection, PlaceMode};
 use super::plugin_type_ids::migrate_connections;
 use super::recovery::RecoveryWarning;
@@ -371,6 +373,38 @@ impl ConnectionManager {
         if !super::jump_host_resolver::chain_has_reference(settings) {
             return Ok(());
         }
+        let (connections, unavailable) = self.reference_scope()?;
+        let scope = JumpHostScope::new(&connections).with_unavailable(unavailable);
+        super::jump_host_resolver::resolve_proxy_jump_refs(
+            settings,
+            &scope,
+            &*self.credential_store,
+            root_id,
+        )
+    }
+
+    /// The saved connection `id` names when used as `role`, looked up in the
+    /// [unified view](Self::load_unified_view) — the main store plus every
+    /// enabled external file — under exactly the rule jump-host references use
+    /// (#3602, #3619): a unique id resolves wherever it lives, an id held by more
+    /// than one connection file is refused as ambiguous (naming the files), and
+    /// an id found only in a disabled or unloadable file is reported as such.
+    pub(crate) fn resolve_saved_connection(
+        &self,
+        id: &str,
+        role: ReferenceRole,
+    ) -> Result<SavedConnection> {
+        let (connections, unavailable) = self.reference_scope()?;
+        JumpHostScope::new(&connections)
+            .with_unavailable(unavailable)
+            .find_as(id, role)
+            .cloned()
+    }
+
+    /// The connections a saved-connection reference may point at (main store,
+    /// then every enabled external file) and the external files that are not in
+    /// that set — disabled, or enabled but failed to load — for error messages.
+    fn reference_scope(&self) -> Result<(Vec<SavedConnection>, Vec<UnavailableFile>)> {
         let view = self.load_unified_view()?;
         let mut unavailable: Vec<UnavailableFile> = view
             .external_errors
@@ -378,13 +412,7 @@ impl ConnectionManager {
             .map(|(path, error)| UnavailableFile::FailedToLoad { path, error })
             .collect();
         unavailable.extend(self.disabled_external_files());
-        let scope = JumpHostScope::new(&view.connections).with_unavailable(unavailable);
-        super::jump_host_resolver::resolve_proxy_jump_refs(
-            settings,
-            &scope,
-            &*self.credential_store,
-            root_id,
-        )
+        Ok((view.connections, unavailable))
     }
 
     /// Every configured-but-disabled external file with the connection ids it
