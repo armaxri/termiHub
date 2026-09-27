@@ -307,6 +307,14 @@ The suite ([`core/tests/rdp.rs`](../../core/tests/rdp.rs)) finds the helper via
 `$TERMIHUB_RDP_HELPER` or `rdp-sidecar/target/{debug,release}/`, and skips when
 the fixture or the helper is missing (hard-fails under `TERMIHUB_REQUIRE_DOCKER=1`).
 
+## polkit (Linux OS re-auth verifier)
+
+`polkit/` is not a Compose service: `polkit/run.sh` builds the
+`termihub-polkit-probe` workspace member for Linux, builds a Debian image with a
+system bus + `polkitd` + `pkttyagent`, and runs `polkit/scenarios.sh` in it
+against the shipped `com.termihub.app.policy` (#3553). See
+[`docs/testing.md`](../../docs/testing.md) → _Linux polkit D-Bus path_.
+
 ## Requirements
 
 - Docker Engine 20.10+ with BuildKit

@@ -29,6 +29,11 @@ on:
       - "core/src/backends/**"
       # The RDP sidecar is backend source too: rdp.rs drives it end to end.
       - "rdp-sidecar/**"
+      # The Linux polkit verifier's D-Bus transport + the shipped action file
+      # (the polkit-dbus job below; its fixture is under tests/docker/**).
+      - "src-tauri/src/credential/os_auth/polkit.rs"
+      - "src-tauri/src/credential/os_auth/polkit/**"
+      - "src-tauri/packaging/linux/com.termihub.app.policy"
       - ".github/workflows/integration-fixtures.yml"
 
 # A fixture run is self-contained; cancel an in-flight run when a newer commit
@@ -132,3 +137,20 @@ jobs:
       - name: Tear down the fixtures
         if: always()
         run: docker compose -f tests/docker/docker-compose.yml --profile all down -v
+
+  polkit-dbus:
+    # The Linux OS re-auth verifier's real polkit D-Bus path (#3553): a Debian
+    # container with a system bus + polkitd, driven through registered /
+    # unregistered action, authorized, denied, dismissed, no-agent and the
+    # timeout -> CancelCheckAuthorization outcomes. Self-contained (builds its
+    # probe in a rust container), so it needs no Rust toolchain on the runner.
+    name: polkit D-Bus verifier (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Run the polkit D-Bus integration test
+        run: tests/docker/polkit/run.sh --clean

@@ -1,0 +1,20 @@
+[package]
+name = "termihub-polkit-probe"
+version = "0.0.0"
+description = "Headless probe for the real polkit D-Bus path of the Linux OS re-auth verifier (#3553)"
+edition = "2021"
+rust-version.workspace = true
+publish = false
+
+# The probe compiles termiHub's own polkit transport
+# (`src-tauri/src/credential/os_auth/polkit/{authority,dbus}.rs`) by path, so it
+# exercises the shipped D-Bus code without building the whole Tauri app. It is
+# driven inside the `tests/docker/polkit` container by `run.sh`; on every other
+# platform it builds to a stub so `cargo build --workspace` stays green.
+[[bin]]
+name = "polkit-probe"
+path = "src/main.rs"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Same major as src-tauri's polkit client, so both share one zbus in Cargo.lock.
+zbus = "5"
