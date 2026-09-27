@@ -19,12 +19,14 @@ const openMock = vi.fn();
 const validateMock = vi.fn();
 const assessTrustMock = vi.fn();
 const checkUpdatesMock = vi.fn();
+const fetchIndexMock = vi.fn();
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: (...a: unknown[]) => openMock(...a) }));
 vi.mock("@/services/api", () => ({
   previewPlugin: (...a: unknown[]) => validateMock(...a),
   assessPluginTrust: (...a: unknown[]) => assessTrustMock(...a),
   checkPluginUpdates: (...a: unknown[]) => checkUpdatesMock(...a),
+  fetchPluginIndex: (...a: unknown[]) => fetchIndexMock(...a),
 }));
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
 
@@ -69,8 +71,17 @@ describe("PluginManagerView (#1997)", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    usePluginUpdateStore.setState({ entries: {}, checkingAll: false, lastCheckedAt: null });
+    usePluginUpdateStore.setState({
+      entries: {},
+      checkingAll: false,
+      lastCheckedAt: null,
+      indexOffers: {},
+      checkingIndex: false,
+      indexError: null,
+    });
     checkUpdatesMock.mockReset();
+    fetchIndexMock.mockReset();
+    fetchIndexMock.mockResolvedValue({ url: "https://idx", isDefault: true, entries: [] });
     openMock.mockReset();
     validateMock.mockReset();
     assessTrustMock.mockReset();
@@ -273,10 +284,53 @@ describe("PluginManagerView (#1997)", () => {
       return p;
     }
 
-    it("hides the check button when no plugin publishes updates", () => {
-      useAppStore.setState({ plugins: [plugin("k8s", "Kubernetes Exec", "1.2.0", "active")] });
+    it("hides the check button when no plugin is installed", () => {
+      useAppStore.setState({ plugins: [] });
       render();
       expect(container.querySelector('[data-testid="plugin-check-updates"]')).toBeNull();
+    });
+
+    it("badges a plugin without an updateUrl that the plugin index offers an update for", async () => {
+      useAppStore.setState({ plugins: [plugin("k8s", "Kubernetes Exec", "1.2.0", "active")] });
+      checkUpdatesMock.mockResolvedValue([]);
+      fetchIndexMock.mockResolvedValue({
+        url: "https://idx",
+        isDefault: true,
+        entries: [
+          {
+            entry: {
+              id: "k8s",
+              name: "Kubernetes Exec",
+              description: "d",
+              author: "a",
+              version: "1.3.0",
+              minHostAbi: "1.0",
+              native: false,
+              packages: [{ platforms: ["any"], url: "https://e/k.zip", sha256: "0".repeat(64) }],
+            },
+            abiCompatible: true,
+            hostAbi: "1.1",
+            platformSupported: true,
+            hostPlatform: "aarch64-apple-darwin",
+            toolchain: "notApplicable",
+            installedVersion: "1.2.0",
+            installStatus: "updateAvailable",
+            installable: true,
+          },
+        ],
+      });
+      render();
+      expect(container.querySelector('[data-testid="plugin-update-badge-k8s"]')).toBeNull();
+
+      await act(async () => {
+        container
+          .querySelector<HTMLButtonElement>('[data-testid="plugin-check-updates"]')!
+          .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await flush();
+
+      expect(fetchIndexMock).toHaveBeenCalledTimes(1);
+      expect(container.querySelector('[data-testid="plugin-update-badge-k8s"]')).not.toBeNull();
     });
 
     it("checks every plugin and badges the ones with an update", async () => {

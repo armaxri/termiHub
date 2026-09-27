@@ -34,15 +34,14 @@ export function PluginUpdateCheckSettings() {
           <RefreshCw size={16} aria-hidden="true" /> Plugin Updates
         </h3>
         <p className="settings-panel__description">
-          A plugin can publish an update URL, and its entry in the Plugins view then offers “Check
-          for updates”. Plugins listed in the plugin index also show available updates under Browse
-          Plugins. Updates are never installed automatically — you always confirm them in the
-          install dialog.
+          “Check for updates” in the Plugins view checks plugins that publish an update URL and
+          plugins listed in the plugin index, and marks the ones with a newer, compatible version.
+          Updates are never installed automatically — you always confirm them in the install dialog.
         </p>
 
         <SettingsField
           label="Check for Plugin Updates Automatically"
-          hint="Checks plugins that publish an update URL once a day while termiHub runs. Off by default."
+          hint="Checks update URLs and the plugin index once a day while termiHub runs. Off by default."
         >
           <Toggle
             checked={enabled}
