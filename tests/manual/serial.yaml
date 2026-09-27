@@ -77,5 +77,5 @@ tests:
   # --- Live virtual-serial happy path (ported from E2E SERIAL-02/03/04, PR #813) ---
   # Automated: tests/system/tests/test_serial.py::TestSerialLiveEcho drives connect,
   # echo and disconnect against the host socat serial_echo_pair fixture (#3682).
-  # (Linux; macOS once #3701 lets the app open a PTY.) The former MT-SER-09 item was
+  # (Linux and macOS; Windows has no socat.) The former MT-SER-09 item was
   # retired from this corpus.
