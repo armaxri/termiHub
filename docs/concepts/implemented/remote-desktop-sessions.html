@@ -467,7 +467,11 @@
 
         <h3>Non-Goals (v1)</h3>
         <ul>
-          <li>Multi-monitor remote sessions (single monitor only).</li>
+          <li>
+            Multi-monitor remote sessions (single monitor only in v1; added later by
+            <a href="https://github.com/armaxri/termiHub/issues/3696">#3696</a>, see
+            <a href="#multi-monitor">Multi-monitor sessions</a>).
+          </li>
           <li>
             RD Gateway / proxy and VNC repeaters (direct connections, or via existing SSH tunnel).
           </li>
@@ -1181,6 +1185,43 @@
           </li>
         </ul>
 
+        <h3 id="multi-monitor">Multi-monitor sessions (#3696)</h3>
+        <p>
+          A multi-monitor session renders in <strong>one tab</strong> as the combined desktop: the
+          remote framebuffer is the bounding box of every monitor. The hover toolbar gets a
+          <strong>viewport selector</strong> (<code>columns-2</code> icon) that cycles
+          <em>All monitors → Monitor 1 → Monitor 2 → …</em>; a single monitor is scaled to the tab
+          like a normal session, and pointer input maps back into the combined desktop. One tab
+          instead of one tab (or native window) per monitor keeps a single session, input focus,
+          clipboard and reconnect path, and works the same in split views and fullscreen.
+        </p>
+        <ul>
+          <li>
+            <strong>Connection editor.</strong> The Display group gains <em>Monitors</em>:
+            <em>Single</em> (default — existing connections are unchanged), <em>All local
+            displays</em> (one remote monitor per display of this computer, in logical pixels, read
+            through the Tauri monitor API at connect time), or <em>Custom count</em> (2–16
+            side-by-side monitors the size of the local primary display).
+          </li>
+          <li>
+            <strong>RDP</strong> sends the layout in the GCC client monitor data
+            (<code>TS_UD_CS_MONITOR</code>) at connect and as a Display Control monitor-layout PDU
+            when it changes (an <em>All local displays</em> session re-reads the local displays when
+            the window regains focus). A server without multi-monitor support shows one monitor
+            spanning the layout.
+          </li>
+          <li>
+            <strong>VNC</strong> requests the layout as one multi-screen
+            <code>SetDesktopSize</code> (RFB ExtendedDesktopSize) and degrades to the server's own
+            layout when the server lacks or refuses it. Screens a multi-head server reports get
+            per-monitor viewports too.
+          </li>
+          <li>
+            A multi-monitor session never follows the tab size (like a fixed resolution: scaling
+            toggles only Fit ↔ 1:1).
+          </li>
+        </ul>
+
         <h3>Edge cases</h3>
         <div class="table-wrap">
           <table>
@@ -1221,8 +1262,15 @@
                 <td>Release all held mouse buttons and modifier keys.</td>
               </tr>
               <tr>
-                <td>Multi-monitor / gateway / smart-card</td>
+                <td>Gateway / smart-card</td>
                 <td>Out of scope for v1 (see Non-Goals).</td>
+              </tr>
+              <tr>
+                <td>Multi-monitor layout the server ignores or refuses</td>
+                <td>
+                  Keep the server's desktop; the viewport selector only offers monitors that lie
+                  inside the framebuffer, so it disappears when fewer than two do (#3696).
+                </td>
               </tr>
             </tbody>
           </table>
@@ -1595,6 +1643,20 @@ classDiagram
                 </td>
                 <td>None</td>
                 <td>In sync — #1682</td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>
+                  Multi-monitor sessions: one combined tab + viewport selector, Monitors editor row
+                </td>
+                <td>
+                  Implemented — <code>core/src/connection/graphical_monitors.rs</code>,
+                  <code>rdp-sidecar/src/monitors.rs</code>,
+                  <code>core/src/backends/vnc/desktop_size.rs</code>,
+                  <code>src/components/RemoteDesktop/monitorLayout.ts</code>
+                </td>
+                <td>None</td>
+                <td>In sync — #3696</td>
               </tr>
             </tbody>
           </table>
