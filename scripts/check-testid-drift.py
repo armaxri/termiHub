@@ -70,6 +70,7 @@ _SELECTOR_METHODS_ARG0 = {
     "get_attribute",
     "is_disabled",
     "drag",
+    "sample_canvas",
     "wait_for",
     "wait_for_gone",
 }

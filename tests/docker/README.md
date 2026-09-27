@@ -273,6 +273,14 @@ and skipping cleanly when the fixture is not up (`require_docker!`). Because
 per-PR CI runs `-m "not integration"` and never brings up Docker, this live
 negotiate → authenticate → decode path is only exercised by a **local** run.
 
+The same two fixtures back the UI suite
+[`tests/system/tests/test_vnc.py`](../system/tests/test_vnc.py) (TIN-006), which
+drives a VNC session through the real app: canvas pixels, resize, dynamic
+resolution against `vnc-vencrypt-server`, and a disconnect/reconnect made by
+stopping and starting the `vnc-server` container. Its session fixtures bring the
+services up by name, so the nightly integration lane needs no `--profile vnc`.
+It restarts `vnc-vencrypt-server` afterwards to undo its desktop resize.
+
 ## RDP server (profile: `rdp`)
 
 Two RDP servers in one container, both for user `testuser` / `testpass`:
