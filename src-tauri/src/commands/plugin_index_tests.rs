@@ -193,7 +193,9 @@ async fn checksum_mismatch_or_wrong_identity_is_rejected_and_discarded() {
     let url = server.url("/demo");
     let sha = fx.sha();
     let wrong_sha = "f".repeat(64);
-    let cases: [(&str, Option<(&str, &str)>, &str); 3] = [
+    // (sha256, expected identity, error substring)
+    type Case<'a> = (&'a str, Option<(&'a str, &'a str)>, &'a str);
+    let cases: [Case; 3] = [
         (&wrong_sha, Some(("demo", "1.0.0")), "SHA-256"),
         (&sha, Some(("other", "1.0.0")), "expected `other`"),
         (&sha, Some(("demo", "2.0.0")), "2.0.0 was advertised"),

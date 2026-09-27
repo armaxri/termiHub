@@ -147,7 +147,7 @@ fn rejects_invalid_field_values() {
         (entry_json("demo", r#","native":true"#), "platforms"),
     ];
     for (entry, field) in cases {
-        match parse_plugin_index(index_json(&[entry.clone()]).as_bytes()) {
+        match parse_plugin_index(index_json(std::slice::from_ref(&entry)).as_bytes()) {
             Err(PluginIndexError::InvalidField { field: f, .. }) => {
                 assert_eq!(f, field, "{entry}")
             }
