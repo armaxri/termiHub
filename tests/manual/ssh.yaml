@@ -5,6 +5,8 @@ tests:
   # --- Agnoster/Powerline theme rendering (PR #197) ---
 
   - id: MT-SSH-01
+    release_gate: true
+    manual_reason: "zsh + Agnoster prompt look on a real remote"
     name: "Agnoster theme renders without black rectangle"
     pr: 197
     platforms: [all]
@@ -20,107 +22,8 @@ tests:
     verification: manual
     tags: [visual]
 
-  - id: MT-SSH-02
-    name: "Default bash prompt renders correctly"
-    pr: 197
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    setup:
-      - create_connection:
-          name: "SSH Bash Prompt Test"
-          type: ssh
-          config:
-            host: "127.0.0.1"
-            port: 2201
-            username: "testuser"
-            authMethod: password
-      - connect: "SSH Bash Prompt Test"
-    instructions:
-      - "Enter password 'testpass' when prompted"
-      - "Observe the default bash prompt"
-    expected:
-      - "No visual regression in prompt rendering"
-    verification: manual
-    tags: [visual]
-
-  - id: MT-SSH-03
-    name: "Local shell ANSI colors unaffected"
-    pr: 197
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Open a local shell terminal"
-      - "Run a command that produces colored output (e.g., 'ls --color')"
-    expected:
-      - "ANSI color rendering is unaffected"
-    verification: manual
-    tags: [visual]
-
-  # --- SSH key authentication on Windows (PR #160) ---
-
-  - id: MT-SSH-07
-    name: "SSH agent auth still works"
-    pr: 160
-    platforms: [windows]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Ensure SSH agent is running with a key loaded"
-      - "Create an SSH connection with agent auth method"
-      - "Connect"
-    expected:
-      - "SSH agent auth works"
-    verification: manual
-
-  # --- SSH agent setup guidance (PR #133) ---
-
-  - id: MT-SSH-09
-    name: "Setup SSH Agent button opens PowerShell"
-    pr: 133
-    platforms: [windows]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Open connection editor, select SSH + Agent auth"
-      - "Click 'Setup SSH Agent' button"
-    expected:
-      - "Local PowerShell tab opens with elevation command"
-    verification: manual
-
-  # --- X11 forwarding (PR #69) ---
-
-  - id: MT-SSH-14
-    name: "Docker SSH + X11 connection works"
-    pr: 69
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "Connect via 'Docker SSH + X11' example connection"
-      - "Verify the SSH session opens"
-    expected:
-      - "SSH connection with X11 forwarding succeeds"
-    verification: manual
-
-  - id: MT-SSH-15
-    name: "X11 app window appears on local display"
-    pr: 69
-    platforms: [macos, linux]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "From the X11 SSH session, run: xclock"
-      - "Or try: xeyes"
-    expected:
-      - "Window appears on local display"
-    verification: manual
-
   - id: MT-SSH-16
+    automation_issue: 3687
     name: "DISPLAY variable set correctly"
     pr: 69
     platforms: [macos, linux]
@@ -134,6 +37,7 @@ tests:
     verification: manual
 
   - id: MT-SSH-18
+    automation_issue: 3687
     name: "X11 graceful degradation without X server"
     pr: 69
     platforms: [windows]
@@ -147,26 +51,10 @@ tests:
       - "SSH connects with graceful degradation"
     verification: manual
 
-  # --- SSH monitoring in status bar (PR #114, #115) ---
-
-  - id: MT-SSH-23
-    name: "High values show warning/critical colors"
-    pr: 115
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "Connect monitoring to a server with high CPU/memory usage"
-      - "Or observe the color thresholds"
-    expected:
-      - "Yellow at >= 70%, red at >= 90%"
-    verification: manual
-    tags: [visual]
-
   # --- Disconnect overlay: view mode + reconnect feedback (feature/terminal-disconnect-overlay) ---
 
   - id: MT-SSH-24
+    automation_issue: 3687
     name: "Disconnect overlay view mode: browse scrollback after dismiss"
     platforms: [all]
     prerequisites:
@@ -184,6 +72,7 @@ tests:
     verification: manual
 
   - id: MT-SSH-25
+    automation_issue: 3687
     name: "View mode: Enter key triggers reconnect prompt"
     platforms: [all]
     prerequisites:
@@ -199,75 +88,8 @@ tests:
       - "Clicking 'Reconnect' starts a new session and opens a fresh terminal"
     verification: manual
 
-  - id: MT-SSH-26
-    name: "Reconnect failure shows error details"
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "Open an SSH tab, then stop the SSH server so it becomes unreachable"
-      - "Wait for the disconnect overlay to appear"
-      - "Click 'Reconnect' (the blue button)"
-    expected:
-      - "The reconnect attempt fails (server is down)"
-      - "The spawn-error overlay appears showing the error reason (e.g. 'Connection refused')"
-      - "A 'Retry' button is present to try again"
-    verification: manual
-
-  # --- Connecting overlay + retry (feature/terminal-connect-overlay) ---
-
-  - id: MT-SSH-36
-    name: "Connecting overlay shown while SSH session is being established"
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "Open a new SSH tab pointing to a reachable server"
-      - "Observe the terminal area immediately after opening"
-    expected:
-      - "A 'Connecting…' spinner overlay covers the terminal while the handshake is in progress"
-      - "A 'Cancel' button is visible in the overlay"
-      - "The overlay disappears automatically as soon as the session is established"
-      - "Normal terminal output appears after the overlay closes"
-    verification: manual
-
-  - id: MT-SSH-37
-    name: "Failed SSH connection shows error overlay with Retry"
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Create an SSH connection pointing to an unreachable host (e.g. wrong port or host down)"
-      - "Open the tab and wait for the connection attempt to fail"
-    expected:
-      - "The 'Connection failed' overlay appears with the error message"
-      - "Both a 'Retry' button and a 'Cancel' button are present"
-      - "Clicking 'Retry' retries the connection and shows the spinner again"
-      - "Clicking 'Cancel' closes the tab entirely"
-    verification: manual
-
-  # --- Configurable line endings (PR #791) ---
-
-  - id: MT-SSH-38
-    name: "Pasting multi-line Windows text into SSH does not insert blank lines"
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "Ensure Settings → Terminal → Line Ending is at its default (LF)"
-      - "Copy several lines of text that use Windows CRLF endings (e.g. from a Windows editor or any multi-line clipboard content)"
-      - "Open an SSH tab to a Linux host and run: cat > /tmp/paste-test.txt"
-      - "Paste the copied lines, press Enter, then Ctrl+D"
-      - "Run: cat -A /tmp/paste-test.txt"
-    expected:
-      - "Each pasted line appears on its own row with NO blank line between rows"
-      - "cat -A shows a single '$' at the end of each line (no '^M$' and no empty '$' lines)"
-    verification: manual
-
   - id: MT-SSH-39
+    automation_issue: 3687
     name: "Line-ending setting changes what Enter sends and is overridable per connection"
     platforms: [all]
     prerequisites:
@@ -284,80 +106,8 @@ tests:
       - "Selecting 'Use global default' makes the connection follow the global Line Ending again"
     verification: manual
 
-  - id: MT-SSH-40
-    name: "Unreachable SSH host fails fast and tunnel Stop is prompt while connecting"
-    pr: 841
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Create an SSH connection to an unreachable but routable host (e.g. host 10.255.255.1, a blackholed address) and set Connection → Advanced → Connect Timeout (s) to 5"
-      - "Create a Local-forward tunnel using that SSH connection and click Start"
-      - "Observe the tunnel status and how long it takes to leave 'connecting'"
-      - "Repeat: click Start, then click Stop while the tunnel is still 'connecting'"
-    expected:
-      - "On Start, the tunnel shows 'connecting' then flips to 'error' within ~5 s (the configured timeout), not after the much longer OS TCP timeout"
-      - "Clicking Stop while connecting returns the tunnel to 'disconnected' promptly (within ~1 s), without waiting out the connect timeout or the OS TCP timeout"
-      - "The Connect Timeout (s) field is visible and editable under Connection → Advanced"
-    verification: manual
-    tags: [tunnel]
-
-  # --- Jump host (ProxyJump) indicators, status bar & context menu (PR #958) ---
-
-  - id: MT-SSH-41
-    name: "Jump-host connections show a hop badge with full-path tooltip"
-    pr: 958
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Create an SSH connection with a single inline jump host (Connection → Jump Host)"
-      - "Create a second SSH connection with a multi-hop chain (two hops via 'Add another hop')"
-      - "Look at both connections in the connection sidebar and hover the hop badge"
-    expected:
-      - "Each jump-host connection shows an accent left-right arrow badge next to its name"
-      - "The multi-hop connection additionally shows a small hop-count label (e.g. '2')"
-      - "Hovering the badge shows a tooltip with the full path, e.g. 'Via: edge -> bastion -> target'"
-      - "A plain SSH connection (no jump host) shows no badge"
-    verification: manual
-    tags: [jump-host, visual]
-
-  - id: MT-SSH-42
-    name: "Status bar shows the hop chain for the active jump-host terminal"
-    pr: 958
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "Connect a jump-host SSH connection so a terminal tab is active"
-      - "Look at the left side of the status bar"
-      - "Switch to a non-jump-host (or local) tab"
-    expected:
-      - "While the jump-host tab is active, the status bar shows 'SSH: user@target via gateway' with a route icon"
-      - "Switching to a direct/local tab removes the hop-chain item from the status bar"
-    verification: manual
-    tags: [jump-host]
-
-  - id: MT-SSH-43
-    name: "Jump-host context menu: Open Jump Host Terminal & Show Connection Path"
-    pr: 958
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "Right-click a jump-host SSH connection in the sidebar"
-      - "Click 'Open Jump Host Terminal'"
-      - "Right-click again and click 'Show Connection Path'"
-    expected:
-      - "The context menu shows 'Open Jump Host Terminal' and 'Show Connection Path' only for jump-host connections (a plain SSH connection shows neither)"
-      - "'Open Jump Host Terminal' opens a terminal connected directly to the gateway (the innermost bastion)"
-      - "'Show Connection Path' opens a dialog listing the full chain (You -> hop... -> target) with each hop's user@host:port"
-    verification: manual
-    tags: [jump-host]
-
   - id: MT-SSH-44
+    automation_issue: 3688
     name: "Jump-host reconnection re-establishes the chain through the shared gateway"
     pr: 958
     platforms: [all]
@@ -374,44 +124,3 @@ tests:
       - "Both terminals reconnecting at once create only one new gateway session (verify in the Open Connections panel)"
     verification: manual
     tags: [jump-host]
-
-  # --- Cancelling a connecting session (PR #967) ---
-
-  - id: MT-SSH-45
-    name: "Cancel aborts a slow/blocked SSH connect instead of waiting the timeout"
-    pr: 967
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Create an SSH connection to an unreachable-but-routable host (e.g. 10.255.255.1) OR a target behind an unreachable jump host; set Connection -> Advanced -> Connect Timeout (s) to 30"
-      - "Open the connection so the terminal shows the 'Connecting…' overlay"
-      - "Click 'Cancel' on the overlay (or close the tab) well before the 30s timeout"
-      - "Open a second such connection, then open the Open Connections panel (Settings wheel) while it is still connecting"
-    expected:
-      - "Clicking Cancel (or closing the tab) tears the connecting tab down immediately — it does NOT hang until the 30s connect timeout"
-      - "The Open Connections panel shows the in-flight session under a 'Connecting' section, and its Cancel button aborts the connect"
-    verification: manual
-    tags: [jump-host]
-
-  # --- Live per-hop status in the Connection Path popover (PR #968) ---
-
-  - id: MT-SSH-46
-    name: "Show Connection Path popover live-probes each hop's status"
-    pr: 968
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "Create a multi-hop SSH connection (target reached through a reachable bastion, e.g. the Docker SSH fixtures) and right-click it -> 'Show Connection Path'"
-      - "Watch the per-node status indicators while the dialog is open"
-      - "Close and reopen, this time with a chain whose SECOND hop is unreachable (e.g. inner hop host 10.255.255.1 with a short per-hop Connect Timeout)"
-      - "Open a path with a slow/blocked hop and close the dialog while a node still shows the connecting spinner"
-    expected:
-      - "On open, every node starts with a dim pending dot; the 'You' origin shows a green check immediately"
-      - "Each node steps live: a spinner while connecting, then a green check (connected) or a red X (failed)"
-      - "For the broken chain, the unreachable hop turns red with its failure reason shown beneath it, and the nodes AFTER it stay pending (no spinner, no check)"
-      - "Closing the dialog mid-probe stops the probe (no lingering connection appears in the Open Connections panel)"
-    verification: manual
-    tags: [jump-host, visual]

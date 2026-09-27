@@ -377,36 +377,37 @@ spread testing across multiple sessions and machines.
 
 ### 5.1 Session Planning
 
-The manual gate is the `tests/manual/*.yaml` corpus: **166 tests across
-14 categories** (every case is `verification: manual` — none is automated).
-These counts are not maintained by hand — regenerate them any time from the
-YAMLs with:
+The manual gate is the **Release-gating manual checklist** in
+[`docs/testing.md`](testing.md#release-gating-manual-checklist): the
+guided-manual harness suites plus the `tests/manual/*.yaml` corpus. After the
+triage in #3681 the corpus holds **57 tests across 11 categories** — 11 genuinely
+manual (`release_gate: true`) and 46 pending automation (`automation_issue`,
+walked manually until their issue lands). These counts are not maintained by
+hand — regenerate them any time from the YAMLs with:
 
 ```bash
 python scripts/test-manual.py --inventory
 ```
 
-| Category (`--category`)                         |   Tests |
-| ----------------------------------------------- | ------: |
-| `ui-layout` (UI / Layout)                       |      28 |
-| `remote-agent` (Remote Agent)                   |      25 |
-| `ssh` (SSH)                                     |      24 |
-| `keyboard` (Keyboard Shortcuts)                 |      14 |
-| `network-tools` (Network Tools)                 |      13 |
-| `tab-management` (Tab Management)               |      13 |
-| `connection-management` (Connection Management) |      12 |
-| `serial` (Serial)                               |      11 |
-| `file-browser` (File Browser)                   |      10 |
-| `credential-store` (Credential Store)           |       4 |
-| `local-shell` (Local Shell)                     |       4 |
-| `portable-mode` (Portable Mode)                 |       4 |
-| `embedded-services` (Embedded Network Services) |       3 |
-| `cross-platform` (Cross-Platform)               |       1 |
-| **Total**                                       | **166** |
+| Category (`--category`)                         |  Tests |
+| ----------------------------------------------- | -----: |
+| `remote-agent` (Remote Agent)                   |     15 |
+| `ui-layout` (UI / Layout)                       |      8 |
+| `ssh` (SSH)                                     |      7 |
+| `serial` (Serial)                               |      5 |
+| `connection-management` (Connection Management) |      4 |
+| `credential-store` (Credential Store)           |      4 |
+| `network-tools` (Network Tools)                 |      4 |
+| `file-browser` (File Browser)                   |      3 |
+| `tab-management` (Tab Management)               |      3 |
+| `local-shell` (Local Shell)                     |      2 |
+| `portable-mode` (Portable Mode)                 |      2 |
+| **Total**                                       | **57** |
 
 Note: `--category` filtering also honours each test's `platforms:` field, so a
 per-platform run (e.g. Windows) sees fewer than the corpus totals above. The
-sessions below split the 166 tests across machines so each category is covered
+sessions below split the corpus across machines (they were planned against the
+pre-triage 166 tests; categories that are now empty simply finish early) so each category is covered
 once, with a final Windows pass re-running the platform-sensitive subset.
 
 #### Session 1: Mac — Core UI, Local Shell & Tabs (~4 h)
@@ -778,8 +779,8 @@ Total: \~23–27 hours across 13 sessions
 ### Point-in-time migration analysis (at ~75 manual tests)
 
 > **Note**: This appendix is a **point-in-time snapshot** from when the manual
-> corpus held ~75 tests. The corpus has since grown to **166 tests across 14
-> categories** (see §5.1; regenerate with `python scripts/test-manual.py
+> corpus held ~75 tests. The corpus grew to **166 tests across 14
+> categories** (57 after the #3681 triage) (see §5.1; regenerate with `python scripts/test-manual.py
 --inventory`). The specific IDs and per-reason counts below reflect the
 > original ~75-test analysis and have **not** been re-derived for the full 166 —
 > treat them as illustrative migration candidates, not a current inventory.

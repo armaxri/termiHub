@@ -1,70 +1,14 @@
 # Network Tools Manual Tests
-# These tests require real network connectivity and cannot be automated in CI.
-# UI-only tests (sidebar structure, panel rendering, button states) are covered
-# by tests/e2e/network-tools.test.js (NT-01 through NT-09).
+# Panel UI is covered by tests/system/tests/test_network_tools.py and the live
+# loopback cases by test_network_tools_live.py; see docs/testing.md
+# (Manual Testing -> Triage) for where each retired MT-NET item went.
 
 prefix: MT-NET
 feature: Network Tools
 
 tests:
-  - id: MT-NET-10
-    title: Ping — live latency chart and stats
-    automated_by: null
-    steps:
-      - Open the Network Tools sidebar (stethoscope icon in activity bar; requires experimental features enabled)
-      - Click "Ping Host…" to open the Ping panel
-      - Enter `8.8.8.8` in the Host field
-      - Click Start
-    expected:
-      - Ping begins; replies stream in
-      - A latency graph appears below the form and updates with each reply
-      - The stats row (Sent / Received / Loss / RTT) updates after each reply
-      - After several replies, click Stop — status changes to "canceled" and final stats are shown
-
-  - id: MT-NET-11
-    title: Ping — TCP fallback notice
-    automated_by: null
-    steps:
-      - Open the Ping panel
-      - Enter `8.8.8.8` in the Host field and click Start on a machine without raw socket privileges (non-root Linux / restricted environment)
-    expected:
-      - An info banner "Using TCP ping — ICMP requires elevated privileges" appears
-      - Ping still produces results via TCP connect
-
-  - id: MT-NET-12
-    title: Port Scanner — results stream in
-    automated_by: null
-    steps:
-      - Click "Scan Ports…" to open the Port Scanner panel
-      - Enter `scanme.nmap.org` in Host and `22,80,443` in Ports
-      - Click Run
-    expected:
-      - Results begin streaming; each port row shows port number, state (open/closed/filtered), and latency
-      - Run button changes to Cancel while scanning
-      - Scan completes with a footer showing total count and elapsed time
-
-  - id: MT-NET-13
-    title: Port Scanner — large-range warning
-    automated_by: null
-    steps:
-      - Open the Port Scanner panel
-      - Enter any host and `1-10000` in Ports
-      - Click Run
-    expected:
-      - A large-range warning banner is shown before or during the scan
-      - Scan proceeds and results stream in
-
-  - id: MT-NET-14
-    title: DNS Lookup — A record resolution
-    automated_by: null
-    steps:
-      - Click "DNS Lookup…" to open the DNS Lookup panel
-      - Enter `example.com` in Hostname, select record type `A`
-      - Click Run
-    expected:
-      - One or more A records appear in the results table with IP address and TTL
-
   - id: MT-NET-15
+    automation_issue: 3692
     title: DNS Lookup — multiple record types
     automated_by: null
     steps:
@@ -74,6 +18,8 @@ tests:
       - Results match the expected records for each type (verify against `dig` or similar)
 
   - id: MT-NET-16
+    release_gate: true
+    manual_reason: "traceroute needs raw ICMP (root); hop rendering is unit-tested"
     title: Traceroute — hops stream in
     automated_by: null
     steps:
@@ -85,30 +31,8 @@ tests:
       - Each row shows hop number, address, and three RTT columns
       - Trace completes (or times out with `* * *` rows for unresponsive hops)
 
-  - id: MT-NET-17
-    title: HTTP Monitor — periodic checks and chart
-    automated_by: null
-    steps:
-      - Click "New Monitor" in the sidebar to open the HTTP Monitor panel
-      - Enter `https://example.com` as URL, set interval to 10 seconds
-      - Click Start
-    expected:
-      - First check appears in the history list within ~10 seconds with status code and latency
-      - The response-time chart updates with each check
-      - After several checks, click Stop — monitoring halts
-
-  - id: MT-NET-18
-    title: HTTP Monitor — sidebar monitor row
-    automated_by: null
-    steps:
-      - Start an HTTP Monitor for `https://example.com` (see MT-NET-17)
-      - Switch to another sidebar view and back to Network Tools
-    expected:
-      - The running monitor appears in the Monitors section of the sidebar with URL and last status
-      - Clicking the row re-opens the HTTP Monitor panel
-      - The stop button in the sidebar row stops the monitor when clicked
-
   - id: MT-NET-19
+    automation_issue: 3692
     title: Remote agent — network.open_ports via JSON-RPC
     automated_by: null
     steps:
@@ -121,6 +45,8 @@ tests:
       - Port list differs from the local machine's ports
 
   - id: MT-NET-21
+    release_gate: true
+    manual_reason: "chart stroke/hover readability is visual; data in latencyChartData.test.ts"
     title: Ping / HTTP Monitor — readable latency chart (uPlot)
     automated_by: null
     pr: 790
@@ -135,31 +61,3 @@ tests:
       - Hovering shows a read-out of the exact latency at the hovered sample
       - A dropped/timed-out sample is marked with a dashed vertical drop marker and a gap in the line
       - The HTTP Monitor Response Time chart renders with the same readable axes and hover read-out
-
-  - id: MT-NET-22
-    title: Traceroute / Port Scanner — error on unresolvable host (Stop works)
-    automated_by: null
-    pr: 795
-    steps:
-      - Open the Traceroute panel, enter a host that cannot resolve (e.g. `Keks` or `does-not-exist.invalid`), and click Run
-      - Repeat the Run a few times in a row (the second attempt often fails instantly from a cached DNS miss)
-      - Repeat the same with the Port Scanner panel (enter the bad host, keep the default ports, click Run)
-    expected:
-      - Each run surfaces an error message and returns to the Run button — the panel never stays stuck on "running"
-      - The Stop button is never left active with nothing happening
-      - On a reachable host, Run still streams hops / port results normally, and Stop during a run reports the run as canceled
-
-  - id: MT-NET-20
-    title: Port Scanner — CIDR / multi-target scan
-    automated_by: null
-    pr: 732
-    steps:
-      - Open the Port Scanner panel
-      - Enter a small local CIDR range in the Host / CIDR field, e.g. `192.168.1.0/30` (or a /29 on your real LAN)
-      - Enter `22,80,443` in Ports and click Run
-    expected:
-      - Scan probes every host in the range against the requested ports
-      - The results table shows a Host column with one row per (host, port) pair
-      - Scan completes and the footer reports the total probe count (e.g. 4 hosts × 3 ports = 12)
-      - Re-running with a comma-separated mix (e.g. `127.0.0.1, 10.0.0.0/30, example.com`) also produces correctly-grouped results
-      - Entering an obviously oversized range (e.g. `10.0.0.0/8`) surfaces an error instead of starting a runaway scan

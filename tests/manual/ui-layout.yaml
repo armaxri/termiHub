@@ -2,65 +2,9 @@ category: ui-layout
 display_name: "UI / Layout"
 
 tests:
-  # --- No white flash on startup (PR #192) ---
-
-  - id: MT-UI-01
-    name: "No white flash on startup"
-    pr: 192
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Launch the app (cold start)"
-      - "Watch the window background carefully"
-    expected:
-      - "Window starts with dark background (#1e1e1e)"
-      - "No white flash"
-    verification: manual
-    tags: [visual]
-
-  - id: MT-UI-02
-    name: "No white transitions during startup"
-    pr: 192
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Observe the full startup sequence"
-    expected:
-      - "No white -> dark -> white transitions"
-    verification: manual
-    tags: [visual]
-
-  - id: MT-UI-03
-    name: "Dark theme restart — no white flash"
-    pr: 192
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "With Dark theme selected, restart the app"
-    expected:
-      - "No white flash on launch"
-    verification: manual
-    tags: [visual]
-
-  # --- Color theme switching (PR #220) ---
-
-  - id: MT-UI-04
-    name: "System theme follows OS preference"
-    pr: 220
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "In Settings, select 'System' theme"
-    expected:
-      - "App follows the current OS dark/light mode preference"
-    verification: manual
-    tags: [visual]
-
   - id: MT-UI-05
+    release_gate: true
+    manual_reason: "real OS appearance toggle (listener logic in engine.test.ts)"
     name: "OS theme toggle — app switches automatically"
     pr: 220
     platforms: [all]
@@ -74,24 +18,10 @@ tests:
     verification: manual
     tags: [visual]
 
-  # --- Theme switching applies immediately (PR #224) ---
-
-  - id: MT-UI-09
-    name: "System theme applies immediately"
-    pr: 224
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Switch to System theme"
-    expected:
-      - "Theme matches current OS preference immediately"
-    verification: manual
-    tags: [visual]
-
   # --- Settings as tab (PR #32) ---
 
   - id: MT-UI-10
+    automation_issue: 3693
     name: "Settings tab drag between panels"
     pr: 32
     platforms: [all]
@@ -106,6 +36,7 @@ tests:
   # --- Vertical split resize handle (PR #213) ---
 
   - id: MT-UI-11
+    automation_issue: 3693
     name: "Vertical resize handle works"
     pr: 213
     platforms: [all]
@@ -121,6 +52,7 @@ tests:
   # --- Clear separation between split view panels (PR #189) ---
 
   - id: MT-UI-12
+    automation_issue: 3693
     name: "1px line between split panels"
     pr: 189
     platforms: [all]
@@ -135,6 +67,8 @@ tests:
     tags: [visual]
 
   - id: MT-UI-13
+    release_gate: true
+    manual_reason: "subjective 'border blends with sidebar' look"
     name: "Single panel — border blends with sidebar"
     pr: 189
     platforms: [all]
@@ -149,6 +83,7 @@ tests:
     tags: [visual]
 
   - id: MT-UI-14
+    automation_issue: 3693
     name: "Horizontal split border"
     pr: 189
     platforms: [all]
@@ -162,6 +97,7 @@ tests:
     tags: [visual]
 
   - id: MT-UI-15
+    automation_issue: 3693
     name: "Vertical split border"
     pr: 189
     platforms: [all]
@@ -174,248 +110,10 @@ tests:
     verification: manual
     tags: [visual]
 
-  # --- Black bar at bottom of terminal fix (PR #130) ---
-
-  - id: MT-UI-16
-    name: "No black bar at bottom of terminal"
-    pr: 130
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Open terminal tabs"
-      - "Look at the bottom of each terminal"
-    expected:
-      - "No black bar at the bottom"
-    verification: manual
-    tags: [visual]
-
-  # --- Custom app icon (PR #70) ---
-
-  - id: MT-UI-19
-    name: "App icon in dock/taskbar"
-    pr: 70
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Check the app icon in dock (macOS), taskbar (Windows), or launcher (Linux)"
-    expected:
-      - "Custom termiHub icon is displayed"
-    verification: manual
-    tags: [visual]
-
-  # --- Switchable Right-Click Terminal Behavior (PR #419) ---
-
-  - id: MT-UI-26
-    name: "Right-click shows context menu by default on macOS/Linux"
-    pr: 419
-    platforms: [macos, linux]
-    prerequisites:
-      - app: true
-      - "Open a terminal with an active session"
-      - "Right-Click Behavior setting is unset (Platform Default)"
-    instructions:
-      - "Right-click on the terminal area"
-    expected:
-      - "A context menu appears with Copy, Paste, Rename, Save, etc."
-    verification: manual
-    tags: [terminal, settings]
-
-  - id: MT-UI-27
-    name: "Quick Copy/Paste copies selected text on right-click"
-    pr: 419
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - "Open a terminal with an active session and some output"
-      - "Set Right-Click Behavior to 'Quick Copy/Paste' in Terminal Settings"
-    instructions:
-      - "Select some text in the terminal by clicking and dragging"
-      - "Right-click on the terminal"
-    expected:
-      - "No context menu appears"
-      - "The selected text is copied to the clipboard"
-      - "The selection is cleared after copying"
-    verification: manual
-    tags: [terminal, settings, clipboard]
-
-  - id: MT-UI-28
-    name: "Quick Copy/Paste pastes when no text is selected"
-    pr: 419
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - "Open a terminal with an active session"
-      - "Set Right-Click Behavior to 'Quick Copy/Paste' in Terminal Settings"
-      - "Copy some text to the clipboard beforehand"
-    instructions:
-      - "Ensure no text is selected in the terminal"
-      - "Right-click on the terminal"
-    expected:
-      - "No context menu appears"
-      - "The clipboard content is pasted into the terminal as input"
-    verification: manual
-    tags: [terminal, settings, clipboard]
-
-  - id: MT-UI-29
-    name: "Right-Click Behavior setting persists across restarts"
-    pr: 419
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Open Terminal Settings and set Right-Click Behavior to 'Quick Copy/Paste'"
-      - "Close and reopen the app"
-      - "Open Terminal Settings"
-    expected:
-      - "Right-Click Behavior is still set to 'Quick Copy/Paste'"
-    verification: manual
-    tags: [terminal, settings]
-
-  - id: MT-UI-30
-    name: "Switching back to Context Menu restores right-click menu"
-    pr: 419
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - "Open a terminal with an active session"
-      - "Right-Click Behavior is set to 'Quick Copy/Paste'"
-    instructions:
-      - "Change Right-Click Behavior to 'Context Menu' in Terminal Settings"
-      - "Right-click on the terminal"
-    expected:
-      - "The full context menu appears again"
-    verification: manual
-    tags: [terminal, settings]
-
-  - id: MT-UI-31
-    name: "Box-drawing characters render without gaps"
-    pr: 579
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - "Open a local terminal session"
-    instructions:
-      - "Run: printf '┌──────┐\\n│ test │\\n└──────┘\\n'"
-      - "Also run a table-rendering CLI tool, e.g.: column -t /etc/passwd | head -5"
-    expected:
-      - "All horizontal (─) and vertical (│) lines are solid and unbroken"
-      - "Corner characters (┌ ┐ └ ┘) connect seamlessly to adjacent lines"
-      - "No pixel gaps visible between rows of a box"
-    verification: manual
-    tags: [terminal, visual]
-
-  - id: MT-UI-32
-    name: "Zoom overlay follows panel focus switching"
-    pr: 591
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - "Open at least two terminal sessions in separate split panels (use Split Right)"
-      - "Run a command in each so both have visible output"
-    instructions:
-      - "Focus panel 1 and press Cmd+Shift+Enter (Mac) or Ctrl+Shift+Enter (Win/Linux) to open the zoom overlay for its active tab"
-      - "Press the Focus Panel Right shortcut (Cmd+Option+Right on Mac, Ctrl+Alt+Right on Win/Linux) to move focus to panel 2 while the overlay is open"
-      - "Observe the zoom overlay"
-    expected:
-      - "The zoom overlay updates to show the active terminal from panel 2"
-      - "The header title in the overlay changes to panel 2's tab name"
-      - "The terminal content from panel 2 is fully visible (no blank/empty overlay)"
-      - "The terminal responds to keyboard input"
-    verification: manual
-    tags: [terminal, zoom, panels]
-
-  - id: MT-UI-33
-    name: "Zoom overlay follows tab switching within the zoomed panel"
-    pr: 591
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - "Open at least two terminal tabs in the same panel"
-      - "Run a distinct command in each tab so they have different visible output"
-    instructions:
-      - "Press Cmd+Shift+Enter (Mac) or Ctrl+Shift+Enter (Win/Linux) to open the zoom overlay for the active tab"
-      - "Press Ctrl+Tab to switch to the next tab while the overlay is open"
-      - "Observe the zoom overlay"
-    expected:
-      - "The zoom overlay updates to show the newly active tab"
-      - "The header title changes to the new tab's name"
-      - "The terminal content of the new tab is fully visible"
-    verification: manual
-    tags: [terminal, zoom, tabs]
-
-  # --- Per-pane OS file drop (PR #755) ---
-
-  - id: MT-UI-34
-    name: "OS file drop targets the individual pane under the cursor"
-    pr: 755
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - "Open a split view with two terminal panes, each running a local shell"
-      - "IMPORTANT: close the Web Inspector / DevTools before testing — an open inspector distorts Tauri drag-drop coordinates on macOS (tauri#11141), making the highlight appear offset from the cursor. This is a dev-tooling artifact only."
-    instructions:
-      - "From the OS file manager (Finder/Explorer), start dragging a file over the app"
-      - "Hover over the LEFT pane and observe the highlight"
-      - "Hover over the RIGHT pane and observe the highlight"
-      - "Drop the file onto the RIGHT pane (which is NOT the globally active pane)"
-    expected:
-      - "Only the pane under the cursor shows the dashed 'Drop to insert path' highlight, not the whole terminal area"
-      - "The highlight moves from one pane to the other as the cursor crosses the divider"
-      - "The quoted file path is inserted into the RIGHT pane's shell, not the active pane"
-    verification: manual
-    tags: [drag-drop, split-view]
-
-  # --- Terminal vertical scrollbar (PR #774, reworked in #789) ---
-
-  - id: MT-UI-35
-    name: "Terminal right-edge scrollbar shows only when scrollback exceeds viewport"
-    pr: 789
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - "Open at least three terminal tabs in a split layout (so multiple xterm instances coexist, some of them initialised while parked off-screen)"
-    instructions:
-      - "Inspect the right edge of every terminal pane while each shell is freshly started with only a prompt visible"
-      - "Run `seq 1 200` in one of the panes so its buffer exceeds the viewport"
-      - "Scroll up, then back to the bottom of that pane (Ctrl/Cmd+End or wheel)"
-      - "Switch focus between panes and re-check each pane's right edge"
-    expected:
-      - "With nothing to scroll, no scrollbar thumb appears in any pane (including freshly-switched-to panes initialised while parked off-screen) — no stray slider or grey bar"
-      - "Once the buffer exceeds the viewport, the thumb appears flush against the container's right edge"
-      - "The thumb stays visible while there is scrollback (it does not fade out on idle) and tracks the scroll position; no stray thumb remains after scrolling back to the bottom"
-    verification: manual
-    tags: [terminal, scrollbar]
-
-  # --- Unified vertical scrollbar across modes (PR #789) ---
-
-  - id: MT-UI-36
-    name: "Vertical scrollbar is the same in normal and horizontal-scroll modes"
-    pr: 789
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Open a local shell tab and run `seq 1 200` to produce scrollback; note the scrollbar appearance in normal mode"
-      - "Enable Horizontal Scrolling from the tab context menu"
-      - "Produce wide output, e.g. run: printf 'x%.0s' {1..400}; echo"
-      - "Without scrolling horizontally, observe the right edge of the pane"
-      - "Scroll all the way to the right and re-check the right edge and the rightmost column"
-      - "Drag the vertical scrollbar thumb and click on the empty track above/below it"
-      - "Resize the window/split, then disable Horizontal Scrolling again"
-    expected:
-      - "The vertical scrollbar looks and behaves identically in normal and horizontal-scroll modes (same reserved gutter on the right, same always-visible thumb)"
-      - "In horizontal-scroll mode the scrollbar is visible at all times even before scrolling horizontally, and never overlaps terminal text — including when scrolled fully right, where the rightmost column stays fully readable (not clipped)"
-      - "In horizontal-scroll mode the first character keeps the same left inset from the container edge as in normal mode, and the horizontal scrollbar along the bottom has a gap above it (it does not cover the last row)"
-      - "Dragging the thumb and clicking the track scroll the buffer; the thumb tracks the scroll position and the new pane height after a resize"
-      - "Toggling horizontal scrolling off keeps the same scrollbar with no leftover or duplicate thumb"
-    verification: manual
-    tags: [terminal, scrollbar, horizontal-scroll]
-
   # --- Restore last session on startup (PR #586) ---
 
   - id: MT-UI-37
+    automation_issue: 3693
     name: "Open tabs and layout are restored after an app restart"
     pr: 586
     platforms: [all]
@@ -433,41 +131,3 @@ tests:
       - "A tab whose target can no longer be reached (host down, agent offline) is shown in a disconnected/error state rather than being silently dropped"
     verification: manual
     tags: [session-restore, startup, layout]
-
-  - id: MT-UI-38
-    name: "Disabling Restore Last Session starts the app fresh"
-    pr: 586
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Open a few tabs, then turn OFF Settings → General → Restore Last Session on Startup"
-      - "Fully quit and relaunch the app"
-      - "Re-open Settings → General and turn the toggle back ON"
-      - "Open a couple of tabs and relaunch once more"
-    expected:
-      - "With the setting OFF, the app starts with a single fresh empty session — no previous tabs are restored"
-      - "Any previously stored session is discarded so it does not reappear later"
-      - "With the setting back ON, the tabs open before the final relaunch are restored again"
-    verification: manual
-    tags: [session-restore, startup, settings]
-
-  - id: MT-UI-39
-    name: "Disconnect overlay explains the exit cause and suppresses for user kills"
-    pr: 1151
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Open a local shell and type `exit` (or log out cleanly)"
-      - "Open a local shell and run a command that exits non-zero, e.g. `sh -c 'exit 3'`"
-      - "Open an SSH or remote-agent session, then drop the connection (stop the server / disconnect the agent)"
-      - "Open a local shell, open the Open Connections panel (Settings wheel → Open Connections), and use Kill on that session"
-    expected:
-      - "After a clean `exit`, the overlay heading reads 'Session ended' (not 'Session disconnected')"
-      - "After the non-zero exit, the overlay reads 'Session disconnected' and surfaces the exit code (e.g. 3)"
-      - "After the dropped connection, the overlay reads 'Session disconnected' with 'The connection was lost'"
-      - "Killing a session from the Open Connections panel shows scrollback with NO 'unexpected disconnect' overlay"
-      - "In every case the scrollback buffer remains visible below"
-    verification: manual
-    tags: [disconnect-overlay, terminal, feedback]

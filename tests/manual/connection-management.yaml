@@ -2,136 +2,8 @@ category: connection-management
 display_name: "Connection Management"
 
 tests:
-  # --- Remove folder selector from editor (PR #146) ---
-
-  - id: MT-CONN-01
-    name: "Drag connection onto folder"
-    pr: 146
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Create a folder and a connection in the sidebar"
-      - "Drag the connection onto the folder"
-    expected:
-      - "Connection moves into the folder correctly"
-    verification: manual
-    automation_note: >
-      Moving a connection into a folder via the editor folder selector is covered
-      by MT-CONN-06 E2E in tests/e2e/connection-crud.test.js (#458).
-      Drag-and-drop specifically remains a manual test.
-
-  # --- Import/export connections (PR #33) ---
-
-  - id: MT-CONN-08
-    name: "Import connections from file"
-    pr: 33
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Click 'Import Connections' in the sidebar menu"
-      - "Select a JSON file"
-    expected:
-      - "File open dialog appears, imports JSON, connection list refreshes"
-    verification: manual
-    tags: [native-dialog]
-    automation_note: >
-      Menu item activation covered by MT-CONN-07 E2E in tests/e2e/connection-crud.test.js (#458).
-      Full import flow (native file dialog + connection list refresh) remains manual.
-
-  - id: MT-CONN-09
-    name: "Export connections to file"
-    pr: 33
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Click 'Export Connections' in the sidebar menu"
-      - "Choose a location and save"
-    expected:
-      - "File save dialog appears, saves JSON"
-    verification: manual
-    tags: [native-dialog]
-    automation_note: >
-      Export dialog UI (title and mode selection) covered by MT-CONN-08 E2E
-      in tests/e2e/connection-crud.test.js (#458).
-      Native file save dialog and actual file output remain manual.
-
-  # --- Encrypted export/import (PR #322) ---
-
-  - id: MT-CONN-13
-    name: "Import encrypted — correct password"
-    pr: 322
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Enter the correct export password"
-      - "Click 'Import with Credentials'"
-    expected:
-      - "Success message shows connections and credentials imported"
-    verification: manual
-
-  # --- SSH key path browse button (PR #205) ---
-
-  - id: MT-CONN-17
-    name: "SSH key browse button opens file dialog"
-    pr: 205
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Create/edit an SSH connection"
-      - "Set auth method to 'Key'"
-      - "Click '...' browse button"
-    expected:
-      - "Native file dialog opens defaulting to ~/.ssh"
-    verification: manual
-    tags: [native-dialog]
-
-  - id: MT-CONN-18
-    name: "SSH key browse — select file populates path"
-    pr: 205
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "In the key browse dialog, select a key file"
-    expected:
-      - "Path populates in the input field"
-    verification: manual
-
-  - id: MT-CONN-19
-    name: "SSH key browse — cancel leaves field unchanged"
-    pr: 205
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Click '...' then cancel the dialog"
-    expected:
-      - "Input field remains unchanged"
-    verification: manual
-
-  # --- External connection file support (PR #50, redesigned in PR #210) ---
-
-  - id: MT-CONN-23
-    name: "Add File — select existing JSON"
-    pr: 210
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "In Settings > External Files, click 'Add File'"
-      - "Select an existing JSON file"
-    expected:
-      - "Native file picker appears"
-      - "Path appears in list with toggle"
-    verification: manual
-    tags: [native-dialog]
-
   - id: MT-CONN-24
+    automation_issue: 3689
     name: "Drag external connections into local folders"
     pr: 210
     platforms: [all]
@@ -146,6 +18,7 @@ tests:
   # --- Multi-select delete (bugfix/multi-connection-delete) ---
 
   - id: MT-CONN-33
+    automation_issue: 3689
     name: "Delete multiple selected connections"
     platforms: [all]
     prerequisites:
@@ -163,6 +36,7 @@ tests:
   # --- Cross-instance connection sync (bugfix/multi-connection-delete) ---
 
   - id: MT-CONN-34
+    automation_issue: 3689
     name: "Connection changes sync across parallel instances"
     platforms: [all]
     prerequisites:
@@ -182,6 +56,7 @@ tests:
   # --- Drag connection out of folder (#394) ---
 
   - id: MT-CONN-32
+    automation_issue: 3689
     name: "Drag connection out of folder to root"
     pr: 394
     platforms: [all]

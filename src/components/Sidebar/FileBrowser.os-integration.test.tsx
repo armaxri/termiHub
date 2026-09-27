@@ -355,4 +355,10 @@ describe("FileBrowser — folder-row OS-integration context items (#2656)", () =
     });
     expect(onAction).toHaveBeenCalledWith(dirEntry, "openFolderVscode");
   });
+  it("shows Open in VS Code for a file only when VS Code is available (MT-FB-16)", () => {
+    renderMenu(fileEntry, { vscodeAvailable: true, local: true });
+    expect(container.querySelector('[data-testid="file-menu-vscode"]')).toBeTruthy();
+    renderMenu(fileEntry, { vscodeAvailable: false, local: true });
+    expect(container.querySelector('[data-testid="file-menu-vscode"]')).toBeNull();
+  });
 });
