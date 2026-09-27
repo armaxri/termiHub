@@ -28,6 +28,7 @@ mod host_clipboard;
 mod host_clipboard_watch;
 mod input;
 mod keymap;
+mod nla;
 mod rdp;
 #[cfg(test)]
 mod rdpsnd_fork_tests;
