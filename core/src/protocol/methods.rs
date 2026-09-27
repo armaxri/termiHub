@@ -3619,8 +3619,7 @@ mod tests {
         assert!(!debug.contains("s3cret"), "token leaked via Debug: {debug}");
 
         let parsed: AgentRequestDeferredUpdateParams =
-            serde_json::from_value(json!({ "authToken": "t", "pinnedVersion": "0.2.0" }))
-                .unwrap();
+            serde_json::from_value(json!({ "authToken": "t", "pinnedVersion": "0.2.0" })).unwrap();
         assert_eq!(parsed.auth_token.as_ref().map(|t| t.expose()), Some("t"));
         assert_eq!(parsed.pinned_version.as_deref(), Some("0.2.0"));
     }
