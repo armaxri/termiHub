@@ -68,7 +68,14 @@ from .display_runner import (
     probe_display_runner,
     release_display_awake,
 )
-from .orchestrator import AgentInstance, AppInstance, agent_binary_path, app_binary_path
+from .orchestrator import (
+    AgentInstance,
+    AppInstance,
+    MissingTestBridgeError,
+    agent_binary_path,
+    app_binary_path,
+    require_test_bridge_build,
+)
 from .local_agent import LocalAgentSshd, LocalAgentUnavailable
 from .projection import ProjectionHarness
 from .ssh_agent import agent_has_key, key_fingerprint, sha256_fingerprints
@@ -113,6 +120,8 @@ __all__ = [
     "LIVE_CONNECT_REQUEST_TIMEOUT",
     "screenshot_to_png_bytes",
     "AppInstance",
+    "MissingTestBridgeError",
+    "require_test_bridge_build",
     "AgentInstance",
     "LocalAgentSshd",
     "LocalAgentUnavailable",

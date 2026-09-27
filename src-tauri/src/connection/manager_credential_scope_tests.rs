@@ -370,6 +370,150 @@ fn deleting_a_main_connection_first_migrates_a_file_sharing_its_key() {
     );
 }
 
+// ── bare keys kept while a file could not be read (#3650) ───────────────────
+
+/// Configure `a` (legacy, holding `x`) and an unreadable `b`, and migrate.
+fn migrate_with_an_unreadable_file(mgr: &ConnectionManager, dir: &Path) -> (String, String) {
+    let a = legacy_file(dir, "a.json", &["x"]);
+    let b = path(dir, "b.json");
+    std::fs::write(&b, "{ not json").unwrap();
+    configure(mgr, &[&a, &b]);
+    mgr.migrate_credential_scopes();
+    (a, b)
+}
+
+#[test]
+fn a_bare_key_kept_for_an_unreadable_file_goes_once_it_reads_without_the_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(RecordingStore::with(&[("x", PW, "X")]));
+    let mgr = manager(dir.path(), &store);
+    let (a, _) = migrate_with_an_unreadable_file(&mgr, dir.path());
+    // `b` might use `x`, so the bare key stays for now.
+    assert_eq!(store.value("x", PW).as_deref(), Some("X"));
+    assert_eq!(
+        store.value(&scoped(&mgr, &a, "x"), PW).as_deref(),
+        Some("X")
+    );
+
+    // After a restart (the record is durable), `b` is readable without `x`.
+    drop(mgr);
+    legacy_file(dir.path(), "b.json", &["y"]);
+    let mgr = manager(dir.path(), &store);
+    mgr.migrate_credential_scopes();
+
+    assert_eq!(store.value("x", PW), None);
+    assert_eq!(
+        store.value(&scoped(&mgr, &a, "x"), PW).as_deref(),
+        Some("X")
+    );
+    // Nothing is left to track: a later pass touches no key.
+    let calls = store.calls().len();
+    mgr.migrate_credential_scopes();
+    assert_eq!(store.calls().len(), calls, "{:?}", store.calls());
+}
+
+#[test]
+fn a_bare_key_kept_for_a_file_using_the_id_stays_until_that_file_is_migrated() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(RecordingStore::with(&[("x", PW, "X")]));
+    let mgr = manager(dir.path(), &store);
+    let (a, b) = migrate_with_an_unreadable_file(&mgr, dir.path());
+    legacy_file(dir.path(), "b.json", &["x"]);
+
+    // Readable but not migrated yet: its copy is not written, so the bare
+    // key must stay.
+    mgr.clean_up_kept_bare_keys();
+    assert_eq!(store.value("x", PW).as_deref(), Some("X"));
+
+    mgr.migrate_credential_scopes();
+    assert_eq!(
+        store.value(&scoped(&mgr, &b, "x"), PW).as_deref(),
+        Some("X")
+    );
+    assert_eq!(
+        store.value(&scoped(&mgr, &a, "x"), PW).as_deref(),
+        Some("X")
+    );
+    assert_eq!(store.value("x", PW), None);
+}
+
+#[test]
+fn a_bare_key_kept_for_a_file_that_is_removed_from_the_configuration_goes() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(RecordingStore::with(&[("x", PW, "X")]));
+    let mgr = manager(dir.path(), &store);
+    let a = legacy_file(dir.path(), "a.json", &["x"]);
+    // On an unmounted share, say.
+    let gone = path(dir.path(), "share/gone.json");
+    configure(&mgr, &[&a, &gone]);
+    mgr.migrate_credential_scopes();
+    assert_eq!(store.value("x", PW).as_deref(), Some("X"));
+
+    // Still missing: it keeps holding the key back.
+    mgr.migrate_credential_scopes();
+    assert_eq!(store.value("x", PW).as_deref(), Some("X"));
+
+    configure(&mgr, &[&a]);
+    mgr.migrate_credential_scopes();
+    assert_eq!(store.value("x", PW), None);
+    assert_eq!(
+        store.value(&scoped(&mgr, &a, "x"), PW).as_deref(),
+        Some("X")
+    );
+}
+
+#[test]
+fn a_bare_key_kept_for_an_unreadable_file_stays_while_the_main_store_uses_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(RecordingStore::with(&[("x", PW, "X")]));
+    let mgr = manager(dir.path(), &store);
+    let (_, _) = migrate_with_an_unreadable_file(&mgr, dir.path());
+    mgr.save_connection(ssh("x", "x")).unwrap();
+    legacy_file(dir.path(), "b.json", &["y"]);
+
+    mgr.migrate_credential_scopes();
+
+    assert_eq!(password(&mgr, &store, "x", None).as_deref(), Some("X"));
+}
+
+/// The #3650 cleanup against a real credential store holding `id`.
+fn bare_key_cleanup_in(store: Arc<dyn CredentialStore>, id: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let mgr = ConnectionManager::new_for_test(dir.path(), store.clone()).unwrap();
+    let get = |owner: &str| store.get(&CredentialKey::new(owner, PW)).unwrap();
+    let a = legacy_file(dir.path(), "a.json", &[id]);
+    let b = path(dir.path(), "b.json");
+    std::fs::write(&b, "{ not json").unwrap();
+    configure(&mgr, &[&a, &b]);
+
+    mgr.migrate_credential_scopes();
+    assert_eq!(get(id).as_deref(), Some("X"));
+
+    legacy_file(dir.path(), "b.json", &["other"]);
+    mgr.migrate_credential_scopes();
+    assert_eq!(get(id), None);
+    assert_eq!(get(&scoped(&mgr, &a, id)).as_deref(), Some("X"));
+}
+
+#[test]
+fn a_kept_bare_key_is_cleaned_up_in_the_master_password_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = crate::credential::master_password::MasterPasswordStore::new(
+        dir.path().join("credentials.enc"),
+    );
+    store.setup("pw").unwrap();
+    store.set(&CredentialKey::new("x", PW), "X").unwrap();
+    bare_key_cleanup_in(Arc::new(store), "x");
+}
+
+#[test]
+fn a_kept_bare_key_is_cleaned_up_in_the_os_keychain_store() {
+    let _mock = crate::credential::os_keychain::test_support::install_mock();
+    let store = crate::credential::OsKeychainStore::new();
+    store.set(&CredentialKey::new("kc3650-x", PW), "X").unwrap();
+    bare_key_cleanup_in(Arc::new(store), "kc3650-x");
+}
+
 // ── file identity ───────────────────────────────────────────────────────────
 
 #[test]

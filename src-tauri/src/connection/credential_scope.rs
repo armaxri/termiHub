@@ -51,6 +51,13 @@
 //! connections ([`ScopeNotice`]). Migration is recorded per file id, so it
 //! runs once, never re-copies over a secret removed later, and works from the
 //! known connection ids alone (the OS keychain cannot list its entries).
+//!
+//! A bare key kept only because some configured file could not be read at that
+//! moment (missing, unmounted share, parse error) is recorded with the
+//! migration (#3650). Once every configured file is readable and migrated, a
+//! later pass deletes the recorded bare keys that neither the main store nor
+//! an agent uses ([`FileScopes::kept_bare_keys`]); a file removed from the
+//! configuration no longer holds them back.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -112,6 +119,10 @@ struct ScopeState {
     /// Notices not yet shown to the user.
     #[serde(default)]
     notices: Vec<ScopeNotice>,
+    /// Connection ids whose bare key a migration kept while some configured
+    /// file could not be read; deleted once nothing may need them (#3650).
+    #[serde(default)]
+    kept_bare: BTreeSet<String>,
 }
 
 /// This machine's file-id bindings and migration record (see the module docs).
@@ -237,14 +248,41 @@ impl FileScopes {
         self.lock().migrated.contains(file_id)
     }
 
-    /// Record that `file_id` was migrated, with its notice (if any).
-    pub fn complete_migration(&self, file_id: &str, notice: Option<ScopeNotice>) {
+    /// Record that `file_id` was migrated, with its notice (if any) and the
+    /// connection ids whose bare key it kept only because some configured file
+    /// could not be read (see [`Self::kept_bare_keys`]).
+    pub fn complete_migration(
+        &self,
+        file_id: &str,
+        notice: Option<ScopeNotice>,
+        kept_bare: &[String],
+    ) {
         let mut state = self.lock();
         state.migrated.insert(file_id.to_string());
         if let Some(notice) = notice {
             state.notices.push(notice);
         }
+        state.kept_bare.extend(kept_bare.iter().cloned());
         self.save(&mut state);
+    }
+
+    /// Connection ids whose bare key a migration kept while some configured
+    /// file could not be read, to delete once nothing may need them.
+    pub fn kept_bare_keys(&self) -> Vec<String> {
+        self.lock().kept_bare.iter().cloned().collect()
+    }
+
+    /// Stop tracking `ids` (their bare keys were deleted, or are owned by the
+    /// main store or an agent).
+    pub fn forget_kept_bare_keys(&self, ids: &[String]) {
+        let mut state = self.lock();
+        let before = state.kept_bare.len();
+        for id in ids {
+            state.kept_bare.remove(id);
+        }
+        if state.kept_bare.len() != before {
+            self.save(&mut state);
+        }
     }
 
     /// Take the notices not yet shown; they are removed from the state.
@@ -327,13 +365,23 @@ pub(crate) struct LegacyHolders {
     pub keep_bare_key: bool,
 }
 
+/// What [`migrate_legacy_keys`] did beyond copying.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct MigratedKeys {
+    /// Names of the connections whose copied secret was shared with another
+    /// connection.
+    pub shared: Vec<String>,
+    /// Ids of the copied connections whose bare key was kept.
+    pub kept_bare: Vec<String>,
+}
+
 /// Copy the pre-#3591 secrets of `connections` (one external file's) from the
 /// bare keys to the keys scoped by `file_scope` (see the module docs).
 ///
 /// A scoped key that already holds a secret is kept. All reads happen first,
 /// then every copy is written in one batch ([`CredentialStore::set_many`]);
-/// only then are bare keys nobody else needs deleted. Returns the names of the
-/// connections whose copied secret was shared with another connection.
+/// only then are bare keys nobody else needs deleted. Returns the connections
+/// whose copied secret was shared, and the ids whose bare key was kept.
 ///
 /// Errors — with nothing written or deleted — when a secret cannot be read or
 /// the copies cannot be written. A failed delete of a bare key is only logged.
@@ -342,7 +390,7 @@ pub(crate) fn migrate_legacy_keys(
     connections: &[SavedConnection],
     holders: impl Fn(&str) -> LegacyHolders,
     store: &dyn CredentialStore,
-) -> Result<Vec<String>> {
+) -> Result<MigratedKeys> {
     let mut writes: Vec<(CredentialKey, String)> = Vec::new();
     let mut copied: Vec<&SavedConnection> = Vec::new();
     for conn in connections {
@@ -370,7 +418,7 @@ pub(crate) fn migrate_legacy_keys(
         }
     }
     if writes.is_empty() {
-        return Ok(Vec::new());
+        return Ok(MigratedKeys::default());
     }
 
     let written = store.set_many(&writes);
@@ -379,7 +427,7 @@ pub(crate) fn migrate_legacy_keys(
     }
     written.context("Failed to write the file-scoped copies of saved credentials")?;
 
-    let mut shared = Vec::new();
+    let mut result = MigratedKeys::default();
     let mut done: HashSet<&str> = HashSet::new();
     for conn in copied {
         if !done.insert(conn.id.as_str()) {
@@ -387,9 +435,10 @@ pub(crate) fn migrate_legacy_keys(
         }
         let who = holders(&conn.id);
         if who.shared {
-            shared.push(conn.name.clone());
+            result.shared.push(conn.name.clone());
         }
         if who.keep_bare_key {
+            result.kept_bare.push(conn.id.clone());
             continue;
         }
         for cred_type in CredentialType::ALL {
@@ -403,7 +452,7 @@ pub(crate) fn migrate_legacy_keys(
             }
         }
     }
-    Ok(shared)
+    Ok(result)
 }
 
 #[cfg(test)]

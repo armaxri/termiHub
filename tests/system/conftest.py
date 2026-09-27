@@ -41,6 +41,7 @@ from termihub_harness import (
     Bridge,
     ComposeFixture,
     ContainerRuntimeUnavailable,
+    require_test_bridge_build,
     stage_remote_agent_binary,
 )
 
@@ -168,6 +169,8 @@ def app(request):
         instance = AppInstance(echo_logs=echo_logs)
     except FileNotFoundError as exc:
         pytest.skip(str(exc))
+    # A bridgeless build must fail loudly here, not time out 30s later (#3664).
+    require_test_bridge_build(instance.binary)
     if manual and not echo_logs:
         print(f"\n[manual] app logs are captured (not echoed) at: {instance.log_path}")
         print("[manual] tail them in another window: " f"tail -f {instance.log_path}\n")

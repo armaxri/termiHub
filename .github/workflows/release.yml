@@ -46,9 +46,39 @@ jobs:
           set -euo pipefail
           scripts/release-check.sh --versions-only --expect-version "${TAG_NAME#v}"
 
+  # Release gate (#3652, WA-CI-004, WA-CI-024): refuse to publish unless the full
+  # integration lanes passed on the EXACT commit being released. Per-PR CI is the
+  # slim lane (#3325) — no bridge integration lane, a path-filtered fixture lane,
+  # no agent Docker suites — so per-PR green alone must never ship. The script
+  # requires the newest "Release Candidate: Full Integration" run (every lane, no
+  # path filter) and the newest post-merge Code Quality push run on this sha to be
+  # green, and otherwise fails with the commands to fix it: dispatch
+  # release-candidate.yml on the tag, then re-run this workflow's failed jobs.
+  # Every other job depends on create-release, which depends on this job.
+  verify-integration:
+    name: Verify Integration Lanes
+    runs-on: ubuntu-latest
+    # Job-level permissions replace the workflow's `contents: write`: this job only
+    # reads workflow runs, so it gets `actions: read` and a read-only checkout.
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # node is preinstalled on the runner (as for emit-release-notes.mjs below).
+      - name: Require green full integration lanes on the release commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_REF_NAME: ${{ github.ref_name }}
+        run: node scripts/internal/release-integration-gate.mjs
+
   create-release:
     name: Create Release
-    needs: verify-version
+    needs: [verify-version, verify-integration]
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get_version.outputs.version }}

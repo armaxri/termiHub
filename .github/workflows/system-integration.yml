@@ -45,12 +45,23 @@ on:
         type: choice
         options: [both, develop, main]
         default: both
+  # Release gate (#3652): release-candidate.yml calls this lane to grade ONE exact
+  # commit (the release candidate), instead of the develop/main branch tips. The
+  # Release workflow then requires that candidate run to be green on the tag's sha.
+  workflow_call:
+    inputs:
+      ref:
+        description: "Full 40-char commit sha to grade"
+        type: string
+        required: true
 
 # Key concurrency on the trigger so the daily-develop and weekly-main runs (which
 # overlap on Wednesday) do not cancel each other, while a redundant re-fire of the
 # same trigger still cancels the older in-flight run.
+# A release-candidate call keys on its sha, so it neither cancels nor is
+# cancelled by the nightly/manual runs.
 concurrency:
-  group: system-integration-${{ github.event.schedule || github.event.inputs.branch || github.ref }}
+  group: system-integration-${{ inputs.ref && format('rc-{0}', inputs.ref) || github.event.schedule || github.event.inputs.branch || github.ref }}
   cancel-in-progress: true
 
 # Least-privilege token (CI-010). Every job checks out (its matrix branch),
@@ -63,7 +74,8 @@ permissions:
 jobs:
   # Resolve which branch(es) this run grades from the trigger: the daily cron →
   # develop, the Wednesday cron → main, a manual dispatch → the chosen input
-  # (default both). Emitted as a JSON array the matrix below expands over.
+  # (default both), a release-candidate call → its exact sha. Emitted as a JSON
+  # array the matrix below expands over (each entry is a checkout ref).
   setup:
     runs-on: ubuntu-latest
     outputs:
@@ -71,8 +83,21 @@ jobs:
     steps:
       - id: pick
         shell: bash
+        env:
+          # Set only when called via workflow_call (release-candidate.yml). In a
+          # called workflow github.event_name is the CALLER's event, so this must
+          # be checked first.
+          RC_REF: ${{ inputs.ref }}
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
+          if [ -n "${RC_REF}" ]; then
+            # Only a full sha is accepted: it is what the release gate keys on,
+            # and it keeps the JSON below injection-free.
+            if ! [[ "${RC_REF}" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::inputs.ref must be a full 40-char commit sha, got '${RC_REF}'"
+              exit 1
+            fi
+            echo "branches=[\"${RC_REF}\"]" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
             case "${{ github.event.schedule }}" in
               "5 5 * * 3") echo 'branches=["main"]' >> "$GITHUB_OUTPUT" ;;
               *) echo 'branches=["develop"]' >> "$GITHUB_OUTPUT" ;;
@@ -244,29 +269,19 @@ jobs:
         # debug bundle (target/debug/…) when no release build is present. Debug
         # builds far faster than release, which is what we want for a nightly.
         #
-        # CSP: the production CSP allows no ws:// in connect-src (#2059); the
-        # test bridge (--features test-bridge below) re-adds only the loopback
-        # ws:// its in-app client needs, at startup. There is no --config CSP
-        # overlay (#3628) — a merge patch would replace connect-src on every
-        # platform and drop that platform's IPC origin. Everything else in the
-        # CSP is identical to production, so this lane still exercises the
-        # shipped policy — including the CSP-violation assertion in test_csp.py.
+        # The build recipe lives in scripts/internal/build-system-test-app.sh,
+        # in the checked-out tree, NOT in this file (#3664). A scheduled run uses
+        # the workflow file on the default branch but checks out the graded
+        # branch, so a recipe copied into this file drifts from the code it
+        # builds. That happened: main's copy kept building develop without
+        # --features test-bridge / VITE_TEST_BRIDGE=1 (SEC-005), and every suite
+        # failed with "no app connected to the bridge" for two weeks. The script
+        # header explains each flag (test bridge, mock-remote-desktop, CSP).
         #
-        # --features mock-remote-desktop (DEAD-001): the mock graphical backend
-        # is NO LONGER in the desktop crate's `default` feature set — a
-        # protocol-less test/demo backend must not compile into a shipping
-        # release. It exists so the shared remote-desktop layer (#1680) is
-        # E2E-testable with no real VNC/RDP server, so the E2E test app must opt
-        # back into it here; without this flag the built app would not register
-        # the "Mock Remote Desktop" connection type the integration lane relies
-        # on for remote-desktop coverage.
-        #
-        # --features test-bridge + VITE_TEST_BRIDGE=1 (SEC-005): the WebSocket
-        # test bridge and its CSP relaxation are compiled out of release builds,
-        # and the frontend ignores the bridge activation signals in a production
-        # build unless VITE_TEST_BRIDGE=1. Both are required for the harness to
-        # drive the app over the bridge; keep in sync with scripts/test-system-py.sh.
-        run: VITE_TEST_BRIDGE=1 pnpm tauri build --debug --features "mock-remote-desktop test-bridge"
+        # shell: bash — the recipe is a bash script, and the Windows runner's
+        # default shell is pwsh (Git Bash runs it there).
+        shell: bash
+        run: scripts/internal/build-system-test-app.sh --debug
 
       - name: Bring up the Docker fixtures
         # Linux only. Pre-build and start the profile-less SSH/telnet fixtures so
@@ -521,12 +536,11 @@ jobs:
         run: cargo build --release -p termihub-agent
 
       - name: Build the desktop app (debug)
-        # Same debug bundle + mock-remote-desktop opt-in as
-        # the bulk lane (see its note; DEAD-001 dropped that backend from the
-        # crate default, so the E2E app must opt back in). --features test-bridge
-        # + VITE_TEST_BRIDGE=1 (SEC-005) opt the bridge back in — it is compiled
-        # out of release builds; see the bulk lane's note.
-        run: VITE_TEST_BRIDGE=1 pnpm tauri build --debug --features "mock-remote-desktop test-bridge"
+        # Same debug test-app build as the bulk lane: the shared recipe script
+        # (test bridge + mock-remote-desktop), under bash on every OS. See the
+        # bulk lane's note (#3664).
+        shell: bash
+        run: scripts/internal/build-system-test-app.sh --debug
 
       - name: Run the display-critical grades (Linux, headless via Xvfb)
         # dbus-run-session (#2646): same headless-portal hang fix as the bulk lane

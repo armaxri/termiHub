@@ -13,6 +13,7 @@ not leave orphaned shells behind.
 
 from __future__ import annotations
 
+import mmap
 import os
 import platform
 import shutil
@@ -76,9 +77,62 @@ def app_binary_path() -> Path:
             return path
     looked = ", ".join(str(p) for p in candidates)
     raise FileNotFoundError(
-        "built app not found — run `pnpm tauri build` (release) or "
-        f"`pnpm tauri build --debug` (faster). Looked in: {looked}"
+        "built app not found — run `scripts/internal/build-system-test-app.sh` "
+        f"(release) or add `--debug` (faster). Looked in: {looked}"
     )
+
+
+#: Marker bytes present in an app binary only when it was built with the
+#: ``test-bridge`` feature. Mirrors ``TEST_BRIDGE_BUILD_MARKER`` in
+#: ``src-tauri/src/utils/test_bridge.rs`` (``test_orchestrator.py`` checks the
+#: two match).
+TEST_BRIDGE_BUILD_MARKER = b"termihub-test-bridge-build-marker:v1"
+
+
+class MissingTestBridgeError(RuntimeError):
+    """The app binary was built without the test bridge, so it can never connect.
+
+    Deliberately NOT a ``FileNotFoundError``: the app fixtures turn that into a
+    *skip*, and a wrongly-built app must fail loudly instead (#3664).
+    """
+
+
+_bridge_build_checked: dict[Path, bool] = {}
+
+
+def binary_has_test_bridge(path: Path) -> bool:
+    """True if the binary at ``path`` contains :data:`TEST_BRIDGE_BUILD_MARKER`."""
+    with open(path, "rb") as handle:
+        try:
+            with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as data:
+                return data.find(TEST_BRIDGE_BUILD_MARKER) != -1
+        except ValueError:
+            # mmap rejects an empty file; an empty file has no marker either.
+            return False
+
+
+def require_test_bridge_build(path: Path) -> None:
+    """Fail fast if the app at ``path`` was built without the test bridge.
+
+    The bridge (``--features test-bridge``) is compiled out of normal builds
+    (SEC-005). An app built without it boots fine but never dials the bridge,
+    so every suite used to burn its full 30s connect budget and error with
+    "no app connected to the bridge". That hid a broken nightly build for two
+    weeks (#3664). Scanning the binary once per path makes the cause explicit
+    and costs well under a second.
+    """
+    resolved = path.resolve()
+    ok = _bridge_build_checked.get(resolved)
+    if ok is None:
+        ok = binary_has_test_bridge(resolved)
+        _bridge_build_checked[resolved] = ok
+    if not ok:
+        raise MissingTestBridgeError(
+            f"{path} was built without the test bridge, so it can never connect "
+            "to the harness. Rebuild it with "
+            "`scripts/internal/build-system-test-app.sh --debug` (or `--release`), "
+            "which sets `--features test-bridge` and `VITE_TEST_BRIDGE=1` (SEC-005)."
+        )
 
 
 def agent_binary_path() -> Path:
@@ -211,6 +265,11 @@ class AppInstance:
     @property
     def config_dir(self) -> Path:
         return self._config_dir
+
+    @property
+    def binary(self) -> Path:
+        """Path of the app binary this instance launches."""
+        return self._binary
 
     @property
     def log_path(self) -> Path:
