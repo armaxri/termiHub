@@ -43,7 +43,8 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::connection::{
-    ClipboardImage, CursorUpdate, FrameUpdate, GraphicalState, InputEvent, RemoteClipboardFile,
+    ClipboardImage, CursorUpdate, FrameUpdate, GraphicalState, InputEvent, MonitorRect,
+    RemoteClipboardFile,
 };
 
 use super::config::RdpConfig;
@@ -105,6 +106,12 @@ pub enum HostMessage {
     /// `CF_DIB`, and serves it as a DIB when the remote pastes. Dropped in
     /// view-only sessions. Appended (never reordered) for wire compatibility.
     SetClipboardImage(ClipboardImage),
+    /// Replace the session's monitor layout at runtime (#3696). The monitors are
+    /// an already-normalized [`MonitorLayout`](crate::connection::MonitorLayout)
+    /// in desktop coordinates (primary at the origin); the sidecar sends them as
+    /// one Display Control monitor-layout PDU. Appended (never reordered) for
+    /// wire compatibility.
+    SetMonitorLayout(Vec<MonitorRect>),
 }
 
 /// A message from the sidecar **to** the desktop (written to the sidecar's stdout).
@@ -309,6 +316,19 @@ mod tests {
             }
             other => panic!("expected Connect, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn monitor_layout_round_trips() {
+        let monitors = vec![
+            MonitorRect {
+                primary: true,
+                ..MonitorRect::new(0, 0, 1920, 1080)
+            },
+            MonitorRect::new(-1280, -56, 1280, 1024),
+        ];
+        let out = round_trip_host(HostMessage::SetMonitorLayout(monitors.clone())).await;
+        assert_eq!(out, HostMessage::SetMonitorLayout(monitors));
     }
 
     #[tokio::test]
