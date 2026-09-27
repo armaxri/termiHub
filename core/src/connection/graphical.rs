@@ -607,6 +607,11 @@ pub struct GraphicalCapabilities {
     pub supports_clipboard_image: bool,
     /// Whether the backend can run in view-only mode (input suppressed).
     pub view_only_capable: bool,
+    /// Multi-monitor support (#3696): whether the backend can open a session
+    /// spanning several monitors, and how many. Defaults to unsupported when
+    /// absent.
+    #[serde(default)]
+    pub multi_monitor: super::graphical_monitors::MultiMonitorCapability,
 }
 
 /// Metadata for one file the remote copied to its clipboard, surfaced to the
@@ -897,6 +902,24 @@ pub trait GraphicalBackend: Send + Sync {
     /// cannot force a keyframe return `Ok(())` (the default); the frontend then
     /// simply waits for the next natural frame.
     async fn request_full_frame(&self) -> Result<(), SessionError> {
+        Ok(())
+    }
+
+    /// The session's current monitor layout in **framebuffer** coordinates
+    /// (#3696): one rectangle per remote monitor, `(0, 0)` being the top-left
+    /// of the combined framebuffer. The frontend offers a per-monitor viewport
+    /// for each. Empty (the default) for a single-monitor session.
+    fn monitor_layout(&self) -> Vec<super::graphical_monitors::MonitorRect> {
+        Vec::new()
+    }
+
+    /// Replace the session's monitor layout at runtime (#3696) — e.g. after a
+    /// local display was added in the "all local displays" mode. Backends
+    /// without multi-monitor support keep their layout and return `Ok(())`.
+    async fn set_monitor_layout(
+        &self,
+        _layout: super::graphical_monitors::MonitorLayout,
+    ) -> Result<(), SessionError> {
         Ok(())
     }
 
@@ -1209,12 +1232,24 @@ mod tests {
             supports_clipboard: true,
             supports_clipboard_image: false,
             view_only_capable: true,
+            multi_monitor: super::super::graphical_monitors::MultiMonitorCapability::supported(),
         };
         let json = serde_json::to_value(&caps).unwrap();
         assert_eq!(json["supportsDynamicResize"], true);
         assert_eq!(json["viewOnlyCapable"], true);
-        let back: GraphicalCapabilities = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            json["multiMonitor"],
+            serde_json::json!({ "supported": true, "maxMonitors": 16 })
+        );
+        let back: GraphicalCapabilities = serde_json::from_value(json.clone()).unwrap();
         assert_eq!(back.auth_kinds.len(), 2);
+        assert_eq!(back, caps);
+
+        // Capabilities serialized before #3696 carry no multi-monitor field.
+        let mut legacy = json;
+        legacy.as_object_mut().unwrap().remove("multiMonitor");
+        let back: GraphicalCapabilities = serde_json::from_value(legacy).unwrap();
+        assert!(!back.multi_monitor.supported);
     }
 
     // ── Shared frame bounds: hostile frame streams (MOCK-011) ──────────

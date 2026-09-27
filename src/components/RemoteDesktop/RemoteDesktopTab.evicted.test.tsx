@@ -56,6 +56,8 @@ function fakeSession(state: GraphicalSessionState): RemoteDesktopSession {
     viewOnly: false,
     scaleMode: "fit",
     fixedResolution: false,
+    multiMonitor: false,
+    monitorLayoutVersion: 0,
     sendInput: vi.fn(),
     releaseInput: vi.fn(),
     resize: vi.fn(),

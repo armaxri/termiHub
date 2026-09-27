@@ -16,6 +16,7 @@
 pub mod auto_reconnect;
 pub mod clipboard_image;
 pub mod graphical;
+pub mod graphical_monitors;
 pub mod graphical_resolution;
 pub mod lifecycle;
 pub mod plugin_type_id;
@@ -38,6 +39,10 @@ pub use graphical::{
     FrameViolation, GraphicalBackend, GraphicalCapabilities, GraphicalState, InputEvent,
     RectViolation, RemoteClipboardFile, SanitizedFrame, SessionStateMachine, MAX_CURSOR_DIMENSION,
     MAX_FRAMEBUFFER_DIMENSION, MAX_RECONNECT_ATTEMPTS,
+};
+pub use graphical_monitors::{
+    monitor_fields, multi_monitor_requested, resolve_monitor_layout, MonitorLayout, MonitorMode,
+    MonitorRect, MultiMonitorCapability, MAX_MONITORS,
 };
 pub use graphical_resolution::{
     fixed_resolution_fields, fixed_resolution_requested, is_fixed_mode, normalize_fixed_size,

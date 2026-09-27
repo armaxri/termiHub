@@ -35,6 +35,8 @@ import {
   remoteDesktopConnect,
   remoteDesktopResize,
   remoteDesktopRequestFullFrame,
+  remoteDesktopMonitorLayout,
+  remoteDesktopSetMonitorLayout,
   remoteDesktopSendInput,
   remoteDesktopReleaseInput,
   remoteDesktopSendClipboard,
@@ -365,6 +367,32 @@ describe("api pass-through wrappers (#2975)", () => {
 
       expect(mockedInvoke).toHaveBeenCalledWith("remote_desktop_request_full_frame", {
         sessionId: "rd-1",
+      });
+    });
+
+    it("remoteDesktopMonitorLayout forwards the session id and returns the monitors", async () => {
+      const monitors = [
+        { x: 0, y: 0, width: 800, height: 600, primary: true, scale: 100 },
+        { x: 800, y: 0, width: 800, height: 600, primary: false, scale: 100 },
+      ];
+      mockedInvoke.mockResolvedValue(monitors);
+
+      await expect(remoteDesktopMonitorLayout("rd-1")).resolves.toEqual(monitors);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("remote_desktop_monitor_layout", {
+        sessionId: "rd-1",
+      });
+    });
+
+    it("remoteDesktopSetMonitorLayout forwards the session id and monitors", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+      const monitors = [{ x: 0, y: 0, width: 800, height: 600, primary: true, scale: 100 }];
+
+      await remoteDesktopSetMonitorLayout("rd-1", monitors);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("remote_desktop_set_monitor_layout", {
+        sessionId: "rd-1",
+        monitors,
       });
     });
 

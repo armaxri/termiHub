@@ -1,7 +1,17 @@
-import { Monitor, Keyboard, Clipboard, Scaling, Maximize, EyeOff, LogOut } from "lucide-react";
+import {
+  Monitor,
+  Keyboard,
+  Clipboard,
+  Scaling,
+  Maximize,
+  EyeOff,
+  LogOut,
+  Columns2,
+} from "lucide-react";
 import { Button } from "@/components/ui";
-import type { ScaleMode } from "@/types/remoteDesktop";
+import type { MonitorRect, ScaleMode } from "@/types/remoteDesktop";
 import { SCALE_MODE_LABELS } from "@/types/remoteDesktop";
+import { monitorLabel } from "./monitorLayout";
 
 interface RemoteDesktopToolbarProps {
   /** Host label (badge). */
@@ -17,12 +27,30 @@ interface RemoteDesktopToolbarProps {
   onCycleScaleMode: () => void;
   onToggleFullscreen: () => void;
   onDisconnect: () => void;
+  /**
+   * The session's monitors in framebuffer coordinates (#3696). With two or
+   * more, the viewport selector cycles "All monitors" → "Monitor 1" → … .
+   */
+  monitors?: MonitorRect[];
+  /** The shown monitor's index, or `null` for all monitors. */
+  viewport?: number | null;
+  /** Advance the viewport selector: all → monitor 1 → … → all. */
+  onCycleViewport?: () => void;
+}
+
+/** The viewport selector's current label. */
+function viewportTitle(monitors: MonitorRect[], viewport: number | null): string {
+  const current =
+    viewport === null || !monitors[viewport]
+      ? `All monitors (${monitors.length})`
+      : monitorLabel(monitors[viewport], viewport);
+  return `Showing: ${current}`;
 }
 
 /**
  * The one shared floating hover toolbar for graphical remote-desktop sessions
- * (#1680) — host badge, resolution, Ctrl+Alt+Del, clipboard, scaling,
- * fullscreen, disconnect. Identical for every protocol; auto-hides via CSS when
+ * (#1680) — host badge, resolution, Ctrl+Alt+Del, clipboard, scaling, the
+ * multi-monitor viewport selector (#3696), fullscreen, disconnect. Identical for every protocol; auto-hides via CSS when
  * the pointer leaves the surface. Icon actions compose from the shared `Button`
  * primitive (icon-only ghost).
  */
@@ -36,6 +64,9 @@ export function RemoteDesktopToolbar({
   onCycleScaleMode,
   onToggleFullscreen,
   onDisconnect,
+  monitors = [],
+  viewport = null,
+  onCycleViewport,
 }: RemoteDesktopToolbarProps) {
   return (
     <div className="rd-toolbar" data-testid="remote-desktop-toolbar">
@@ -77,6 +108,19 @@ export function RemoteDesktopToolbar({
         onClick={onCycleScaleMode}
         data-testid="remote-desktop-scale"
       />
+      {monitors.length >= 2 && onCycleViewport && (
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<Columns2 size={14} />}
+          title={viewportTitle(monitors, viewport)}
+          aria-label={viewportTitle(monitors, viewport)}
+          onClick={onCycleViewport}
+          data-testid="remote-desktop-monitor"
+        >
+          {viewport === null ? "All" : `${viewport + 1}/${monitors.length}`}
+        </Button>
+      )}
       <Button
         variant="ghost"
         size="sm"
