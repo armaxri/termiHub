@@ -223,7 +223,9 @@ pub fn platform_verifier() -> Box<dyn OsUserVerifier> {
     }
     #[cfg(all(not(test), target_os = "linux"))]
     {
-        Box::new(polkit::PolkitVerifier::new(polkit::dbus::DbusAuthority))
+        Box::new(polkit::PolkitVerifier::new(
+            polkit::dbus::DbusAuthority::new(),
+        ))
     }
     #[cfg(all(
         not(test),

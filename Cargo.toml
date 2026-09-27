@@ -8,6 +8,9 @@ members = [
     # Example plugins (#1994): kept as workspace members so `cargo build`/`clippy`
     # guarantee they keep compiling against the plugin-api ABI on every platform.
     "examples/plugins/echo-backend",
+    # Headless probe for the real polkit D-Bus path (#3553): compiles the shipped
+    # src-tauri polkit transport by path; driven by tests/docker/polkit/run.sh.
+    "tests/docker/polkit/probe",
 ]
 # The RDP sidecar (#1747) is a standalone build unit with its OWN Cargo.lock:
 # IronRDP's CredSSP crypto and russh pin incompatible RustCrypto pre-releases,

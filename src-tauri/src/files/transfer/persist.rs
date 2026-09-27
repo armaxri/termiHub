@@ -148,6 +148,70 @@ impl PersistedTransfer {
     }
 }
 
+/// Whether a folder paste copies or moves its folder (#3630).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FolderPasteOperation {
+    Copy,
+    Cut,
+}
+
+/// One side of a folder paste (#3630): the local disk (no `session_id`) or a
+/// session's file system. Metadata only — never credentials.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderPasteEndpoint {
+    /// The session the folder lives on, absent for the local disk. A session
+    /// id does not survive a restart; it only identifies the endpoint while
+    /// the app runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    /// The saved connection the session was opened from, when known — the
+    /// reference a Retry after a restart uses to find the reconnected session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_id: Option<String>,
+    /// A display name for the endpoint (its tab title), for the notice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// The folder's path on this endpoint.
+    pub path: String,
+}
+
+/// A folder paste driven file by file from the frontend (#3630), recorded
+/// before its first file starts and removed once its last file landed. A
+/// record that is still present at the next launch therefore marks a folder
+/// that may be only partly copied, so the user can be told and offered a
+/// Retry that continues the rest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedFolderPaste {
+    /// Opaque manifest id.
+    pub id: String,
+    /// Copy or move.
+    pub operation: FolderPasteOperation,
+    /// Where the folder is copied from.
+    pub source: FolderPasteEndpoint,
+    /// The folder path it is copied to.
+    pub destination: FolderPasteEndpoint,
+    /// Epoch-millis wall clock when the paste started.
+    #[serde(default)]
+    pub started_at_ms: u64,
+}
+
+impl PersistedFolderPaste {
+    /// Whether `other` pastes the same folder to the same place (labels
+    /// ignored), so a newer paste replaces an older, unfinished record.
+    pub fn same_target(&self, other: &Self) -> bool {
+        let same = |a: &FolderPasteEndpoint, b: &FolderPasteEndpoint| {
+            a.path == b.path && a.session_id == b.session_id && a.connection_id == b.connection_id
+        };
+        same(&self.source, &other.source) && same(&self.destination, &other.destination)
+    }
+}
+
+/// The most unfinished folder-paste records retained on disk (oldest dropped).
+pub const MAX_PERSISTED_FOLDER_PASTES: usize = 20;
+
 /// The most-recent transfer records retained on disk. A count-based cap kept
 /// deliberately simple and metadata-only; bounds the file if abandoned
 /// (never-resumed) rehydrated transfers accumulate across restarts.
@@ -160,6 +224,14 @@ pub struct PersistedTransferStore {
     pub version: String,
     /// All persisted transfers, oldest-first (append/upsert order).
     pub transfers: Vec<PersistedTransfer>,
+    /// Unfinished cross-session folder pastes (#3630). Absent in files written
+    /// before it existed.
+    #[serde(
+        default,
+        rename = "folderPastes",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub folder_pastes: Vec<PersistedFolderPaste>,
     /// Unknown top-level keys, captured verbatim so an older app preserves
     /// fields a newer version added rather than dropping them on save (PER-010).
     #[serde(flatten, default)]
@@ -171,6 +243,7 @@ impl Default for PersistedTransferStore {
         Self {
             version: "1".to_string(),
             transfers: Vec::new(),
+            folder_pastes: Vec::new(),
             extra: serde_json::Map::new(),
         }
     }
@@ -212,6 +285,37 @@ impl PersistedTransferStore {
             .filter(|t| t.status.is_incomplete())
             .map(PersistedTransfer::as_paused)
             .collect()
+    }
+
+    /// Drop every transfer whose local endpoint lies under `root` (a path
+    /// prefix, compared by component). Returns how many were dropped.
+    pub fn remove_local_paths_under(&mut self, root: &std::path::Path) -> usize {
+        let before = self.transfers.len();
+        self.transfers.retain(|t| {
+            !t.local_path
+                .as_deref()
+                .is_some_and(|p| std::path::Path::new(p).starts_with(root))
+        });
+        before - self.transfers.len()
+    }
+
+    /// Record an unfinished folder paste (#3630), replacing any older record of
+    /// the same folder and target, and keeping at most
+    /// [`MAX_PERSISTED_FOLDER_PASTES`] (oldest dropped).
+    pub fn add_folder_paste(&mut self, paste: PersistedFolderPaste) {
+        self.folder_pastes.retain(|p| !p.same_target(&paste));
+        self.folder_pastes.push(paste);
+        if self.folder_pastes.len() > MAX_PERSISTED_FOLDER_PASTES {
+            let overflow = self.folder_pastes.len() - MAX_PERSISTED_FOLDER_PASTES;
+            self.folder_pastes.drain(0..overflow);
+        }
+    }
+
+    /// Remove a folder-paste record by id. Returns whether one was removed.
+    pub fn remove_folder_paste(&mut self, id: &str) -> bool {
+        let before = self.folder_pastes.len();
+        self.folder_pastes.retain(|p| p.id != id);
+        self.folder_pastes.len() != before
     }
 
     /// Drop the oldest records until at most [`MAX_PERSISTED_TRANSFERS`] remain.
@@ -429,6 +533,93 @@ mod tests {
         ] {
             assert!(s.is_terminal() && !s.is_incomplete());
         }
+    }
+
+    fn paste(id: &str, src: &str, dest: &str) -> PersistedFolderPaste {
+        PersistedFolderPaste {
+            id: id.to_string(),
+            operation: FolderPasteOperation::Copy,
+            source: FolderPasteEndpoint {
+                session_id: None,
+                connection_id: None,
+                label: None,
+                path: src.to_string(),
+            },
+            destination: FolderPasteEndpoint {
+                session_id: Some("sess-b".to_string()),
+                connection_id: Some("conn-b".to_string()),
+                label: Some("web-1".to_string()),
+                path: dest.to_string(),
+            },
+            started_at_ms: 1,
+        }
+    }
+
+    /// Records under the drag-out staging root are dropped (#3629); others, and
+    /// a sibling that merely shares a name prefix, are kept.
+    #[test]
+    fn remove_local_paths_under_drops_only_records_inside_the_root() {
+        let root = std::path::Path::new("/cache/drag-out");
+        let mut store = PersistedTransferStore::default();
+        let mut staged = sample("staged", PersistedTransferStatus::Active);
+        staged.local_path = Some("/cache/drag-out/123-abc/file.bin".to_string());
+        let mut sibling = sample("sibling", PersistedTransferStatus::Active);
+        sibling.local_path = Some("/cache/drag-out-other/file.bin".to_string());
+        let mut remote_copy = sample("r2r", PersistedTransferStatus::Active);
+        remote_copy.local_path = None;
+        for t in [
+            staged,
+            sibling,
+            remote_copy,
+            sample("plain", PersistedTransferStatus::Paused),
+        ] {
+            store.upsert(t);
+        }
+
+        assert_eq!(store.remove_local_paths_under(root), 1);
+        let ids: Vec<&str> = store
+            .transfers
+            .iter()
+            .map(|t| t.transfer_id.as_str())
+            .collect();
+        assert_eq!(ids, ["sibling", "r2r", "plain"]);
+    }
+
+    #[test]
+    fn folder_pastes_round_trip_dedupe_and_cap() {
+        let mut store = PersistedTransferStore::default();
+        store.add_folder_paste(paste("p1", "/src/a", "/dst/a"));
+        store.add_folder_paste(paste("p2", "/src/b", "/dst/b"));
+        // The same folder pasted again replaces the older, unfinished record.
+        store.add_folder_paste(paste("p3", "/src/a", "/dst/a"));
+        let ids: Vec<&str> = store.folder_pastes.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["p2", "p3"]);
+
+        let json = serde_json::to_string(&store).unwrap();
+        assert!(json.contains("\"folderPastes\""));
+        assert!(json.contains("\"operation\":\"copy\""));
+        let parsed: PersistedTransferStore = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.folder_pastes, store.folder_pastes);
+
+        assert!(store.remove_folder_paste("p2"));
+        assert!(!store.remove_folder_paste("p2"));
+
+        for i in 0..(MAX_PERSISTED_FOLDER_PASTES + 3) {
+            store.add_folder_paste(paste(&format!("x{i}"), &format!("/s/{i}"), "/d"));
+        }
+        assert_eq!(store.folder_pastes.len(), MAX_PERSISTED_FOLDER_PASTES);
+        assert_eq!(store.folder_pastes[0].id, "x3", "the oldest are dropped");
+    }
+
+    /// A store written before folder pastes existed still loads, and an empty
+    /// list is not written (so older files stay byte-compatible).
+    #[test]
+    fn store_without_folder_pastes_loads_and_empty_list_is_omitted() {
+        let parsed: PersistedTransferStore =
+            serde_json::from_str(r#"{"version":"1","transfers":[]}"#).unwrap();
+        assert!(parsed.folder_pastes.is_empty());
+        let json = serde_json::to_string(&parsed).unwrap();
+        assert!(!json.contains("folderPastes"));
     }
 
     #[test]

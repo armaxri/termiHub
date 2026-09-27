@@ -17,7 +17,8 @@ use anyhow::{Context, Result};
 use tauri::AppHandle;
 
 use super::persist::{
-    PersistedDockerTarget, PersistedTransfer, PersistedTransferStatus, PersistedTransferStore,
+    FolderPasteEndpoint, FolderPasteOperation, PersistedDockerTarget, PersistedFolderPaste,
+    PersistedTransfer, PersistedTransferStatus, PersistedTransferStore,
 };
 use super::persist_storage::TransferPersistenceStorage;
 use super::TransferDirection;
@@ -46,6 +47,9 @@ pub struct TransferPersistenceManager {
     /// non-blocking; the writer coalesces bursts into a single atomic write.
     writer: Sender<PersistedTransferStore>,
     recovery_warnings: Mutex<Vec<RecoveryWarning>>,
+    /// Ids of the folder pastes that were still recorded when this process
+    /// started (#3630): each is a paste a previous run never finished.
+    interrupted_pastes: Mutex<Vec<String>>,
 }
 
 impl TransferPersistenceManager {
@@ -88,10 +92,12 @@ impl TransferPersistenceManager {
             tracing::warn!(error = %e, "could not start transfer-persist writer; queue persistence disabled");
         }
 
+        let interrupted = data.folder_pastes.iter().map(|p| p.id.clone()).collect();
         Self {
             store: Mutex::new(data),
             writer,
             recovery_warnings: Mutex::new(warnings),
+            interrupted_pastes: Mutex::new(interrupted),
         }
     }
 
@@ -277,6 +283,82 @@ impl TransferPersistenceManager {
     /// from here.
     pub fn get_record(&self, transfer_id: &str) -> Option<PersistedTransfer> {
         self.lock().get(transfer_id).cloned()
+    }
+
+    /// Drop every persisted transfer whose local endpoint lies under `root`
+    /// (#3629). Called at startup with the drag-out staging root: a staging
+    /// download's directory is deleted at quit, so its record could only
+    /// rehydrate as a paused row that can never be resumed. Covers records
+    /// written before staging downloads stopped being persisted. Returns how
+    /// many were dropped.
+    pub fn prune_local_paths_under(&self, root: &std::path::Path) -> usize {
+        let mut store = self.lock();
+        let removed = store.remove_local_paths_under(root);
+        if removed > 0 {
+            self.schedule_write(&store);
+        }
+        removed
+    }
+
+    /// Record a folder paste that is about to be driven file by file (#3630)
+    /// and return its manifest id. Removed by [`Self::end_folder_paste`] once
+    /// the folder fully landed; still present at the next launch, it is
+    /// reported by [`Self::take_interrupted_folder_pastes`].
+    pub fn begin_folder_paste(
+        &self,
+        operation: FolderPasteOperation,
+        source: FolderPasteEndpoint,
+        destination: FolderPasteEndpoint,
+    ) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        let mut store = self.lock();
+        store.add_folder_paste(PersistedFolderPaste {
+            id: id.clone(),
+            operation,
+            source,
+            destination,
+            started_at_ms: now_ms(),
+        });
+        self.schedule_write(&store);
+        id
+    }
+
+    /// Remove a folder-paste record (the folder fully landed, or the user
+    /// dismissed it). Idempotent.
+    pub fn end_folder_paste(&self, id: &str) {
+        let mut store = self.lock();
+        if store.remove_folder_paste(id) {
+            self.schedule_write(&store);
+        }
+    }
+
+    /// Take the folder pastes a previous run left unfinished (#3630): each is
+    /// returned once and its record removed, so a notice is shown once and a
+    /// Retry records a fresh paste of its own. Pastes started by this process
+    /// are never reported here.
+    pub fn take_interrupted_folder_pastes(&self) -> Vec<PersistedFolderPaste> {
+        let ids: Vec<String> = self
+            .interrupted_pastes
+            .lock()
+            .map(|mut ids| std::mem::take(&mut *ids))
+            .unwrap_or_default();
+        if ids.is_empty() {
+            return Vec::new();
+        }
+        let mut store = self.lock();
+        let taken: Vec<PersistedFolderPaste> = store
+            .folder_pastes
+            .iter()
+            .filter(|p| ids.contains(&p.id))
+            .cloned()
+            .collect();
+        for paste in &taken {
+            store.remove_folder_paste(&paste.id);
+        }
+        if !taken.is_empty() {
+            self.schedule_write(&store);
+        }
+        taken
     }
 
     /// Queue the current store snapshot for the background writer (non-blocking,
@@ -520,6 +602,99 @@ mod tests {
         );
         assert!(m.take_record("t1").is_none(), "a second take gets nothing");
         assert!(m.load_incomplete_as_paused().is_empty());
+    }
+
+    /// A drag-out staging download recorded by an older build is pruned at
+    /// startup (#3629); an ordinary download still rehydrates.
+    #[test]
+    fn prune_local_paths_under_drops_staging_records_only() {
+        let (_d, m) = mgr();
+        register(&m, "plain");
+        m.record_registration(
+            "staged",
+            "sess-a",
+            TransferDirection::Download,
+            "data.csv",
+            "/remote/data.csv",
+            Some("/cache/drag-out/42-uuid/data.csv".to_string()),
+            2048,
+        );
+        assert_eq!(
+            m.prune_local_paths_under(std::path::Path::new("/cache/drag-out")),
+            1
+        );
+        let ids: Vec<String> = m
+            .load_incomplete_as_paused()
+            .into_iter()
+            .map(|t| t.transfer_id)
+            .collect();
+        assert_eq!(ids, ["plain"]);
+        assert_eq!(
+            m.prune_local_paths_under(std::path::Path::new("/cache/drag-out")),
+            0
+        );
+    }
+
+    fn endpoint(session: Option<&str>, path: &str) -> FolderPasteEndpoint {
+        FolderPasteEndpoint {
+            session_id: session.map(str::to_string),
+            connection_id: None,
+            label: None,
+            path: path.to_string(),
+        }
+    }
+
+    /// Wait until the background writer has flushed `transfers.json`
+    /// containing `needle` (the writer is asynchronous).
+    fn wait_for_file(dir: &std::path::Path, needle: &str, present: bool) {
+        let path = dir.join("transfers.json");
+        for _ in 0..200 {
+            let has = std::fs::read_to_string(&path)
+                .map(|s| s.contains(needle))
+                .unwrap_or(false);
+            if has == present {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("transfers.json never reached the expected state for {needle}");
+    }
+
+    /// A folder paste that never ended is reported once after a "restart"
+    /// (#3630); one that ended is not, and a paste of this process never is.
+    #[test]
+    fn unfinished_folder_paste_is_reported_once_after_a_restart() {
+        let dir = TempDir::new().unwrap();
+        let (unfinished, finished) = {
+            let m = TransferPersistenceManager::new_test(dir.path());
+            let unfinished = m.begin_folder_paste(
+                FolderPasteOperation::Copy,
+                endpoint(None, "/home/u/photos"),
+                endpoint(Some("sess-b"), "/srv/photos"),
+            );
+            let finished = m.begin_folder_paste(
+                FolderPasteOperation::Cut,
+                endpoint(Some("sess-a"), "/a"),
+                endpoint(Some("sess-b"), "/b"),
+            );
+            m.end_folder_paste(&finished);
+            assert!(
+                m.take_interrupted_folder_pastes().is_empty(),
+                "this process's own pastes are not interrupted"
+            );
+            (unfinished, finished)
+        };
+        wait_for_file(dir.path(), &unfinished, true);
+        wait_for_file(dir.path(), &finished, false);
+
+        let relaunched = TransferPersistenceManager::new_test(dir.path());
+        let taken = relaunched.take_interrupted_folder_pastes();
+        assert_eq!(taken.len(), 1);
+        assert_eq!(taken[0].id, unfinished);
+        assert_eq!(taken[0].operation, FolderPasteOperation::Copy);
+        assert_eq!(taken[0].destination.path, "/srv/photos");
+        assert!(relaunched.take_interrupted_folder_pastes().is_empty());
+        assert!(relaunched.snapshot().folder_pastes.is_empty());
     }
 
     #[test]

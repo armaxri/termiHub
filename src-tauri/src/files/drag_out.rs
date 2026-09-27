@@ -366,6 +366,17 @@ impl DragOutStaging {
         self.owned.lock().map(|o| o.contains(dir)).unwrap_or(false)
     }
 
+    /// Whether `path` lies inside (or is) a staging directory this process
+    /// created. A download into one is a drag-out staging download, which is
+    /// never persisted to the transfer queue: its directory is deleted at quit,
+    /// so a rehydrated row could never be resumed (#3629).
+    pub fn contains(&self, path: &Path) -> bool {
+        self.owned
+            .lock()
+            .map(|o| o.iter().any(|dir| path.starts_with(dir)))
+            .unwrap_or(false)
+    }
+
     /// Delete one staging directory this process created. Unknown paths are
     /// refused so the command can never be used to delete arbitrary files.
     pub fn discard(&self, dir: &Path) -> Result<(), String> {
@@ -398,6 +409,18 @@ impl DragOutStaging {
             }
         }
     }
+}
+
+/// Whether a session transfer is a drag-out staging download (#3629): a
+/// download whose local destination lies in a staging directory this process
+/// created. Such a transfer is kept out of the persisted queue — its directory
+/// is deleted at quit, so after a relaunch the row could never be resumed.
+pub fn is_staging_download(
+    staging: Option<&DragOutStaging>,
+    is_download: bool,
+    local_path: &str,
+) -> bool {
+    is_download && staging.is_some_and(|s| s.contains(Path::new(local_path)))
 }
 
 /// One dragged row of a byte-based session (Docker / remote agent, #3491), as
@@ -748,6 +771,40 @@ mod tests {
         assert!(!staging.owns(&dir));
         // A second discard is refused: the dir is no longer owned.
         assert!(staging.discard(&dir).is_err());
+    }
+
+    #[test]
+    fn contains_matches_only_paths_inside_owned_dirs() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let staging = DragOutStaging::new();
+        let out = staging
+            .create(tmp.path(), &["a.txt".to_string()])
+            .expect("create");
+        let dir = PathBuf::from(&out.dir);
+        assert!(staging.contains(Path::new(&out.paths[0])));
+        assert!(staging.contains(&dir.join("sub/deep.bin")));
+        assert!(!staging.contains(&tmp.path().join("elsewhere.txt")));
+        // A sibling whose name merely extends the dir's name is not inside it.
+        let sibling = PathBuf::from(format!("{}-other", out.dir));
+        assert!(!staging.contains(&sibling.join("a.txt")));
+        staging.discard(&dir).expect("discard");
+        assert!(!staging.contains(Path::new(&out.paths[0])));
+    }
+
+    #[test]
+    fn only_downloads_into_owned_staging_are_staging_downloads() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let staging = DragOutStaging::new();
+        let out = staging
+            .create(tmp.path(), &["a.txt".to_string()])
+            .expect("create");
+        let staged = out.paths[0].as_str();
+        let ordinary = tmp.path().join("a.txt");
+        let ordinary = ordinary.to_string_lossy();
+        assert!(is_staging_download(Some(&staging), true, staged));
+        assert!(!is_staging_download(Some(&staging), true, &ordinary));
+        assert!(!is_staging_download(Some(&staging), false, staged));
+        assert!(!is_staging_download(None, true, staged));
     }
 
     #[test]
