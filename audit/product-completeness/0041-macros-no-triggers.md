@@ -10,7 +10,7 @@ evidence:
   - src-tauri/src/macros/config.rs:22
   - src-tauri/src/workflows/config.rs:74
 status: partial
-resolution: "#3181 — workflow triggers framework DONE (manual/on-connect/hotkey via workflowTriggers.ts, wired to keyboard + session-open). Remaining = taxonomy breadth (on-disconnect/on-output-match/on-schedule) + a maintainer trigger-taxonomy decision"
+resolution: "#3181, #3749 — manual/on-connect/hotkey triggers + Schedules feature; 0.1 trigger scope documented in README (#3749). Remaining: on-disconnect / on-output-match triggers not built"
 ---
 
 ## What

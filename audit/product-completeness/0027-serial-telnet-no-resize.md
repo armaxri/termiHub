@@ -9,8 +9,8 @@ subsystem: core/backends/serial, core/backends/telnet
 evidence:
   - core/src/backends/serial.rs:337
   - core/src/backends/telnet.rs:249
-status: partial
-resolution: "#3398 — telnet NAWS negotiation + resize done; serial half not yet verified/addressed"
+status: fixed
+resolution: "#3398, #3749 — telnet NAWS resize (#3398); serial has no in-band size channel - resize() is a no-op reporting resize:false, documented with stty workaround in README (#3749)"
 ---
 
 ## What

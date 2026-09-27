@@ -11,7 +11,7 @@ evidence:
   - src-tauri/src/session/registry.rs:14
   - src-tauri/src/session/remote_proxy.rs:70
 status: partial
-resolution: "#3243 — agent connection-registry parity: FTP now registered on the agent (feature-gated, mirrors desktop) so agent-hosted FTP connections are possible (#3243). Deferred: mock-remote-desktop + VNC + RDP are GRAPHICAL and the agent has no graphical/frame session transport (SessionManager forwards only byte output, never touches graphical()) — registering them would yield non-functional sessions. Graphical-over-agent tracked #3241; agent file-browsing for non-local sessions tracked #3242"
+resolution: "#3243, #3749 — FTP on agent (#3243); desktop-vs-agent per-type support matrix documented in README (#3749). Remaining: graphical (VNC/RDP) over agent #3241; plugin types not loaded by agent"
 ---
 
 ## What
