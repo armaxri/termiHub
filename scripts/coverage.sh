@@ -14,6 +14,14 @@
 # does not fail on a low value. The intended follow-up is to capture a baseline
 # from the first CI run, then add a fail-on-decrease ratchet (see coverage.yml).
 #
+# Nightly integration coverage (TOOL-005, #3656): when TERMIHUB_INTEGRATION_LCOV
+# names an lcov file from the nightly integration-fixtures lane, it is merged
+# into the unified report per source file (lcov-merge.mjs), so paths only the
+# live-fixture suites reach count as covered. TERMIHUB_INTEGRATION_STALE names an
+# optional list of files changed since that nightly commit; their integration
+# records are skipped. CI's coverage.yml fetches both; locally they are unset
+# and the report is unit-only, as before.
+#
 # Flags:
 #   --dry-run   Resolve everything and run the merge/summary logic against any
 #               existing lcov, but SKIP the heavy vitest/llvm-cov runs. Used to
@@ -33,8 +41,12 @@ done
 OUT_DIR="coverage-unified"
 FRONTEND_LCOV="coverage/lcov.info"
 RUST_LCOV="$OUT_DIR/rust.lcov"
+UNIT_LCOV="$OUT_DIR/unit.lcov"
 MERGED_LCOV="$OUT_DIR/merged.lcov"
 SUMMARY_FILE="$OUT_DIR/summary.txt"
+GAP_REPORT="$OUT_DIR/integration-gap.md"
+INTEGRATION_LCOV="${TERMIHUB_INTEGRATION_LCOV:-}"
+INTEGRATION_STALE="${TERMIHUB_INTEGRATION_STALE:-}"
 
 mkdir -p "$OUT_DIR"
 
@@ -67,23 +79,24 @@ fi
 #    dependency on the `lcov`/`genhtml` binaries, which are not installed on all
 #    dev machines or CI runners).
 echo "=== Merging lcov + computing unified number ==="
-: > "$MERGED_LCOV"
+: > "$UNIT_LCOV"
 FRONTEND_PRESENT=0
 RUST_PRESENT=0
+INTEGRATION_PRESENT=0
 if [ -f "$FRONTEND_LCOV" ]; then
-    cat "$FRONTEND_LCOV" >> "$MERGED_LCOV"
+    cat "$FRONTEND_LCOV" >> "$UNIT_LCOV"
     FRONTEND_PRESENT=1
 else
     echo "  note: no frontend lcov at $FRONTEND_LCOV"
 fi
 if [ -f "$RUST_LCOV" ]; then
-    cat "$RUST_LCOV" >> "$MERGED_LCOV"
+    cat "$RUST_LCOV" >> "$UNIT_LCOV"
     RUST_PRESENT=1
 else
     echo "  note: no Rust lcov at $RUST_LCOV"
 fi
 
-if [ ! -s "$MERGED_LCOV" ]; then
+if [ ! -s "$UNIT_LCOV" ]; then
     echo "  no coverage data to summarize (both lcov files missing)." >&2
     if [ "$DRY_RUN" -eq 1 ]; then
         echo "  [dry-run] nothing to summarize — that is expected without a prior run."
@@ -92,13 +105,36 @@ if [ ! -s "$MERGED_LCOV" ]; then
     exit 1
 fi
 
+# The frontend and Rust unit reports never share a source file, so a plain
+# concatenation is already a valid merged tracefile. The integration lcov DOES
+# share files with the Rust report, so it is merged per file instead (hits
+# summed, the unit report owning the denominator, stale files skipped).
+rm -f "$GAP_REPORT"
+if [ -n "$INTEGRATION_LCOV" ] && [ -s "$INTEGRATION_LCOV" ]; then
+    echo "--- unit tests only ---"
+    node scripts/internal/lcov-summary.mjs "$UNIT_LCOV"
+    echo "--- + nightly integration lane ($INTEGRATION_LCOV) ---"
+    node scripts/internal/lcov-merge.mjs --base "$UNIT_LCOV" --overlay "$INTEGRATION_LCOV" \
+        --skip-list "$INTEGRATION_STALE" --root "$PWD" \
+        --out "$MERGED_LCOV" --report "$GAP_REPORT"
+    INTEGRATION_PRESENT=1
+else
+    if [ -n "$INTEGRATION_LCOV" ]; then
+        echo "  note: no integration lcov at $INTEGRATION_LCOV"
+    fi
+    cp "$UNIT_LCOV" "$MERGED_LCOV"
+fi
+
 # Sum lines/functions/branches (LF/LH, FNF/FNH, BRF/BRH) across every record in
 # the merged tracefile and print percentages. A shared Node summarizer (Node is
 # already a repo dependency) keeps this identical to coverage.cmd.
 node scripts/internal/lcov-summary.mjs "$MERGED_LCOV" | tee "$SUMMARY_FILE"
 
 echo ""
-echo "Sources merged: frontend=$FRONTEND_PRESENT rust=$RUST_PRESENT"
+echo "Sources merged: frontend=$FRONTEND_PRESENT rust=$RUST_PRESENT integration=$INTEGRATION_PRESENT"
 echo "Merged lcov:    $MERGED_LCOV"
 echo "Summary:        $SUMMARY_FILE"
+if [ "$INTEGRATION_PRESENT" -eq 1 ]; then
+    echo "Gap report:     $GAP_REPORT"
+fi
 echo "HTML reports:   coverage/ (frontend) — run 'cargo llvm-cov --html' for Rust HTML"
