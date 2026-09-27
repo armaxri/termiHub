@@ -36,10 +36,6 @@ use tracing::info;
 /// `agent.list_connections` RPC will serialize — the same time type the agent's
 /// session snapshots already use (`created_at`).
 ///
-/// The metadata fields are the deliberate public shape for the upcoming
-/// `agent.list_connections` RPC (#1349); until it lands they are read only by
-/// tests, hence the `dead_code` allow in non-test builds.
-#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone)]
 pub struct ConnectedClient {
     /// Agent-assigned unique id for this client connection.
@@ -118,28 +114,26 @@ impl ConnectionRegistry {
     }
 
     /// Look up a single connected client by id.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn get(&self, client_id: &str) -> Option<ConnectedClient> {
         let guard = self.clients.lock().unwrap_or_else(|e| e.into_inner());
         guard.get(client_id).cloned()
     }
 
     /// Snapshot of every currently connected client.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn list(&self) -> Vec<ConnectedClient> {
         let guard = self.clients.lock().unwrap_or_else(|e| e.into_inner());
         guard.values().cloned().collect()
     }
 
-    /// Number of currently connected clients.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Number of currently connected clients (test-only observer).
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         let guard = self.clients.lock().unwrap_or_else(|e| e.into_inner());
         guard.len()
     }
 
-    /// Whether no clients are currently connected.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Whether no clients are currently connected (test-only observer).
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
