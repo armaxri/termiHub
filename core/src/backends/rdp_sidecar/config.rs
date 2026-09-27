@@ -14,6 +14,10 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::connection::graphical_monitors::{
+    deserialize_monitor_count, deserialize_monitor_rects, monitor_fields, resolve_monitor_layout,
+    MonitorLayout, MonitorMode, MonitorRect, MONITORS_SINGLE,
+};
 use crate::connection::graphical_resolution::{
     DEFAULT_FIXED_HEIGHT, DEFAULT_FIXED_WIDTH, RESOLUTION_MODE_DYNAMIC,
 };
@@ -142,6 +146,16 @@ pub struct RdpConfig {
     /// capability, not a user preference, so it is not part of
     /// [`rdp_settings_schema`].
     pub clipboard_delayed_render: bool,
+    /// Monitor mode select (`"single" | "all" | "custom"`, #3696). Anything
+    /// else — including the empty value of a pre-#3696 config — is single.
+    pub monitors: String,
+    /// Monitor count for the custom mode (2..=16).
+    #[serde(deserialize_with = "deserialize_monitor_count")]
+    pub monitor_count: Option<u8>,
+    /// The concrete layout stamped by the frontend at connect time from the
+    /// local display geometry (#3696). Not part of the editor schema.
+    #[serde(deserialize_with = "deserialize_monitor_rects")]
+    pub monitor_layout: Vec<MonitorRect>,
 }
 
 impl Default for RdpConfig {
@@ -166,6 +180,9 @@ impl Default for RdpConfig {
             clipboard_file_transfer: false,
             paste_local_files: false,
             clipboard_delayed_render: false,
+            monitors: MONITORS_SINGLE.to_string(),
+            monitor_count: None,
+            monitor_layout: Vec::new(),
         }
     }
 }
@@ -225,8 +242,29 @@ impl RdpConfig {
     /// otherwise the dynamic default (the canvas then drives the size through
     /// "Match Window" resizes). Stale `width` / `height` values left in a config
     /// switched back to dynamic are deliberately ignored.
+    ///
+    /// A multi-monitor session (#3696) requests the bounding box of its layout.
     pub fn desktop_size(&self) -> (u16, u16) {
+        match self.multi_monitor_layout() {
+            Some(layout) => layout.desktop_size(),
+            None => self.single_monitor_size(),
+        }
+    }
+
+    /// The fixed size, or the dynamic default, ignoring any monitor layout.
+    fn single_monitor_size(&self) -> (u16, u16) {
         self.fixed_size().unwrap_or((DEFAULT_WIDTH, DEFAULT_HEIGHT))
+    }
+
+    /// The multi-monitor layout this connection asks for, or `None` for a
+    /// single-monitor session (#3696). The custom mode without a stamped layout
+    /// uses the single-monitor size for every monitor.
+    pub fn multi_monitor_layout(&self) -> Option<MonitorLayout> {
+        resolve_monitor_layout(
+            MonitorMode::from_settings(&self.monitors, self.monitor_count),
+            &self.monitor_layout,
+            self.single_monitor_size(),
+        )
     }
 
     /// The initial desktop width to request (see [`Self::desktop_size`]).
@@ -394,6 +432,7 @@ pub fn rdp_settings_schema() -> SettingsSchema {
     if let Some(display) = groups.iter_mut().find(|g| g.key == "display") {
         display.fields.extend(fixed_resolution_fields());
         display.fields.push(color_depth_field());
+        display.fields.extend(monitor_fields());
     }
 
     groups.push(SettingsGroup {
@@ -679,7 +718,9 @@ mod tests {
                 "resolutionMode",
                 "width",
                 "height",
-                "colorDepth"
+                "colorDepth",
+                "monitors",
+                "monitorCount"
             ]
         );
         let depth = display
@@ -700,6 +741,64 @@ mod tests {
             };
             assert_eq!(cfg.color_depth_bpp().to_string(), opt.value);
         }
+    }
+
+    #[test]
+    fn single_monitor_is_the_default_and_ignores_a_stale_layout() {
+        let cfg: RdpConfig = serde_json::from_value(serde_json::json!({
+            "host": "h",
+            "monitorLayout": [
+                { "x": 0, "y": 0, "width": 1024, "height": 768, "primary": true },
+                { "x": 1024, "y": 0, "width": 1024, "height": 768 }
+            ]
+        }))
+        .unwrap();
+        assert_eq!(cfg.monitors, "single");
+        assert!(cfg.multi_monitor_layout().is_none());
+        assert_eq!(cfg.desktop_size(), (DEFAULT_WIDTH, DEFAULT_HEIGHT));
+    }
+
+    #[test]
+    fn all_displays_mode_requests_the_layout_bounding_box() {
+        let cfg: RdpConfig = serde_json::from_value(serde_json::json!({
+            "host": "h",
+            "monitors": "all",
+            "monitorLayout": [
+                { "x": 0, "y": 0, "width": 1024, "height": 768, "primary": true },
+                { "x": 1024, "y": 0, "width": 1024, "height": 768 }
+            ]
+        }))
+        .unwrap();
+        let layout = cfg.multi_monitor_layout().expect("two monitors");
+        assert_eq!(layout.monitors().len(), 2);
+        assert_eq!(cfg.desktop_size(), (2048, 768));
+    }
+
+    #[test]
+    fn custom_mode_without_a_layout_repeats_the_single_size() {
+        let cfg: RdpConfig = serde_json::from_value(serde_json::json!({
+            "host": "h",
+            "monitors": "custom",
+            "monitorCount": 3,
+            "resolutionMode": "fixed",
+            "width": 1024,
+            "height": 768
+        }))
+        .unwrap();
+        assert_eq!(cfg.desktop_size(), (3072, 768));
+    }
+
+    #[test]
+    fn a_malformed_monitor_layout_never_fails_the_connect() {
+        let cfg: RdpConfig = serde_json::from_value(serde_json::json!({
+            "host": "h",
+            "monitors": "all",
+            "monitorCount": "lots",
+            "monitorLayout": "garbage"
+        }))
+        .unwrap();
+        assert!(cfg.monitor_layout.is_empty());
+        assert!(cfg.multi_monitor_layout().is_none());
     }
 
     #[test]
@@ -756,9 +855,25 @@ mod tests {
             clipboard_file_transfer: true,
             paste_local_files: true,
             clipboard_delayed_render: true,
+            monitors: "all".to_string(),
+            monitor_count: Some(3),
+            monitor_layout: vec![
+                MonitorRect {
+                    primary: true,
+                    ..MonitorRect::new(0, 0, 1024, 768)
+                },
+                MonitorRect::new(-1280, 0, 1280, 1024),
+            ],
         };
+        // The sidecar IPC is MessagePack with named fields (#3696 layout included).
+        let packed = rmp_serde::to_vec_named(&cfg).unwrap();
+        let unpacked: RdpConfig = rmp_serde::from_slice(&packed).unwrap();
+        assert_eq!(unpacked, cfg);
         let json = serde_json::to_value(&cfg).unwrap();
         let back: RdpConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(back.monitor_layout, cfg.monitor_layout);
+        assert_eq!(back.monitor_count, Some(3));
+        assert_eq!(back.desktop_size(), (2304, 1024));
         assert_eq!(back.host, "host");
         assert_eq!(back.port, 3390);
         assert_eq!(back.password, "secret");

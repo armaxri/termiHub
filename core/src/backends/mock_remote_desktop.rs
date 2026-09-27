@@ -380,6 +380,7 @@ impl GraphicalBackend for MockRemoteDesktop {
             supports_clipboard: true,
             supports_clipboard_image: true,
             view_only_capable: true,
+            multi_monitor: crate::connection::MultiMonitorCapability::unsupported(),
         }
     }
 
