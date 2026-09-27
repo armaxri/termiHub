@@ -447,6 +447,40 @@ export interface SeverAgentTransportCommand {
   agentId: string;
 }
 
+/**
+ * Request that **this** window close, exactly as the OS title-bar close button
+ * would (multi-window, TIN-014 / #3720).
+ *
+ * A native window's close has no DOM control, so the multi-window journeys
+ * (close-with-live-tabs decision dialog, per-OS quit policy — #1903) cannot be
+ * reached through the DOM verbs. This verb calls Tauri's `getCurrentWindow().close()`,
+ * which emits the same `close-requested` event a real close does — so the app's
+ * own interceptor (`prepareWindowClose`) decides whether to prompt, detach, or
+ * destroy. It never force-destroys.
+ *
+ * The close is **deferred** until after the response is sent: a window that
+ * closes straight away tears its bridge socket down, and the runner would
+ * otherwise see "bridge connection closed" instead of `ok`. Resolves against an
+ * injected `closeWindow` dep, so unit tests supply a stub and the verb fails with
+ * a clear "not available" error outside the harness.
+ */
+export interface CloseWindowCommand {
+  action: "closeWindow";
+}
+
+/**
+ * List the app's open native windows from the backend window registry
+ * (`list_windows`, #1900): `[{ label, tabCount? }, …]`, main first.
+ *
+ * Complements the runner's own view (which windows have a bridge connection):
+ * this is the backend's authoritative set, so a test can assert that a window
+ * really closed or that a restore spawned the expected windows. Resolves against
+ * an injected `listWindows` dep; fails with "not available" outside the harness.
+ */
+export interface ListWindowsCommand {
+  action: "listWindows";
+}
+
 /** Read a subscription's current recorded frames + cache state by id. */
 export interface ProjectionStateCommand {
   action: "projectionState";
@@ -510,6 +544,8 @@ export type BridgeCommand =
   | ScreenshotCommand
   | EmitEventCommand
   | SeverAgentTransportCommand
+  | CloseWindowCommand
+  | ListWindowsCommand
   | ProjectionSubscribeCommand
   | ProjectionDispatchCommand
   | ProjectionStateCommand

@@ -6,7 +6,7 @@
 //! `Arc<Mutex<HandlerState>>`; the shutdown signal is conveyed through
 //! `Arc<AtomicBool>` so the transport can stop after `agent.shutdown`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -2558,7 +2558,8 @@ fn register_agent_crash_reports(module: &mut RpcModule<Mutex<HandlerState>>) -> 
 
 // ── Capability detection ───────────────────────────────────────────
 
-/// Well-known shell paths to probe on the host system.
+/// Well-known shell paths to probe on a Unix host (unused on Windows outside tests).
+#[cfg_attr(windows, allow(dead_code))]
 const SHELL_CANDIDATES: &[&str] = &[
     "/bin/bash",
     "/bin/sh",
@@ -2588,10 +2589,19 @@ fn detect_monitoring_supported() -> bool {
     }
 }
 
+/// Shells offered by this host. On Windows, the shared PowerShell 7 /
+/// Windows PowerShell / `%COMSPEC%` probe (#3727); elsewhere the existing
+/// paths from [`SHELL_CANDIDATES`].
+#[cfg(windows)]
+fn detect_available_shells() -> Vec<String> {
+    termihub_core::session::shell::detect_windows_shells()
+}
+
+#[cfg(not(windows))]
 fn detect_available_shells() -> Vec<String> {
     SHELL_CANDIDATES
         .iter()
-        .filter(|p| Path::new(p).exists())
+        .filter(|p| std::path::Path::new(p).exists())
         .map(|p| p.to_string())
         .collect()
 }
@@ -2780,6 +2790,7 @@ mod tests {
     use super::*;
     use crate::session::manager::SessionManager;
     use serde_json::json;
+    use std::path::Path;
 
     // ── to_result_value helper tests (WA-RS-007) ───────────────────
 

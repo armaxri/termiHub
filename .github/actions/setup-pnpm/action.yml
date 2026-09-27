@@ -21,3 +21,20 @@ runs:
     - name: Retry pnpm install (final attempt)
       if: steps.attempt-1.outcome == 'failure' && steps.attempt-2.outcome == 'failure'
       uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+    # Surface a flaky install instead of hiding it behind a green step (CI-014):
+    # when a retry was needed and pnpm did install, say how many attempts it took
+    # as a notice annotation and a job-summary line, so a worsening installer is
+    # visible without reading every log. Skipped when the first attempt succeeded
+    # (and, by the default success() condition, when the final attempt failed —
+    # that failure is already the job's error).
+    - name: Report pnpm install retries
+      if: steps.attempt-1.outcome == 'failure'
+      shell: bash
+      env:
+        ATTEMPT_2: ${{ steps.attempt-2.outcome }}
+      run: |
+        if [ "$ATTEMPT_2" = "success" ]; then attempts=2; else attempts=3; fi
+        msg="pnpm/action-setup needed ${attempts} attempts to install pnpm (flaky installer retried)."
+        echo "::notice title=Setup pnpm retried::${msg}"
+        echo ":repeat: ${msg}" >> "$GITHUB_STEP_SUMMARY"

@@ -380,8 +380,9 @@ spread testing across multiple sessions and machines.
 The manual gate is the **Release-gating manual checklist** in
 [`docs/testing.md`](testing.md#release-gating-manual-checklist): the
 guided-manual harness suites plus the `tests/manual/*.yaml` corpus. After the
-triage in #3681 the corpus holds **38 tests across 9 categories** — 11 genuinely
-manual (`release_gate: true`) and 27 pending automation (`automation_issue`,
+triage in #3681 (plus the two macOS-only multi-window items added in #3720) the
+corpus holds **40 tests across 10 categories** — 13 genuinely manual
+(`release_gate: true`) and 27 pending automation (`automation_issue`,
 walked manually until their issue lands). These counts are not maintained by
 hand — regenerate them any time from the YAMLs with:
 
@@ -400,7 +401,8 @@ python scripts/test-manual.py --inventory
 | `ssh` (SSH)                                     |      2 |
 | `portable-mode` (Portable Mode)                 |      2 |
 | `ui-layout` (UI / Layout)                       |      2 |
-| **Total**                                       | **38** |
+| `multi-window` (Multi-Window, macOS only)       |      2 |
+| **Total**                                       | **40** |
 
 Note: `--category` filtering also honours each test's `platforms:` field, so a
 per-platform run (e.g. Windows) sees fewer than the corpus totals above. The

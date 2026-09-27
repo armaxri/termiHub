@@ -30,6 +30,7 @@ function run(overrides = {}) {
 const GREEN = {
   "release-candidate.yml": [run()],
   "code-quality.yml": [run({ id: 2, event: "push" })],
+  "dev-build.yml": [run({ id: 3, event: "push" })],
 };
 
 describe("classifyRuns", () => {
@@ -78,10 +79,11 @@ describe("classifyRuns", () => {
 });
 
 describe("evaluateGate", () => {
-  it("requires the release candidate and the Code Quality push run", () => {
+  it("requires the release candidate and the Code Quality and Dev Build push runs", () => {
     expect(REQUIRED_WORKFLOWS.map((w) => [w.file, w.event])).toEqual([
       ["release-candidate.yml", "workflow_dispatch"],
       ["code-quality.yml", "push"],
+      ["dev-build.yml", "push"],
     ]);
   });
 
@@ -95,7 +97,24 @@ describe("evaluateGate", () => {
       runsByWorkflow: { ...GREEN, "release-candidate.yml": [] },
     });
     expect(verdict.ok).toBe(false);
-    expect(verdict.results.map((r) => r.state)).toEqual(["missing", "ok"]);
+    expect(verdict.results.map((r) => r.state)).toEqual(["missing", "ok", "ok"]);
+  });
+
+  it("blocks the release when the full Dev Build on the sha failed or was cancelled", () => {
+    for (const conclusion of ["failure", "cancelled"]) {
+      const verdict = evaluateGate({
+        sha: SHA,
+        runsByWorkflow: { ...GREEN, "dev-build.yml": [run({ event: "push", conclusion })] },
+      });
+      expect(verdict.ok).toBe(false);
+      expect(verdict.results[2].state).toBe("failed");
+    }
+  });
+
+  it("does not accept a missing Dev Build push run", () => {
+    const verdict = evaluateGate({ sha: SHA, runsByWorkflow: { ...GREEN, "dev-build.yml": [] } });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.results[2].state).toBe("missing");
   });
 
   it("does not accept a Code Quality pull_request run as the post-merge run", () => {
@@ -122,11 +141,13 @@ describe("formatReport", () => {
       runsByWorkflow: {
         "release-candidate.yml": [run({ conclusion: "failure" })],
         "code-quality.yml": [],
+        "dev-build.yml": [run({ event: "push", conclusion: "failure" })],
       },
     });
     const text = formatReport(verdict, ctx).join("\n");
     expect(text).toMatch(/::error::Release Candidate.*concluded failure/);
     expect(text).toMatch(/::error::Code Quality.*no push run on this commit/);
+    expect(text).toMatch(/::error::Dev Build.*concluded failure/);
     expect(text).toContain("gh workflow run release-candidate.yml --repo o/r --ref v1.2.3");
     expect(text).toContain("gh run rerun 99 --repo o/r --failed");
   });

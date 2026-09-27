@@ -21,8 +21,19 @@
 # The gate therefore stays genuinely blocking for real high/critical production
 # advisories while tolerating transient registry outages.
 #
-# Env knobs (used by the test harness; defaults suit CI):
-#   AUDIT_MAX_ATTEMPTS     registry attempts before soft-passing        (default 3)
+# Strict mode (WA-CI-008): a soft-pass means the tree was NOT audited. That is an
+# acceptable trade on develop and PRs, but not for what ships. On `main`,
+# `release/*` branches and tags, strict mode turns "registry unreachable" into a
+# hard failure. Whenever the gate soft-passes it also writes an
+# "AUDIT SKIPPED — registry unreachable" marker to $GITHUB_STEP_SUMMARY, so a
+# skipped audit is visible on the run page instead of hiding in a green check.
+#
+# Env knobs (defaults suit CI):
+#   AUDIT_STRICT           1/true forces strict mode, 0/false forces lenient
+#                          mode; unset/empty -> strict when GITHUB_REF is
+#                          refs/heads/main, refs/heads/release/* or refs/tags/*
+#                          (the Release workflow sets AUDIT_STRICT=1 explicitly)
+#   AUDIT_MAX_ATTEMPTS     registry attempts before giving up             (default 3)
 #   AUDIT_BACKOFF_SECONDS  base backoff, multiplied by attempt number    (default 5)
 #   AUDIT_JSON_FILE        read canned JSON from this file instead of
 #                          invoking pnpm (test injection only)
@@ -35,6 +46,40 @@ BACKOFF_SECONDS="${AUDIT_BACKOFF_SECONDS:-5}"
 # Emit a GitHub Actions annotation when running in CI, otherwise a plain line.
 warn() { echo "::warning::$*"; }
 fail() { echo "::error::$*"; }
+
+# Resolve strict mode: an explicit AUDIT_STRICT wins, otherwise infer it from the
+# ref being built. Prints "1" (strict) or "0" (lenient).
+resolve_strict() {
+  case "${AUDIT_STRICT:-}" in
+  1 | true | TRUE | yes) echo 1 ;;
+  0 | false | FALSE | no) echo 0 ;;
+  "")
+    case "${GITHUB_REF:-}" in
+    refs/heads/main | refs/heads/release/* | refs/tags/*) echo 1 ;;
+    *) echo 0 ;;
+    esac
+    ;;
+  *)
+    # stderr: stdout is captured into STRICT below.
+    fail "AUDIT_STRICT must be 1/true/yes or 0/false/no, got '${AUDIT_STRICT}'." >&2
+    exit 2
+    ;;
+  esac
+}
+
+STRICT="$(resolve_strict)"
+if [ "$STRICT" = "1" ]; then
+  echo "Production audit gate: strict mode (AUDIT_STRICT=${AUDIT_STRICT:-auto}, GITHUB_REF=${GITHUB_REF:-unset}); an unreachable registry fails."
+else
+  echo "Production audit gate: lenient mode; an unreachable registry soft-passes with a marker."
+fi
+
+# Append a line to the GitHub job summary when running in Actions.
+summary() {
+  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    printf '%s\n' "$*" >>"$GITHUB_STEP_SUMMARY"
+  fi
+}
 
 # Produce the audit JSON. In tests, AUDIT_JSON_FILE short-circuits the network
 # call so the three code paths can be exercised deterministically with canned
@@ -99,7 +144,24 @@ while :; do
       attempt=$((attempt + 1))
       continue
     fi
-    warn "pnpm audit could not reach the npm registry after ${MAX_ATTEMPTS} attempts; \
+    ref="${GITHUB_REF:-local}"
+    if [ "$STRICT" = "1" ]; then
+      summary "### :x: AUDIT SKIPPED — registry unreachable (strict mode: FAILED)"
+      summary ""
+      summary "\`pnpm audit --prod\` could not reach the npm registry after ${MAX_ATTEMPTS} attempts" \
+        "on \`${ref}\`. Strict mode (main, release branches, tags) does not ship an" \
+        "unaudited tree: re-run the job once the registry is reachable."
+      fail "pnpm audit could not reach the npm registry after ${MAX_ATTEMPTS} attempts; \
+strict mode (${ref}) refuses to pass an unaudited production tree. Re-run once the registry \
+is reachable. See WA-CI-008."
+      exit 1
+    fi
+    summary "### :warning: AUDIT SKIPPED — registry unreachable"
+    summary ""
+    summary "\`pnpm audit --prod\` could not reach the npm registry after ${MAX_ATTEMPTS} attempts" \
+      "on \`${ref}\`; the production audit gate soft-passed WITHOUT auditing the tree" \
+      "(transient network error, not an advisory). See #2589."
+    warn "AUDIT SKIPPED — pnpm audit could not reach the npm registry after ${MAX_ATTEMPTS} attempts; \
 soft-passing the production audit gate (transient network error, not an advisory). See #2589."
     exit 0
     ;;

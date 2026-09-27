@@ -13,7 +13,7 @@
 // system-integration lane is scheduled from the default branch and checks out the
 // branch it grades, so its run's head_sha is NOT the commit it tested. Only the
 // Release Candidate workflow (dispatched on the release ref, grading github.sha)
-// and the post-merge Code Quality push run are keyed to the exact commit.
+// and the post-merge Code Quality / Dev Build push runs are keyed to the exact commit.
 //
 // The logic lives here (not inline in release.yml) so it can be unit-tested — see
 // release-integration-gate.test.mjs.
@@ -30,6 +30,12 @@ import { appendFileSync } from "node:fs";
  * - code-quality.yml's push run is the post-merge full lane: the three-OS test
  *   matrix and "Agent Live Tests (Windows, serial)". Only a `push` run counts —
  *   a pull_request run is path-filtered and never keyed to the merge commit.
+ * - dev-build.yml's push run is the full cross-platform app build (every
+ *   bundle target, CI-015). Per-PR Build is path-filtered and the Release
+ *   workflow only builds after create-release, so without this a commit whose
+ *   full build is red could still be tagged. It is cancel-in-progress, so a run
+ *   superseded by a newer push concludes `cancelled` and fails the gate — re-run
+ *   it (see docs/contributing.md).
  */
 export const REQUIRED_WORKFLOWS = [
   {
@@ -40,6 +46,11 @@ export const REQUIRED_WORKFLOWS = [
   {
     file: "code-quality.yml",
     name: "Code Quality (post-merge push run)",
+    event: "push",
+  },
+  {
+    file: "dev-build.yml",
+    name: "Dev Build (post-merge full build)",
     event: "push",
   },
 ];
@@ -124,8 +135,11 @@ export function formatReport(verdict, { sha, repo, refName, runUrl, runId }) {
     "To fix:",
     `  1. Run the full integration lanes on the release ref:`,
     `       gh workflow run release-candidate.yml --repo ${repo} --ref ${ref}`,
-    "     (a missing Code Quality push run means the commit was never pushed to",
-    "     main/develop — tag a commit that was, so the post-merge lane grades it)",
+    "     (a missing Code Quality or Dev Build push run means the commit was never",
+    "     pushed to main/develop — tag a commit that was, so the post-merge lanes grade it;",
+    "     a Dev Build push run cancelled by a newer push is re-run with",
+    `       gh run rerun <dev-build run id> --repo ${repo}`,
+    "     a failed one is a broken full build: fix it and re-tag)",
     "  2. Wait for it to finish green; fix and re-tag on a red lane (do not bypass).",
     runId
       ? `  3. Re-run this release's failed jobs: gh run rerun ${runId} --repo ${repo} --failed`
