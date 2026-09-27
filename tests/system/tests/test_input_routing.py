@@ -23,9 +23,10 @@ Covered:
 - **Right-click terminal: context menu vs Quick Copy/Paste** (MT-UI-26..30) —
   the harness opens the real context menu (asserting its items), the operator
   exercises real-clipboard Quick Copy/Paste.
-- **Tab drag to edge / across groups / divider resize** (MT-TAB-06/07/16) — drop
-  targets outside the bridge's dnd-kit coverage; harness asserts the resulting
-  leaf count / panel tree after the operator's drag.
+- **Tab drag to edge / across groups** (MT-TAB-06/07) — drop targets outside the
+  bridge's dnd-kit coverage; harness asserts the resulting leaf count / panel
+  tree after the operator's drag. (Divider resize, MT-TAB-16, is fully automated
+  in ``test_split_views`` since #3693.)
 - **Drag a connection into a folder** (MT-CONN-01/24) — harness builds the
   connection + folder and asserts the connection's parent after the drop.
 - **Drag an editor tab between panels** (MT-FB-20) — harness opens an editor in a
@@ -318,26 +319,6 @@ class TestInputRouting(
         self.wait(
             lambda: self.driver.get_state("rootPanel") != before,
             what="the panel tree to change after the cross-group move",
-        )
-        self.close_all_tabs()
-
-    # ── Drag the split divider to resize (MT-TAB-16) ──────────────────────────
-    def test_drag_divider_resizes_panels(self):
-        """The harness creates a 2-panel split (so the resize handle exists); the
-        operator drags the divider; the harness confirms the handle is present.
-
-        The divider (``split-view-resize-handle``) drives react-resizable-panels'
-        pointer-based resize; absolute pixel layout is operator-observed."""
-        self._reset_to_single_terminal()
-        self.driver.click(SPLIT_H)
-        self.wait(lambda: self.leaf_count() == 2, what="two panels")
-        assert self.driver.exists("split-view-resize-handle"), "no divider to drag"
-
-        self.manual_observe(
-            "Drag the vertical divider between the two panels left and right.",
-            "The two panels resize smoothly as you drag the divider; the cursor "
-            "shows a col-resize handle over it and the layout follows the pointer.",
-            label="divider-resize",
         )
         self.close_all_tabs()
 
