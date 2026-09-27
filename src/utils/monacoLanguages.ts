@@ -5,6 +5,8 @@
  * `getAvailableLanguages()` is safe to call before any editor is mounted.
  */
 
+// Before any editor exists: route Monaco workers to bundled files, not data: URLs (#3632).
+import "@/utils/monacoEnvironment";
 import * as monaco from "monaco-editor";
 import { LanguageInfo } from "@/types/terminal";
 import { compareNames } from "@/utils/locale";

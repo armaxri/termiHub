@@ -24,6 +24,8 @@
  * show uncoloured text and switch to highlighted once it completes.
  */
 
+// Before any editor exists: route Monaco workers to bundled files, not data: URLs (#3632).
+import "@/utils/monacoEnvironment";
 import * as monaco from "monaco-editor";
 import { createHighlighter, bundledLanguages, bundledLanguagesInfo } from "shiki";
 import type {
