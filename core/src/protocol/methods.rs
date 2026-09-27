@@ -366,6 +366,14 @@ pub struct InitializeResult {
     /// Added in protocol 0.3.0 (additive, backwards compatible).
     pub client_id: String,
     pub capabilities: Capabilities,
+    /// Path (on the agent host) of this agent instance's owner-only (`0600`)
+    /// update auth token file (AGT-003, #3213). The desktop reads the token from
+    /// it out of band — over its SSH session, so only a peer able to read the
+    /// agent owner's files can obtain it — and sends it as `authToken` on the
+    /// update RPCs. Absent from agents older than protocol 0.12.0, which do not
+    /// require the token. Added in protocol 0.12.0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_auth_token_path: Option<String>,
 }
 
 // ── agent.list_connections ───────────────────────────────────────────
@@ -1002,6 +1010,30 @@ pub struct AgentShutdownResult {
     pub detached_sessions: u32,
 }
 
+// ── update auth token (AGT-003, #3213) ──────────────────────────────
+
+/// The per-instance update auth token carried on `agent.request_update` /
+/// `agent.request_deferred_update` (AGT-003, #3213).
+///
+/// A transparent string on the wire; its only purpose as a newtype is a
+/// **redacted** `Debug`, so a logged params struct never leaks the secret.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct UpdateAuthToken(pub String);
+
+impl UpdateAuthToken {
+    /// The plaintext token.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for UpdateAuthToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("UpdateAuthToken(<redacted>)")
+    }
+}
+
 // ── agent.request_deferred_update ───────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1029,6 +1061,20 @@ pub struct AgentRequestDeferredUpdateParams {
     /// "Apply Now", where the agent uses the signature it recorded at download.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
+    /// The agent instance's per-instance update auth token (AGT-003, #3213).
+    /// Required — in addition to the `signature` — before the agent stages or
+    /// applies any binary; a missing or wrong token is refused with
+    /// `UPDATE_UNAUTHORIZED`. The desktop reads it from the owner-only file whose
+    /// path the agent advertises as `update_auth_token_path` in `initialize`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<UpdateAuthToken>,
+    /// Explicit version pin for a **matched downgrade** (SEC-006, #3213). The
+    /// agent refuses a binary older than itself unless this is set, equals the
+    /// requesting desktop's own `client_version`, and equals the binary's
+    /// embedded build version. Also refuses any binary whose version differs from
+    /// a pin that is set. Only honoured together with `binary_path`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1074,6 +1120,20 @@ pub struct AgentRequestUpdateParams {
     /// "Apply Now", where the agent uses the signature it recorded at download.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
+    /// The agent instance's per-instance update auth token (AGT-003, #3213).
+    /// Required — in addition to the `signature` — before the agent stages or
+    /// applies any binary; a missing or wrong token is refused with
+    /// `UPDATE_UNAUTHORIZED`. The desktop reads it from the owner-only file whose
+    /// path the agent advertises as `update_auth_token_path` in `initialize`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<UpdateAuthToken>,
+    /// Explicit version pin for a **matched downgrade** (SEC-006, #3213). The
+    /// agent refuses a binary older than itself unless this is set, equals the
+    /// requesting desktop's own `client_version`, and equals the binary's
+    /// embedded build version. Also refuses any binary whose version differs from
+    /// a pin that is set. Only honoured together with `binary_path`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_version: Option<String>,
     /// How long other hosts get to disconnect before the update proceeds
     /// anyway. Omit for the default 10 s
     /// (`ACK_TIMEOUT` in the agent's `update` module); tests use a short window
@@ -2198,6 +2258,7 @@ mod tests {
             protocol_version: "0.2.0".to_string(),
             agent_version: "0.1.0".to_string(),
             client_id: "client-1".to_string(),
+            update_auth_token_path: None,
             capabilities: Capabilities {
                 connection_types: vec![ConnectionTypeInfo {
                     type_id: "local".to_string(),
@@ -2237,6 +2298,8 @@ mod tests {
             .as_array()
             .unwrap()
             .is_empty());
+        // AGT-003 (#3213): the token path is omitted when the agent has none.
+        assert!(v.get("update_auth_token_path").is_none());
     }
 
     #[test]
@@ -3508,6 +3571,8 @@ mod tests {
                 version: Some("0.4.0".to_string()),
                 expected_sha256: Some("a".repeat(64)),
                 signature: Some("c2ln".to_string()),
+                auth_token: None,
+                pinned_version: None,
             })
             .unwrap(),
             json!({
@@ -3524,10 +3589,40 @@ mod tests {
                 version: None,
                 expected_sha256: None,
                 signature: None,
+                auth_token: None,
+                pinned_version: None,
             })
             .unwrap(),
             json!({}),
         );
+    }
+
+    /// AGT-003 / SEC-006 (#3213): the auth token and the matched-downgrade pin
+    /// travel as `authToken` / `pinnedVersion`, and the token never leaks
+    /// through `Debug`.
+    #[test]
+    fn update_params_carry_auth_token_and_pin_on_the_wire() {
+        let params = AgentRequestUpdateParams {
+            binary_path: Some("/tmp/agent".to_string()),
+            version: None,
+            expected_sha256: None,
+            signature: None,
+            auth_token: Some(UpdateAuthToken("s3cret".to_string())),
+            pinned_version: Some("0.1.0".to_string()),
+            ack_timeout_secs: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&params).unwrap(),
+            json!({ "binaryPath": "/tmp/agent", "authToken": "s3cret", "pinnedVersion": "0.1.0" }),
+        );
+        let debug = format!("{params:?}");
+        assert!(!debug.contains("s3cret"), "token leaked via Debug: {debug}");
+
+        let parsed: AgentRequestDeferredUpdateParams =
+            serde_json::from_value(json!({ "authToken": "t", "pinnedVersion": "0.2.0" }))
+                .unwrap();
+        assert_eq!(parsed.auth_token.as_ref().map(|t| t.expose()), Some("t"));
+        assert_eq!(parsed.pinned_version.as_deref(), Some("0.2.0"));
     }
 
     #[test]
@@ -3540,6 +3635,8 @@ mod tests {
                 version: Some("0.4.0".to_string()),
                 expected_sha256: Some("b".repeat(64)),
                 signature: None,
+                auth_token: None,
+                pinned_version: None,
                 ack_timeout_secs: None,
             })
             .unwrap(),
@@ -3551,6 +3648,8 @@ mod tests {
                 version: None,
                 expected_sha256: None,
                 signature: None,
+                auth_token: None,
+                pinned_version: None,
                 ack_timeout_secs: None,
             })
             .unwrap(),

@@ -107,6 +107,18 @@ pub const AUTH_CANCELLED: i64 = -32024;
 /// keep it.
 pub const SECOND_FACTOR_FAILED: i64 = -32025;
 
+/// An agent update RPC (`agent.request_update` / `agent.request_deferred_update`)
+/// was refused because it did not carry this agent instance's per-instance
+/// update auth token (missing or wrong), or the agent has none configured
+/// (AGT-003, #3213). Fails closed: nothing is staged or applied.
+pub const UPDATE_UNAUTHORIZED: i64 = -32026;
+
+/// An agent update was refused by the downgrade policy (SEC-006, #3213): the
+/// binary is older than the running agent without a matched pin, the pin does
+/// not match the requesting desktop's version or the binary's embedded version,
+/// or the binary's version cannot be determined.
+pub const UPDATE_DOWNGRADE_REFUSED: i64 = -32027;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,6 +156,8 @@ mod tests {
             SESSION_HELD_BY_OTHER,
             AUTH_CANCELLED,
             SECOND_FACTOR_FAILED,
+            UPDATE_UNAUTHORIZED,
+            UPDATE_DOWNGRADE_REFUSED,
         ];
         for code in codes {
             assert!(code < 0, "Error code {code} should be negative");
@@ -194,6 +208,8 @@ mod tests {
             SESSION_HELD_BY_OTHER,
             AUTH_CANCELLED,
             SECOND_FACTOR_FAILED,
+            UPDATE_UNAUTHORIZED,
+            UPDATE_DOWNGRADE_REFUSED,
         ];
         for code in app_codes {
             assert!(
