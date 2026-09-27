@@ -10,7 +10,8 @@ evidence:
   - core/tests/vnc.rs
   - tests/docker/docker-compose.yml:294
   - tests/system/tests/
-status: open
+status: fixed
+resolution: "#3714 — VNC bridge E2E suite (render quadrant colours via sampleCanvas, resize, dynamic resolution, manual + auto reconnect) on nightly Linux lane; macOS/Windows skip pending TIN-007"
 ---
 
 ## What

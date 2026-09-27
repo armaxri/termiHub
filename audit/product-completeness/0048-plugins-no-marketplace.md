@@ -9,7 +9,8 @@ subsystem: src-tauri/src/commands/plugin, src/components/Plugins
 evidence:
   - src-tauri/src/commands/plugin.rs:42
   - src-tauri/src/commands/plugin.rs:114
-status: open
+status: fixed
+resolution: "#3718 — in-app plugin index browse + install-from-URL; backend-only https fetch, size caps, sha256-before-parse, same trust-gated install pipeline; ADR-17; index signing #3716"
 ---
 
 ## What
