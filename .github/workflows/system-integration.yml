@@ -172,8 +172,10 @@ jobs:
       # Linux enable (#2669, the intent of the closed #2634): with the headless app
       # launch restored (#2646) the ubuntu leg now connects to the test bridge, so
       # the reconnect grade can run there too (loopback /usr/sbin/sshd + release
-      # agent are both present). Windows stays skipped — its loopback sshd is
-      # unreliable. (#2579, #2618, #2626 cat B, #2634, #2646, #2669)
+      # agent are both present). Windows stays off HERE: this bulk lane excludes
+      # the grade (`-k "not (...)"`) and does not provision the native sshd the
+      # Windows grade needs; the `display-grades` job below runs it on Windows
+      # (CI-020, TIN-007). (#2579, #2618, #2626 cat B, #2634, #2646, #2669)
       TERMIHUB_LIVE_AGENT: ${{ (matrix.os == 'macos-latest' || matrix.os == 'ubuntu-latest') && '1' || '' }}
 
     steps:
@@ -459,11 +461,13 @@ jobs:
       WEBKIT_DEBUG: "Process"
       G_MESSAGES_DEBUG: "all"
 
-      # Mirror the bulk lane's gating for test_agent_reconnect_ui EXACTLY: opt-in
-      # on macOS AND Linux (skip-guarded on Windows, whose loopback sshd is
-      # unreliable). The Linux enable (#2669, intent of the closed #2634) is now
-      # live in the bulk lane above; keep this expression identical to it.
-      TERMIHUB_LIVE_AGENT: ${{ (matrix.os == 'macos-latest' || matrix.os == 'ubuntu-latest') && '1' || '' }}
+      # Opt test_agent_reconnect_ui in on ALL three legs. macOS and Linux reach
+      # their agent through the harness's own throwaway loopback sshd (#2669).
+      # Windows cannot run Win32-OpenSSH that way, so its leg provisions a native
+      # sshd service + test user first ("Provision the native sshd fixture"
+      # below, CI-020 / TIN-007). Opted in, a missing endpoint FAILS the grade
+      # rather than skipping it.
+      TERMIHUB_LIVE_AGENT: "1"
 
     steps:
       - name: Checkout code
@@ -542,6 +546,17 @@ jobs:
         shell: bash
         run: scripts/internal/build-system-test-app.sh --debug
 
+      - name: Provision the native sshd fixture (Windows)
+        # CI-020 / TIN-007: Win32-OpenSSH as its own service on a loopback port,
+        # a local test user, and a copy of the release agent that user can run;
+        # exports TERMIHUB_NATIVE_SSHD_* to later steps. The recipe lives in the
+        # checked-out script, not here (a scheduled run uses main's workflow).
+        if: runner.os == 'Windows'
+        shell: bash
+        run: >-
+          scripts/internal/native-sshd-fixture.sh up --github-env
+          --agent-binary target/release/termihub-agent.exe
+
       - name: Run the display-critical grades (Linux, headless via Xvfb)
         # dbus-run-session (#2646): same headless-portal hang fix as the bulk lane
         # — a throwaway session bus makes the startup xdg-desktop-portal call fail
@@ -573,6 +588,18 @@ jobs:
           ./tests/system/pytest.sh -m integration
           -k "test_agent_reconnect_ui or test_layout_scrollback_ui" -v
           --reruns 0 -r aR
+
+      - name: Tear down the native sshd fixture (Windows)
+        # Prints the fixture's sshd log first when the job failed.
+        if: always() && runner.os == 'Windows'
+        shell: bash
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          if [ "$JOB_STATUS" != "success" ] && [ -n "${TERMIHUB_NATIVE_SSHD_DIR:-}" ]; then
+            tail -n 200 "$(cygpath -u "$TERMIHUB_NATIVE_SSHD_DIR")/sshd.log" || true
+          fi
+          scripts/internal/native-sshd-fixture.sh down
 
       - name: Upload failure artifacts
         if: always()
