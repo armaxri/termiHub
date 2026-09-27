@@ -11,12 +11,12 @@ a dev-server favicon link — neither is observable through the bridge contract.
 
 import pytest
 
-from termihub_harness import SETTINGS_REGION, SystemTest, TabsUi
+from termihub_harness import ProjectionHarness, SETTINGS_REGION, SystemTest, TabsUi
 
 pytestmark = pytest.mark.integration
 
 
-class TestUiState(TabsUi, SystemTest):
+class TestUiState(ProjectionHarness, TabsUi, SystemTest):
     def test_new_terminal_is_tracked_as_an_active_tab(self):
         # MT-UI-06: a new terminal is a live, active tab in the panel state.
         self.close_all_tabs()
@@ -32,6 +32,24 @@ class TestUiState(TabsUi, SystemTest):
         theme_before = self.projection_region_cache(SETTINGS_REGION).get("theme")
         self.restart_app()
         assert self.projection_region_cache(SETTINGS_REGION).get("theme") == theme_before
+
+    def test_right_click_behavior_persists_across_an_app_restart(self):
+        # Legacy manual MT-UI-29 (#3681): the Right-Click Behavior setting survives
+        # a kill/relaunch. Set via the authoritative settings region, then restore.
+        def behavior():
+            return self.projection_region_cache(SETTINGS_REGION).get("rightClickBehavior")
+
+        self.projection_dispatch_intent(
+            "settings.patch", {"patch": {"rightClickBehavior": "quickAction"}}
+        )
+        self.wait(lambda: behavior() == "quickAction", what="quickAction to apply")
+        try:
+            self.restart_app()
+            self.wait(lambda: behavior() == "quickAction", what="quickAction after restart")
+        finally:
+            self.projection_dispatch_intent(
+                "settings.patch", {"patch": {"rightClickBehavior": "contextMenu"}}
+            )
 
     def test_root_uses_theme_css_variables(self):
         # MT-UI-08: the theme drives CSS custom properties on :root.

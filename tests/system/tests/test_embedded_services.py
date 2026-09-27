@@ -393,3 +393,25 @@ class TestEmbeddedServices(
         assert not self.driver.exists(
             f"ctx-open-browser-{ftp['id']}"
         ), "Open in Browser must not be offered for non-HTTP servers"
+
+    # ── SVC-20: auto-start on application launch (legacy manual MT-SVC-06) ─────
+    def test_auto_start_server_runs_after_app_restart(self):
+        """A server saved with "Auto-start when termiHub launches" is running —
+        and actually serving — after a kill/relaunch, without a Start click.
+
+        Replaces the legacy manual item MT-SVC-06 (#3681).
+        """
+        root = self._serve_dir("auto.txt", "termihub-autostart-ok")
+        port = self.free_port()
+        name = unique_name("auto")
+        self.open_new_dialog()
+        self.fill_dialog(name, proto="http", root=str(root), port=port)
+        self.driver.click("server-dialog-autostart")
+        self.driver.click(self.DIALOG_SAVE)
+        server = self.require_server(name)
+        assert server.get("autoStart") is True, "the auto-start flag must persist"
+
+        self.restart_app()
+        self.wait(lambda: self.server_running(server["id"]), what="the auto-started server")
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/auto.txt", timeout=10) as resp:
+            assert resp.read().decode("utf-8").strip() == "termihub-autostart-ok"
