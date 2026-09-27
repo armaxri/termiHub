@@ -48,6 +48,7 @@ import { BackupRestoreSettings } from "./BackupRestoreSettings";
 import { PluginSettingsSection } from "./PluginSettingsSection";
 import { FrontendPluginGateSettings } from "./FrontendPluginGateSettings";
 import { PluginUpdateCheckSettings } from "./PluginUpdateCheckSettings";
+import { PluginCatalogSettings } from "./PluginCatalogSettings";
 import { NativePluginGateSettings } from "./NativePluginGateSettings";
 import { TrustedPublishersSettings } from "./TrustedPublishersSettings";
 import { useAppInfo } from "@/hooks/useAppInfo";
@@ -411,6 +412,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
         sections.push(<FrontendPluginGateSettings key="frontend-plugin-gate" />);
         sections.push(<NativePluginGateSettings key="native-plugin-gate" />);
         sections.push(<PluginSettingsSection key="plugins" focusPluginId={focusPluginId} />);
+        sections.push(<PluginCatalogSettings key="plugin-catalog" />);
         sections.push(<PluginUpdateCheckSettings key="plugin-update-check" />);
         sections.push(<TrustedPublishersSettings key="trusted-publishers" />);
       }
@@ -469,6 +471,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
             <FrontendPluginGateSettings />
             <NativePluginGateSettings />
             <PluginSettingsSection focusPluginId={focusPluginId} />
+            <PluginCatalogSettings />
             <PluginUpdateCheckSettings />
             <TrustedPublishersSettings />
           </>

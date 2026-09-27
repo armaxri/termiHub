@@ -443,3 +443,70 @@ export interface PluginUpdateCheckResult {
   outcome?: PluginUpdateCheckOutcome;
   error?: string;
 }
+
+/** A native plugin's build-toolchain record as listed in the plugin index (PLG-013). */
+export interface PluginIndexToolchain {
+  rustc: string;
+  panicStrategy: string;
+}
+
+/** One downloadable package of an indexed plugin (Rust `PluginIndexPackage`). */
+export interface PluginIndexPackage {
+  /** Target triples it supports, or `["any"]` for a package without native code. */
+  platforms: string[];
+  url: string;
+  sha256: string;
+}
+
+/** One plugin listed in the curated plugin index (PROD-048, Rust `PluginIndexEntry`). */
+export interface PluginIndexEntry {
+  id: string;
+  name: string;
+  description: string;
+  author: string;
+  version: string;
+  homepage?: string;
+  minHostAbi: string;
+  native: boolean;
+  toolchain?: PluginIndexToolchain;
+  packages: PluginIndexPackage[];
+}
+
+/**
+ * How a listed native plugin's toolchain compares with this termiHub's:
+ * `match` loads, `mismatch` would be refused at load time, `undeclared` leaves
+ * it to the loader (which asks for acceptance), `notApplicable` = no native code.
+ */
+export type PluginToolchainStatus = "notApplicable" | "match" | "mismatch" | "undeclared";
+
+/** How a listed plugin relates to the installed one. */
+export type PluginIndexInstallStatus =
+  | "notInstalled"
+  | "installed"
+  | "updateAvailable"
+  | "installedNewer";
+
+/** An index entry plus this computer's compatibility verdict (Rust `PluginIndexEntryView`). */
+export interface PluginIndexEntryView {
+  entry: PluginIndexEntry;
+  abiCompatible: boolean;
+  hostAbi: string;
+  platformSupported: boolean;
+  hostPlatform: string;
+  toolchain: PluginToolchainStatus;
+  installedVersion?: string;
+  installStatus: PluginIndexInstallStatus;
+  /** Whether Install / Update is offered. */
+  installable: boolean;
+  /** Why it is not installable (or already current). */
+  blockedReason?: string;
+}
+
+/** The result of `fetch_plugin_index`. */
+export interface PluginIndexResult {
+  /** The index URL that was fetched. */
+  url: string;
+  /** Whether it is the built-in default index. */
+  isDefault: boolean;
+  entries: PluginIndexEntryView[];
+}

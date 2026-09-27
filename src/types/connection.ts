@@ -671,6 +671,12 @@ export interface AppSettings {
    * clicks "Check for updates". A check never installs anything.
    */
   pluginUpdateCheckEnabled?: boolean;
+  /**
+   * URL of the curated plugin index browsed in Settings → Plugins (PROD-048).
+   * Unset or blank → the maintainer-hosted default. Must be `https://`; the
+   * backend fetches it only when the user opens or refreshes Browse.
+   */
+  pluginIndexUrl?: string;
   updates?: UpdateSettings;
   /**
    * Durable log-file verbosity (OBS-009). Controls how much detail termiHub

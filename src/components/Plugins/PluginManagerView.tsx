@@ -2,13 +2,13 @@ import { useCallback, useState } from "react";
 import { CircleArrowUp, FileUp, RefreshCw } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store/appStore";
-import { assessPluginTrust, previewPlugin } from "@/services/api";
-import type { InstalledPlugin, PluginManifest, PluginTrustInfo } from "@/types/plugin";
+import type { InstalledPlugin } from "@/types/plugin";
 import { Button, SearchInput, StatusDot, toast } from "@/components/ui";
 import { useListFilter, type ListFilterMatcher } from "@/hooks/useListFilter";
 import { frontendLog } from "@/utils/frontendLog";
 import { pluginDotState, pluginDotTone, pluginTypeIcon } from "./pluginPresentation";
 import { PluginInstallDialog } from "./PluginInstallDialog";
+import { reviewDownloadedPackage, type DownloadedPackageReview } from "./pluginDownloadReview";
 import "./Plugins.css";
 import { errorMessage } from "@/utils/errorMessage";
 import {
@@ -16,17 +16,6 @@ import {
   hasUpdateSource,
   usePluginUpdateStore,
 } from "@/plugins/pluginUpdateStore";
-
-/** A picked-and-validated package awaiting the user's install confirmation. */
-interface PendingInstall {
-  filePath: string;
-  manifest: PluginManifest;
-  trust: PluginTrustInfo;
-  /** This computer's target triple (PLG-011, #3507). */
-  hostPlatform: string;
-  /** Whether the package ships a native library for this computer. */
-  platformSupported: boolean;
-}
 
 /**
  * Case-insensitive match of a plugin against the (already normalized) query on
@@ -56,7 +45,7 @@ export function PluginManagerView() {
   const checkingAll = usePluginUpdateStore((s) => s.checkingAll);
   const checkForUpdates = usePluginUpdateStore((s) => s.checkForUpdates);
 
-  const [pending, setPending] = useState<PendingInstall | null>(null);
+  const [pending, setPending] = useState<DownloadedPackageReview | null>(null);
 
   const updatable = plugins.some(hasUpdateSource);
 
@@ -97,13 +86,9 @@ export function PluginManagerView() {
 
     const toastId = toast.loading("Validating plugin…");
     try {
-      const [preview, trust] = await Promise.all([
-        previewPlugin(filePath),
-        assessPluginTrust(filePath),
-      ]);
-      const { manifest, hostPlatform, platformSupported } = preview;
+      const review = await reviewDownloadedPackage(filePath);
       toast.dismiss(toastId);
-      setPending({ filePath, manifest, trust, hostPlatform, platformSupported });
+      setPending(review);
     } catch (err) {
       toast.error(`Invalid plugin package: ${errorMessage(err)}`, {
         id: toastId,
