@@ -7,6 +7,9 @@
 //! (like OpenSSH's `X11DisplayOffset`) rather than deriving a huge display from
 //! an arbitrary ephemeral port (`:26961`), which stricter X clients reject so no
 //! forwarded channel is ever opened.
+//!
+//! Also covers graceful degradation (MT-SSH-18): with X11 forwarding enabled but
+//! no X server available, the SSH connect still succeeds and the shell runs.
 #![cfg(feature = "ssh")]
 
 mod common;
@@ -16,8 +19,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{port_ssh_x11, require_docker, ssh_exec, ssh_password_config};
+use termihub_core::backends::ssh::connector::{RusshSshConnector, SshConnector};
 use termihub_core::backends::ssh::x11::{
-    LocalXConnection, LocalXServerInfo, ResolvedXServer, X11Forwarder,
+    set_x_server_provisioner, LocalXConnection, LocalXServerInfo, ResolvedXServer, X11Forwarder,
+    XServerLease, XServerProvisioner,
 };
 
 /// End-to-end: run a real X client on the remote and assert the forwarded X11
@@ -101,4 +106,94 @@ async fn x11_forwarding_delivers_channel_to_local_server() {
         "the forwarded X11 connection never reached the local X server \
          (no channel proxied) — issue #1304"
     );
+}
+
+/// A provisioner that always fails, standing in for the desktop app's
+/// VcXsrv/XQuartz provisioning when no X server can be brought up.
+struct FailingProvisioner;
+
+#[async_trait::async_trait]
+impl XServerProvisioner for FailingProvisioner {
+    async fn ensure(
+        &self,
+        _cancel: Option<tokio_util::sync::CancellationToken>,
+    ) -> Result<XServerLease, String> {
+        Err("test: no X server could be provisioned".to_string())
+    }
+}
+
+/// Read from the shell until `needle` appears or the deadline passes, returning
+/// everything read so far.
+async fn read_until(
+    mut reader: Box<dyn std::io::Read + Send>,
+    needle: &'static str,
+) -> (Box<dyn std::io::Read + Send>, String) {
+    tokio::task::spawn_blocking(move || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let mut out = Vec::new();
+        let mut buf = [0u8; 4096];
+        while std::time::Instant::now() < deadline {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    out.extend_from_slice(&buf[..n]);
+                    if String::from_utf8_lossy(&out).contains(needle) {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        (reader, String::from_utf8_lossy(&out).into_owned())
+    })
+    .await
+    .expect("reader task")
+}
+
+/// MT-SSH-18: X11 forwarding degrades gracefully without an X server.
+///
+/// With `enable_x11_forwarding=true`, a provisioner that fails and no
+/// detectable local X server, the connect must still succeed and the shell must
+/// be usable — the connector logs the failure and continues without display
+/// forwarding (`connector.rs` fallback) instead of aborting the whole connect.
+/// No `DISPLAY` is injected into the remote shell in that case.
+#[tokio::test(flavor = "multi_thread")]
+async fn x11_forwarding_degrades_gracefully_without_x_server() {
+    require_docker!(port_ssh_x11());
+
+    // Make local X server detection fail deterministically: an unparsable
+    // DISPLAY short-circuits detection to "none" (it is honoured before the
+    // socket/TCP fallbacks), independent of whether this host runs an X server.
+    // The other test in this binary passes an explicit resolved server and never
+    // consults DISPLAY or the provisioner.
+    std::env::set_var("DISPLAY", "not-a-display");
+    set_x_server_provisioner(Arc::new(FailingProvisioner));
+
+    let mut config = ssh_password_config(port_ssh_x11());
+    config.enable_x11_forwarding = true;
+
+    let alive = Arc::new(AtomicBool::new(true));
+    let handle = RusshSshConnector
+        .open_shell(&config, alive.clone(), None)
+        .await
+        .expect("connect must succeed even though X11 forwarding cannot start");
+
+    // No forwarder was started, so nothing X11-related is held for the session.
+    assert!(
+        !handle.extensions.iter().any(|e| e.is::<X11Forwarder>()),
+        "no X11 forwarder should be running without an X server"
+    );
+
+    // The shell runs, and no DISPLAY was injected. The end marker is split in
+    // the command so the terminal echo of the input line cannot match it.
+    (handle.write)(b"echo \"TH_X11_DEGRADED=[${DISPLAY}]\" \"TH_\"\"END\"\n")
+        .expect("write to shell");
+    let (_reader, output) = read_until(handle.reader, "TH_END").await;
+    assert!(
+        output.contains("TH_X11_DEGRADED=[] TH_END"),
+        "shell must run with an empty DISPLAY after X11 degradation, got: {output:?}"
+    );
+
+    alive.store(false, Ordering::SeqCst);
+    let _ = (handle.close)();
 }
