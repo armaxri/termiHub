@@ -23,6 +23,7 @@ mod registry_daemon;
 mod service;
 mod session;
 mod state;
+mod test_parent_watchdog;
 mod transport;
 mod tunnel;
 mod update;
@@ -100,6 +101,9 @@ fn update_strategy_from_args(args: &[String]) -> update::UpdateStrategy {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Test-harness only: exit when the spawning test process dies (#3641).
+    // Inert unless `TERMIHUB_TEST_PARENT_PID` is set.
+    test_parent_watchdog::start_from_env();
     build_runtime()?.block_on(run())
 }
 

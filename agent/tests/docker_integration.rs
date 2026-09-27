@@ -18,6 +18,10 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 
+mod common;
+
+use common::parent_death::GuardedSpawn;
+
 // ── Inlined frame protocol ─────────────────────────────────────────
 //
 // Same subset as shell_integration.rs — the agent is a binary crate
@@ -179,7 +183,7 @@ fn spawn_docker_daemon(session_id: &str, socket_path: &Path, image: &str) -> Dae
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
-        .spawn()
+        .spawn_guarded()
         .expect("Failed to spawn daemon process");
 
     // The daemon reads its connection settings from stdin (AGT-021), not an env

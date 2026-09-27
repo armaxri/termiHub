@@ -68,6 +68,8 @@ use tempfile::TempDir;
 
 mod common;
 
+use common::parent_death::GuardedSpawn;
+
 /// Version label staged for the deferred update. Bookkeeping only — see the
 /// module docs on why the re-execed agent still reports its compile-time version.
 /// Chosen far above any real `CARGO_PKG_VERSION` so the #1551 startup prune keeps
@@ -177,7 +179,7 @@ impl LiveAgent {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::from(stderr_handle))
-            .spawn()
+            .spawn_guarded()
             .expect("spawn agent process");
         // `spawn` returns only once the child has exec'd, so the inherited-fd
         // window is closed here.

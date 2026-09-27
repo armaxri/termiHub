@@ -130,3 +130,13 @@ wiremock = "0.6"
 # Compute the SHA-256 the mock release advertises for the staged agent binary
 # in the live self-update integration test.
 sha2 = "0.10"
+
+[target.'cfg(windows)'.dev-dependencies]
+# Kill-on-close Job Object the test harnesses put spawned agents into, so a
+# killed test run cannot leak them (#3641, agent/tests/common/parent_death.rs).
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
