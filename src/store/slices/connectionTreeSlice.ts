@@ -93,6 +93,12 @@ export interface ConnectionTreeSlice {
    * references follow.
    */
   followConnectionIdChanges: (changes: readonly ConnectionIdChange[]) => void;
+  /**
+   * Point an open connection editor's target folder (`connectionEditorMeta.folderId`)
+   * at a folder's new id after the folder was renamed, moved or deleted (#3622).
+   * No-op for a tab that is not a connection editor.
+   */
+  retargetConnectionEditorFolder: (tabId: string, folderId: string | null) => void;
 }
 
 /**
@@ -226,6 +232,20 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       // for the on-connect triggers; schedules, tunnels and settings update
       // through their own event / regions.
       if (changes.length > 0) void get().loadWorkflows();
+    },
+
+    retargetConnectionEditorFolder: (tabId, folderId) => {
+      set((state) => {
+        const content = state.tabContent[tabId];
+        const meta = content?.connectionEditorMeta;
+        if (!meta || meta.folderId === folderId) return {};
+        return {
+          tabContent: {
+            ...state.tabContent,
+            [tabId]: { ...content, connectionEditorMeta: { ...meta, folderId } },
+          },
+        };
+      });
     },
 
     reloadExternalConnections: async () => {
