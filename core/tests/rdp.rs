@@ -485,7 +485,9 @@ async fn assert_session_ends_without_desktop(
 
 /// xrdp (TLS, no NLA) checks the Client Info credentials only after the RDP
 /// connection is up, then closes it (`require_credentials`). It sends no
-/// typed reason, so the contract here is: no desktop, the session ends, and
+/// typed reason — a bare MCS Disconnect Provider Ultimatum, the same one it
+/// sends for a logoff (#3612) — so the contract here is: no desktop, the session
+/// ends as an ordinary server close, and
 /// the sidecar exits on its own. Before #3609 the sidecar lingered after a
 /// server-side close — its stdin reader kept the runtime alive — so the frame
 /// stream never closed and the desktop never learned the session was gone.
@@ -517,12 +519,12 @@ async fn rdp_04_wrong_password_on_tls_server_ends_session() {
 }
 
 /// Over NLA (CredSSP) the server rejects the credentials during the handshake,
-/// before any RDP session exists. Windows answers with a logon NTSTATUS that
-/// the sidecar reports as the typed `AuthFailed` (#3390); the fixture's FreeRDP
-/// shadow server instead returns a facility-Win32 NTSTATUS, which is still
-/// classified as a connect failure — tracked in #3612. Until then this asserts
-/// the stable part: no desktop, a failure raised by the server's CredSSP error
-/// status (the right reason — not a transport or TLS error), and a clean exit.
+/// before any RDP session exists, and the sidecar reports the typed
+/// `AuthFailed` (#3390) so the desktop does not auto-reconnect into it. The
+/// fixture's FreeRDP shadow server answers the NTLM AUTHENTICATE message with a
+/// facility-Win32 NTSTATUS (`0xC00700EA`) rather than Windows'
+/// `STATUS_LOGON_FAILURE`; the sidecar classifies it by the phase it answers
+/// (#3612).
 #[tokio::test]
 async fn rdp_04b_wrong_password_on_nla_server_is_rejected_in_credssp() {
     let _serial = SERIAL.lock().await;
@@ -539,16 +541,9 @@ async fn rdp_04b_wrong_password_on_nla_server_is_rejected_in_credssp() {
 
     assert_session_ends_without_desktop(&mut frames, Solid::Blue, "RDP-04b").await;
     let fatal = rdp.fatal_error();
-    let rejected_in_credssp = match &fatal {
-        Some(SessionError::AuthFailed) => true,
-        Some(SessionError::ConnectionFailed(message)) => {
-            message.contains("CredSSP server returned an error status")
-        }
-        _ => false,
-    };
     assert!(
-        rejected_in_credssp,
-        "RDP-04b: expected a CredSSP credential rejection, got {fatal:?}"
+        matches!(fatal, Some(SessionError::AuthFailed)),
+        "RDP-04b: expected AuthFailed for a CredSSP credential rejection, got {fatal:?}"
     );
     assert_helper_gone(pid, "RDP-04b").await;
     rdp.disconnect().await.expect("disconnect should succeed");
