@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::expand_config_value;
 use crate::config::SshConfig;
-use crate::errors::SessionError;
+use crate::errors::{ConnectFailureKind, SessionError};
 
 use super::handler::{ForwardedChannelRegistry, LivenessWatch, SshSession, TermiHubHandler};
 use super::keyboard_interactive::{
@@ -67,10 +67,10 @@ pub async fn connect_and_authenticate_cancellable_with_liveness(
         timeout_excluding_prompts(timeout, do_connect_and_authenticate(config))
             .await
             .map_err(|_| {
-                SessionError::SpawnFailed(format!(
-                    "Connection timed out after {}s",
-                    timeout.as_secs()
-                ))
+                SessionError::classified(
+                    ConnectFailureKind::Timeout,
+                    format!("Connection timed out after {}s", timeout.as_secs()),
+                )
             })?
     };
 
@@ -358,7 +358,7 @@ async fn authenticate_with_agent<H: russh::client::Handler>(
 ) -> Result<russh::client::AuthResult, SessionError> {
     let agent = russh::keys::agent::client::AgentClient::connect_env()
         .await
-        .map_err(|e| SessionError::SpawnFailed(format!("SSH agent connect failed: {e}")))?;
+        .map_err(|e| SessionError::classified(ConnectFailureKind::AgentAuthFailed, format!("SSH agent connect failed: {e}")))?;
     authenticate_with_agent_client(session, username, agent).await
 }
 
@@ -371,7 +371,7 @@ async fn authenticate_with_agent<H: russh::client::Handler>(
     let agent =
         russh::keys::agent::client::AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent")
             .await
-            .map_err(|e| SessionError::SpawnFailed(format!("SSH agent connect failed: {e}")))?;
+            .map_err(|e| SessionError::classified(ConnectFailureKind::AgentAuthFailed, format!("SSH agent connect failed: {e}")))?;
     authenticate_with_agent_client(session, username, agent).await
 }
 
@@ -395,13 +395,13 @@ where
     let identities = agent
         .request_identities()
         .await
-        .map_err(|e| SessionError::SpawnFailed(format!("SSH agent list keys failed: {e}")))?;
+        .map_err(|e| SessionError::classified(ConnectFailureKind::AgentAuthFailed, format!("SSH agent list keys failed: {e}")))?;
 
     // Negotiate the RSA hash once; ignored for ed25519/ecdsa agent keys.
     let hash_alg = session
         .best_supported_rsa_hash()
         .await
-        .map_err(|e| SessionError::SpawnFailed(format!("Agent auth failed: {e}")))?
+        .map_err(|e| SessionError::classified(ConnectFailureKind::AgentAuthFailed, format!("Agent auth failed: {e}")))?
         .flatten();
 
     // With no usable identity the outcome is a plain rejection.
@@ -417,7 +417,7 @@ where
         let result = session
             .authenticate_publickey_with(username, public_key, hash_alg, &mut agent)
             .await
-            .map_err(|e| SessionError::SpawnFailed(format!("Agent auth failed: {e}")))?;
+            .map_err(|e| SessionError::classified(ConnectFailureKind::AgentAuthFailed, format!("Agent auth failed: {e}")))?;
         // Stop on success, and on a partial success: the key was accepted and
         // the server now wants a second factor (#3371).
         if matches!(

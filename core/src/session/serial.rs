@@ -7,7 +7,7 @@
 use serial2_tokio::SerialPort;
 
 use crate::config::SerialConfig;
-use crate::errors::SessionError;
+use crate::errors::{ConnectFailureKind, SessionError};
 
 /// Pre-parsed serial port configuration.
 ///
@@ -112,26 +112,6 @@ pub fn parse_serial_config(config: &SerialConfig) -> Result<ParsedSerialConfig, 
         parity,
         flow_control,
     })
-}
-
-/// Platform-appropriate remediation for a serial-port permission error.
-///
-/// Only Linux gates serial ports behind the `dialout` group, so the `usermod`
-/// fix applies there alone. On Windows a denied `COM` port and on macOS a denied
-/// `/dev/tty.*`/`/dev/cu.*` port almost always mean another program holds the
-/// port or the user lacks access — there is no group to join, so we return plain
-/// guidance rather than a bogus command (#1831). This runs on the machine that
-/// owns the port (the host for local ports, the remote agent for agent-hosted
-/// ports), so the advice matches where the device physically lives.
-fn serial_permission_hint() -> &'static str {
-    #[cfg(target_os = "linux")]
-    {
-        "on Linux, add your user to the dialout group: sudo usermod -aG dialout $USER"
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        "another application may be using the port, or you may not have permission to access it"
-    }
 }
 
 /// Locale-independent classification of a serial-port open failure.
@@ -303,26 +283,28 @@ pub fn open_serial_port(config: &ParsedSerialConfig) -> Result<SerialPort, Sessi
         }
 
         // Classify by locale-invariant signals (ErrorKind / raw OS code) rather
-        // than the localized OS message text (I18N-007).
-        let msg = match classify_open_error(&e) {
-            SerialOpenError::NotFound => format!(
-                "Serial port '{}' not found — check that the device is connected and the port name is correct",
-                config.port
+        // than the localized OS message text (I18N-007), and carry the result as
+        // a typed kind so the UI picks its (localized) remediation hint from the
+        // kind rather than from this text (I18N-009). The message therefore
+        // states only the fact — no appended remediation clause to split off.
+        let port = &config.port;
+        match classify_open_error(&e) {
+            SerialOpenError::NotFound => SessionError::classified(
+                ConnectFailureKind::NotFound,
+                format!("Serial port '{port}' not found"),
             ),
-            SerialOpenError::PermissionDenied => format!(
-                "Permission denied on '{}' — {}",
-                config.port,
-                serial_permission_hint()
+            SerialOpenError::PermissionDenied => SessionError::classified(
+                ConnectFailureKind::PermissionDenied,
+                format!("Permission denied on '{port}'"),
             ),
-            SerialOpenError::Busy => format!(
-                "Serial port '{}' is already in use by another application",
-                config.port
+            SerialOpenError::Busy => SessionError::classified(
+                ConnectFailureKind::Busy,
+                format!("Serial port '{port}' is already in use by another application"),
             ),
             SerialOpenError::Other => {
-                format!("Failed to open serial port '{}': {}", config.port, e)
+                SessionError::SpawnFailed(format!("Failed to open serial port '{port}': {e}"))
             }
-        };
-        SessionError::SpawnFailed(msg)
+        }
     })
 }
 
@@ -858,6 +840,24 @@ mod tests {
 
     // --- open_serial_port tests ------------------------------------------
 
+    /// A missing port surfaces the typed `NotFound` kind (I18N-009), and the
+    /// message states only the fact — the remediation lives in the UI hint.
+    #[cfg(unix)]
+    #[test]
+    fn open_missing_port_is_classified_not_found() {
+        let parsed = ParsedSerialConfig {
+            port: "/dev/__nonexistent_serial_port__".into(),
+            baud_rate: 115200,
+            char_size: serial2::CharSize::Bits8,
+            stop_bits: serial2::StopBits::One,
+            parity: serial2::Parity::None,
+            flow_control: serial2::FlowControl::None,
+        };
+        let err = open_serial_port(&parsed).unwrap_err();
+        assert_eq!(err.connect_failure_kind(), Some(ConnectFailureKind::NotFound));
+        assert!(!err.to_string().contains(" — "), "got: {err}");
+    }
+
     #[test]
     fn open_invalid_port_returns_spawn_failed() {
         let parsed = ParsedSerialConfig {
@@ -872,7 +872,10 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            matches!(err, SessionError::SpawnFailed(_)),
+            matches!(
+                err,
+                SessionError::SpawnFailed(_) | SessionError::Classified { .. }
+            ),
             "expected SpawnFailed, got: {:?}",
             err
         );
@@ -1012,36 +1015,6 @@ mod tests {
         assert_eq!(
             classify_open_error(&Error::other("something unexpected")),
             SerialOpenError::Other
-        );
-    }
-
-    // --- serial_permission_hint tests ------------------------------------
-    //
-    // The permission-error remediation must be host-OS specific: the Linux
-    // `dialout` advice is wrong on Windows/macOS, where there is no such group
-    // (#1831). CI runs on all three platforms, so each leg pins its own case.
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn permission_hint_mentions_dialout_on_linux() {
-        assert!(
-            serial_permission_hint().contains("dialout"),
-            "Linux hint should recommend the dialout group, got: {:?}",
-            serial_permission_hint()
-        );
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    #[test]
-    fn permission_hint_omits_dialout_off_linux() {
-        let hint = serial_permission_hint();
-        assert!(
-            !hint.contains("dialout"),
-            "non-Linux hint must not mention the dialout group, got: {hint:?}"
-        );
-        assert!(
-            !hint.is_empty(),
-            "non-Linux hint should still offer generic guidance"
         );
     }
 }

@@ -17,7 +17,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{JumpHostConfig, SshConfig};
-use crate::errors::SessionError;
+use crate::errors::{ConnectFailureKind, SessionError};
 
 use super::auth::{
     connect_and_authenticate_cancellable, connect_and_authenticate_over_channel_with_liveness,
@@ -258,10 +258,10 @@ where
         timeout_excluding_prompts(timeout, step)
             .await
             .map_err(|_| {
-                SessionError::SpawnFailed(format!(
-                    "Jump host {hop_label} timed out after {}s",
-                    timeout.as_secs()
-                ))
+                SessionError::classified(
+                    ConnectFailureKind::Timeout,
+                    format!("Jump host {hop_label} timed out after {}s", timeout.as_secs()),
+                )
             })?
     };
 
@@ -327,10 +327,18 @@ async fn connect_hop_over_channel_with_liveness(
 fn label_first_hop_error(e: SessionError, first_cfg: &SshConfig) -> SessionError {
     match e {
         SessionError::AuthCancelled | SessionError::SecondFactorFailed => e,
-        other => SessionError::SpawnFailed(format!(
-            "Jump host {}: {other}",
-            hop_label(1, &first_cfg.host, first_cfg.port)
-        )),
+        other => {
+            let message = format!(
+                "Jump host {}: {other}",
+                hop_label(1, &first_cfg.host, first_cfg.port)
+            );
+            // Keep a typed connect-failure kind (a hop timeout, an SSH-agent
+            // failure) so the UI can still pick its hint structurally (I18N-009).
+            match other.connect_failure_kind() {
+                Some(kind) => SessionError::classified(kind, message),
+                None => SessionError::SpawnFailed(message),
+            }
+        }
     }
 }
 
@@ -608,6 +616,22 @@ mod tests {
                 if m == "Jump host hop 1 (bastion:2200): Authentication failed"),
             "got {labelled:?}"
         );
+    }
+
+    /// A first-hop failure with a typed connect-failure kind keeps that kind
+    /// through the hop label (I18N-009).
+    #[test]
+    fn first_hop_error_keeps_connect_failure_kind() {
+        let cfg = hop("bastion", 2200, "u").to_ssh_config();
+        let labelled = label_first_hop_error(
+            SessionError::classified(ConnectFailureKind::AgentAuthFailed, "Agent auth failed: x"),
+            &cfg,
+        );
+        assert_eq!(
+            labelled.connect_failure_kind(),
+            Some(ConnectFailureKind::AgentAuthFailed)
+        );
+        assert!(labelled.to_string().contains("hop 1 (bastion:2200)"));
     }
 
     /// Build an SSH target config with the given inline jump-host chain. A short
