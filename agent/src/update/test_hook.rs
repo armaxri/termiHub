@@ -277,6 +277,7 @@ mod tests {
             staged_at: "2026-07-17T09:00:00Z".to_string(),
             expected_sha256: None,
             signature: None,
+            pinned_version: None,
         });
 
         let current_exe = std::env::current_exe().ok();

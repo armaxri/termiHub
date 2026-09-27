@@ -1120,15 +1120,19 @@ fn a_broadcast_with_no_other_workers_is_harmless() {
 /// deliberately. Staging a real one would exec-replace the agent mid-test; what
 /// these tests are about is the coordination that happens strictly *before* the
 /// apply, and the failure arriving at all is itself proof the window closed.
+///
+/// `auth_token` is the requesting agent's per-instance token: the update RPCs
+/// require it on top of `initialize` (AGT-003, #3213).
 fn request_update_async(
     mut client: Client,
     ack_timeout_secs: u64,
+    auth_token: String,
 ) -> std::thread::JoinHandle<(Value, Duration)> {
     std::thread::spawn(move || {
         let started = Instant::now();
         let response = client.call(
             "agent.request_update",
-            json!({ "ackTimeoutSecs": ack_timeout_secs }),
+            json!({ "ackTimeoutSecs": ack_timeout_secs, "authToken": auth_token }),
         );
         (response, started.elapsed())
     })
@@ -1167,7 +1171,11 @@ fn the_update_notice_reaches_a_second_session_less_desktop() {
         "desktop-b must be host-wide visible before the update is requested"
     );
 
-    let requester = request_update_async(desktop_a, 2);
+    let requester = request_update_async(
+        desktop_a,
+        2,
+        common::read_listen_token(agent_a.config_home()),
+    );
 
     let notice = desktop_b
         .next_notification("agent.update_pending", Duration::from_secs(15))
@@ -1217,7 +1225,11 @@ fn a_desktop_that_disconnects_releases_the_update_early() {
         vec!["desktop-a", "desktop-b"],
     );
 
-    let requester = request_update_async(desktop_a, 20);
+    let requester = request_update_async(
+        desktop_a,
+        20,
+        common::read_listen_token(agent_a.config_home()),
+    );
 
     desktop_b
         .next_notification("agent.update_pending", Duration::from_secs(15))
@@ -1257,7 +1269,11 @@ fn a_desktop_that_never_leaves_does_not_block_the_update() {
     );
 
     // desktop-b stays attached and does nothing about the notice.
-    let requester = request_update_async(desktop_a, 2);
+    let requester = request_update_async(
+        desktop_a,
+        2,
+        common::read_listen_token(agent_a.config_home()),
+    );
 
     let (response, elapsed) = requester.join().expect("requester thread");
     assert!(

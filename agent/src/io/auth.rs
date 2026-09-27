@@ -37,9 +37,13 @@
 //! boundary. This mirrors the token-file pattern used by editor/server agents
 //! (Jupyter, VS Code Server).
 //!
-//! Only the TCP `--listen` path uses this. The `--stdio` and SSH-exec transports
-//! are unchanged: their trust derives from the pipe / SSH channel already being
-//! owned by the launching process.
+//! Only the TCP `--listen` path uses this connection handshake. The `--stdio` and
+//! SSH-exec transports are unchanged: their trust derives from the pipe / SSH
+//! channel already being owned by the launching process.
+//!
+//! The same per-instance token (and, for `--stdio`, an equivalent per-process
+//! one) additionally gates the agent-update RPCs — see
+//! [`super::update_auth`] (AGT-003, #3213).
 
 use std::path::{Path, PathBuf};
 
@@ -96,7 +100,7 @@ pub struct ListenAuthToken {
 
 impl ListenAuthToken {
     /// Build a token guard from a known plaintext (its digest is stored).
-    fn from_plaintext(token: &str) -> Self {
+    pub(crate) fn from_plaintext(token: &str) -> Self {
         Self {
             digest: Sha256::digest(token.as_bytes()).into(),
         }
@@ -174,7 +178,7 @@ pub fn remove_token_file() {
 /// any brute-force reach for a bearer token and comfortably past the 128-bit
 /// security target. Using `uuid` keeps this to a RNG already vetted and present
 /// in the tree.
-fn generate_token_string() -> String {
+pub(crate) fn generate_token_string() -> String {
     let mut bytes = [0u8; 32];
     bytes[..16].copy_from_slice(Uuid::new_v4().as_bytes());
     bytes[16..].copy_from_slice(Uuid::new_v4().as_bytes());
@@ -210,7 +214,7 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 /// that implementation detail — mirroring `state.json`'s handling). On Windows
 /// the file lives under `%APPDATA%`, whose NTFS ACL already restricts it to the
 /// owner's profile, and there is no `chmod` analog to apply.
-fn write_token_file(path: &Path, token: &str) -> Result<()> {
+pub(crate) fn write_token_file(path: &Path, token: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create token dir {}", parent.display()))?;

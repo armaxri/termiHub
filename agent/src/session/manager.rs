@@ -41,7 +41,7 @@ use crate::state::persistence::{AgentState, PendingUpdate, PersistedSession};
 use crate::update::{
     cleanup_stale_update_backup, confine_to_staging, prune_applied_pending_update,
     should_apply_deferred_update, StagingConfinementError, SystemUpdateApplier, UpdateApplier,
-    UpdateSignatureError,
+    UpdateSignatureError, VersionPolicyError,
 };
 
 /// Maximum number of concurrent sessions the agent supports.
@@ -105,12 +105,17 @@ pub trait SessionManagerApi: Send + Sync + 'static {
     async fn active_count(&self) -> u32;
 
     /// Record a deferred agent update, applying it immediately when idle.
+    ///
+    /// `pinned_version` is the desktop's matched-downgrade pin (SEC-006,
+    /// #3213), already checked against the desktop's own version by the RPC
+    /// layer; it is honoured only together with `binary_path`.
     async fn request_deferred_update(
         &self,
         binary_path: Option<String>,
         version: Option<String>,
         expected_sha256: Option<String>,
         signature: Option<String>,
+        pinned_version: Option<String>,
     ) -> Result<DeferredUpdateOutcome, DeferredUpdateError>;
 
     /// Attach a client to an existing session.
@@ -216,6 +221,10 @@ pub enum DeferredUpdateError {
     /// malformed, or does not verify against the compiled-in release key
     /// (AGT-005, #3213). Surfaced to the desktop with a dedicated error code.
     SignatureRejected(UpdateSignatureError),
+    /// The update was refused by the downgrade policy (SEC-006, #3213): an
+    /// unpinned downgrade, a pin that does not match the desktop's version or
+    /// the binary's embedded version, or a binary of unknown version.
+    DowngradeRefused(VersionPolicyError),
 }
 
 impl fmt::Display for DeferredUpdateError {
@@ -225,6 +234,7 @@ impl fmt::Display for DeferredUpdateError {
             Self::NoPendingUpdate => write!(f, "No pending update to apply"),
             Self::ApplyFailed(e) => write!(f, "Failed to apply update: {e:#}"),
             Self::SignatureRejected(e) => write!(f, "Update signature rejected: {e}"),
+            Self::DowngradeRefused(e) => write!(f, "Update refused: {e}"),
         }
     }
 }
@@ -251,10 +261,13 @@ fn map_confinement_error(e: StagingConfinementError) -> DeferredUpdateError {
 /// signature refusal (AGT-005) out of the error chain into its typed variant so
 /// the RPC layer can report it with its own error code.
 fn map_apply_error(e: anyhow::Error) -> DeferredUpdateError {
-    match e.downcast_ref::<UpdateSignatureError>() {
-        Some(sig) => DeferredUpdateError::SignatureRejected(sig.clone()),
-        None => DeferredUpdateError::ApplyFailed(e),
+    if let Some(sig) = e.downcast_ref::<UpdateSignatureError>() {
+        return DeferredUpdateError::SignatureRejected(sig.clone());
     }
+    if let Some(policy) = e.downcast_ref::<VersionPolicyError>() {
+        return DeferredUpdateError::DowngradeRefused(policy.clone());
+    }
+    DeferredUpdateError::ApplyFailed(e)
 }
 
 // ── DaemonLauncher trait ──────────────────────────────────────────
@@ -1691,9 +1704,11 @@ impl SessionManager {
         version: Option<String>,
         expected_sha256: Option<String>,
         signature: Option<String>,
+        pinned_version: Option<String>,
     ) -> Result<DeferredUpdateOutcome, DeferredUpdateError> {
         // Stage a caller-supplied binary, or fall back to an existing pending
-        // update.
+        // update. A pin without a binary is ignored: it must never re-authorize
+        // an update that is already staged.
         if let Some(path) = binary_path {
             // AGT-003: confine the caller-supplied path to the agent-owned
             // staging locations before it can ever be staged/applied. An
@@ -1709,6 +1724,12 @@ impl SessionManager {
                     .check_signature(digest, signature.as_deref())
                     .map_err(DeferredUpdateError::SignatureRejected)?;
             }
+            // SEC-006: refuse an unpinned (or mismatched-pin) downgrade up front,
+            // from the version embedded in the now-signature-checked binary. The
+            // apply path re-checks it immediately before the swap.
+            self.update_applier
+                .check_version(&confined, pinned_version.as_deref())
+                .map_err(DeferredUpdateError::DowngradeRefused)?;
             let pending = PendingUpdate {
                 version: version.unwrap_or_default(),
                 binary_path: confined.to_string_lossy().into_owned(),
@@ -1720,6 +1741,8 @@ impl SessionManager {
                 // AGT-005: carried so the apply path re-verifies it before the
                 // swap (a deferred apply may run much later).
                 signature,
+                // SEC-006: the matched-downgrade pin, re-checked at apply.
+                pinned_version,
             };
             self.persist_state_delta(move |s| {
                 s.update.pending_update = Some(pending);
@@ -1783,6 +1806,8 @@ impl SessionManager {
             staged_at: Utc::now().to_rfc3339(),
             expected_sha256,
             signature,
+            // A self-downloaded update is only ever an upgrade: never pinned.
+            pinned_version: None,
         };
         self.persist_state_delta(move |s| {
             s.update.pending_update = Some(pending);
@@ -2058,6 +2083,7 @@ impl SessionManagerApi for SessionManager {
         version: Option<String>,
         expected_sha256: Option<String>,
         signature: Option<String>,
+        pinned_version: Option<String>,
     ) -> Result<DeferredUpdateOutcome, DeferredUpdateError> {
         SessionManager::request_deferred_update(
             self,
@@ -2065,6 +2091,7 @@ impl SessionManagerApi for SessionManager {
             version,
             expected_sha256,
             signature,
+            pinned_version,
         )
         .await
     }
@@ -3179,6 +3206,7 @@ mod tests {
                 staged_at: "2026-07-14T09:00:00Z".to_string(),
                 expected_sha256: None,
                 signature: None,
+                pinned_version: None,
             }
         }
 
@@ -3256,6 +3284,7 @@ mod tests {
                 staged_at: "2026-07-17T09:00:00Z".to_string(),
                 expected_sha256: None,
                 signature: None,
+                pinned_version: None,
             });
             seeded.save_to(&state_path);
 
@@ -3314,6 +3343,7 @@ mod tests {
                 staged_at: "2026-07-17T09:00:00Z".to_string(),
                 expected_sha256: None,
                 signature: None,
+                pinned_version: None,
             });
             seeded.save_to(&state_path);
 
@@ -3379,6 +3409,7 @@ mod tests {
                     Some("1.0.0".to_string()),
                     Some("a".repeat(64)),
                     None,
+                    None,
                 )
                 .await
                 .unwrap();
@@ -3416,7 +3447,13 @@ mod tests {
             std::fs::write(&bin, b"BIN").unwrap();
 
             let outcome = mgr
-                .request_deferred_update(Some(bin.to_string_lossy().into_owned()), None, None, None)
+                .request_deferred_update(
+                    Some(bin.to_string_lossy().into_owned()),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
                 .await
                 .unwrap();
 
@@ -3438,7 +3475,7 @@ mod tests {
                 .await;
 
             let outcome = mgr
-                .request_deferred_update(None, None, None, None)
+                .request_deferred_update(None, None, None, None, None)
                 .await
                 .unwrap();
             assert!(matches!(outcome, DeferredUpdateOutcome::Applying));
@@ -3451,7 +3488,7 @@ mod tests {
         async fn request_without_path_and_no_pending_errors() {
             let (mgr, _applied, _tmp) = manager_with_recording_applier();
             let err = mgr
-                .request_deferred_update(None, None, None, None)
+                .request_deferred_update(None, None, None, None, None)
                 .await
                 .unwrap_err();
             assert!(matches!(err, DeferredUpdateError::NoPendingUpdate));
@@ -3461,7 +3498,13 @@ mod tests {
         async fn request_with_missing_binary_errors() {
             let (mgr, _applied, _tmp) = manager_with_recording_applier();
             let err = mgr
-                .request_deferred_update(Some("/no/such/binary".to_string()), None, None, None)
+                .request_deferred_update(
+                    Some("/no/such/binary".to_string()),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
                 .await
                 .unwrap_err();
             assert!(matches!(err, DeferredUpdateError::BinaryNotFound(_)));
@@ -3479,6 +3522,7 @@ mod tests {
             let err = mgr
                 .request_deferred_update(
                     Some(outside.to_string_lossy().into_owned()),
+                    None,
                     None,
                     None,
                     None,
@@ -3561,6 +3605,7 @@ mod tests {
                     Some("9.9.9".to_string()),
                     Some("a".repeat(64)),
                     None,
+                    None,
                 )
                 .await
                 .expect_err("an unsigned update must be refused");
@@ -3593,7 +3638,7 @@ mod tests {
             .await;
 
             let err = mgr
-                .request_deferred_update(None, None, None, None)
+                .request_deferred_update(None, None, None, None, None)
                 .await
                 .expect_err("the apply must fail");
             assert!(
@@ -3607,6 +3652,178 @@ mod tests {
             assert!(
                 mgr.pending_update_for_test().await.is_some(),
                 "a failed apply keeps the pending update"
+            );
+        }
+
+        // ── SEC-006: matched-downgrade policy at staging time (#3213) ──
+
+        /// Applier enforcing the **strict** (release-build) downgrade policy for
+        /// an agent running 0.5.0, recording applies instead of swapping.
+        struct StrictVersionApplier {
+            applied: AppliedLog,
+        }
+
+        impl UpdateApplier for StrictVersionApplier {
+            fn apply(&self, pending: &PendingUpdate) -> anyhow::Result<()> {
+                self.applied
+                    .lock()
+                    .expect("applied lock")
+                    .push(pending.clone());
+                Ok(())
+            }
+
+            fn check_version(
+                &self,
+                binary: &Path,
+                pinned_version: Option<&str>,
+            ) -> Result<(), VersionPolicyError> {
+                crate::update::VersionPolicy::strict("0.5.0").check_binary(binary, pinned_version)
+            }
+        }
+
+        /// A manager over a strict-version applier, plus a staged binary that
+        /// embeds build version `binary_version`.
+        fn manager_with_staged_version(
+            binary_version: &str,
+        ) -> (SessionManager, AppliedLog, tempfile::TempDir, String) {
+            let tmp = tempfile::tempdir().unwrap();
+            let applied: AppliedLog = Arc::new(StdMutex::new(Vec::new()));
+            let mgr = SessionManager::with_test_deps(
+                test_notification_tx(),
+                test_registry(),
+                Arc::new(SystemDaemonLauncher),
+                tmp.path().join("state.json"),
+                Arc::new(StrictVersionApplier {
+                    applied: applied.clone(),
+                }),
+            );
+            let staging = tmp.path().join("updates");
+            std::fs::create_dir_all(&staging).unwrap();
+            let bin = staging.join("staged-agent");
+            let mut body = b"ELF...".to_vec();
+            body.extend_from_slice(crate::update::BUILD_VERSION_MARKER_PREFIX);
+            body.extend_from_slice(binary_version.as_bytes());
+            body.push(0);
+            std::fs::write(&bin, body).unwrap();
+            (mgr, applied, tmp, bin.to_string_lossy().into_owned())
+        }
+
+        async fn stage(
+            mgr: &SessionManager,
+            bin: String,
+            pinned: Option<&str>,
+        ) -> Result<DeferredUpdateOutcome, DeferredUpdateError> {
+            mgr.request_deferred_update(
+                Some(bin),
+                None,
+                Some("a".repeat(64)),
+                None,
+                pinned.map(str::to_string),
+            )
+            .await
+        }
+
+        #[tokio::test]
+        async fn unpinned_downgrade_is_refused_before_staging() {
+            let (mgr, applied, _tmp, bin) = manager_with_staged_version("0.4.0");
+            let err = stage(&mgr, bin, None)
+                .await
+                .expect_err("an unpinned downgrade must be refused");
+            assert!(
+                matches!(
+                    err,
+                    DeferredUpdateError::DowngradeRefused(VersionPolicyError::Downgrade { .. })
+                ),
+                "got {err}"
+            );
+            assert!(applied.lock().unwrap().is_empty());
+            assert!(mgr.pending_update_for_test().await.is_none());
+        }
+
+        #[tokio::test]
+        async fn pinned_downgrade_to_the_binary_version_is_staged_and_applied() {
+            let (mgr, applied, _tmp, bin) = manager_with_staged_version("0.4.0");
+            let outcome = stage(&mgr, bin, Some("0.4.0"))
+                .await
+                .expect("a matched, pinned downgrade must be accepted");
+            assert!(matches!(outcome, DeferredUpdateOutcome::Applying));
+            let applied = applied.lock().unwrap();
+            assert_eq!(applied.len(), 1);
+            assert_eq!(
+                applied[0].pinned_version.as_deref(),
+                Some("0.4.0"),
+                "the pin is carried to the apply-time re-check"
+            );
+        }
+
+        #[tokio::test]
+        async fn pinned_downgrade_to_a_different_version_is_refused() {
+            let (mgr, applied, _tmp, bin) = manager_with_staged_version("0.3.0");
+            let err = stage(&mgr, bin, Some("0.4.0"))
+                .await
+                .expect_err("a pin that does not name the binary must be refused");
+            assert!(
+                matches!(
+                    err,
+                    DeferredUpdateError::DowngradeRefused(
+                        VersionPolicyError::PinnedVersionMismatch { .. }
+                    )
+                ),
+                "got {err}"
+            );
+            assert!(applied.lock().unwrap().is_empty());
+            assert!(mgr.pending_update_for_test().await.is_none());
+        }
+
+        #[tokio::test]
+        async fn upgrade_and_same_version_reinstall_are_accepted_unpinned() {
+            for version in ["0.6.0", "0.5.0"] {
+                let (mgr, applied, _tmp, bin) = manager_with_staged_version(version);
+                stage(&mgr, bin, None)
+                    .await
+                    .unwrap_or_else(|e| panic!("{version} must be accepted: {e}"));
+                assert_eq!(applied.lock().unwrap().len(), 1, "{version}");
+            }
+        }
+
+        #[tokio::test]
+        async fn apply_time_downgrade_refusal_maps_to_the_typed_variant() {
+            // "Apply Now" of an already-staged update whose apply-time policy
+            // re-check refuses: it must surface as `DowngradeRefused`.
+            struct RefusingApplier;
+            impl UpdateApplier for RefusingApplier {
+                fn apply(&self, _pending: &PendingUpdate) -> anyhow::Result<()> {
+                    Err(anyhow::Error::from(VersionPolicyError::Downgrade {
+                        current: "0.5.0".into(),
+                        candidate: "0.4.0".into(),
+                    })
+                    .context("refuse to apply an agent update binary that violates the policy"))
+                }
+            }
+            let tmp = tempfile::tempdir().unwrap();
+            let mgr = SessionManager::with_test_deps(
+                test_notification_tx(),
+                test_registry(),
+                Arc::new(SystemDaemonLauncher),
+                tmp.path().join("state.json"),
+                Arc::new(RefusingApplier),
+            );
+            mgr.stage_pending_update("/tmp/staged".to_string(), "0.4.0".to_string(), None, None)
+                .await;
+            let err = mgr
+                .request_deferred_update(None, None, None, None, Some("0.4.0".to_string()))
+                .await
+                .expect_err("the apply must fail");
+            assert!(
+                matches!(err, DeferredUpdateError::DowngradeRefused(_)),
+                "got {err}"
+            );
+            assert_eq!(
+                mgr.pending_update_for_test()
+                    .await
+                    .and_then(|p| p.pinned_version),
+                None,
+                "a pin sent without a binary must never re-authorize a staged update"
             );
         }
 

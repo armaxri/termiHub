@@ -399,7 +399,15 @@ impl Client {
 
     /// Stage `binary_path` as a deferred update and ask the agent to apply it —
     /// the `agent.request_deferred_update` RPC (#1352). Returns the raw response.
-    fn request_deferred_update(&mut self, binary_path: &Path, version: &str) -> Value {
+    ///
+    /// `auth_token` is the agent's per-instance token, which the update RPCs
+    /// require on top of `initialize` (AGT-003, #3213).
+    fn request_deferred_update(
+        &mut self,
+        binary_path: &Path,
+        version: &str,
+        auth_token: &str,
+    ) -> Value {
         // AGT-004: the apply path re-verifies the staged bytes against this
         // digest before the swap, so a coordinated/pushed update must carry it.
         let expected_sha256 = sha256_hex_of_file(binary_path);
@@ -409,6 +417,7 @@ impl Client {
                 "binaryPath": binary_path,
                 "version": version,
                 "expectedSha256": expected_sha256,
+                "authToken": auth_token,
             }),
         )
     }
@@ -498,7 +507,11 @@ async fn deferred_update_applies_on_last_docker_disconnect() {
     let inode_before = inode(&agent.bin_path).expect("binary present before apply");
 
     // ── (1) Request a deferred update while busy → deferred, no swap ─────────
-    let resp = client.request_deferred_update(&staged_bin, STAGED_VERSION);
+    let resp = client.request_deferred_update(
+        &staged_bin,
+        STAGED_VERSION,
+        &common::read_listen_token(agent.config_home()),
+    );
     let result = &resp["result"];
     assert_eq!(
         result["applied"], false,

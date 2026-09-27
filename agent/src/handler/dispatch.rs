@@ -25,6 +25,7 @@ use tokio_util::sync::CancellationToken;
 use crate::client_registry::ConnectionRegistry;
 use crate::files::FileError;
 use crate::io::transport::NotificationSender;
+use crate::io::update_auth::{carries_update_auth_token, UpdateAuth};
 use crate::ki_prompt::{is_secret_bearing_request, KiBinding, KiPromptHub};
 use crate::monitoring::MonitoringManagerApi;
 use crate::network;
@@ -53,7 +54,7 @@ use crate::protocol::methods::{
     SessionInputParams, SessionListEntry, SessionListResult, SessionResizeParams, ToolCancelParams,
     ToolCancelResult, ToolStartParams, ToolStartResult, TunnelForwardSpec, TunnelStartParams,
     TunnelStartResult, TunnelStatusParams, TunnelStatusResult, TunnelStopParams, TunnelStopResult,
-    UpdatePendingNotification, AGENT_UPDATE_PENDING,
+    UpdateAuthToken, UpdatePendingNotification, AGENT_UPDATE_PENDING,
 };
 use termihub_core::protocol::methods::{KbdInteractiveRespondParams, KbdInteractiveRespondResult};
 // Shared method-name constants (DUP-002); referenced as `pm::CONNECTION_CREATE`
@@ -67,7 +68,9 @@ use crate::session::manager::{
     DeferredUpdateError, DeferredUpdateOutcome, SessionCreateError, SessionManagerApi, MAX_SESSIONS,
 };
 use crate::tunnel::AgentTunnelRegistry;
-use crate::update::{coordinate_update, CoordinationOutcome, ACK_TIMEOUT};
+use crate::update::{
+    check_pin_matches_desktop, coordinate_update, CoordinationOutcome, ACK_TIMEOUT,
+};
 use termihub_core::files::{FileBrowser, LocalFileBrowser};
 use termihub_core::monitoring::{LocalProcessManager, ProcessError, ProcessManager};
 
@@ -96,7 +99,11 @@ use termihub_core::monitoring::{LocalProcessManager, ProcessError, ProcessManage
 /// Bumped to 0.11.0 for the additive `embedded_server.activity` /
 /// `embedded_server.clear_activity` methods and the `embeddedServerActivity`
 /// capability (#3453).
-const AGENT_PROTOCOL_VERSION: &str = "0.11.0";
+/// Bumped to 0.12.0 because the update RPCs now **require** the per-instance
+/// `authToken` (AGT-003) and honour a matched-downgrade `pinnedVersion`
+/// (SEC-006), and `initialize` advertises `update_auth_token_path` (#3213). An
+/// older desktop that does not send the token can no longer update this agent.
+const AGENT_PROTOCOL_VERSION: &str = "0.12.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -152,6 +159,10 @@ struct HandlerState {
     /// agent's own `<config>/logs/crash-reports` is used; tests point it at a
     /// temp dir via [`AgentHandler::with_crash_dir`].
     crash_dir: Arc<OnceLock<PathBuf>>,
+    /// This agent instance's update auth token (AGT-003, #3213), wired by the
+    /// transport via [`AgentHandler::with_update_auth`]. Empty ⇒ every update
+    /// RPC is refused (fail closed).
+    update_auth: Arc<OnceLock<UpdateAuth>>,
 }
 
 // ── AgentHandler ───────────────────────────────────────────────────
@@ -207,6 +218,9 @@ pub struct AgentHandler {
         )
     )]
     crash_dir: Arc<OnceLock<PathBuf>>,
+    /// Shared with [`HandlerState::update_auth`]; see
+    /// [`with_update_auth`](Self::with_update_auth).
+    update_auth: Arc<OnceLock<UpdateAuth>>,
 }
 
 impl AgentHandler {
@@ -234,6 +248,7 @@ impl AgentHandler {
         let tool_runs = ToolRunManager::new(RunLimits::default());
         let ki_binding = KiBinding::new();
         let crash_dir: Arc<OnceLock<PathBuf>> = Arc::new(OnceLock::new());
+        let update_auth: Arc<OnceLock<UpdateAuth>> = Arc::new(OnceLock::new());
 
         let state = Mutex::new(HandlerState {
             session_manager,
@@ -252,6 +267,7 @@ impl AgentHandler {
             tool_runs: tool_runs.clone(),
             ki_binding: ki_binding.clone(),
             crash_dir: crash_dir.clone(),
+            update_auth: update_auth.clone(),
         });
 
         let mut module: RpcModule<Mutex<HandlerState>> = RpcModule::new(state);
@@ -268,7 +284,18 @@ impl AgentHandler {
             ki_binding,
             service_registry,
             crash_dir,
+            update_auth,
         })
+    }
+
+    /// Require this instance's update auth token on the update RPCs (AGT-003,
+    /// #3213) and advertise its file path in `initialize`.
+    ///
+    /// Called by the transport loops right after construction. A handler that
+    /// never gets one refuses every update RPC (fail closed).
+    pub fn with_update_auth(self, auth: UpdateAuth) -> Self {
+        let _ = self.update_auth.set(auth);
+        self
     }
 
     /// Serve `agent.crash_reports.*` from `dir` instead of the agent's own
@@ -371,6 +398,9 @@ impl AgentHandler {
                 "Dispatching: <redacted {}>",
                 pm::SSH_KEYBOARD_INTERACTIVE_RESPOND
             );
+        } else if carries_update_auth_token(request) {
+            // Carries the update auth token (AGT-003): never log the body.
+            debug!("Dispatching: <redacted update request>");
         } else {
             debug!("Dispatching: {}", request);
         }
@@ -700,10 +730,19 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 },
             )?;
 
-        let (session_manager, connection_store, buffer_size, client_id, tool_streaming, ki_prompts) = {
+        let (
+            session_manager,
+            connection_store,
+            buffer_size,
+            client_id,
+            tool_streaming,
+            ki_prompts,
+            update_auth_token_path,
+        ) = {
             let mut s = ctx.lock().await;
             s.initialized = true;
             s.agent_settings = p.agent_settings.clone();
+            let update_auth_token_path = s.update_auth.get().map(UpdateAuth::token_path);
             // Record the connected client (additive to the single-client
             // settings above). One entry per agent process in `--stdio` mode.
             let client_id = s.client_id.clone();
@@ -750,6 +789,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 client_id,
                 s.tool_runs.is_available(),
                 s.ki_binding.is_wired(),
+                update_auth_token_path,
             )
         };
 
@@ -794,6 +834,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             protocol_version: negotiated_version,
             agent_version: env!("CARGO_PKG_VERSION").to_string(),
             client_id,
+            update_auth_token_path,
             capabilities: Capabilities {
                 connection_types,
                 max_sessions: MAX_SESSIONS,
@@ -2347,7 +2388,50 @@ fn map_deferred_update_error(e: DeferredUpdateError) -> ErrorObjectOwned {
             errors::UPDATE_SIGNATURE_REJECTED,
             format!("Update signature rejected: {err}"),
         ),
+        // SEC-006 (#3213): a refused downgrade gets its own code too.
+        DeferredUpdateError::DowngradeRefused(err) => rpc_err(
+            errors::UPDATE_DOWNGRADE_REFUSED,
+            format!("Update refused by the downgrade policy: {err}"),
+        ),
     }
+}
+
+/// Authorize an update RPC beyond the `initialized` flag (AGT-003 / SEC-006,
+/// #3213), under the handler lock. Fails closed:
+///
+/// 1. The caller must present this agent instance's update auth token. A
+///    handler with no token configured refuses every update.
+/// 2. A `pinned_version` (a matched-downgrade request) must equal the
+///    requesting desktop's own `client_version` from `initialize`.
+///
+/// Runs before anything is staged; the binary's own version is checked against
+/// the pin later, once its signature has been verified.
+fn authorize_update(
+    s: &HandlerState,
+    auth_token: Option<&UpdateAuthToken>,
+    pinned_version: Option<&str>,
+) -> Result<(), ErrorObjectOwned> {
+    let authorized = s
+        .update_auth
+        .get()
+        .is_some_and(|auth| auth.verify(auth_token));
+    if !authorized {
+        warn!("Refused an agent update request: missing or invalid update auth token");
+        return Err(rpc_err(
+            errors::UPDATE_UNAUTHORIZED,
+            "Update refused: missing or invalid update auth token (read it from the file \
+             advertised as update_auth_token_path in initialize)",
+        ));
+    }
+    if let Some(pinned) = pinned_version {
+        let desktop_version = s
+            .client_registry
+            .get(&s.client_id)
+            .map(|c| c.client_version);
+        check_pin_matches_desktop(pinned, desktop_version.as_deref())
+            .map_err(|e| map_deferred_update_error(DeferredUpdateError::DowngradeRefused(e)))?;
+    }
+    Ok(())
 }
 
 /// How long the agent tells other hosts it expects to be unavailable.
@@ -2380,6 +2464,10 @@ fn register_agent_request_update(
             if !s.initialized {
                 return Err(not_initialized());
             }
+            // AGT-003 / SEC-006 (#3213): token + matched-pin gate, before the
+            // courtesy broadcast — an unauthorized caller must not even be able
+            // to make other hosts disconnect.
+            authorize_update(&s, p.auth_token.as_ref(), p.pinned_version.as_deref())?;
             // The requester's own version, for the notice's "being updated by
             // …" line. It is in this worker's own registry because `initialize`
             // put it there, so no host-wide round trip is needed.
@@ -2427,7 +2515,13 @@ fn register_agent_request_update(
         // Coordination is a courtesy, not a gate: every outcome proceeds. What
         // differs is only what we can report about the hosts we were waiting on.
         let apply = session_manager
-            .request_deferred_update(p.binary_path, p.version, p.expected_sha256, p.signature)
+            .request_deferred_update(
+                p.binary_path,
+                p.version,
+                p.expected_sha256,
+                p.signature,
+                p.pinned_version,
+            )
             .await
             .map_err(map_deferred_update_error)?;
 
@@ -2466,14 +2560,27 @@ fn register_agent_request_deferred_update(
     module.register_async_method(
         pm::AGENT_REQUEST_DEFERRED_UPDATE,
         |params, ctx, _ext| async move {
-            let session_manager = get_session_manager(&ctx).await?;
+            check_initialized(&ctx).await?;
 
             let p: AgentRequestDeferredUpdateParams = params
                 .parse()
                 .map_err(|e| invalid_params("agent.request_deferred_update", e))?;
 
+            // AGT-003 / SEC-006 (#3213): token + matched-pin gate.
+            let session_manager = {
+                let s = ctx.lock().await;
+                authorize_update(&s, p.auth_token.as_ref(), p.pinned_version.as_deref())?;
+                s.session_manager.clone()
+            };
+
             let outcome = session_manager
-                .request_deferred_update(p.binary_path, p.version, p.expected_sha256, p.signature)
+                .request_deferred_update(
+                    p.binary_path,
+                    p.version,
+                    p.expected_sha256,
+                    p.signature,
+                    p.pinned_version,
+                )
                 .await
                 .map_err(map_deferred_update_error)?;
 
@@ -3306,10 +3413,16 @@ mod tests {
     /// does not have — and must not claim it notified anyone.
     #[tokio::test]
     async fn request_update_without_a_registry_proceeds_and_notifies_nobody() {
-        let handler = make_handler();
+        let handler = make_handler().with_update_auth(UpdateAuth::for_test("t"));
         init_handler(&handler).await;
 
-        let result = dispatch(&handler, "agent.request_update", json!({}), 2).await;
+        let result = dispatch(
+            &handler,
+            "agent.request_update",
+            json!({"authToken": "t"}),
+            2,
+        )
+        .await;
 
         // No binary staged, so the apply is what fails — the point is that it
         // got as far as the apply instead of hanging for the ack window.
@@ -3324,10 +3437,10 @@ mod tests {
     /// does — the two RPCs share one apply path, so they must share its errors.
     #[tokio::test]
     async fn request_update_reports_a_missing_binary_like_the_deferred_rpc() {
-        let handler = make_handler();
+        let handler = make_handler().with_update_auth(UpdateAuth::for_test("t"));
         init_handler(&handler).await;
 
-        let params = json!({"binaryPath": "/definitely/not/here/termihub-agent"});
+        let params = json!({"binaryPath": "/definitely/not/here/termihub-agent", "authToken": "t"});
         let coordinated = dispatch(&handler, "agent.request_update", params.clone(), 2).await;
         let deferred = dispatch(&handler, "agent.request_deferred_update", params, 3).await;
 
@@ -3363,7 +3476,7 @@ mod tests {
     /// log RPC) may now arrive.
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.11.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.12.0");
     }
 
     // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────
@@ -5834,6 +5947,7 @@ mod tests {
             _version: Option<String>,
             _expected_sha256: Option<String>,
             _signature: Option<String>,
+            _pinned_version: Option<String>,
         ) -> Result<DeferredUpdateOutcome, DeferredUpdateError> {
             let active = self.sessions.lock().await.len() as u32;
             if active == 0 {
@@ -6069,4 +6183,7 @@ mod tests {
 
     /// `agent.crash_reports.*` — listing, reading, caps, invalid names (#3574).
     mod crash_reports_tests;
+
+    /// Update-RPC auth token + matched-downgrade pin (AGT-003 / SEC-006, #3213).
+    mod update_auth_tests;
 }

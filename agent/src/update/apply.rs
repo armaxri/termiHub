@@ -19,6 +19,7 @@ use tracing::debug;
 #[cfg(unix)]
 use tracing::{info, warn};
 
+use super::build_version::{VersionPolicy, VersionPolicyError};
 use super::signature::{SignaturePolicy, UpdateSignatureError};
 use super::version;
 use crate::state::persistence::{AgentState, PendingUpdate};
@@ -297,6 +298,20 @@ pub trait UpdateApplier: Send + Sync + 'static {
             .verify(digest_hex, signature)
             .map(|_| ())
     }
+
+    /// Check the binary at `binary` against the downgrade policy (SEC-006,
+    /// #3213) before it is staged, so a refused downgrade is reported
+    /// immediately. `pinned_version` is the desktop's matched-downgrade pin.
+    /// The apply path re-checks it immediately before the swap.
+    ///
+    /// Defaults to the build's policy ([`VersionPolicy::for_build`]).
+    fn check_version(
+        &self,
+        binary: &Path,
+        pinned_version: Option<&str>,
+    ) -> Result<(), VersionPolicyError> {
+        VersionPolicy::for_build().check_binary(binary, pinned_version)
+    }
 }
 
 /// Production [`UpdateApplier`] that swaps the on-disk binary and re-execs.
@@ -308,6 +323,7 @@ impl UpdateApplier for SystemUpdateApplier {
             &pending.binary_path,
             pending.expected_sha256.as_deref(),
             pending.signature.as_deref(),
+            pending.pinned_version.as_deref(),
         )
     }
 }
@@ -331,13 +347,16 @@ fn apply_update_binary(
     binary_path: &str,
     expected_sha256: Option<&str>,
     signature: Option<&str>,
+    pinned_version: Option<&str>,
 ) -> anyhow::Result<()> {
     apply_update_binary_confined(
         binary_path,
         expected_sha256,
         signature,
+        pinned_version,
         &production_staging_roots(),
         &SignaturePolicy::for_build(),
+        &VersionPolicy::for_build(),
     )
 }
 
@@ -382,23 +401,29 @@ fn production_staging_roots() -> Vec<PathBuf> {
 ///    Ed25519 signature from a key compiled into this agent. Integrity alone
 ///    only proves the bytes are what the *initiator* intended; the signature
 ///    proves they are a genuinely published termiHub agent build.
+/// 4. **Downgrade policy (SEC-006, #3213).** The version embedded in the
+///    now-authentic binary must not be older than the running agent unless it
+///    equals the desktop's matched-downgrade pin (see [`VersionPolicy`]).
 ///
 /// Fails **closed** on any violation of any guard — the running binary is
 /// never touched.
 #[cfg(unix)]
+#[allow(clippy::too_many_arguments)]
 fn apply_update_binary_confined(
     binary_path: &str,
     expected_sha256: Option<&str>,
     signature: Option<&str>,
+    pinned_version: Option<&str>,
     staging_roots: &[PathBuf],
     policy: &SignaturePolicy,
+    version_policy: &VersionPolicy,
 ) -> anyhow::Result<()> {
     use anyhow::Context;
 
-    // All guards run — confinement, digest, signature — before the running
-    // binary is ever touched. Extracted into `confine_and_verify` so the
-    // tamper-vector tests can exercise the gate without driving the
-    // (destructive) swap+re-exec.
+    // All guards run — confinement, digest, signature, downgrade policy —
+    // before the running binary is ever touched. Extracted so the tamper-vector
+    // tests can exercise the gate without driving the (destructive)
+    // swap+re-exec.
     let src = confine_and_verify(
         binary_path,
         expected_sha256,
@@ -406,6 +431,7 @@ fn apply_update_binary_confined(
         staging_roots,
         policy,
     )?;
+    check_version_policy(&src, pinned_version, version_policy)?;
 
     let current = std::env::current_exe().context("resolve current agent executable")?;
     let backup = backup_path_for(&current);
@@ -496,6 +522,23 @@ fn confine_and_verify(
         .context("refuse to apply an agent update binary that failed signature verification")?;
 
     Ok(src)
+}
+
+/// The downgrade-policy guard (SEC-006, #3213), run on the confined source only
+/// after [`confine_and_verify`] has proven it authentic — so the version it
+/// embeds can be trusted. Keeps the typed [`VersionPolicyError`] in the chain.
+#[cfg(unix)]
+fn check_version_policy(
+    src: &Path,
+    pinned_version: Option<&str>,
+    version_policy: &VersionPolicy,
+) -> anyhow::Result<()> {
+    use anyhow::Context;
+
+    version_policy
+        .check_binary(src, pinned_version)
+        .map_err(anyhow::Error::from)
+        .context("refuse to apply an agent update binary that violates the downgrade policy")
 }
 
 /// Verify the confined update binary at `src` against its `expected_sha256`
@@ -607,6 +650,7 @@ fn apply_update_binary(
     _binary_path: &str,
     _expected_sha256: Option<&str>,
     _signature: Option<&str>,
+    _pinned_version: Option<&str>,
 ) -> anyhow::Result<()> {
     anyhow::bail!("deferred agent update apply is only supported on Unix platforms")
 }
@@ -730,6 +774,7 @@ mod tests {
             staged_at: "2026-07-17T09:00:00Z".to_string(),
             expected_sha256: None,
             signature: None,
+            pinned_version: None,
         }
     }
 
@@ -1217,8 +1262,10 @@ mod tests {
             outside.to_str().unwrap(),
             Some(&sha256_hex(b"EVIL")),
             None,
+            None,
             &[staging],
             &strict_test_policy(),
+            &VersionPolicy::strict("0.0.0"),
         )
         .expect_err("apply must refuse a source outside the staging dir");
         let msg = format!("{err:#}");
@@ -1488,8 +1535,10 @@ mod tests {
             staged.to_str().unwrap(),
             Some(&good_digest),
             None,
+            None,
             &[staging],
             &strict_test_policy(),
+            &VersionPolicy::strict("0.0.0"),
         )
         .expect_err("an unsigned update must never be applied");
         assert_eq!(signature_error_of(&err), UpdateSignatureError::Missing);
@@ -1497,5 +1546,96 @@ mod tests {
             !backup_path_for(&exe).exists(),
             "the running binary must not even be backed up"
         );
+    }
+
+    // ── SEC-006: apply-time downgrade policy (#3213) ─────────────────────
+
+    /// Stage a digest-correct, test-key-signed binary that embeds build version
+    /// `version`, returning `(staging_root, staged_path, digest, signature)`.
+    #[cfg(unix)]
+    fn stage_signed_versioned_binary(
+        dir: &Path,
+        version: &str,
+    ) -> (PathBuf, PathBuf, String, String) {
+        let mut bytes = b"AGENT".to_vec();
+        bytes.extend_from_slice(super::super::build_version::MARKER_PREFIX);
+        bytes.extend_from_slice(version.as_bytes());
+        bytes.push(0);
+        let (staging, staged, digest) = stage_valid_binary(dir, &bytes);
+        let signature = sign_digest(&test_signing_key(TEST_KEY_SEED), &digest);
+        (staging, staged, digest, signature)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_refuses_an_unpinned_downgrade_before_touching_the_binary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (staging, staged, digest, signature) =
+            stage_signed_versioned_binary(tmp.path(), "0.1.0");
+        let exe = std::env::current_exe().unwrap();
+        let err = apply_update_binary_confined(
+            staged.to_str().unwrap(),
+            Some(&digest),
+            Some(&signature),
+            None,
+            &[staging],
+            &strict_test_policy(),
+            &VersionPolicy::strict("9.9.9"),
+        )
+        .expect_err("an unpinned downgrade must never be applied");
+        assert!(
+            matches!(
+                err.downcast_ref::<VersionPolicyError>(),
+                Some(VersionPolicyError::Downgrade { .. })
+            ),
+            "typed policy error must be in the chain: {err:#}"
+        );
+        assert!(
+            !backup_path_for(&exe).exists(),
+            "the running binary must not even be backed up"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_refuses_a_pin_that_does_not_name_the_staged_binary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (staging, staged, digest, signature) =
+            stage_signed_versioned_binary(tmp.path(), "0.1.0");
+        let err = apply_update_binary_confined(
+            staged.to_str().unwrap(),
+            Some(&digest),
+            Some(&signature),
+            Some("0.2.0"),
+            &[staging],
+            &strict_test_policy(),
+            &VersionPolicy::strict("9.9.9"),
+        )
+        .expect_err("a mismatched pin must never be applied");
+        assert!(matches!(
+            err.downcast_ref::<VersionPolicyError>(),
+            Some(VersionPolicyError::PinnedVersionMismatch { .. })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_gate_accepts_a_pinned_downgrade_of_an_authentic_binary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (staging, staged, digest, signature) =
+            stage_signed_versioned_binary(tmp.path(), "0.1.0");
+        let src = confine_and_verify(
+            staged.to_str().unwrap(),
+            Some(&digest),
+            Some(&signature),
+            std::slice::from_ref(&staging),
+            &strict_test_policy(),
+        )
+        .expect("an authentic binary passes the signature gate");
+        check_version_policy(&src, Some("0.1.0"), &VersionPolicy::strict("9.9.9"))
+            .expect("a matched pin authorises the downgrade");
+        // And an upgrade needs no pin.
+        check_version_policy(&src, None, &VersionPolicy::strict("0.0.1"))
+            .expect("an upgrade is always allowed");
     }
 }

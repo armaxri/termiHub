@@ -8,6 +8,7 @@ use tracing::{info, warn};
 use crate::handler::dispatch::AgentHandler;
 use crate::io::auth::{authenticate_connection, AuthOutcome, ListenAuthToken};
 use crate::io::transport::run_transport_loop_with_priority;
+use crate::io::update_auth::UpdateAuth;
 use crate::ki_prompt::KiPromptHub;
 use crate::monitoring::{MonitoringManager, MonitoringManagerApi};
 use crate::protocol::messages::JsonRpcNotification;
@@ -195,7 +196,13 @@ pub async fn run_tcp_listener(
                     Ok(handler) => handler
                         .with_registry_client(registry_client.clone())
                         .with_notification_sender(tool_tx.clone())
-                        .with_ki_prompt_relay(KiPromptHub::global(), priority_tx.clone()),
+                        .with_ki_prompt_relay(KiPromptHub::global(), priority_tx.clone())
+                        // AGT-003 (#3213): the update RPCs require this
+                        // instance's token again, on top of the handshake.
+                        .with_update_auth(UpdateAuth::new(
+                            auth_token.clone(),
+                            crate::io::auth::token_file_path(),
+                        )),
                     Err(e) => {
                         warn!("failed to build handler for {}, dropping client: {}", peer, e);
                         continue;

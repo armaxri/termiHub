@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use tokio::io::BufReader;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::handler::dispatch::AgentHandler;
 use crate::io::transport::run_transport_loop_with_priority;
+use crate::io::update_auth::UpdateAuth;
 use crate::ki_prompt::KiPromptHub;
 use crate::monitoring::{MonitoringManager, MonitoringManagerApi};
 use crate::protocol::messages::JsonRpcNotification;
@@ -81,7 +82,19 @@ pub async fn run_stdio_loop(
         shutdown.child_token(),
     ));
 
-    let handler = AgentHandler::new(
+    // Per-process update auth token (AGT-003, #3213): the update RPCs require
+    // it on top of the release signature. A failure to write it is not fatal
+    // for the session transport — the handler then simply refuses every update
+    // RPC (fail closed), which is logged here.
+    let update_auth = match UpdateAuth::generate_for_stdio() {
+        Ok(auth) => Some(auth),
+        Err(e) => {
+            warn!("could not create the update auth token; agent updates will be refused: {e:#}");
+            None
+        }
+    };
+
+    let mut handler = AgentHandler::new(
         session_manager.clone(),
         connection_store.clone() as Arc<dyn ConnectionStoreApi>,
         monitoring_manager.clone() as Arc<dyn MonitoringManagerApi>,
@@ -91,6 +104,9 @@ pub async fn run_stdio_loop(
     // SSH keyboard-interactive prompts (#3375) travel on a priority channel the
     // loop drains even while the `connection.create` awaiting the answer runs.
     .with_ki_prompt_relay(KiPromptHub::global(), priority_tx);
+    if let Some(auth) = update_auth.clone() {
+        handler = handler.with_update_auth(auth);
+    }
 
     let stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
@@ -111,6 +127,10 @@ pub async fn run_stdio_loop(
     // The single client for this process has disconnected — clear it from the
     // registry before propagating any transport error.
     handler.deregister_client();
+    // Best-effort hygiene: this process's token dies with it.
+    if let Some(auth) = &update_auth {
+        auth.remove_token_file();
+    }
     loop_result?;
 
     // Graceful shutdown: stop monitoring and close all sessions
