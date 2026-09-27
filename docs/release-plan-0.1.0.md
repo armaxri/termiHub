@@ -380,8 +380,8 @@ spread testing across multiple sessions and machines.
 The manual gate is the **Release-gating manual checklist** in
 [`docs/testing.md`](testing.md#release-gating-manual-checklist): the
 guided-manual harness suites plus the `tests/manual/*.yaml` corpus. After the
-triage in #3681 the corpus holds **57 tests across 11 categories** — 11 genuinely
-manual (`release_gate: true`) and 46 pending automation (`automation_issue`,
+triage in #3681 the corpus holds **56 tests across 11 categories** — 11 genuinely
+manual (`release_gate: true`) and 45 pending automation (`automation_issue`,
 walked manually until their issue lands). These counts are not maintained by
 hand — regenerate them any time from the YAMLs with:
 
