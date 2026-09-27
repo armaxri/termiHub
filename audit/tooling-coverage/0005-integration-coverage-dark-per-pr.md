@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/code-quality.yml:263
   - docs/testing.md:331
   - docs/testing.md:359
-status: open
+status: partial
+resolution: "#3659 — nightly fixtures lane instrumented with cargo-llvm-cov, merged into unified report (activates once workflows reach main); frontend/src-tauri harness coverage #3657, release-gate summary #3658"
 ---
 
 ## What

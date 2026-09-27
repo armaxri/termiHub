@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/system-integration.yml:344
   - .github/workflows/system-integration.yml:513
   - .github/workflows/system-integration.yml:333
-status: open
+status: fixed
+resolution: "#3666 — global TERMIHUB_WAIT_SCALE removed from CI; named per-operation deadlines sized from 174 job logs (>=2x observed max); scoped 2x only for parallel macOS/Windows workers (data-backed); harness timing recorder + summary script; refinement #3663"
 ---
 
 ## What
