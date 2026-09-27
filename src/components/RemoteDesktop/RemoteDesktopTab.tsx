@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileDown, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button, Spinner, ContentOverlay } from "@/components/ui";
@@ -7,16 +7,17 @@ import { activeTreeTabs } from "@/store/layoutSelectors";
 import { useRemoteDesktopSession } from "@/hooks/useRemoteDesktopSession";
 import { useWindowEviction } from "@/hooks/useWindowEviction";
 import { TerminalWindowEvictedOverlay } from "@/components/Terminal/TerminalEvictedOverlay";
-import { remoteDesktopGetClipboard } from "@/services/api";
+import { remoteDesktopGetClipboard, remoteDesktopMonitorLayout } from "@/services/api";
 import { fireAndForget } from "@/utils/frontendLog";
 import { readConfigString } from "@/utils/connectionConfigFields";
-import type { RemoteClipboardFile, ScaleMode } from "@/types/remoteDesktop";
+import type { MonitorRect, RemoteClipboardFile, ScaleMode } from "@/types/remoteDesktop";
 import { SCALE_MODE_LABELS, effectiveScaleMode, scaleModesFor } from "@/types/remoteDesktop";
 import { RemoteDesktopCanvas } from "./RemoteDesktopCanvas";
 import { RemoteDesktopToolbar } from "./RemoteDesktopToolbar";
 import { RemoteDesktopOverlay } from "./RemoteDesktopOverlay";
 import { RemoteDesktopCertPrompt } from "./RemoteDesktopCertPrompt";
 import { RemoteDesktopClipboardImage } from "./RemoteDesktopClipboardImage";
+import { monitorLabel, viewportsFor } from "./monitorLayout";
 import "./RemoteDesktopTab.css";
 
 interface RemoteDesktopTabProps {
@@ -42,6 +43,10 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
   // The scale mode can be changed at runtime via the toolbar, overriding the
   // configured default.
   const [scaleModeOverride, setScaleModeOverride] = useState<ScaleMode | null>(null);
+  // Multi-monitor sessions (#3696) render as one combined framebuffer; the
+  // toolbar shows either all of it (`null`) or one monitor's region.
+  const [monitors, setMonitors] = useState<MonitorRect[]>([]);
+  const [viewportIndex, setViewportIndex] = useState<number | null>(null);
 
   const session = useRemoteDesktopSession(tabId);
   // A fixed-resolution session (PROD-026) only toggles Fit ↔ 1:1: it scales
@@ -77,6 +82,43 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
     if (!id) return;
     return () => clearRemoteDesktopResolution(id);
   }, [session.sessionId, clearRemoteDesktopResolution]);
+
+  // Read the session's monitors whenever the framebuffer size (or, at runtime,
+  // the layout) changes; only monitors inside the framebuffer are offered.
+  useEffect(() => {
+    const id = session.sessionId;
+    if (!id || !resolution) {
+      setMonitors([]);
+      return;
+    }
+    let stale = false;
+    remoteDesktopMonitorLayout(id)
+      .then((reported) => {
+        if (!stale) setMonitors(viewportsFor(reported, resolution.width, resolution.height));
+      })
+      .catch(() => {
+        if (!stale) setMonitors([]);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [session.sessionId, resolution, session.monitorLayoutVersion]);
+
+  const shownIndex =
+    viewportIndex !== null && viewportIndex < monitors.length ? viewportIndex : null;
+  // Stable per selection, so the canvas does not re-subscribe on every render.
+  const viewport = useMemo(() => {
+    const m = shownIndex === null ? null : monitors[shownIndex];
+    return m ? { x: m.x, y: m.y, width: m.width, height: m.height } : null;
+  }, [monitors, shownIndex]);
+
+  const handleCycleViewport = useCallback(() => {
+    const next = shownIndex === null ? 0 : shownIndex + 1 < monitors.length ? shownIndex + 1 : null;
+    setViewportIndex(next);
+    toast.success(
+      next === null ? "Showing all monitors" : `Showing ${monitorLabel(monitors[next], next)}`
+    );
+  }, [shownIndex, monitors]);
 
   const title = useAppStore((s) => activeTreeTabs(s).find((t) => t.id === tabId)?.title ?? "");
   const host = useAppStore((s) => {
@@ -171,6 +213,7 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
             }
           }}
           onFirstFrame={session.noteFirstFrame}
+          viewport={viewport}
         />
       )}
 
@@ -202,6 +245,9 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
           onCycleScaleMode={handleCycleScaleMode}
           onToggleFullscreen={handleFullscreen}
           onDisconnect={session.reconnect}
+          monitors={monitors}
+          viewport={shownIndex}
+          onCycleViewport={handleCycleViewport}
         />
       )}
 

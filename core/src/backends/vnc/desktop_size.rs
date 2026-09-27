@@ -15,6 +15,13 @@
 //!   is reported back to the caller as a notice so the frontend can tell the
 //!   user the remote is being scaled locally instead.
 //!
+//! - **Multi-monitor** (#3696, overrides the mode): once the server supports
+//!   the extension, one `SetDesktopSize` carries every monitor as its own
+//!   screen, and tab resizes are ignored. A server without the extension (or
+//!   one that refuses) keeps its own layout — the session degrades to what the
+//!   server offers. Screens the server reports are exposed either way, so a
+//!   multi-head server's own layout gets per-monitor viewports too.
+//!
 //! This module is pure state (no I/O, time is passed in) so every transition
 //! is unit-tested; the driver and `GraphicalBackend::resize` in `mod.rs` do the
 //! sending.
@@ -28,6 +35,7 @@ use vnc::{
 };
 
 use crate::connection::graphical_resolution::{MAX_FIXED_DIMENSION, MIN_FIXED_DIMENSION};
+use crate::connection::{MonitorLayout, MonitorRect};
 
 /// How long a `SetDesktopSize` may await its reply before a newer request is
 /// sent anyway, so a server that never answers cannot wedge dynamic resizing.
@@ -91,6 +99,10 @@ pub(super) struct DesktopSize {
     prohibited: bool,
     /// A refusal not yet reported to a dynamic resize caller.
     refusal: Option<String>,
+    /// The multi-monitor layout to request, if any (#3696).
+    monitors: Option<MonitorLayout>,
+    /// The multi-monitor layout has been requested (asked only once per set).
+    monitors_requested: bool,
 }
 
 impl DesktopSize {
@@ -105,13 +117,70 @@ impl DesktopSize {
             pending: None,
             prohibited: false,
             refusal: None,
+            monitors: None,
+            monitors_requested: false,
         }
+    }
+
+    /// Request `monitors` (#3696) instead of following the resolution mode.
+    pub(super) fn with_monitors(mut self, monitors: Option<MonitorLayout>) -> Self {
+        self.monitors = monitors;
+        self
+    }
+
+    /// Whether the ExtendedDesktopSize pseudo-encoding must be advertised.
+    pub(super) fn negotiates_layout(&self) -> bool {
+        self.monitors.is_some() || self.mode.negotiates_layout()
+    }
+
+    /// Replace the multi-monitor layout at runtime (#3696). Returns the
+    /// `SetDesktopSize` to send now, or the user-facing reason the server's
+    /// layout is kept instead.
+    pub(super) fn set_monitors(
+        &mut self,
+        monitors: MonitorLayout,
+        now: Instant,
+    ) -> Result<Option<DesktopSizeRequest>, String> {
+        self.monitors = Some(monitors);
+        self.monitors_requested = false;
+        if self.support == Support::Unsupported || self.prohibited {
+            return Err(
+                "This VNC server does not support changing its screen layout from the client \
+                 (RFB ExtendedDesktopSize); keeping the server's layout."
+                    .to_string(),
+            );
+        }
+        // Supersede any in-flight request: the new layout is what matters.
+        self.in_flight = None;
+        Ok(self.next_request(now))
+    }
+
+    /// The server's current screens in framebuffer coordinates (the first is
+    /// primary), or empty when it reported fewer than two (#3696).
+    pub(super) fn screens(&self) -> Vec<MonitorRect> {
+        if self.screens.len() < 2 {
+            return Vec::new();
+        }
+        self.screens
+            .iter()
+            .enumerate()
+            .map(|(i, s)| MonitorRect {
+                primary: i == 0,
+                ..MonitorRect::new(
+                    i32::from(s.x),
+                    i32::from(s.y),
+                    u32::from(s.width),
+                    u32::from(s.height),
+                )
+            })
+            .collect()
     }
 
     /// Whether this session can currently follow the tab (dynamic mode on a
     /// server not known to lack, or to prohibit, client-side resizing).
     pub(super) fn supports_dynamic_resize(&self) -> bool {
         self.mode == ResolutionMode::Dynamic
+            && self.monitors.is_none()
             && self.support != Support::Unsupported
             && !self.prohibited
     }
@@ -173,6 +242,9 @@ impl DesktopSize {
             ),
             ResolutionMode::Server => {}
         }
+        if self.monitors.is_some() {
+            warn!("VNC server does not support ExtendedDesktopSize; keeping its single screen");
+        }
     }
 
     fn record_refusal(&mut self, status: DesktopSizeStatus) {
@@ -203,7 +275,8 @@ impl DesktopSize {
     /// shared 200..=8192 range). A no-op outside the dynamic mode — the server
     /// and fixed modes never follow the tab.
     pub(super) fn request(&mut self, width: u16, height: u16, now: Instant) -> ResizeOutcome {
-        if self.mode != ResolutionMode::Dynamic {
+        // A multi-monitor layout defines the size; the tab never does (#3696).
+        if self.mode != ResolutionMode::Dynamic || self.monitors.is_some() {
             return ResizeOutcome::default();
         }
         let size = (
@@ -246,6 +319,15 @@ impl DesktopSize {
                 return None;
             }
         }
+        if let Some(monitors) = &self.monitors {
+            if self.monitors_requested {
+                return None;
+            }
+            let request = self.layout_for_monitors(monitors);
+            self.monitors_requested = true;
+            self.in_flight = Some(now);
+            return Some(request);
+        }
         let target = match self.mode {
             ResolutionMode::Server => None,
             ResolutionMode::Dynamic => self.pending.take(),
@@ -259,6 +341,43 @@ impl DesktopSize {
         }
         self.in_flight = Some(now);
         Some(self.layout_for(target))
+    }
+
+    /// A multi-screen layout, one screen per monitor (#3696). The server's
+    /// existing screens lend their ids and flags in order; extra monitors get
+    /// fresh ids above the highest one in use.
+    fn layout_for_monitors(&self, monitors: &MonitorLayout) -> DesktopSizeRequest {
+        let (width, height) = monitors.desktop_size();
+        let mut next_id = self.screens.iter().map(|s| s.id).max().unwrap_or(0);
+        let screens = monitors
+            .framebuffer_rects()
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                let base = self.screens.get(i);
+                let id = base.map_or_else(
+                    || {
+                        next_id = next_id.wrapping_add(1);
+                        next_id
+                    },
+                    |s| s.id,
+                );
+                // Framebuffer rects are 0-based and bounded by 8192.
+                DesktopScreen {
+                    id,
+                    x: u16::try_from(m.x).unwrap_or(0),
+                    y: u16::try_from(m.y).unwrap_or(0),
+                    width: u16::try_from(m.width).unwrap_or(MAX_FIXED_DIMENSION),
+                    height: u16::try_from(m.height).unwrap_or(MAX_FIXED_DIMENSION),
+                    flags: base.map_or(0, |s| s.flags),
+                }
+            })
+            .collect();
+        DesktopSizeRequest {
+            width,
+            height,
+            screens,
+        }
     }
 
     /// A single-screen layout of `size`, keeping the id and flags of the

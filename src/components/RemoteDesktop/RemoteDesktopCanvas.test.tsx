@@ -42,6 +42,7 @@ interface RenderOptions {
   onDimensions: (width: number, height: number) => void;
   onFirstFrame: () => void;
   onReleaseAll: () => void;
+  viewport: { x: number; y: number; width: number; height: number } | null;
 }
 
 let container: HTMLDivElement;
@@ -351,6 +352,47 @@ describe("RemoteDesktopCanvas", () => {
     emitCursor({ session_id: SESSION, x: Number.NaN, y: 20, visible: true });
     emitFrame(makeFrame(100, 50));
     expect(canvasStub.contextFor(canvasEl()).arc).not.toHaveBeenCalled();
+  });
+
+  describe("monitor viewport (#3696)", () => {
+    const RIGHT = { x: 100, y: 0, width: 100, height: 50 };
+
+    it("fit mode draws only the viewport's region of the framebuffer", () => {
+      render({ scaleMode: "fit", viewport: RIGHT });
+      setContainerSize(200, 100);
+      emitFrame(makeFrame(200, 50));
+      // The right-hand 100×50 monitor, scaled 2× into the 200×100 tab.
+      expect(canvasStub.contextFor(canvasEl()).drawImage).toHaveBeenLastCalledWith(
+        expect.any(HTMLCanvasElement),
+        100,
+        0,
+        100,
+        50,
+        0,
+        0,
+        200,
+        100
+      );
+    });
+
+    it("maps pointer positions back into full-framebuffer coordinates", () => {
+      const { onInput } = render({ scaleMode: "pixel", viewport: RIGHT });
+      emitFrame(makeFrame(200, 50));
+      expect(canvasEl().width).toBe(100);
+      act(() => {
+        canvasEl().dispatchEvent(
+          new MouseEvent("mousedown", { bubbles: true, clientX: 10, clientY: 20, buttons: 1 })
+        );
+      });
+      expect(onInput).toHaveBeenCalledWith({ kind: "pointer", x: 110, y: 20, buttons: 1 });
+    });
+
+    it("clamps a viewport that no longer fits the framebuffer", () => {
+      render({ scaleMode: "pixel", viewport: { x: 150, y: 0, width: 400, height: 400 } });
+      emitFrame(makeFrame(200, 50));
+      const canvas = canvasEl();
+      expect([canvas.width, canvas.height]).toEqual([50, 50]);
+    });
   });
 
   it("forwards a reverse-scaled pointer event", () => {

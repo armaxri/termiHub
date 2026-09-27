@@ -79,17 +79,18 @@ runs on pull requests that change a dependency manifest or lockfile, on every pu
 
 ## Vendored forks
 
-Three third-party crates are carried as in-tree forks (SUP-005). A fork is consumed by **path** or
+Four third-party crates are carried as in-tree forks (SUP-005). A fork is consumed by **path** or
 by **`[patch.crates-io]`**, so `cargo update`, Dependabot, `cargo audit` and `cargo deny` never
 see the upstream crate again: an upstream security fix is not pulled in and a RustSec advisory
-against the upstream crate is not reported. All forks sit on untrusted-input paths, so the
-upstream crate is watched explicitly instead.
+against the upstream crate is not reported. All forks sit on paths that handle bytes from outside
+the app (remote servers or attached devices), so the upstream crate is watched explicitly instead.
 
 | Fork                                | Upstream                                                                              | Base                            | Reviewed up to           | Why it is forked                                                                                                                             |
 | ----------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `vendor/vnc-rs`                     | [HsuJv/vnc-rs](https://github.com/HsuJv/vnc-rs)                                       | 0.5.3 (`f8ac0ee`)               | 0.6.0 (`99ed1a2`, #3499) | VeNCrypt (#1714), bounded cut-text (#3474), hostile-server hardening (#3473), typed error event (#3479), upstream 0.6.0 fixes ported (#3499) |
 | `rdp-sidecar/vendor/ironrdp-rdpsnd` | [Devolutions/IronRDP](https://github.com/Devolutions/IronRDP) `crates/ironrdp-rdpsnd` | 0.9.0 (`ironrdp-rdpsnd-v0.9.0`) | `160752f` (#3499)        | Concrete negotiated audio format (#1773), `accepts_format` (#1812), post-0.9.0 upstream fixes ported (#3499)                                 |
 | `rdp-sidecar/vendor/ironrdp-pdu`    | [Devolutions/IronRDP](https://github.com/Devolutions/IronRDP) `crates/ironrdp-pdu`    | 0.9.0 (`ironrdp-pdu-v0.9.0`)    | 0.9.0 (`11a0810`)        | 6-byte Share Control Header for xrdp's short Deactivate All PDU (#3611), port of unreleased upstream `d4b728a`                               |
+| `vendor/serial2`                    | [de-vri-es/serial2-rs](https://github.com/de-vri-es/serial2-rs)                       | 0.2.38 (`v0.2.38`, `448a20e`)   | 0.2.38 (`448a20e`)       | macOS termios-speed fallback when `IOSSIOSPEED` is rejected, so pseudo-terminal serial ports open (#3701)                                    |
 
 The machine-readable register is [`vendor/vendored-forks.json`](../vendor/vendored-forks.json):
 per fork the upstream repository and crate name, the fork base (version **and** commit), how far
@@ -153,6 +154,7 @@ it. The last three columns are prose.
 | `ironrdp-rdpsnd`   | 0.9.0 | `rdp-sidecar/Cargo.lock`               | RDP audio output channel PDUs                                             | no   | Vendored fork (see above)                                                                                                 | Sidecar audio unit tests; no fuzzing                                                      |
 | `suppaftp`         | 11    | `Cargo.lock`                           | FTP control replies and directory listings from FTP servers               | yes  | On the line that closes RUSTSEC-2025-0052 and RUSTSEC-2026-0271 (CRLF injection); FTPS via rustls                         | FTP Docker fixture in the nightly integration lane; no fuzzing                            |
 | `vte`              | 0.13  | `Cargo.lock`, `rdp-sidecar/Cargo.lock` | Terminal escape sequences in remote shell output (screen-clear detection) | no   | Used only to recognise clear sequences (`core/src/output/screen_clear.rs`)                                                | Unit tests in `screen_clear.rs`; no fuzzing                                               |
+| `serial2`          | 0.2   | `Cargo.lock`                           | Serial-port bytes and termios state from attached serial devices          | no   | Vendored fork (see above); the serial backend does no protocol parsing, it forwards bytes to the terminal                 | `core/src/backends/serial.rs` unit + macOS pty tests; upstream tests                      |
 | `libunftp`         | 0.20  | `Cargo.lock`                           | FTP commands from remote clients of the embedded FTP server               | no   | Server is opt-in and bound to a configured host; optional transfer-size cap                                               | Embedded FTP server tests (`core/src/embedded_servers/ftp_server.rs`)                     |
 | `unftp-sbe-fs`     | 0.2   | `Cargo.lock`                           | Client-supplied paths mapped onto the served directory                    | no   | Rooted at the configured directory                                                                                        | Embedded FTP server tests                                                                 |
 | `axum`             | 0.7   | `Cargo.lock`                           | HTTP requests from remote clients of the embedded HTTP server             | no   | Server is opt-in and bound to a configured host                                                                           | Embedded HTTP server tests (`core/src/embedded_servers/http_server.rs`)                   |
