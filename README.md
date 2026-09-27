@@ -100,7 +100,7 @@ Prefer to build it yourself? See [Development](#development) below.
 - **Docker** — Start a new container from an image and open a shell in it (run-new; attaching to an already-running container is not yet supported)
 - **WSL** — Windows Subsystem for Linux distribution sessions (Windows only)
 - **FTP / FTPS** — File-transfer connections with a managed transfer queue (browse, upload, download, edit)
-- **Remote Desktop (RDP / VNC)** — Graphical remote-desktop sessions with a shared framebuffer layer and clipboard integration. **Experimental** — hidden until you enable **Settings → General → Allow Experimental Features**. RDP runs via a bundled `termihub-rdp-helper` sidecar.
+- **Remote Desktop (RDP / VNC)** — Graphical remote-desktop sessions with a shared framebuffer layer and clipboard integration. **Experimental** — hidden until you enable **Settings → General → Allow Experimental Features**. RDP runs via a bundled `termihub-rdp-helper` sidecar and can redirect the remote session's audio. **VNC sessions have no audio** — the RFB protocol has no standard audio channel.
 - **Remote agent** — Persistent sessions on headless servers via auto-deployed `termihub-agent`
 
 ### Terminal Management
@@ -219,7 +219,7 @@ termiHub uses a VS Code-inspired three-column layout:
 - **Docker** — Start a new container from an image and open a shell in it (run-new; attaching to an already-running container is not yet supported).
 - **WSL** — Open a session in a Windows Subsystem for Linux distribution (Windows only).
 - **FTP / FTPS** — File-transfer connection with a managed transfer queue.
-- **Remote Desktop (RDP / VNC)** — Graphical remote-desktop session. Experimental; enable **Settings → General → Allow Experimental Features** to use it.
+- **Remote Desktop (RDP / VNC)** — Graphical remote-desktop session. Experimental; enable **Settings → General → Allow Experimental Features** to use it. VNC carries no audio (RFB has no standard audio channel); use RDP if you need the remote session's sound.
 - **Remote agent** — Attach to a `termihub-agent` for persistent sessions on a headless server.
 
 ### Terminal Tabs
