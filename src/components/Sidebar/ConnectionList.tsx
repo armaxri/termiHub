@@ -35,6 +35,7 @@ import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
+import { currentConnectionsView } from "@/store/connectionsBridge";
 import { SavedConnection, ConnectionFolder, InventoryHost } from "@/types/connection";
 import { type AgentDefinitionInfo, importInventoryHosts } from "@/services/api";
 import { newId } from "@/services/transport/ids";
@@ -621,8 +622,18 @@ function ConnectionItem({
                 <ContextMenu.Item
                   className="context-menu__item"
                   onSelect={() => {
-                    const gateway = jumpHostGatewayConnection(connection);
-                    if (gateway) onConnect(gateway);
+                    // Resolve a saved-connection reference hop against the
+                    // unified view (main store + enabled external files), #3620.
+                    const gateway = jumpHostGatewayConnection(
+                      connection,
+                      currentConnectionsView().connections
+                    );
+                    if (!gateway) return;
+                    if ("error" in gateway) {
+                      toast.error(`Cannot open jump host terminal: ${gateway.error}`);
+                      return;
+                    }
+                    onConnect(gateway.connection);
                   }}
                   data-testid="context-connection-open-jump-host"
                 >

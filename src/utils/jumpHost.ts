@@ -67,19 +67,52 @@ export function jumpHostStatusLabel(config: ConnectionConfig | undefined | null)
 }
 
 /**
- * Build a synthetic SSH connection that opens a terminal directly on the
- * innermost gateway of `connection`'s jump-host chain (for debugging gateway
- * connectivity). The gateway is reached through the same outer hops, so it
- * shares the pooled gateway session with the original connection.
+ * The outcome of {@link jumpHostGatewayConnection}: the connection to open, or
+ * a user-facing reason it cannot be opened.
+ */
+export type JumpHostGateway = { connection: SavedConnection } | { error: string };
+
+/** Human-readable name of the connection file a connection lives in. */
+function sourceLabel(connection: SavedConnection): string {
+  return connection.sourceFile
+    ? `the external connection file '${connection.sourceFile}'`
+    : "the main connection store";
+}
+
+/**
+ * Build the connection that opens a terminal directly on the innermost gateway
+ * of `connection`'s jump-host chain (for debugging gateway connectivity). The
+ * gateway is reached through the same outer hops, so it shares the pooled
+ * gateway session with the original connection.
+ *
+ * - An **inline** innermost hop becomes a synthetic SSH connection carrying the
+ *   hop's host/port/username/auth fields.
+ * - A **saved-connection reference** (`connectionId`, #940) stores no inline
+ *   fields (`host: ""`), so the gateway is the referenced connection itself
+ *   (#3620): its settings, reached through the outer hops followed by its own
+ *   chain — the order the backend resolver expands a reference in. It keeps the
+ *   referenced connection's id so its saved credential resolves exactly as for
+ *   a direct connect. The reference is looked up in `connections` (the unified
+ *   view: main store + enabled external files) under the backend's rule
+ *   (`JumpHostScope`, #3602): an id held by more than one connection file is
+ *   refused as ambiguous, and an unknown or non-SSH reference is refused, each
+ *   with a message instead of an empty-host connection.
  *
  * Returns `null` when the connection has no jump host.
  */
-export function jumpHostGatewayConnection(connection: SavedConnection): SavedConnection | null {
+export function jumpHostGatewayConnection(
+  connection: SavedConnection,
+  connections: SavedConnection[] = []
+): JumpHostGateway | null {
   const hops = getJumpHosts(connection.config);
   if (hops.length === 0) return null;
 
   const gateway = hops[hops.length - 1];
   const outerHops = hops.slice(0, -1);
+
+  const refId = gateway.connectionId?.trim();
+  if (refId) return referencedGateway(refId, outerHops, connections);
+
   const settings: Record<string, unknown> = {
     host: gateway.host,
     port: gateway.port,
@@ -91,10 +124,50 @@ export function jumpHostGatewayConnection(connection: SavedConnection): SavedCon
   if (outerHops.length > 0) settings.proxyJump = outerHops;
 
   return {
-    ...connection,
-    id: `${connection.id}::jump-host`,
-    name: `${gateway.host} (jump host)`,
-    config: { type: "ssh", config: settings },
+    connection: {
+      ...connection,
+      id: `${connection.id}::jump-host`,
+      name: `${gateway.host} (jump host)`,
+      config: { type: "ssh", config: settings },
+    },
+  };
+}
+
+/** The gateway for an innermost hop that references saved connection `refId`. */
+function referencedGateway(
+  refId: string,
+  outerHops: JumpHostConfig[],
+  connections: SavedConnection[]
+): JumpHostGateway {
+  const matches = connections.filter((c) => c.id === refId);
+  if (matches.length === 0) {
+    return {
+      error: `Jump host connection '${refId}' not found. Pick an existing SSH connection for the hop or configure it inline.`,
+    };
+  }
+  if (matches.length > 1) {
+    return {
+      error: `Jump host connection '${refId}' is ambiguous: a connection with this id exists in ${matches
+        .map(sourceLabel)
+        .join(" and ")}. Rename or move one of them, or configure the hop inline.`,
+    };
+  }
+  const target = matches[0];
+  if (!isSshConnectionConfig(target.config)) {
+    return { error: `Jump host connection '${target.name}' is not an SSH connection.` };
+  }
+
+  const chain = [...outerHops, ...getJumpHosts(target.config)];
+  const { proxyJump: _proxyJump, jumpHosts: _jumpHosts, ...rest } = target.config.config;
+  const settings: Record<string, unknown> = { ...rest };
+  if (chain.length > 0) settings.proxyJump = chain;
+
+  return {
+    connection: {
+      ...target,
+      name: `${target.name} (jump host)`,
+      config: { type: "ssh", config: settings },
+    },
   };
 }
 

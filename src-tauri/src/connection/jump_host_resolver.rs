@@ -121,6 +121,18 @@ impl<'a> JumpHostScope<'a> {
         )
     }
 
+    /// Whether any connection file — in the scope, or a disabled external file —
+    /// holds `id`. Lets a caller with its own fallback for an unknown id (a WSL
+    /// spawn falls back to the default distro) still refuse an ambiguous id or
+    /// one that sits in a disabled file.
+    pub(crate) fn knows(&self, id: &str) -> bool {
+        self.connections.iter().any(|c| c.id == id)
+            || self.unavailable.iter().any(|f| match f {
+                UnavailableFile::Disabled { ids, .. } => ids.contains(id),
+                UnavailableFile::FailedToLoad { .. } => false,
+            })
+    }
+
     fn not_found_message(&self, id: &str, role: ReferenceRole) -> String {
         let mut msg = format!("Referenced {} '{id}' not found.", role.noun());
         for file in &self.unavailable {
@@ -154,6 +166,9 @@ pub(crate) enum ReferenceRole {
     JumpHost,
     /// The saved SSH connection a tunnel is hosted on (`sshConnectionId`, #3619).
     TunnelHost,
+    /// The saved connection a CLI/context-menu spawn names with `--connection`
+    /// (#3624).
+    SpawnTarget,
 }
 
 impl ReferenceRole {
@@ -161,6 +176,7 @@ impl ReferenceRole {
         match self {
             Self::JumpHost => "jump host connection",
             Self::TunnelHost => "tunnel SSH connection",
+            Self::SpawnTarget => "spawn connection",
         }
     }
 
@@ -168,6 +184,7 @@ impl ReferenceRole {
         match self {
             Self::JumpHost => "use it as a jump host",
             Self::TunnelHost => "host tunnels on it",
+            Self::SpawnTarget => "spawn sessions with it",
         }
     }
 
@@ -175,6 +192,7 @@ impl ReferenceRole {
         match self {
             Self::JumpHost => "configure the hop inline",
             Self::TunnelHost => "pick another SSH connection for the tunnel",
+            Self::SpawnTarget => "pass a --connection id held by only one connection file",
         }
     }
 
@@ -182,6 +200,7 @@ impl ReferenceRole {
         match self {
             Self::JumpHost => "Pick an existing SSH connection or switch to inline configuration.",
             Self::TunnelHost => "Pick an existing SSH connection for the tunnel.",
+            Self::SpawnTarget => "Pass the id of an existing saved connection to --connection.",
         }
     }
 }

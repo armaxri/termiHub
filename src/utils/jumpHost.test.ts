@@ -112,28 +112,113 @@ describe("jumpHostGatewayConnection", () => {
     };
   }
 
+  function gatewayOf(result: ReturnType<typeof jumpHostGatewayConnection>): SavedConnection {
+    if (!result || !("connection" in result))
+      throw new Error(`no gateway: ${JSON.stringify(result)}`);
+    return result.connection;
+  }
+
   it("targets the (single) bastion directly with no further hops", () => {
-    const gw = jumpHostGatewayConnection(
-      savedConn({ host: "app-server", username: "deploy", proxyJump: [hop("bastion")] })
+    const gw = gatewayOf(
+      jumpHostGatewayConnection(
+        savedConn({ host: "app-server", username: "deploy", proxyJump: [hop("bastion")] })
+      )
     );
-    expect(gw).not.toBeNull();
-    expect(gw!.config.config.host).toBe("bastion");
-    expect(gw!.config.config.proxyJump).toBeUndefined();
-    expect(gw!.id).toBe("Work/app-server::jump-host");
-    expect(gw!.name).toContain("bastion");
+    expect(gw.config.config.host).toBe("bastion");
+    expect(gw.config.config.proxyJump).toBeUndefined();
+    expect(gw.id).toBe("Work/app-server::jump-host");
+    expect(gw.name).toContain("bastion");
   });
 
   it("targets the innermost gateway through the remaining outer hops", () => {
-    const gw = jumpHostGatewayConnection(
-      savedConn({ host: "db", username: "deploy", proxyJump: [hop("edge"), hop("bastion")] })
+    const gw = gatewayOf(
+      jumpHostGatewayConnection(
+        savedConn({ host: "db", username: "deploy", proxyJump: [hop("edge"), hop("bastion")] })
+      )
     );
-    expect(gw!.config.config.host).toBe("bastion");
-    expect(gw!.config.config.proxyJump).toHaveLength(1);
-    expect((gw!.config.config.proxyJump as JumpHostConfig[])[0].host).toBe("edge");
+    expect(gw.config.config.host).toBe("bastion");
+    expect(gw.config.config.proxyJump).toHaveLength(1);
+    expect((gw.config.config.proxyJump as JumpHostConfig[])[0].host).toBe("edge");
   });
 
   it("returns null when there is no jump host", () => {
     expect(jumpHostGatewayConnection(savedConn({ host: "app-server" }))).toBeNull();
+  });
+
+  // #3620: a saved-connection reference hop stores `host: ""` — the gateway must
+  // be the referenced connection itself, not an empty-host synthetic one.
+  describe("innermost hop referencing a saved connection", () => {
+    const refHop: JumpHostConfig = {
+      connectionId: "Infra/bastion",
+      host: "",
+      port: 22,
+      username: "",
+      authMethod: "key",
+    };
+    const bastion: SavedConnection = {
+      id: "Infra/bastion",
+      name: "bastion",
+      folderId: "Infra",
+      config: sshConfig({
+        host: "bastion.example.com",
+        port: 2222,
+        username: "ops",
+        authMethod: "password",
+        savePassword: true,
+      }),
+    };
+
+    it("opens the referenced connection (host, port, user, auth) under its own id", () => {
+      const target = savedConn({ host: "db", proxyJump: [refHop] });
+      const gw = gatewayOf(jumpHostGatewayConnection(target, [target, bastion]));
+      expect(gw.config.type).toBe("ssh");
+      expect(gw.config.config.host).toBe("bastion.example.com");
+      expect(gw.config.config.port).toBe(2222);
+      expect(gw.config.config.username).toBe("ops");
+      expect(gw.config.config.authMethod).toBe("password");
+      expect(gw.config.config.savePassword).toBe(true);
+      expect(gw.config.config.proxyJump).toBeUndefined();
+      // Its own id, so its saved credential resolves as for a direct connect.
+      expect(gw.id).toBe("Infra/bastion");
+      expect(gw.name).toBe("bastion (jump host)");
+    });
+
+    it("reaches the referenced gateway through the outer hops, then its own chain", () => {
+      const chained: SavedConnection = {
+        ...bastion,
+        config: sshConfig({ ...bastion.config.config, proxyJump: [hop("dmz")] }),
+      };
+      const target = savedConn({ host: "db", proxyJump: [hop("edge"), refHop] });
+      const gw = gatewayOf(jumpHostGatewayConnection(target, [target, chained]));
+      expect(gw.config.config.host).toBe("bastion.example.com");
+      const chain = gw.config.config.proxyJump as JumpHostConfig[];
+      expect(chain.map((h) => h.host)).toEqual(["edge", "dmz"]);
+    });
+
+    it("refuses an unknown reference instead of opening an empty host", () => {
+      const target = savedConn({ host: "db", proxyJump: [refHop] });
+      const result = jumpHostGatewayConnection(target, [target]);
+      expect(result).toEqual({ error: expect.stringContaining("'Infra/bastion' not found") });
+    });
+
+    it("refuses an id held by several connection files, naming them", () => {
+      const target = savedConn({ host: "db", proxyJump: [refHop] });
+      const external = { ...bastion, sourceFile: "/team/shared.json" };
+      const result = jumpHostGatewayConnection(target, [target, bastion, external]);
+      expect(result).not.toBeNull();
+      expect("error" in result!).toBe(true);
+      const { error } = result as { error: string };
+      expect(error).toContain("ambiguous");
+      expect(error).toContain("the main connection store");
+      expect(error).toContain("/team/shared.json");
+    });
+
+    it("refuses a reference to a non-SSH connection", () => {
+      const target = savedConn({ host: "db", proxyJump: [refHop] });
+      const local: SavedConnection = { ...bastion, config: { type: "local", config: {} } };
+      const result = jumpHostGatewayConnection(target, [target, local]);
+      expect(result).toEqual({ error: expect.stringContaining("not an SSH connection") });
+    });
   });
 });
 
