@@ -46,11 +46,39 @@ type ActionDescription = (
 
 /// polkit over the system bus. Connects per call so a restarted polkit or
 /// bus never leaves a stale connection behind.
-pub struct DbusAuthority;
+pub struct DbusAuthority {
+    /// How long a `CheckAuthorization` may block before it is cancelled.
+    prompt_timeout: Duration,
+}
 
-fn connect() -> Result<Connection, AuthorityError> {
+impl DbusAuthority {
+    /// The production authority: prompts are cancelled after [`PROMPT_TIMEOUT`].
+    pub const fn new() -> Self {
+        Self::with_prompt_timeout(PROMPT_TIMEOUT)
+    }
+
+    /// An authority with a custom prompt bound. Only the headless polkit probe
+    /// (`tests/docker/polkit`, #3553) uses it, to drive the timeout →
+    /// `CancelCheckAuthorization` path in seconds instead of minutes.
+    #[allow(dead_code, reason = "used by the tests/docker/polkit probe")]
+    pub const fn with_prompt_timeout(prompt_timeout: Duration) -> Self {
+        Self { prompt_timeout }
+    }
+
+    fn connect(&self) -> Result<Connection, AuthorityError> {
+        connect(self.prompt_timeout)
+    }
+}
+
+impl Default for DbusAuthority {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn connect(prompt_timeout: Duration) -> Result<Connection, AuthorityError> {
     Builder::system()
-        .and_then(|builder| builder.method_timeout(PROMPT_TIMEOUT).build())
+        .and_then(|builder| builder.method_timeout(prompt_timeout).build())
         .map_err(|e| {
             AuthorityError::ServiceUnavailable(format!("cannot reach the system bus ({e})"))
         })
@@ -70,7 +98,7 @@ fn map_zbus_error(error: zbus::Error) -> AuthorityError {
 
 impl PolkitAuthority for DbusAuthority {
     fn is_action_registered(&self, action_id: &str) -> Result<bool, AuthorityError> {
-        let connection = connect()?;
+        let connection = self.connect()?;
         let reply = connection
             .call_method(
                 Some(DESTINATION),
@@ -88,7 +116,7 @@ impl PolkitAuthority for DbusAuthority {
     }
 
     fn check_authorization(&self, action_id: &str) -> Result<AuthorizationResult, AuthorityError> {
-        let connection = connect()?;
+        let connection = self.connect()?;
         let bus_name = connection
             .unique_name()
             .ok_or_else(|| AuthorityError::Other("no unique system-bus name".to_string()))?
