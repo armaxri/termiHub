@@ -9,6 +9,9 @@
 use tauri::{Manager, State};
 use tracing::debug;
 
+use crate::files::transfer::persist::{
+    FolderPasteEndpoint, FolderPasteOperation, PersistedFolderPaste,
+};
 use crate::files::transfer::{TransferPersistenceManager, TransferRegistry, TransferSnapshot};
 use crate::session::manager::SessionManager;
 use crate::utils::errors::TerminalError;
@@ -189,6 +192,49 @@ pub async fn session_copy_remote(
         .await;
     });
     Ok(transfer_id)
+}
+
+// --- Folder-paste manifests (#3630) ---
+
+/// Record a folder paste the frontend is about to drive file by file and return
+/// its manifest id (#3630). The frontend ends it with [`folder_paste_end`] once
+/// every file landed; a manifest still recorded at the next launch marks a
+/// folder that may be only partly copied. Metadata only — never credentials.
+/// Without durable persistence this run, an id is still returned (nothing is
+/// recorded).
+#[tauri::command]
+pub fn folder_paste_begin(
+    operation: FolderPasteOperation,
+    source: FolderPasteEndpoint,
+    destination: FolderPasteEndpoint,
+    app_handle: tauri::AppHandle,
+) -> String {
+    debug!(?operation, src = source.path, dest = destination.path, "folder paste begin");
+    match app_handle.try_state::<TransferPersistenceManager>() {
+        Some(pm) => pm.begin_folder_paste(operation, source, destination),
+        None => uuid::Uuid::new_v4().to_string(),
+    }
+}
+
+/// Remove a folder-paste manifest: the folder fully landed, or the user
+/// dismissed the interrupted-paste notice (#3630). Idempotent.
+#[tauri::command]
+pub fn folder_paste_end(paste_id: String, app_handle: tauri::AppHandle) {
+    debug!(paste_id, "folder paste end");
+    if let Some(pm) = app_handle.try_state::<TransferPersistenceManager>() {
+        pm.end_folder_paste(&paste_id);
+    }
+}
+
+/// Take the folder pastes a previous run left unfinished (#3630). Each is
+/// returned exactly once (its record is removed), so only one window shows the
+/// notice and a Retry records a paste of its own.
+#[tauri::command]
+pub fn folder_paste_take_interrupted(app_handle: tauri::AppHandle) -> Vec<PersistedFolderPaste> {
+    app_handle
+        .try_state::<TransferPersistenceManager>()
+        .map(|pm| pm.take_interrupted_folder_pastes())
+        .unwrap_or_default()
 }
 
 /// List the rich (queued) transfers, optionally filtered by session.
