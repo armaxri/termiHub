@@ -265,7 +265,10 @@ mod tests {
     fn classified_failure_keeps_spawn_failed_text_and_exposes_kind() {
         let err = SessionError::classified(ConnectFailureKind::Timeout, "Connection timed out");
         assert_eq!(err.to_string(), "Spawn failed: Connection timed out");
-        assert_eq!(err.connect_failure_kind(), Some(ConnectFailureKind::Timeout));
+        assert_eq!(
+            err.connect_failure_kind(),
+            Some(ConnectFailureKind::Timeout)
+        );
         assert_eq!(
             SessionError::SpawnFailed("x".into()).connect_failure_kind(),
             None
@@ -276,9 +279,15 @@ mod tests {
     #[test]
     fn connect_failure_kind_codes_are_stable() {
         assert_eq!(ConnectFailureKind::Timeout.code(), "timeout");
-        assert_eq!(ConnectFailureKind::AgentAuthFailed.code(), "agent_auth_failed");
+        assert_eq!(
+            ConnectFailureKind::AgentAuthFailed.code(),
+            "agent_auth_failed"
+        );
         assert_eq!(ConnectFailureKind::NotFound.code(), "not_found");
-        assert_eq!(ConnectFailureKind::PermissionDenied.code(), "permission_denied");
+        assert_eq!(
+            ConnectFailureKind::PermissionDenied.code(),
+            "permission_denied"
+        );
         assert_eq!(ConnectFailureKind::Busy.code(), "busy");
         assert_eq!(with_code("busy", "held"), "[thub-code:busy] held");
     }

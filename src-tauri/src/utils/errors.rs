@@ -543,7 +543,10 @@ mod tests {
             assert_eq!(spawn.code(), code);
             let json = serde_json::to_value(&spawn).expect("serialize");
             assert_eq!(json["code"], slug);
-            assert_eq!(json["message"], "Failed to spawn terminal: Spawn failed: boom");
+            assert_eq!(
+                json["message"],
+                "Failed to spawn terminal: Spawn failed: boom"
+            );
 
             let ssh = TerminalError::from_session_ssh(SessionError::classified(kind, "boom"));
             assert!(matches!(ssh, TerminalError::SshError(_)));

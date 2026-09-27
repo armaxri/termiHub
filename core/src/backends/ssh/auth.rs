@@ -358,7 +358,12 @@ async fn authenticate_with_agent<H: russh::client::Handler>(
 ) -> Result<russh::client::AuthResult, SessionError> {
     let agent = russh::keys::agent::client::AgentClient::connect_env()
         .await
-        .map_err(|e| SessionError::classified(ConnectFailureKind::AgentAuthFailed, format!("SSH agent connect failed: {e}")))?;
+        .map_err(|e| {
+            SessionError::classified(
+                ConnectFailureKind::AgentAuthFailed,
+                format!("SSH agent connect failed: {e}"),
+            )
+        })?;
     authenticate_with_agent_client(session, username, agent).await
 }
 
@@ -371,7 +376,12 @@ async fn authenticate_with_agent<H: russh::client::Handler>(
     let agent =
         russh::keys::agent::client::AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent")
             .await
-            .map_err(|e| SessionError::classified(ConnectFailureKind::AgentAuthFailed, format!("SSH agent connect failed: {e}")))?;
+            .map_err(|e| {
+                SessionError::classified(
+                    ConnectFailureKind::AgentAuthFailed,
+                    format!("SSH agent connect failed: {e}"),
+                )
+            })?;
     authenticate_with_agent_client(session, username, agent).await
 }
 
@@ -392,16 +402,23 @@ where
 {
     use russh::keys::agent::AgentIdentity;
 
-    let identities = agent
-        .request_identities()
-        .await
-        .map_err(|e| SessionError::classified(ConnectFailureKind::AgentAuthFailed, format!("SSH agent list keys failed: {e}")))?;
+    let identities = agent.request_identities().await.map_err(|e| {
+        SessionError::classified(
+            ConnectFailureKind::AgentAuthFailed,
+            format!("SSH agent list keys failed: {e}"),
+        )
+    })?;
 
     // Negotiate the RSA hash once; ignored for ed25519/ecdsa agent keys.
     let hash_alg = session
         .best_supported_rsa_hash()
         .await
-        .map_err(|e| SessionError::classified(ConnectFailureKind::AgentAuthFailed, format!("Agent auth failed: {e}")))?
+        .map_err(|e| {
+            SessionError::classified(
+                ConnectFailureKind::AgentAuthFailed,
+                format!("Agent auth failed: {e}"),
+            )
+        })?
         .flatten();
 
     // With no usable identity the outcome is a plain rejection.
@@ -417,7 +434,12 @@ where
         let result = session
             .authenticate_publickey_with(username, public_key, hash_alg, &mut agent)
             .await
-            .map_err(|e| SessionError::classified(ConnectFailureKind::AgentAuthFailed, format!("Agent auth failed: {e}")))?;
+            .map_err(|e| {
+                SessionError::classified(
+                    ConnectFailureKind::AgentAuthFailed,
+                    format!("Agent auth failed: {e}"),
+                )
+            })?;
         // Stop on success, and on a partial success: the key was accepted and
         // the server now wants a second factor (#3371).
         if matches!(

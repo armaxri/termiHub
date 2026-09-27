@@ -854,7 +854,10 @@ mod tests {
             flow_control: serial2::FlowControl::None,
         };
         let err = open_serial_port(&parsed).unwrap_err();
-        assert_eq!(err.connect_failure_kind(), Some(ConnectFailureKind::NotFound));
+        assert_eq!(
+            err.connect_failure_kind(),
+            Some(ConnectFailureKind::NotFound)
+        );
         assert!(!err.to_string().contains(" — "), "got: {err}");
     }
 

@@ -260,7 +260,10 @@ where
             .map_err(|_| {
                 SessionError::classified(
                     ConnectFailureKind::Timeout,
-                    format!("Jump host {hop_label} timed out after {}s", timeout.as_secs()),
+                    format!(
+                        "Jump host {hop_label} timed out after {}s",
+                        timeout.as_secs()
+                    ),
                 )
             })?
     };
