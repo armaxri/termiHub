@@ -226,7 +226,8 @@ matrix and Dev Build. The newest commit's run is the
 one to read (it covers all earlier merges). **Watch `develop`'s own runs after
 merging**: a failure there is a real regression (or a new advisory) and needs a follow-up fix, since the PR
 that caused it was not gated on it. The nightly system-integration and Docker
-fixture lanes are unchanged. The weekly **Vendored Forks** upstream-drift job keeps one
+fixture lanes are unchanged, and a release additionally requires them green on the exact
+release commit (see [Release integration gate](#release-integration-gate)). The weekly **Vendored Forks** upstream-drift job keeps one
 `supply-chain` tracking issue current (see [Vendored forks](supply-chain.md#vendored-forks)).
 
 **Concurrency rule (#3588).** Every workflow sets a per-ref `concurrency` group,
@@ -1092,6 +1093,9 @@ Before creating a release, run the quality scripts and verify:
 - [ ] The [agent update signing key](#agent-update-signing-key) is configured (the release workflow refuses to run otherwise)
 - [ ] All `docs/changes/*.md` fragments have been consolidated into `CHANGELOG.md` and deleted (see [Finalize Changelog](#finalize-changelog))
 - [ ] No known release-blocking issues remain
+- [ ] The [release integration gate](#release-integration-gate) is satisfied on the exact
+      commit you will tag: a green **Release Candidate: Full Integration** run and a green
+      post-merge **Code Quality** push run (the Release workflow refuses to publish otherwise)
 - [ ] Every crate on the [untrusted-input parser watchlist](supply-chain.md#untrusted-input-parser-watchlist)
       is on its latest compatible release, and its advisories and changelog since the last
       release were reviewed (a watchlist advisory outranks any general dependency bump)
@@ -1176,7 +1180,9 @@ Pushing the `vX.Y.Z` tag triggers the [Release workflow](../.github/workflows/re
 
 1. Refuse to start if the tag does not match every version source above or the Tauri
    npm packages have drifted from their Rust crates (`release-check.sh --versions-only`),
-   or if the [agent update signing key](#agent-update-signing-key) is not configured
+   if the full integration lanes have not passed on the tagged commit (the
+   [release integration gate](#release-integration-gate)), or if the
+   [agent update signing key](#agent-update-signing-key) is not configured
 2. Create a GitHub Release with notes extracted from `CHANGELOG.md`
 3. Build platform-specific installers (macOS .dmg, Windows .msi, Linux .AppImage + .deb)
 4. Upload all artifacts to the GitHub Release page, each agent binary with a `.sha256`
@@ -1199,6 +1205,49 @@ to "Latest" (and that desktop update checks and agent self-updates then pick up)
 `TERMIHUB_STABLE_RELEASE` repository variable to `true` before pushing the tag (and clear
 it afterwards). A tag with a semver prerelease suffix (`vX.Y.Z-beta.1`, `vX.Y.Z-rc.1`) is
 always a prerelease, even with the variable set.
+
+### Release integration gate
+
+Per-PR CI is the [slim lane](#ci-lanes-what-a-green-pr-proves-and-what-it-does-not): it
+never runs the bridge integration lane or the agent Docker suites, and runs the Docker
+fixture lane only on a path filter. The full lanes run nightly per branch, but a nightly
+grades a branch _tip_, not the commit you tag. So **a release is never cut on per-PR green
+alone** (WA-CI-004, WA-CI-024, #3652): the Release workflow's first job, **Verify
+Integration Lanes**, runs
+[`scripts/internal/release-integration-gate.mjs`](../scripts/internal/release-integration-gate.mjs)
+and refuses to publish unless the **newest** run of each of these is green on the tag's
+exact commit:
+
+| Required run                                                                               | Event               | What it covers                                                                                                                                                        |
+| ------------------------------------------------------------------------------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Release Candidate: Full Integration](../.github/workflows/release-candidate.yml)          | `workflow_dispatch` | `system-integration.yml` (bridge integration lane on Linux/macOS/Windows, display-critical grades, agent Docker suites) + `integration-fixtures.yml` (no path filter) |
+| [Code Quality](../.github/workflows/code-quality.yml) (post-merge push run on that commit) | `push`              | the full three-OS test matrix and **Agent Live Tests (Windows, serial)**                                                                                              |
+
+The newest run decides, so a later red re-run outranks an earlier green one. A run that is
+still in progress fails the gate too.
+
+**Before tagging** (the release commit is already on `main`, so its Code Quality push run
+exists), dispatch the candidate run on it and wait for it to go green:
+
+```bash
+gh workflow run release-candidate.yml --ref main
+gh run watch "$(gh run list --workflow=release-candidate.yml --limit 1 --json databaseId -q '.[0].databaseId')"
+```
+
+If you pushed the tag first, the release fails at **Verify Integration Lanes** with the
+exact commands to run: dispatch the candidate on the tag
+(`gh workflow run release-candidate.yml --ref vX.Y.Z`), then, once it is green, re-run the
+release's failed jobs (`gh run rerun <run-id> --failed`). A red candidate lane is a release
+blocker: fix it on a branch and re-tag. There is no bypass.
+
+**Integration-fixtures PR path filter.** Beyond `tests/docker/**`, `core/tests/**`,
+`core/src/backends/**` and the RDP/polkit sources, the fixture lane also runs on PRs that
+touch the core plumbing its suites drive directly — `core/src/connection/**`,
+`core/src/session/**`, `core/src/files/**`, `core/src/tunnel/**`, `core/src/reconnect_backoff*`
+and `core/Cargo.toml`. It is deliberately **not** widened to `agent/**` or `src-tauri/**`
+(the lane tests `termihub-core` only, so those changes would gain no coverage there) or to
+`Cargo.lock` (weekly lockfile bumps would run the Docker lane every time); the nightly run
+and this gate catch those before they ship.
 
 ### Post-Release Install Smokes
 
