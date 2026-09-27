@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/system-integration.yml:252
   - .github/workflows/system-integration.yml:22
   - docs/testing.md:2559
-status: open
+status: fixed
+resolution: "#3726 — native sshd fixtures; SSH integration no longer Linux-container-only"
 ---
 
 ## What

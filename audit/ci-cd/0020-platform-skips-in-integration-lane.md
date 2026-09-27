@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/system-integration.yml:145
   - .github/workflows/system-integration.yml:258
   - .github/workflows/integration-fixtures.yml:74
-status: open
+status: fixed
+resolution: "#3726 — native sshd fixtures for macOS/Windows integration jobs"
 ---
 
 ## What
