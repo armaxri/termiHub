@@ -250,28 +250,30 @@ GATE_REF=$(git rev-parse --abbrev-ref HEAD)
 if [ "$GATE_REF" = "HEAD" ]; then
     GATE_REF="<branch-or-tag-at-$HEAD_SHA>"
 fi
+GATE_REPO="armaxri/termiHub"
+if command -v gh >/dev/null 2>&1; then
+    GATE_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "$GATE_REPO")
+fi
+DISPATCH_CMD="gh workflow run release-candidate.yml --repo $GATE_REPO --ref $GATE_REF"
 if ! command -v gh >/dev/null 2>&1; then
     fail "gh CLI not installed — cannot verify the integration lanes (https://cli.github.com)"
 elif ! GATE_TOKEN=$(gh auth token 2>/dev/null) || [ -z "$GATE_TOKEN" ]; then
     fail "gh CLI not logged in — cannot verify the integration lanes (run: gh auth login)"
 elif [ -z "$(git branch -r --contains "$HEAD_SHA" 2>/dev/null)" ]; then
     fail "HEAD $HEAD_SHA is on no remote branch, so no CI run can exist for it"
-    echo "    Push it first (git push), then dispatch the candidate run on it (below)."
+    echo "    Push it first (git push), then run the full integration lanes on it:"
+    echo "      $DISPATCH_CMD"
     echo "    If you pushed it from elsewhere, run 'git fetch' and re-run this script."
+elif GATE_OUTPUT=$(RELEASE_GATE_LOCAL=1 RELEASE_SHA="$HEAD_SHA" RELEASE_REF_NAME="$GATE_REF" \
+    GITHUB_REPOSITORY="$GATE_REPO" GITHUB_TOKEN="$GATE_TOKEN" \
+    node scripts/internal/release-integration-gate.mjs 2>&1); then
+    echo "$GATE_OUTPUT" | sed 's/^/    /'
+    pass "Integration lanes green on $HEAD_SHA"
 else
-    GATE_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null \
-        || echo "armaxri/termiHub")
-    if GATE_OUTPUT=$(RELEASE_GATE_LOCAL=1 RELEASE_SHA="$HEAD_SHA" RELEASE_REF_NAME="$GATE_REF" \
-        GITHUB_REPOSITORY="$GATE_REPO" GITHUB_TOKEN="$GATE_TOKEN" \
-        node scripts/internal/release-integration-gate.mjs 2>&1); then
-        echo "$GATE_OUTPUT" | sed 's/^/    /'
-        pass "Integration lanes green on $HEAD_SHA"
-    else
-        echo "$GATE_OUTPUT" | sed 's/^/    /'
-        echo "    The dispatched run grades the ref's tip, so dispatch it on a ref whose tip is"
-        echo "    $HEAD_SHA (the release branch you are on, or the release tag)."
-        fail "Integration lanes not green on $HEAD_SHA (see above for the dispatch command)"
-    fi
+    echo "$GATE_OUTPUT" | sed 's/^/    /'
+    echo "    The dispatched run grades the ref's tip, so dispatch it on a ref whose tip is"
+    echo "    $HEAD_SHA (the release branch you are on, or the release tag)."
+    fail "Integration lanes not green on $HEAD_SHA — run: $DISPATCH_CMD"
 fi
 
 # ---------------------------------------------------------------------------
