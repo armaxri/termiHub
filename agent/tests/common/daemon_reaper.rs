@@ -157,7 +157,7 @@ fn peer_pid(_fd: std::os::unix::io::RawFd) -> Option<u32> {
 }
 
 #[cfg(unix)]
-fn pid_alive(pid: u32) -> bool {
+pub fn pid_alive(pid: u32) -> bool {
     // Safety: signal 0 only checks that the pid exists and may be signalled.
     let exists = unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
     exists && !is_zombie(pid)
@@ -182,7 +182,7 @@ fn is_zombie(_pid: u32) -> bool {
 }
 
 #[cfg(unix)]
-fn kill_pid(pid: u32) {
+pub fn kill_pid(pid: u32) {
     // Safety: SIGKILL to a pid just verified to be serving our own endpoint.
     unsafe {
         libc::kill(pid as libc::pid_t, libc::SIGKILL);
@@ -236,7 +236,7 @@ fn server_pid(endpoint: &str) -> std::io::Result<u32> {
 }
 
 #[cfg(windows)]
-fn pid_alive(pid: u32) -> bool {
+pub fn pid_alive(pid: u32) -> bool {
     use windows_sys::Win32::Foundation::{CloseHandle, WAIT_TIMEOUT};
     use windows_sys::Win32::System::Threading::{
         OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
@@ -255,7 +255,7 @@ fn pid_alive(pid: u32) -> bool {
 }
 
 #[cfg(windows)]
-fn kill_pid(pid: u32) {
+pub fn kill_pid(pid: u32) {
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
     // Safety: terminate a pid just verified to be serving our own endpoint.
