@@ -21,6 +21,11 @@
 //!     batch — the jump-host references of the file that changed in the very
 //!     same write (see `ConnectionManager::follow_references`); here the
 //!     rewritten settings are only reflected into the `settings` region;
+//! * **persistent sessions** (#3595) — the backend registry (keyed by
+//!   connection id) is re-keyed before the announcement below, and a
+//!   `persistent-session-state-changed` event is sent for each moved session
+//!   after it, so every window's `persistentSessions` map (re-keyed on the
+//!   announcement) shows the session under the new id and attach/stop reach it;
 //! * **open tabs** — tab content (`connectionId` / `persistentConnectionId`) is
 //!   window-local frontend state (the backend `layout@<client>` region holds the
 //!   panel structure only), so every window is told via
@@ -45,6 +50,7 @@ use crate::connection::id_changes::ConnectionIdRemap;
 use crate::connection::manager::{ConnectionIdChange, ConnectionManager};
 use crate::schedules::manager::ScheduleManager;
 use crate::schedules::runner::EVENT_SCHEDULES_CHANGED;
+use crate::session::manager::{EventEmitter, PersistentSessionStateEvent, SessionManager};
 use crate::tunnel::tunnel_manager::TunnelManager;
 use crate::workflows::manager::WorkflowManager;
 use crate::workspace::last_session::LastSessionManager;
@@ -66,7 +72,11 @@ pub(crate) fn follow_connection_id_changes<R: Runtime>(app: &AppHandle<R>) {
     connections.set_id_change_listener(Arc::new(move |changes| {
         follow_saved_references(&handle, changes);
         crate::files::bookmarks_manager::follow_connection_renames(&handle, changes);
+        let persistent = follow_persistent_sessions(&handle, changes);
         announce_connection_id_changes(&handle, changes);
+        for event in &persistent {
+            handle.emit_persistent_state(event);
+        }
     }));
 }
 
@@ -112,6 +122,22 @@ fn follow_saved_references<R: Runtime>(app: &AppHandle<R>, changes: &[Connection
             }
         }
     }
+}
+
+/// Re-key the persistent-session registry (#3595) so attach/stop/start from a
+/// renamed connection reach its running session. Runs before the id change is
+/// announced, so a window never re-keys its `persistentSessions` map ahead of
+/// the backend. Returns the `persistent-session-state-changed` events for the
+/// moved sessions; they are sent after the announcement, so a window applies
+/// them to the entry it has already moved to the new id.
+fn follow_persistent_sessions<R: Runtime>(
+    app: &AppHandle<R>,
+    changes: &[ConnectionIdChange],
+) -> Vec<PersistentSessionStateEvent> {
+    let Some(sessions) = app.try_state::<SessionManager>() else {
+        return Vec::new();
+    };
+    sessions.follow_connection_id_changes(&ConnectionIdRemap::new(changes))
 }
 
 /// Log the outcome of one store following an id-change batch; returns whether
@@ -399,6 +425,69 @@ mod tests {
         // The frontend is told: the schedule list reloads, tabs follow.
         assert_eq!(schedules_changed.lock().unwrap().len(), 1);
         assert_eq!(ids_changed.lock().unwrap().len(), 1);
+    }
+
+    /// #3595: renaming a connection with a running persistent session re-keys
+    /// the backend registry, then announces the id change, then reports the
+    /// session under its new id — in that order, so a window moves its entry
+    /// before updating it.
+    #[test]
+    fn a_rename_moves_a_running_persistent_session_to_the_new_id() {
+        use crate::terminal::agent_manager::{AgentConnectionManager, AgentRpcClient};
+        use termihub_core::connection::ConnectionTypeRegistry;
+
+        let dir = tempfile::tempdir().unwrap();
+        let app = tauri::test::mock_app();
+        app.manage(ConnectionManager::new_for_test(dir.path(), Arc::new(NullStore)).unwrap());
+        let agents = Arc::new(AgentConnectionManager::new(app.handle().clone()));
+        app.manage(SessionManager::new(
+            ConnectionTypeRegistry::new(),
+            agents as Arc<dyn AgentRpcClient>,
+        ));
+        follow_connection_id_changes(app.handle());
+
+        let mgr = app.state::<ConnectionManager>();
+        mgr.save_connection(conn("a", "a", None)).unwrap();
+        let sessions = app.state::<SessionManager>();
+        tauri::async_runtime::block_on(sessions.adopt_persistent_session(
+            "a",
+            "agent-1",
+            "sess-1",
+            app.handle().clone(),
+        ))
+        .unwrap();
+
+        let log: Arc<Mutex<Vec<String>>> = Arc::default();
+        for event in [
+            CONNECTION_IDS_CHANGED_EVENT,
+            "persistent-session-state-changed",
+        ] {
+            let sink = log.clone();
+            app.listen_any(event, move |e| {
+                sink.lock()
+                    .unwrap()
+                    .push(format!("{event} {}", e.payload()));
+            });
+        }
+
+        mgr.save_connection(conn("a", "b", None)).unwrap();
+
+        let listed = tauri::async_runtime::block_on(sessions.list_persistent_sessions());
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].connection_id, "b");
+        assert_eq!(listed[0].session_id, "sess-1");
+        let log = log.lock().unwrap();
+        assert_eq!(log.len(), 2, "{log:?}");
+        assert!(log[0].starts_with(CONNECTION_IDS_CHANGED_EVENT), "{log:?}");
+        let state: serde_json::Value = serde_json::from_str(
+            log[1]
+                .strip_prefix("persistent-session-state-changed ")
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(state["connection_id"], "b");
+        assert_eq!(state["session_id"], "sess-1");
+        assert_eq!(state["state"], "running");
     }
 
     #[test]

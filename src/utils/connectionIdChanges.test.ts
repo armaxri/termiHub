@@ -4,10 +4,12 @@ import {
   inferFolderFollow,
   remapConnectionIdList,
   remapJumpHostRefs,
+  remapPersistentSessions,
   remapTabContentConnectionIds,
   remapWorkflowTriggers,
   remapWorkspaceTabGroups,
 } from "./connectionIdChanges";
+import type { PersistentSessionEntry } from "@/types/connection";
 import type { TabContent } from "@/types/terminal";
 import type { WorkflowTrigger } from "@/types/workflow";
 import type { WorkspaceTabGroupDef } from "@/types/workspace";
@@ -201,5 +203,42 @@ describe("inferFolderFollow (#3622)", () => {
     // An empty folder / untouched folder.
     expect(inferFolderFollow("Empty", [{ oldId: "Work/x", newId: "Job/x" }], before)).toBeNull();
     expect(inferFolderFollow("Other", [{ oldId: "Work/x", newId: "Job/x" }], before)).toBeNull();
+  });
+});
+
+describe("remapPersistentSessions (#3595)", () => {
+  const entry = (connectionId: string, sessionId: string): PersistentSessionEntry => ({
+    connectionId,
+    sessionId,
+    state: "running",
+    attachedTabIds: [],
+  });
+
+  it("moves entries and their connectionId, applying a chain simultaneously", () => {
+    const next = remapPersistentSessions({ a: entry("a", "sa"), b: entry("b", "sb") }, [
+      { oldId: "a", newId: "b" },
+      { oldId: "b", newId: "c" },
+    ]);
+    expect(next).toEqual({ b: entry("b", "sa"), c: entry("c", "sb") });
+  });
+
+  it("exchanges a swap", () => {
+    const next = remapPersistentSessions({ a: entry("a", "sa"), b: entry("b", "sb") }, [
+      { oldId: "a", newId: "b" },
+      { oldId: "b", newId: "a" },
+    ]);
+    expect(next).toEqual({ a: entry("a", "sb"), b: entry("b", "sa") });
+  });
+
+  it("never displaces an entry that does not move away (the backend keeps it too)", () => {
+    const sessions = { a: entry("a", "sa"), b: entry("b", "stale") };
+    expect(remapPersistentSessions(sessions, [{ oldId: "a", newId: "b" }])).toBeNull();
+  });
+
+  it("returns null when no entry moved", () => {
+    expect(
+      remapPersistentSessions({ a: entry("a", "sa") }, [{ oldId: "x", newId: "y" }])
+    ).toBeNull();
+    expect(remapPersistentSessions({}, [])).toBeNull();
   });
 });

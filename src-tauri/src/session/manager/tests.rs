@@ -4206,3 +4206,215 @@ mod ki_prompt_owner {
         manager.close_session(&session).await.ok();
     }
 }
+
+// ── Following connection id changes (#3595) ───────────────────────
+
+fn id_remap(changes: &[(&str, &str)]) -> crate::connection::id_changes::ConnectionIdRemap {
+    let changes: Vec<crate::connection::id_changes::ConnectionIdChange> = changes
+        .iter()
+        .map(|(o, n)| crate::connection::id_changes::ConnectionIdChange::new(*o, *n))
+        .collect();
+    crate::connection::id_changes::ConnectionIdRemap::new(&changes)
+}
+
+fn persistent_record(connection_id: &str, session_id: &str, tabs: &[&str]) -> PersistentRecord {
+    PersistentRecord {
+        connection_id: connection_id.to_string(),
+        session_id: session_id.to_string(),
+        attached_tabs: tabs.iter().map(|t| t.to_string()).collect(),
+        remote_session_id: None,
+        agent_id: None,
+    }
+}
+
+/// `connection id → session id` of every record, checking each record's own
+/// `connection_id` matches its key.
+fn registry_view(manager: &SessionManager) -> Vec<(String, String)> {
+    let ps = manager.persistent_sessions.blocking_lock();
+    let mut view: Vec<(String, String)> = ps
+        .iter()
+        .map(|(k, r)| {
+            assert_eq!(
+                &r.connection_id, k,
+                "record's connection_id follows its key"
+            );
+            (k.clone(), r.session_id.clone())
+        })
+        .collect();
+    view.sort();
+    view
+}
+
+fn seed(manager: &SessionManager, records: &[(&str, &str, &[&str])]) {
+    let mut ps = manager.persistent_sessions.blocking_lock();
+    for (conn, sess, tabs) in records {
+        ps.insert(conn.to_string(), persistent_record(conn, sess, tabs));
+    }
+}
+
+fn pairs(items: &[(&str, &str)]) -> Vec<(String, String)> {
+    items
+        .iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect()
+}
+
+#[test]
+fn follow_connection_id_changes_rekeys_a_renamed_session() {
+    let manager = make_test_manager();
+    seed(
+        &manager,
+        &[("Work/x", "s1", &["tab-1"]), ("other", "s2", &[])],
+    );
+
+    let events = manager.follow_connection_id_changes(&id_remap(&[("Work/x", "Job/x")]));
+
+    assert_eq!(
+        registry_view(&manager),
+        pairs(&[("Job/x", "s1"), ("other", "s2")])
+    );
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].connection_id, "Job/x");
+    assert_eq!(events[0].session_id.as_deref(), Some("s1"));
+    assert_eq!(events[0].state, "attached");
+    assert_eq!(events[0].attached_tab_count, 1);
+}
+
+#[test]
+fn follow_connection_id_changes_exchanges_a_swap() {
+    let manager = make_test_manager();
+    seed(&manager, &[("a", "sa", &[]), ("b", "sb", &[])]);
+
+    let events = manager.follow_connection_id_changes(&id_remap(&[("a", "b"), ("b", "a")]));
+
+    assert_eq!(registry_view(&manager), pairs(&[("a", "sb"), ("b", "sa")]));
+    let moved: Vec<_> = events
+        .iter()
+        .map(|e| {
+            (
+                e.connection_id.as_str(),
+                e.session_id.as_deref(),
+                e.state.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        moved,
+        [("a", Some("sb"), "running"), ("b", Some("sa"), "running")]
+    );
+}
+
+#[test]
+fn follow_connection_id_changes_applies_a_chain_simultaneously() {
+    let manager = make_test_manager();
+    seed(&manager, &[("a", "sa", &[]), ("b", "sb", &[])]);
+
+    let events = manager.follow_connection_id_changes(&id_remap(&[("a", "b"), ("b", "c")]));
+
+    assert_eq!(registry_view(&manager), pairs(&[("b", "sa"), ("c", "sb")]));
+    assert_eq!(events.len(), 2);
+}
+
+#[test]
+fn follow_connection_id_changes_never_displaces_a_registered_session() {
+    let manager = make_test_manager();
+    // A stale record already sits at the new id and does not move away.
+    seed(&manager, &[("a", "sa", &[]), ("b", "stale", &[])]);
+
+    let events = manager.follow_connection_id_changes(&id_remap(&[("a", "b")]));
+
+    assert_eq!(
+        registry_view(&manager),
+        pairs(&[("a", "sa"), ("b", "stale")])
+    );
+    assert!(events.is_empty());
+}
+
+#[test]
+fn follow_connection_id_changes_ignores_unrelated_and_empty_batches() {
+    let manager = make_test_manager();
+    seed(&manager, &[("a", "sa", &[])]);
+
+    assert!(manager
+        .follow_connection_id_changes(&id_remap(&[("x", "y")]))
+        .is_empty());
+    assert!(manager
+        .follow_connection_id_changes(&id_remap(&[]))
+        .is_empty());
+    assert_eq!(registry_view(&manager), pairs(&[("a", "sa")]));
+}
+
+/// The id-change listener runs synchronously; called from inside an async
+/// runtime (where `blocking_lock` would panic) the re-key still completes
+/// before it returns.
+#[tokio::test]
+async fn follow_connection_id_changes_works_inside_a_runtime() {
+    let manager = make_test_manager();
+    manager
+        .persistent_sessions
+        .lock()
+        .await
+        .insert("a".to_string(), persistent_record("a", "sa", &[]));
+
+    let events = manager.follow_connection_id_changes(&id_remap(&[("a", "b")]));
+
+    assert_eq!(events.len(), 1);
+    let ps = manager.persistent_sessions.lock().await;
+    assert_eq!(ps["b"].session_id, "sa");
+    assert!(!ps.contains_key("a"));
+}
+
+/// End to end on the manager: a running persistent session whose connection
+/// is renamed is reached through the new id — start attaches to it instead of
+/// spawning a second session, attach and stop find it.
+#[tokio::test]
+async fn a_renamed_connections_persistent_session_is_reached_by_its_new_id() {
+    let manager = make_test_manager();
+    let emitter = MockPersistentEmitter::new();
+    let session_id = manager
+        .start_persistent_session(
+            "Work/x",
+            "mock",
+            serde_json::json!({}),
+            None,
+            emitter.clone(),
+        )
+        .await
+        .unwrap();
+
+    let events = manager.follow_connection_id_changes(&id_remap(&[("Work/x", "Job/x")]));
+    assert_eq!(events[0].connection_id, "Job/x");
+
+    let again = manager
+        .start_persistent_session(
+            "Job/x",
+            "mock",
+            serde_json::json!({}),
+            None,
+            emitter.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(again, session_id, "start re-uses the running session");
+    assert_eq!(manager.sessions.lock().await.len(), 1);
+
+    let attach = manager
+        .attach_persistent_tab("Job/x", "tab-1", emitter.clone())
+        .await
+        .unwrap();
+    assert_eq!(attach.session_id, session_id);
+    assert!(manager
+        .attach_persistent_tab("Work/x", "tab-2", emitter.clone())
+        .await
+        .is_err());
+
+    manager
+        .stop_persistent_session("Job/x", emitter.clone())
+        .await
+        .unwrap();
+    assert!(manager.persistent_sessions.lock().await.is_empty());
+    assert!(!manager.sessions.lock().await.contains_key(&session_id));
+    let last = emitter.events().pop().unwrap();
+    assert_eq!(last.connection_id, "Job/x");
+    assert_eq!(last.state, "stopped");
+}
