@@ -9,7 +9,7 @@ subsystem: scripts / release
 evidence:
   - scripts/release-check.sh:1
 status: partial
-resolution: "develop — reclaim-partial: unified-coverage step added scripts/release-check.sh:116-130 (advisory). Still missing: no system/integration tests, no `pnpm tauri build`/smoke-test.sh in release-check, TODO/FIXME/HACK scan still warn-only (:166-181)"
+resolution: "#3741 — coverage part done: release-check.sh/.cmd now fails on coverage drop (#3741). Still missing: system/integration tests + real bundle build/smoke-test in release-check; TODO/FIXME scan warn-only"
 ---
 
 ## What

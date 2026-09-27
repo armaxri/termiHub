@@ -9,8 +9,8 @@ subsystem: .github/workflows
 evidence:
   - .github/workflows/code-quality.yml:223
   - .github/workflows/code-quality.yml:263
-status: partial
-resolution: "develop — rust coverage tooling landed (coverage.yml cargo-llvm-cov unified FE+Rust via scripts/coverage.sh) but NOT enforcing: whole job continue-on-error:true (:33 'advisory'), coverage.sh:13 doesn't fail on low value. Remaining: flip to fail-on-decrease ratchet after baseline — maintainer/policy call (same as CI-011)"
+status: fixed
+resolution: "#3741 — Rust (core/agent/src-tauri) + frontend coverage gated by ratchet in coverage.yml (post-merge lane) and release-check"
 ---
 
 ## What
