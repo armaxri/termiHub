@@ -23,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 use crate::connection::{
     AuthKind, Capabilities, ClipboardImage, ConnectionType, CursorReceiver, CursorUpdate,
     DirtyRect, FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities, InputEvent,
-    OutputReceiver, SettingsSchema,
+    MonitorLayout, MonitorRect, OutputReceiver, SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
@@ -65,6 +65,13 @@ struct MockConfig {
     /// Optional initial framebuffer height override.
     #[serde(default)]
     height: Option<u16>,
+    /// A multi-monitor layout (#3696), as the frontend stamps it at connect.
+    /// Honored when its combined size fits the mock's dimension cap.
+    #[serde(
+        default,
+        deserialize_with = "crate::connection::graphical_monitors::deserialize_monitor_rects"
+    )]
+    monitor_layout: Vec<MonitorRect>,
 }
 
 /// Shared, interior-mutable state of a connected mock session.
@@ -77,6 +84,8 @@ struct MockRuntime {
     clipboard_image: Mutex<Option<ClipboardImage>>,
     view_only: bool,
     dims: Mutex<(u16, u16)>,
+    /// The monitors in framebuffer coordinates (#3696); empty = single monitor.
+    monitors: StdMutex<Vec<MonitorRect>>,
     /// Count of accepted input events — lets tests assert view-only suppression.
     input_count: AtomicU64,
     cancel: CancellationToken,
@@ -129,6 +138,12 @@ impl Drop for MockRemoteDesktop {
 }
 
 /// Clamp a requested dimension into `1..=MAX_DIMENSION`, defaulting when zero.
+/// The layout's combined size, when it fits the mock's dimension cap.
+fn mock_layout_size(layout: &MonitorLayout) -> Option<(u16, u16)> {
+    let (w, h) = layout.desktop_size();
+    (w <= MAX_DIMENSION && h <= MAX_DIMENSION).then_some((w, h))
+}
+
 fn clamp_dim(value: u16, default: u16) -> u16 {
     match value {
         0 => default,
@@ -285,8 +300,17 @@ impl ConnectionType for MockRemoteDesktop {
         let cfg: MockConfig = serde_json::from_value(settings)
             .map_err(|e| SessionError::InvalidConfig(format!("Invalid mock settings: {e}")))?;
 
-        let width = clamp_dim(cfg.width.unwrap_or(DEFAULT_WIDTH), DEFAULT_WIDTH);
-        let height = clamp_dim(cfg.height.unwrap_or(DEFAULT_HEIGHT), DEFAULT_HEIGHT);
+        let mut width = clamp_dim(cfg.width.unwrap_or(DEFAULT_WIDTH), DEFAULT_WIDTH);
+        let mut height = clamp_dim(cfg.height.unwrap_or(DEFAULT_HEIGHT), DEFAULT_HEIGHT);
+        let layout = MonitorLayout::normalize(&cfg.monitor_layout)
+            .and_then(|l| mock_layout_size(&l).map(|size| (l, size)));
+        let monitors = match layout {
+            Some((layout, (w, h))) => {
+                (width, height) = (w, h);
+                layout.framebuffer_rects()
+            }
+            None => Vec::new(),
+        };
 
         let (frame_tx, frame_rx) = mpsc::channel(CHANNEL_DEPTH);
         let (cursor_tx, cursor_rx) = mpsc::channel(CHANNEL_DEPTH);
@@ -297,6 +321,7 @@ impl ConnectionType for MockRemoteDesktop {
             clipboard_image: Mutex::new(None),
             view_only: cfg.view_only,
             dims: Mutex::new((width, height)),
+            monitors: StdMutex::new(monitors),
             input_count: AtomicU64::new(0),
             cancel: CancellationToken::new(),
         });
@@ -380,7 +405,7 @@ impl GraphicalBackend for MockRemoteDesktop {
             supports_clipboard: true,
             supports_clipboard_image: true,
             view_only_capable: true,
-            multi_monitor: crate::connection::MultiMonitorCapability::unsupported(),
+            multi_monitor: crate::connection::MultiMonitorCapability::supported(),
         }
     }
 
@@ -434,6 +459,28 @@ impl GraphicalBackend for MockRemoteDesktop {
         let h = clamp_dim(height_px, DEFAULT_HEIGHT);
         *rt.dims.lock().await = (w, h);
         // Repaint the whole surface at the new resolution.
+        let _ = rt.frame_tx.send(background_frame(w, h)).await;
+        Ok(())
+    }
+
+    fn monitor_layout(&self) -> Vec<MonitorRect> {
+        self.runtime
+            .as_ref()
+            .and_then(|rt| rt.monitors.lock().ok().map(|m| m.clone()))
+            .unwrap_or_default()
+    }
+
+    async fn set_monitor_layout(&self, layout: MonitorLayout) -> Result<(), SessionError> {
+        let Some(rt) = &self.runtime else {
+            return Err(SessionError::NotRunning("mock not connected".to_string()));
+        };
+        let (w, h) = mock_layout_size(&layout).ok_or_else(|| {
+            SessionError::InvalidConfig("monitor layout exceeds the mock's size cap".to_string())
+        })?;
+        if let Ok(mut monitors) = rt.monitors.lock() {
+            *monitors = layout.framebuffer_rects();
+        }
+        *rt.dims.lock().await = (w, h);
         let _ = rt.frame_tx.send(background_frame(w, h)).await;
         Ok(())
     }
@@ -614,6 +661,36 @@ mod tests {
                 break;
             }
         }
+        m.disconnect().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_stamped_monitor_layout_sizes_the_framebuffer_and_is_reported() {
+        let mut m = connected();
+        m.connect(serde_json::json!({
+            "monitorLayout": [
+                { "x": 0, "y": 0, "width": 640, "height": 480, "primary": true },
+                { "x": 640, "y": 0, "width": 640, "height": 480 }
+            ]
+        }))
+        .await
+        .unwrap();
+        let mut frames = m.subscribe_frames();
+        let first = tokio::time::timeout(Duration::from_secs(2), frames.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((first.width, first.height), (1280, 480));
+        let backend = m.graphical().unwrap();
+        assert_eq!(backend.monitor_layout().len(), 2);
+
+        let three = MonitorLayout::side_by_side(3, 400, 300).unwrap();
+        backend.set_monitor_layout(three).await.unwrap();
+        assert_eq!(backend.monitor_layout().len(), 3);
+        // Too large for the mock: refused, layout unchanged.
+        let huge = MonitorLayout::side_by_side(2, 1920, 1080).unwrap();
+        assert!(backend.set_monitor_layout(huge).await.is_err());
+        assert_eq!(backend.monitor_layout().len(), 3);
         m.disconnect().await.unwrap();
     }
 

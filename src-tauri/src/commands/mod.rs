@@ -26,6 +26,7 @@ pub mod projection;
 pub mod projection_diag;
 pub mod remote_desktop;
 pub mod remote_desktop_image;
+pub mod remote_desktop_monitors;
 pub mod restore_mode;
 pub mod schedules;
 pub mod session;
