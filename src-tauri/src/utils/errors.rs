@@ -133,6 +133,10 @@ pub enum IpcErrorCode {
     /// session (SM-003, #3404). The tab is shown "Taken over by another desktop"
     /// with Reclaim rather than an error.
     SessionHeldByPeer,
+    /// A bounded remote operation (an SSH exec or SFTP transfer on an
+    /// established session) hit its deadline because the server stopped
+    /// responding (#3698).
+    Timeout,
 }
 
 impl IpcErrorCode {
@@ -254,6 +258,14 @@ pub enum TerminalError {
     /// like [`TerminalError::RemoteError`], so the IPC wire is unchanged.
     #[error("Remote agent error: {0}")]
     AgentUnsupported(String),
+
+    /// A bounded remote operation on an established SSH session (an exec
+    /// channel or an SFTP transfer) did not finish within its deadline — the
+    /// server accepted the login and then stopped responding (#3698). Built via
+    /// [`TerminalError::timed_out`] so the message always names the operation
+    /// and the limit.
+    #[error("Timed out: {0}")]
+    Timeout(String),
 }
 
 impl TerminalError {
@@ -262,6 +274,20 @@ impl TerminalError {
     /// rather than by matching the "Connection failed" text (I18N-002 / ERR-003).
     pub fn unreachable(message: impl std::fmt::Display) -> Self {
         TerminalError::ConnectionFailed(with_code(codes::UNREACHABLE, message))
+    }
+
+    /// A remote operation (`what`) that did not complete within `limit` because
+    /// the SSH server stopped responding (#3698).
+    pub fn timed_out(what: impl std::fmt::Display, limit: std::time::Duration) -> Self {
+        TerminalError::Timeout(format!(
+            "{what} did not complete within {:.1}s — the SSH server stopped responding",
+            limit.as_secs_f64()
+        ))
+    }
+
+    /// Whether this error is a [`TerminalError::Timeout`].
+    pub fn is_timeout(&self) -> bool {
+        matches!(self, TerminalError::Timeout(_))
     }
 
     /// A remote error meaning the `termihub-agent` binary could not be started
@@ -320,6 +346,7 @@ impl TerminalError {
             TerminalError::EmbeddedServerError(_) => C::EmbeddedServerError,
             TerminalError::Io(_) => C::Io,
             TerminalError::InvalidParams(_) => C::InvalidParams,
+            TerminalError::Timeout(_) => C::Timeout,
         }
     }
 
