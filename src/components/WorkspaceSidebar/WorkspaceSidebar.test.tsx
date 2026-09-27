@@ -429,7 +429,7 @@ describe("WorkspaceSidebar", () => {
 
   it("surfaces a success toast when export succeeds", async () => {
     useAppStore.setState({ workspaces: [] });
-    apiExportWorkspaces.mockResolvedValue("{}");
+    apiExportWorkspaces.mockResolvedValue({ json: "{}", warnings: [] });
     dialogSave.mockResolvedValue("/tmp/out.json");
     fsWriteTextFile.mockResolvedValue(undefined);
 
@@ -445,9 +445,47 @@ describe("WorkspaceSidebar", () => {
     expect(toastError).not.toHaveBeenCalled();
   });
 
+  it("surfaces export warnings after the file is written", async () => {
+    useAppStore.setState({ workspaces: [] });
+    apiExportWorkspaces.mockResolvedValue({
+      json: "{}",
+      warnings: ['Workspace "Team": connection "Web" exists in two files'],
+    });
+    dialogSave.mockResolvedValue("/tmp/out.json");
+    fsWriteTextFile.mockResolvedValue(undefined);
+
+    act(() => {
+      root.render(withTooltip(<WorkspaceSidebar />));
+    });
+
+    act(() => (query("workspace-export-btn") as HTMLButtonElement).click());
+    await flush();
+
+    expect(fsWriteTextFile).toHaveBeenCalledWith("/tmp/out.json", "{}");
+    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    expect(toastError).toHaveBeenCalledWith(
+      'Workspace "Team": connection "Web" exists in two files'
+    );
+  });
+
+  it("shows no export warnings when the export file dialog is cancelled", async () => {
+    useAppStore.setState({ workspaces: [] });
+    apiExportWorkspaces.mockResolvedValue({ json: "{}", warnings: ["ambiguous"] });
+    dialogSave.mockResolvedValue(null);
+
+    act(() => {
+      root.render(withTooltip(<WorkspaceSidebar />));
+    });
+
+    act(() => (query("workspace-export-btn") as HTMLButtonElement).click());
+    await flush();
+
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
   it("surfaces an error toast when export fails", async () => {
     useAppStore.setState({ workspaces: [] });
-    apiExportWorkspaces.mockResolvedValue("{}");
+    apiExportWorkspaces.mockResolvedValue({ json: "{}", warnings: [] });
     dialogSave.mockResolvedValue("/tmp/out.json");
     fsWriteTextFile.mockRejectedValue(new Error("permission denied"));
 
@@ -464,7 +502,7 @@ describe("WorkspaceSidebar", () => {
 
   it("shows no toast when the export file dialog is cancelled", async () => {
     useAppStore.setState({ workspaces: [] });
-    apiExportWorkspaces.mockResolvedValue("{}");
+    apiExportWorkspaces.mockResolvedValue({ json: "{}", warnings: [] });
     dialogSave.mockResolvedValue(null);
 
     act(() => {

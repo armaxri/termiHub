@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   ActiveWorkspaceInfo,
   WorkspaceDefinition,
+  WorkspaceExportResult,
   WorkspaceImportPreview,
   WorkspaceImportResult,
   WorkspaceSummary,
@@ -54,9 +55,13 @@ export async function getCliWorkspace(): Promise<string | null> {
   return await invoke<string | null>("get_cli_workspace");
 }
 
-/** Export all workspaces as portable JSON (connection IDs replaced with names). */
-export async function exportWorkspaces(): Promise<string> {
-  return await invoke<string>("export_workspaces");
+/**
+ * Export all workspaces as portable JSON (connection IDs replaced with names).
+ * Returns the JSON plus any non-fatal warnings (e.g. a tab bound to an id that
+ * several connection files hold, exported without a portable name).
+ */
+export async function exportWorkspaces(): Promise<WorkspaceExportResult> {
+  return await invoke<WorkspaceExportResult>("export_workspaces");
 }
 
 /**

@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
@@ -6,9 +5,10 @@ use tauri::AppHandle;
 
 use super::config::{
     count_tabs, follow_connection_id_changes_in_groups, WorkspaceDefinition, WorkspaceExportData,
-    WorkspaceExportEntry, WorkspaceImportPreview, WorkspaceImportResult, WorkspaceLayoutNode,
-    WorkspaceStore, WorkspaceSummary, WorkspaceTabDef, WorkspaceTabGroupDef,
+    WorkspaceExportEntry, WorkspaceExportResult, WorkspaceImportPreview, WorkspaceImportResult,
+    WorkspaceLayoutNode, WorkspaceStore, WorkspaceSummary, WorkspaceTabDef, WorkspaceTabGroupDef,
 };
+use super::connection_refs::{ConnectionRefMap, RefLookup};
 use super::settings::{ActiveWorkspaceInfo, WorkspaceSettings};
 use super::storage::WorkspaceStorage;
 use crate::connection::id_changes::ConnectionIdRemap;
@@ -275,33 +275,56 @@ impl WorkspaceManager {
 
     /// Export all workspaces as portable JSON.
     /// Connection IDs are replaced with connection names for portability.
+    ///
+    /// An id that `id_to_name` marks ambiguous (held by several connection
+    /// files, #3625) is exported verbatim — it has no portable name — and a
+    /// warning naming the workspace and the colliding files is returned.
     pub fn export_json(
         &self,
-        id_to_name: &HashMap<String, String>,
-    ) -> Result<String, TerminalError> {
+        id_to_name: &ConnectionRefMap,
+    ) -> Result<WorkspaceExportResult, TerminalError> {
         let store = self
             .store
             .lock()
             .map_err(|e| TerminalError::WorkspaceError(e.to_string()))?;
 
+        let mut warnings: Vec<String> = Vec::new();
         let entries: Vec<WorkspaceExportEntry> = store
             .workspaces
             .iter()
-            .map(|ws| WorkspaceExportEntry {
-                name: ws.name.clone(),
-                description: ws.description.clone(),
-                tab_groups: ws
-                    .tab_groups
-                    .iter()
-                    .map(|g| WorkspaceTabGroupDef {
-                        name: g.name.clone(),
-                        color: g.color.clone(),
-                        layout: replace_connection_ids_with_names(&g.layout, id_to_name),
-                        window_id: g.window_id.clone(),
-                    })
-                    .collect(),
-                windows: ws.windows.clone(),
-                settings: ws.settings.clone(),
+            .map(|ws| {
+                let mut ambiguous: Vec<(String, String)> = Vec::new();
+                let entry = WorkspaceExportEntry {
+                    name: ws.name.clone(),
+                    description: ws.description.clone(),
+                    tab_groups: ws
+                        .tab_groups
+                        .iter()
+                        .map(|g| WorkspaceTabGroupDef {
+                            name: g.name.clone(),
+                            color: g.color.clone(),
+                            layout: replace_connection_ids_with_names(
+                                &g.layout,
+                                id_to_name,
+                                &mut ambiguous,
+                            ),
+                            window_id: g.window_id.clone(),
+                        })
+                        .collect(),
+                    windows: ws.windows.clone(),
+                    settings: ws.settings.clone(),
+                };
+                ambiguous.sort();
+                ambiguous.dedup();
+                for (id, sources) in ambiguous {
+                    warnings.push(format!(
+                        "Workspace \"{}\": connection \"{id}\" exists in {sources}, so it \
+                         has no unambiguous name and was exported by id. Rename or move one \
+                         of them and export again for a portable reference.",
+                        ws.name
+                    ));
+                }
+                entry
             })
             .collect();
 
@@ -310,8 +333,9 @@ impl WorkspaceManager {
             workspaces: entries,
         };
 
-        serde_json::to_string_pretty(&export)
-            .map_err(|e| TerminalError::WorkspaceError(format!("Failed to serialize: {e}")))
+        let json = serde_json::to_string_pretty(&export)
+            .map_err(|e| TerminalError::WorkspaceError(format!("Failed to serialize: {e}")))?;
+        Ok(WorkspaceExportResult { json, warnings })
     }
 
     /// Import workspaces from portable JSON.
@@ -321,10 +345,14 @@ impl WorkspaceManager {
     /// Returns a [`WorkspaceImportResult`] carrying the number of workspaces
     /// imported and any non-fatal warnings (e.g. dangling connection references,
     /// PER-009) so the caller can surface them to the user.
+    ///
+    /// A name that `name_to_id` marks ambiguous (several connections carry it,
+    /// #3625) is never guessed: the tab keeps the raw name and a warning is
+    /// returned, like a dangling reference.
     pub fn import_json(
         &self,
         json: &str,
-        name_to_id: &HashMap<String, String>,
+        name_to_id: &ConnectionRefMap,
     ) -> Result<WorkspaceImportResult, TerminalError> {
         let data: WorkspaceExportData = serde_json::from_str(json)
             .map_err(|e| TerminalError::WorkspaceError(format!("Invalid import data: {e}")))?;
@@ -352,7 +380,7 @@ impl WorkspaceManager {
                 &uuid::Uuid::new_v4().to_string()[..6]
             );
 
-            let mut unresolved: Vec<String> = Vec::new();
+            let mut unresolved = UnresolvedRefs::default();
             let mut definition = WorkspaceDefinition {
                 id: new_id,
                 name: entry.name,
@@ -397,11 +425,8 @@ impl WorkspaceManager {
             // here we record a warning (both into the recovery-warning list and
             // in the returned result) so the user learns the workspace is
             // partially broken. Never auto-delete the tab or the reference.
-            let ws_warnings = record_dangling_ref_warnings(
-                &definition.name,
-                &mut unresolved,
-                &self.recovery_warnings,
-            );
+            let ws_warnings =
+                record_dangling_ref_warnings(&definition.name, unresolved, &self.recovery_warnings);
             warnings.extend(ws_warnings);
 
             store.workspaces.push(definition);
@@ -450,17 +475,23 @@ impl WorkspaceManager {
 /// them server-side.
 fn record_dangling_ref_warnings(
     workspace_name: &str,
-    unresolved: &mut Vec<String>,
+    unresolved: UnresolvedRefs,
     recovery_warnings: &Mutex<Vec<RecoveryWarning>>,
 ) -> Vec<String> {
-    if unresolved.is_empty() {
+    let UnresolvedRefs {
+        mut missing,
+        mut ambiguous,
+    } = unresolved;
+    if missing.is_empty() && ambiguous.is_empty() {
         return Vec::new();
     }
-    unresolved.sort();
-    unresolved.dedup();
+    missing.sort();
+    missing.dedup();
+    ambiguous.sort();
+    ambiguous.dedup();
 
-    let mut messages: Vec<String> = Vec::with_capacity(unresolved.len());
-    for name in unresolved.iter() {
+    let mut messages: Vec<String> = Vec::with_capacity(missing.len() + ambiguous.len());
+    for name in missing.iter() {
         tracing::warn!(
             workspace = %workspace_name,
             connection = %name,
@@ -473,7 +504,20 @@ fn record_dangling_ref_warnings(
              until the connection is restored."
         ));
     }
-    unresolved.clear();
+    for (name, sources) in ambiguous.iter() {
+        tracing::warn!(
+            workspace = %workspace_name,
+            connection = %name,
+            "imported workspace references a connection name that several connections \
+             carry; the tab was kept unlinked rather than guessing"
+        );
+        messages.push(format!(
+            "Workspace \"{workspace_name}\" references connection \"{name}\", \
+             which matches several connections (in {sources}). The tab was kept but \
+             not linked to any of them; rename one so the name is unique and import \
+             again, or re-bind the tab."
+        ));
+    }
 
     // Also record into the shared recovery-warning list (best-effort; a poisoned
     // lock must not drop the messages already destined for the caller).
@@ -490,20 +534,39 @@ fn record_dangling_ref_warnings(
     messages
 }
 
+/// Connection references an import could not bind to an id.
+#[derive(Debug, Default)]
+struct UnresolvedRefs {
+    /// Names no connection carries (PER-009).
+    missing: Vec<String>,
+    /// Names several connections carry, with the files they live in (#3625).
+    ambiguous: Vec<(String, String)>,
+}
+
 /// Replace connection ref IDs with connection names for export.
+///
+/// An unknown id is kept verbatim. An ambiguous id is kept verbatim too and
+/// recorded in `ambiguous` (with the colliding files) so the export can warn.
 fn replace_connection_ids_with_names(
     layout: &WorkspaceLayoutNode,
-    id_to_name: &HashMap<String, String>,
+    id_to_name: &ConnectionRefMap,
+    ambiguous: &mut Vec<(String, String)>,
 ) -> WorkspaceLayoutNode {
     match layout {
         WorkspaceLayoutNode::Leaf { tabs } => WorkspaceLayoutNode::Leaf {
             tabs: tabs
                 .iter()
                 .map(|tab| WorkspaceTabDef {
-                    connection_ref: tab
-                        .connection_ref
-                        .as_ref()
-                        .map(|id| id_to_name.get(id).cloned().unwrap_or_else(|| id.clone())),
+                    connection_ref: tab.connection_ref.as_ref().map(|id| {
+                        match id_to_name.lookup(id) {
+                            RefLookup::Mapped(name) => name.to_string(),
+                            RefLookup::Ambiguous { sources } => {
+                                ambiguous.push((id.clone(), sources.to_string()));
+                                id.clone()
+                            }
+                            RefLookup::Unknown => id.clone(),
+                        }
+                    }),
                     ..tab.clone()
                 })
                 .collect(),
@@ -516,7 +579,7 @@ fn replace_connection_ids_with_names(
             direction: direction.clone(),
             children: children
                 .iter()
-                .map(|c| replace_connection_ids_with_names(c, id_to_name))
+                .map(|c| replace_connection_ids_with_names(c, id_to_name, ambiguous))
                 .collect(),
             sizes: sizes.clone(),
         },
@@ -528,11 +591,12 @@ fn replace_connection_ids_with_names(
 /// A name that does not resolve to a known connection is **kept verbatim** (no
 /// data is dropped) and its name is recorded in `unresolved` so the caller can
 /// surface a warning instead of silently swallowing the dangling reference
-/// (PER-009).
+/// (PER-009). A name several connections carry is kept verbatim the same way
+/// and recorded as ambiguous — never bound to one of them (#3625).
 fn resolve_connection_names_to_ids(
     layout: &WorkspaceLayoutNode,
-    name_to_id: &HashMap<String, String>,
-    unresolved: &mut Vec<String>,
+    name_to_id: &ConnectionRefMap,
+    unresolved: &mut UnresolvedRefs,
 ) -> WorkspaceLayoutNode {
     match layout {
         WorkspaceLayoutNode::Leaf { tabs } => WorkspaceLayoutNode::Leaf {
@@ -540,12 +604,18 @@ fn resolve_connection_names_to_ids(
                 .iter()
                 .map(|tab| WorkspaceTabDef {
                     connection_ref: tab.connection_ref.as_ref().map(|name| {
-                        match name_to_id.get(name) {
-                            Some(id) => id.clone(),
-                            None => {
-                                // Preserve the raw name — the tab is never dropped —
-                                // but record it so the import can warn about it.
-                                unresolved.push(name.clone());
+                        match name_to_id.lookup(name) {
+                            RefLookup::Mapped(id) => id.to_string(),
+                            // Preserve the raw name — the tab is never dropped —
+                            // but record it so the import can warn about it.
+                            RefLookup::Ambiguous { sources } => {
+                                unresolved
+                                    .ambiguous
+                                    .push((name.clone(), sources.to_string()));
+                                name.clone()
+                            }
+                            RefLookup::Unknown => {
+                                unresolved.missing.push(name.clone());
                                 name.clone()
                             }
                         }
@@ -574,6 +644,7 @@ mod tests {
     use super::*;
     use crate::workspace::config::{SplitDirection, WorkspaceLayoutNode, WorkspaceTabDef};
     use crate::workspace::storage::WorkspaceStorage;
+    use std::collections::HashMap;
     use tempfile::TempDir;
 
     fn create_test_manager(dir: &TempDir) -> WorkspaceManager {
@@ -729,10 +800,12 @@ mod tests {
             Some(settings.clone())
         );
 
-        let json = mgr.export_json(&HashMap::new()).unwrap();
+        let json = mgr.export_json(&ConnectionRefMap::default()).unwrap().json;
         let dir2 = TempDir::new().unwrap();
         let mgr2 = create_test_manager(&dir2);
-        let result = mgr2.import_json(&json, &HashMap::new()).unwrap();
+        let result = mgr2
+            .import_json(&json, &ConnectionRefMap::default())
+            .unwrap();
         assert_eq!(result.imported_count, 2);
         let imported = mgr2.get_workspaces().unwrap();
         let first = mgr2.load_workspace(&imported[0].id).unwrap();
@@ -752,7 +825,9 @@ mod tests {
             }]
         })
         .to_string();
-        let result = mgr.import_json(&json, &HashMap::new()).unwrap();
+        let result = mgr
+            .import_json(&json, &ConnectionRefMap::default())
+            .unwrap();
         assert_eq!(result.imported_count, 1);
         assert!(result
             .warnings
@@ -999,13 +1074,14 @@ mod tests {
         assert_eq!(dup.tab_groups[1].window_id.as_deref(), Some("win-1"));
 
         // Export then re-import into a fresh manager preserves it too.
-        let json = mgr.export_json(&HashMap::new()).unwrap();
+        let json = mgr.export_json(&ConnectionRefMap::default()).unwrap().json;
         assert!(json.contains("\"windowId\""));
         assert!(json.contains("\"windows\""));
 
         let dir2 = TempDir::new().unwrap();
         let mgr2 = create_test_manager(&dir2);
-        mgr2.import_json(&json, &HashMap::new()).unwrap();
+        mgr2.import_json(&json, &ConnectionRefMap::default())
+            .unwrap();
         let imported = mgr2.get_workspaces().unwrap();
         let ws = mgr2.load_workspace(&imported[0].id).unwrap();
         assert_eq!(ws.windows.as_ref().unwrap().len(), 2);
@@ -1025,7 +1101,7 @@ mod tests {
                 .into_iter()
                 .collect();
 
-        let json = mgr.export_json(&id_to_name).unwrap();
+        let json = mgr.export_json(&id_to_name.into()).unwrap().json;
         assert!(json.contains("Dev Server"));
         assert!(!json.contains("conn-1"));
         assert!(json.contains("My Setup"));
@@ -1040,7 +1116,7 @@ mod tests {
             .unwrap();
 
         let id_to_name: HashMap<String, String> = HashMap::new();
-        let json = mgr.export_json(&id_to_name).unwrap();
+        let json = mgr.export_json(&id_to_name.into()).unwrap().json;
         assert!(json.contains("conn-1"));
     }
 
@@ -1059,7 +1135,7 @@ mod tests {
         .into_iter()
         .collect();
 
-        let json = mgr.export_json(&id_to_name).unwrap();
+        let json = mgr.export_json(&id_to_name.into()).unwrap().json;
         assert!(json.contains("Dev"));
         assert!(json.contains("Deploy"));
         assert!(json.contains("Dev Server"));
@@ -1092,7 +1168,10 @@ mod tests {
                 .into_iter()
                 .collect();
 
-        let count = mgr.import_json(json, &name_to_id).unwrap().imported_count;
+        let count = mgr
+            .import_json(json, &name_to_id.into())
+            .unwrap()
+            .imported_count;
         assert_eq!(count, 1);
 
         let workspaces = mgr.get_workspaces().unwrap();
@@ -1125,7 +1204,7 @@ mod tests {
         }"#;
 
         let count = mgr
-            .import_json(json, &HashMap::new())
+            .import_json(json, &ConnectionRefMap::default())
             .unwrap()
             .imported_count;
         assert_eq!(count, 1); // Only "New One" imported
@@ -1180,13 +1259,13 @@ mod tests {
         .into_iter()
         .collect();
 
-        let exported = mgr.export_json(&id_to_name).unwrap();
+        let exported = mgr.export_json(&id_to_name.into()).unwrap().json;
 
         // Import into a fresh manager
         let dir2 = TempDir::new().unwrap();
         let mgr2 = create_test_manager(&dir2);
         let count = mgr2
-            .import_json(&exported, &name_to_id)
+            .import_json(&exported, &name_to_id.into())
             .unwrap()
             .imported_count;
         assert_eq!(count, 2);
@@ -1232,7 +1311,7 @@ mod tests {
         }"#;
 
         // Empty connection set → the referenced name cannot resolve.
-        let result = mgr.import_json(json, &HashMap::new()).unwrap();
+        let result = mgr.import_json(json, &ConnectionRefMap::default()).unwrap();
         assert_eq!(result.imported_count, 1);
 
         // (a) The tab is still present and its ref is retained verbatim — no data loss.
@@ -1296,7 +1375,7 @@ mod tests {
                 .into_iter()
                 .collect();
 
-        mgr.import_json(json, &name_to_id).unwrap();
+        mgr.import_json(json, &name_to_id.into()).unwrap();
 
         let workspaces = mgr.get_workspaces().unwrap();
         let ws = mgr.load_workspace(&workspaces[0].id).unwrap();
@@ -1336,7 +1415,7 @@ mod tests {
             }]
         }"#;
         let count = mgr
-            .import_json(json, &HashMap::new())
+            .import_json(json, &ConnectionRefMap::default())
             .unwrap()
             .imported_count;
         assert_eq!(count, 1);
@@ -1434,5 +1513,247 @@ mod tests {
             refs_of(&mgr.load_workspace("ws-1").unwrap()),
             [Some("conn-1".to_string())]
         );
+    }
+
+    // ── #3625: export/import resolve against the unified connection view ──
+
+    mod unified_view {
+        use super::*;
+        use crate::connection::config::{ConnectionFolder, SavedConnection};
+        use crate::connection::manager::{save_external_file, ConnectionManager};
+        use crate::connection::settings::ExternalFileConfig;
+        use crate::terminal::backend::ConnectionConfig;
+        use std::sync::Arc;
+
+        fn ssh(name: &str, folder: Option<&str>) -> SavedConnection {
+            SavedConnection {
+                id: match folder {
+                    Some(f) => format!("{f}/{name}"),
+                    None => name.to_string(),
+                },
+                name: name.to_string(),
+                config: ConnectionConfig {
+                    type_id: "ssh".to_string(),
+                    settings: serde_json::json!({"host": "h", "port": 22, "username": "u"}),
+                },
+                folder_id: folder.map(str::to_string),
+                terminal_options: None,
+                icon: None,
+                source_file: None,
+            }
+        }
+
+        /// A connection manager in `dir` whose main store holds `main` and
+        /// which has one enabled external file holding `external`.
+        fn connections(
+            dir: &TempDir,
+            main: Vec<SavedConnection>,
+            external: Vec<SavedConnection>,
+        ) -> ConnectionManager {
+            let ext = dir.path().join("team.json");
+            let ext_str = ext.to_str().unwrap().to_string();
+            let mut folder_ids: Vec<String> = external
+                .iter()
+                .filter_map(|c| c.folder_id.clone())
+                .collect();
+            folder_ids.sort();
+            folder_ids.dedup();
+            let folders = folder_ids
+                .into_iter()
+                .map(|id| ConnectionFolder {
+                    name: id.clone(),
+                    id,
+                    parent_id: None,
+                    is_expanded: true,
+                })
+                .collect();
+            save_external_file(
+                &ext_str,
+                "Team",
+                folders,
+                external,
+                &crate::credential::NullStore,
+            )
+            .unwrap();
+            let mgr =
+                ConnectionManager::new_for_test(dir.path(), Arc::new(crate::credential::NullStore))
+                    .unwrap();
+            for conn in main {
+                mgr.save_connection(conn).unwrap();
+            }
+            let mut settings = mgr.get_settings();
+            settings.external_connection_files = vec![ExternalFileConfig {
+                path: ext_str,
+                enabled: true,
+            }];
+            mgr.save_settings(settings).unwrap();
+            mgr
+        }
+
+        fn workspace_with_ref(conn_ref: &str) -> WorkspaceDefinition {
+            let mut def = sample_definition("ws-1", "Team Setup");
+            if let WorkspaceLayoutNode::Leaf { tabs } = &mut def.tab_groups[0].layout {
+                tabs[0].connection_ref = Some(conn_ref.to_string());
+            }
+            def
+        }
+
+        fn first_ref(mgr: &WorkspaceManager) -> Option<String> {
+            let ws = mgr.get_workspaces().unwrap();
+            let def = mgr.load_workspace(&ws[0].id).unwrap();
+            match &def.tab_groups[0].layout {
+                WorkspaceLayoutNode::Leaf { tabs } => tabs[0].connection_ref.clone(),
+                _ => panic!("expected leaf layout"),
+            }
+        }
+
+        fn unified(conns: &ConnectionManager) -> Vec<SavedConnection> {
+            conns.load_unified_view().unwrap().connections
+        }
+
+        #[test]
+        fn external_file_connection_round_trips_by_name() {
+            let dir = TempDir::new().unwrap();
+            let conns = connections(
+                &dir,
+                vec![ssh("Local Box", None)],
+                vec![ssh("Web", Some("Prod"))],
+            );
+            let view = unified(&conns);
+            let ext_id = view
+                .iter()
+                .find(|c| c.source_file.is_some())
+                .map(|c| c.id.clone())
+                .unwrap();
+
+            let ws_dir = TempDir::new().unwrap();
+            let src = WorkspaceManager::new_for_test(ws_dir.path());
+            src.save_workspace(workspace_with_ref(&ext_id)).unwrap();
+            let exported = src
+                .export_json(&ConnectionRefMap::for_export(&view))
+                .unwrap();
+            assert!(exported.warnings.is_empty(), "{:?}", exported.warnings);
+            assert!(exported.json.contains("\"connectionRef\": \"Web\""));
+
+            let dst_dir = TempDir::new().unwrap();
+            let dst = WorkspaceManager::new_for_test(dst_dir.path());
+            let result = dst
+                .import_json(&exported.json, &ConnectionRefMap::for_import(&view))
+                .unwrap();
+            assert_eq!(result.imported_count, 1);
+            assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+            assert_eq!(first_ref(&dst), Some(ext_id));
+        }
+
+        #[test]
+        fn id_held_by_main_store_and_external_file_exports_with_warning() {
+            let dir = TempDir::new().unwrap();
+            let conns = connections(&dir, vec![ssh("Web", None)], vec![ssh("Web", None)]);
+            let view = unified(&conns);
+            assert_eq!(view.iter().filter(|c| c.id == "Web").count(), 2);
+
+            let ws_dir = TempDir::new().unwrap();
+            let src = WorkspaceManager::new_for_test(ws_dir.path());
+            src.save_workspace(workspace_with_ref("Web")).unwrap();
+            let exported = src
+                .export_json(&ConnectionRefMap::for_export(&view))
+                .unwrap();
+            // The raw id is kept (no portable name) and the user is told why.
+            assert!(exported.json.contains("\"connectionRef\": \"Web\""));
+            assert_eq!(exported.warnings.len(), 1, "{:?}", exported.warnings);
+            let warning = &exported.warnings[0];
+            assert!(warning.contains("Team Setup"), "{warning}");
+            assert!(warning.contains("main connection store"), "{warning}");
+            assert!(warning.contains("team.json"), "{warning}");
+        }
+
+        #[test]
+        fn name_matching_several_connections_imports_unlinked_with_warning() {
+            let dir = TempDir::new().unwrap();
+            let conns = connections(&dir, vec![ssh("Web", None)], vec![ssh("Web", Some("Prod"))]);
+            let view = unified(&conns);
+            let json = r#"{
+                "version": "1",
+                "workspaces": [{
+                    "name": "Imported",
+                    "tabGroups": [{
+                        "name": "Main",
+                        "layout": { "type": "leaf", "tabs": [{ "connectionRef": "Web" }] }
+                    }]
+                }]
+            }"#;
+
+            let ws_dir = TempDir::new().unwrap();
+            let mgr = WorkspaceManager::new_for_test(ws_dir.path());
+            let result = mgr
+                .import_json(json, &ConnectionRefMap::for_import(&view))
+                .unwrap();
+            assert_eq!(result.imported_count, 1);
+            // Never guessed: the tab keeps the raw name, bound to neither id.
+            assert_eq!(first_ref(&mgr), Some("Web".to_string()));
+            assert_eq!(result.warnings.len(), 1, "{:?}", result.warnings);
+            let warning = &result.warnings[0];
+            assert!(warning.contains("matches several connections"), "{warning}");
+            assert!(warning.contains("team.json"), "{warning}");
+        }
+
+        /// An export file written before #3625 (plain `version: "1"`, names
+        /// only) still imports, now also resolving names from external files.
+        #[test]
+        fn pre_3625_export_file_still_imports() {
+            let dir = TempDir::new().unwrap();
+            let conns = connections(
+                &dir,
+                vec![ssh("Local Box", None)],
+                vec![ssh("Web", Some("Prod"))],
+            );
+            let view = unified(&conns);
+            let web_id = view.iter().find(|c| c.name == "Web").unwrap().id.clone();
+            let local_id = view
+                .iter()
+                .find(|c| c.name == "Local Box")
+                .unwrap()
+                .id
+                .clone();
+            let json = r#"{
+                "version": "1",
+                "workspaces": [{
+                    "name": "Legacy",
+                    "description": "exported by an older build",
+                    "tabGroups": [{
+                        "name": "Main",
+                        "layout": {
+                            "type": "split",
+                            "direction": "horizontal",
+                            "children": [
+                                { "type": "leaf", "tabs": [{ "connectionRef": "Local Box" }] },
+                                { "type": "leaf", "tabs": [{ "connectionRef": "Web" }] }
+                            ]
+                        }
+                    }]
+                }]
+            }"#;
+
+            let ws_dir = TempDir::new().unwrap();
+            let mgr = WorkspaceManager::new_for_test(ws_dir.path());
+            let result = mgr
+                .import_json(json, &ConnectionRefMap::for_import(&view))
+                .unwrap();
+            assert_eq!(result.imported_count, 1);
+            assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+            let ws = mgr.get_workspaces().unwrap();
+            let def = mgr.load_workspace(&ws[0].id).unwrap();
+            let WorkspaceLayoutNode::Split { children, .. } = &def.tab_groups[0].layout else {
+                panic!("expected split layout");
+            };
+            let refs: Vec<Option<String>> = children
+                .iter()
+                .map(|c| match c {
+                    WorkspaceLayoutNode::Leaf { tabs } => tabs[0].connection_ref.clone(),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(refs, vec![Some(local_id), Some(web_id)]);
+        }
     }
 }
