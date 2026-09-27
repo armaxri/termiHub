@@ -1964,6 +1964,17 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
   as a rehydrated paused row — cancels the folder's rest. The rows stay
   individual queue rows; the folder-level result the paste awaited does not
   survive the restart, so each row reports its own outcome afterwards.
+  A **session folder paste** (local → session, session → session, or a
+  byte-based backend) is still copied file by file from the frontend
+  (`src/hooks/sessionFolderPaste.ts`), so it records a **folder-paste
+  manifest** in `transfers.json` (`folderPastes`) before its first file and
+  removes it once the whole folder landed (#3630). A manifest left at the next
+  launch — a quit, crash or failure part-way — is shown as a notice whose
+  Retry resolves both sides to their reconnected sessions (by saved connection
+  id; session ids do not survive a restart) and continues the paste, skipping
+  every file the destination already holds with the same size. Drag-out
+  staging downloads are never persisted: their directories are deleted at
+  quit, and records under the staging root are pruned at startup (#3629).
 - **Desktop-only for v1** — the `ftp` cargo feature is desktop-only (registered in
   `src-tauri/src/session/registry.rs::build_desktop_registry()`); the remote agent has no FTP
   backend. Wiring the connection-type-agnostic `file_browser()` dispatch into the sidebar (so FTP
