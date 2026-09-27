@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { RemoteDesktopToolbar } from "./RemoteDesktopToolbar";
-import type { ScaleMode } from "@/types/remoteDesktop";
+import type { MonitorRect, ScaleMode } from "@/types/remoteDesktop";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -27,6 +27,9 @@ function render(
     resolution: { width: number; height: number } | null;
     viewOnly: boolean;
     scaleMode: ScaleMode;
+    monitors: MonitorRect[];
+    viewport: number | null;
+    onCycleViewport: () => void;
   }> = {},
   h = handlers()
 ) {
@@ -39,6 +42,9 @@ function render(
         }
         viewOnly={overrides.viewOnly ?? false}
         scaleMode={overrides.scaleMode ?? "fit"}
+        monitors={overrides.monitors}
+        viewport={overrides.viewport}
+        onCycleViewport={overrides.onCycleViewport}
         {...h}
       />
     );
@@ -106,5 +112,36 @@ describe("RemoteDesktopToolbar", () => {
     expect(h.onToggleFullscreen).toHaveBeenCalledOnce();
     act(() => query("remote-desktop-disconnect")?.click());
     expect(h.onDisconnect).toHaveBeenCalledOnce();
+  });
+
+  describe("multi-monitor viewport selector (#3696)", () => {
+    const monitors: MonitorRect[] = [
+      { x: 0, y: 0, width: 1920, height: 1080, primary: true, scale: 100 },
+      { x: 1920, y: 0, width: 1280, height: 1024, primary: false, scale: 100 },
+    ];
+
+    it("is hidden for a single-monitor session", () => {
+      render({ onCycleViewport: vi.fn() });
+      expect(query("remote-desktop-monitor")).toBeNull();
+      render({ monitors: [monitors[0]], onCycleViewport: vi.fn() });
+      expect(query("remote-desktop-monitor")).toBeNull();
+    });
+
+    it("shows all monitors and cycles on click", () => {
+      const onCycleViewport = vi.fn();
+      render({ monitors, viewport: null, onCycleViewport });
+      const btn = query("remote-desktop-monitor") as HTMLButtonElement;
+      expect(btn.textContent).toContain("All");
+      expect(btn.title).toBe("Showing: All monitors (2)");
+      act(() => btn.click());
+      expect(onCycleViewport).toHaveBeenCalledTimes(1);
+    });
+
+    it("names the shown monitor", () => {
+      render({ monitors, viewport: 1, onCycleViewport: vi.fn() });
+      const btn = query("remote-desktop-monitor") as HTMLButtonElement;
+      expect(btn.textContent).toContain("2/2");
+      expect(btn.title).toBe("Showing: Monitor 2 (1280×1024)");
+    });
   });
 });

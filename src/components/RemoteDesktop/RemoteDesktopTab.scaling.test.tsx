@@ -49,6 +49,8 @@ function fakeSession(fixedResolution: boolean, scaleMode: ScaleMode): RemoteDesk
     viewOnly: false,
     scaleMode,
     fixedResolution,
+    multiMonitor: false,
+    monitorLayoutVersion: 0,
     sendInput: vi.fn(),
     releaseInput: vi.fn(),
     resize: vi.fn(),
