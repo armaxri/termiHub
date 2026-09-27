@@ -1,7 +1,7 @@
 name: 'Detect changed CI areas'
 description: >-
   Classify what a PR changes (rust, frontend, sidecar, scripts, harness,
-  markdown, deps) via scripts/internal/ci-changes.mjs, so per-PR jobs can skip
+  markdown, deps, agent) via scripts/internal/ci-changes.mjs, so per-PR jobs can skip
   work the PR cannot affect (#3325). Non-PR events (push to develop/main,
   schedule, dispatch) always report every area on. FAIL-OPEN: if the diff
   cannot be computed, every area is reported on. Requires a prior
@@ -30,6 +30,9 @@ outputs:
   deps:
     description: 'Dependency manifests / lockfiles changed'
     value: ${{ steps.classify.outputs.deps }}
+  agent:
+    description: 'Anything termihub-agent builds from (agent/, core/, workspace manifests) changed'
+    value: ${{ steps.classify.outputs.agent }}
   test_matrix:
     description: 'JSON list of OSes for the "Run Tests" matrix'
     value: ${{ steps.classify.outputs.test_matrix }}

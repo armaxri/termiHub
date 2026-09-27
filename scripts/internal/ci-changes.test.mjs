@@ -23,7 +23,31 @@ describe("classify", () => {
   });
 
   it("treats a Rust-only PR as rust (no frontend)", () => {
-    expect(on(classify(["core/src/lib.rs", "src-tauri/src/lib.rs"]))).toEqual(["rust"]);
+    expect(on(classify(["src-tauri/src/lib.rs"]))).toEqual(["rust"]);
+  });
+
+  it("flags agent for anything the agent binary builds from (#3615)", () => {
+    expect(on(classify(["agent/src/main.rs"]))).toEqual(["rust", "agent"]);
+    expect(on(classify(["core/src/lib.rs"]))).toEqual(["rust", "agent"]);
+    expect(on(classify(["agent/tests/local_agent_integration.rs"]))).toEqual(["rust", "agent"]);
+    expect(on(classify(["vendor/vnc-rs/src/lib.rs"]))).toEqual(["rust", "agent"]);
+    expect(on(classify(["plugin-api/src/lib.rs"]))).toEqual(["rust", "agent"]);
+    expect(on(classify(["rust-toolchain.toml"]))).toEqual(["rust", "agent"]);
+    expect(classify(["Cargo.lock"])).toMatchObject({ rust: true, deps: true, agent: true });
+  });
+
+  it("does not flag agent for Rust the agent does not build from", () => {
+    expect(classify(["src-tauri/src/lib.rs"]).agent).toBe(false);
+    expect(classify(["examples/plugin/src/lib.rs"]).agent).toBe(false);
+    expect(classify(["core/Cargo.toml"]).agent).toBe(true);
+  });
+
+  it("runs the Rust and agent test legs when the Rust test driver changes", () => {
+    expect(on(classify(["scripts/internal/ci-rust-tests.sh"]))).toEqual([
+      "rust",
+      "scripts",
+      "agent",
+    ]);
   });
 
   it("runs the frontend suite for Tauri config changes — the CSP guard is vitest (#3627)", () => {
@@ -56,6 +80,7 @@ describe("classify", () => {
     expect(on(classify(["scripts/dev.sh"]))).toEqual(["scripts"]);
     expect(on(classify(["scripts/hooks/pre-push"]))).toEqual(["scripts"]);
     expect(on(classify(["scripts/internal/parse-issue-refs.mjs"]))).toEqual(["frontend"]);
+    expect(on(classify(["scripts/internal/ci-changes.mjs"]))).toEqual(["frontend"]);
     expect(on(classify(["scripts/check-testid-drift.py"]))).toEqual(["harness"]);
     expect(classify(["scripts/package-plugin.sh"])).toMatchObject({ rust: true, scripts: true });
   });
@@ -114,6 +139,7 @@ describe("formatOutputs", () => {
     const out = formatOutputs(classify(["src/main.tsx"]), true);
     expect(out).toContain("frontend=true\n");
     expect(out).toContain("rust=false\n");
+    expect(out).toContain("agent=false\n");
     expect(out).toContain('test_matrix=["ubuntu-latest"]\n');
   });
 });
