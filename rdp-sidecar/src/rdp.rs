@@ -82,7 +82,7 @@ fn security_flags(mode: SecurityMode) -> (bool, bool) {
 }
 
 /// Build IronRDP's connector [`Config`](ConnectorConfig) from our settings.
-fn build_connector_config(cfg: &RdpConfig) -> Result<ConnectorConfig> {
+pub(crate) fn build_connector_config(cfg: &RdpConfig) -> Result<ConnectorConfig> {
     let (enable_tls, enable_credssp) = security_flags(cfg.security());
 
     // 16/24/32 — exactly the depths IronRDP negotiates and decodes; the config
@@ -275,6 +275,7 @@ where
         &mut network_client,
         ServerName::new(host),
         server_public_key,
+        cfg.multi_monitor_layout().as_ref(),
     )
     .await
     .context("RDP CredSSP / capability exchange failed")?;
@@ -347,6 +348,7 @@ where
             | HostMessage::Resize { .. }
             | HostMessage::SetClipboard(_)
             | HostMessage::SetClipboardImage(_)
+            | HostMessage::SetMonitorLayout(_)
             | HostMessage::FetchClipboardFile { .. } => {
                 debug!("ignoring a host message received while awaiting the cert decision");
             }
@@ -764,6 +766,24 @@ where
                             }
                             None => debug!(
                                 "display control channel not ready; resize request dropped"
+                            ),
+                        }
+                    }
+                    HostMessage::SetMonitorLayout(monitors) => {
+                        // A new multi-monitor layout (#3696): one Display
+                        // Control PDU with every monitor. The server answers
+                        // with a Deactivation-Reactivation to the combined
+                        // size, handled below like a resize.
+                        match crate::monitors::encode_layout(&mut stage, &monitors) {
+                            Some(Ok(frame)) => {
+                                if writer.write_all(&frame).await.is_err() {
+                                    break;
+                                }
+                                debug!(monitors = monitors.len(), "requested monitor layout");
+                            }
+                            Some(Err(e)) => warn!(error = %e, "failed to encode monitor layout"),
+                            None => debug!(
+                                "display control channel not ready; monitor layout dropped"
                             ),
                         }
                     }
