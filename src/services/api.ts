@@ -3164,29 +3164,57 @@ export async function restartAfterBackupRestore(): Promise<void> {
  */
 export type CredentialType = "password" | "key_passphrase" | "sudo_password";
 
-/** Store a credential for a connection (e.g., after entering it via the password prompt). */
+/**
+ * Store a credential for a connection (e.g., after entering it via the password prompt).
+ *
+ * `sourceFile` is the external connection file the connection lives in
+ * (`null`/omitted for the main store): saved secrets are scoped by file, so a
+ * same-named connection in another file keeps its own (#3591).
+ */
 export async function storeCredential(
   connectionId: string,
   credentialType: CredentialType,
-  value: string
+  value: string,
+  sourceFile?: string | null
 ): Promise<void> {
-  await invoke("store_credential", { connectionId, credentialType, value });
+  await invoke("store_credential", {
+    connectionId,
+    credentialType,
+    value,
+    sourceFile: sourceFile ?? null,
+  });
 }
 
-/** Resolve a stored credential for a connection. Returns the value or null if not found. */
+/**
+ * Resolve a stored credential for a connection. Returns the value or null if
+ * not found. `sourceFile` scopes the lookup as in {@link storeCredential}.
+ */
 export async function resolveCredential(
   connectionId: string,
-  credentialType: CredentialType
+  credentialType: CredentialType,
+  sourceFile?: string | null
 ): Promise<string | null> {
-  return await invoke<string | null>("resolve_credential", { connectionId, credentialType });
+  return await invoke<string | null>("resolve_credential", {
+    connectionId,
+    credentialType,
+    sourceFile: sourceFile ?? null,
+  });
 }
 
-/** Remove a stored credential for a connection (e.g., after auth failure). */
+/**
+ * Remove a stored credential for a connection (e.g., after auth failure).
+ * `sourceFile` scopes the key as in {@link storeCredential}.
+ */
 export async function removeCredential(
   connectionId: string,
-  credentialType: CredentialType
+  credentialType: CredentialType,
+  sourceFile?: string | null
 ): Promise<void> {
-  await invoke("remove_credential", { connectionId, credentialType });
+  await invoke("remove_credential", {
+    connectionId,
+    credentialType,
+    sourceFile: sourceFile ?? null,
+  });
 }
 
 // --- Portable mode commands ---

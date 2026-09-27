@@ -55,6 +55,11 @@ export interface ResolveConnectSecretOptions {
    * can exist, so the store is skipped and the user is prompted directly.
    */
   connectionId: string | null;
+  /**
+   * The external connection file the saved connection lives in (`null` or
+   * omitted for the main store) — saved secrets are scoped by file (#3591).
+   */
+  sourceFile?: string | null;
   /** The store's promise-based prompt (`useAppStore().requestPassword`). */
   requestPassword: (
     host: string,
@@ -80,6 +85,7 @@ export async function resolveConnectSecret({
   schema,
   settings,
   connectionId,
+  sourceFile,
   requestPassword,
   allowSave = true,
 }: ResolveConnectSecretOptions): Promise<ConnectSecretResult> {
@@ -119,7 +125,8 @@ export async function resolveConnectSecret({
       connectionId ?? "",
       authMethod,
       savePassword,
-      credentialRef
+      credentialRef,
+      sourceFile
     );
     if (resolution.usedStoredCredential && resolution.password) {
       return {

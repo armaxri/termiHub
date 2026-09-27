@@ -190,7 +190,8 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
           connection.id,
           authMethod,
           savePassword,
-          credentialRef
+          credentialRef,
+          connection.sourceFile
         );
         // A shared credential is never deleted on rejection (other connections
         // use it) and a prompted secret is never saved per-connection in its
@@ -247,7 +248,11 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
               // credential fails it lingers in the store, so the failure must be
               // auditable. No toast — the flow falls through to re-prompt the
               // user, so a mid-connect error toast would be noise.
-              await removeCredential(connection.id, resolution.credentialType).catch((err) => {
+              await removeCredential(
+                connection.id,
+                resolution.credentialType,
+                connection.sourceFile
+              ).catch((err) => {
                 frontendError(
                   "connection_list",
                   `Failed to remove stale ${resolution.credentialType} credential for ${connection.id}: ${err}`
@@ -302,9 +307,11 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
           config = { ...config, config: { ...cfg, password } } as typeof config;
           // Persist the entered password if the user opted in via the prompt checkbox
           if (!sharedCredential && useAppStore.getState().passwordPromptShouldSave) {
-            await storeCredential(connection.id, "password", password).catch((err) => {
-              frontendLog("connection_list", `Failed to store credential: ${err}`);
-            });
+            await storeCredential(connection.id, "password", password, connection.sourceFile).catch(
+              (err) => {
+                frontendLog("connection_list", `Failed to store credential: ${err}`);
+              }
+            );
           }
         } else if (authMethod === "key") {
           // Key auth with an encrypted key (guaranteed by the needsCredential
@@ -328,7 +335,12 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
           }
           config = { ...config, config: { ...cfg, password: passphrase } } as typeof config;
           if (!sharedCredential && useAppStore.getState().passwordPromptShouldSave) {
-            await storeCredential(connection.id, "key_passphrase", passphrase).catch((err) => {
+            await storeCredential(
+              connection.id,
+              "key_passphrase",
+              passphrase,
+              connection.sourceFile
+            ).catch((err) => {
               frontendLog("connection_list", `Failed to store key passphrase: ${err}`);
             });
           }
