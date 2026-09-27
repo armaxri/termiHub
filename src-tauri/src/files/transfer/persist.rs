@@ -226,7 +226,11 @@ pub struct PersistedTransferStore {
     pub transfers: Vec<PersistedTransfer>,
     /// Unfinished cross-session folder pastes (#3630). Absent in files written
     /// before it existed.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        rename = "folderPastes",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub folder_pastes: Vec<PersistedFolderPaste>,
     /// Unknown top-level keys, captured verbatim so an older app preserves
     /// fields a newer version added rather than dropping them on save (PER-010).
