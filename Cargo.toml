@@ -18,7 +18,12 @@ members = [
 # *member* would share the root lockfile (and pull russh via other members), so
 # it must be excluded, not added. Built + bundled separately
 # (scripts/build-rdp-sidecar.sh).
-exclude = ["rdp-sidecar"]
+#
+# `vendor/serial2` is a [patch.crates-io] fork (#3701, see the [patch] table
+# below). It is excluded rather than a member: its upstream rustfmt.toml uses
+# unstable options and its `doc-cfg` feature needs nightly, so it cannot sit
+# under the workspace-wide `cargo fmt --all` / `clippy --all-features` gates.
+exclude = ["rdp-sidecar", "vendor/serial2"]
 resolver = "2"
 
 # Minimum supported Rust version (SUP-011), inherited by every first-party member
@@ -90,3 +95,11 @@ serial2-tokio = "0.1"
 russh = "0.61"
 russh-sftp = "2.3"
 bollard = "0.18"
+
+# In-tree fork of `serial2` (registered in vendor/vendored-forks.json, see
+# docs/supply-chain.md -> "Vendored forks"). Patched rather than a path dep so
+# `serial2-tokio` (which depends on `serial2` from crates.io) picks it up too.
+# Delta: on macOS, fall back to a termios speed when the IOSSIOSPEED ioctl is
+# rejected (pseudo-terminals, drivers without custom-speed support), #3701.
+[patch.crates-io]
+serial2 = { path = "vendor/serial2" }
