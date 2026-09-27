@@ -11,8 +11,8 @@ evidence:
   - src-tauri/src/session_projection/projection.rs:11
   - src/store/sessionBridge.ts:20
   - agent/src/registry_daemon/mod.rs:6
-status: partial
-resolution: "#3370 — single-attach + Evicted + Reclaim for agent/daemon sessions (maintainer decision); window slice #3368, orphan listing #3369"
+status: fixed
+resolution: "#3370,#3389,#3394,#3403 — single-attach + Evicted/Reclaim incl. graphical; documented in remote-protocol"
 ---
 
 ## What

@@ -10,8 +10,8 @@ evidence:
   - docs/plugin-authoring.md:8
   - docs/plugin-authoring.md:186
   - docs/plugin-authoring.md:99
-status: partial
-resolution: "#3126 — doc-note: corrected 2 stale status sentences in docs/plugin-authoring.md (host/loader/UI ARE wired lib.rs:1992/1995 + frontend extension points run). Version-story + SDK-dependency-line parts entangled w/ maintainer PLG-001/002"
+status: fixed
+resolution: "#3374,#3582,#3722 — plugin-authoring status banner, experimental JS, single ABI version story, SDK internal, toolchain rule"
 ---
 
 ## What

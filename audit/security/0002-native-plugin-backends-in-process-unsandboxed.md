@@ -11,8 +11,8 @@ evidence:
   - core/src/plugin/security.rs:11
   - core/src/plugin/capabilities.rs:15
   - src/plugins/frontendPlugins.ts:107
-status: partial
-resolution: "#3296 — native plugin backends default-off + per-plugin hash-bound ack; OS-level sandbox for native backends is pre-v1.0 by maintainer decision 2026-09-25"
+status: deferred
+resolution: "maintainer 2026-09-25 — native plugins default-off + hash-bound trust ack (#3296); OS sandbox pre-v1.0; documented"
 ---
 
 ## What

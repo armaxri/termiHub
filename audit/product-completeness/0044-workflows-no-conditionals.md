@@ -9,8 +9,8 @@ subsystem: src-tauri/src/workflows, src/services/workflowRunner
 evidence:
   - src-tauri/src/workflows/config.rs:18
   - src/services/workflowRunner.ts:349
-status: partial
-resolution: "develop — workflows are no longer linear-only: WorkflowStep::Conditional + WorkflowComparisonOp landed (workflows/config.rs, 'PROD-0044 slice 1') — structured comparator branching over params. Loop steps (count/while, MAX_LOOP_ITERATIONS=1000 cap, ${iteration} var) + wait-for-output steps (substring default / optional regex, capped timeout, wired to terminal-output event) added via PR #3289 (in CI) mirroring the conditional pattern. Nearly complete once #3289 merges"
+status: fixed
+resolution: "#3289 — loop/wait-for-output/conditional workflow steps"
 ---
 
 ## What

@@ -10,8 +10,8 @@ evidence:
   - src-tauri/tauri.test.conf.json:6
   - .github/workflows/system-integration.yml:250
   - tests/system/tests/test_csp.py
-status: partial
-resolution: "#3249 — DRIFT RISK CLOSED (#3249): prod_csp_matches_tauri_conf test parses tauri.conf.json app.security.csp and asserts per-directive equivalence with PROD_CSP (connect-src first + full policy, whitespace/order-insensitive), verified to catch a real host injection — so PROD_CSP can no longer silently drift from the shipped policy. REMAINING (infra, out of autonomous scope): the integration lane still builds under a loosened test CSP, so the shipped production CSP is never exercised end-to-end at boot"
+status: fixed
+resolution: "#3633,#3646 — test overlay removed; bridge runtime adds only loopback ws://; test_csp.py asserts zero violations under production CSP"
 ---
 
 ## What

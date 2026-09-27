@@ -9,8 +9,8 @@ subsystem: agent/src/daemon
 evidence:
   - agent/src/daemon/process.rs:194
   - docs/architecture.md:1425
-status: partial
-resolution: "develop — reclaim-partial: decide_attach + AttachDecision enum (daemon/process.rs:426-449) — recovery connects REFUSED w/ clear error (RefuseOwnedByLivePeer, client.rs:82), takeover deliberate+logged (EvictAndTakeover, OBS-012 process.rs:246-254). Addresses AGT-015/OBS-012. STILL: no UI-consented steal-session prompt, no cross-worker registry surfacing of attach state → product"
+status: fixed
+resolution: "#3370,#3389,#3394 — takeover explicit + consented with Evicted state/Reclaim; orphans unattached + listable"
 ---
 
 ## What
