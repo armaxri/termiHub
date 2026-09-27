@@ -2476,6 +2476,26 @@ WebKit (macOS/Linux) and the plugin origin still need a real build:
    **Expected:** no `Refused to …` / `violates the following Content Security Policy` messages,
    apart from the known Monaco `editorWorkerService` worker error tracked in #3632.
 
+### Browse Plugins and Install from URL (PROD-048, #3715)
+
+The fetch limits, checksum-before-parse, redirect and oversize rejection, and the hand-off to the
+install pipeline are covered against a local HTTP fixture server in
+`src-tauri/src/commands/plugin_index_tests.rs` and `plugin_fetch_tests.rs`; the Browse UI in
+`PluginCatalogSettings.test.tsx`. A real HTTPS round trip stays manual:
+
+1. Open **Settings > Plugins > Browse Plugins**. **Expected:** nothing is fetched yet; the Plugin
+   Index URL field shows the default as its placeholder.
+2. Click **Load plugin index**. **Expected:** the default index loads and says it lists no plugins
+   yet (it only exists on `main`; before the first release merge it reports HTTP 404).
+3. Enter `http://example.com/index.json` as the index URL. **Expected:** an inline "Only https://
+   URLs are allowed." error and Load is disabled. Click **Use default index** after entering a
+   valid custom HTTPS URL to confirm the reset.
+4. Host a packed example plugin (e.g. `examples/plugins/clock-widget`) at any HTTPS URL (a GitHub
+   release asset works), and compute `shasum -a 256` of it. Under **Install from URL**, paste the
+   URL with a wrong checksum. **Expected:** an error toast about the SHA-256 and no install dialog.
+5. Repeat with the correct checksum. **Expected:** the normal install dialog opens with the
+   untrusted/unsigned banner and permission list; nothing is installed until you confirm.
+
 ### Right-click paste inserts the clipboard exactly once (Windows/WebView2, #2595)
 
 A single right-click paste in the terminal used to insert the clipboard **twice**

@@ -665,6 +665,25 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "pluginIndexUrl",
+    label: "Plugin Index URL",
+    description:
+      "Browse Plugins: the curated plugin index to list (termiHub-maintained by default). Fetched only when you click Load; installs are checksum-verified and always need your confirmation.",
+    category: "plugins",
+    keywords: [
+      "plugin",
+      "browse",
+      "discover",
+      "catalog",
+      "store",
+      "marketplace",
+      "index",
+      "install",
+      "url",
+      "download",
+    ],
+  },
+  {
     id: "pluginUpdateCheckEnabled",
     label: "Check for Plugin Updates Automatically",
     description:
