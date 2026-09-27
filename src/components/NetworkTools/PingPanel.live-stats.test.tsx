@@ -78,4 +78,20 @@ describe("PingPanel — live stats", () => {
     expect(text).toContain("avg=20ms");
     expect(text).not.toContain("NaN");
   });
+  it("shows the TCP fallback notice only when replies arrive via TCP (MT-NET-11)", async () => {
+    await act(async () => {
+      root.render(<PingPanel prefillHost="example.com" />);
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="ping-start"]')!.click();
+    });
+    await flush();
+
+    const notice = "Using TCP ping — ICMP requires elevated privileges";
+    await emitResult({ seq: 1, latencyMs: 5, timedOut: false, tcpFallback: false });
+    expect(container.textContent).not.toContain(notice);
+
+    await emitResult({ seq: 2, latencyMs: 6, timedOut: false, tcpFallback: true });
+    expect(container.textContent).toContain(notice);
+  });
 });

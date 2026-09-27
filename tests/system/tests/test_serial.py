@@ -14,8 +14,8 @@ wired into the harness: the app runs host-native, and the host virtual-serial
 setup currently lives only in `scripts/test-system.sh` (the unreachable
 in-container `serial-echo` fixture, whose PTYs lived in an isolated Docker
 volume the host app could not reach, was removed in #859). Until that fixture is
-part of the harness, live send/receive stays manual — see `docs/testing.md` →
-Infrastructure → Serial (`MT-SER-09`).
+part of the harness (#3682), live send/receive stays manual — see
+`tests/manual/serial.yaml` (`MT-SER-09`).
 """
 
 from __future__ import annotations

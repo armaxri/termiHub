@@ -837,6 +837,24 @@ flowchart LR
 - Agent-hosted terminal tabs are always reconnect-eligible (agent-level session
   re-attach), independent of this setting.
 
+### Graphical Backend Parity: VNC Has No Audio (PROD-020)
+
+The two graphical backends share the framebuffer, input, clipboard and auto-reconnect
+layers, but they are **not** at parity for audio:
+
+| Capability          | RDP                                   | VNC                   |
+| ------------------- | ------------------------------------- | --------------------- |
+| Framebuffer + input | Yes                                   | Yes                   |
+| Clipboard (text)    | Yes (CLIPRDR)                         | Yes (RFB cut-text)    |
+| Audio output        | Yes (`rdpsnd`, played by the sidecar) | **No**                |
+| Auto-reconnect      | Yes (`autoReconnect`)                 | Yes (`autoReconnect`) |
+
+This is a protocol limitation, not a missing feature: RFB (RFC 6143) defines no
+standard audio channel. The only audio extensions (e.g. QEMU's audio pseudo-encoding)
+are server-specific and absent from common servers (TigerVNC, TightVNC, RealVNC,
+macOS Screen Sharing), so termiHub does not implement them. Users who need remote
+sound should use RDP, or run a separate audio transport (e.g. PulseAudio over SSH).
+
 ### Agent Update Flow
 
 ```mermaid

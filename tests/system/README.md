@@ -429,9 +429,9 @@ Podman's compose provider may not support that flag.) Force a runtime with
 
 Telnet works the same way: depend on **`telnet_fixtures`** to bring up the
 `telnet-server` container (`TELNET_PORT` 2301). The **serial** editor-UI suite
-(`test_serial.py`) needs **no** container — its live-I/O scenarios are manual
-(the port field is a detection-only `<select>` a virtual PTY can't be selected
-through; see the module docstring and `docs/testing.md` → `MT-SER-09`).
+(`test_serial.py`) needs **no** container — its live-I/O scenarios are still
+manual (`MT-SER-09`): the port field accepts a typed virtual PTY path since #854,
+but the harness has no host-side socat echo fixture yet (#3682).
 
 Coordinates live in `termihub_harness` as constants: `SSH_PASSWORD_PORT` (2201),
 `SSH_KEYS_PORT` (2203), `SSH_USERNAME` / `SSH_PASSWORD`, `SSH_KEY_PATH`, and

@@ -252,10 +252,11 @@ Branch protection is kept as code (CI-017, #3675). The source of truth is
 required checks, the "up to date" (`strict`) rule, admin enforcement,
 pull-request, force-push and deletion rules for each long-lived branch.
 
-| Branch    | Status in the file                       | Required checks                                                                                                                                                                                                                                            |
-| --------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `main`    | enforced (mirrors the live settings)     | Rust Code Quality, Frontend Code Quality, Lint Commit Messages, Security Audit, Run Tests (ubuntu-latest), Run Tests (macos-latest), Run Tests (windows-latest), Build on ubuntu-latest, Build on macos-latest-arm, Build on windows-latest                |
-| `develop` | **proposed** — the maintainer applies it | Lint Commit Messages, Rust Code Quality, Rust Code Quality (Windows), Frontend Code Quality, Agent Live Tests (Windows, serial), RDP Sidecar Quality, Shell Script Quality, Windows cmd Script Smoke, System-Test Harness (machinery), Test-ID Drift Guard |
+| Branch                  | Status in the file                                                   | Required checks                                                                                                                                                                                                                                                                            |
+| ----------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `main`                  | enforced (mirrors the live settings)                                 | Rust Code Quality, Frontend Code Quality, Lint Commit Messages, Security Audit, Run Tests (ubuntu-latest), Run Tests (macos-latest), Run Tests (windows-latest), Build on ubuntu-latest, Build on macos-latest-arm, Build on windows-latest                                                |
+| `main` (pending, #3677) | **pending** — applied when the next release PR into `main` is opened | Same as `develop`: Lint Commit Messages, Rust Code Quality, Rust Code Quality (Windows), Frontend Code Quality, Agent Live Tests (Windows, serial), RDP Sidecar Quality, Shell Script Quality, Windows cmd Script Smoke, System-Test Harness (machinery), Test-ID Drift Guard, **PR Gate** |
+| `develop`               | **proposed** — the maintainer applies it                             | Lint Commit Messages, Rust Code Quality, Rust Code Quality (Windows), Frontend Code Quality, Agent Live Tests (Windows, serial), RDP Sidecar Quality, Shell Script Quality, Windows cmd Script Smoke, System-Test Harness (machinery), Test-ID Drift Guard, **PR Gate**                    |
 
 Other rules: `main` enforces the rules for admins and requires a pull request
 (0 approvals); `develop` lets an admin override (for example to land a fix past
@@ -272,18 +273,49 @@ name to report. Only require a name that reports on **every** PR:
 - A **matrix** job that is skipped reports under its bare name (`Run Tests`,
   `Build on ${{ matrix.platform }}`), and a leg that is not in the PR's matrix
   never reports. Requiring `Run Tests (ubuntu-latest)` would block every
-  docs-only PR forever, so no matrix leg is required on `develop`.
+  docs-only PR forever, so no matrix leg is required on `develop`; the
+  **PR Gate** below gates them instead.
 - A workflow with a workflow-level `paths` filter (Security Audit, Vendored
   Forks) reports **nothing** on a PR outside its paths; never require it on a
   branch whose PRs do not always touch those paths.
 - A PR opened by `GITHUB_TOKEN` (the daily `chore(deps): update cargo lockfile`
   PR) starts no workflows; close and reopen it so the required checks report.
 
-`main`'s set predates the slim PR lane (#3325) and still names checks the
+**PR Gate (#3678).** The last job of
+[`code-quality.yml`](../.github/workflows/code-quality.yml) is an aggregate
+that `needs:` every correctness job of the workflow (including the `Run Tests`
+matrix and `Agent Live Tests (Windows, serial)`) and runs with `if: always()`,
+so it reports under the one fixed name `PR Gate` on every PR. It fails when any
+needed job **failed** or was **cancelled**; **success** and **skipped** (an area
+the PR does not touch) pass, so a docs-only PR still goes green. The evaluation
+is [`scripts/internal/pr-gate.mjs`](../scripts/internal/pr-gate.mjs); its test
+fails when a job is added to the workflow but not to the gate's `needs:`. A job
+that must not gate (advisory or push-only) goes in `GATE_EXCLUDED` in that
+script, with its reason. `main` adopts `PR Gate` with its pending set (below).
+
+`main`'s current set predates the slim PR lane (#3325) and still names checks the
 current `develop` workflows no longer run on a PR (the macOS/Windows Build legs,
-`Run Tests (macos-latest)`, the path-filtered Security Audit). It matches the
-workflows on `main` today; reconcile it before the next `develop` → `main`
-merge brings the slim lane there.
+`Run Tests (macos-latest)`, the path-filtered Security Audit, which now runs
+post-merge and daily per #3326). It matches the workflows on `main` today, so it
+stays live until the slim lane reaches `main`. The replacement is committed
+ahead of time as `branches.main.pending` in the file (#3677): the same
+always-reporting set as `develop`, with every other `main` rule unchanged.
+
+**When to apply `main`'s pending set.** A PR's checks run from the PR's own
+workflow files, so the release PR `develop` → `main` is the first PR into `main`
+that runs the slim lane, and it never reports the old macOS/Windows names. With
+`enforce_admins` on, not even an admin could merge it. So the maintainer applies
+the pending set **right after opening the release PR into `main`, before it needs
+to go green** (step in [Pre-Release Checklist](#pre-release-checklist)):
+
+```bash
+scripts/internal/apply-branch-protection.sh --branch main --target pending          # dry run
+scripts/internal/apply-branch-protection.sh --branch main --target pending --apply  # write
+```
+
+Then, in a follow-up PR, move `branches.main.pending.protection` to
+`branches.main.protection` and delete `branches.main.pending`; the weekly check
+reports `OK main` again.
 
 **Drift detection.** The weekly **Branch Protection Drift** workflow
 ([`branch-protection.yml`](../.github/workflows/branch-protection.yml), Mondays
@@ -291,7 +323,9 @@ and on demand) runs
 [`scripts/internal/check-branch-protection.mjs`](../scripts/internal/check-branch-protection.mjs),
 which compares the live protection with the file and prints every difference.
 A branch marked `enforced` that drifts fails the run; a `proposed` branch is
-reported as "not applied yet" only. Run it locally with
+reported as "not applied yet" only. A branch with a `pending` block reports it as
+`PENDING CHANGE` while live still matches `protection`, and as `PENDING LIVE`
+(promote it) once it is applied; neither fails the run. Run it locally with
 `node scripts/internal/check-branch-protection.mjs` (uses your `gh` login).
 
 Reading branch protection needs repository **admin read**, which the workflow's
@@ -304,7 +338,8 @@ read, it fails.
 **Applying.** A repository admin applies the file with
 [`scripts/internal/apply-branch-protection.sh`](../scripts/internal/apply-branch-protection.sh).
 It is a dry run by default (drift report plus the exact PUT body); `--apply`
-writes it with `gh api -X PUT`. CI never runs it.
+writes it with `gh api -X PUT`; `--target pending` uses the branch's `pending`
+protection instead of `protection`. CI never runs it.
 
 ```bash
 scripts/internal/apply-branch-protection.sh --branch develop           # dry run
@@ -1157,6 +1192,12 @@ Before creating a release, run the quality scripts and verify:
 ```
 
 - [ ] All scripts pass without errors
+- [ ] **Right after opening the release PR into `main`** (before it has to go green), a
+      repository admin applies `main`'s pending required checks, if
+      `.github/branch-protection.json` still has a `branches.main.pending` block:
+      `scripts/internal/apply-branch-protection.sh --branch main --target pending --apply`.
+      Without it the release PR waits forever on checks the slim lane no longer runs
+      (see [Required checks per branch](#required-checks-per-branch))
 - [ ] The [agent update signing key](#agent-update-signing-key) is configured (the release workflow refuses to run otherwise)
 - [ ] All `docs/changes/*.md` fragments have been consolidated into `CHANGELOG.md` and deleted (see [Finalize Changelog](#finalize-changelog))
 - [ ] No known release-blocking issues remain

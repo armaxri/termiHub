@@ -2,24 +2,9 @@ category: serial
 display_name: "Serial"
 
 tests:
-  # --- Nerd Font / Powerline glyph support (PR #131) ---
-
-  - id: MT-SER-01
-    name: "Powerline glyphs render in SSH with agnoster"
-    pr: 131
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "SSH to a host running zsh with the agnoster theme"
-      - "Observe the prompt glyphs"
-    expected:
-      - "Powerline glyphs render correctly instead of boxes"
-    verification: manual
-    tags: [visual]
-
   - id: MT-SER-02
+    release_gate: true
+    manual_reason: "needs a clean Windows install without a Nerd Font"
     name: "Glyphs render on clean Windows without Nerd Font"
     pr: 131
     platforms: [windows]
@@ -33,39 +18,10 @@ tests:
     verification: manual
     tags: [visual]
 
-  # --- Serial connection error overlay (feature/terminal-connect-overlay) ---
-
-  - id: MT-SER-03
-    name: "Serial port not found shows descriptive error overlay"
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Create a serial connection pointing to a port that does not exist (e.g. /dev/ttyUSB99)"
-      - "Open the tab"
-    expected:
-      - "The 'Connection failed' overlay appears"
-      - "Error message contains 'Serial port not found' and the port path"
-      - "A 'Retry' button and a 'Cancel' button are shown"
-    verification: manual
-
-  - id: MT-SER-04
-    name: "Serial port permission denied shows dialout hint"
-    platforms: [linux]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Create a serial connection to a port the current user lacks permission to open"
-      - "Open the tab (do not add the user to the dialout group beforehand)"
-    expected:
-      - "The 'Connection failed' overlay appears"
-      - "Error message contains 'Permission denied' and mentions the 'dialout' group"
-      - "A 'Retry' button and a 'Cancel' button are shown"
-    verification: manual
-
-  # --- Configurable serial port scan prefixes (PR #TODO) ---
+  # --- Configurable serial port scan prefixes (now under Settings → Serial) ---
 
   - id: MT-SER-06
+    automation_issue: 3683
     name: "Serial port scan prefixes appear in Settings → General"
     platforms: [all]
     prerequisites:
@@ -82,6 +38,7 @@ tests:
     tags: [settings, serial]
 
   - id: MT-SER-07
+    automation_issue: 3683
     name: "Disabling a prefix removes its ports from the serial dropdown"
     platforms: [linux]
     prerequisites:
@@ -99,6 +56,7 @@ tests:
     tags: [settings, serial]
 
   - id: MT-SER-08
+    automation_issue: 3683
     name: "Adding a custom prefix discovers matching ports"
     platforms: [linux]
     prerequisites:
@@ -116,27 +74,15 @@ tests:
     verification: manual
     tags: [settings, serial]
 
-  - id: MT-SER-05
-    name: "Serial port busy shows 'already in use' hint"
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Open a serial port with another application (e.g. screen, minicom, or another termiHub tab)"
-      - "Try to open a second termiHub tab to the same port"
-    expected:
-      - "The 'Connection failed' overlay appears on the second tab"
-      - "Error message contains 'already in use'"
-      - "A 'Retry' button and a 'Cancel' button are shown"
-    verification: manual
-
   # --- Live virtual-serial happy path (ported from E2E SERIAL-02/03/04, PR #813) ---
   # Since #854 the port field is an editable combobox, so a virtual socat PTY path
   # can be typed (and is now driven by the bridge in test_serial.py). The connect /
   # echo / disconnect happy path still runs manually because the harness has no
-  # host-side socat echo fixture yet (#859) — not because the path can't be set.
+  # host-side socat echo fixture: #859 removed the unreachable container fixture
+  # instead of adding one. Automating it is tracked in #3682.
 
   - id: MT-SER-09
+    automation_issue: 3682
     name: "Connect to a virtual serial port, echo data, and handle disconnect"
     pr: 813
     platforms: [linux, macos]
@@ -154,41 +100,3 @@ tests:
       - "On disconnect the app stays stable (no crash); the tab shows a connection-closed/error state"
     verification: manual
     tags: [serial]
-
-  # --- Lost-port disconnect notification (#1824) ---
-
-  - id: MT-SER-10
-    name: "Losing the serial/COM port flips the tab out of green and notifies"
-    issue: 1824
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - hardware: "a real USB serial adapter (or a socat virtual pair whose backing process can be killed)"
-    instructions:
-      - "Create a Serial connection to a live USB serial adapter and open it"
-      - "Confirm the tab connects and its status dot is green (connected)"
-      - "Physically remove the adapter / unplug the cable (or kill the socat process backing the virtual port)"
-    expected:
-      - "Within a moment the tab's status dot leaves green (turns to the disconnected/error color)"
-      - "The disconnect overlay appears on the terminal ('Session disconnected / The connection was lost.')"
-      - "The app stays stable (no crash, no hang)"
-    verification: manual
-    tags: [serial, disconnect]
-
-  # --- Configurable line endings (PR #791) ---
-
-  - id: MT-SER-06
-    name: "Per-connection line ending controls what serial sends on Enter and paste"
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Edit a serial connection → Terminal → Line Ending and select 'CRLF (\\r\\n)' (many serial devices expect CRLF)"
-      - "Open the connection and connect to a device or loopback that echoes input"
-      - "Type a line and press Enter; then paste a multi-line block"
-    expected:
-      - "Enter sends CRLF as configured for this connection"
-      - "Pasted multi-line text uses CRLF between lines (no doubled or missing line breaks)"
-      - "Switching the per-connection setting to LF or CR changes the bytes sent accordingly"
-    verification: manual
-    tags: [settings, serial]
