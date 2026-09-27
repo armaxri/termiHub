@@ -1713,7 +1713,7 @@ Signed off in #3627 against the production bundle (`pnpm build`, `dist/assets`):
 | `img-src blob:`                      | Keep                                  | `@xterm/addon-image` shows inline images through blob URLs                                                                              |
 | `font-src data:`                     | **Removed**                           | No shipped font is a `data:` URL; Geist, Meslo and codicon load as bundled files                                                        |
 | `connect-src http://ipc.localhost`   | Keep (follow-up #3628)                | Windows form of Tauri's IPC protocol (`ipc:` is the WebKit form). Scoping it per platform also needs the test overlay reworked          |
-| `worker-src` / `child-src blob:`     | Keep                                  | Monaco's worker bootstrap falls back to a `blob:` worker; `child-src` covers engines without `worker-src`                               |
+| `worker-src` / `child-src blob:`     | Keep (follow-up #3639)                | Monaco's workers now load as bundled `'self'` files (#3632), not a `blob:` bootstrap; `child-src` covers engines without `worker-src`   |
 
 #### Native file drag-out (no drag capability granted)
 

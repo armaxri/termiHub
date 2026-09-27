@@ -22,6 +22,14 @@ export default defineConfig(async () => ({
     },
   },
 
+  build: {
+    // Never inline a script as a `data:` URL: the shipped CSP's `script-src` has
+    // no `data:`, so an inlined worker/module would be blocked at runtime (#3632 —
+    // Monaco's 544-byte editor-worker stub was inlined this way). Other small
+    // assets keep Vite's default 4 KiB inlining.
+    assetsInlineLimit: (filePath: string) => (/\.[cm]?[jt]sx?$/.test(filePath) ? false : undefined),
+  },
+
   // Exclude Rust build artifacts from dependency scanning
   optimizeDeps: {
     exclude: [],
