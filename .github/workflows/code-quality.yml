@@ -389,6 +389,13 @@ jobs:
       - name: Lint Markdown
         run: pnpm run markdownlint
 
+      # The manual-test counts in docs/testing.md and docs/release-plan-0.1.0.md
+      # are a generated block (#3721), so PRs that automate different manual
+      # items never conflict on hand-edited totals. Stdlib-only Python, no venv.
+      # Fix a failure with: python3 scripts/manual-inventory.py --write
+      - name: Check generated manual-inventory doc blocks
+        run: python3 scripts/manual-inventory.py --check
+
       # Advisory unused-code report (audit findings TOOL-009 + TOOL-008 JS slice).
       # knip statically finds unused files, exports, and dependencies; knip.json
       # declares the real entrypoints (src/main.tsx, the vite/vitest configs, test
