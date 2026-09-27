@@ -247,8 +247,6 @@ struct Client {
     /// The agent's per-instance token, which the update RPCs require on top of
     /// `initialize` (AGT-003, #3213).
     auth_token: String,
-    /// The `initialize` result.
-    init_result: Value,
 }
 
 impl Client {
@@ -279,7 +277,6 @@ impl Client {
                     next_id: 1,
                     notifications: Vec::new(),
                     auth_token: token.clone(),
-                    init_result: Value::Null,
                 };
                 // Auth gate first (AGT-002/SEC-004), before initialize. The gate
                 // answers before any notification is emitted, so the first line
@@ -293,8 +290,7 @@ impl Client {
                     "initialize",
                     json!({"protocolVersion": "0.3.0", "client": "hook-it", "clientVersion": "0.1.0"}),
                 );
-                if let Some(result) = resp.get("result") {
-                    client.init_result = result.clone();
+                if resp.get("result").is_some() {
                     // Handshake done; give later reads the full budget, since a
                     // notification may legitimately take a moment to arrive.
                     client
@@ -599,49 +595,6 @@ fn falsy_gate_leaves_the_agent_unarmed() {
 }
 
 // ── Update-RPC authorization (AGT-003 / SEC-006, #3213) ─────────────────────
-
-/// A live agent refuses an update RPC that does not carry its per-instance
-/// token — `initialize` alone is not enough authority to stage a binary.
-#[test]
-fn update_rpcs_without_the_instance_token_are_refused() {
-    let agent = LiveAgent::spawn(Some("1"));
-    let mut client = Client::connect(&agent);
-    for (method, params) in [
-        ("agent.request_deferred_update", json!({})),
-        (
-            "agent.request_deferred_update",
-            json!({ "authToken": "wrong" }),
-        ),
-        ("agent.request_update", json!({ "ackTimeoutSecs": 0 })),
-    ] {
-        let resp = client.rpc(method, params);
-        assert_eq!(
-            resp["error"]["code"], -32026,
-            "{method} without the instance token must be refused: {resp}"
-        );
-    }
-    // Nothing was touched: the hook's staged record is still the only one.
-    assert_eq!(
-        agent.state()["update"]["pending_update"]["version"],
-        HOOK_DEFAULT_VERSION
-    );
-}
-
-/// In `--listen` mode the update token is the listen token, and `initialize`
-/// advertises that file — the path only, never the token itself.
-#[test]
-fn initialize_advertises_the_listen_token_file_for_updates() {
-    let agent = LiveAgent::spawn(None);
-    let client = Client::connect(&agent);
-    let advertised = client.init_result["update_auth_token_path"]
-        .as_str()
-        .unwrap_or_else(|| panic!("no update_auth_token_path: {}", client.init_result));
-    assert_eq!(
-        Path::new(advertised),
-        agent.config_home().join("termihub-agent/listen-auth.token")
-    );
-    assert!(!client.init_result.to_string().contains(&client.auth_token));
-}
 
 /// The shipped binary really carries its build-version record (SEC-006): the
 /// downgrade policy reads it from a staged binary, so it must survive linking.

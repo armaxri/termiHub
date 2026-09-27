@@ -1108,6 +1108,70 @@ fn a_broadcast_with_no_other_workers_is_harmless() {
     peer.register("desktop-b");
 }
 
+// ── Update-RPC authorization (AGT-003, #3213) ─────────────────────────────────
+
+/// A live agent refuses an update RPC that does not carry its per-instance token
+/// — `initialize` alone is not enough authority to stage a binary — and
+/// advertises the token's file (the path only, never the token) in
+/// `initialize`. In `--listen` mode that file is the listen token file.
+#[test]
+fn update_rpcs_require_the_advertised_instance_token() {
+    let dir = TempDir::new().expect("temp dir");
+    let endpoint = unique_endpoint(&dir, "update-auth");
+    let _registry = spawn_registry(&endpoint);
+    assert!(wait_for_endpoint(&endpoint), "registry never bound");
+
+    let agent = spawn_agent(&endpoint);
+    let token = common::read_listen_token(agent.config_home());
+    let mut desktop = agent.client();
+    let init = desktop.call(
+        "initialize",
+        json!({
+            "protocolVersion": "0.3.0",
+            "client": "desktop-auth",
+            "clientVersion": "1.0.0",
+            "agentSettings": {},
+        }),
+    );
+    let advertised = init["result"]["update_auth_token_path"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no update_auth_token_path: {init}"));
+    assert_eq!(
+        std::fs::read_to_string(advertised).expect("read advertised token file"),
+        token,
+        "the advertised file must hold this instance's token"
+    );
+    assert!(!init.to_string().contains(&token), "never the token itself");
+
+    for (method, params) in [
+        ("agent.request_deferred_update", json!({})),
+        (
+            "agent.request_deferred_update",
+            json!({ "authToken": "wrong" }),
+        ),
+        ("agent.request_update", json!({ "ackTimeoutSecs": 0 })),
+    ] {
+        let resp = desktop.call(method, params);
+        assert_eq!(
+            resp["error"]["code"], -32026,
+            "{method} without the instance token must be refused: {resp}"
+        );
+    }
+
+    // With the token the request reaches the apply, which reports that
+    // nothing is staged — proof the gate, not something else, refused above.
+    let resp = desktop.call(
+        "agent.request_deferred_update",
+        json!({ "authToken": token }),
+    );
+    assert!(
+        resp["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("No pending update")),
+        "an authorized request must get past the gate: {resp}"
+    );
+}
+
 // ── Coordinated update (#1351) ────────────────────────────────────────────────
 
 /// Ask for a coordinated update from `client`, on a thread.
