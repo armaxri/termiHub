@@ -3,9 +3,16 @@ import { fileURLToPath } from "url";
 
 export default defineConfig({
   resolve: {
-    alias: {
-      "@": fileURLToPath(new URL("./src", import.meta.url)),
-    },
+    alias: [
+      { find: "@", replacement: fileURLToPath(new URL("./src", import.meta.url)) },
+      // Vite `?worker` imports (Monaco's bundled workers, #3632) only exist in a
+      // Vite app build; jsdom has no Worker, so tests get a stub constructor.
+      // The query keeps each worker a distinct module id, so a test can mock one.
+      {
+        find: /^monaco-editor\/(.*)\?worker$/,
+        replacement: `${fileURLToPath(new URL("./src/test/workerStub.ts", import.meta.url))}?worker=$1`,
+      },
+    ],
   },
   test: {
     environment: "jsdom",
