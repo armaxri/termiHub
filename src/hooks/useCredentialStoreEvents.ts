@@ -1,12 +1,33 @@
 import { useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import { toast } from "@/components/ui";
+import { getRecoveryWarnings } from "@/services/storage";
+import { frontendLog } from "@/utils/frontendLog";
 import {
   onCredentialStoreLocked,
   onCredentialStoreUnlocked,
   onCredentialStoreStatusChanged,
   onCredentialStoreUnlockNeeded,
 } from "@/services/events";
+
+/**
+ * Show warnings the backend produced after startup. Unlocking the store scopes
+ * saved passwords per connection file (#3591), which may yield a one-time
+ * notice about connections that shared a saved password.
+ */
+function showNewRecoveryWarnings(): void {
+  getRecoveryWarnings()
+    .then((warnings) => {
+      if (warnings.length === 0) return;
+      useAppStore.setState((s) => ({
+        recoveryWarnings: [...s.recoveryWarnings, ...warnings],
+        recoveryDialogOpen: true,
+      }));
+    })
+    .catch((err: unknown) => {
+      frontendLog("credential_store", `Failed to load recovery warnings: ${String(err)}`);
+    });
+}
 
 /**
  * Hook that listens for credential store events from the backend
@@ -44,6 +65,7 @@ export function useCredentialStoreEvents(): void {
         resolveUnlock(true);
         loadCredentialStoreStatus();
         setUnlockDialogOpen(false);
+        showNewRecoveryWarnings();
       });
 
       unlistenStatusChanged = await onCredentialStoreStatusChanged((status) => {

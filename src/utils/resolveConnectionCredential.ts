@@ -45,12 +45,13 @@ function toResolution(
 async function lookup(
   connectionId: string,
   credentialType: CredentialResolution["credentialType"],
-  credentialRef: string | undefined
+  credentialRef: string | undefined,
+  sourceFile: string | null | undefined
 ): Promise<CredentialResolution> {
   try {
     const raw = credentialRef
       ? await resolveNamedCredential(credentialRef, credentialType)
-      : await resolveCredential(connectionId, credentialType);
+      : await resolveCredential(connectionId, credentialType, sourceFile);
     return toResolution(raw, credentialType, credentialRef);
   } catch {
     return toResolution(null, credentialType, credentialRef);
@@ -70,20 +71,25 @@ async function lookup(
  * - `authMethod === "agent"` or no `savePassword` → skip, return null
  *
  * Errors from the store are caught and treated as "not found".
+ *
+ * `sourceFile` is the external connection file the connection lives in
+ * (omitted for the main store and for agents): per-connection secrets are
+ * scoped by file (#3591).
  */
 export async function resolveConnectionCredential(
   connectionId: string,
   authMethod: string,
   savePassword?: boolean,
-  credentialRef?: string
+  credentialRef?: string,
+  sourceFile?: string | null
 ): Promise<CredentialResolution> {
   const ref = credentialRef?.trim() || undefined;
   if (authMethod === "password") {
-    return lookup(connectionId, "password", ref);
+    return lookup(connectionId, "password", ref, sourceFile);
   }
 
   if (authMethod === "key" && (savePassword || ref)) {
-    return lookup(connectionId, "key_passphrase", ref);
+    return lookup(connectionId, "key_passphrase", ref, sourceFile);
   }
 
   // agent auth or key without savePassword — no credential to resolve

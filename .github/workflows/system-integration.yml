@@ -45,12 +45,23 @@ on:
         type: choice
         options: [both, develop, main]
         default: both
+  # Release gate (#3652): release-candidate.yml calls this lane to grade ONE exact
+  # commit (the release candidate), instead of the develop/main branch tips. The
+  # Release workflow then requires that candidate run to be green on the tag's sha.
+  workflow_call:
+    inputs:
+      ref:
+        description: "Full 40-char commit sha to grade"
+        type: string
+        required: true
 
 # Key concurrency on the trigger so the daily-develop and weekly-main runs (which
 # overlap on Wednesday) do not cancel each other, while a redundant re-fire of the
 # same trigger still cancels the older in-flight run.
+# A release-candidate call keys on its sha, so it neither cancels nor is
+# cancelled by the nightly/manual runs.
 concurrency:
-  group: system-integration-${{ github.event.schedule || github.event.inputs.branch || github.ref }}
+  group: system-integration-${{ inputs.ref && format('rc-{0}', inputs.ref) || github.event.schedule || github.event.inputs.branch || github.ref }}
   cancel-in-progress: true
 
 # Least-privilege token (CI-010). Every job checks out (its matrix branch),
@@ -63,7 +74,8 @@ permissions:
 jobs:
   # Resolve which branch(es) this run grades from the trigger: the daily cron →
   # develop, the Wednesday cron → main, a manual dispatch → the chosen input
-  # (default both). Emitted as a JSON array the matrix below expands over.
+  # (default both), a release-candidate call → its exact sha. Emitted as a JSON
+  # array the matrix below expands over (each entry is a checkout ref).
   setup:
     runs-on: ubuntu-latest
     outputs:
@@ -71,8 +83,21 @@ jobs:
     steps:
       - id: pick
         shell: bash
+        env:
+          # Set only when called via workflow_call (release-candidate.yml). In a
+          # called workflow github.event_name is the CALLER's event, so this must
+          # be checked first.
+          RC_REF: ${{ inputs.ref }}
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
+          if [ -n "${RC_REF}" ]; then
+            # Only a full sha is accepted: it is what the release gate keys on,
+            # and it keeps the JSON below injection-free.
+            if ! [[ "${RC_REF}" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::inputs.ref must be a full 40-char commit sha, got '${RC_REF}'"
+              exit 1
+            fi
+            echo "branches=[\"${RC_REF}\"]" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
             case "${{ github.event.schedule }}" in
               "5 5 * * 3") echo 'branches=["main"]' >> "$GITHUB_OUTPUT" ;;
               *) echo 'branches=["develop"]' >> "$GITHUB_OUTPUT" ;;

@@ -14,6 +14,8 @@ pub(crate) struct RecordingStore {
     pub(crate) calls: Mutex<Vec<String>>,
     pub(crate) fail_gets: bool,
     pub(crate) fail_sets: bool,
+    /// Reported as locked by [`CredentialStore::status`] while set.
+    pub(crate) locked: std::sync::atomic::AtomicBool,
 }
 
 impl RecordingStore {
@@ -98,6 +100,10 @@ impl CredentialStore for RecordingStore {
     }
 
     fn status(&self) -> CredentialStoreStatus {
-        CredentialStoreStatus::Unlocked
+        if self.locked.load(std::sync::atomic::Ordering::SeqCst) {
+            CredentialStoreStatus::Locked
+        } else {
+            CredentialStoreStatus::Unlocked
+        }
     }
 }

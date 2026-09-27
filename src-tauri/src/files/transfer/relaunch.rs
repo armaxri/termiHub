@@ -614,6 +614,7 @@ mod tests {
             updated_at_ms: 2_000,
             docker: None,
             group_id: None,
+            folder_paste_id: None,
         }
     }
 

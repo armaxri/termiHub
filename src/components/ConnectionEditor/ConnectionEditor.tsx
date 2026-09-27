@@ -815,6 +815,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   // Prevents the hint from showing when savePassword=true but no credential was ever saved.
   const [credentialExistsInStore, setCredentialExistsInStore] = useState(false);
   const credentialId = existingConnection?.id ?? existingAgentDef?.id ?? existingAgent?.id;
+  // Saved secrets are scoped by connection file (#3591).
+  const credentialSourceFile = existingConnection?.sourceFile ?? null;
   useEffect(() => {
     if (
       !credentialId ||
@@ -825,7 +827,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       return;
     }
     let cancelled = false;
-    resolveCredential(credentialId, "password")
+    resolveCredential(credentialId, "password", credentialSourceFile)
       .then((val) => {
         if (!cancelled) setCredentialExistsInStore(val !== null);
       })
@@ -835,7 +837,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     return () => {
       cancelled = true;
     };
-  }, [credentialId, credentialStoreStatus?.mode, connSettings.savePassword]);
+  }, [credentialId, credentialSourceFile, credentialStoreStatus?.mode, connSettings.savePassword]);
 
   // Show a "Password saved in credential store" hint on empty password fields when editing
   // an existing connection that has savePassword=true, an active credential store, and a
@@ -1184,6 +1186,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     if (!saved || "connectionState" in saved) return;
 
     let config: ConnectionConfig = saved.config;
+    const savedSourceFile = "sourceFile" in saved ? (saved.sourceFile ?? null) : null;
 
     // Resolve a password / key passphrase the form does not carry: stored
     // credential first (behind the unlock gate, #1144), else prompt (#879/#885).
@@ -1192,6 +1195,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       schema: isAgentTransportMode ? AGENT_SCHEMA : currentTypeInfo?.schema,
       settings: connSettings,
       connectionId: saved.id,
+      sourceFile: savedSourceFile,
       requestPassword,
     });
     if (secret.status === "canceled") {
@@ -1208,13 +1212,19 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       // and the editor enforces unique names per folder, so name + folderId
       // identifies the stored entry.
       if (secret.source === "prompt" && useAppStore.getState().passwordPromptShouldSave) {
+        // The file matters too: a same-named connection in another file has
+        // its own secret (#3591).
         const storeConn = currentConnectionsView().connections.find(
-          (c) => c.name === saved.name && (c.folderId ?? null) === (saved.folderId ?? null)
+          (c) =>
+            c.name === saved.name &&
+            (c.folderId ?? null) === (saved.folderId ?? null) &&
+            (c.sourceFile ?? null) === savedSourceFile
         );
         await storeCredential(
           storeConn?.id ?? saved.id,
           secret.credentialType,
-          secret.secret
+          secret.secret,
+          savedSourceFile
         ).catch((err) => frontendLog("connection_editor", `Failed to store credential: ${err}`));
       }
       config = {
@@ -1284,6 +1294,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         schema: isAgentTransportMode ? AGENT_SCHEMA : currentTypeInfo?.schema,
         settings: connSettings,
         connectionId: existingConnection?.id ?? existingAgent?.id ?? null,
+        sourceFile: existingConnection?.sourceFile ?? null,
         requestPassword,
         // Test never persists the secret, so the prompt offers no Save box (#3316).
         allowSave: false,

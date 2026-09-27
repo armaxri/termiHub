@@ -306,6 +306,15 @@ fn sync_embedded_server_secrets(app_handle: &AppHandle) {
     }
 }
 
+/// Copy pre-#3591 external-file secrets to their file-scoped keys now that
+/// the store can be read (#3591). Runs before the unlocked event, so the
+/// frontend's follow-up read of the recovery warnings sees its notice.
+pub(crate) fn sync_connection_credential_scopes(app_handle: &AppHandle) {
+    if let Some(connections) = app_handle.try_state::<ConnectionManager>() {
+        connections.migrate_credential_scopes();
+    }
+}
+
 /// Unlock the master password credential store.
 ///
 /// This is async because Argon2id key derivation is CPU-intensive.
@@ -320,6 +329,7 @@ pub async fn unlock_credential_store(
     guarded_unlock(&manager, &password)?;
 
     sync_embedded_server_secrets(&app_handle);
+    sync_connection_credential_scopes(&app_handle);
     if let Err(e) = app_handle.emit(EVENT_STORE_UNLOCKED, ()) {
         warn!("Failed to emit {}: {}", EVENT_STORE_UNLOCKED, e);
     }
@@ -399,6 +409,7 @@ pub async fn setup_master_password(
     manager.notify_auto_lock_unlocked();
 
     sync_embedded_server_secrets(&app_handle);
+    sync_connection_credential_scopes(&app_handle);
     if let Err(e) = app_handle.emit(EVENT_STORE_UNLOCKED, ()) {
         warn!("Failed to emit {}: {}", EVENT_STORE_UNLOCKED, e);
     }
@@ -524,6 +535,7 @@ pub async fn switch_credential_store(
     }
 
     sync_embedded_server_secrets(&app_handle);
+    sync_connection_credential_scopes(&app_handle);
     emit_status_changed(&app_handle, &manager);
     Ok(SwitchResult {
         status: outcome.status,
@@ -561,15 +573,24 @@ fn parse_credential_type(s: &str) -> Result<CredentialType, String> {
 /// Used to persist a password or passphrase that was entered via the
 /// password prompt, so it can be retrieved automatically on the next
 /// connection attempt (when `savePassword` is enabled on the connection).
+///
+/// `source_file` is the external connection file the connection is stored in
+/// (`None` for the main store): secrets are scoped by file (#3591).
 #[tauri::command]
 pub fn store_credential(
     connection_id: String,
     credential_type: String,
     value: String,
+    source_file: Option<String>,
     manager: State<'_, Arc<CredentialManager>>,
+    connection_manager: State<'_, ConnectionManager>,
 ) -> Result<(), String> {
     let cred_type = parse_credential_type(&credential_type)?;
-    let key = CredentialKey::new(&connection_id, cred_type);
+    let key = connection_manager.connection_credential_key(
+        &connection_id,
+        source_file.as_deref(),
+        cred_type,
+    );
     debug!(
         connection_id = %connection_id,
         credential_type = %credential_type,
@@ -582,14 +603,21 @@ pub fn store_credential(
 ///
 /// Returns the stored password/passphrase, or `null` if none is found.
 /// Gracefully returns `None` when the store is locked or unavailable.
+/// `source_file` scopes the lookup as in [`store_credential`].
 #[tauri::command]
 pub fn resolve_credential(
     connection_id: String,
     credential_type: String,
+    source_file: Option<String>,
     manager: State<'_, Arc<CredentialManager>>,
+    connection_manager: State<'_, ConnectionManager>,
 ) -> Result<Option<String>, String> {
     let cred_type = parse_credential_type(&credential_type)?;
-    let key = CredentialKey::new(&connection_id, cred_type);
+    let key = connection_manager.connection_credential_key(
+        &connection_id,
+        source_file.as_deref(),
+        cred_type,
+    );
     debug!(
         connection_id = %connection_id,
         credential_type = %credential_type,
@@ -607,14 +635,21 @@ pub fn resolve_credential(
 /// Remove a stored credential for a connection.
 ///
 /// Used to clear stale credentials after an authentication failure.
+/// `source_file` scopes the key as in [`store_credential`].
 #[tauri::command]
 pub fn remove_credential(
     connection_id: String,
     credential_type: String,
+    source_file: Option<String>,
     manager: State<'_, Arc<CredentialManager>>,
+    connection_manager: State<'_, ConnectionManager>,
 ) -> Result<(), String> {
     let cred_type = parse_credential_type(&credential_type)?;
-    let key = CredentialKey::new(&connection_id, cred_type);
+    let key = connection_manager.connection_credential_key(
+        &connection_id,
+        source_file.as_deref(),
+        cred_type,
+    );
     debug!(
         connection_id = %connection_id,
         credential_type = %credential_type,

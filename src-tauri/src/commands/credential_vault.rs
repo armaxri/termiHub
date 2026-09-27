@@ -33,14 +33,11 @@ pub(crate) fn known_owners(
     connection_manager: &ConnectionManager,
     app_handle: &AppHandle,
 ) -> Result<HashMap<String, String>, String> {
-    let store = connection_manager.get_all().map_err(|e| e.to_string())?;
-    let mut owners = HashMap::new();
-    for conn in store.connections {
-        owners.insert(conn.id, conn.name);
-    }
-    for agent in store.agents {
-        owners.insert(agent.id, agent.name);
-    }
+    // Saved connections of the main store and of every enabled external file
+    // (the latter under their file-scoped owner ids, #3591), and agents.
+    let mut owners = connection_manager
+        .credential_owner_names()
+        .map_err(|e| e.to_string())?;
     if let Some(servers) = app_handle.try_state::<EmbeddedServerManager>() {
         owners.extend(servers.vault_owners());
     }

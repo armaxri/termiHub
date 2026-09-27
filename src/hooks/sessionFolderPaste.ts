@@ -25,6 +25,7 @@
 import {
   folderPasteBegin,
   folderPasteEnd,
+  folderPasteLinkTransfer,
   localListDir,
   sessionCopy,
   sessionCopyRemote,
@@ -47,15 +48,32 @@ import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 import { seedTransferQueueRow } from "./transferFeedback";
 
-/** Upload a local file over a session's transfer queue, seeding its queue row. */
+/**
+ * Link a file transfer to the recorded folder paste it belongs to (#3643), so
+ * the file in flight at a quit is reported with its folder's notice instead of
+ * as its own paused row. Best-effort, like the manifest itself.
+ */
+function linkToFolderPaste(pasteId: string | undefined, transferId: string): void {
+  if (!pasteId) return;
+  folderPasteLinkTransfer(pasteId, transferId).catch((err) =>
+    frontendLog("folder_paste", `Could not link transfer to folder paste: ${errorMessage(err)}`)
+  );
+}
+
+/**
+ * Upload a local file over a session's transfer queue, seeding its queue row.
+ * `pasteId` links the transfer to the recorded folder paste it belongs to.
+ */
 export function startSessionUpload(
   sessionId: string,
   localPath: string,
-  remotePath: string
+  remotePath: string,
+  pasteId?: string
 ): Promise<number> {
-  return sessionUpload(sessionId, localPath, remotePath, (transferId) =>
-    seedTransferQueueRow({ transferId, sessionId, direction: "upload", remotePath })
-  );
+  return sessionUpload(sessionId, localPath, remotePath, (transferId) => {
+    seedTransferQueueRow({ transferId, sessionId, direction: "upload", remotePath });
+    linkToFolderPaste(pasteId, transferId);
+  });
 }
 
 /**
@@ -66,16 +84,18 @@ export function startSessionRemoteCopy(
   srcSession: string,
   srcPath: string,
   dstSession: string,
-  dstPath: string
+  dstPath: string,
+  pasteId?: string
 ): Promise<number> {
-  return sessionCopyRemote(srcSession, srcPath, dstSession, dstPath, (transferId) =>
+  return sessionCopyRemote(srcSession, srcPath, dstSession, dstPath, (transferId) => {
     seedTransferQueueRow({
       transferId,
       sessionId: dstSession,
       direction: "upload",
       remotePath: dstPath,
-    })
-  );
+    });
+    linkToFolderPaste(pasteId, transferId);
+  });
 }
 
 /** Everything a paste needs to know about its two endpoints. */
@@ -98,6 +118,12 @@ export interface PasteTransport {
    * partly copied destination).
    */
   continueExisting?: boolean;
+  /**
+   * The manifest id of the recorded folder paste this copy runs for (#3643).
+   * Each tracked file transfer is linked to it, so the file in flight at a
+   * quit comes back with the folder's notice, not as an orphan paused row.
+   */
+  pasteId?: string;
 }
 
 /**
@@ -128,7 +154,7 @@ export async function pasteFileLeg(
     // fallback below.
     let tracked: boolean;
     if (t.destSftp && t.srcSftp) {
-      await startSessionRemoteCopy(src, srcPath, t.destSession, destPath);
+      await startSessionRemoteCopy(src, srcPath, t.destSession, destPath, t.pasteId);
       tracked = true;
     } else {
       // Byte-based fallback: blocking read/write round-trip, which registers no
@@ -146,7 +172,7 @@ export async function pasteFileLeg(
   if (t.destQueueCapable) {
     // Queue-capable (SFTP/FTP/Docker): a tracked transfer on the rich queue
     // engine (#2421, PROD-010).
-    await startSessionUpload(t.destSession, srcPath, destPath);
+    await startSessionUpload(t.destSession, srcPath, destPath, t.pasteId);
     return true;
   }
   // Byte-based fallback (remote-agent): blocking round-trip with no
@@ -277,7 +303,7 @@ export async function pasteFolderRecorded(
   } catch (err) {
     frontendLog("folder_paste", `Could not record folder paste: ${errorMessage(err)}`);
   }
-  const tracked = await pasteFolderTree(t, srcDir, destPath);
+  const tracked = await pasteFolderTree(pasteId ? { ...t, pasteId } : t, srcDir, destPath);
   if (pasteId) {
     try {
       await folderPasteEnd(pasteId);

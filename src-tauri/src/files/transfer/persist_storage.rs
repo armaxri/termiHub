@@ -94,6 +94,7 @@ mod tests {
             updated_at_ms: 2,
             docker: None,
             group_id: None,
+            folder_paste_id: None,
         }
     }
 
