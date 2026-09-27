@@ -18,6 +18,32 @@ import websockets
 
 Handler = Callable[[dict[str, Any]], dict[str, Any]]
 
+# Bridge actions ``dispatcher_like`` deliberately does NOT answer (it replies
+# ``unhandled``). Together with the actions it does handle, this must cover
+# ``termihub_harness.protocol.BRIDGE_ACTIONS`` exactly — the contract test
+# (test_bridge_protocol_contract.py, MOCK-010) fails otherwise, so a new command
+# forces a conscious choice: fake it here, or list it as unhandled.
+UNHANDLED_ACTIONS: frozenset[str] = frozenset(
+    {
+        # Needs a real DOM / canvas / Monaco instance to mean anything.
+        "type",
+        "getText",
+        "getAttribute",
+        "sampleCanvas",
+        "editorCursor",
+        # Needs the real agent transport.
+        "severAgentTransport",
+        # Projection verbs need the real backend substrate; they are exercised
+        # live by test_projection_bridge.py (integration lane).
+        "projectionSubscribe",
+        "projectionDispatch",
+        "projectionState",
+        "projectionDropNext",
+        "projectionResync",
+        "projectionUnsubscribe",
+    }
+)
+
 
 class FakeApp:
     """A controllable stand-in for the in-app bridge over a real WebSocket."""
@@ -185,6 +211,10 @@ def dispatcher_like(
                 {"event": command["event"], "payload": command.get("payload")}
             )
             return {"ok": True, "action": "emitEvent"}
+        if action == "closeWindow":
+            return {"ok": True, "action": "closeWindow"}
+        if action == "listWindows":
+            return {"ok": True, "action": "listWindows", "value": [{"label": "main"}]}
         if action == "screenshot":
             if screenshot is None:
                 return {"ok": False, "action": "screenshot", "error": "capture unavailable"}

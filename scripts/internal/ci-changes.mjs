@@ -128,6 +128,9 @@ function locationAreas(path) {
   if (path.startsWith("src/types/generated/")) return ["rust", "frontend"];
 
   if (path.startsWith("tests/system/")) return ["harness"];
+  // The in-app test bridge: its command set is contract-tested against the
+  // Python harness by the machinery suite (test_bridge_protocol_contract.py).
+  if (path.startsWith("src/testbridge/")) return ["frontend", "harness"];
   // Container fixtures run in integration-fixtures.yml (own path trigger); the
   // only per-PR check that reads them is ShellCheck over their scripts.
   if (path.startsWith("tests/docker/")) return ["scripts"];
