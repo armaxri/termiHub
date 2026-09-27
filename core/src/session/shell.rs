@@ -75,6 +75,101 @@ pub fn detect_default_shell() -> Option<String> {
     None
 }
 
+/// Windows shell executables probed on `PATH`, in preference order:
+/// PowerShell 7 (`pwsh.exe`) first, then Windows PowerShell (`powershell.exe`).
+/// `cmd.exe` is resolved separately via `%COMSPEC%` (see
+/// [`windows_shell_candidates`]).
+pub const WINDOWS_PATH_SHELLS: &[&str] = &["pwsh.exe", "powershell.exe"];
+
+/// Last-resort Windows shell when neither PowerShell nor `%COMSPEC%` resolves.
+pub const WINDOWS_FALLBACK_SHELL: &str = "cmd.exe";
+
+/// Look up `exe` in the directories of a `PATH`-style value.
+///
+/// Returns the first `<dir>/<exe>` that is an existing file. The separator is
+/// the host's (`;` on Windows, `:` elsewhere), as understood by
+/// [`std::env::split_paths`]. Empty entries are skipped.
+///
+/// The filesystem probe is injected via `is_file` so the lookup is
+/// unit-testable on any platform without touching the real `PATH`.
+pub fn find_in_path(
+    exe: &str,
+    path_var: Option<&std::ffi::OsStr>,
+    is_file: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    let path_var = path_var?;
+    std::env::split_paths(path_var)
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .map(|dir| dir.join(exe))
+        .find(|candidate| is_file(candidate))
+}
+
+/// List the usable Windows shells as executable paths, most preferred first.
+///
+/// Order: `pwsh.exe` (PowerShell 7) on `PATH`, `powershell.exe` (Windows
+/// PowerShell) on `PATH`, then `cmd.exe` from `%COMSPEC%` (only when that
+/// value names an existing file). Only shells that were actually found are
+/// returned, so the list may be empty.
+///
+/// Pure selection logic: `find_on_path` resolves an executable name to a path
+/// and `is_file` checks `%COMSPEC%`. Both are injected so this runs in tests on
+/// every platform. Used by the agent to pick its "Default Shell" and to report
+/// its available shells on a Windows host (#3727).
+pub fn windows_shell_candidates(
+    find_on_path: impl Fn(&str) -> Option<PathBuf>,
+    comspec: Option<&str>,
+    is_file: impl Fn(&Path) -> bool,
+) -> Vec<String> {
+    let mut shells: Vec<String> = WINDOWS_PATH_SHELLS
+        .iter()
+        .filter_map(|exe| find_on_path(exe))
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    if let Some(comspec) = comspec.map(str::trim).filter(|c| !c.is_empty()) {
+        if is_file(Path::new(comspec)) && !shells.iter().any(|s| s == comspec) {
+            shells.push(comspec.to_string());
+        }
+    }
+    shells
+}
+
+/// Pick the default Windows shell executable: the first of
+/// [`windows_shell_candidates`], or [`WINDOWS_FALLBACK_SHELL`] when none was
+/// found.
+pub fn select_windows_default_shell(
+    find_on_path: impl Fn(&str) -> Option<PathBuf>,
+    comspec: Option<&str>,
+    is_file: impl Fn(&Path) -> bool,
+) -> String {
+    windows_shell_candidates(find_on_path, comspec, is_file)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| WINDOWS_FALLBACK_SHELL.to_string())
+}
+
+/// Live-environment wrapper around [`windows_shell_candidates`]: reads `PATH`
+/// and `COMSPEC` from the process environment and probes the real filesystem.
+pub fn detect_windows_shells() -> Vec<String> {
+    let path_var = std::env::var_os("PATH");
+    let comspec = std::env::var("COMSPEC").ok();
+    windows_shell_candidates(
+        |exe| find_in_path(exe, path_var.as_deref(), Path::is_file),
+        comspec.as_deref(),
+        Path::is_file,
+    )
+}
+
+/// Live-environment wrapper around [`select_windows_default_shell`].
+pub fn detect_windows_default_shell() -> String {
+    let path_var = std::env::var_os("PATH");
+    let comspec = std::env::var("COMSPEC").ok();
+    select_windows_default_shell(
+        |exe| find_in_path(exe, path_var.as_deref(), Path::is_file),
+        comspec.as_deref(),
+        Path::is_file,
+    )
+}
+
 /// Extract the bare shell name from a `$SHELL` value (e.g. `/bin/zsh` -> `"zsh"`).
 ///
 /// Split out of [`detect_default_shell`] so tests can exercise the parsing
@@ -778,6 +873,142 @@ mod tests {
     #[test]
     fn detect_default_shell_returns_powershell_on_windows() {
         assert_eq!(detect_default_shell(), Some("powershell".to_string()));
+    }
+
+    // -----------------------------------------------------------------------
+    // Windows shell selection (#3727) — platform-neutral, injected probes
+    // -----------------------------------------------------------------------
+
+    /// Build a `find_on_path` stub that resolves only the given executables.
+    fn stub_path(found: &[(&'static str, &'static str)]) -> impl Fn(&str) -> Option<PathBuf> {
+        let found = found.to_vec();
+        move |exe| {
+            found
+                .iter()
+                .find(|(name, _)| *name == exe)
+                .map(|(_, path)| PathBuf::from(path))
+        }
+    }
+
+    const PWSH: &str = r"C:\Program Files\PowerShell\7\pwsh.exe";
+    const WINPS: &str = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
+    const CMD: &str = r"C:\Windows\system32\cmd.exe";
+
+    #[test]
+    fn windows_default_prefers_pwsh() {
+        let pick = select_windows_default_shell(
+            stub_path(&[("pwsh.exe", PWSH), ("powershell.exe", WINPS)]),
+            Some(CMD),
+            |_| true,
+        );
+        assert_eq!(pick, PWSH);
+    }
+
+    #[test]
+    fn windows_default_falls_back_to_windows_powershell() {
+        let pick = select_windows_default_shell(
+            stub_path(&[("powershell.exe", WINPS)]),
+            Some(CMD),
+            |_| true,
+        );
+        assert_eq!(pick, WINPS);
+    }
+
+    #[test]
+    fn windows_default_falls_back_to_comspec() {
+        let pick = select_windows_default_shell(stub_path(&[]), Some(CMD), |_| true);
+        assert_eq!(pick, CMD);
+    }
+
+    #[test]
+    fn windows_default_ignores_missing_comspec_file() {
+        let pick = select_windows_default_shell(stub_path(&[]), Some(CMD), |_| false);
+        assert_eq!(pick, WINDOWS_FALLBACK_SHELL);
+    }
+
+    #[test]
+    fn windows_default_last_resort_is_cmd_exe() {
+        let pick = select_windows_default_shell(stub_path(&[]), None, |_| true);
+        assert_eq!(pick, "cmd.exe");
+        let pick = select_windows_default_shell(stub_path(&[]), Some("  "), |_| true);
+        assert_eq!(pick, "cmd.exe");
+    }
+
+    #[test]
+    fn windows_default_never_returns_unix_shell() {
+        // The #3727 bug: a Windows agent defaulted to `/bin/sh`.
+        for comspec in [None, Some(CMD)] {
+            let pick = select_windows_default_shell(stub_path(&[]), comspec, |_| true);
+            assert!(!pick.starts_with('/'), "unix path picked: {pick}");
+        }
+    }
+
+    #[test]
+    fn windows_candidates_lists_all_found_in_order() {
+        let shells = windows_shell_candidates(
+            stub_path(&[("powershell.exe", WINPS), ("pwsh.exe", PWSH)]),
+            Some(CMD),
+            |_| true,
+        );
+        assert_eq!(shells, vec![PWSH, WINPS, CMD]);
+    }
+
+    #[test]
+    fn windows_candidates_empty_when_nothing_found() {
+        let shells = windows_shell_candidates(stub_path(&[]), None, |_| true);
+        assert!(shells.is_empty());
+    }
+
+    #[test]
+    fn find_in_path_returns_first_matching_dir() {
+        let path_var =
+            std::env::join_paths(["/nope", "", "/first", "/second"].iter().map(PathBuf::from))
+                .unwrap();
+        let found = find_in_path("pwsh.exe", Some(&path_var), |p| {
+            p.starts_with("/first") || p.starts_with("/second")
+        });
+        assert_eq!(found, Some(PathBuf::from("/first").join("pwsh.exe")));
+    }
+
+    #[test]
+    fn find_in_path_none_without_path_or_match() {
+        assert_eq!(find_in_path("pwsh.exe", None, |_| true), None);
+        let path_var = std::env::join_paths([PathBuf::from("/a")]).unwrap();
+        assert_eq!(find_in_path("pwsh.exe", Some(&path_var), |_| false), None);
+    }
+
+    #[test]
+    fn find_in_path_real_filesystem() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("pwsh.exe");
+        std::fs::write(&exe, b"").unwrap();
+        let path_var = std::env::join_paths([dir.path()]).unwrap();
+        assert_eq!(
+            find_in_path("pwsh.exe", Some(&path_var), Path::is_file),
+            Some(exe)
+        );
+        assert_eq!(
+            find_in_path("powershell.exe", Some(&path_var), Path::is_file),
+            None
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn detect_windows_default_shell_is_a_windows_shell() {
+        let pick = detect_windows_default_shell();
+        let lower = pick.to_ascii_lowercase();
+        assert!(
+            lower.ends_with("pwsh.exe")
+                || lower.ends_with("powershell.exe")
+                || lower.ends_with("cmd.exe"),
+            "unexpected Windows default shell: {pick}"
+        );
+        assert!(!pick.starts_with('/'));
+        // Every reported shell exists on disk.
+        for shell in detect_windows_shells() {
+            assert!(Path::new(&shell).is_file(), "missing shell: {shell}");
+        }
     }
 
     // -----------------------------------------------------------------------
