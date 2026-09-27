@@ -17,11 +17,20 @@
 //              applies it with scripts/internal/apply-branch-protection.sh and
 //              then flips the status to "enforced".
 //
+// Optional `pending` block per branch (#3677): a complete future `protection`
+// plus `when` (the moment it must be applied). Live matching the current
+// `protection` reports a "pending change" line (exit 0); live matching `pending`
+// reports that it was applied and must be promoted into `protection` (exit 0);
+// live matching neither is ordinary drift. Applied with
+// `apply-branch-protection.sh --branch <name> --target pending --apply`.
+//
 // Usage:
 //   node scripts/internal/check-branch-protection.mjs [--repo <owner/name>]
 //        [--file <json>] [--branch <name>]... [--summary <md-file>]
 //   node scripts/internal/check-branch-protection.mjs --payload <branch> [--file <json>]
-//        Print the REST PUT body for <branch> (used by apply-branch-protection.sh).
+//        [--target protection|pending]
+//        Print the REST PUT body for <branch> (used by apply-branch-protection.sh);
+//        --target pending prints the branch's `pending` protection instead.
 //
 // Token: BRANCH_PROTECTION_TOKEN, else GH_TOKEN, else GITHUB_TOKEN, else
 // `gh auth token`. When BRANCH_PROTECTION_TOKEN is set, an unreadable response is
@@ -64,6 +73,51 @@ export const REVIEW_FIELDS = [
 
 const STATUSES = new Set(["enforced", "proposed"]);
 
+/** The protection targets a branch entry can name (`--target`). */
+export const TARGETS = ["protection", "pending"];
+
+/**
+ * Validate one protection object (`branches.<b>.protection` or `.pending.protection`).
+ *
+ * @param {string} where - JSON path used in error messages.
+ * @param {object} p
+ */
+function validateProtection(where, p) {
+  if (!p || typeof p !== "object") {
+    throw new Error(`branch-protection.json: ${where} is missing`);
+  }
+  for (const key of TOGGLES) {
+    if (typeof p[key] !== "boolean") {
+      throw new Error(`branch-protection.json: ${where}.${key} must be a boolean`);
+    }
+  }
+  const checks = p.required_status_checks;
+  if (checks !== null) {
+    if (typeof checks?.strict !== "boolean" || !Array.isArray(checks?.contexts)) {
+      throw new Error(
+        `branch-protection.json: ${where}.required_status_checks needs strict + contexts (or null)`
+      );
+    }
+  }
+}
+
+/**
+ * The protection object for a branch entry and target.
+ *
+ * @param {string} name - branch name (for errors).
+ * @param {object} entry - `branches.<name>`.
+ * @param {"protection" | "pending"} target
+ * @returns {object}
+ */
+export function selectProtection(name, entry, target = "protection") {
+  if (!TARGETS.includes(target)) {
+    throw new Error(`unknown target "${target}" (expected ${TARGETS.join(" or ")})`);
+  }
+  if (target === "protection") return entry.protection;
+  if (!entry.pending) throw new Error(`branch "${name}" has no pending protection`);
+  return entry.pending.protection;
+}
+
 /**
  * Parse and validate the expectation file.
  *
@@ -80,22 +134,16 @@ export function parseExpected(text) {
     if (!STATUSES.has(entry?.status)) {
       throw new Error(`branch-protection.json: ${name}.status must be "enforced" or "proposed"`);
     }
-    const p = entry.protection;
-    if (!p || typeof p !== "object") {
-      throw new Error(`branch-protection.json: ${name}.protection is missing`);
-    }
-    for (const key of TOGGLES) {
-      if (typeof p[key] !== "boolean") {
-        throw new Error(`branch-protection.json: ${name}.protection.${key} must be a boolean`);
+    validateProtection(`${name}.protection`, entry.protection);
+    if (entry.pending !== undefined) {
+      const pending = entry.pending;
+      if (!pending || typeof pending !== "object") {
+        throw new Error(`branch-protection.json: ${name}.pending must be an object`);
       }
-    }
-    const checks = p.required_status_checks;
-    if (checks !== null) {
-      if (typeof checks?.strict !== "boolean" || !Array.isArray(checks?.contexts)) {
-        throw new Error(
-          `branch-protection.json: ${name}.protection.required_status_checks needs strict + contexts (or null)`
-        );
+      if (typeof pending.when !== "string" || pending.when.trim() === "") {
+        throw new Error(`branch-protection.json: ${name}.pending.when must say when it is applied`);
       }
+      validateProtection(`${name}.pending.protection`, pending.protection);
     }
   }
   return branches;
@@ -320,12 +368,35 @@ export async function run({
     }
     const live = got.state === "ok" ? normalizeLive(got.data) : null;
     const drift = diffProtection(entry.protection, live);
+    const pending = entry.pending ? diffProtection(entry.pending.protection, live) : null;
     if (drift.length === 0) {
-      results.push({ branch: name, status: entry.status, outcome: "match" });
+      const hasPendingChange = pending !== null && pending.length > 0;
+      results.push({
+        branch: name,
+        status: entry.status,
+        outcome: hasPendingChange ? "pending-change" : "match",
+      });
       report.push(
         entry.status === "proposed"
           ? `MATCH ${name} (proposed): the proposal is live; flip its status to "enforced".`
           : `OK ${name}: live protection matches.`
+      );
+      if (hasPendingChange) {
+        report.push(
+          `PENDING CHANGE ${name} (not applied yet, by design): ${pending.length} difference(s)`,
+          `  When: ${entry.pending.when}`,
+          `  Apply: scripts/internal/apply-branch-protection.sh --branch ${name} --target pending --apply`
+        );
+        for (const line of pending) report.push(`  - ${line}`);
+      }
+      continue;
+    }
+    if (pending !== null && pending.length === 0) {
+      results.push({ branch: name, status: entry.status, outcome: "pending-live" });
+      report.push(
+        `PENDING LIVE ${name}: the pending protection is applied.`,
+        `  Promote it in a PR: move branches.${name}.pending.protection to`,
+        `  branches.${name}.protection and delete branches.${name}.pending.`
       );
       continue;
     }
@@ -361,7 +432,14 @@ export function resolveToken(env = process.env, exec = execFileSync) {
 
 /** Parse CLI arguments. */
 export function parseArgs(argv) {
-  const opts = { repo: DEFAULT_REPO, file: DEFAULT_FILE, only: [], summary: "", payload: "" };
+  const opts = {
+    repo: DEFAULT_REPO,
+    file: DEFAULT_FILE,
+    only: [],
+    summary: "",
+    payload: "",
+    target: "protection",
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     const value = () => {
@@ -374,7 +452,14 @@ export function parseArgs(argv) {
     else if (arg === "--branch") opts.only.push(value());
     else if (arg === "--summary") opts.summary = value();
     else if (arg === "--payload") opts.payload = value();
+    else if (arg === "--target") opts.target = value();
     else throw new Error(`unknown argument: ${arg}`);
+  }
+  if (!TARGETS.includes(opts.target)) {
+    throw new Error(`--target must be ${TARGETS.join(" or ")}, got "${opts.target}"`);
+  }
+  if (opts.target !== "protection" && !opts.payload) {
+    throw new Error("--target only applies together with --payload");
   }
   return opts;
 }
@@ -387,7 +472,8 @@ async function main() {
     if (opts.payload) {
       const entry = branches[opts.payload];
       if (!entry) throw new Error(`branch "${opts.payload}" is not in ${opts.file}`);
-      process.stdout.write(`${JSON.stringify(buildPutPayload(entry.protection), null, 2)}\n`);
+      const protection = selectProtection(opts.payload, entry, opts.target);
+      process.stdout.write(`${JSON.stringify(buildPutPayload(protection), null, 2)}\n`);
       return 0;
     }
     const { exitCode, report, results } = await run({
@@ -414,6 +500,12 @@ async function main() {
         );
       } else if (r.outcome === "pending") {
         console.log(`::notice title=Proposed protection not applied::${r.branch}`);
+      } else if (r.outcome === "pending-change") {
+        console.log(`::notice title=Pending protection change::${r.branch}: see the report`);
+      } else if (r.outcome === "pending-live") {
+        console.log(
+          `::warning title=Pending protection applied::${r.branch}: promote it into protection`
+        );
       }
     }
     if (opts.summary) {
