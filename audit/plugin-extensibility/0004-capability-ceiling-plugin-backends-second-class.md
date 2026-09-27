@@ -10,7 +10,8 @@ evidence:
   - core/src/plugin/connection.rs:298
   - plugin-api/src/backend.rs:62
   - core/src/plugin/connection.rs:394
-status: open
+status: fixed
+resolution: "#3722 — maintainer decision: plugins terminal-only for 0.1; ceiling documented (plugin-authoring + ADR-15 amendment) with append-only growth path; capability ceiling pinned by tests"
 ---
 
 ## What

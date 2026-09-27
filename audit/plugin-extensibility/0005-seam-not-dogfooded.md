@@ -9,7 +9,8 @@ subsystem: core/src/plugin
 evidence:
   - core/src/plugin/connection.rs:283
   - examples/plugins/echo-backend/src/lib.rs:1
-status: open
+status: fixed
+resolution: "#3722 — packaged-plugin dlopen->trust->load->connect->I/O->unload covered per-OS by plugin-packaging lane (#3508); first-party built-in via ABI deferred with the ceiling (ADR-15)"
 ---
 
 ## What
