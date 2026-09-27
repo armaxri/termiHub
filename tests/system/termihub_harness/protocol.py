@@ -23,6 +23,46 @@ from typing import Any, Optional
 Command = dict[str, Any]
 Response = dict[str, Any]
 
+# Every ``action`` the bridge understands — the Python mirror of the TypeScript
+# ``BridgeCommand`` union in ``src/testbridge/protocol.ts``. The contract test
+# (tests/test_bridge_protocol_contract.py, MOCK-010) fails when this set, the TS
+# union, the in-app dispatcher, the Driver verbs in ``bridge.py`` or the fake
+# app's handler drift apart, so add a new command to all of them together.
+BRIDGE_ACTIONS: frozenset[str] = frozenset(
+    {
+        "click",
+        "contextMenu",
+        "doubleClick",
+        "drag",
+        "dragTo",
+        "editorCursor",
+        "emitEvent",
+        "exists",
+        "getAttribute",
+        "getComputedStyle",
+        "getState",
+        "getTerminalViewport",
+        "getText",
+        "getValue",
+        "pressKey",
+        "projectionDispatch",
+        "projectionDropNext",
+        "projectionResync",
+        "projectionState",
+        "projectionSubscribe",
+        "projectionUnsubscribe",
+        "readTerminal",
+        "resizeWindow",
+        "sampleCanvas",
+        "screenshot",
+        "scrollTerminal",
+        "select",
+        "severAgentTransport",
+        "terminalInput",
+        "type",
+    }
+)
+
 
 def encode_request(request_id: int, command: Command) -> str:
     """Serialize a ``{id, command}`` request envelope to a JSON string."""
