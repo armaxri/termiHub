@@ -9,7 +9,8 @@ subsystem: .github
 evidence:
   - .github/workflows/code-quality.yml:4
   - .github/workflows/auto-close-issues.yml:21
-status: open
+status: fixed
+resolution: "#3679 — branch protection committed as .github/branch-protection.json (main enforced = live; develop proposed), drift checker + weekly workflow (needs BRANCH_PROTECTION_TOKEN), admin apply script; main/slim-lane reconcile #3677, PR Gate #3678"
 ---
 
 ## What
