@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/backends/vnc
 evidence:
   - core/src/backends/vnc/mod.rs:503
-status: open
+status: wontfix
+resolution: "#3697 — RFB has no standard audio channel; limitation documented in README, feature matrix and architecture parity note"
 ---
 
 ## What

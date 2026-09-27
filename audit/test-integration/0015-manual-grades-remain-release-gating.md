@@ -10,7 +10,8 @@ evidence:
   - docs/testing.md:987
   - docs/testing.md:2745
   - tests/manual/
-status: open
+status: fixed
+resolution: "#3697 — manual corpus triaged 169->57: 62 covered+deleted, 9 automated, 41 guided-suite; 46 tracked by automation issues #3682-#3695; 11 release-gating; corpus guard test"
 ---
 
 ## What
