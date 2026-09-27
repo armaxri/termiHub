@@ -454,6 +454,46 @@ known-flaky, #1585), so `TERMIHUB_REQUIRE_DOCKER=1` cannot be flipped on
 blanket there until those fixtures are brought up or the corresponding tests are
 excluded from the required run; that wiring is tracked as a follow-up.
 
+### Linux polkit D-Bus path (#3553)
+
+The Linux OS re-auth verifier's result mapping is unit-tested against a fake
+authority; the **real** D-Bus transport
+([`polkit/dbus.rs`](../src-tauri/src/credential/os_auth/polkit/dbus.rs):
+`EnumerateActions`, `CheckAuthorization` with a `system-bus-name` subject,
+`CancelCheckAuthorization` on timeout) is covered headlessly by
+[`tests/docker/polkit/`](../tests/docker/polkit/). A Debian container runs a
+system bus + `polkitd` (no desktop session), and the `termihub-polkit-probe`
+workspace member — which compiles the shipped `authority.rs` + `dbus.rs` by
+path, so no Tauri build is needed — is driven as an unprivileged user through:
+
+| Scenario                                         | Expected                                                                                |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| `polkitd` not running                            | `ServiceUnavailable`                                                                    |
+| Policy file not installed (AppImage / portable)  | not registered; `check` → `ActionNotRegistered`                                         |
+| Shipped `com.termihub.app.policy` installed      | registered                                                                              |
+| Shipped defaults, subject outside a session      | denied (`allow_any = no`)                                                               |
+| Rules file returns `YES` / `NO`                  | authorized / denied                                                                     |
+| Rules `AUTH_SELF`, no agent                      | `is_challenge` (the "no agent" outcome)                                                 |
+| `pkttyagent` + right / wrong password (real PAM) | authorized / denied                                                                     |
+| Agent answers `Error.Cancelled` (dialog Cancel)  | `polkit.dismissed`                                                                      |
+| Agent never answers, 3 s prompt bound            | `TimedOut`; `dbus-monitor` sees polkit accept the verifier's `CancelCheckAuthorization` |
+
+Run it from any OS with Docker (it builds the probe in a
+`rust:<.github/rust-version>-slim-trixie` container and names everything after
+this checkout's `TERMIHUB_TEST_PROJECT`):
+
+```bash
+tests/docker/polkit/run.sh          # keeps the cargo cache volumes for fast reruns
+tests/docker/polkit/run.sh --clean  # also removes the image and volumes (CI)
+```
+
+It runs in the `polkit-dbus` job of the
+[`integration-fixtures.yml`](../.github/workflows/integration-fixtures.yml) lane
+(nightly, and on PRs touching `tests/docker/**`, the polkit module or the policy
+file) — not in the per-PR lane, since it needs a system bus. The real desktop
+agents' dialogs (GNOME Shell, KDE) remain a manual check — see
+[Linux — keychain export via polkit](#linux--keychain-export-via-polkit-3535).
+
 ### Per-PR app-shell smoke (#2065)
 
 To give the merge gate _some_ app-boot coverage without the nightly lane's build
@@ -1918,8 +1958,9 @@ or face sensor for the biometric steps). Each step states the expected result.
 
 #### Linux — keychain export via polkit (#3535)
 
-The polkit result mapping is unit-tested against a fake authority; the real agent dialog needs a
-desktop session. Run once on **GNOME** (Ubuntu/Fedora Workstation — GNOME Shell is the agent) and
+The polkit result mapping is unit-tested against a fake authority, and the real D-Bus path is
+automated headlessly (see [Linux polkit D-Bus path](#linux-polkit-d-bus-path-3553)); the real
+desktop agent dialog still needs a desktop session. Run once on **GNOME** (Ubuntu/Fedora Workstation — GNOME Shell is the agent) and
 once on **KDE Plasma** (`polkit-kde-authentication-agent-1`), installing termiHub from the **.deb**
 (Ubuntu/Debian) or **.rpm** (Fedora/openSUSE) package.
 
