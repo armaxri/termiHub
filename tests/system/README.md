@@ -428,10 +428,15 @@ Podman's compose provider may not support that flag.) Force a runtime with
 > plugin if you hit it.
 
 Telnet works the same way: depend on **`telnet_fixtures`** to bring up the
-`telnet-server` container (`TELNET_PORT` 2301). The **serial** editor-UI suite
-(`test_serial.py`) needs **no** container — its live-I/O scenarios are manual
-(the port field is a detection-only `<select>` a virtual PTY can't be selected
-through; see the module docstring and `docs/testing.md` → `MT-SER-09`).
+`telnet-server` container (`TELNET_PORT` 2301). The **serial** suite
+(`test_serial.py`) needs **no** container: live serial I/O depends on the
+function-scoped **`serial_echo_pair`** fixture, which starts a host-side `socat`
+PTY pair with an echo loop on one end (`termihub_harness.SerialEchoPair`). Point
+the app at `pair.app_port` (typed into the editable port combobox, #854) and
+every byte is echoed back; `pair.kill_socat()` makes the port vanish to exercise
+the lost-port disconnect. Teardown stops only the `socat` the fixture started.
+It skips cleanly where `socat` is missing (Windows, or not installed — `apt
+install socat` / `brew install socat`).
 
 Coordinates live in `termihub_harness` as constants: `SSH_PASSWORD_PORT` (2201),
 `SSH_KEYS_PORT` (2203), `SSH_USERNAME` / `SSH_PASSWORD`, `SSH_KEY_PATH`, and
