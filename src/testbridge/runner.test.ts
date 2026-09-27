@@ -11,7 +11,7 @@ import type {
   ScrollTerminalOptions,
   TerminalInputOptions,
 } from "./driver";
-import type { TerminalViewport } from "./protocol";
+import type { CanvasSample, TerminalViewport } from "./protocol";
 import { BridgeError } from "./driver";
 import type { Scenario } from "./scenario";
 
@@ -127,6 +127,11 @@ class FakeDriver implements Driver {
 
   async getComputedStyle(property: string, options: GetComputedStyleOptions = {}): Promise<string> {
     return this.computedStyles.get(options.testId ?? "")?.[property] ?? "";
+  }
+
+  async sampleCanvas(testId: string): Promise<CanvasSample> {
+    if (!this.elements.has(testId)) throw new BridgeError("sampleCanvas", `no element "${testId}"`);
+    return { width: 0, height: 0, pixels: [] };
   }
 
   async readTerminal(_options?: ReadTerminalOptions): Promise<string> {

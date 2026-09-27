@@ -1,4 +1,10 @@
-import type { BridgeCommand, BridgeResponse, TerminalViewport } from "./protocol";
+import type {
+  BridgeCommand,
+  BridgeResponse,
+  CanvasPoint,
+  CanvasSample,
+  TerminalViewport,
+} from "./protocol";
 
 /**
  * Transport that carries a {@link BridgeCommand} to the running app and returns
@@ -146,6 +152,11 @@ export interface Driver {
    * like `--bg-primary` live.
    */
   getComputedStyle(property: string, options?: GetComputedStyleOptions): Promise<string>;
+  /**
+   * Sample RGBA pixels of a `<canvas>` at backing-store coordinates (e.g. the
+   * remote-desktop framebuffer canvas). Pass no points to read only its size.
+   */
+  sampleCanvas(testId: string, points?: CanvasPoint[]): Promise<CanvasSample>;
   /** Drag an element by a pixel delta (e.g. a resize handle). */
   drag(testId: string, dx: number, dy?: number): Promise<void>;
   /** Read the reconstructed text of a terminal (active tab unless specified). */
@@ -293,6 +304,10 @@ export class InAppBridgeDriver implements Driver {
 
   async getComputedStyle(property: string, options: GetComputedStyleOptions = {}): Promise<string> {
     return this.send<string>({ action: "getComputedStyle", testId: options.testId, property });
+  }
+
+  async sampleCanvas(testId: string, points: CanvasPoint[] = []): Promise<CanvasSample> {
+    return this.send<CanvasSample>({ action: "sampleCanvas", testId, points });
   }
 
   async drag(testId: string, dx: number, dy?: number): Promise<void> {

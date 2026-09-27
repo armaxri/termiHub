@@ -83,6 +83,16 @@ describe("InAppBridgeDriver", () => {
     });
   });
 
+  it("maps sampleCanvas to a command and unwraps the sample", async () => {
+    const sample = { width: 10, height: 5, pixels: [[255, 0, 0, 255]] };
+    const { transport, sent } = scriptedTransport({
+      sampleCanvas: { ok: true, action: "sampleCanvas", value: sample },
+    });
+    const value = await new InAppBridgeDriver(transport).sampleCanvas("rd", [{ x: 1, y: 2 }]);
+    expect(value).toEqual(sample);
+    expect(sent[0]).toEqual({ action: "sampleCanvas", testId: "rd", points: [{ x: 1, y: 2 }] });
+  });
+
   it("maps contextMenu to a contextMenu command", async () => {
     const { transport, sent } = scriptedTransport({});
     await new InAppBridgeDriver(transport).contextMenu("connection-item-1");

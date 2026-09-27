@@ -413,6 +413,50 @@ export async function dispatchCommand(
       return ok("getComputedStyle", value);
     }
 
+    case "sampleCanvas": {
+      const el = findByTestId(deps.root, command.testId);
+      if (!el) return fail("sampleCanvas", `no element with data-testid="${command.testId}"`);
+      if (el.tagName.toLowerCase() !== "canvas") {
+        return fail("sampleCanvas", `element data-testid="${command.testId}" is not a <canvas>`);
+      }
+      const canvas = el as HTMLCanvasElement;
+      const { width, height } = canvas;
+      const points = command.points ?? [];
+      const bad = points.find(
+        (p) =>
+          !Number.isInteger(p?.x) ||
+          !Number.isInteger(p?.y) ||
+          p.x < 0 ||
+          p.y < 0 ||
+          p.x >= width ||
+          p.y >= height
+      );
+      if (bad) {
+        return fail(
+          "sampleCanvas",
+          `point ${JSON.stringify(bad)} is not an integer inside the ${width}x${height} canvas`
+        );
+      }
+      if (points.length === 0) return ok("sampleCanvas", { width, height, pixels: [] });
+      let ctx: CanvasRenderingContext2D | null = null;
+      try {
+        ctx = canvas.getContext("2d");
+      } catch (error) {
+        return fail("sampleCanvas", errorMessage(error));
+      }
+      if (!ctx)
+        return fail("sampleCanvas", `canvas data-testid="${command.testId}" has no 2D context`);
+      try {
+        const pixels = points.map((p) => {
+          const d = ctx.getImageData(p.x, p.y, 1, 1).data;
+          return [d[0], d[1], d[2], d[3]] as [number, number, number, number];
+        });
+        return ok("sampleCanvas", { width, height, pixels });
+      } catch (error) {
+        return fail("sampleCanvas", errorMessage(error));
+      }
+    }
+
     case "click": {
       const el = findByTestId(deps.root, command.testId);
       if (!el) return fail("click", `no element with data-testid="${command.testId}"`);
