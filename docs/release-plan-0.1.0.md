@@ -589,8 +589,25 @@ gh pr create --title "chore: release v0.1.0-beta" --body "$(cat <<'EOF'
 - Release checklist script passes
 EOF
 )"
+```
 
-# Merge (after review)
+**Right after opening the PR** (before it needs to go green), apply `main`'s pending
+required checks (#3677) — as a repository admin, one command:
+
+```bash
+scripts/internal/apply-branch-protection.sh --branch main --target pending --apply
+```
+
+`main`'s current required checks predate the slim PR lane and name checks the release
+PR never reports (the macOS/Windows Build legs, `Run Tests (macos-latest)`, Security
+Audit), and admins cannot bypass them — so without this step the PR can never merge.
+Skip it only if `.github/branch-protection.json` has no `branches.main.pending` block
+any more (already applied and promoted). Run it without `--apply` first to see the
+dry run. After the release, promote the pending block in a PR (see
+[Required checks per branch](contributing.md#required-checks-per-branch)).
+
+```bash
+# Merge (after review and green checks)
 gh pr merge --merge
 ```
 
