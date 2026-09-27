@@ -4193,8 +4193,9 @@ exhausted. Pending a fault-injection system test (follow-up), verify manually:
    once the host is reachable again — no manual Kill / re-pick.
 3. **Exhausted backoff → Offline:** stop the monitored host's sshd and leave it
    down. Confirm monitoring goes `Stale` → `Reconnecting`, retries under an
-   increasing backoff (capped at 30 s), and after the attempt budget resolves to
-   **Offline** and stops retrying (no runaway reconnect loop).
+   increasing, jittered backoff (capped at 30 s), and after the shared budget of
+   10 attempts (at most ~3 minutes of backoff) resolves to **Offline** and stops
+   retrying (no runaway reconnect loop).
 4. Repeat against a monitored host **behind the agent** (agent monitoring
    subscription) to confirm the agent mirrors the same behavior.
 

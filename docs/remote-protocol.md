@@ -2880,7 +2880,7 @@ A monitored host's collect-loop status changed (#3321). The agent sends one on e
 **Compatibility.** The notification is optional and additive:
 
 - An older desktop ignores it (unknown notification methods are dropped).
-- A newer desktop applies it in preference to inferring status from the sample flow. Against an older agent, which never sends it, the desktop keeps inferring: missed samples mark the monitor `stale`, and a `stale` monitor whose agent transport stays up resolves `offline` once the agent's worst-case recovery budget has passed (217 s at the default 2 s interval: 2 failed collects to `stale` plus 6 failed collects after a re-dial, each up to `interval + 10 s` collect timeout, plus the 121 s reconnect backoff `1+2+4+8+16+30+30+30`). A later sample still recovers the monitor to `live`.
+- A newer desktop applies it in preference to inferring status from the sample flow. Against an older agent, which never sends it, the desktop keeps inferring: missed samples mark the monitor `stale`, and a `stale` monitor whose agent transport stays up resolves `offline` once the agent's worst-case recovery budget has passed (277 s at the default 2 s interval: 2 failed collects to `stale` plus 6 failed collects after a re-dial, each up to `interval + 10 s` collect timeout, plus the worst-case 181 s reconnect backoff `1+2+4+8+16+30+30+30+30+30` of the shared reconnect policy; an older agent with the former 8-attempt budget resolves sooner, which only makes this bound more generous). A later sample still recovers the monitor to `live`.
 - A desktop must ignore a `status` or `reason` value it does not recognize rather than fail.
 
 ---

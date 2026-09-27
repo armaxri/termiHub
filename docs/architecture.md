@@ -837,6 +837,79 @@ flowchart LR
 - Agent-hosted terminal tabs are always reconnect-eligible (agent-level session
   re-attach), independent of this setting.
 
+### Reconnect Policy (SM-020)
+
+Every automatic reconnect loop follows **one** retry policy, `RECONNECT_POLICY` in
+`core/src/reconnect_backoff.rs` (mirrored for the frontend in
+`src/utils/reconnectBackoff.ts`, #3730). All loops drive the same pure engine
+(`reconnect_reducer`), and each one reads its policy from `policy_for(ReconnectKind)`,
+so a loop cannot quietly carry its own numbers.
+
+| Setting        | Value                    | Meaning                                                        |
+| -------------- | ------------------------ | -------------------------------------------------------------- |
+| First delay    | 1 s                      | A brief blip recovers almost at once.                          |
+| Growth         | ×2 per attempt           | 1, 2, 4, 8, 16 s …                                             |
+| Delay cap      | 30 s                     | No single wait is longer than 30 s.                            |
+| Attempt budget | 10                       | Then the loop gives up and shows the manual reconnect state.   |
+| Jitter         | up to 50 % shorter       | Each wait is drawn from `[d/2, d]` of its nominal delay `d`.   |
+| Give-up window | 181 s of waiting at most | `1+2+4+8+16+30+30+30+30+30 s`, the nominal (worst-case) total. |
+
+**Jitter** is bounded "equal jitter": it only ever _shortens_ a wait, never below half of
+it. So a nominal delay is always the worst case (the give-up window is exact), a wait
+never exceeds the 30 s cap, and a wait never collapses to zero — no reconnect storm.
+Clients dropped by the same outage (many tabs, tunnels or monitors to one host) spread
+over half of every window instead of re-dialling in lockstep. The ratio is clamped to
+`0.5`, and a broken random source (NaN, out of range) cannot push a wait out of those
+bounds.
+
+**Determinism under test.** The random source is injectable everywhere (`FnMut() -> f64`
+in Rust, `() => number` in TypeScript). Production draws from the thread RNG
+(`system_jitter`); tests pass a constant (`0` gives the nominal schedule) or a seeded,
+portable `SeededJitter` (SplitMix64), and a seeded schedule is pinned as a golden. The
+golden vectors under `core/tests/fixtures/golden/reconnect_backoff/` are replayed by
+both the Rust and the TypeScript engine, which also pins the policy constants on both
+sides. Property tests cover the bounds, the monotone cap and the absence of zero-length
+windows.
+
+| Loop (`ReconnectKind`)     | Where                                                 | Policy                                  |
+| -------------------------- | ----------------------------------------------------- | --------------------------------------- |
+| Terminal tabs              | `src-tauri/src/session_projection/` (store + redrive) | shared                                  |
+| Agent transport            | `src-tauri/src/terminal/agent_manager.rs` (in-task)   | shared                                  |
+| SSH tunnels                | `src-tauri/src/tunnel/tunnel_manager.rs`              | shared                                  |
+| Graphical (VNC/RDP)        | `src-tauri/src/session/graphical_supervisor.rs`       | shared                                  |
+| Monitoring (desktop/agent) | `core/src/monitoring/status.rs` (`BackoffSchedule`)   | shared                                  |
+| FTP file operation         | `core/src/backends/ftp/reconnect.rs`                  | **override**: 3 retries, 100 ms → 1.6 s |
+
+**The one override.** The FTP file browser does not run a session reconnect loop; it
+retries the single file operation the user is waiting on (a listing, a download) after
+re-opening the control connection. That must resolve in about a second, not minutes, so
+it keeps 3 retries doubling from 100 ms to a 1.6 s cap (700 ms of worst-case backoff) —
+on the same engine and jitter. A test pins that every policy is bounded, jittered and
+inside the give-up window.
+
+**Telnet and serial** have no automatic reconnect: they do not expose Auto-Reconnect,
+and a dropped tab shows the manual reconnect prompt.
+
+**Agent tabs: no compounding.** An agent-hosted tab has two loops that could look
+nested. A transient break of the agent's SSH transport is owned by the agent's
+**in-task** loop (10 attempts); while it runs, the hosted tabs show "reconnecting"
+without arming the tab loop, and if it gives up the tabs fold straight to failed —
+the tab loop is never armed on top of it. The **tab** loop (the backend redrive) only
+runs for a tab whose session dropped while the transport was up or gone; each of its
+attempts makes at most one cold transport connect, and is a no-op when the in-task loop
+is already reconnecting. So no single drop runs more than one policy's worth of
+network re-dials.
+
+The give-up window bounds the _waiting_. The attempts themselves are bounded by each
+transport's own timeout (for example the agent's 45 s SSH connect timeout, or the
+graphical 30 s re-dial timeout), so every loop resolves in bounded time.
+
+**One wording for every surface.** Terminal and graphical tabs both show "Connection
+lost — reconnecting…" with "Attempt n of 10" (`src/utils/reconnectStatus.ts`). The
+monitoring status bar shows exactly one badge, by precedence: **Offline** (with Retry)
+over **Reconnecting…** over **Stale** over **Paused** — a link problem always outranks a
+user pause. Reconnecting, Stale and Paused dim the frozen numbers.
+
 ### Graphical Backend Parity: VNC Has No Audio (PROD-020)
 
 The two graphical backends share the framebuffer, input, clipboard and auto-reconnect
