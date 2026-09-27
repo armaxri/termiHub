@@ -37,6 +37,11 @@ from termihub_harness import (
     TELNET_HOST,
     TELNET_PORT,
     TELNET_SERVICE,
+    VNC_HOST,
+    VNC_PORT,
+    VNC_SERVICE,
+    VNC_VENCRYPT_PORT,
+    VNC_VENCRYPT_SERVICE,
     AgentInstance,
     AppInstance,
     Bridge,
@@ -44,6 +49,7 @@ from termihub_harness import (
     ContainerRuntimeUnavailable,
     require_test_bridge_build,
     stage_remote_agent_binary,
+    wait_for_banner,
 )
 
 
@@ -300,6 +306,40 @@ def telnet_fixtures():
     return _ensure_services(
         [(TELNET_HOST, TELNET_SERVICE, TELNET_PORT)], label="telnet"
     )
+
+
+def _ensure_vnc_service(service, port):
+    """Bring up one ``vnc``-profile server and wait for its RFB greeting.
+
+    Naming the service activates its compose profile, so this works in the
+    nightly Linux lane even though that lane's bulk bring-up starts only the
+    profile-less fixtures. The published port answers as soon as the container
+    runs, before the server inside listens, so readiness is the server's own
+    ``RFB 003.00x`` greeting rather than a bare TCP connect. Skips cleanly when
+    no container runtime is reachable (the macOS/Windows CI legs).
+    """
+    fixture = _ensure_services([(VNC_HOST, service, port)], label="VNC")
+    try:
+        wait_for_banner(VNC_HOST, port, b"RFB ", timeout=90.0)
+    except ContainerRuntimeUnavailable as exc:
+        pytest.skip(f"VNC container fixture unavailable: {exc}")
+    return fixture
+
+
+@pytest.fixture(scope="session")
+def vnc_fixtures():
+    """Classic-VncAuth VNC server (x11vnc + Xvfb, profile ``vnc``, port 2501)."""
+    return _ensure_vnc_service(VNC_SERVICE, VNC_PORT)
+
+
+@pytest.fixture(scope="session")
+def vnc_vencrypt_fixtures():
+    """VeNCrypt X509 VNC server (TigerVNC Xvnc, profile ``vnc``, port 2502).
+
+    The one fixture that honours client ``SetDesktopSize`` requests, so a
+    dynamic-resolution session's remote desktop really follows the tab.
+    """
+    return _ensure_vnc_service(VNC_VENCRYPT_SERVICE, VNC_VENCRYPT_PORT)
 
 
 @pytest.fixture(scope="session")
