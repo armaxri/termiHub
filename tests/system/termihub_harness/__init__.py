@@ -89,7 +89,12 @@ from .orchestrator import (
     app_binary_path,
     require_test_bridge_build,
 )
-from .local_agent import LocalAgentSshd, LocalAgentUnavailable
+from .local_agent import (
+    LocalAgentSshd,
+    LocalAgentUnavailable,
+    NativeSshdFixture,
+    local_agent_endpoint,
+)
 from .local_http import LocalThreadingHTTPServer
 from .projection import ProjectionHarness
 from .serial_echo import SerialEchoPair, SerialEchoUnavailable
@@ -142,6 +147,8 @@ __all__ = [
     "AgentInstance",
     "LocalAgentSshd",
     "LocalAgentUnavailable",
+    "NativeSshdFixture",
+    "local_agent_endpoint",
     "SerialEchoPair",
     "SerialEchoUnavailable",
     "LocalThreadingHTTPServer",

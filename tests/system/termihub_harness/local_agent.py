@@ -248,3 +248,171 @@ class LocalAgentSshd:
                 return
             time.sleep(0.1)
         raise LocalAgentUnavailable(f"sshd did not listen on 127.0.0.1:{self._port} within {timeout}s")
+
+
+# ── native sshd fixture (CI-020, TIN-007) ──────────────────────────────────────
+#
+# On Windows, Win32-OpenSSH cannot be run as a throwaway unprivileged process the
+# way ``LocalAgentSshd`` runs ``/usr/sbin/sshd``: it has to run as LocalSystem to
+# log a user on. So the nightly Windows leg provisions it up front with
+# ``scripts/internal/native-sshd-fixture.sh up`` (-> ``.ps1``), which exports
+# ``TERMIHUB_NATIVE_SSHD_*``, and the reconnect grade drives THAT endpoint
+# through the same interface. The same fixture works on macOS/Linux too.
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_FIXTURE_SH = _REPO_ROOT / "scripts" / "internal" / "native-sshd-fixture.sh"
+_FIXTURE_PS1 = _REPO_ROOT / "scripts" / "internal" / "native-sshd-fixture.ps1"
+_IS_WINDOWS = os.name == "nt"
+
+
+class NativeSshdFixture:
+    """The provisioned native sshd, with ``LocalAgentSshd``'s interface.
+
+    ``stop`` takes the listener down (and ends the sessions it spawned) and
+    ``start`` brings it back on the same port; the fixture itself (service, test
+    user, keys) belongs to whoever ran ``up`` and is left in place by
+    :meth:`cleanup`, which only restores it to running and removes the
+    ``known_hosts`` entry this object added.
+    """
+
+    def __init__(self) -> None:
+        env = os.environ
+        try:
+            self._port = int(env["TERMIHUB_NATIVE_SSHD_PORT"])
+            self._username = env["TERMIHUB_NATIVE_SSHD_USER"]
+            self._client_key = env["TERMIHUB_NATIVE_SSHD_KEY"]
+            self._host_pubkey = Path(env["TERMIHUB_NATIVE_SSHD_HOST_PUBKEY"])
+            self._dir = env["TERMIHUB_NATIVE_SSHD_DIR"]
+        except (KeyError, ValueError) as exc:
+            raise LocalAgentUnavailable(
+                f"native sshd fixture env incomplete ({exc}); run "
+                "scripts/internal/native-sshd-fixture.sh up"
+            ) from exc
+        agent = env.get("TERMIHUB_NATIVE_SSHD_AGENT_BIN")
+        if agent:
+            self._agent_binary = Path(agent)
+        else:
+            try:
+                self._agent_binary = agent_binary_path()
+            except FileNotFoundError as exc:
+                raise LocalAgentUnavailable(str(exc)) from exc
+        self._known_hosts = Path.home() / ".ssh" / "known_hosts"
+        self._known_hosts_added = False
+        self._register_known_host()
+
+    @staticmethod
+    def present() -> bool:
+        """Whether a native sshd fixture was provisioned for this run."""
+        return bool(os.environ.get("TERMIHUB_NATIVE_SSHD_PORT"))
+
+    # ── the LocalAgentSshd interface ─────────────────────────────────────────────
+    @property
+    def port(self) -> int:
+        return self._port
+
+    @property
+    def username(self) -> str:
+        return self._username
+
+    @property
+    def client_key_path(self) -> str:
+        return self._client_key
+
+    @property
+    def agent_binary_path(self) -> str:
+        return str(self._agent_binary)
+
+    def start(self, ready_timeout: float = 30.0) -> "NativeSshdFixture":
+        self._fixture("start")
+        deadline = time.monotonic() + ready_timeout
+        while not self.is_listening():
+            if time.monotonic() > deadline:
+                raise LocalAgentUnavailable(
+                    f"native sshd did not listen on 127.0.0.1:{self._port} within {ready_timeout}s"
+                )
+            time.sleep(0.1)
+        return self
+
+    def stop(self) -> None:
+        self._fixture("stop")
+
+    def restart(self, ready_timeout: float = 30.0) -> None:
+        self.stop()
+        self.start(ready_timeout)
+
+    def is_listening(self) -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.5)
+            return sock.connect_ex(("127.0.0.1", self._port)) == 0
+
+    def cleanup(self) -> None:
+        try:
+            if not self.is_listening():
+                self._fixture("start")
+        finally:
+            self._unregister_known_host()
+
+    def __enter__(self) -> "NativeSshdFixture":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.cleanup()
+
+    # ── internals ────────────────────────────────────────────────────────────────
+    def _fixture(self, action: str) -> None:
+        if _IS_WINDOWS:
+            cmd = [
+                "pwsh", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(_FIXTURE_PS1),
+                "-Action", action, "-Dir", self._dir,
+            ]
+        else:
+            cmd = ["bash", str(_FIXTURE_SH), action, "--dir", self._dir]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"native sshd fixture '{action}' failed ({result.returncode}): "
+                f"{result.stderr.strip() or result.stdout.strip()}"
+            )
+
+    @property
+    def _known_hosts_marker(self) -> str:
+        return f"[127.0.0.1]:{self._port}"
+
+    def _register_known_host(self) -> None:
+        # Same strict-verifier reason as LocalAgentSshd._register_known_host.
+        algo, key = self._host_pubkey.read_text(encoding="utf-8").split()[:2]
+        self._known_hosts.parent.mkdir(mode=0o700, exist_ok=True)
+        with open(self._known_hosts, "a", encoding="utf-8") as fh:
+            fh.write(f"{self._known_hosts_marker} {algo} {key}\n")
+        self._known_hosts_added = True
+
+    def _unregister_known_host(self) -> None:
+        if not self._known_hosts_added or not self._known_hosts.exists():
+            return
+        try:
+            kept = [
+                ln
+                for ln in self._known_hosts.read_text(encoding="utf-8").splitlines(keepends=True)
+                if self._known_hosts_marker not in ln
+            ]
+            self._known_hosts.write_text("".join(kept), encoding="utf-8")
+        except OSError:
+            pass
+        self._known_hosts_added = False
+
+
+def local_agent_endpoint():
+    """The SSH endpoint an agent test should use on this runner.
+
+    The provisioned native sshd fixture when one is present (always on Windows,
+    where there is no other way), else a throwaway :class:`LocalAgentSshd`.
+    Raises :class:`LocalAgentUnavailable` when neither can be had.
+    """
+    if NativeSshdFixture.present():
+        return NativeSshdFixture()
+    if _IS_WINDOWS:
+        raise LocalAgentUnavailable(
+            "Windows needs the provisioned native sshd fixture "
+            "(scripts/internal/native-sshd-fixture.sh up); TERMIHUB_NATIVE_SSHD_PORT is unset"
+        )
+    return LocalAgentSshd()

@@ -147,6 +147,130 @@ macro_rules! require_docker {
 #[allow(unused_imports)]
 pub(crate) use require_docker;
 
+/// Name of the env var that marks a **native** loopback sshd fixture as present
+/// AND required (CI-020, TIN-007). `scripts/internal/native-sshd-fixture.{sh,ps1}`
+/// exports it (`=1`) together with the `TERMIHUB_NATIVE_SSHD_*` connection
+/// details below, on the runners that have no Linux Docker (macOS, Windows) as
+/// well as Linux. It is the native-sshd twin of [`REQUIRE_DOCKER_ENV`]: set, an
+/// unreachable fixture hard-fails the test; unset (a local / per-PR run), the
+/// native suites skip with a visible `SKIPPED:` line.
+pub const NATIVE_SSHD_ENV: &str = "TERMIHUB_NATIVE_SSHD";
+
+/// Connection details of the native sshd fixture, read from the
+/// `TERMIHUB_NATIVE_SSHD_*` env the fixture script exports.
+#[derive(Debug, Clone)]
+pub struct NativeSshd {
+    /// Loopback port the fixture sshd listens on.
+    pub port: u16,
+    /// Login user (the current user on macOS/Linux, a dedicated local test
+    /// user on Windows).
+    pub user: String,
+    /// Unencrypted ed25519 client private key authorized for `user`.
+    pub key_path: String,
+}
+
+impl NativeSshd {
+    /// Read the fixture from the environment. `None` when the port is unset or
+    /// unparsable (the fixture was never stood up).
+    pub fn from_env() -> Option<Self> {
+        let port = std::env::var("TERMIHUB_NATIVE_SSHD_PORT")
+            .ok()?
+            .trim()
+            .parse()
+            .ok()?;
+        Some(Self {
+            port,
+            user: std::env::var("TERMIHUB_NATIVE_SSHD_USER").unwrap_or_default(),
+            key_path: std::env::var("TERMIHUB_NATIVE_SSHD_KEY").unwrap_or_default(),
+        })
+    }
+
+    /// `SshConfig` authenticating with the fixture's own client key.
+    pub fn key_config(&self) -> termihub_core::config::SshConfig {
+        self.config_with_key(&self.key_path, None)
+    }
+
+    /// `SshConfig` for this fixture's user with an arbitrary key file (e.g. one
+    /// of the `tests/fixtures/ssh-keys` keys, all of which the fixture
+    /// authorizes) and optional passphrase.
+    pub fn config_with_key(
+        &self,
+        key_path: &str,
+        passphrase: Option<&str>,
+    ) -> termihub_core::config::SshConfig {
+        termihub_core::config::SshConfig {
+            host: "127.0.0.1".to_string(),
+            port: self.port,
+            username: self.user.clone(),
+            auth_method: "key".to_string(),
+            key_path: Some(key_path.to_string()),
+            password: passphrase.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    /// Settings JSON (the `ConnectionType::connect` shape) for key auth.
+    pub fn key_settings(&self) -> serde_json::Value {
+        serde_json::json!({
+            "host": "127.0.0.1",
+            "port": self.port,
+            "username": self.user,
+            "authMethod": "key",
+            "keyPath": self.key_path,
+        })
+    }
+}
+
+/// Resolve the native sshd fixture for a test, or `None` to skip.
+///
+/// Runs when the fixture env is present and its port is reachable. Skips with a
+/// visible `SKIPPED:` line when [`NATIVE_SSHD_ENV`] is unset and no fixture is
+/// reachable. **Panics** when [`NATIVE_SSHD_ENV`] is set but the fixture is
+/// missing or unreachable, so a native-sshd lane cannot go falsely green.
+pub fn require_native_sshd_fixture() -> Option<NativeSshd> {
+    let required = parse_required(std::env::var(NATIVE_SSHD_ENV).ok().as_deref());
+    let fixture = NativeSshd::from_env();
+    let port = fixture.as_ref().map_or(0, |f| f.port);
+    let reachable = fixture
+        .as_ref()
+        .is_some_and(|f| f.port != 0 && is_port_reachable("127.0.0.1", f.port));
+    match fixture_gate(reachable, required) {
+        FixtureGate::Run => fixture,
+        FixtureGate::Skip => {
+            eprintln!(
+                "SKIPPED: native sshd fixture not reachable (port {port}; start with: \
+                 eval \"$(scripts/internal/native-sshd-fixture.sh up)\")"
+            );
+            None
+        }
+        FixtureGate::Fail => panic!(
+            "REQUIRED fixture unavailable: native sshd not reachable on port {port} but \
+             {NATIVE_SSHD_ENV} is set -- a missing/broken fixture is a hard failure here, \
+             not a skip (TERMIHUB_NATIVE_SSHD_PORT/_USER/_KEY come from \
+             scripts/internal/native-sshd-fixture.sh up)"
+        ),
+    }
+}
+
+/// Skip *or hard-fail* the current test on the native sshd fixture and bind it.
+///
+/// `let sshd = require_native_sshd!();` — the native-sshd counterpart of
+/// [`require_docker!`] (see [`require_native_sshd_fixture`]). Also registers
+/// the trust-all loopback host-key verifier, since the fixture's host key is
+/// freshly generated per run.
+#[allow(unused_macros)]
+macro_rules! require_native_sshd {
+    () => {{
+        common::trust_fixture_host_keys();
+        match common::require_native_sshd_fixture() {
+            Some(fixture) => fixture,
+            None => return,
+        }
+    }};
+}
+#[allow(unused_imports)]
+pub(crate) use require_native_sshd;
+
 /// Register a process-wide host-key verifier that trusts the local Docker
 /// fixture containers, so the SSH integration tests connect deterministically
 /// under the strict default host-key policy (#1969, #2032).

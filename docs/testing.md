@@ -502,6 +502,79 @@ known-flaky, #1585), so `TERMIHUB_REQUIRE_DOCKER=1` cannot be flipped on
 blanket there until those fixtures are brought up or the corresponding tests are
 excluded from the required run; that wiring is tracked as a follow-up.
 
+### Native sshd fixture (macOS, Windows, Linux) — CI-020, TIN-007
+
+The Docker fixtures cannot run on the hosted macOS and Windows runners, so the
+**sshd-only** journeys also run against the platform's **own** OpenSSH server:
+
+- **Fixture:** [`scripts/internal/native-sshd-fixture.sh`](../scripts/internal/native-sshd-fixture.sh)
+  `up | stop | start | env | down`.
+  - On **macOS/Linux** it runs `/usr/sbin/sshd` **unprivileged** as the current
+    user on a loopback port (`22400 + TERMIHUB_TEST_PORT_OFFSET` or the next free
+    one). It uses a temporary ed25519 host key, a temporary client key, and an
+    `authorized_keys` of `tests/fixtures/ssh-keys` plus that client key, with
+    `UsePAM no` / `StrictModes no`. There is no root and no change to the
+    system sshd.
+  - On **Windows** (Git Bash) it hands over to
+    [`native-sshd-fixture.ps1`](../scripts/internal/native-sshd-fixture.ps1),
+    which needs an elevated shell. It uses the preinstalled Win32-OpenSSH (or
+    adds the `OpenSSH.Server` capability), creates the local user `termihubssh`
+    (key auth only), and runs `sshd.exe -D` as SYSTEM from its own
+    `termihub-native-sshd` scheduled task with the fixture config (no extra
+    Windows service). The system `sshd` service is left untouched. A failed
+    start prints the sshd log, `sshd -t` and the OpenSSH event log.
+  - `up` proves a real `ssh` login and `sftp` subsystem, then prints
+    `export TERMIHUB_NATIVE_SSHD=1 … _PORT _USER _KEY _HOST_PUBKEY _DIR` (and
+    `_AGENT_BIN` with `--agent-binary`). `--github-env` also writes them to
+    `$GITHUB_ENV`. `down` kills only the recorded sshd (verified by its command
+    line) and removes all state.
+- **Suite:** [`core/tests/ssh_native.rs`](../core/tests/ssh_native.rs) covers
+  key login, the whole fixture key-type matrix, rejection of an unauthorized key
+  and a wrong passphrase, exec stdout/stderr/exit status/stdin, an interactive
+  shell round trip, a byte-exact SFTP file journey (mkdir, upload, stat,
+  download, rename, list, delete) and a local TCP forward. It gates on
+  `require_native_sshd!()`. With `TERMIHUB_NATIVE_SSHD` unset and no fixture it
+  prints `SKIPPED:`. Once the flag is set, a missing fixture **panics** (the
+  native twin of `TERMIHUB_REQUIRE_DOCKER`).
+- **Nightly:** the `native-sshd` job in
+  [`integration-fixtures.yml`](../.github/workflows/integration-fixtures.yml)
+  runs [`scripts/internal/run-native-sshd-suites.sh`](../scripts/internal/run-native-sshd-suites.sh)
+  (fixture up → suite → sshd log on failure → teardown) on `ubuntu-latest`,
+  `macos-latest` and `windows-latest`. It also runs on manual dispatch and in the
+  release gate, but not on the path-filtered PR runs. The Windows agent
+  reconnect grade uses the same fixture (see
+  [the agent reconnect grade](#backend-driven-agent-reconnect-across-a-prolonged-transport-drop-24762512)). Scheduled runs use
+  `main`'s copy of the workflow, so these jobs start running nightly once this
+  workflow reaches `main`. Until then, dispatch the workflow on a branch.
+  Nothing in the recipe lives in the workflow file, so it cannot drift from the
+  code it runs.
+
+Run it locally:
+
+```bash
+scripts/internal/run-native-sshd-suites.sh            # up → ssh_native → down
+# or by hand:
+eval "$(scripts/internal/native-sshd-fixture.sh up)"
+cargo test -p termihub-core --features ssh --test ssh_native
+scripts/internal/native-sshd-fixture.sh down
+```
+
+**What stays Linux-only, and why.** Only suites that need **nothing but an
+sshd** moved to the native fixture. These stay on the Linux Docker lane:
+
+| Suite(s)                                                                                                        | Why it needs a Linux container                                                                                                                                      |
+| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `telnet.rs`                                                                                                     | needs a telnet daemon; neither hosted macOS nor Windows ships one                                                                                                   |
+| `ftp_*.rs`                                                                                                      | needs the `ftp-server` fixture (plain FTP + explicit FTPS with its test certs and data)                                                                             |
+| `vnc.rs`                                                                                                        | needs Xvfb + x11vnc / TigerVNC VeNCrypt servers with a fixed test pattern                                                                                           |
+| `rdp.rs`                                                                                                        | needs xrdp + xorgxrdp and the FreeRDP shadow server (NLA)                                                                                                           |
+| `ssh_auth.rs`, `ssh_banner.rs`, `ssh_compat.rs`, `ssh_advanced.rs`, `ssh_x11.rs`, `monitoring.rs`               | fixture-specific servers: password auth for `testuser`, a pre-auth banner, OpenSSH 7.x, a jump host, an rbash-restricted shell, X11 forwarding, Linux `/proc` stats |
+| `sftp_stress.rs`, `ssh_exec_with_stdin.rs` (SFTP-only case), `tunnel_local_forward.rs`, `network_resilience.rs` | a pre-populated SFTP tree, a `ForceCommand internal-sftp` server, tunnel-target services, `tc`/netem fault injection                                                |
+
+The portable parts of those (key auth for every key type, exec/stdin, SFTP
+round trips, local forwarding) are exactly what `ssh_native.rs` re-covers on
+all three OSes.
+
 ### Linux polkit D-Bus path (#3553)
 
 The Linux OS re-auth verifier's result mapping is unit-tested against a fake
@@ -2039,13 +2112,19 @@ It runs on the nightly `-m integration` lane:
 On CI the grade carries a skip-guard (#2631): it needs a live app→agent SSH
 connect (not merely an `sshd` binary), so it stays skipped unless
 `TERMIHUB_LIVE_AGENT=1` is exported. The nightly `system-integration.yml` lane
-sets that flag on the **macOS** (#2579) and **Linux** (#2669, the intent of the
-closed #2634) legs, where the harness `LocalAgentSshd` stands up its own loopback
-`sshd` and deploys the release `termihub-agent` built earlier in the job — so the
-grade runs unattended there, no operator and no foreground display. The Linux leg
-was enabled once #2646 restored the headless ubuntu app launch. It stays skipped
-on the **Windows** leg (loopback `sshd` is unreliable); a dev box (no `CI` env)
-always runs it.
+sets that flag in its `display-grades` job on all three legs. On **macOS**
+(#2579) and **Linux** (#2669, the intent of the closed #2634) the harness
+`LocalAgentSshd` stands up its own loopback `sshd` and deploys the release
+`termihub-agent` built earlier in the job, so the grade runs unattended there, no
+operator and no foreground display. The Linux leg was enabled once #2646 restored
+the headless ubuntu app launch. On **Windows** (CI-020, TIN-007) Win32-OpenSSH
+cannot run as a throwaway unprivileged process, so the job first provisions the
+[native sshd fixture](#native-sshd-fixture-macos-windows-linux--ci-020-tin-007)
+(a service, a local test user and a copy of the agent that user can run). The
+harness then drives it through `NativeSshdFixture` / `local_agent_endpoint()`,
+and the counter runs as a PowerShell loop, since the Windows agent's shell is
+PowerShell. Once a leg opts in, an unavailable endpoint **fails** the grade
+instead of skipping. A dev box (no `CI` env) always runs it.
 
 Unlike the retired manual grade it does **not** need a foreground display: the
 client reconnect engine was deleted (#2558) and reconnect is backend-driven
