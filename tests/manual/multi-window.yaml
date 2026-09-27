@@ -1,0 +1,46 @@
+category: multi-window
+display_name: "Multi-Window"
+
+# Only the OS-native macOS behaviour stays manual (TIN-014, #3720). Everything
+# else about multi-window — opening a window, moving a live tab, the
+# close-with-live-tabs dialog, windowed-layout restore, and the Linux/Windows
+# last-window quit — runs unattended in tests/system/tests/test_multi_window.py.
+
+tests:
+  # --- Per-OS quit policy: macOS Dock (PR #1903) ---
+
+  - id: MT-WIN-01
+    release_gate: true
+    manual_reason: "macOS Dock lifecycle is OS-native; the bridge cannot drive the Dock"
+    name: "macOS — closing the last window keeps the app in the Dock; Dock click reopens a window"
+    pr: 1903
+    platforms: [macos]
+    prerequisites:
+      - app: true
+    instructions:
+      - "With two windows open, close the non-last one (title-bar close)"
+      - "Close the last remaining window"
+      - "Click the termiHub icon in the Dock"
+    expected:
+      - "Closing the non-last window closes only that window; the app keeps running"
+      - "After the last window closes the app stays running (its Dock icon keeps the running dot)"
+      - "Clicking the Dock icon recreates a window"
+    verification: manual
+    tags: [os-native]
+
+  - id: MT-WIN-02
+    release_gate: true
+    manual_reason: "macOS app-menu Quit (Cmd+Q) is OS-native; the bridge cannot drive it"
+    name: "macOS — Cmd+Q quits the app with several windows open"
+    pr: 1903
+    platforms: [macos]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a second window (Cmd+Shift+N) and a local shell in each window"
+      - "Press Cmd+Q"
+    expected:
+      - "The app quits entirely: every window closes and the Dock icon loses its running dot"
+      - "Relaunching the app starts cleanly (no leftover windows or orphaned sessions)"
+    verification: manual
+    tags: [os-native]

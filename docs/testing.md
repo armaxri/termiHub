@@ -1355,6 +1355,7 @@ All 169 legacy YAML items in [`tests/manual/`](../tests/manual/) were triaged in
 | Automated since by its follow-up issue             | 1       | Deleted; MT-SER-09 → `test_serial.py::TestSerialLiveEcho` (#3682)                              |
 | Genuinely manual                                   | 11      | Kept in the YAML with `release_gate: true` + `manual_reason`; on the release checklist         |
 | **Total before → after**                           | **169** | **51 YAML items remain (11 release-gating + 40 pending automation)**                           |
+| Added since: macOS-only multi-window items (#3720) | +2      | **53 YAML items (13 release-gating + 40 pending automation)** — see below                      |
 
 `tests/system/tests/test_manual_corpus.py` (normal, non-integration lane) enforces this: every remaining YAML item must carry exactly one of `release_gate: true` + `manual_reason`, or `automation_issue: <N>`, and ids must be unique. Follow-up issues: #3682 (serial socat echo fixture — #859 was closed by removing the unreachable container fixture, not by adding one), #3683 (serial prefixes), #3684 (Windows agent host fixture), #3685 (Windows agent CI), #3686 (agent wake/park UI), #3687 (SSH small items — done), #3688 (jump-host reconnect fixture), #3689 (connection management), #3690 (credential auto-lock seam), #3691 (portable launch), #3692 (network tools fixtures), #3693 (layout / restore), #3694 (file-browser CWD follow). The per-feature prose walkthroughs further down this section are PR-verification notes, not part of the release gate; triaging them the same way is tracked in #3695. The other two follow-ups the audit named were already done: #1230 (monitoring auto-reconnect) is covered by fault-injection tests over a scripted `MonitoringTransport` in `core/src/backends/ssh/monitoring.rs` (`collect_loop_emits_stale_reconnecting_then_live_on_recovery`, `collect_loop_emits_offline_when_reconnect_exhausted`), and #1336 (FTP transfer queue) by the live `core/tests/ftp_transfer.rs` / `ftp_reconnect.rs` integration tests.
 
@@ -1559,6 +1560,8 @@ This is the **single** manual gate for a release. Run it on each target OS (macO
 - [ ] MT-SSH-01 — a zsh + Agnoster prompt renders without a black rectangle
 - [ ] MT-UI-05 — toggling the OS appearance switches the System theme live
 - [ ] MT-UI-13 — a single panel's border blends with the sidebar
+- [ ] MT-WIN-01 (macOS) — closing the last window keeps the app in the Dock; a Dock click reopens a window
+- [ ] MT-WIN-02 (macOS) — Cmd+Q quits the app with several windows open
 
 **3. Pending automation (interim)** — until its issue lands, each `automation_issue` item in the YAML is still walked by `scripts/test-manual.py` for a release. The issue removes it from the YAML when it automates it.
 
@@ -1627,41 +1630,33 @@ macOS/Linux for parity):
    the resting thumb reads well against each background — visible-but-subtle on
    both dark and light surfaces.
 
-### Multi-window close-with-live-tabs & per-OS quit policy (#1903)
+### Multi-window journeys — automated (#1900, #1903, #1925; TIN-014 #3720)
 
-The close decision surface and the classification/store branches are covered by
-unit tests (`src/utils/windowClose.test.ts`, `src/store/appStore.windowClose.test.ts`,
+The multi-window journeys run **unattended** in the nightly integration lane
+([`tests/system/tests/test_multi_window.py`](../tests/system/tests/test_multi_window.py)),
+over the multi-window-aware bridge (each window's page dials the runner tagged
+with its window label, so a test addresses any window with
+`driver.window(label)` — see [test-bridge.md](test-bridge.md#multi-window)):
+
+| Journey                                                                                                                                           | Test                                                                             |
+| ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Open a second window with the New Window shortcut (#1902); it boots empty                                                                         | `TestMultiWindow::test_new_window_opens_an_addressable_second_window`            |
+| Close an empty window: it closes at once, no dialog (#1903)                                                                                       | `TestMultiWindow::test_closing_an_empty_window_needs_no_decision`                |
+| Move a live terminal tab to it (#1900/#1901); scrollback replays, the session keeps printing                                                      | `TestMultiWindow::test_moved_live_tab_keeps_its_session_output`                  |
+| Restart; the windowed layout is restored and the restored window's shell is live (#1925)                                                          | `TestMultiWindow::test_windowed_layout_is_restored_after_restart`                |
+| Close a window with a live local shell (#1903): dialog shows "Would be terminated", Cancel keeps it, Move re-parents the tab into the main window | `TestMultiWindow::test_closing_a_window_with_live_tabs_follows_the_close_policy` |
+| Linux/Windows: closing the **last** window quits the app (#1903 per-OS policy)                                                                    | `TestLastWindowQuitPolicy::test_closing_the_last_window_quits_the_app`           |
+
+The classification and dialog branches stay covered by unit tests
+(`src/utils/windowClose.test.ts`, `src/store/appStore.windowClose.test.ts`,
 `src/components/Terminal/CloseWindowDecisionDialog.test.tsx`) and the per-OS
-policy by Rust unit tests (`src-tauri/src/window/mod.rs`). The steps below verify
-the native-window behaviour, which cannot be automated — `tauri-driver` has no
-macOS WKWebView driver (ADR-5) and window-close/Dock behaviour is OS-native.
+policy by Rust unit tests (`src-tauri/src/window/mod.rs`).
 
-1. **Detach-vs-terminate dialog.** Open a window with at least one persistent
-   session (SSH/agent) **and** one non-persistent session (local shell), e.g. via
-   "Move to New Window" (#1901). Close that window (title-bar X). **Expected:** a
-   "Close this window?" dialog lists each session — the persistent one as
-   "Detaches — keeps running", the local shell as "Would be terminated" — with
-   **Move tabs to …** as the primary (blue) action, **Close & end sessions** as
-   the red action, and **Cancel**.
-2. **Move (safe).** Click **Move tabs to Window N**. **Expected:** the window
-   closes and all its tabs reappear in the target window, sessions still live
-   (scrollback replays); nothing was terminated.
-3. **Close & end.** Reopen a similar window, close it, click **Close & end
-   sessions**. **Expected:** the window closes; the persistent session detaches
-   (still visible in the Open Connections panel), the local shell is terminated.
-4. **Cancel.** Close a window with a live local shell and click **Cancel**.
-   **Expected:** the window stays open, no session is touched.
-5. **All-persistent → no dialog.** Close a window whose sessions are all
-   persistent/agent. **Expected:** no dialog; a toast reads "N sessions detached
-   — still running" and the window closes.
-6. **Empty window → no prompt.** Close a window with no live sessions.
-   **Expected:** it closes immediately, no dialog.
-7. **Per-OS quit policy — macOS.** With multiple windows, close a non-last window
-   → only that window closes, the app keeps running. Close the **last** window →
-   the app **stays alive in the Dock**; clicking the Dock icon **recreates a
-   window**. Cmd+Q quits the app.
-8. **Per-OS quit policy — Windows/Linux.** Closing the **last** window **quits**
-   the app; closing a non-last window closes only that window and never quits.
+Only the OS-native **macOS** behaviour stays manual, as release-gating items in
+[`tests/manual/multi-window.yaml`](../tests/manual/multi-window.yaml):
+**MT-WIN-01** (closing the last window keeps the app alive in the Dock; clicking
+the Dock icon recreates a window) and **MT-WIN-02** (Cmd+Q quits with several
+windows open). The bridge cannot drive the Dock or the app menu.
 
 ### VNC VeNCrypt / TLS authentication (#1714)
 
@@ -3475,40 +3470,6 @@ connection (no exec channel, so no `sudo` path). See PR #1525 (#1330).
    connection → the **Edit with sudo** action is shown (not the fallback), and no
    "Save a copy…" / "Download" actions appear in the banner (see #1329).
 
-### Multi-window: move a live tab between windows (#1900)
-
-Multi-window behavior cannot be automated on macOS (`tauri-driver` has no
-WKWebView driver, ADR-5) and the Python bridge harness is not yet multi-window
-aware, so the foundation's end-to-end path is verified manually. The UI to
-trigger a move (context-menu "Move to Window") is #1901; until it lands, drive
-the store seam from the DevTools console.
-
-Foundation smoke test (all platforms; **required on macOS**):
-
-1. Launch via `./scripts/dev.sh`. Open a **local shell** tab in the main window
-   and run a few commands so it has visible scrollback (e.g. `ls -la`, `pwd`).
-2. Open the DevTools console. Grab the store, find the active leaf/tab ids, and
-   move the tab into a **new** window:
-
-```js
-const store = (await import("/src/store/appStore.ts")).useAppStore;
-const { getAllLeaves } = await import("/src/utils/panelTree.ts");
-const leaf = getAllLeaves(store.getState().rootPanel)[0];
-store.getState().moveTabToWindow(leaf.tabs[0].id, leaf.id, { kind: "new" });
-```
-
-Then verify:
-
-1. A second native window opens; the tab appears in it with its **scrollback
-   repainted**; the tab disappears from the main window; the shell is **still
-   live** (type a command in the moved tab — it responds, the backend PTY never
-   restarted).
-2. In the new (empty) main-window leaf, confirm no orphaned/blank terminal is
-   left behind and the source session was not killed.
-3. Close the second window → confirm the main window's other sessions, tunnels,
-   and embedded/X servers are untouched (app-wide teardown only runs when the
-   last window closes; full close policy is #1903).
-
 ### Guided-Manual Tests in the Python Harness (preferred)
 
 Guided-manual tests are **first-class `pytest` tests** in the Python system-test harness (`tests/system/`). Each one does all the automatable setup through the existing mixins — launch the app, build connections/state — and then prompts the operator for only the irreducibly-manual step (a native OS dialog, xterm-canvas color fidelity, cursor blink). This is the key difference from the legacy YAML runner: the operator does just the un-automatable bit, and the test shares the harness's app/agent orchestration, fixtures, and reporting.
@@ -4252,6 +4213,7 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 | Credential Store      | [`credential-store.yaml`](../tests/manual/credential-store.yaml)           | `MT-CRED`  |
 | Portable Mode         | [`portable-mode.yaml`](../tests/manual/portable-mode.yaml)                 | `MT-PORT`  |
 | Network Tools         | [`network-tools.yaml`](../tests/manual/network-tools.yaml)                 | `MT-NET`   |
+| Multi-Window (macOS)  | [`multi-window.yaml`](../tests/manual/multi-window.yaml)                   | `MT-WIN`   |
 
 Prefer a guided-manual pytest for a new irreducibly-manual check. If you add a YAML item instead, it must carry `release_gate: true` plus a `manual_reason` (genuinely manual) or `automation_issue: <N>` (automatable, tracked) — `tests/system/tests/test_manual_corpus.py` fails otherwise.
 
@@ -4298,6 +4260,7 @@ Mapping of manual test IDs that have been automated to their Python harness test
 | MT-SVC-01, 02, 03                | `tests/system/tests/test_embedded_services.py` (SVC-01..11)                                                                                                                              |
 | MT-SVC-04, 05 (transfer)         | `tests/system/tests/test_embedded_services.py` (SVC-12 FTP, SVC-13 TFTP via curl)                                                                                                        |
 | MT-NET-01–09                     | `tests/system/tests/test_network_tools.py`                                                                                                                                               |
+| Multi-window (#1900/#1903/#1925) | `tests/system/tests/test_multi_window.py` (open, move a live tab, restore after restart, close-with-live-tabs, Linux/Windows last-window quit — #3720)                                   |
 | MT-NET-10, 12, 14, 17, 18        | `tests/system/tests/test_network_tools_live.py` (loopback + local stdlib servers; no Docker `network` profile)                                                                           |
 | MT-NET-13                        | `src/components/NetworkTools/PortScannerPanel.large-scan.test.tsx` (the warning is now a confirm modal, #1348)                                                                           |
 

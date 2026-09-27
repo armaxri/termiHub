@@ -4,7 +4,8 @@ Each native window runs its own page, store, and bridge socket, so a suite can
 address any window by label (``self.driver.window("win-1")``). This drives the
 journeys that used to be verified only by hand:
 
-* open a second window with the real "New Window" shortcut (#1902);
+* open a second window with the real "New Window" shortcut (#1902), and close
+  an empty one without any prompt;
 * move a live terminal tab into it and check the session keeps producing output
   (the #1900 re-parent — the backend PTY never restarts);
 * restart and check the windowed layout comes back (#1925);
@@ -137,6 +138,18 @@ class TestMultiWindow(WindowsUi, TerminalUi, SystemTest):
         # The main window is still the suite's driver and still answers.
         assert self.driver.window_label == "main"
         assert self.driver.get_state("windowLabel") == "main"
+
+    def test_closing_an_empty_window_needs_no_decision(self):
+        # An empty window has nothing to lose, so it closes straight away (#1903).
+        spare = self.open_new_window()
+        label = spare.window_label
+        self.request_close(spare)
+        spare.wait_until_closed()
+        self.wait(
+            lambda: label not in {w["label"] for w in self.driver.list_windows()},
+            what=f"window {label!r} to leave the backend registry",
+        )
+        assert not self.close_dialog_open(self.driver)
 
     def test_moved_live_tab_keeps_its_session_output(self):
         second = self._second_window()
