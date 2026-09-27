@@ -184,6 +184,14 @@ Every command returns a structured `BridgeResponse` (`{ ok, action, value?,
 error? }`). Nothing throws across the bridge — failures are `ok: false` with an
 agent-readable `error` — so a runner branches on results instead of catching.
 
+**Adding a command** means touching every place the vocabulary is declared: the
+`BridgeCommand` union (`src/testbridge/protocol.ts`), the dispatcher switch, the
+Python mirror `BRIDGE_ACTIONS` (`tests/system/termihub_harness/protocol.py`), a
+Driver verb in `bridge.py`, and the fake app (`tests/system/tests/fake_app.py` —
+fake it, or list it in `UNHANDLED_ACTIONS`). The per-PR machinery suite's
+`test_bridge_protocol_contract.py` fails on drift between them in either
+direction (MOCK-010).
+
 ### Writing into a terminal (`terminalInput`)
 
 `type` targets `<input>`/`<textarea>` elements, but an xterm terminal renders to
