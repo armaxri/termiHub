@@ -32,8 +32,11 @@ concurrency:
 # Least-privilege token (CI-010). The job checks out, runs coverage, and uploads
 # the coverage artifact via the artifact API (no contents-write needed) — it does
 # not comment on the PR or push, so a read-only token is sufficient.
+# `actions: read` lets it list the integration-fixtures runs and download their
+# `integration-coverage` artifact (TOOL-005, #3656).
 permissions:
   contents: read
+  actions: read
 
 jobs:
   coverage:
@@ -91,7 +94,26 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
+      # Nightly integration coverage (TOOL-005, #3656): the integration-fixtures
+      # lane runs core/tests against live Docker fixtures under cargo-llvm-cov on
+      # its scheduled/dispatched runs. Fetch the newest such lcov for this branch
+      # plus the list of files changed since its commit (their line numbers may
+      # have moved, so coverage.sh skips them). Advisory: when none is available
+      # the report is unit-only.
+      - name: Fetch nightly integration coverage
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node scripts/internal/fetch-integration-coverage.mjs
+          --repo "${{ github.repository }}"
+          --branch "${{ github.ref_name }}"
+          --out-dir coverage-integration
+
       - name: Run unified coverage
+        env:
+          TERMIHUB_INTEGRATION_LCOV: coverage-integration/integration.lcov
+          TERMIHUB_INTEGRATION_STALE: coverage-integration/stale-files.txt
         run: ./scripts/coverage.sh
 
       - name: Publish unified number to job summary
@@ -103,6 +125,12 @@ jobs:
             echo '```'
             cat coverage-unified/summary.txt 2>/dev/null || echo "(no summary produced)"
             echo '```'
+            echo ""
+            if [ -f coverage-unified/integration-gap.md ]; then
+              cat coverage-unified/integration-gap.md
+            else
+              echo "_Unit tests only: no nightly integration coverage was merged._"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage artifact
@@ -113,4 +141,5 @@ jobs:
           path: |
             coverage-unified/
             coverage/lcov.info
+            coverage-integration/
           if-no-files-found: warn
