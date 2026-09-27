@@ -64,6 +64,11 @@ ALLOWLIST=(
   # Branch protection as code (CI-017, #3675): admin-only maintainer tool around
   # `gh api`; Git Bash works on Windows.
   "scripts/internal/apply-branch-protection.sh"  # maintainer applies .github/branch-protection.json
+  # Native loopback sshd fixture (CI-020, TIN-007): bash on every runner; on
+  # Windows it hands over to its PowerShell twin (native-sshd-fixture.ps1),
+  # since Win32-OpenSSH provisioning needs PowerShell, not a .cmd.
+  "scripts/internal/native-sshd-fixture.sh"   # fixture up/stop/start/down (-> .ps1 on Windows)
+  "scripts/internal/run-native-sshd-suites.sh" # CI suite runner (bash on every runner)
 )
 
 in_allowlist() {
