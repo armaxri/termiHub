@@ -2138,9 +2138,10 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
   file anyway — so the folder is reported as one unit. Drag-out
   staging downloads are never persisted: their directories are deleted at
   quit, and records under the staging root are pruned at startup (#3629).
-- **Desktop-only for v1** — the `ftp` cargo feature is desktop-only (registered in
-  `src-tauri/src/session/registry.rs::build_desktop_registry()`); the remote agent has no FTP
-  backend. Wiring the connection-type-agnostic `file_browser()` dispatch into the sidebar (so FTP
+- **Desktop and agent** — the `ftp` cargo feature (on by default) registers the backend in both
+  `src-tauri/src/session/registry.rs::build_desktop_registry()` and the agent's
+  `agent/src/registry.rs::build_registry()` (PARITY-003), so an agent-hosted FTP connection uses
+  the same core backend. Wiring the connection-type-agnostic `file_browser()` dispatch into the sidebar (so FTP
   sessions browse there the way SFTP does today) is tracked as the final sub-issue #1335 and is not
   yet merged; until then FTP file operations run through the backend and the Transfer Queue rather
   than the sidebar tree.
