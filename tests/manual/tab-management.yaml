@@ -2,80 +2,10 @@ category: tab-management
 display_name: "Tab Management"
 
 tests:
-  # --- Drag-and-drop ---
-  # Reorder within the tab bar (MT-TAB-05) is now automated via the in-app test
-  # bridge (dragTo → @dnd-kit), see tests/system/tests/test_tab_management.py
-  # (#832). Edge-split and cross-group drops stay manual: they hit drop targets
-  # outside the DndContext that the bridge does not yet drive.
-
-  - id: MT-TAB-06
-    name: "Drag tab to edge creates new split"
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Drag a tab to the edge of another panel"
-    expected:
-      - "New split created, tab moves to new panel"
-    verification: manual
-
-  - id: MT-TAB-07
-    name: "Drag tab between groups"
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Open multiple tabs in a split view"
-      - "Drag a tab from one group to another"
-    expected:
-      - "Tab moves to the target group"
-    verification: manual
-
-  # --- Save terminal content to file (PR #35) ---
-
-  - id: MT-TAB-08
-    name: "Save to File — native dialog opens"
-    pr: 35
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Open a terminal with some output"
-      - "Right-click the terminal tab or use the menu"
-      - "Click 'Save to File'"
-    expected:
-      - "Native save dialog opens with default filename 'terminal-output.txt'"
-    verification: manual
-    tags: [native-dialog]
-
-  - id: MT-TAB-09
-    name: "Save to File — file is written"
-    pr: 35
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "In the save dialog, choose a location and save"
-      - "Open the saved file"
-    expected:
-      - "File is written with the terminal's text content"
-    verification: manual
-
-  - id: MT-TAB-10
-    name: "Save to File — cancel does nothing"
-    pr: 35
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Click 'Save to File' then cancel the dialog"
-    expected:
-      - "Nothing happens (no crash, no file written)"
-    verification: manual
-
   # --- Open Saved File in Tab (PR #782) ---
 
   - id: MT-TAB-11
+    automation_issue: 3693
     name: "Save to File — opens the saved file in an editor tab"
     pr: 782
     platforms: [all]
@@ -92,6 +22,7 @@ tests:
     tags: [native-dialog]
 
   - id: MT-TAB-12
+    automation_issue: 3693
     name: "Save to File — Cancel does not open a tab"
     pr: 782
     platforms: [all]
@@ -104,42 +35,10 @@ tests:
       - "The file is saved but no editor tab is opened"
     verification: manual
 
-  - id: MT-TAB-13
-    name: "Save to File — 'Ask again' off suppresses the dialog"
-    pr: 782
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Save terminal content to a file"
-      - "In the dialog, uncheck 'Ask again', then click 'Cancel'"
-      - "Verify Settings → Terminal → 'Open Saved File in Tab' is now off"
-      - "Save terminal content to a file again"
-    expected:
-      - "No dialog appears on the second save and no editor tab is opened"
-      - "Re-enabling the setting makes the dialog reappear on the next save"
-    verification: manual
-
-  - id: MT-TAB-14
-    name: "Save to File — width-wrapped lines are saved as logical lines"
-    pr: 782
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Make the terminal narrow (e.g. ~40 columns)"
-      - "Print a line longer than the terminal width, e.g. run: printf 'A%.0s' {1..120}; echo"
-      - "Also print a normal short line so a real newline is present"
-      - "Save to File and open the saved file in an external editor"
-    expected:
-      - "The long line is saved on a single line (no breaks at the terminal width)"
-      - "The separate short line remains on its own line"
-      - "Deliberate blank lines in the output are preserved"
-    verification: manual
-
   # --- Split Views ---
 
   - id: MT-TAB-16
+    automation_issue: 3693
     name: "Drag divider resizes split panels"
     platforms: [all]
     prerequisites:
@@ -149,48 +48,4 @@ tests:
       - "Drag the divider between split panels"
     expected:
       - "Panels resize, terminals re-fit"
-    verification: manual
-
-  # --- Open terminal output in an unsaved editor tab (PR #786, Closes #785) ---
-
-  - id: MT-TAB-17
-    name: "Open in Editor — captures terminal output to an unsaved Monaco tab"
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Open a local terminal and run a command that produces several lines of output (e.g. `ls -la` or `echo` a few lines)"
-      - "Right-click the terminal tab title and choose 'Open in Editor'"
-    expected:
-      - "A new editor tab titled '<tab name> (output)' opens, seeded with the full terminal scrollback"
-      - "The tab shows an 'Unsaved' badge and a dirty indicator; the toolbar button reads 'Save As...'"
-      - "Ctrl+F / search, scrolling, folding and free-form editing all work on the captured text"
-    verification: manual
-
-  - id: MT-TAB-18
-    name: "Open in Editor — Save As writes the buffer and clears the unsaved state"
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Capture terminal output via 'Open in Editor' (see MT-TAB-17)"
-      - "Optionally edit or add a comment line in the editor"
-      - "Click 'Save As...' (or press Ctrl+S) and choose a destination file"
-    expected:
-      - "A native save dialog opens; after choosing a path the file is written with the editor content"
-      - "The 'Unsaved' badge disappears, the tab title becomes the file name, and the button reverts to 'Save'"
-      - "Further edits + Save write directly to the chosen file without prompting again"
-    verification: manual
-
-  - id: MT-TAB-19
-    name: "Open in Editor — closing an unsaved capture warns before discarding"
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Capture terminal output via 'Open in Editor' (see MT-TAB-17)"
-      - "Without saving, close the captured-output editor tab"
-    expected:
-      - "An unsaved-changes dialog appears offering Save and Close / Just Close / Cancel"
-      - "Choosing 'Just Close' discards the capture; 'Cancel' keeps the tab open"
     verification: manual

@@ -60,10 +60,10 @@
 
 ## Remote desktop
 
-| Capability | Description                                                           | Status       |
-| ---------- | --------------------------------------------------------------------- | ------------ |
-| RDP        | Graphical RDP session via the bundled `termihub-rdp-helper` sidecar   | Experimental |
-| VNC        | Graphical VNC session with shared framebuffer + clipboard integration | Experimental |
+| Capability | Description                                                                                                         | Status       |
+| ---------- | ------------------------------------------------------------------------------------------------------------------- | ------------ |
+| RDP        | Graphical RDP session via the bundled `termihub-rdp-helper` sidecar, with audio redirection                         | Experimental |
+| VNC        | Graphical VNC session with shared framebuffer + clipboard integration (no audio: RFB has no standard audio channel) | Experimental |
 
 ## Monitoring
 
