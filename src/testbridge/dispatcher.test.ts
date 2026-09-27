@@ -406,6 +406,23 @@ describe("dispatchCommand", () => {
       expect(events[2].clientX - events[0].clientX).toBe(100);
     });
 
+    it("also fires pointer events with the button held during the move (#3693)", async () => {
+      const { deps, container } = setup(`<div data-testid="handle"></div>`);
+      const handle = container.querySelector("div") as HTMLElement;
+      const seq: string[] = [];
+      const record = (e: Event) => {
+        const buttons = (e as MouseEvent).buttons;
+        seq.push(`${e.type}:${(e as MouseEvent).clientY}:${buttons}`);
+      };
+      handle.addEventListener("pointerdown", record);
+      document.addEventListener("pointermove", record);
+      document.addEventListener("pointerup", record);
+
+      const res = await dispatchCommand({ action: "drag", testId: "handle", dx: 0, dy: 40 }, deps);
+      expect(res).toEqual({ ok: true, action: "drag" });
+      expect(seq).toEqual(["pointerdown:0:1", "pointermove:40:1", "pointerup:40:0"]);
+    });
+
     it("fails when the handle is absent", async () => {
       const { deps } = setup(`<div></div>`);
       const res = await dispatchCommand({ action: "drag", testId: "handle", dx: 10 }, deps);
