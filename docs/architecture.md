@@ -2577,7 +2577,8 @@ terminal sessions for people who expect nothing to leave their machine.
 
 - **No network telemetry of any kind.** termiHub never uploads crash reports, logs, usage data or
   analytics. The only network call it makes on its own is the update check (see the README
-  privacy note), which can be turned off.
+  privacy note), which can be turned off. Plugin discovery (ADR-17) fetches its index only when
+  the user asks.
 - **Crashes are diagnosable fully offline.** The desktop panic hook (`src-tauri/src/utils/panic_hook.rs`)
   and the agent panic hook (`agent/src/panic_hook.rs`) log the panic and write one small text report
   per crash into a `crash-reports/` folder next to the app's log (desktop: the platform log dir,
@@ -2624,6 +2625,60 @@ terminal sessions for people who expect nothing to leave their machine.
 - Redaction is pattern-based, so it can mask harmless text (e.g. a dotted identifier that looks
   like a host name); the tests in `core/src/diagnostics/redact_tests.rs` pin what must be masked
   and what must stay readable.
+
+### ADR-17: Plugin Discovery via a Curated, Checksum-Carrying Index over HTTPS
+
+**Context:** Plugins could only be installed from a local file (audit PROD-048). Users need an
+in-app way to find plugins, but termiHub loads native code in-process, so discovery must not
+become a new way to install or trust something the user did not review. The webview's CSP
+forbids it from fetching remote content, so any network access has to happen in the backend.
+
+**Decision** (#3715):
+
+- **A curated index, not a store.** `plugins/index.json` in this repository lists plugins (id,
+  name, description, author, version, `minHostAbi`, native flag, toolchain record, and one or
+  more packages, each with its platform triples, HTTPS URL and SHA-256). The default index URL is
+  that file on the stable `main` branch
+  (`https://raw.githubusercontent.com/armaxri/termiHub/main/plugins/index.json`), so a listing
+  only changes through a reviewed PR. It ships **empty**: nothing third-party is suggested by
+  default. The URL is a setting (`pluginIndexUrl`, https only) for users who run their own index.
+- **Backend-only, bounded fetching.** `src-tauri/src/commands/plugin_fetch.rs` is the one client
+  for every plugin network call (this and the PROD-051 update check): HTTPS only (validated before
+  the request, `https_only` client), at most 3 redirects and only to HTTPS, no credentials in
+  URLs, no cookies or auth headers, connect and overall timeouts, and hard size caps (index 1 MiB,
+  package 50 MB) enforced by `Content-Length` and again while streaming. Nothing is fetched until
+  the user clicks **Load plugin index**.
+- **Checksum before parse.** A package is streamed into a private temp file (`0600` in a `0700`
+  cache directory on Unix) while it is hashed; only a file whose SHA-256 equals the index entry's
+  is kept. Only then is it opened: package validation, then the id and version must equal the
+  entry's. The URL and checksum always come from a fresh **backend** fetch of the index, never
+  from the webview. A user-pasted URL must come with the expected SHA-256.
+- **The unchanged install pipeline decides.** The verified file goes through the same install
+  dialog as **Install from file…**: package signature and publisher trust, the per-plugin native
+  trust acknowledgement (#3296), ABI / toolchain / platform checks (#3508, #3582) and the
+  downgrade / signer-change confirmations (#3383, #3490). Discovery never installs, enables or
+  trusts anything by itself.
+- **v0.1 trust level: HTTPS plus a checksum in the index; the index itself is not signed.**
+  Considered: a detached Ed25519 signature over the index with a compiled-in key (the agent-update
+  scheme, #3213 / #3331). Deferred because (1) the index is a discovery aid, not a trust anchor —
+  what a package may do is still decided by its own signature and the user's explicit
+  acknowledgement, and an index cannot bypass either; (2) the default index is served over TLS
+  from the maintainer's own repository, where changes need a reviewed PR; (3) a signing key
+  needs a maintainer key ceremony first (the agent-update key is still a placeholder), and a
+  fail-closed check against a placeholder key would disable the feature. Signing the index is
+  tracked as a follow-up.
+
+**Consequences:**
+
+- Someone who can change the served index (a compromised repository or hosting) could list a
+  malicious package with a matching checksum. It still reaches the user as an unsigned or
+  unknown-publisher package behind the trust banner and, for native code, the per-plugin trust
+  acknowledgement, with native plugins off by default. A signed index would close this gap.
+- An index entry's `author` is display text; the package signature, not the index, identifies
+  the publisher.
+- A custom index URL is the user's choice of trust. Because the client runs on the user's own
+  machine, server-side SSRF concerns do not apply, and the size, timeout and redirect limits
+  bound what a hostile index can make the app do.
 
 ---
 
