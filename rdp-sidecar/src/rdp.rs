@@ -41,7 +41,7 @@ use ironrdp_tokio::reqwest::ReqwestNetworkClient;
 use ironrdp_tokio::{FramedWrite, TokioFramed};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use termihub_core::backends::rdp_sidecar::config::{RdpConfig, SecurityMode};
 use termihub_core::backends::rdp_sidecar::protocol::{
@@ -268,14 +268,13 @@ where
 
     // 3) CredSSP/NLA + channel join + capability exchange.
     let mut network_client = ReqwestNetworkClient::new();
-    let result = ironrdp_tokio::connect_finalize(
+    let result = crate::nla::connect_finalize(
         upgraded,
         connector,
         &mut framed,
         &mut network_client,
         ServerName::new(host),
         server_public_key,
-        None,
     )
     .await
     .context("RDP CredSSP / capability exchange failed")?;
@@ -844,7 +843,17 @@ where
                 let outputs = match stage.process(&mut image, action, &payload) {
                     Ok(o) => o,
                     Err(e) => {
-                        warn!(error = %e, "rdp process error");
+                        // IronRDP's active stage has no case for a server's MCS
+                        // Disconnect Provider Ultimatum and reports it as a decode
+                        // error. It is the server ending the session (xrdp sends
+                        // one, with no Set Error Info, when its login fails), so
+                        // end as an ordinary server close, not a protocol error.
+                        if let Some(reason) = disconnect_ultimatum_reason(action, &payload) {
+                            info!(?reason, "server ended the session (MCS Disconnect Provider Ultimatum)");
+                            terminated = Some(GracefulDisconnectReason::ServerInitiated);
+                        } else {
+                            warn!(error = %e, "rdp process error");
+                        }
                         break;
                     }
                 };
@@ -1292,10 +1301,61 @@ where
     Ok(())
 }
 
+/// The reason of an MCS Disconnect Provider Ultimatum, if `frame` is one.
+///
+/// It carries no logon semantics: xrdp sends the same `rn-user-requested`
+/// ultimatum for a rejected login as for any other end of session, with no Set
+/// Error Info PDU before it, so the sidecar cannot tell a wrong password from a
+/// logoff here (#3612) and reports a plain server close.
+fn disconnect_ultimatum_reason(
+    action: ironrdp::pdu::Action,
+    frame: &[u8],
+) -> Option<ironrdp::pdu::mcs::DisconnectReason> {
+    if action != ironrdp::pdu::Action::X224 {
+        return None;
+    }
+    ironrdp::core::decode::<ironrdp::pdu::x224::X224<ironrdp::pdu::mcs::DisconnectProviderUltimatum>>(
+        frame,
+    )
+    .ok()
+    .map(|pdu| pdu.0.reason)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use ironrdp::pdu::rdp::headers::{ShareControlHeader, ShareControlPdu, ShareDataPdu};
+
+    /// The exact frame xrdp 0.10 sends after `require_credentials` rejects a
+    /// wrong password (captured against the `rdp-server` fixture, #3612).
+    #[test]
+    fn xrdp_disconnect_ultimatum_is_recognised() {
+        let frame = [0x03, 0x00, 0x00, 0x09, 0x02, 0xf0, 0x80, 0x21, 0x80];
+        assert_eq!(
+            disconnect_ultimatum_reason(ironrdp::pdu::Action::X224, &frame),
+            Some(ironrdp::pdu::mcs::DisconnectReason::UserRequested)
+        );
+        assert_eq!(
+            disconnect_ultimatum_reason(ironrdp::pdu::Action::FastPath, &frame),
+            None
+        );
+    }
+
+    #[test]
+    fn other_x224_frames_are_not_a_disconnect_ultimatum() {
+        // An MCS Send Data Indication header (truncated) and garbage.
+        let sdi = [
+            0x03, 0x00, 0x00, 0x0c, 0x02, 0xf0, 0x80, 0x68, 0x00, 0x01, 0x03, 0xeb,
+        ];
+        assert_eq!(
+            disconnect_ultimatum_reason(ironrdp::pdu::Action::X224, &sdi),
+            None
+        );
+        assert_eq!(
+            disconnect_ultimatum_reason(ironrdp::pdu::Action::X224, &[0x03]),
+            None
+        );
+    }
 
     #[test]
     fn security_flags_map_modes() {
