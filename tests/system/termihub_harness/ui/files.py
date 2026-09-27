@@ -17,7 +17,8 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from ..bridge import BridgeError, scale_timeout
+from .. import deadlines
+from ..bridge import BridgeError
 from ..systemtest import DEFAULT_WAIT_TIMEOUT
 from .base import HarnessMixin
 
@@ -142,8 +143,9 @@ class FilesUi(FileBrowserPathReads):
         navigation resets it), so the two mechanisms compose. Call
         :meth:`clear_entry_filter` when a test needs the whole listing back.
         """
-        # Scaled for xdist contention headroom (issue #2690), like SystemTest.wait.
-        deadline = time.monotonic() + scale_timeout(timeout)
+        # A UI poll loop, so it takes the same contended-webview slow category as
+        # SystemTest.wait (#3660; see deadlines.py).
+        deadline = time.monotonic() + deadlines.ui_budget(timeout)
         next_refresh = 0.0  # refresh immediately on the first tick
         while time.monotonic() < deadline:
             now = time.monotonic()
