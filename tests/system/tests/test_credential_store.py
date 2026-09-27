@@ -252,9 +252,10 @@ class TestCredentialStore(
         self.cancel_password_prompt()
 
     def test_auto_lock_timeout_setting_persists(self):
-        # The auto-lock options start at 5 minutes, so the lock firing cannot be
-        # awaited in a system test (covered by manual test MT-CRED-04). This verifies
-        # the selected timeout round-trips into the store, then resets it to Never.
+        # The auto-lock options start at 5 minutes, so the lock firing is not
+        # awaited here; it is covered by the fake-clock unit tests in
+        # src-tauri/src/credential/auto_lock.rs (#3690). This verifies the
+        # selected timeout round-trips into the store, then resets it to Never.
         self.setup_master_password_store(MASTER_PASSWORD)
         self.set_auto_lock_timeout(5)
         assert (
