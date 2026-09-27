@@ -3764,6 +3764,24 @@ limits, symlinks, merge layout, group cancel, end-to-end temp tree) and
    neither comes back after another restart. Automated coverage:
    `src-tauri/src/files/transfer/relaunch.rs` (`cancelling_*` tests).
 
+### Transfer Queue: restart gaps (#3629, #3630)
+
+Automated coverage: `src-tauri/src/files/transfer/persist*.rs`,
+`src-tauri/src/files/drag_out.rs`, `src/hooks/sessionFolderPaste.test.ts` and
+`src/hooks/useInterruptedFolderPastes.test.ts`.
+
+1. **Drag-out staging is not rehydrated (#3629):** in an SFTP session, drag a
+   large remote file out of the window and release immediately; while its
+   Transfer Queue row is still running, quit the app. Relaunch → no staging row
+   comes back. An ordinary download interrupted the same way still comes back
+   as a paused row.
+2. **Interrupted folder paste (#3630):** copy a local folder holding several
+   large files and paste it into an SFTP session; quit while the second file
+   is copying. Relaunch → a notice says pasting the folder did not finish.
+   Press Retry before reconnecting → the notice asks to connect first.
+   Reconnect the saved SFTP connection and press Retry → only the files that
+   were missing (or partly written) are copied, then `Finished pasting …`.
+
 ### Transfer Queue panel: rows, controls, minimized state (#1337)
 
 Verifies the connection-type-agnostic Transfer Queue panel UI docked above the

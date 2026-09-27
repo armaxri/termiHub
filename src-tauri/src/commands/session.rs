@@ -987,7 +987,19 @@ async fn start_session_transfer(
         &remote_path,
         0,
     );
-    if let Some(pm) = app_handle.try_state::<TransferPersistenceManager>() {
+    // A download into a drag-out staging directory is not persisted (#3629):
+    // the directory is deleted at quit, so the row could never be resumed.
+    let staging = crate::files::drag_out::is_staging_download(
+        app_handle
+            .try_state::<crate::files::drag_out::DragOutStaging>()
+            .as_deref(),
+        direction == TransferDirection::Download,
+        &local_path,
+    );
+    if let Some(pm) = app_handle
+        .try_state::<TransferPersistenceManager>()
+        .filter(|_| !staging)
+    {
         pm.record_registration(
             &transfer_id,
             &session_id,
