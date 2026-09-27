@@ -86,6 +86,15 @@
   height: var(--resize-handle-width);
 }
 
+/* Top/bottom split (#189, MT-UI-15): every panel below a horizontal separator gets
+   the same 1px divider line its left edge carries, so stacked panels are visibly
+   separated too. Nested panels further down sit under their own separator. */
+.split-view__resize-handle[aria-orientation="horizontal"]
+  + [data-panel]
+  .split-view__panel-content {
+  border-top: 1px solid var(--panel-border);
+}
+
 .split-view__resize-handle:hover,
 .split-view__resize-handle[data-separator="active"] {
   background-color: var(--resize-handle-hover-color);
