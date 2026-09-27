@@ -309,7 +309,10 @@ pub struct LoadedLibrary {
     /// The open library. Never read directly — held solely to keep the mapping
     /// alive (the resolved function pointers point into it) and to unmap on drop.
     /// **Must be the last field** so it is dropped last, after [`Drop`] runs.
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "RAII: held only to keep the library mapped; unmapped on drop"
+    )]
     library: Library,
 }
 

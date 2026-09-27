@@ -50,13 +50,12 @@ const TICK: std::time::Duration = std::time::Duration::from_millis(150);
 const CHANNEL_DEPTH: usize = 16;
 
 /// User-supplied mock settings (a subset of the shared field base plus test knobs).
+///
+/// Shared fields the mock has no use for (e.g. `host`, sent for editor parity) are
+/// accepted and ignored: serde skips keys the struct does not declare.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MockConfig {
-    /// Ignored by the mock (no real connection) — accepted for editor parity.
-    #[serde(default)]
-    #[allow(dead_code)]
-    host: String,
     /// When true, input is suppressed and the view-only badge shows.
     #[serde(default)]
     view_only: bool,

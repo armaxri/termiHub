@@ -144,7 +144,7 @@ impl RetainedRequestStore {
     }
 
     /// Whether a request is currently retained for `tab_id`.
-    #[allow(dead_code)] // consumed by `SessionManager::has_retained_request` (tests + follow-up redrive)
+    #[cfg(test)]
     pub(crate) fn contains(&self, tab_id: &str) -> bool {
         self.lock().contains_key(tab_id)
     }
@@ -152,7 +152,6 @@ impl RetainedRequestStore {
     /// A clone of the retained request for `tab_id`, for the (follow-up) redrive.
     /// Cloning copies the secret-bearing settings; the caller owns scrubbing the
     /// clone (its `Drop` zeroizes it).
-    #[allow(dead_code)]
     pub(crate) fn get(&self, tab_id: &str) -> Option<RetainedConnectionRequest> {
         self.lock().get(tab_id).cloned()
     }

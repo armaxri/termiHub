@@ -19,7 +19,10 @@ static FORK_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 /// exists; the short retry only covers the rare interleaving where a test reads
 /// it the instant the port becomes connectable. `config_home` is the same dir the
 /// suite passes as `XDG_CONFIG_HOME` when spawning the agent.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared test helper; not every test binary uses it"
+)]
 pub fn read_listen_token(config_home: &Path) -> String {
     let path = config_home.join("termihub-agent").join("listen-auth.token");
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -37,7 +40,10 @@ pub fn read_listen_token(config_home: &Path) -> String {
 
 /// The first NDJSON line a `--listen` client must send to authenticate, WITHOUT
 /// the trailing newline (callers frame it however they frame their other lines).
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared test helper; not every test binary uses it"
+)]
 pub fn auth_request_line(token: &str) -> String {
     format!(r#"{{"jsonrpc":"2.0","id":0,"method":"auth","params":{{"token":"{token}"}}}}"#)
 }
@@ -46,7 +52,10 @@ pub fn auth_request_line(token: &str) -> String {
 /// request, then read exactly one response line **byte-wise** — so no bytes past
 /// the newline are pulled into a buffer a later reader would then miss — and
 /// assert the agent accepted the token. Panics on rejection or a closed socket.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared test helper; not every test binary uses it"
+)]
 pub fn authenticate_raw(stream: &mut TcpStream, token: &str) {
     let line = format!("{}\n", auth_request_line(token));
     stream
@@ -123,7 +132,10 @@ pub fn authenticate_raw(stream: &mut TcpStream, token: &str) {
 /// Hold it for the copy and the spawn only. Drop it before anything that waits
 /// on the child (reading its log, polling its port), or the suite serialises
 /// wholesale instead of just at the hazard.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared test helper; not every test binary uses it"
+)]
 pub fn fork_guard() -> MutexGuard<'static, ()> {
     FORK_LOCK
         .get_or_init(|| Mutex::new(()))
@@ -139,7 +151,10 @@ pub fn fork_guard() -> MutexGuard<'static, ()> {
 ///
 /// A re-exec (self-update apply) inherits the same stderr, so the *n*-th entry is
 /// the listener of the agent's *n*-th incarnation.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared test helper; not every test binary uses it"
+)]
 pub fn listen_addrs(log: &str) -> Vec<String> {
     log.lines()
         .filter_map(|line| line.split("Listening on ").nth(1))
@@ -157,7 +172,10 @@ pub fn listen_addrs(log: &str) -> Vec<String> {
 /// first — a freed ephemeral port can be taken by a concurrent test before the
 /// agent binds it (#3533). A re-exec re-binds `127.0.0.1:0`, so it announces a
 /// fresh address, which is why callers pass the incarnation they expect.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared test helper; not every test binary uses it"
+)]
 pub fn wait_for_listen_addr(
     stderr_path: &Path,
     generation: usize,
@@ -183,7 +201,10 @@ pub mod parent_death;
 /// via the inherited `TERMIHUB_REGISTRY_IDLE_TIMEOUT_SECS` (#3636). Short, so a
 /// registry left behind by a test is gone seconds after its last worker, not a
 /// minute; long enough to ride out one agent being swapped for the next.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared test helper; not every test binary uses it"
+)]
 pub const TEST_REGISTRY_IDLE_SECS: &str = "15";
 
 /// Detached lifetime (seconds) the suites give session daemons, via the
@@ -192,7 +213,10 @@ pub const TEST_REGISTRY_IDLE_SECS: &str = "15";
 /// before its drop guards run, so a leaked shell daemon reaps itself instead of
 /// living for days. Far longer than any deliberate detach-and-recover gap a
 /// test exercises.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared test helper; not every test binary uses it"
+)]
 pub const TEST_DAEMON_DETACHED_SECS: &str = "120";
 
 /// Env for a to-be-spawned `--listen` agent (pass to `Command::envs`) that
@@ -204,7 +228,10 @@ pub const TEST_DAEMON_DETACHED_SECS: &str = "120";
 /// `/tmp/termihub/<uid>/registry.sock`, which then stays up for as long as any
 /// leaked test agent is still connected to it.
 #[cfg(unix)]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared test helper; not every test binary uses it"
+)]
 pub fn isolated_registry_env(config_home: &Path) -> [(&'static str, std::ffi::OsString); 3] {
     [
         (

@@ -27,7 +27,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use termihub_core::layout::panel_tree::{
     contains_panel_id, create_leaf_panel, edge_to_split, find_leaf, find_leaf_by_tab,
@@ -160,16 +160,20 @@ impl ClientLayout {
 
     /// The back-compat **active-group** view `{ root, activePanelId }` — the shape
     /// the current `layout@<clientId>` consumers render, unchanged by the widening
-    /// so the live render path is unaffected until a later slice.
+    /// so the live render path is unaffected until a later slice. Test-only.
+    #[cfg(test)]
     fn active_view(&self) -> Value {
         match self.active_group() {
-            Some(g) => json!({ "root": g.root, "activePanelId": g.active_panel_id }),
-            None => json!({ "root": PanelNode::Leaf(create_leaf_panel()), "activePanelId": null }),
+            Some(g) => serde_json::json!({ "root": g.root, "activePanelId": g.active_panel_id }),
+            None => {
+                serde_json::json!({ "root": PanelNode::Leaf(create_leaf_panel()), "activePanelId": null })
+            }
         }
     }
 
     /// The active group, falling back to the first group when the active id is
-    /// somehow dangling (should not happen — transforms keep it valid).
+    /// somehow dangling (should not happen — transforms keep it valid). Test-only.
+    #[cfg(test)]
     fn active_group(&self) -> Option<&GroupLayout> {
         self.groups
             .iter()
@@ -206,11 +210,12 @@ impl LayoutStore {
     /// The **back-compat** render-ready view for a client (seeding it if
     /// unknown): the active group's `{ root, activePanelId }`.
     ///
-    /// Retained accessor: since the group-aware widening (#2283 slice C) the live
-    /// `layout@<clientId>` region carries [`snapshot_full`] instead, so this is no
-    /// longer published — kept (and unit-tested) as the documented back-compat
-    /// active-group shape / a rollback seam. Pure with respect to layout structure.
-    #[allow(dead_code)]
+    /// Test-only: since the group-aware widening (#2283 slice C) the live
+    /// `layout@<clientId>` region carries [`snapshot_full`] instead, so this shape
+    /// is no longer published. The rollback seam it once provided expired with the
+    /// extended-testing period (#2562 closed); the unit tests keep it as a compact
+    /// active-group view. Pure with respect to layout structure.
+    #[cfg(test)]
     pub fn snapshot(&self, client_id: &str) -> Value {
         self.lock()
             .entry(client_id.to_string())

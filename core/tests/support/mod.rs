@@ -5,6 +5,9 @@
 //! runner shared by every `*_golden.rs` suite (#2147). Each integration test is
 //! compiled as its own crate, so a suite that does not use every item here would
 //! otherwise warn — allow dead code at the module root.
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "shared test-support module: each test binary uses a different subset"
+)]
 
 pub mod golden;

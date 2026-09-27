@@ -26,8 +26,8 @@ use termihub_core::protocol::methods::{
     ConnectionCreateParams, ConnectionDefinition, ConnectionDeleteParams, ConnectionListResult,
     ConnectionUpdateParams, FolderCreateParams, FolderDefinition, FolderDeleteParams,
     FolderUpdateParams, SessionAttachParams, SessionCloseParams, SessionCreateParams,
-    SessionCreateResult, SessionDetachParams, SessionInputParams, SessionListEntry,
-    SessionListResult, SessionResizeParams,
+    SessionCreateResult, SessionInputParams, SessionListEntry, SessionListResult,
+    SessionResizeParams,
 };
 use termihub_core::protocol::methods::{ClientCapabilities, MonitoringStatusNotification};
 use termihub_core::reconnect_backoff::{
@@ -191,6 +191,13 @@ pub(crate) enum AgentIoCommand {
     /// is exactly what a real transport loss produces. Only ever constructed by
     /// [`AgentConnectionManager::test_sever_transport`], which is reachable solely
     /// through the test-bridge-gated `test_sever_agent_transport` command.
+    #[cfg_attr(
+        not(any(all(test, unix), feature = "test-bridge")),
+        expect(
+            dead_code,
+            reason = "test-only transport sever (#2573): reached only via the test bridge or the unix russh tests"
+        )
+    )]
     TestSeverTransport,
 }
 
@@ -231,11 +238,6 @@ struct AgentConnection {
 /// so they can be tested without real SSH connections.
 ///
 /// [`RemoteProxy`]: crate::session::remote_proxy::RemoteProxy
-// The trait is live (consumed as `Arc<dyn AgentRpcClient>` across commands, session,
-// network, tunnel and embedded-servers), but `retain_agent_config` belongs to the
-// default-off backend-reconnect reattach feature (#2472) and has no caller yet, so the
-// blanket allow stays until that path is wired up.
-#[allow(dead_code)]
 pub trait AgentRpcClient: Send + Sync + 'static {
     /// Connect to a remote agent via SSH.
     fn connect_agent(
@@ -288,6 +290,10 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     /// Retain an agent's SSH transport config for backend-driven reconnect
     /// reattach (#2472). Default no-op so mock clients need not implement it; the
     /// production [`AgentConnectionManager`] stores it for the redrive.
+    #[expect(
+        dead_code,
+        reason = "agent-tab reattach seam (#2472); no production caller retains yet (#3661)"
+    )]
     fn retain_agent_config(
         &self,
         _agent_id: &str,
@@ -303,6 +309,13 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     /// TEST-ONLY (#2573): abruptly sever the agent's transport in-process to drive
     /// the reconnect path deterministically. Default no-op returning `false` (mock
     /// clients); the production [`AgentConnectionManager`] performs the sever.
+    #[cfg_attr(
+        not(feature = "test-bridge"),
+        expect(
+            dead_code,
+            reason = "only the test-bridge command calls it through the trait"
+        )
+    )]
     fn test_sever_transport(&self, _agent_id: &str) -> bool {
         false
     }
@@ -1165,6 +1178,13 @@ impl<R: Runtime> AgentConnectionManager<R> {
     ///
     /// Returns `true` when a live agent received the sever, `false` for an unknown
     /// or already-dead agent (nothing to sever).
+    #[cfg_attr(
+        not(any(all(test, unix), feature = "test-bridge")),
+        expect(
+            dead_code,
+            reason = "test-only transport sever (#2573): reached only via the test bridge or the unix russh tests"
+        )
+    )]
     pub fn test_sever_transport(&self, agent_id: &str) -> bool {
         let agents = match self.agents.lock() {
             Ok(guard) => guard,
@@ -1193,6 +1213,10 @@ impl<R: Runtime> AgentConnectionManager<R> {
     /// Exercised by tests and re-wired by #2473. The retained secret is zeroized on
     /// drop and scrubbed at every terminal point (user disconnect / shutdown /
     /// prune here, reconnect give-up in the redrive).
+    #[expect(
+        dead_code,
+        reason = "agent-tab reattach seam (#2472); no production caller retains yet (#3661)"
+    )]
     pub fn retain_agent_config(
         &self,
         agent_id: &str,
@@ -1573,33 +1597,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
         Ok(())
     }
 
-    /// Detach from a session on the agent.
-    // allow(dead_code): session-lifecycle API counterpart to the wired-up attach
-    // path; retained for the backend-driven reattach/close flows, not yet routed to.
-    #[allow(dead_code)]
-    pub fn detach_session(
-        &self,
-        agent_id: &str,
-        remote_session_id: &str,
-    ) -> Result<(), TerminalError> {
-        let params = serde_json::to_value(SessionDetachParams {
-            session_id: remote_session_id.to_string(),
-        })
-        .map_err(|e| {
-            TerminalError::RemoteError(format!("Failed to build connection.detach params: {e}"))
-        })?;
-        self.send_request(
-            agent_id,
-            termihub_core::protocol::methods::CONNECTION_DETACH,
-            params,
-        )?;
-        Ok(())
-    }
-
     /// Close a session on the agent.
-    // allow(dead_code): session-lifecycle API counterpart to the wired-up attach
-    // path; retained for the backend-driven reattach/close flows, not yet routed to.
-    #[allow(dead_code)]
     pub fn close_session(
         &self,
         agent_id: &str,
