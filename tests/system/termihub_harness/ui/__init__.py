@@ -29,6 +29,7 @@ Mixin → concern:
 - :class:`AgentUi`           — remote-agent create / connect / error dialog / setup
 - :class:`WorkflowUi`        — workflow-automation editor + sidebar (author / run)
 - :class:`RemoteDesktopUi`   — VNC/RDP tab: create, overlays, resolution, canvas pixels
+- :class:`WindowsUi`         — multi-window: open / move a tab into / close a native window
 
 The plain name->element store lookups (``find_connection`` / ``find_folder`` /
 testid helpers) stay functions so they remain unit-testable without an app.
@@ -68,6 +69,7 @@ from .sidebar import SidebarUi
 from .ssh import SshUi
 from .tabs import TabsUi
 from .terminal import TerminalUi
+from .windows import WindowsUi
 from .workflow import WorkflowUi
 
 __all__ = [
@@ -94,6 +96,7 @@ __all__ = [
     "EmbeddedServicesUi",
     "ShellFsUi",
     "WorkflowUi",
+    "WindowsUi",
     "connections",
     "find_connection",
     "folders",

@@ -3,15 +3,30 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
+import { listWindows } from "@/services/api";
 import { getActiveTab, getComposedLayout, useAppStore } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
 import { dispatchCommand, type BridgeDeps } from "./dispatcher";
 import { ProjectionRecorder } from "./projectionRecorder";
 import { isTestBridgeEnabled, getTestBridgePort } from "./testMode";
 import { runBridgeWebSocketClient, type BridgeWebSocketClient } from "./wsClient";
+import { bridgeRunnerUrl } from "./wsProtocol";
 
-/** Protocol revision exposed via `window.__termihubTestBridge.version`. */
-const BRIDGE_VERSION = 1;
+/**
+ * Protocol revision exposed via `window.__termihubTestBridge.version`.
+ *
+ * v2 (#3720): each window's runner socket carries its window label, and the
+ * `closeWindow` / `listWindows` verbs drive the multi-window journeys.
+ */
+const BRIDGE_VERSION = 2;
+
+/**
+ * Delay before a bridge-requested window close fires, so the `closeWindow`
+ * response is sent over the socket first. A window with nothing to decide is
+ * destroyed at once, which would otherwise race the reply and surface to the
+ * runner as "bridge connection closed" rather than `ok`.
+ */
+const CLOSE_WINDOW_DEFER_MS = 50;
 
 /** A command dispatched in-process; resolves to a {@link BridgeResponse}. */
 type BridgeDispatch = (
@@ -113,6 +128,25 @@ export function TestBridge() {
         if (!isTestBridgeEnabled()) throw new Error("test bridge is not enabled");
         return await invoke<boolean>("test_sever_agent_transport", { agentId });
       },
+      // Request this window's close through the real OS close path (#3720), so
+      // the app's own `onCloseRequested` interceptor (#1903) decides whether to
+      // prompt, detach, or destroy — the bridge never force-destroys. Deferred so
+      // the response reaches the runner before a no-prompt close tears the page
+      // (and its socket) down. Re-checks test mode like the other verbs that act
+      // past the DOM.
+      closeWindow: async () => {
+        if (!isTestBridgeEnabled()) throw new Error("test bridge is not enabled");
+        setTimeout(() => {
+          getCurrentWindow()
+            .close()
+            .catch((err: unknown) =>
+              frontendLog("test_bridge", `closeWindow failed: ${String(err)}`)
+            );
+        }, CLOSE_WINDOW_DEFER_MS);
+      },
+      // The backend window registry (#1900): the authoritative set of native
+      // windows, independent of which ones have a bridge socket open.
+      listWindows: () => listWindows(),
       // Drive the projection substrate for the assertion harness (#2164) over the
       // real transport + ProjectionClient cache. Lazily created and page-scoped
       // so a remount never drops live subscriptions.
@@ -149,11 +183,16 @@ export function TestBridge() {
     if (port && !runnerClient) {
       // Loopback by design: the runner launches the app on the same host, so the
       // server it hosts is always reachable at 127.0.0.1 — no host config needed.
+      // Tag the socket with this window's label (#3720) so the runner can tell
+      // the windows of a multi-window app apart and address each one; the main
+      // window keeps behaving exactly as the single-window bridge did.
+      const windowLabel = useAppStore.getState().windowLabel;
       runnerClient = runBridgeWebSocketClient({
-        url: `ws://127.0.0.1:${port}`,
+        url: bridgeRunnerUrl(port, windowLabel),
         // Indirect through the holder so the live (latest) dispatch is used.
         dispatch: (command) => latestDispatch!(command),
-        onOpen: () => frontendLog("test_bridge", `ws connected to runner on :${port}`),
+        onOpen: () =>
+          frontendLog("test_bridge", `ws connected to runner on :${port} as "${windowLabel}"`),
         onClose: () => frontendLog("test_bridge", "ws disconnected from runner"),
         onError: () => frontendLog("test_bridge", `ws error connecting to runner on :${port}`),
       });
