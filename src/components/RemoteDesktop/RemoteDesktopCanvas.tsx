@@ -3,6 +3,20 @@ import { onRemoteDesktopFrame, onRemoteDesktopCursor } from "@/services/events";
 import type { CursorShape, RemoteDesktopInput, ScaleMode } from "@/types/remoteDesktop";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { isCursorShapeValid, isDirtyRectValid, isFramebufferSizeValid } from "./frameBounds";
+import type { Viewport } from "./monitorLayout";
+
+/** The part of a `width x height` framebuffer to show: `viewport`, clamped. */
+function sourceRegion(viewport: Viewport | null | undefined, width: number, height: number) {
+  if (!viewport) return { x: 0, y: 0, width, height };
+  const x = Math.min(Math.max(0, viewport.x), width - 1);
+  const y = Math.min(Math.max(0, viewport.y), height - 1);
+  return {
+    x,
+    y,
+    width: Math.max(1, Math.min(viewport.width, width - x)),
+    height: Math.max(1, Math.min(viewport.height, height - y)),
+  };
+}
 
 interface RemoteDesktopCanvasProps {
   /** Backend graphical session id; the canvas filters events by it. */
@@ -28,10 +42,20 @@ interface RemoteDesktopCanvasProps {
    * hidden. Without it, the canvas falls back to sending its own key-ups.
    */
   onReleaseAll?: () => void;
+  /**
+   * The framebuffer region to show (#3696): one monitor of a multi-monitor
+   * session. `null` / absent shows the whole (combined) framebuffer.
+   */
+  viewport?: Viewport | null;
 }
 
-/** Draw geometry mapping framebuffer pixels ↔ on-screen pixels. */
+/**
+ * Draw geometry mapping framebuffer pixels ↔ on-screen pixels. `srcX`/`srcY`
+ * are the shown region's origin in the framebuffer; `fbW`/`fbH` its size.
+ */
 interface Geometry {
+  srcX: number;
+  srcY: number;
   fbW: number;
   fbH: number;
   drawX: number;
@@ -61,12 +85,15 @@ export function RemoteDesktopCanvas({
   onDimensions,
   onFirstFrame,
   onReleaseAll,
+  viewport,
 }: RemoteDesktopCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Offscreen framebuffer at the remote's native resolution.
   const fbRef = useRef<HTMLCanvasElement | null>(null);
   const geometryRef = useRef<Geometry>({
+    srcX: 0,
+    srcY: 0,
     fbW: 0,
     fbH: 0,
     drawX: 0,
@@ -126,19 +153,23 @@ export function RemoteDesktopCanvas({
 
     const cw = container.clientWidth;
     const ch = container.clientHeight;
-    const { width: fbW, height: fbH } = fb;
+    // The shown region: the whole framebuffer, or one monitor of it (#3696).
+    const src = sourceRegion(viewport, fb.width, fb.height);
+    const { x: srcX, y: srcY, width: fbW, height: fbH } = src;
 
     let geom: Geometry;
     if (scaleMode === "pixel") {
-      // Native 1:1; the canvas is the framebuffer size and the container scrolls.
+      // Native 1:1; the canvas is the region size and the container scrolls.
       canvas.width = fbW;
       canvas.height = fbH;
-      geom = { fbW, fbH, drawX: 0, drawY: 0, scaleX: 1, scaleY: 1 };
+      geom = { srcX, srcY, fbW, fbH, drawX: 0, drawY: 0, scaleX: 1, scaleY: 1 };
     } else if (scaleMode === "match") {
       // Stretch to fill; a debounced resize request keeps the remote in step.
       canvas.width = cw;
       canvas.height = ch;
       geom = {
+        srcX,
+        srcY,
         fbW,
         fbH,
         drawX: 0,
@@ -154,6 +185,8 @@ export function RemoteDesktopCanvas({
       const drawW = fbW * s;
       const drawH = fbH * s;
       geom = {
+        srcX,
+        srcY,
         fbW,
         fbH,
         drawX: (cw - drawW) / 2,
@@ -166,20 +199,30 @@ export function RemoteDesktopCanvas({
 
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(fb, 0, 0, fbW, fbH, geom.drawX, geom.drawY, fbW * geom.scaleX, fbH * geom.scaleY);
+    ctx.drawImage(
+      fb,
+      srcX,
+      srcY,
+      fbW,
+      fbH,
+      geom.drawX,
+      geom.drawY,
+      fbW * geom.scaleX,
+      fbH * geom.scaleY
+    );
 
     // Draw the synthetic cursor marker, if visible.
     const cur = cursorRef.current;
     if (cur.visible) {
-      const sx = geom.drawX + cur.x * geom.scaleX;
-      const sy = geom.drawY + cur.y * geom.scaleY;
+      const sx = geom.drawX + (cur.x - srcX) * geom.scaleX;
+      const sy = geom.drawY + (cur.y - srcY) * geom.scaleY;
       ctx.strokeStyle = "rgba(255,255,255,0.9)";
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.arc(sx, sy, 4, 0, Math.PI * 2);
       ctx.stroke();
     }
-  }, [scaleMode]);
+  }, [scaleMode, viewport]);
 
   // Subscribe to frame + cursor events for this session.
   useEffect(() => {
@@ -255,7 +298,8 @@ export function RemoteDesktopCanvas({
     const x = (clientX - rect.left - geom.drawX) / geom.scaleX;
     const y = (clientY - rect.top - geom.drawY) / geom.scaleY;
     if (x < 0 || y < 0 || x >= geom.fbW || y >= geom.fbH) return null;
-    return { x: Math.floor(x), y: Math.floor(y) };
+    // Back to full-framebuffer coordinates (a monitor viewport is offset, #3696).
+    return { x: Math.floor(x) + geom.srcX, y: Math.floor(y) + geom.srcY };
   }, []);
 
   const handlePointer = useCallback(
