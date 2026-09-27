@@ -583,14 +583,14 @@ Reproduce the Windows split locally with `CI_RUST_TESTS_SPLIT_SERIAL=1 scripts/i
 
 ## Coverage Goals
 
-These are **aspirational guidelines**, not enforced gates. There is currently **no Rust coverage
-tooling** in the repo (no tarpaulin/llvm-cov/grcov/codecov), so the Rust figure below is a target
-we aim for by hand, not a measured or CI-gated number. Frontend coverage can be measured locally
-with `pnpm test:coverage` (Vitest), but it is likewise not gated in CI.
+These are **aspirational guidelines**, not enforced gates. Rust coverage is measured by
+`cargo-llvm-cov` in the advisory unified report (see [Measuring coverage](#measuring-coverage)),
+but no Rust figure is CI-gated. The frontend vitest floors in `vitest.config.ts` are the only
+blocking coverage gate.
 
 Guideline coverage levels:
 
-- **Rust Backend**: aim for high line coverage (guideline ~80%) — **not currently measured**
+- **Rust Backend**: aim for high line coverage (guideline ~80%) — measured (advisory), not gated
 - **React Components**: aim for ~70% coverage — measurable via `pnpm test:coverage`, not gated
 - **E2E Critical Paths**: cover all main user flows
 
@@ -612,10 +612,70 @@ the Rust tool once with `cargo install cargo-llvm-cov` (it needs the
   workflow on every push to `develop`/`main` (post-merge only since #3325) and uploads the merged lcov + summary as an artifact. It is
   **advisory** (`continue-on-error`) for now: it establishes the baseline without
   reddening PRs. The planned follow-up is a fail-on-decrease ratchet against a
-  captured baseline (remove `continue-on-error`), plus running the nightly
-  integration lane under `cargo-llvm-cov` so that dark lane finally contributes.
+  captured baseline (remove `continue-on-error`).
+- The nightly integration lane contributes too — see
+  [Integration coverage](#integration-coverage-nightly-fixtures-lane) below.
 - `release-check.sh` runs the unified report too (advisory), so the release path
   can produce the number.
+
+### Integration coverage (nightly fixtures lane)
+
+Paths that only the live-fixture suites reach (`core/tests` against the Docker
+fixtures — SSH/SFTP/telnet/FTP/VNC/RDP backends, reconnect, transfer) never run
+in the unit suite, so without this they would read as uncovered (TOOL-005, see
+[#3656](https://github.com/armaxri/termiHub/issues/3656)).
+
+```mermaid
+flowchart LR
+    N["integration-coverage-nightly.yml<br/>(daily 03:47 UTC)"] -- "dispatch on develop" --> F
+    S["manual dispatch"] --> F
+    F["integration-fixtures.yml<br/>cargo llvm-cov core/tests"] -- "artifact: integration-coverage" --> C
+    P["push to develop / main"] --> C
+    C["coverage.yml<br/>unit coverage + merge"] --> R["coverage-unified artifact<br/>+ job summary"]
+```
+
+- **Measured:** manually dispatched runs of
+  [`integration-fixtures.yml`](../.github/workflows/integration-fixtures.yml) run
+  the `core/tests` suite under `cargo llvm-cov` and upload
+  `integration-coverage/integration.lcov` (14-day retention);
+  [`integration-coverage-nightly.yml`](../.github/workflows/integration-coverage-nightly.yml)
+  dispatches it on `develop` daily. The lane's own cron is not instrumented: it
+  fires from the default branch (`main`) but checks out `develop` (#3664), so
+  its run's branch and commit would not match the code it measured. PR-triggered fixture runs stay a plain
+  `cargo test`, so PR runtime is unchanged, and so do the runs
+  [`release-candidate.yml`](../.github/workflows/release-candidate.yml) makes of
+  this lane via `workflow_call`: the release gate is not slowed by
+  instrumentation, and its artifact would sit on the candidate run, which the
+  merge step never reads.
+- **Activation:** scheduled runs execute the workflow files of the default
+  branch (`main`), so `integration-coverage-nightly.yml`'s cron starts firing
+  only once develop's workflows have reached `main`. Until then, dispatch
+  `integration-fixtures.yml` on `develop` by hand to produce an instrumented run.
+- **Merged:** each `coverage.yml` run fetches the newest instrumented run's
+  artifact for its own branch
+  (`scripts/internal/fetch-integration-coverage.mjs`) and hands it to
+  `scripts/coverage.sh` via `TERMIHUB_INTEGRATION_LCOV`. `lcov-merge.mjs` merges
+  it per source file: hits are summed, and the unit report keeps its own
+  denominator, so integration runs can only turn uncovered lines covered and
+  never add files or lines.
+- **Stale files are skipped:** the nightly lcov was measured on an older commit.
+  Every file that changed between that commit and the one being reported
+  (`git diff --name-only`) keeps its unit-only coverage, because its line numbers
+  may have moved. The gap report shows how many were skipped.
+- **Reading it:** the Coverage run's job summary shows the unified number
+  (unit + integration) and a table of the files with lines covered **only** by
+  the integration lane. The `coverage-unified` artifact holds `merged.lcov`
+  (unit + integration), `unit.lcov` (unit only), `summary.txt` and
+  `integration-gap.md`. When no instrumented run is available (none yet, or the
+  artifact expired) the report is unit-only and the summary says so.
+- **Locally:** `TERMIHUB_INTEGRATION_LCOV=<file> ./scripts/coverage.sh` merges any
+  lcov you produced yourself, e.g. with
+  `cargo llvm-cov --no-report -p termihub-core --all-features -- --test-threads=1`
+  against running fixtures, then
+  `cargo llvm-cov report -p termihub-core --lcov --output-path int.lcov`.
+- **Not measured yet:** the Python bridge harness (`system-integration.yml`)
+  exercises the frontend and the desktop backend, but collects no coverage — see
+  [#3657](https://github.com/armaxri/termiHub/issues/3657). The whole report stays advisory; it gates nothing.
 
 ## Testing Best Practices
 
