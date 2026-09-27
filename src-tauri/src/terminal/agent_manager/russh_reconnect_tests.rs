@@ -1979,3 +1979,138 @@ async fn manager_user_cancel_settles_distinct_from_a_parked_permanent_drop() {
 
     drop(app);
 }
+
+// ── #3661: the reattach-config seam, end to end over a real sshd + agent ──
+//
+// A resilient agent tab's connect opts the agent's (expanded) transport config
+// into the reap-surviving store; after the in-task loop reaps the transport, the
+// redrive's `reconnect_retained_agent` cold-re-establishes it from that config
+// instead of always folding `NoRetainedConfig`. The config carries `${VAR}` /
+// quoted-path placeholders that only connect because the agent connect path now
+// expands them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn resilient_agent_tab_retains_config_and_redrive_reestablishes_after_reap() {
+    let Some(sshd) = find_sshd() else {
+        eprintln!("SKIP: no sshd binary found — cannot stand up a local agent endpoint");
+        return;
+    };
+    let Some(agent_bin) = find_agent_binary() else {
+        eprintln!(
+            "SKIP: termihub-agent binary not found — run `cargo build -p termihub-agent` \
+                 (or set TERMIHUB_TEST_AGENT_BIN)"
+        );
+        return;
+    };
+
+    trust_all_host_keys();
+
+    let mut sshd = LocalAgentSshd::new(sshd, agent_bin).expect("stand up local agent sshd");
+    sshd.start();
+
+    let app = tauri::test::mock_app();
+    let handle = app.handle().clone();
+    let agent_id = "agent-3661".to_string();
+
+    let agents_store = Arc::new(AgentsStore::new());
+    agents_store.add(
+        &agent_id,
+        "Test Agent",
+        serde_json::json!({}),
+        serde_json::json!({}),
+    );
+    handle.manage(agents_store.clone());
+
+    let manager = Arc::new(AgentConnectionManager::new(handle.clone()));
+    let session_manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        manager.clone() as Arc<dyn AgentRpcClient>,
+    );
+
+    // Placeholders that only resolve through `RemoteAgentConfig::expand`: an
+    // unset `${VAR}` expands to "" (so the host becomes `127.0.0.1`), and the
+    // key path is wrapped in quotes that the expansion strips. Unexpanded, the
+    // SSH connect would target a bogus host / unreadable key and fail. No
+    // process-environment mutation is needed.
+    let mut config = sshd.agent_config();
+    config.host = format!("${{TERMIHUB_TEST_3661_UNSET_PLACEHOLDER}}{}", config.host);
+    config.key_path = config.key_path.map(|p| format!("\"{p}\""));
+    let settings = AgentSettings::default();
+
+    {
+        let m = manager.clone();
+        let cfg = config.clone();
+        let st = settings.clone();
+        let aid = agent_id.clone();
+        tokio::task::spawn_blocking(move || m.connect_agent(&aid, &cfg, Some(&st)))
+            .await
+            .expect("connect_agent join")
+            .expect("connect_agent with placeholders must expand and connect");
+    }
+    assert!(manager.is_connected(&agent_id));
+    assert!(
+        !manager.has_retained_agent_config(&agent_id),
+        "a bare agent connect (no resilient tab yet) retains nothing"
+    );
+
+    // A resilient agent tab connects → opts the agent config into the store.
+    session_manager
+        .create_connection(
+            "local",
+            serde_json::json!({}),
+            Some(agent_id.as_str()),
+            Some("tab-3661:0"),
+            false,
+            true, // resilient
+            handle.clone(),
+        )
+        .await
+        .expect("create the resilient agent-hosted session");
+    assert!(
+        manager.has_retained_agent_config(&agent_id),
+        "a resilient agent tab's connect must retain the agent's reattach config"
+    );
+    sshd.record_session_daemons();
+
+    // Simulate the in-task loop's reap: the map entry is removed and the I/O
+    // task ends (the real `reap_agent` + task return), dropping the transport.
+    {
+        let reaped = manager
+            .agents
+            .lock()
+            .unwrap()
+            .remove(&agent_id)
+            .expect("live entry to reap");
+        reaped.io_task.abort();
+    }
+    assert!(!manager.is_connected(&agent_id));
+    assert!(
+        manager.has_retained_agent_config(&agent_id),
+        "the retained config must survive the reap"
+    );
+
+    // The redrive's cold re-establish now finds the config and reconnects.
+    {
+        let m = manager.clone();
+        let aid = agent_id.clone();
+        tokio::task::spawn_blocking(move || m.reconnect_retained_agent(&aid))
+            .await
+            .expect("reconnect_retained_agent join")
+            .expect("the retained config must re-establish the reaped transport");
+    }
+    assert!(
+        manager.is_connected(&agent_id),
+        "the reaped agent transport is re-established from the retained config"
+    );
+
+    // The last resilient tab releasing its request (give-up / tab close /
+    // drop) scrubs the agent config.
+    session_manager.clear_retained_request_with_agent_scrub("tab-3661");
+    assert!(
+        !manager.has_retained_agent_config(&agent_id),
+        "the last resilient tab releasing its request scrubs the agent config"
+    );
+
+    sshd.record_session_daemons();
+    let _ = manager.disconnect_agent(&agent_id);
+    drop(app);
+}

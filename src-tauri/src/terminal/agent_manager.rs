@@ -45,7 +45,9 @@ use crate::session_projection::projection::{
     fold_agent_transport_reconnecting,
 };
 use crate::session_projection::store::{SessionLifecycleStore, SessionStatus};
-use crate::terminal::agent_config_store::{decide_reattach, AgentConfigStore, ReattachDecision};
+use crate::terminal::agent_config_store::{
+    decide_reattach, AgentConfigStore, ReattachDecision, RetainedAgentConfig,
+};
 use crate::terminal::agent_deploy::ConnectedHost;
 use crate::terminal::agent_forward::DesktopAgentForward;
 use crate::terminal::agent_ki_prompt::{
@@ -229,6 +231,13 @@ struct AgentConnection {
     /// exclude this desktop from the connected-host update guard (#1349). Empty
     /// when the agent predates protocol 0.3.0 and did not report one.
     client_id: String,
+    /// The (expanded) SSH transport config + settings this connection was
+    /// established with (#3661). Lives exactly as long as the connection — the
+    /// I/O task already holds the same config for its in-task reconnect — and is
+    /// the source [`AgentConnectionManager::retain_agent_config`] promotes into
+    /// the reap-surviving [`AgentConfigStore`] when a resilient tab opts in.
+    /// Zeroized on drop (see [`RetainedAgentConfig`]).
+    reattach_config: RetainedAgentConfig,
 }
 
 /// Abstract interface over an agent connection manager.
@@ -287,24 +296,23 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     /// Get the capabilities of a connected agent.
     fn get_capabilities(&self, agent_id: &str) -> Option<AgentCapabilities>;
 
-    /// Retain an agent's SSH transport config for backend-driven reconnect
-    /// reattach (#2472). Default no-op so mock clients need not implement it; the
-    /// production [`AgentConnectionManager`] stores it for the redrive.
-    #[expect(
-        dead_code,
-        reason = "agent-tab reattach seam (#2472); no production caller retains yet (#3661)"
-    )]
-    fn retain_agent_config(
-        &self,
-        _agent_id: &str,
-        _config: &RemoteAgentConfig,
-        _agent_settings: Option<&AgentSettings>,
-    ) {
+    /// Retain a **connected** agent's SSH transport config for backend-driven
+    /// reconnect reattach (#2472), so it survives a transport reap. Called when a
+    /// resilient agent tab connects (#3661); returns whether a live connection's
+    /// config was retained. Default no-op returning `false` so mock clients need
+    /// not implement it; the production [`AgentConnectionManager`] promotes the
+    /// live connection's config into its reattach store.
+    fn retain_agent_config(&self, _agent_id: &str) -> bool {
+        false
     }
 
     /// Drop and zeroize the retained reattach config for an agent (#2472).
     /// Default no-op; the production manager scrubs it.
     fn clear_retained_agent_config(&self, _agent_id: &str) {}
+
+    /// Drop and zeroize **every** retained reattach config — the app-quit scrub
+    /// point (#3661). Default no-op; the production manager scrubs them all.
+    fn clear_all_retained_agent_configs(&self) {}
 
     /// TEST-ONLY (#2573): abruptly sever the agent's transport in-process to drive
     /// the reconnect path deterministically. Default no-op returning `false` (mock
@@ -710,8 +718,8 @@ pub struct AgentConnectionManager<R: Runtime = Wry> {
     /// Retained SSH transport configs for agents that opted into backend-driven
     /// reconnect reattach, keyed by agent id (#2472). Survives a transport reap
     /// so the reconnect redrive can cold-re-establish the transport itself; only
-    /// ever populated when the connect opted in (default-off flag), so it is
-    /// never written on the `develop`/flag-off path. See
+    /// populated when a resilient agent tab opts in via
+    /// [`Self::retain_agent_config`] (#3661). See
     /// [`crate::terminal::agent_config_store`].
     agent_configs: AgentConfigStore,
     app_handle: AppHandle<R>,
@@ -761,6 +769,15 @@ impl<R: Runtime> AgentConnectionManager<R> {
         config: &RemoteAgentConfig,
         agent_settings: Option<&AgentSettings>,
     ) -> Result<AgentConnectResult, TerminalError> {
+        // Expand `${env:…}` / `~` placeholders in the non-secret fields (host,
+        // username, key path) exactly as sibling connection types do on their
+        // spawn path (#3661). Every agent connect funnels through here — the
+        // `connect_agent` command and the redrive's cold re-establish
+        // (`reconnect_retained_agent`) — and the in-task reconnect loop reuses
+        // the expanded copy captured below. The password is left verbatim.
+        let expanded = config.clone().expand();
+        let config = &expanded;
+
         let mut agents = self
             .agents
             .lock()
@@ -1106,9 +1123,20 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 capabilities,
                 ki_activity,
                 client_id,
+                reattach_config: RetainedAgentConfig {
+                    config: config.clone(),
+                    settings: settings_ref.clone(),
+                },
             },
         );
         drop(agents);
+
+        // An agent a resilient tab already opted into reattach (#3661) — e.g. the
+        // user re-connecting a reaped agent with a changed password — refreshes
+        // its retained config so a later redrive never re-establishes with a
+        // stale secret. A no-op for an agent nothing opted in.
+        self.agent_configs
+            .refresh_if_retained(agent_id, config.clone(), settings_ref.clone());
 
         // Best-effort "agent crashed since last connect" check (#3593): spawned
         // off the connect path, never delays or fails this connect.
@@ -1205,29 +1233,55 @@ impl<R: Runtime> AgentConnectionManager<R> {
         agents.get(agent_id).map(|c| c.capabilities.clone())
     }
 
-    /// Retain an agent's SSH transport config for backend-driven reconnect
-    /// reattach (#2472), so the redrive can cold-re-establish the transport after
-    /// a reap. Not currently invoked in production: the frontend agent-tab
-    /// backend-redrive wiring (#2473) is not yet present, so no agent config is
-    /// retained and the reattach path stays inert — byte-identical to `develop`.
-    /// Exercised by tests and re-wired by #2473. The retained secret is zeroized on
-    /// drop and scrubbed at every terminal point (user disconnect / shutdown /
-    /// prune here, reconnect give-up in the redrive).
-    #[expect(
-        dead_code,
-        reason = "agent-tab reattach seam (#2472); no production caller retains yet (#3661)"
-    )]
-    pub fn retain_agent_config(
-        &self,
-        agent_id: &str,
-        config: &RemoteAgentConfig,
-        agent_settings: Option<&AgentSettings>,
-    ) {
-        self.agent_configs.retain(
-            agent_id,
-            config.clone(),
-            agent_settings.cloned().unwrap_or_default(),
-        );
+    /// Retain a connected agent's SSH transport config for backend-driven
+    /// reconnect reattach (#2472), so the redrive can cold-re-establish the
+    /// transport after a reap.
+    ///
+    /// Called by [`crate::session::manager::SessionManager::create_connection`]
+    /// when a **resilient** agent tab connects (#3661) — the gate: a
+    /// non-resilient tab never reconnects, so it never extends the secret's
+    /// lifetime past the connection. Promotes the live connection's (already
+    /// expanded) config, so the caller needs no copy of the secret. Returns
+    /// `false` when the agent has no live connection (nothing to retain).
+    ///
+    /// The retained secret is zeroized on drop and scrubbed at every terminal
+    /// point: user disconnect / shutdown / prune here, agent deletion, app quit,
+    /// and — refcounted over the agent's resilient tabs — tab close, eviction,
+    /// drop and reconnect give-up in the session layer / redrive.
+    pub fn retain_agent_config(&self, agent_id: &str) -> bool {
+        let live = {
+            let agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
+            agents
+                .get(agent_id)
+                .filter(|c| c.alive.load(Ordering::SeqCst))
+                .map(|c| c.reattach_config.clone())
+        };
+        // The agents lock is released before the config-store lock is taken, so
+        // the two are never held nested.
+        match live {
+            Some(retained) => {
+                self.agent_configs.retain(
+                    agent_id,
+                    retained.config.clone(),
+                    retained.settings.clone(),
+                );
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Drop and zeroize every retained reattach config — the app-quit scrub
+    /// point (#3661), run from the app teardown.
+    pub fn clear_all_retained_agent_configs(&self) {
+        self.agent_configs.clear_all();
+    }
+
+    /// Whether a reattach config is currently retained for `agent_id`. Test-only
+    /// observer for the scrub-point tests.
+    #[cfg(test)]
+    pub(crate) fn has_retained_agent_config(&self, agent_id: &str) -> bool {
+        self.agent_configs.contains(agent_id)
     }
 
     /// Drop and zeroize the retained reattach config for an agent (#2472). The
@@ -1303,11 +1357,19 @@ impl<R: Runtime> AgentConnectionManager<R> {
             TerminalError::RemoteError(format!("Failed to build agent.shutdown params: {e}"))
         })?;
 
-        let result = self.send_request(
-            agent_id,
-            termihub_core::protocol::methods::AGENT_SHUTDOWN,
-            params,
-        )?;
+        let result = self
+            .send_request(
+                agent_id,
+                termihub_core::protocol::methods::AGENT_SHUTDOWN,
+                params,
+            )
+            .inspect_err(|_| {
+                // A shutdown is a terminal point even when the request fails
+                // (e.g. the transport was already reaped): the retained reattach
+                // secret must not outlive the user's intent (#3661). The success
+                // path scrubs via `disconnect_agent` below.
+                self.agent_configs.clear(agent_id);
+            })?;
         // Tolerate a reply that omits/garbles the count (best-effort shutdown):
         // an unparseable result means "shut down, count unknown" → 0, matching the
         // pre-migration `unwrap_or(0)`.
@@ -2101,17 +2163,16 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
         AgentConnectionManager::get_capabilities(self, agent_id)
     }
 
-    fn retain_agent_config(
-        &self,
-        agent_id: &str,
-        config: &RemoteAgentConfig,
-        agent_settings: Option<&AgentSettings>,
-    ) {
-        AgentConnectionManager::retain_agent_config(self, agent_id, config, agent_settings)
+    fn retain_agent_config(&self, agent_id: &str) -> bool {
+        AgentConnectionManager::retain_agent_config(self, agent_id)
     }
 
     fn clear_retained_agent_config(&self, agent_id: &str) {
         AgentConnectionManager::clear_retained_agent_config(self, agent_id)
+    }
+
+    fn clear_all_retained_agent_configs(&self) {
+        AgentConnectionManager::clear_all_retained_agent_configs(self)
     }
 
     fn test_sever_transport(&self, agent_id: &str) -> bool {

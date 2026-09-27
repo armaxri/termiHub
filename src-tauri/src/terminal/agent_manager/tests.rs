@@ -834,6 +834,21 @@ fn dummy_abort_handle() -> AbortHandle {
     rt.spawn(std::future::pending::<()>()).abort_handle()
 }
 
+/// A reattach config fixture for a placeholder [`AgentConnection`] (#3661).
+fn test_reattach_config(password: Option<&str>) -> RetainedAgentConfig {
+    RetainedAgentConfig {
+        config: RemoteAgentConfig {
+            host: "agent.example".to_string(),
+            port: 22,
+            username: "user".to_string(),
+            auth_method: "password".to_string(),
+            password: password.map(str::to_string),
+            ..RemoteAgentConfig::default()
+        },
+        settings: AgentSettings::default(),
+    }
+}
+
 fn make_agent_connection_with_tx(command_tx: UnboundedSender<AgentIoCommand>) -> AgentConnection {
     AgentConnection {
         command_tx,
@@ -854,6 +869,7 @@ fn make_agent_connection_with_tx(command_tx: UnboundedSender<AgentIoCommand>) ->
         },
         ki_activity: crate::terminal::agent_ki_prompt::AgentPromptActivity::new(),
         client_id: String::new(),
+        reattach_config: test_reattach_config(Some("secret")),
     }
 }
 
@@ -991,6 +1007,7 @@ fn make_wedged_agent_connection() -> (AgentConnection, tokio::task::JoinHandle<(
         },
         ki_activity: crate::terminal::agent_ki_prompt::AgentPromptActivity::new(),
         client_id: String::new(),
+        reattach_config: test_reattach_config(Some("secret")),
     };
     (conn, join)
 }
@@ -1647,4 +1664,139 @@ fn reconnect_backlog_drops_prompt_answers() {
         responses: Some(vec![Zeroizing::new("123456".into())]),
     }]);
     assert!(kept.is_empty());
+}
+
+// ── Reattach-config retention + scrub points (#3661) ─────────────────
+
+/// Build a manager (on `MockRuntime`) with one placeholder **live** agent
+/// connection registered under `agent_id`.
+fn manager_with_live_agent(
+    agent_id: &str,
+) -> (
+    tauri::App<tauri::test::MockRuntime>,
+    AgentConnectionManager<tauri::test::MockRuntime>,
+) {
+    let app = tauri::test::mock_app();
+    let manager = AgentConnectionManager::new(app.handle().clone());
+    manager
+        .agents
+        .lock()
+        .unwrap()
+        .insert(agent_id.to_string(), make_agent_connection(true));
+    (app, manager)
+}
+
+/// Simulate the in-task reconnect loop exhausting its budget and self-reaping
+/// the entry (the real `reap_agent` path): the live connection — and the
+/// reattach config it carried — is gone; only the retained store can
+/// re-establish it.
+fn simulate_reap<R: Runtime>(manager: &AgentConnectionManager<R>, agent_id: &str) {
+    let weak = Arc::downgrade(&manager.agents);
+    reap_agent(&weak, agent_id);
+}
+
+#[test]
+fn retain_agent_config_promotes_the_live_config_and_survives_a_reap() {
+    let (_app, manager) = manager_with_live_agent("agent-1");
+    assert!(!manager.has_retained_agent_config("agent-1"));
+
+    assert!(
+        manager.retain_agent_config("agent-1"),
+        "a live agent's config is promoted into the reattach store"
+    );
+    simulate_reap(&manager, "agent-1");
+    assert!(!manager.is_connected("agent-1"));
+
+    // The reap drops the live entry but the opted-in config survives it, so the
+    // redrive takes the cold re-establish branch instead of `NoRetainedConfig`.
+    match decide_reattach(&manager.agent_configs, false, "agent-1") {
+        ReattachDecision::Reconnect(retained) => {
+            assert_eq!(retained.config.host, "agent.example");
+            assert_eq!(retained.config.password.as_deref(), Some("secret"));
+        }
+        _ => panic!("expected a cold re-establish from the retained config"),
+    }
+}
+
+#[test]
+fn retain_agent_config_is_a_noop_without_a_live_connection() {
+    let app = tauri::test::mock_app();
+    let manager = AgentConnectionManager::new(app.handle().clone());
+    assert!(!manager.retain_agent_config("agent-unknown"));
+    assert!(!manager.has_retained_agent_config("agent-unknown"));
+
+    // A dead entry (alive == false) has nothing to promote either.
+    manager
+        .agents
+        .lock()
+        .unwrap()
+        .insert("agent-dead".to_string(), make_agent_connection(false));
+    assert!(!manager.retain_agent_config("agent-dead"));
+    assert!(!manager.has_retained_agent_config("agent-dead"));
+}
+
+#[test]
+fn user_disconnect_scrubs_the_retained_config_even_after_a_reap() {
+    let (_app, manager) = manager_with_live_agent("agent-1");
+    assert!(manager.retain_agent_config("agent-1"));
+    simulate_reap(&manager, "agent-1");
+
+    // Reaped → "not connected", but the disconnect is still a scrub point.
+    let _ = manager.disconnect_agent("agent-1");
+    assert!(!manager.has_retained_agent_config("agent-1"));
+}
+
+#[test]
+fn shutdown_of_a_reaped_agent_scrubs_the_retained_config() {
+    let (_app, manager) = manager_with_live_agent("agent-1");
+    assert!(manager.retain_agent_config("agent-1"));
+    simulate_reap(&manager, "agent-1");
+
+    // The shutdown request fails (no live transport) yet must still scrub.
+    assert!(manager.shutdown_agent("agent-1", None).is_err());
+    assert!(!manager.has_retained_agent_config("agent-1"));
+}
+
+#[test]
+fn prune_scrubs_the_retained_config_of_a_dead_agent() {
+    let (_app, manager) = manager_with_live_agent("agent-1");
+    assert!(manager.retain_agent_config("agent-1"));
+    manager
+        .agents
+        .lock()
+        .unwrap()
+        .get("agent-1")
+        .unwrap()
+        .alive
+        .store(false, Ordering::SeqCst);
+
+    assert_eq!(manager.prune_dead_agents(), vec!["agent-1".to_string()]);
+    assert!(!manager.has_retained_agent_config("agent-1"));
+}
+
+#[test]
+fn clear_all_retained_agent_configs_scrubs_every_agent_on_app_quit() {
+    let (_app, manager) = manager_with_live_agent("agent-1");
+    manager
+        .agents
+        .lock()
+        .unwrap()
+        .insert("agent-2".to_string(), make_agent_connection(true));
+    assert!(manager.retain_agent_config("agent-1"));
+    assert!(manager.retain_agent_config("agent-2"));
+
+    manager.clear_all_retained_agent_configs();
+    assert!(!manager.has_retained_agent_config("agent-1"));
+    assert!(!manager.has_retained_agent_config("agent-2"));
+}
+
+#[test]
+fn reconnect_retained_agent_reports_no_config_once_scrubbed() {
+    // After a scrub the redrive must fold a failure, never reconnect with a
+    // secret the user already released.
+    let (_app, manager) = manager_with_live_agent("agent-1");
+    assert!(manager.retain_agent_config("agent-1"));
+    simulate_reap(&manager, "agent-1");
+    manager.clear_retained_agent_config("agent-1");
+    assert!(manager.reconnect_retained_agent("agent-1").is_err());
 }

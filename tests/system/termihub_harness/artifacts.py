@@ -17,6 +17,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from . import deadlines
+
 #: Where bundles are written (git-ignored). One subdir per failing test node id.
 ARTIFACT_ROOT = Path(__file__).resolve().parents[1] / "artifacts"
 
@@ -29,7 +31,7 @@ ARTIFACT_ROOT = Path(__file__).resolve().parents[1] / "artifacts"
 #: definitive timed "FAILED after Ns" record (see :func:`write_failure_artifacts`
 #: and ``probe-diagnostics.txt``) rather than silence — the #2460 slow-vs-hung
 #: verdict.
-DIAGNOSTIC_PROBE_TIMEOUT = 60.0
+DIAGNOSTIC_PROBE_TIMEOUT = deadlines.DIAGNOSTIC_PROBE
 
 
 def sanitize_nodeid(nodeid: str) -> str:

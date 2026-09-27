@@ -259,6 +259,11 @@ fn run_app_teardown(app_handle: &tauri::AppHandle) {
     if let Some(staging) = app_handle.try_state::<files::drag_out::DragOutStaging>() {
         staging.cleanup_all();
     }
+    // Scrub every retained agent reattach secret (#3661) synchronously, so an
+    // orderly quit never leaves a resolved agent password in memory past teardown.
+    if let Some(agents) = app_handle.try_state::<Arc<dyn AgentRpcClient>>() {
+        agents.clear_all_retained_agent_configs();
+    }
     let handle = app_handle.clone();
     tauri::async_runtime::spawn(async move {
         if let Some(mgr) = handle.try_state::<Arc<tunnel::tunnel_manager::TunnelManager>>() {

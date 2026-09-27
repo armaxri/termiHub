@@ -17,61 +17,23 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
-import os
 import threading
+import time
 from typing import Any, Optional
 
 import websockets
 
+from . import deadlines, timing
 from .protocol import Command, Response, decode_response, encode_request
 
 
-def _timeout_scale() -> float:
-    """Global multiplier for every harness wait/command budget (``TERMIHUB_WAIT_SCALE``).
-
-    The integration lane fans several full webview apps across xdist workers on a
-    core-constrained CI runner (``--dist loadscope -n <workers>``). Under that
-    contention a UI op that settles in well under a second when a suite runs
-    alone can take multiples longer, so a fixed, serial-tuned budget fires
-    mid-op and reds a test that is *passing* — just slow (issue #2690; the same
-    shape the #2460 live-connect timeout addressed for one suite). Rather than
-    bump each helper's literal one by one, a single env-driven multiplier scales
-    them all at their shared chokepoints (``SystemTest.wait``, ``Driver._call``,
-    ``Bridge.wait_for_app``, and the standalone UI poll loops).
-
-    Default ``1.0`` leaves local and serial (Linux) runs unchanged; the parallel
-    macOS/Windows CI lanes set it >1 for headroom. A non-positive or unparseable
-    value falls back to ``1.0`` so a typo can never zero out a budget.
-    """
-    try:
-        scale = float(os.environ.get("TERMIHUB_WAIT_SCALE", "1"))
-    except ValueError:
-        return 1.0
-    return scale if scale > 0 else 1.0
-
-
-#: Resolved once at import from ``TERMIHUB_WAIT_SCALE`` (see :func:`_timeout_scale`).
-WAIT_SCALE = _timeout_scale()
-
-
-def scale_timeout(seconds: float) -> float:
-    """Apply :data:`WAIT_SCALE` to a timeout budget. Identity when the scale is 1.0."""
-    return seconds * WAIT_SCALE
-
-
-DEFAULT_REQUEST_TIMEOUT = 10.0
-#: Command timeout for the **live-connect / SFTP** suites (issue #2460). A real
-#: SSH session negotiates while the always-on Docker (``--cpus 10``) + podman
-#: ``krunkit`` VMs intermittently starve the macOS WKWebView JS thread for >10s,
-#: so the default 10s fires mid-negotiation and the whole live suite times out
-#: even though the backend is fine. 60s is deliberately generous: it is long
-#: enough to let a webview that is merely *slow under load* finish (the suite then
-#: passes), while a run that still times out at 60s is strong evidence the webview
-#: is *genuinely hung* rather than slow — the #2460 hypothesis test. Scoped to the
-#: live suites (via ``SystemTest.request_timeout``); it does **not** slow every
-#: verb globally.
-LIVE_CONNECT_REQUEST_TIMEOUT = 60.0
-DEFAULT_APP_WAIT_TIMEOUT = 30.0
+#: Named per-operation deadlines live in :mod:`.deadlines` (#3660); these aliases
+#: keep the historical import names working.
+DEFAULT_REQUEST_TIMEOUT = deadlines.COMMAND
+#: Command timeout for the live-connect / SFTP suites (#2460) — see
+#: :data:`.deadlines.LIVE_COMMAND`.
+LIVE_CONNECT_REQUEST_TIMEOUT = deadlines.LIVE_COMMAND
+DEFAULT_APP_WAIT_TIMEOUT = deadlines.APP_CONNECT
 #: After the first app connection arrives, briefly prefer a newer one that shows
 #: up within this window. An app's webview can connect and then reconnect during
 #: startup (a layout-driven remount or a page reload), so the first connection is
@@ -182,13 +144,23 @@ class Driver:
         # A per-call ``timeout`` overrides the Driver's default — used by the
         # failure-artifact probes, which must outlive the live path's own timeout
         # to capture evidence from a slow (not-yet-hung) webview (issue #2460).
-        # Scaled by TERMIHUB_WAIT_SCALE so a command budget that is fine serially
-        # gets headroom under xdist contention (issue #2690).
-        effective_timeout = scale_timeout(self._timeout if timeout is None else timeout)
+        # ``ui_budget`` applies the contended-webview slow category on parallel
+        # macOS/Windows workers only (#3660; see deadlines.py for the data).
+        effective_timeout = deadlines.ui_budget(self._timeout if timeout is None else timeout)
+        op = f"command:{command.get('action', '')}"
+        started = time.monotonic()
         cfut = asyncio.run_coroutine_threadsafe(
             self._conn.send(command, effective_timeout), self._loop
         )
-        response = cfut.result(effective_timeout + 5)
+        try:
+            response = cfut.result(effective_timeout + 5)
+        except BridgeError as exc:
+            if "timed out" in str(exc):
+                timing.record(
+                    op, time.monotonic() - started, effective_timeout, timed_out=True
+                )
+            raise
+        timing.record(op, time.monotonic() - started, effective_timeout)
         if not response.get("ok"):
             raise BridgeError(
                 response.get("action", command.get("action", "")),
@@ -579,21 +551,22 @@ class Bridge:
         """
         if self._loop is None or self._conn_queue is None:
             raise RuntimeError("bridge is not started")
-        # Scale the connect budget (not the settle grace) by TERMIHUB_WAIT_SCALE:
-        # under xdist contention several apps build + boot at once, so the in-app
-        # bridge client can take well past the serial-tuned 30s to dial out, and
-        # a fixed budget reds the whole suite in class-fixture setup with
-        # "no app connected …" (issue #2690).
-        timeout = scale_timeout(timeout)
+        # The connect budget is an absolute, data-sized deadline (#3660): under
+        # xdist several apps boot at once, and a serial Linux run was observed at
+        # 28 s against the old 30 s budget — see deadlines.APP_CONNECT.
+        timeout = deadlines.app_connect(timeout)
+        started = time.monotonic()
         cfut = asyncio.run_coroutine_threadsafe(
             self._acquire_settled(timeout, settle), self._loop
         )
         try:
             connection = cfut.result(timeout + settle + 5)
         except asyncio.TimeoutError as exc:
+            timing.record("app-connect", time.monotonic() - started, timeout, timed_out=True)
             raise TimeoutError(
                 f"no app connected to the bridge within {timeout}s"
             ) from exc
+        timing.record("app-connect", time.monotonic() - started, timeout)
         return Driver(connection, self._loop, request_timeout=request_timeout)
 
     async def _acquire_settled(self, timeout: float, settle: float) -> "_Connection":
