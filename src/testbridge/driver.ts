@@ -5,6 +5,7 @@ import type {
   CanvasSample,
   TerminalViewport,
 } from "./protocol";
+import type { WindowInfo } from "@/types/window";
 
 /**
  * Transport that carries a {@link BridgeCommand} to the running app and returns
@@ -198,6 +199,13 @@ export interface Driver {
    * `true` when a live agent received the sever, `false` for an unknown/dead one.
    */
   severAgentTransport(agentId: string): Promise<boolean>;
+  /**
+   * Request that the driven window close through the OS close path, so the
+   * app's close interceptor (#1903) runs (multi-window, #3720).
+   */
+  closeWindow(): Promise<void>;
+  /** List the app's open native windows from the backend registry (#1900). */
+  listWindows(): Promise<WindowInfo[]>;
 }
 
 /**
@@ -352,5 +360,13 @@ export class InAppBridgeDriver implements Driver {
 
   async severAgentTransport(agentId: string): Promise<boolean> {
     return await this.send<boolean>({ action: "severAgentTransport", agentId });
+  }
+
+  async closeWindow(): Promise<void> {
+    await this.send({ action: "closeWindow" });
+  }
+
+  async listWindows(): Promise<WindowInfo[]> {
+    return await this.send<WindowInfo[]>({ action: "listWindows" });
   }
 }

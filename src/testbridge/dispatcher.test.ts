@@ -383,6 +383,72 @@ describe("dispatchCommand", () => {
     });
   });
 
+  describe("closeWindow (#3720)", () => {
+    it("requests the close through the injected dep", async () => {
+      const closeWindow = vi.fn(async () => {});
+      const { deps } = setup(`<div></div>`, { closeWindow });
+
+      const res = await dispatchCommand({ action: "closeWindow" }, deps);
+
+      expect(res).toEqual({ ok: true, action: "closeWindow" });
+      expect(closeWindow).toHaveBeenCalledTimes(1);
+    });
+
+    it("fails cleanly when the dep is not wired (outside the harness)", async () => {
+      const { deps } = setup(`<div></div>`);
+
+      const res = await dispatchCommand({ action: "closeWindow" }, deps);
+
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("not available");
+    });
+
+    it("fails with the dep's error when the close is refused", async () => {
+      const closeWindow = vi.fn(async () => {
+        throw new Error("test bridge is not enabled");
+      });
+      const { deps } = setup(`<div></div>`, { closeWindow });
+
+      const res = await dispatchCommand({ action: "closeWindow" }, deps);
+
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("test bridge is not enabled");
+    });
+  });
+
+  describe("listWindows (#3720)", () => {
+    it("returns the backend window registry", async () => {
+      const windows = [{ label: "main", tabCount: 1 }, { label: "win-1" }];
+      const listWindows = vi.fn(async () => windows);
+      const { deps } = setup(`<div></div>`, { listWindows });
+
+      const res = await dispatchCommand({ action: "listWindows" }, deps);
+
+      expect(res).toEqual({ ok: true, action: "listWindows", value: windows });
+    });
+
+    it("fails cleanly when the dep is not wired (outside the harness)", async () => {
+      const { deps } = setup(`<div></div>`);
+
+      const res = await dispatchCommand({ action: "listWindows" }, deps);
+
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("not available");
+    });
+
+    it("fails with the dep's error when the registry is unreachable", async () => {
+      const listWindows = vi.fn(async () => {
+        throw new Error("ipc down");
+      });
+      const { deps } = setup(`<div></div>`, { listWindows });
+
+      const res = await dispatchCommand({ action: "listWindows" }, deps);
+
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("ipc down");
+    });
+  });
+
   describe("drag", () => {
     it("fires mousedown on the handle then mousemove/mouseup with the delta applied", async () => {
       const { deps, container } = setup(`<div data-testid="handle"></div>`);

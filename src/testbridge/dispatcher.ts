@@ -87,6 +87,21 @@ export interface BridgeDeps {
    */
   severAgentTransport?: (agentId: string) => Promise<boolean>;
   /**
+   * Request this window's close through the same `close-requested` path the OS
+   * close button takes (multi-window journeys, #3720). The live
+   * {@link import("./TestBridge").TestBridge} defers Tauri's
+   * `getCurrentWindow().close()` until after the response is sent; unit tests
+   * supply a stub. Optional — absent outside the harness, so the `closeWindow`
+   * verb then fails with a clear "not available" error.
+   */
+  closeWindow?: () => Promise<void>;
+  /**
+   * List the app's open native windows from the backend registry (`list_windows`,
+   * #1900). Optional — absent outside the harness, so the `listWindows` verb then
+   * fails with a clear "not available" error.
+   */
+  listWindows?: () => Promise<unknown>;
+  /**
    * Drive the projection substrate (#2149) for the assertion harness (#2164):
    * subscribe to a region and record its pushed frames, dispatch intents, force
    * a gap, resync. The live {@link import("./TestBridge").TestBridge} wires a
@@ -808,6 +823,25 @@ export async function dispatchCommand(
         return ok("severAgentTransport", await deps.severAgentTransport(command.agentId));
       } catch (error) {
         return fail("severAgentTransport", errorMessage(error));
+      }
+    }
+
+    case "closeWindow": {
+      if (!deps.closeWindow) return fail("closeWindow", "window close is not available");
+      try {
+        await deps.closeWindow();
+        return ok("closeWindow");
+      } catch (error) {
+        return fail("closeWindow", errorMessage(error));
+      }
+    }
+
+    case "listWindows": {
+      if (!deps.listWindows) return fail("listWindows", "window listing is not available");
+      try {
+        return ok("listWindows", await deps.listWindows());
+      } catch (error) {
+        return fail("listWindows", errorMessage(error));
       }
     }
 

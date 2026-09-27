@@ -51,3 +51,54 @@ export function isResponseEnvelope(value: unknown): value is BridgeResponseEnvel
     typeof (candidate.response as Record<string, unknown>).ok === "boolean"
   );
 }
+
+// ── Multi-window routing (TIN-014, #3720) ───────────────────────────────────
+//
+// Every native window is its own page with its own TestBridge, so each opens its
+// own runner socket. The window names itself in the connection URL's query
+// string (`ws://127.0.0.1:<port>/?window=<label>`), which the runner reads at the
+// handshake — before any frame — so it can route commands to a specific window
+// without a racy "hello" message. A connection with no `window` parameter (an
+// older app build) is the main window, so single-window runners and tests are
+// unaffected. The envelope format above is unchanged.
+
+/** The window label a connection without a `window` parameter belongs to. */
+export const DEFAULT_BRIDGE_WINDOW = "main";
+
+/** Query parameter carrying the connecting window's runtime label. */
+export const BRIDGE_WINDOW_QUERY_PARAM = "window";
+
+/**
+ * Accepted window labels: Tauri's own label alphabet (alphanumerics plus
+ * `-`, `/`, `:`, `_`), capped in length. Anything else is rejected by the runner
+ * rather than silently treated as the main window.
+ */
+const BRIDGE_WINDOW_LABEL_PATTERN = /^[A-Za-z0-9_:/-]{1,128}$/;
+
+/** Whether `label` is an acceptable bridge window label. */
+export function isValidBridgeWindowLabel(label: string): boolean {
+  return BRIDGE_WINDOW_LABEL_PATTERN.test(label);
+}
+
+/**
+ * The runner URL a window's in-app client dials: loopback only, tagged with the
+ * window's label so the runner can address it (`driver.window(label)`).
+ */
+export function bridgeRunnerUrl(port: number, windowLabel: string): string {
+  const label = isValidBridgeWindowLabel(windowLabel) ? windowLabel : DEFAULT_BRIDGE_WINDOW;
+  return `ws://127.0.0.1:${port}/?${BRIDGE_WINDOW_QUERY_PARAM}=${encodeURIComponent(label)}`;
+}
+
+/**
+ * The window label a runner-side connection belongs to, from the request path
+ * the client dialled (e.g. `/?window=win-1`). Returns {@link DEFAULT_BRIDGE_WINDOW}
+ * when the parameter is absent (legacy single-window client) and `null` when it
+ * is present but not a valid label — the runner then refuses the connection.
+ */
+export function bridgeWindowFromRequestPath(path: string | undefined): string | null {
+  const query = (path ?? "").split("?", 2)[1] ?? "";
+  const params = new URLSearchParams(query);
+  if (!params.has(BRIDGE_WINDOW_QUERY_PARAM)) return DEFAULT_BRIDGE_WINDOW;
+  const label = params.get(BRIDGE_WINDOW_QUERY_PARAM) ?? "";
+  return isValidBridgeWindowLabel(label) ? label : null;
+}

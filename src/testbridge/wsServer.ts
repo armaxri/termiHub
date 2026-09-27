@@ -1,5 +1,6 @@
 import { WebSocketServer, type WebSocket as WsSocket, type RawData } from "ws";
 import { WebSocketBridgeTransport, type BridgeChannel } from "./wsTransport";
+import { bridgeWindowFromRequestPath, DEFAULT_BRIDGE_WINDOW } from "./wsProtocol";
 
 /**
  * `ws`-backed runner server for the cross-platform test bridge (issue #801).
@@ -39,6 +40,19 @@ export interface WebSocketBridgeServer {
    * after the current app disconnects, `awaitNextApp()` drives the next launch.
    */
   awaitNextApp(): Promise<WebSocketBridgeTransport>;
+  /**
+   * Labels of every window with a live bridge connection (#3720), main window
+   * first. Each native window of a multi-window app dials its own socket tagged
+   * with its label; only the main window takes part in the
+   * {@link waitForApp}/{@link awaitNextApp} generation contract.
+   */
+  windows(): string[];
+  /**
+   * Resolve with the transport of the window labelled `label` once it is
+   * connected (immediately if it already is). `"main"` resolves like
+   * {@link waitForApp}.
+   */
+  waitForWindow(label: string): Promise<WebSocketBridgeTransport>;
   /** Stop the server and reject any in-flight commands and pending waiters. */
   close(): Promise<void>;
 }
@@ -109,7 +123,44 @@ export function serveWebSocketBridge(
     });
   }
 
-  server.on("connection", (socket) => {
+  // Secondary windows (#3720): the live transport per window label, and waiters
+  // for a label that has not connected yet. A secondary window never supersedes
+  // the main connection — before this, a second window's socket would have
+  // replaced (and closed) the main one under last-writer-wins.
+  const secondary = new Map<string, WebSocketBridgeTransport>();
+  const windowWaiters: {
+    label: string;
+    resolve: (transport: WebSocketBridgeTransport) => void;
+    reject: (error: Error) => void;
+  }[] = [];
+
+  function acceptSecondary(label: string, socket: WsSocket): void {
+    const transport = new WebSocketBridgeTransport(channelFromSocket(socket), {
+      requestTimeoutMs: options.requestTimeoutMs,
+    });
+    const previous = secondary.get(label);
+    secondary.set(label, transport);
+    previous?.close();
+    socket.on("close", () => {
+      if (secondary.get(label) === transport) secondary.delete(label);
+    });
+    for (let i = windowWaiters.length - 1; i >= 0; i -= 1) {
+      if (windowWaiters[i].label === label) windowWaiters.splice(i, 1)[0].resolve(transport);
+    }
+  }
+
+  server.on("connection", (socket, request) => {
+    const label = bridgeWindowFromRequestPath(request.url);
+    if (label === null) {
+      // A malformed window tag is refused outright rather than guessed at — it
+      // must never be mistaken for (and supersede) the main window.
+      socket.close(1008, "invalid bridge window label");
+      return;
+    }
+    if (label !== DEFAULT_BRIDGE_WINDOW) {
+      acceptSecondary(label, socket);
+      return;
+    }
     // Last writer wins: the newest connection becomes the live one and supersedes
     // any predecessor, so a single app drives the run at a time AND a restarted
     // app always re-acquires the bridge (issue #817). Rejecting an overlapping
@@ -144,12 +195,27 @@ export function serveWebSocketBridge(
         waitForApp: () => acquire(currentGeneration),
         // Strictly the next connection after the one we last handed out.
         awaitNextApp: () => acquire(handedOut + 1),
+        windows: () => [
+          ...(current ? [DEFAULT_BRIDGE_WINDOW] : []),
+          ...[...secondary.keys()].sort(),
+        ],
+        waitForWindow: (label) => {
+          if (label === DEFAULT_BRIDGE_WINDOW) return acquire(currentGeneration);
+          const live = secondary.get(label);
+          if (live) return Promise.resolve(live);
+          return new Promise<WebSocketBridgeTransport>((res, rej) => {
+            windowWaiters.push({ label, resolve: res, reject: rej });
+          });
+        },
         close: () =>
           new Promise<void>((res) => {
             const error = new Error("bridge server closed");
             for (const waiter of waiters.splice(0)) waiter.reject(error);
+            for (const waiter of windowWaiters.splice(0)) waiter.reject(error);
             current?.close();
             current = undefined;
+            for (const transport of secondary.values()) transport.close();
+            secondary.clear();
             server.close(() => res());
           }),
       });

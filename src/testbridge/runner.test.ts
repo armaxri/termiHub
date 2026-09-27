@@ -14,6 +14,7 @@ import type {
 import type { CanvasSample, TerminalViewport } from "./protocol";
 import { BridgeError } from "./driver";
 import type { Scenario } from "./scenario";
+import type { WindowInfo } from "@/types/window";
 
 /**
  * An in-memory {@link Driver} for runner tests. Backing data is public and
@@ -172,6 +173,12 @@ class FakeDriver implements Driver {
 
   async severAgentTransport(_agentId: string): Promise<boolean> {
     return true;
+  }
+
+  async closeWindow(): Promise<void> {}
+
+  async listWindows(): Promise<WindowInfo[]> {
+    return [{ label: "main" }];
   }
 }
 
