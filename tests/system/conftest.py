@@ -47,6 +47,8 @@ from termihub_harness import (
     Bridge,
     ComposeFixture,
     ContainerRuntimeUnavailable,
+    SerialEchoPair,
+    SerialEchoUnavailable,
     require_test_bridge_build,
     stage_remote_agent_binary,
     wait_for_banner,
@@ -340,6 +342,27 @@ def vnc_vencrypt_fixtures():
     dynamic-resolution session's remote desktop really follows the tab.
     """
     return _ensure_vnc_service(VNC_VENCRYPT_SERVICE, VNC_VENCRYPT_PORT)
+
+
+@pytest.fixture
+def serial_echo_pair():
+    """A host ``socat`` PTY pair with an echo loop on one end (#3682).
+
+    Yields a started :class:`~termihub_harness.SerialEchoPair`: point the app at
+    ``pair.app_port`` and every byte it sends is echoed back. Function-scoped
+    because a test may kill ``socat`` (``pair.kill_socat()``) to simulate the
+    device vanishing. Teardown stops only the processes this fixture started.
+    Skips cleanly where ``socat`` is unavailable (Windows, or not installed).
+    """
+    pair = SerialEchoPair()
+    try:
+        pair.start()
+    except SerialEchoUnavailable as exc:
+        pytest.skip(f"virtual serial fixture unavailable: {exc}")
+    try:
+        yield pair
+    finally:
+        pair.stop()
 
 
 @pytest.fixture(scope="session")
