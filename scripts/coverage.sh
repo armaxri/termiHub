@@ -10,9 +10,13 @@
 #
 # Run from anywhere: ./scripts/coverage.sh
 #
-# ADVISORY, NOT A HARD GATE (yet): this script reports the unified number; it
-# does not fail on a low value. The intended follow-up is to capture a baseline
-# from the first CI run, then add a fail-on-decrease ratchet (see coverage.yml).
+# BLOCKING RATCHET (#3740 — CI-011, TBE-007, TOOL-011): after reporting, the
+# per-component UNIT line coverage (frontend, core, agent, src-tauri, unified)
+# is compared with the committed per-platform baseline in
+# scripts/coverage-baseline.json by scripts/internal/coverage-ratchet.mjs. A drop
+# of more than the baseline's tolerance fails the script (exit 1). The nightly
+# integration overlay below is reported but NOT gated (it varies run to run).
+# When coverage improves, lock it in with: ./scripts/coverage.sh --update-baseline
 #
 # Nightly integration coverage (TOOL-005, #3656): when TERMIHUB_INTEGRATION_LCOV
 # names an lcov file from the nightly integration-fixtures lane, it is merged
@@ -26,14 +30,20 @@
 #   --dry-run   Resolve everything and run the merge/summary logic against any
 #               existing lcov, but SKIP the heavy vitest/llvm-cov runs. Used to
 #               smoke-test the script (this repo's CI does not run full coverage).
+#   --update-baseline
+#               Instead of gating, raise this platform's baseline in
+#               scripts/coverage-baseline.json to the measured values (never
+#               lowers a value). Commit the updated file.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
 DRY_RUN=0
+UPDATE_BASELINE=0
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=1 ;;
+        --update-baseline) UPDATE_BASELINE=1 ;;
         *) echo "unknown argument: $arg" >&2; exit 2 ;;
     esac
 done
@@ -44,6 +54,7 @@ RUST_LCOV="$OUT_DIR/rust.lcov"
 UNIT_LCOV="$OUT_DIR/unit.lcov"
 MERGED_LCOV="$OUT_DIR/merged.lcov"
 SUMMARY_FILE="$OUT_DIR/summary.txt"
+RATCHET_REPORT="$OUT_DIR/ratchet.md"
 GAP_REPORT="$OUT_DIR/integration-gap.md"
 INTEGRATION_LCOV="${TERMIHUB_INTEGRATION_LCOV:-}"
 INTEGRATION_STALE="${TERMIHUB_INTEGRATION_STALE:-}"
@@ -67,9 +78,12 @@ fi
 #    llvm-tools-preview rustup component).
 echo "=== Rust coverage (cargo llvm-cov → lcov) ==="
 if [ "$DRY_RUN" -eq 1 ]; then
-    echo "  [dry-run] skipping: cargo llvm-cov --workspace --all-features --lcov"
+    echo "  [dry-run] skipping: cargo llvm-cov --workspace --all-features --no-report"
 else
-    cargo llvm-cov --workspace --all-features --lcov --output-path "$RUST_LCOV"
+    # Tests and report are split so the report step can survive an intermittent
+    # truncated .profraw (see scripts/internal/llvm-cov-report.mjs).
+    cargo llvm-cov --workspace --all-features --no-report
+    node scripts/internal/llvm-cov-report.mjs "$RUST_LCOV"
 fi
 
 # ---------------------------------------------------------------------------
@@ -109,7 +123,7 @@ fi
 # concatenation is already a valid merged tracefile. The integration lcov DOES
 # share files with the Rust report, so it is merged per file instead (hits
 # summed, the unit report owning the denominator, stale files skipped).
-rm -f "$GAP_REPORT"
+rm -f "$GAP_REPORT" "$RATCHET_REPORT"
 if [ -n "$INTEGRATION_LCOV" ] && [ -s "$INTEGRATION_LCOV" ]; then
     echo "--- unit tests only ---"
     node scripts/internal/lcov-summary.mjs "$UNIT_LCOV"
@@ -138,3 +152,14 @@ if [ "$INTEGRATION_PRESENT" -eq 1 ]; then
     echo "Gap report:     $GAP_REPORT"
 fi
 echo "HTML reports:   coverage/ (frontend) — run 'cargo llvm-cov --html' for Rust HTML"
+
+# ---------------------------------------------------------------------------
+# 4. Ratchet: fail on a coverage decrease against the committed baseline, or
+#    (with --update-baseline) raise the baseline to the measured values.
+echo ""
+echo "=== Coverage ratchet (scripts/coverage-baseline.json) ==="
+if [ "$UPDATE_BASELINE" -eq 1 ]; then
+    node scripts/internal/coverage-ratchet.mjs --update
+else
+    node scripts/internal/coverage-ratchet.mjs --check --report "$RATCHET_REPORT"
+fi

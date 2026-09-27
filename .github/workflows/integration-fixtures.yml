@@ -86,7 +86,7 @@ jobs:
     env:
       # Integration coverage (TOOL-005, #3656): manually dispatched runs
       # (including the nightly develop dispatch) measure the suite with cargo-llvm-cov and upload the lcov, which the
-      # advisory Coverage workflow (coverage.yml) merges into the unified report.
+      # Coverage workflow (coverage.yml) merges into the unified report.
       # PR-triggered runs stay a plain `cargo test`, so PR runtime is unchanged.
       # The develop nightly is dispatched by integration-coverage-nightly.yml.
       #
