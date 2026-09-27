@@ -111,7 +111,12 @@ pub(crate) fn build(
     // (SEC-005): the whole block is compiled out of release builds.
     #[cfg(feature = "test-bridge")]
     if let Some(plugin) = crate::utils::test_bridge::test_bridge_plugin() {
-        tracing::info!("Test bridge WebSocket transport enabled");
+        // Logging the build marker keeps it in the binary, where the harness
+        // looks for it before launch (#3664).
+        tracing::info!(
+            marker = crate::utils::test_bridge::TEST_BRIDGE_BUILD_MARKER,
+            "Test bridge WebSocket transport enabled"
+        );
         builder = builder.plugin(plugin);
     }
 

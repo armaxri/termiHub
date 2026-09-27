@@ -298,3 +298,65 @@ def test_pump_is_silent_on_console_when_disabled_but_still_logs(
     inst._pump_output()
     assert capsys.readouterr().out == ""
     assert "boot A" in inst._log_file.getvalue()
+
+
+# ─── Test-bridge build guard (#3664) ────────────────────────────────────────
+
+
+def test_bridge_marker_matches_rust_constant():
+    """The Python marker must equal the Rust one the app build embeds."""
+    source = (
+        Path(orchestrator.__file__).resolve().parents[3]
+        / "src-tauri/src/utils/test_bridge.rs"
+    ).read_text(encoding="utf-8")
+    needle = 'pub const TEST_BRIDGE_BUILD_MARKER: &str = "'
+    start = source.index(needle) + len(needle)
+    rust_marker = source[start : source.index('"', start)]
+    assert rust_marker.encode() == orchestrator.TEST_BRIDGE_BUILD_MARKER
+
+
+def _binary_with(tmp_path: Path, content: bytes) -> Path:
+    path = tmp_path / "termihub"
+    path.write_bytes(content)
+    return path
+
+
+def test_binary_with_marker_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "_bridge_build_checked", {})
+    path = _binary_with(
+        tmp_path, b"\x7fELF...." + orchestrator.TEST_BRIDGE_BUILD_MARKER + b"...."
+    )
+    assert orchestrator.binary_has_test_bridge(path)
+    orchestrator.require_test_bridge_build(path)
+
+
+def test_bridgeless_binary_fails_loudly_not_skips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A bridgeless build must raise, and not as FileNotFoundError (= a skip)."""
+    monkeypatch.setattr(orchestrator, "_bridge_build_checked", {})
+    path = _binary_with(tmp_path, b"\x7fELF no bridge compiled in")
+    assert not orchestrator.binary_has_test_bridge(path)
+    with pytest.raises(orchestrator.MissingTestBridgeError, match="test-bridge") as exc:
+        orchestrator.require_test_bridge_build(path)
+    assert not isinstance(exc.value, FileNotFoundError)
+    assert "build-system-test-app.sh" in str(exc.value)
+
+
+def test_empty_binary_has_no_marker(tmp_path: Path):
+    assert not orchestrator.binary_has_test_bridge(_binary_with(tmp_path, b""))
+
+
+def test_bridge_check_is_cached_per_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(orchestrator, "_bridge_build_checked", {})
+    calls: list[Path] = []
+
+    def _fake_scan(path: Path) -> bool:
+        calls.append(path)
+        return True
+
+    monkeypatch.setattr(orchestrator, "binary_has_test_bridge", _fake_scan)
+    path = _binary_with(tmp_path, b"x")
+    orchestrator.require_test_bridge_build(path)
+    orchestrator.require_test_bridge_build(path)
+    assert len(calls) == 1
