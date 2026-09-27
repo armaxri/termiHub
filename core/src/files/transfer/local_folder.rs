@@ -294,9 +294,10 @@ fn remove_existing_symlink(path: &Path) -> Result<(), FolderCopyError> {
     }
 }
 
-/// [`run_local_transfer`] for one queued file of a folder copy: once it ends,
-/// a **cancelled** file cancels the rest of its folder — every id in `group`
-/// still registered (queued, active, paused or awaiting a retry).
+/// [`run_local_transfer`] for one queued file of a folder copy, from
+/// `start_offset` (non-zero when an app relaunch resumes it, #3613): once it
+/// ends, a **cancelled** file cancels the rest of its folder — every id in
+/// `group` still registered (queued, active, paused or awaiting a retry).
 ///
 /// Completed siblings are already gone from the registry, so cancelling them is
 /// a harmless no-op; the executor's temp + rename keeps every cancelled file's
@@ -309,8 +310,17 @@ pub async fn run_local_transfer_in_group(
     registry: TransferRegistry,
     sink: ProgressSink,
     group: Arc<[String]>,
+    start_offset: u64,
 ) {
-    run_local_transfer(src, dest, handle.clone(), registry.clone(), sink, 0).await;
+    run_local_transfer(
+        src,
+        dest,
+        handle.clone(),
+        registry.clone(),
+        sink,
+        start_offset,
+    )
+    .await;
     if handle.state().tag() != TransferStateTag::Cancelled || is_queue_teardown() {
         return;
     }

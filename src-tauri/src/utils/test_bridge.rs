@@ -244,11 +244,13 @@ mod tests {
         assert!(!always_on_top_opt_out_from(Some(String::new())));
     }
 
-    /// The exact production `connect-src` from `tauri.conf.json`. If the config
-    /// changes, this constant must change too — the assertion below is a guard
+    /// The production CSP from `tauri.conf.json` (the base, macOS/Linux policy —
+    /// Windows swaps only the `script-src` plugin origin via
+    /// `tauri.windows.conf.json`, #3627). If the config changes, this constant
+    /// must change too — the assertion below is a guard
     /// that the relaxation widens the *current* production directive, not a
     /// stale one.
-    const PROD_CSP: &str = "default-src 'self'; script-src 'self' plugin://localhost http://plugin.localhost 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; worker-src 'self' blob:; child-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'";
+    const PROD_CSP: &str = "default-src 'self'; script-src 'self' plugin://localhost 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost; worker-src 'self' blob:; child-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'";
 
     #[test]
     fn relax_csp_adds_ws_sources_to_connect_src() {
@@ -382,15 +384,20 @@ mod tests {
         let conf: serde_json::Value =
             serde_json::from_str(&raw).expect("tauri.conf.json is valid JSON");
 
-        let conf_csp = conf
+        // The CSP is declared as a directive map (#3627) so platform overlays can
+        // patch single directives; render it through Tauri's own `Csp` type, the
+        // same path the runtime relaxation takes (`Csp::to_string`).
+        let conf_csp: Csp = conf
             .get("app")
             .and_then(|app| app.get("security"))
             .and_then(|security| security.get("csp"))
-            .and_then(serde_json::Value::as_str)
-            .expect("tauri.conf.json has app.security.csp as a string");
+            .cloned()
+            .map(serde_json::from_value)
+            .expect("tauri.conf.json has app.security.csp")
+            .expect("app.security.csp is a valid Tauri CSP");
 
         let baked = normalize_csp(PROD_CSP);
-        let shipped = normalize_csp(conf_csp);
+        let shipped = normalize_csp(&conf_csp.to_string());
 
         // The `connect-src` directive is the highest-risk one — surface it first
         // and explicitly if it drifts.

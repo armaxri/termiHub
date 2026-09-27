@@ -23,7 +23,17 @@ describe("classify", () => {
   });
 
   it("treats a Rust-only PR as rust (no frontend)", () => {
-    expect(on(classify(["core/src/lib.rs", "src-tauri/tauri.conf.json"]))).toEqual(["rust"]);
+    expect(on(classify(["core/src/lib.rs", "src-tauri/src/lib.rs"]))).toEqual(["rust"]);
+  });
+
+  it("runs the frontend suite for Tauri config changes — the CSP guard is vitest (#3627)", () => {
+    for (const conf of [
+      "src-tauri/tauri.conf.json",
+      "src-tauri/tauri.windows.conf.json",
+      "src-tauri/tauri.test.conf.json",
+    ]) {
+      expect(on(classify([conf]))).toEqual(["rust", "frontend"]);
+    }
   });
 
   it("flags lockfile and manifest changes as deps", () => {

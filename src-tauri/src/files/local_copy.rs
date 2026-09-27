@@ -9,6 +9,9 @@
 //!   each large file enqueued as its own Transfer Queue row. The folder's rows
 //!   form a group: cancelling one cancels the rest
 //!   ([`run_local_transfer_in_group`](termihub_core::files::transfer::local_folder::run_local_transfer_in_group)).
+//!   The group id is persisted with each row (#3613), so a relaunch after an
+//!   app restart rebuilds the group
+//!   ([`relaunch`](crate::files::transfer::relaunch)).
 //!
 //! The core planning/layout/grouping lives in
 //! `termihub_core::files::transfer::local_folder`; this module only wires it to
@@ -69,13 +72,16 @@ async fn blocking<T: Send + 'static>(
 }
 
 /// Register a queued local copy of `src` → `dest` (`size` bytes) with the
-/// registry and, when present, the persisted queue; returns its id + handle.
+/// registry and, when present, the persisted queue — tagged with the folder's
+/// cancel `group` when it is one file of a folder copy (#3613); returns its
+/// id + handle.
 fn enqueue(
     registry: &TransferRegistry,
     app_handle: &tauri::AppHandle,
     src: &str,
     dest: &str,
     size: u64,
+    group: Option<&str>,
 ) -> (String, Arc<TransferHandle>) {
     let transfer_id = uuid::Uuid::new_v4().to_string();
     debug!(transfer_id, src, dest, "Local copy (queued)");
@@ -98,6 +104,9 @@ fn enqueue(
             Some(dest.to_string()),
             size,
         );
+        if let Some(group) = group {
+            pm.record_group(&transfer_id, group);
+        }
     }
     (transfer_id, handle)
 }
@@ -120,7 +129,14 @@ pub async fn start(
         blocking(move || crate::files::local::copy_file(&src_path, &dest_path, false)).await?;
         return Ok(LocalCopyStarted::default());
     }
-    let (transfer_id, handle) = enqueue(registry, app_handle, &src_path, &dest_path, meta.len());
+    let (transfer_id, handle) = enqueue(
+        registry,
+        app_handle,
+        &src_path,
+        &dest_path,
+        meta.len(),
+        None,
+    );
     let queued = vec![QueuedLocalCopy {
         transfer_id,
         src_path: src_path.clone(),
@@ -172,13 +188,14 @@ async fn start_folder(
         skipped = plan.skipped.len(),
         "Local folder copy"
     );
+    let group_id = uuid::Uuid::new_v4().to_string();
     let jobs: Vec<(String, String, Arc<TransferHandle>)> = plan
         .queued
         .iter()
         .map(|file| {
             let from = src.join(&file.rel).to_string_lossy().into_owned();
             let to = dest.join(&file.rel).to_string_lossy().into_owned();
-            let (_, handle) = enqueue(registry, app_handle, &from, &to, file.size);
+            let (_, handle) = enqueue(registry, app_handle, &from, &to, file.size, Some(&group_id));
             (from, to, handle)
         })
         .collect();
@@ -194,7 +211,7 @@ async fn start_folder(
         let (registry, group) = (registry.clone(), group.clone());
         let sink = transfer::app_progress_sink(app_handle.clone());
         tauri::async_runtime::spawn(async move {
-            local_folder::run_local_transfer_in_group(from, to, handle, registry, sink, group)
+            local_folder::run_local_transfer_in_group(from, to, handle, registry, sink, group, 0)
                 .await;
         });
     }

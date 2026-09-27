@@ -32,8 +32,8 @@ import { TunnelDiagram } from "./TunnelDiagram";
 import { TunnelChainPreviewDialog } from "./TunnelChainPreviewDialog";
 import { validateTunnelType, type TunnelFieldErrors } from "./tunnelValidation";
 import { newId } from "@/services/transport/ids";
-import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import { ambiguousConnectionIds } from "@/utils/jumpHost";
+import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import "./TunnelEditor.css";
 
 /** Encode a run-location as a `Select` option value, and decode it back. */

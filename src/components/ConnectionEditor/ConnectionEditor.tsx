@@ -65,7 +65,11 @@ import {
 } from "@/utils/schemaDefaults";
 import { useAvailableRuntimes } from "@/hooks/useAvailableRuntimes";
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
-import { remapJumpHostRefs } from "@/utils/connectionIdChanges";
+import {
+  inferFolderFollow,
+  remapJumpHostRefs,
+  type FolderFollow,
+} from "@/utils/connectionIdChanges";
 import { shouldOfferGitBashSetup } from "@/utils/gitBashSetup";
 import { GitBashSetupDialog } from "@/components/OpenConnections/GitBashSetupDialog";
 import { ConnectionTerminalSettings } from "./ConnectionTerminalSettings";
@@ -255,6 +259,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const settings = useProjectedSettings();
   const credentialStoreStatus = useAppStore((s) => s.credentialStoreStatus);
   const setEditorDirty = useAppStore((s) => s.setEditorDirty);
+  const renameTab = useAppStore((s) => s.renameTab);
+  const retargetConnectionEditorFolder = useAppStore((s) => s.retargetConnectionEditorFolder);
   const pendingCloseRequest = useAppStore((s) => s.pendingCloseRequest);
   const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
   const experimental = useExperimentalFeatures();
@@ -560,10 +566,67 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   // the draft's saved-connection jump-host hops, or saving would write the old id
   // back over the backend's follow (#3603). The remap is not a user edit, so the
   // dirty baseline follows too — a clean editor stays clean, a dirty one dirty.
-  useConnectionIdChanges((remap) => {
+  //
+  // A *new* connection's target folder (`meta.folderId`) was renamed, moved or
+  // deleted (#3622): the event carries connection ids only, so infer where the
+  // folder went from the connections under it (read here, before the tree
+  // updates) and retarget once the tree confirms the old folder is gone.
+  const folderFollowRef = useRef<FolderFollow | null>(null);
+  useConnectionIdChanges((remap, changes) => {
     initialConnSettings.current = remapJumpHostRefs(initialConnSettings.current, remap);
     setConnSettings((prev) => remapJumpHostRefs(prev, remap));
+    if (!existingConnection && meta.folderId != null) {
+      const follow = inferFolderFollow(
+        meta.folderId,
+        changes,
+        connections.map((c) => c.id)
+      );
+      if (follow) folderFollowRef.current = follow;
+    }
   });
+  useEffect(() => {
+    const follow = folderFollowRef.current;
+    if (!follow || follow.from !== meta.folderId) return;
+    if (folders.some((f) => f.id === follow.from)) return;
+    if (follow.to !== null && !folders.some((f) => f.id === follow.to)) return;
+    folderFollowRef.current = null;
+    retargetConnectionEditorFolder(tabId, follow.to);
+  }, [folders, meta.folderId, tabId, retargetConnectionEditorFolder]);
+
+  // This editor's own connection renamed or moved (#3622): the tab's
+  // `connectionEditorMeta.connectionId` follows the new id (see
+  // `remapTabContentConnectionIds`), so `existingConnection` resolves to the
+  // renamed record and saving updates it — the draft (and its dirty state) is
+  // kept as is. A renamed connection's name and storage file are not user edits:
+  // where the draft still holds the old value it takes the new one, and the dirty
+  // baseline follows either way, so a clean editor stays clean and an edited
+  // field keeps the user's value.
+  const [baselineVersion, setBaselineVersion] = useState(0);
+  const followedConnectionRef = useRef(existingConnection);
+  useEffect(() => {
+    if (!existingConnection) return;
+    const prev = followedConnectionRef.current;
+    followedConnectionRef.current = existingConnection;
+    if (!prev || prev.id === existingConnection.id) return;
+    let baselineChanged = false;
+    if (existingConnection.name !== prev.name && initialName.current === prev.name) {
+      if (name === prev.name) setTopLevelValue("name", existingConnection.name);
+      initialName.current = existingConnection.name;
+      baselineChanged = true;
+      const tab = useAppStore.getState().tabContent[tabId];
+      if (tab?.title === `Edit: ${prev.name}`) renameTab(tabId, `Edit: ${existingConnection.name}`);
+    }
+    const prevSource = prev.sourceFile ?? null;
+    const nextSource = existingConnection.sourceFile ?? null;
+    if (nextSource !== prevSource && initialSourceFile.current === prevSource) {
+      if (sourceFile === prevSource) setTopLevelValue("sourceFile", nextSource);
+      initialSourceFile.current = nextSource;
+      baselineChanged = true;
+    }
+    if (baselineChanged) setBaselineVersion((v) => v + 1);
+    // Runs on the resolved record changing only; the draft values are read as of then.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existingConnection]);
 
   useEffect(() => {
     const normalizedConnSettings = {
@@ -589,6 +652,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     persistent,
     agentSettings,
     sourceFile,
+    baselineVersion,
     tabId,
     setEditorDirty,
   ]);
