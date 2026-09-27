@@ -10,6 +10,7 @@ import {
   parseExpected,
   resolveToken,
   run,
+  selectProtection,
 } from "./check-branch-protection.mjs";
 
 const CONTEXTS = ["Lint Commit Messages", "Rust Code Quality"];
@@ -90,6 +91,45 @@ describe("parseExpected", () => {
       /^(Run Tests|Build on) /.test(c)
     );
     expect(legs).toEqual([]);
+  });
+
+  it("keeps main's pending set reportable on every PR once the slim lane lands", () => {
+    const { main, develop } = parseExpected(readFileSync(DEFAULT_FILE, "utf8"));
+    expect(main.pending.when).toMatch(/release PR/);
+    const pending = main.pending.protection.required_status_checks.contexts;
+    expect(pending).toContain("PR Gate");
+    // No matrix leg (skipped matrix reports under its bare name) and no
+    // path-filtered workflow (reports nothing outside its paths).
+    expect(pending.filter((c) => /^(Run Tests|Build on) /.test(c))).toEqual([]);
+    expect(pending).not.toContain("Security Audit");
+    expect(pending).toEqual(develop.protection.required_status_checks.contexts);
+    // Only the required checks change; every other main rule stays as it is live.
+    const { required_status_checks: _a, ...restPending } = main.pending.protection;
+    const { required_status_checks: _b, ...restCurrent } = main.protection;
+    expect(restPending).toEqual(restCurrent);
+  });
+
+  it("rejects a pending block without a when or with an invalid protection", () => {
+    const noWhen = {
+      branches: {
+        main: { status: "enforced", protection: expected(), pending: { protection: expected() } },
+      },
+    };
+    expect(() => parseExpected(JSON.stringify(noWhen))).toThrow(/pending\.when/);
+    const p = expected();
+    delete p.lock_branch;
+    const bad = {
+      branches: {
+        main: {
+          status: "enforced",
+          protection: expected(),
+          pending: { when: "later", protection: p },
+        },
+      },
+    };
+    expect(() => parseExpected(JSON.stringify(bad))).toThrow(
+      /main\.pending\.protection\.lock_branch/
+    );
   });
 
   it("rejects an unknown status", () => {
@@ -249,6 +289,25 @@ describe("buildPutPayload", () => {
   });
 });
 
+describe("selectProtection", () => {
+  const entry = {
+    status: "enforced",
+    protection: expected(),
+    pending: { when: "later", protection: expected({ enforce_admins: false }) },
+  };
+
+  it("returns the current protection by default and the pending one on request", () => {
+    expect(selectProtection("main", entry)).toBe(entry.protection);
+    expect(selectProtection("main", entry, "pending")).toBe(entry.pending.protection);
+  });
+
+  it("rejects a pending target the branch does not have, and unknown targets", () => {
+    const plain = { status: "enforced", protection: expected() };
+    expect(() => selectProtection("develop", plain, "pending")).toThrow(/no pending/);
+    expect(() => selectProtection("main", entry, "future")).toThrow(/unknown target/);
+  });
+});
+
 describe("fetchProtection", () => {
   it("sends the token and returns the body", async () => {
     const fetchImpl = mockFetch({ main: [200, apiResponse()] });
@@ -345,6 +404,83 @@ describe("run", () => {
   });
 });
 
+describe("run with a pending protection", () => {
+  const PENDING = ["Lint Commit Messages", "PR Gate"];
+  const branches = {
+    main: {
+      status: "enforced",
+      protection: expected(),
+      pending: {
+        when: "right after the release PR is opened",
+        protection: expected({
+          required_status_checks: { strict: false, app_id: 15368, contexts: [...PENDING] },
+        }),
+      },
+    },
+  };
+  const liveWith = (contexts) => {
+    const api = apiResponse();
+    api.required_status_checks.contexts = [...contexts];
+    api.required_status_checks.checks = contexts.map((context) => ({ context, app_id: 15368 }));
+    return api;
+  };
+
+  it("reports the pending change without failing while live is the current set", async () => {
+    const fetchImpl = mockFetch({ main: [200, apiResponse()] });
+    const { exitCode, results, report } = await run({ repo: "o/r", branches, fetchImpl });
+    expect(exitCode).toBe(0);
+    expect(results).toEqual([{ branch: "main", status: "enforced", outcome: "pending-change" }]);
+    expect(report[0]).toBe("OK main: live protection matches.");
+    expect(report).toContain("PENDING CHANGE main (not applied yet, by design): 2 difference(s)");
+    expect(report).toContain("  When: right after the release PR is opened");
+    expect(report.join("\n")).toContain(
+      "apply-branch-protection.sh --branch main --target pending --apply"
+    );
+    expect(report).toContain('  - required check missing live: "PR Gate"');
+    expect(report).toContain('  - required check live but not expected: "Rust Code Quality"');
+  });
+
+  it("asks for promotion without failing once the pending set is live", async () => {
+    const fetchImpl = mockFetch({ main: [200, liveWith(PENDING)] });
+    const { exitCode, results, report } = await run({ repo: "o/r", branches, fetchImpl });
+    expect(exitCode).toBe(0);
+    expect(results[0].outcome).toBe("pending-live");
+    expect(report[0]).toBe("PENDING LIVE main: the pending protection is applied.");
+    expect(report.join("\n")).toMatch(/move branches\.main\.pending\.protection/);
+  });
+
+  it("still fails an enforced branch that matches neither set", async () => {
+    const fetchImpl = mockFetch({ main: [200, liveWith(["Something Else"])] });
+    const { exitCode, results, report } = await run({ repo: "o/r", branches, fetchImpl });
+    expect(exitCode).toBe(1);
+    expect(results[0].outcome).toBe("drift");
+    // The drift is reported against the current protection, not the pending one.
+    expect(report).toContain('  - required check missing live: "Rust Code Quality"');
+  });
+
+  it("reports a plain match when the pending set equals the current one", async () => {
+    const same = { main: { ...branches.main, pending: { when: "x", protection: expected() } } };
+    const fetchImpl = mockFetch({ main: [200, apiResponse()] });
+    const { results, report } = await run({ repo: "o/r", branches: same, fetchImpl });
+    expect(results[0].outcome).toBe("match");
+    expect(report).toEqual(["OK main: live protection matches."]);
+  });
+
+  it("reports the committed file's main as a pending change against today's live set", async () => {
+    const committed = parseExpected(readFileSync(DEFAULT_FILE, "utf8"));
+    const liveNow = liveWith(committed.main.protection.required_status_checks.contexts);
+    const fetchImpl = mockFetch({ main: [200, liveNow] });
+    const { exitCode, results } = await run({
+      repo: "o/r",
+      branches: committed,
+      only: ["main"],
+      fetchImpl,
+    });
+    expect(exitCode).toBe(0);
+    expect(results[0].outcome).toBe("pending-change");
+  });
+});
+
 describe("resolveToken", () => {
   it("prefers BRANCH_PROTECTION_TOKEN over GH_TOKEN and GITHUB_TOKEN", () => {
     const exec = vi.fn();
@@ -378,6 +514,16 @@ describe("parseArgs", () => {
       "s.md",
     ]);
     expect(opts).toMatchObject({ repo: "o/r", only: ["main", "develop"], summary: "s.md" });
+  });
+
+  it("accepts --target pending only together with --payload", () => {
+    expect(parseArgs(["--payload", "main", "--target", "pending"])).toMatchObject({
+      payload: "main",
+      target: "pending",
+    });
+    expect(parseArgs(["--payload", "main"]).target).toBe("protection");
+    expect(() => parseArgs(["--target", "pending"])).toThrow(/only applies together/);
+    expect(() => parseArgs(["--payload", "main", "--target", "later"])).toThrow(/--target must/);
   });
 
   it("rejects unknown flags and missing values", () => {

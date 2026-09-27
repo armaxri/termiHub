@@ -70,7 +70,11 @@ pub fn probe_remote_agent(
 
     // Try running the agent with --version using the resolved path
     let version_cmd = config.agent_version_command();
-    let version_output = run_remote_command(&session, &version_cmd);
+    // A frozen server is a failed probe, not a missing agent (#3698).
+    let version_output = match run_remote_command(&session, &version_cmd) {
+        Err(e) if e.is_timeout() => return Err(e),
+        other => other,
+    };
 
     let (found, version, compatible) = match version_output {
         Ok(output) if !output.is_empty() => {
@@ -398,8 +402,14 @@ pub fn deploy_agent(
         "Installing agent binary…",
         0.7,
     );
-    run_remote_command(&session, &plan.install_command)
-        .map_err(|e| TerminalError::RemoteError(format!("Install command failed: {e}")))?;
+    run_remote_command(&session, &plan.install_command).map_err(|e| {
+        // Keep a timeout typed so the UI reports the frozen server (#3698).
+        if e.is_timeout() {
+            e
+        } else {
+            TerminalError::RemoteError(format!("Install command failed: {e}"))
+        }
+    })?;
 
     // 8. Verify
     bail_if_cancelled(cancel)?;
@@ -410,7 +420,12 @@ pub fn deploy_agent(
         "Verifying installation…",
         0.9,
     );
-    let verify_output = run_remote_command(&session, &plan.verify_command);
+    // A frozen server during verify fails the deploy with the typed timeout
+    // rather than reporting "installed but --version failed" (#3698).
+    let verify_output = match run_remote_command(&session, &plan.verify_command) {
+        Err(e) if e.is_timeout() => return Err(e),
+        other => other,
+    };
 
     let installed_version = match verify_output {
         Ok(output) if !output.is_empty() => {

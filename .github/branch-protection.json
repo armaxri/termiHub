@@ -14,12 +14,13 @@
     "always-reporting 'PR Gate' aggregate job (#3678) instead. A workflow-level",
     "`paths` filter (Security Audit, Vendored Forks) reports nothing at all.",
     "app_id 15368 is GitHub Actions: a required check is only satisfied by an Actions run.",
+    "Optional per-branch 'pending': a complete future protection plus 'when' it must be applied; the check reports it as a pending change without failing (#3677).",
     "See docs/contributing.md -> 'Required checks per branch'."
   ],
   "branches": {
     "main": {
       "status": "enforced",
-      "note": "Mirrors the live settings as of 2026-09-27 (no drift on day one). Several contexts predate the slim PR lane (#3325) and are not reported on every PR; see the docs.",
+      "note": "Mirrors the live settings as of 2026-09-27 (no drift on day one). Several contexts predate the slim PR lane (#3325) and are not reported on every PR once it reaches main; 'pending' holds the replacement set (#3677).",
       "protection": {
         "required_status_checks": {
           "strict": false,
@@ -53,6 +54,45 @@
         "required_conversation_resolution": false,
         "lock_branch": false,
         "allow_fork_syncing": false
+      },
+      "pending": {
+        "when": "On the next develop -> main release merge: right after the release PR into main is opened, before it has to go green (the current set names checks the slim lane no longer reports, so that PR could never merge).",
+        "note": "Same non-matrix set as develop: every context is a code-quality.yml job gated by a job-level `if`, so it reports (success or skipped) on every PR, and 'PR Gate' (#3678) aggregates the Run Tests matrix legs. Dropped: the Run Tests / Build matrix legs (a skipped matrix reports under its bare name; macOS/Windows legs are post-merge only) and Security Audit (workflow-level paths filter; post-merge and daily per #3326). The rest of main's rules are unchanged.",
+        "protection": {
+          "required_status_checks": {
+            "strict": false,
+            "app_id": 15368,
+            "contexts": [
+              "Lint Commit Messages",
+              "Rust Code Quality",
+              "Rust Code Quality (Windows)",
+              "Frontend Code Quality",
+              "Agent Live Tests (Windows, serial)",
+              "RDP Sidecar Quality",
+              "Shell Script Quality",
+              "Windows cmd Script Smoke",
+              "System-Test Harness (machinery)",
+              "Test-ID Drift Guard",
+              "PR Gate"
+            ]
+          },
+          "enforce_admins": true,
+          "required_pull_request_reviews": {
+            "dismiss_stale_reviews": false,
+            "require_code_owner_reviews": false,
+            "require_last_push_approval": false,
+            "required_approving_review_count": 0
+          },
+          "restrictions": null,
+          "required_signatures": false,
+          "required_linear_history": false,
+          "allow_force_pushes": false,
+          "allow_deletions": false,
+          "block_creations": false,
+          "required_conversation_resolution": false,
+          "lock_branch": false,
+          "allow_fork_syncing": false
+        }
       }
     },
     "develop": {

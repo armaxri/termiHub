@@ -10,10 +10,14 @@
 #
 # Usage:
 #   scripts/internal/apply-branch-protection.sh --branch <name> [--apply]
-#                                               [--repo <owner/name>]
+#                          [--target current|pending] [--repo <owner/name>]
 #
 # Options:
 #   --branch <name>   Branch to apply (must be listed in branch-protection.json).
+#   --target <t>      current (default): the branch's `protection`.
+#                     pending: the branch's `pending.protection`, a change
+#                     committed ahead of time and applied at a set moment
+#                     (its `when`; for main: when the release PR is opened).
 #   --apply           Actually write the protection. Without it this is a DRY
 #                     RUN: it only reads (drift report + payload) and changes
 #                     nothing.
@@ -22,6 +26,8 @@
 #
 # After applying a branch whose status is "proposed", change its status to
 # "enforced" in .github/branch-protection.json (in a PR) so drift on it fails.
+# After applying a pending protection, move it into `protection` and delete
+# `pending` (in a PR); the drift check reports "PENDING LIVE" until then.
 #
 # Requires: Node 22+, and an authenticated `gh` CLI (admin rights on the repo to
 # read the drift report and for --apply).
@@ -35,10 +41,11 @@ EXPECTED="$REPO_ROOT/.github/branch-protection.json"
 
 REPO="armaxri/termiHub"
 BRANCH=""
+TARGET="current"
 APPLY=false
 
 usage() {
-    sed -n '3,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '3,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 die() {
@@ -58,6 +65,11 @@ while [ "$#" -gt 0 ]; do
         REPO="$2"
         shift 2
         ;;
+    --target)
+        [ "$#" -ge 2 ] || die "--target needs a value"
+        TARGET="$2"
+        shift 2
+        ;;
     --apply)
         APPLY=true
         shift
@@ -73,20 +85,30 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "$BRANCH" ] || die "--branch is required (see --help)"
+case "$TARGET" in
+current) JSON_TARGET="protection" ;;
+pending) JSON_TARGET="pending" ;;
+*) die "--target must be current or pending, got: $TARGET" ;;
+esac
 command -v node >/dev/null 2>&1 || die "node is required"
 command -v gh >/dev/null 2>&1 || die "the gh CLI is required"
 
-# Status ("enforced" / "proposed") and required_signatures of the branch in the
-# expectation file, as two lines.
-BRANCH_INFO="$(node - "$EXPECTED" "$BRANCH" <<'JS'
-const [file, branch] = process.argv.slice(2);
+# Status ("enforced" / "proposed") and required_signatures of the chosen
+# target of the branch in the expectation file, as two lines.
+BRANCH_INFO="$(node - "$EXPECTED" "$BRANCH" "$JSON_TARGET" <<'JS'
+const [file, branch, target] = process.argv.slice(2);
 const entry = JSON.parse(require("fs").readFileSync(file, "utf8")).branches?.[branch];
 if (!entry) {
   console.error(`branch "${branch}" is not in ${file}`);
   process.exit(1);
 }
+const protection = target === "pending" ? entry.pending?.protection : entry.protection;
+if (!protection) {
+  console.error(`branch "${branch}" has no pending protection in ${file}`);
+  process.exit(1);
+}
 console.log(entry.status);
-console.log(entry.protection.required_signatures);
+console.log(protection.required_signatures);
 JS
 )" || exit 1
 STATUS="$(sed -n 1p <<<"$BRANCH_INFO")"
@@ -94,13 +116,13 @@ REQUIRE_SIGNATURES="$(sed -n 2p <<<"$BRANCH_INFO")"
 
 PAYLOAD_FILE="$(mktemp)"
 trap 'rm -f "$PAYLOAD_FILE"' EXIT
-node "$CHECK" --payload "$BRANCH" >"$PAYLOAD_FILE"
+node "$CHECK" --payload "$BRANCH" --target "$JSON_TARGET" >"$PAYLOAD_FILE"
 
 PUT=(gh api -X PUT "repos/$REPO/branches/$BRANCH/protection"
     -H "Accept: application/vnd.github+json" --input "$PAYLOAD_FILE")
 SIG_PATH="repos/$REPO/branches/$BRANCH/protection/required_signatures"
 
-echo "== Branch protection for $REPO:$BRANCH (status in the repo: $STATUS)"
+echo "== Branch protection for $REPO:$BRANCH (status in the repo: $STATUS, target: $TARGET)"
 echo
 echo "-- Current drift (read-only):"
 # Exit 1 = drift on an enforced branch; that is the thing being fixed here.
@@ -108,7 +130,7 @@ drift_rc=0
 node "$CHECK" --repo "$REPO" --branch "$BRANCH" || drift_rc=$?
 [ "$drift_rc" -le 1 ] || die "could not read the live protection (see above)"
 echo
-echo "-- PUT body (.github/branch-protection.json -> REST):"
+echo "-- PUT body (branches.$BRANCH.$JSON_TARGET in .github/branch-protection.json -> REST):"
 cat "$PAYLOAD_FILE"
 echo
 
@@ -120,7 +142,11 @@ if [ "$APPLY" != true ]; then
     else
         echo "   gh api -X DELETE $SIG_PATH   (only if signatures are required live)"
     fi
-    echo "   Re-run with --apply to write it (repository admin only)."
+    if [ "$TARGET" = pending ]; then
+        echo "   Re-run with --target pending --apply to write it (repository admin only)."
+    else
+        echo "   Re-run with --apply to write it (repository admin only)."
+    fi
     exit 0
 fi
 
@@ -134,7 +160,12 @@ fi
 
 echo "-- Verifying:"
 node "$CHECK" --repo "$REPO" --branch "$BRANCH"
-if [ "$STATUS" = proposed ]; then
+if [ "$TARGET" = pending ]; then
+    echo
+    echo "Applied the pending protection. Now, in a PR, move branches.$BRANCH.pending.protection"
+    echo "to branches.$BRANCH.protection in .github/branch-protection.json and delete"
+    echo "branches.$BRANCH.pending, so the weekly check reports \"OK $BRANCH\" again."
+elif [ "$STATUS" = proposed ]; then
     echo
     echo "Applied. Now set branches.$BRANCH.status to \"enforced\" in"
     echo ".github/branch-protection.json (via a PR) so the weekly check fails on drift."
