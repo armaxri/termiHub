@@ -11,8 +11,8 @@ import {
  * Static guards on the shipped Content-Security-Policy (#2048/#2059/#3627).
  *
  * These assert invariants on `tauri.conf.json` (the base production CSP), the
- * per-platform overlay `tauri.windows.conf.json`, and `tauri.test.conf.json`
- * (the system-test build overlay) as plain data, so an accidental loosening
+ * per-platform overlay `tauri.windows.conf.json`, and the system-test build's
+ * runtime `connect-src` widening (`test_bridge.rs`, #3628) as plain data, so an accidental loosening
  * fails fast in per-PR CI without a full app build. The runtime "app boots +
  * terminal renders + zero violations under the CSP" check lives in the
  * integration lane (`tests/system/tests/test_csp.py`).
@@ -61,8 +61,14 @@ const ALLOW_LIST: Record<string, Record<string, AllowedSource>> = {
   "font-src": { "'self'": { reason: "bundled Geist / Meslo / codicon fonts" } },
   "connect-src": {
     "'self'": { reason: "same-origin fetches" },
-    "ipc:": { reason: "Tauri IPC custom protocol (macOS/Linux)" },
-    "http://ipc.localhost": { reason: "Tauri IPC custom protocol (Windows)" },
+    "ipc:": {
+      reason: "Tauri IPC custom protocol, WebKit form (ipc://localhost/<cmd>)",
+      platforms: ["macos", "linux"],
+    },
+    "http://ipc.localhost": {
+      reason: "Tauri IPC custom protocol, WebView2 form (http://ipc.localhost/<cmd>)",
+      platforms: ["windows"],
+    },
   },
   "worker-src": {
     "'self'": { reason: "Monaco's bundled workers (#3632) and the plugin sandbox worker" },
@@ -136,6 +142,15 @@ describe.each(CSP_PLATFORMS)("production CSP on %s", (platform) => {
     expect(csp["script-src"]).not.toContain(other);
   });
 
+  it("allows exactly this platform's IPC origin in connect-src (#3628)", () => {
+    // Tauri's IPC script fetches `http://ipc.localhost/<cmd>` on Windows and
+    // `ipc://localhost/<cmd>` on WebKit (convertFileSrc in tauri/scripts/core.js).
+    const expected = platform === "windows" ? "http://ipc.localhost" : "ipc:";
+    const other = platform === "windows" ? "ipc:" : "http://ipc.localhost";
+    expect(csp["connect-src"]).toEqual(["'self'", expected]);
+    expect(csp["connect-src"]).not.toContain(other);
+  });
+
   it("allows no WebSocket origin in connect-src — the bridge allowance is test-only (#2059)", () => {
     expect(csp["connect-src"]).toBeDefined();
     expect(csp["connect-src"].some((s) => s.startsWith("ws://") || s.startsWith("wss://"))).toBe(
@@ -163,16 +178,16 @@ describe("platform overlays", () => {
     expect(typeof csp === "object" && csp !== null && !Array.isArray(csp)).toBe(true);
   });
 
-  it("the Windows overlay touches only script-src", () => {
+  it("the Windows overlay touches only script-src and connect-src", () => {
     const win = readTauriConfig("tauri.windows.conf.json") as {
       app: { security: Record<string, unknown> };
     };
     expect(Object.keys(win)).toEqual(expect.arrayContaining(["app"]));
     expect(Object.keys(win.app)).toEqual(["security"]);
     expect(Object.keys(win.app.security)).toEqual(["csp"]);
-    expect(Object.keys(toCspMap(win.app.security.csp as Parameters<typeof toCspMap>[0]))).toEqual([
-      "script-src",
-    ]);
+    expect(
+      Object.keys(toCspMap(win.app.security.csp as Parameters<typeof toCspMap>[0])).sort()
+    ).toEqual(["connect-src", "script-src"]);
   });
 
   it("no macOS/Linux overlay changes the CSP (none exists today)", () => {
@@ -185,11 +200,26 @@ describe("platform overlays", () => {
   });
 });
 
-describe.each(CSP_PLATFORMS)("test-build CSP overlay (tauri.test.conf.json) on %s", (platform) => {
+describe("test-build CSP", () => {
+  it("has no config overlay — the bridge widens connect-src at runtime instead (#3628)", () => {
+    // A `--config` overlay would replace the whole connect-src array on every
+    // platform, so it could not keep each platform's own IPC origin.
+    expect(readTauriConfig("tauri.test.conf.json")).toBeNull();
+  });
+});
+
+describe.each(CSP_PLATFORMS)("test-build CSP (runtime bridge widening) on %s", (platform) => {
   const prod = effectiveCsp(platform);
   const test = effectiveCsp(platform, { testBuild: true });
 
-  it("re-adds ONLY the loopback ws:// bridge allowance to connect-src", () => {
+  it("keeps this platform's IPC origin and only it", () => {
+    const expected = platform === "windows" ? "http://ipc.localhost" : "ipc:";
+    const other = platform === "windows" ? "ipc:" : "http://ipc.localhost";
+    expect(test["connect-src"]).toContain(expected);
+    expect(test["connect-src"]).not.toContain(other);
+  });
+
+  it("adds ONLY the loopback ws:// bridge allowance to connect-src", () => {
     const added = test["connect-src"].filter((s) => !prod["connect-src"].includes(s));
     const removed = prod["connect-src"].filter((s) => !test["connect-src"].includes(s));
     expect(added).toEqual(["ws://127.0.0.1:*", "ws://localhost:*"]);

@@ -103,10 +103,17 @@ fn test_bridge_enabled_from(raw: Option<String>) -> bool {
 /// the in-app WebSocket client (`ws://127.0.0.1:<port>`, `src/testbridge/wsClient.ts`)
 /// can reach the runner's bridge server. The built app bundle runs from the
 /// secure origin `tauri://localhost`, whose production CSP only allows
-/// `connect-src 'self' ipc: http://ipc.localhost` — so WebKit rejects the raw
+/// `connect-src 'self'` plus the platform's IPC origin (`ipc:` on macOS/Linux,
+/// `http://ipc.localhost` on Windows, #3628) — so WebKit rejects the raw
 /// `ws://` socket with `SecurityError` and the automated full-app system-test
 /// lane never connects (#2480). Merged in *only* when test-bridge mode is
 /// active; the production/release CSP is untouched.
+///
+/// This runtime widening is the **only** difference between the test build's
+/// CSP and production: there is no `--config` overlay (#3628), because a JSON
+/// merge patch would replace the whole `connect-src` array and so could not keep
+/// each platform's own IPC origin. `src/security/cspConfig.test.ts` reads this
+/// constant to model the test-build policy.
 pub const TEST_BRIDGE_CSP_CONNECT_SRC: &str = "ws://127.0.0.1:* ws://localhost:*";
 
 /// Return `csp` with the test-bridge WebSocket sources
@@ -244,13 +251,17 @@ mod tests {
         assert!(!always_on_top_opt_out_from(Some(String::new())));
     }
 
-    /// The production CSP from `tauri.conf.json` (the base, macOS/Linux policy —
-    /// Windows swaps only the `script-src` plugin origin via
-    /// `tauri.windows.conf.json`, #3627). If the config changes, this constant
-    /// must change too — the assertion below is a guard
-    /// that the relaxation widens the *current* production directive, not a
-    /// stale one.
-    const PROD_CSP: &str = "default-src 'self'; script-src 'self' plugin://localhost 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost; worker-src 'self' blob:; child-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'";
+    /// The production CSP from `tauri.conf.json` (the base, macOS/Linux policy).
+    /// If the config changes, this constant must change too — the drift guard
+    /// below enforces it, so the relaxation tests widen the *current* production
+    /// directive, not a stale one.
+    const PROD_CSP: &str = "default-src 'self'; script-src 'self' plugin://localhost 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ipc:; worker-src 'self' blob:; child-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'";
+
+    /// The production CSP on Windows: `tauri.conf.json` patched by
+    /// `tauri.windows.conf.json`, which swaps the WebKit custom-scheme origins
+    /// for their WebView2 forms in `script-src` (#3627) and `connect-src`
+    /// (#3628). Drift-guarded like [`PROD_CSP`].
+    const PROD_CSP_WINDOWS: &str = "default-src 'self'; script-src 'self' http://plugin.localhost 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' http://ipc.localhost; worker-src 'self' blob:; child-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'";
 
     #[test]
     fn relax_csp_adds_ws_sources_to_connect_src() {
@@ -266,10 +277,11 @@ mod tests {
             .expect("connect-src directive present");
         assert!(connect_src.contains("ws://127.0.0.1:*"));
         assert!(connect_src.contains("ws://localhost:*"));
-        // The original sources are preserved.
+        // The original sources are preserved, and no other platform's IPC
+        // origin is introduced (#3628).
         assert!(connect_src.contains("'self'"));
         assert!(connect_src.contains("ipc:"));
-        assert!(connect_src.contains("http://ipc.localhost"));
+        assert!(!connect_src.contains("http://ipc.localhost"));
         // Only connect-src is touched — other directives are unchanged.
         assert!(relaxed.contains("default-src 'self'"));
         assert!(relaxed.contains("object-src 'none'"));
@@ -282,6 +294,33 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn relax_csp_keeps_only_the_windows_ipc_origin_on_windows() {
+        // The runtime widening is the test build's only CSP change on every
+        // platform (#3628): on Windows it must keep `http://ipc.localhost` and
+        // must not introduce the WebKit `ipc:` form.
+        let relaxed = relax_csp_policy(PROD_CSP_WINDOWS);
+        let connect_src = normalize_csp(&relaxed)
+            .remove("connect-src")
+            .expect("connect-src directive present");
+        let expected: std::collections::BTreeSet<String> = [
+            "'self'",
+            "http://ipc.localhost",
+            "ws://127.0.0.1:*",
+            "ws://localhost:*",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        assert_eq!(connect_src, expected);
+        // Every other directive is untouched.
+        let mut prod = normalize_csp(PROD_CSP_WINDOWS);
+        let mut widened = normalize_csp(&relaxed);
+        prod.remove("connect-src");
+        widened.remove("connect-src");
+        assert_eq!(prod, widened);
     }
 
     #[test]
@@ -368,45 +407,70 @@ mod tests {
             .collect()
     }
 
-    /// TIN-004 drift guard: `PROD_CSP` (baked into this test module so the
-    /// relaxation tests validate the *current* production policy) must stay
-    /// byte-equivalent to the CSP actually enforced by the shipped bundle
-    /// (`app.security.csp` in `tauri.conf.json`). The two are hand-mirrored, so
-    /// without this test the highest-risk `connect-src` directive could silently
-    /// diverge between them. Hermetic and deterministic: the config is read off
-    /// disk relative to `CARGO_MANIFEST_DIR`, no network.
-    #[test]
-    fn prod_csp_matches_tauri_conf() {
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let conf_path = std::path::Path::new(manifest_dir).join("tauri.conf.json");
-        let raw = std::fs::read_to_string(&conf_path)
-            .unwrap_or_else(|e| panic!("read {}: {e}", conf_path.display()));
-        let conf: serde_json::Value =
-            serde_json::from_str(&raw).expect("tauri.conf.json is valid JSON");
+    /// RFC 7396 JSON merge patch — how Tauri layers `tauri.<platform>.conf.json`
+    /// over `tauri.conf.json`.
+    fn merge_patch(target: &mut serde_json::Value, patch: &serde_json::Value) {
+        let Some(patch_map) = patch.as_object() else {
+            *target = patch.clone();
+            return;
+        };
+        if !target.is_object() {
+            *target = serde_json::Value::Object(serde_json::Map::new());
+        }
+        let target_map = target.as_object_mut().expect("target is an object");
+        for (key, value) in patch_map {
+            if value.is_null() {
+                target_map.remove(key);
+            } else {
+                merge_patch(
+                    target_map
+                        .entry(key.clone())
+                        .or_insert(serde_json::Value::Null),
+                    value,
+                );
+            }
+        }
+    }
 
-        // The CSP is declared as a directive map (#3627) so platform overlays can
-        // patch single directives; render it through Tauri's own `Csp` type, the
-        // same path the runtime relaxation takes (`Csp::to_string`).
-        let conf_csp: Csp = conf
+    /// Read a `src-tauri/<file>` config off disk (hermetic: relative to
+    /// `CARGO_MANIFEST_DIR`, no network).
+    fn read_conf(file: &str) -> serde_json::Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(file);
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        serde_json::from_str(&raw).unwrap_or_else(|e| panic!("{file} is not valid JSON: {e}"))
+    }
+
+    /// The shipped CSP for a platform overlay (`None` = base only), rendered
+    /// through Tauri's own `Csp` type — the same path the runtime relaxation
+    /// takes (`Csp::to_string`).
+    fn shipped_csp(platform_overlay: Option<&str>) -> String {
+        let mut conf = read_conf("tauri.conf.json");
+        if let Some(overlay) = platform_overlay {
+            merge_patch(&mut conf, &read_conf(overlay));
+        }
+        let csp: Csp = conf
             .get("app")
             .and_then(|app| app.get("security"))
             .and_then(|security| security.get("csp"))
             .cloned()
             .map(serde_json::from_value)
-            .expect("tauri.conf.json has app.security.csp")
+            .expect("config has app.security.csp")
             .expect("app.security.csp is a valid Tauri CSP");
+        csp.to_string()
+    }
 
-        let baked = normalize_csp(PROD_CSP);
-        let shipped = normalize_csp(&conf_csp.to_string());
+    /// Compare a baked policy against the shipped one, surfacing `connect-src`
+    /// (the highest-risk directive) first.
+    fn assert_no_csp_drift(name: &str, baked_policy: &str, shipped_policy: &str, source: &str) {
+        let baked = normalize_csp(baked_policy);
+        let shipped = normalize_csp(shipped_policy);
 
-        // The `connect-src` directive is the highest-risk one — surface it first
-        // and explicitly if it drifts.
         assert_eq!(
             baked.get("connect-src"),
             shipped.get("connect-src"),
-            "TIN-004: `connect-src` drifted between PROD_CSP (test_bridge.rs) and \
-             tauri.conf.json (app.security.csp). PROD_CSP={:?} tauri.conf.json={:?}. \
-             Reconcile PROD_CSP to the shipped value.",
+            "TIN-004: `connect-src` drifted between {name} (test_bridge.rs) and {source}. \
+             {name}={:?} shipped={:?}. Reconcile {name} to the shipped value.",
             baked.get("connect-src"),
             shipped.get("connect-src"),
         );
@@ -417,21 +481,56 @@ mod tests {
                 .chain(shipped.keys())
                 .collect::<std::collections::BTreeSet<_>>()
                 .into_iter()
-                .filter(|name| baked.get(*name) != shipped.get(*name))
-                .map(|name| {
+                .filter(|directive| baked.get(*directive) != shipped.get(*directive))
+                .map(|directive| {
                     format!(
-                        "  {name}: PROD_CSP={:?} vs tauri.conf.json={:?}",
-                        baked.get(name),
-                        shipped.get(name)
+                        "  {directive}: {name}={:?} vs shipped={:?}",
+                        baked.get(directive),
+                        shipped.get(directive)
                     )
                 })
                 .collect();
             panic!(
-                "TIN-004: production CSP drifted between PROD_CSP (test_bridge.rs) and \
-                 tauri.conf.json (app.security.csp). Reconcile PROD_CSP to the shipped \
-                 value. Drifted directives:\n{}",
+                "TIN-004: production CSP drifted between {name} (test_bridge.rs) and {source}. \
+                 Reconcile {name} to the shipped value. Drifted directives:\n{}",
                 drifted.join("\n")
             );
         }
+    }
+
+    /// TIN-004 drift guard: `PROD_CSP` / `PROD_CSP_WINDOWS` (baked into this
+    /// test module so the relaxation tests validate the *current* production
+    /// policy) must stay equivalent to the CSP actually enforced by the shipped
+    /// bundle on each platform. The two are hand-mirrored, so without this test
+    /// the highest-risk `connect-src` directive could silently diverge.
+    #[test]
+    fn prod_csp_matches_tauri_conf() {
+        // No macOS/Linux overlay touches the CSP (the vitest guard enforces
+        // that), so the base config is their shipped policy.
+        assert_no_csp_drift(
+            "PROD_CSP",
+            PROD_CSP,
+            &shipped_csp(None),
+            "tauri.conf.json (app.security.csp)",
+        );
+        assert_no_csp_drift(
+            "PROD_CSP_WINDOWS",
+            PROD_CSP_WINDOWS,
+            &shipped_csp(Some("tauri.windows.conf.json")),
+            "tauri.conf.json + tauri.windows.conf.json",
+        );
+    }
+
+    /// The system-test build has no `--config` CSP overlay any more (#3628): the
+    /// runtime widening above is its only CSP change, so a stale
+    /// `tauri.test.conf.json` must not come back and clobber `connect-src`.
+    #[test]
+    fn no_test_build_csp_overlay() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.test.conf.json");
+        assert!(
+            !path.exists(),
+            "tauri.test.conf.json would replace connect-src on every platform; \
+             the test bridge widens the CSP at runtime instead (#3628)"
+        );
     }
 }
