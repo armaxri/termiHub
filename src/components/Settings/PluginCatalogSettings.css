@@ -1,0 +1,119 @@
+/* Settings → Plugins → Browse Plugins (PROD-048). */
+
+.plugin-catalog__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  margin: var(--spacing-sm) 0;
+}
+
+.plugin-catalog__error {
+  margin: var(--spacing-sm) 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-error);
+}
+
+.plugin-catalog__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  margin: var(--spacing-sm) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plugin-catalog__entry {
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+}
+
+.plugin-catalog__entry-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--spacing-sm);
+}
+
+.plugin-catalog__entry-name {
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+.plugin-catalog__entry-version,
+.plugin-catalog__entry-author {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.plugin-catalog__entry-desc {
+  margin: var(--spacing-xs) 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  white-space: pre-line;
+}
+
+.plugin-catalog__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.plugin-catalog__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xxs);
+  padding: var(--spacing-xxs) var(--spacing-xs);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.plugin-catalog__badge--ok {
+  color: var(--color-success);
+}
+
+.plugin-catalog__badge--warn {
+  color: var(--color-warning);
+}
+
+.plugin-catalog__badge--bad {
+  color: var(--color-error);
+}
+
+.plugin-catalog__entry-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.plugin-catalog__entry-status,
+.plugin-catalog__entry-blocked {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xxs);
+  margin-right: auto;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.plugin-catalog__entry-blocked {
+  color: var(--color-warning);
+}
+
+.plugin-catalog__url {
+  margin-top: var(--spacing-lg);
+}
+
+.plugin-catalog__subtitle {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin: 0 0 var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}

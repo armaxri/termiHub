@@ -238,6 +238,7 @@ impl GraphicalBackend for FakeDesktop {
             supports_clipboard: false,
             supports_clipboard_image: false,
             view_only_capable: false,
+            multi_monitor: Default::default(),
         }
     }
     fn subscribe_frames(&self) -> FrameReceiver {

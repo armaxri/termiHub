@@ -19,7 +19,7 @@ import base64
 import binascii
 import threading
 import time
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import websockets
 
@@ -320,6 +320,26 @@ class Driver:
         """
         return self._call(
             {"action": "getComputedStyle", "testId": test_id, "property": property}
+        )
+
+    def sample_canvas(
+        self, test_id: str, points: Sequence[tuple[int, int]] = ()
+    ) -> dict[str, Any]:
+        """Sample RGBA pixels of the ``<canvas>`` carrying ``test_id``.
+
+        ``points`` are integer ``(x, y)`` coordinates in the canvas's *backing
+        store* (its ``width`` x ``height``). Returns ``{"width", "height",
+        "pixels"}``, where ``pixels[i]`` is ``[r, g, b, a]`` for ``points[i]``;
+        with no points it reads only the size. This is how a test sees what a
+        graphical remote-desktop session (VNC/RDP) actually painted — no DOM verb
+        can, and the DOM :meth:`screenshot` does not capture canvas content.
+        """
+        return self._call(
+            {
+                "action": "sampleCanvas",
+                "testId": test_id,
+                "points": [{"x": int(x), "y": int(y)} for x, y in points],
+            }
         )
 
     def read_terminal(

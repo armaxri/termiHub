@@ -78,6 +78,11 @@ import type { CursorUpdate } from "./generated/CursorUpdate";
 
 export type { GraphicalSessionState, FrameUpdate, CursorUpdate };
 export type { DirtyRect } from "./generated/DirtyRect";
+/**
+ * One remote monitor (#3696): its rect, primary flag and scale (percent).
+ * `remote_desktop_monitor_layout` reports these in framebuffer coordinates.
+ */
+export type { MonitorRect } from "./generated/MonitorRect";
 export type { CursorShape } from "./generated/CursorShape";
 
 /**

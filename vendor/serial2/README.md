@@ -46,7 +46,8 @@ an `openpty()` slave through the serial backend. Run the fork's own tests with
 `cargo test --features unix` inside this directory.
 
 The delta is small and upstream-compatible; upstreaming it would let the fork be
-retired.
+retired. The ready-to-submit patch, pull-request text and retirement steps are in
+[`UPSTREAM.md`](UPSTREAM.md) (#3704).
 
 Everything else is upstream `0.2.38`, under the original BSD-2-Clause /
 Apache-2.0 licenses (`LICENSE-BSD`, `LICENSE-APACHE`).

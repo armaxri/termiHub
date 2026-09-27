@@ -71,6 +71,7 @@ mod native_trust;
 mod pack;
 mod package;
 mod platform;
+mod plugin_index;
 mod security;
 mod settings_migration;
 mod signature;
@@ -121,6 +122,11 @@ pub use package::{
 pub use platform::{
     host_target_triple, is_valid_library_path, is_valid_target_triple,
     library_file_name_for_triple, BACKEND_DIR, HOST_TARGET_TRIPLE,
+};
+pub use plugin_index::{
+    evaluate_index_entry, is_valid_sha256_hex, parse_plugin_index, HostFacts, IndexToolchain,
+    InstallStatus, PluginIndex, PluginIndexEntry, PluginIndexEntryView, PluginIndexError,
+    PluginIndexPackage, ToolchainStatus, ANY_PLATFORM, INDEX_SCHEMA_VERSION, MAX_INDEX_BYTES,
 };
 pub use security::{
     assess_trust, FilesystemScope, PermissionError, PermissionSet, RecoveryAction, RecoveryState,

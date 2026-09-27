@@ -85,7 +85,7 @@ See [Verifying release artifacts](docs/contributing.md#verifying-release-artifac
 - **Serial port support** requires platform-specific drivers — see [Serial Port Setup](#serial-port-setup).
 - **Telnet connections are unencrypted** by protocol design; avoid them over untrusted networks.
 
-> **What phones home:** On startup (and every 24 hours while running) termiHub queries the GitHub Releases API (`api.github.com/repos/armaxri/termiHub`) to notify you of new or security-relevant releases. That is the only network call termiHub makes on its own — there is no telemetry, analytics or crash reporting. If termiHub crashes, a redacted crash report is kept **only on your computer**; you can view it or export a diagnostics bundle yourself (Settings menu → **Export Diagnostics…**), and nothing leaves the machine unless you share that file. It never installs anything automatically; it only notifies and can open the Releases page in your browser. Disable the check under **Settings → Updates → Auto-check for updates → Never**.
+> **What phones home:** On startup (and every 24 hours while running) termiHub queries the GitHub Releases API (`api.github.com/repos/armaxri/termiHub`) to notify you of new or security-relevant releases. That is the only network call termiHub makes on its own (Settings → Plugins → **Browse Plugins** fetches the plugin index, by default from `raw.githubusercontent.com/armaxri/termiHub`, only when you click **Load plugin index**) — there is no telemetry, analytics or crash reporting. If termiHub crashes, a redacted crash report is kept **only on your computer**; you can view it or export a diagnostics bundle yourself (Settings menu → **Export Diagnostics…**), and nothing leaves the machine unless you share that file. It never installs anything automatically; it only notifies and can open the Releases page in your browser. Disable the check under **Settings → Updates → Auto-check for updates → Never**.
 
 Prefer to build it yourself? See [Development](#development) below.
 
@@ -120,7 +120,7 @@ Prefer to build it yourself? See [Development](#development) below.
 
 ### Power Tools
 
-- **Plugin system** — Extend termiHub with installable plugins, managed from the Plugins sidebar. Includes **native (cdylib) backends** loaded over a C ABI with an Ed25519 signature / trust model — see the plugin trust warning under [Security](#security)
+- **Plugin system** — Extend termiHub with installable plugins, managed from the Plugins sidebar, with a curated plugin index to browse and install from (Settings → Plugins → Browse Plugins; every download is checksum-verified and still needs your review). Includes **native (cdylib) backends** loaded over a C ABI with an Ed25519 signature / trust model — see the plugin trust warning under [Security](#security)
 - **Network diagnostics** — Built-in ping, traceroute, port scanner, DNS lookup, HTTP monitor, and Wake-on-LAN
 - **Embedded servers** — Run local HTTP, FTP, and TFTP servers with lifecycle management for quick file serving and device provisioning
 - **Macros** — Record and replay terminal input sequences, or write them by hand in the Macro Manager (control keys via `\r` Enter, `\t` Tab, `\e` Esc, `\xHH`); replay into the active terminal or, after an explicit confirmation listing every target, into many at once (all terminals, the current panel, the live broadcast set, or a saved broadcast group)

@@ -74,6 +74,42 @@ TELNET_HOST = "127.0.0.1"
 TELNET_SERVICE = "telnet-server"
 TELNET_PORT = dev_local.service_port("TERMIHUB_TEST_TELNET_PORT", 2301)
 
+# ── VNC fixture coordinates (mirror tests/docker/docker-compose.yml) ─────────
+# Both services live under the ``vnc`` compose profile. Naming a service
+# explicitly in ``compose up -d <service>`` activates its profile, so
+# :class:`ComposeFixture` brings them up on demand in any lane — including the
+# nightly Linux lane, whose bulk bring-up step starts only the profile-less
+# fixtures. Both serve the same static 1024x768 four-quadrant pattern (see
+# ``tests/docker/vnc-server/Dockerfile``), so a rendered frame asserts exactly.
+#: Host the published VNC ports are reachable on.
+VNC_HOST = "127.0.0.1"
+#: Service + host port of the classic-VncAuth server (x11vnc + Xvfb). It keeps
+#: its 1024x768 desktop: x11vnc refuses client ``SetDesktopSize`` requests.
+VNC_SERVICE = "vnc-server"
+VNC_PORT = dev_local.service_port("TERMIHUB_TEST_VNC_PORT", 2501)
+#: ``container_name`` suffix of :data:`VNC_SERVICE` (``<project>-vnc``).
+VNC_CONTAINER_SUFFIX = "vnc"
+#: Service + host port of the VeNCrypt X509 server (TigerVNC Xvnc). Unlike
+#: x11vnc it honours ExtendedDesktopSize, so a *dynamic*-resolution session
+#: really resizes the remote desktop to follow the tab (#3463 / #3556).
+VNC_VENCRYPT_SERVICE = "vnc-vencrypt-server"
+VNC_VENCRYPT_PORT = dev_local.service_port("TERMIHUB_TEST_VNC_VENCRYPT_PORT", 2502)
+#: ``container_name`` suffix of :data:`VNC_VENCRYPT_SERVICE`.
+VNC_VENCRYPT_CONTAINER_SUFFIX = "vnc-vencrypt"
+#: The fixtures' VNC password (VncAuth caps passwords at 8 characters).
+VNC_PASSWORD = "testpass"
+#: The fixtures' native framebuffer size.
+VNC_FB_WIDTH = 1024
+VNC_FB_HEIGHT = 768
+#: Expected RGB of each quadrant of the test pattern, keyed by quadrant name.
+#: ImageMagick's ``lime`` is pure (0, 255, 0) green.
+VNC_QUADRANT_COLORS: dict[str, tuple[int, int, int]] = {
+    "top-left": (255, 0, 0),
+    "top-right": (0, 255, 0),
+    "bottom-left": (0, 0, 255),
+    "bottom-right": (255, 255, 255),
+}
+
 # ── Remote-agent fixture coordinates (mirror tests/docker/docker-compose.yml) ──
 #: Service + host port for the deployed-agent SSH container (compose profile
 #: ``agent``). Unlike ``ssh-password``, this image ships the ``termihub-agent``
@@ -426,6 +462,34 @@ def wait_for_port(host: str, port: int, *, timeout: float) -> None:
     )
 
 
+def wait_for_banner(host: str, port: int, prefix: bytes, *, timeout: float) -> None:
+    """Block until ``host:port`` accepts a connection AND greets with ``prefix``.
+
+    A bare TCP probe is not enough for a server that has to boot first: Docker's
+    port forwarder accepts on the published host port as soon as the container
+    runs, then drops the connection until the server inside listens. Servers that
+    speak first (an RFB server sends ``RFB 003.008\\n``) can be probed for their
+    greeting instead, which proves the service itself is up. Raises
+    :class:`ContainerRuntimeUnavailable` on timeout.
+    """
+    deadline = time.monotonic() + timeout
+    last: object = None
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=2.0) as sock:
+                sock.settimeout(2.0)
+                greeting = sock.recv(len(prefix))
+                if greeting.startswith(prefix):
+                    return
+                last = greeting
+        except OSError as exc:
+            last = exc
+        time.sleep(0.25)
+    raise ContainerRuntimeUnavailable(
+        f"{host}:{port} did not greet with {prefix!r} within {timeout}s (last: {last!r})"
+    )
+
+
 def _container_musl_target() -> str:
     """The static-musl target triple matching the container's architecture.
 
@@ -595,3 +659,58 @@ class SshServerControl:
                 f"{_tail(exc.stderr)}"
             ) from exc
         return result.stdout
+
+
+class ContainerControl:
+    """Stop / start one of this checkout's compose fixture containers.
+
+    Lets a test cut a live connection at the server the way a real outage does
+    (the container, and with it the server process and every socket, goes away)
+    and then bring the server back — the VNC disconnect/reconnect grade (TIN-006).
+    Scoped to exactly one container of *this* checkout's compose project
+    (``<project>-<suffix>``, mirroring ``container_name`` in the compose file), so
+    a sibling checkout's fixtures are never touched.
+    """
+
+    def __init__(self, container_suffix: str) -> None:
+        #: The container name compose publishes under this checkout's project.
+        self.container = f"{dev_local.compose_project()}-{container_suffix}"
+        self._runtime = container_runtime()
+
+    def stop(self, *, grace: int = 1) -> None:
+        """Stop the container (``SIGTERM``, then ``SIGKILL`` after ``grace`` s)."""
+        self._run(["stop", "-t", str(grace), self.container])
+
+    def start(self) -> None:
+        """Start the (stopped) container again; a no-op when it is running."""
+        self._run(["start", self.container])
+
+    def restart(self, *, grace: int = 1) -> None:
+        """Restart the container, resetting its server to the image's state."""
+        self._run(["restart", "-t", str(grace), self.container])
+
+    def _run(self, args: Sequence[str], *, timeout: float = 60.0) -> None:
+        """Run a runtime subcommand, mapping failures to the skip-signal error."""
+        if self._runtime is None:
+            raise ContainerRuntimeUnavailable(
+                f"no container runtime available to control {self.container} "
+                "(need Docker or Podman)"
+            )
+        try:
+            subprocess.run(
+                [self._runtime, *args],
+                check=True,
+                timeout=timeout,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            raise ContainerRuntimeUnavailable(
+                f"`{args[0]}` of {self.container} failed (exit {exc.returncode}):\n"
+                f"{_tail(exc.stderr or exc.stdout)}"
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise ContainerRuntimeUnavailable(
+                f"`{args[0]}` of {self.container} timed out after {timeout}s:\n"
+                f"{_tail(exc.stderr)}"
+            ) from exc

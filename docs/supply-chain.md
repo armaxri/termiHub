@@ -131,6 +131,21 @@ when an entry lacks its upstream, base, reviewed state or delta links, when the 
 `Cargo.toml` name/version drifts from the register, or when a fork README does not record its base
 version, base commit and upstream URL. It also validates the watchlist below.
 
+### Upstreaming status
+
+Each fork is watched until its deltas are accepted upstream and it can be retired. A delta that is
+ready to submit carries a prepared patch and pull-request description next to the fork; opening it
+upstream is a maintainer action.
+
+| Fork             | Upstream delta                                 | Status                                                                                                                                    | Retire when                                                                      |
+| ---------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `vendor/serial2` | macOS `IOSSIOSPEED` → termios fallback (#3701) | Prepared, not yet submitted: patch against `v0.2.38` and PR text in [`vendor/serial2/UPSTREAM.md`](../vendor/serial2/UPSTREAM.md) (#3704) | A `serial2` release contains the fallback; retirement steps are in `UPSTREAM.md` |
+
+When the Vendored Forks drift job reports new `serial2` commits or a release, check whether the
+fallback landed before porting anything else: if it did, retire the fork instead of re-basing it.
+Once the pull request is open, add its link to the delta's `refs` in
+[`vendor/vendored-forks.json`](../vendor/vendored-forks.json) and to the table above.
+
 ## Untrusted-input parser watchlist
 
 The crates below parse bytes an attacker can control — a hostile or compromised server, a remote

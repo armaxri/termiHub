@@ -20,12 +20,19 @@ import {
 } from "@/services/events";
 import type {
   GraphicalSessionState,
+  MonitorRect,
   RemoteClipboardFile,
   RemoteDesktopInput,
   RemoteDesktopCertPromptPayload,
   ScaleMode,
 } from "@/types/remoteDesktop";
 import { effectiveScaleMode, isFixedResolution } from "@/types/remoteDesktop";
+import {
+  connectMonitorLayout,
+  isMultiMonitor,
+  monitorModeOf,
+} from "@/components/RemoteDesktop/monitorLayout";
+import { useMonitorLayoutRefresh } from "./useMonitorLayoutRefresh";
 import { toast } from "@/components/ui";
 import { backendErrorMessage, isAuthFailure } from "@/utils/backendErrorCode";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
@@ -54,10 +61,18 @@ export interface RemoteDesktopSession {
    */
   scaleMode: ScaleMode;
   /**
-   * Whether the connection pins the remote to a fixed resolution (PROD-026):
-   * the canvas then only scales locally and {@link resize} is a no-op.
+   * Whether the connection pins the remote to a fixed resolution (PROD-026) or
+   * to a multi-monitor layout (#3696): the canvas then only scales locally and
+   * {@link resize} is a no-op.
    */
   fixedResolution: boolean;
+  /** Whether the connection asks for more than one monitor (#3696). */
+  multiMonitor: boolean;
+  /**
+   * Bumped whenever the session's monitor layout changed at runtime (#3696),
+   * so the tab re-reads the monitors for its viewport selector.
+   */
+  monitorLayoutVersion: number;
   /** Send a protocol-agnostic input event (no-op while view-only/not-active). */
   sendInput: (event: RemoteDesktopInput) => void;
   /**
@@ -134,6 +149,8 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
   // Set when this tab adopts a live session handed off from another window
   // (#1904); cleared when the destination canvas paints its first frame.
   const [awaitingFirstFrame, setAwaitingFirstFrame] = useState(false);
+  // The monitor layout stamped into the last connect (#3696), or null.
+  const [connectLayout, setConnectLayout] = useState<MonitorRect[] | null>(null);
 
   const sessionIdRef = useRef<string | null>(null);
   // The last pixel size this tab asked the remote for (Match Window), recorded
@@ -169,7 +186,14 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
   const tabConfig = readTab()?.config;
   const settings = (tabConfig?.config ?? {}) as Record<string, unknown>;
   const viewOnly = settings.viewOnly === true;
-  const fixedResolution = isFixedResolution(settings);
+  const multiMonitor = isMultiMonitor(settings);
+  // A multi-monitor layout defines the remote size, never the tab (#3696).
+  const fixedResolution = isFixedResolution(settings) || multiMonitor;
+  const monitorLayoutVersion = useMonitorLayoutRefresh(
+    sessionId,
+    monitorModeOf(settings) === "all",
+    connectLayout
+  );
   const scaleMode = effectiveScaleMode(
     (settings.scaleMode as ScaleMode | undefined) ?? "fit",
     fixedResolution
@@ -199,7 +223,14 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
       setMessage(null);
       setReconnectAttempt(0);
       try {
-        const id = await remoteDesktopConnect(tab.config.type, tab.config.config);
+        // A multi-monitor connection carries the concrete layout of this
+        // computer's displays (#3696); the backend normalizes it.
+        const layout = await connectMonitorLayout(tab.config.config);
+        setConnectLayout(layout);
+        const connectSettings = layout
+          ? { ...tab.config.config, monitorLayout: layout }
+          : tab.config.config;
+        const id = await remoteDesktopConnect(tab.config.type, connectSettings);
         if (canceled) {
           fireAndForget(
             remoteDesktopDisconnect(id),
@@ -459,6 +490,8 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     viewOnly,
     scaleMode,
     fixedResolution,
+    multiMonitor,
+    monitorLayoutVersion,
     sendInput,
     releaseInput,
     resize,

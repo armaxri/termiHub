@@ -89,6 +89,38 @@ def test_press_key_modifiers_round_trip(bridge):
     assert received[1]["ctrl"] is True and received[1]["shift"] is True
 
 
+def test_sample_canvas_round_trip(bridge):
+    # Echo the command back inside the sample so the wire shape is asserted too.
+    received = []
+
+    def capture(command):
+        received.append(command)
+        points = command.get("points") or []
+        return {
+            "ok": True,
+            "action": command["action"],
+            "value": {
+                "width": 64,
+                "height": 48,
+                "pixels": [[p["x"], p["y"], 0, 255] for p in points],
+            },
+        }
+
+    with FakeApp(bridge.port, capture):
+        driver = bridge.wait_for_app(timeout=5)
+        sample = driver.sample_canvas("remote-desktop-canvas", [(3, 4), (63, 47)])
+        size_only = driver.sample_canvas("remote-desktop-canvas")
+
+    assert received[0] == {
+        "action": "sampleCanvas",
+        "testId": "remote-desktop-canvas",
+        "points": [{"x": 3, "y": 4}, {"x": 63, "y": 47}],
+    }
+    assert sample == {"width": 64, "height": 48, "pixels": [[3, 4, 0, 255], [63, 47, 0, 255]]}
+    assert received[1]["points"] == []
+    assert size_only["pixels"] == []
+
+
 def test_terminal_scroll_round_trip(bridge):
     handler = dispatcher_like(viewport={"viewportY": 5, "baseY": 42})
     with FakeApp(bridge.port, handler):

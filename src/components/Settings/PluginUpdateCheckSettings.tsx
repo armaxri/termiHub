@@ -34,9 +34,10 @@ export function PluginUpdateCheckSettings() {
           <RefreshCw size={16} aria-hidden="true" /> Plugin Updates
         </h3>
         <p className="settings-panel__description">
-          Plugins are installed from files; there is no plugin store yet. A plugin can publish an
-          update URL, and its entry in the Plugins view then offers “Check for updates”. Updates are
-          never installed automatically — you always confirm them in the install dialog.
+          A plugin can publish an update URL, and its entry in the Plugins view then offers “Check
+          for updates”. Plugins listed in the plugin index also show available updates under Browse
+          Plugins. Updates are never installed automatically — you always confirm them in the
+          install dialog.
         </p>
 
         <SettingsField

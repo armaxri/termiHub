@@ -8,30 +8,20 @@ import {
   ExternalLink,
   RefreshCw,
 } from "lucide-react";
-import { assessPluginTrust, downloadPluginUpdate, previewPlugin } from "@/services/api";
-import type { InstalledPlugin, PluginManifest, PluginTrustInfo } from "@/types/plugin";
+import { downloadPluginUpdate } from "@/services/api";
+import type { InstalledPlugin } from "@/types/plugin";
 import { Button, toast } from "@/components/ui";
 import { currentEntry, usePluginUpdateStore } from "@/plugins/pluginUpdateStore";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 import { PluginInstallDialog } from "./PluginInstallDialog";
+import { reviewDownloadedPackage, type DownloadedPackageReview } from "./pluginDownloadReview";
 import "./Plugins.css";
 
 /** Props for {@link PluginUpdateSection}. */
 export interface PluginUpdateSectionProps {
   /** The installed plugin; must declare a `manifest.updateUrl`. */
   plugin: InstalledPlugin;
-}
-
-/** A downloaded, verified update package awaiting the install dialog. */
-interface PendingUpdate {
-  filePath: string;
-  manifest: PluginManifest;
-  trust: PluginTrustInfo;
-  /** This computer's target triple (PLG-011, #3507). */
-  hostPlatform: string;
-  /** Whether the package ships a native library for this computer. */
-  platformSupported: boolean;
 }
 
 /**
@@ -48,7 +38,7 @@ interface PendingUpdate {
 export function PluginUpdateSection({ plugin }: PluginUpdateSectionProps) {
   const entry = usePluginUpdateStore((s) => currentEntry(s.entries, plugin));
   const checkForUpdates = usePluginUpdateStore((s) => s.checkForUpdates);
-  const [pending, setPending] = useState<PendingUpdate | null>(null);
+  const [pending, setPending] = useState<DownloadedPackageReview | null>(null);
 
   const { id, name } = plugin.manifest;
 
@@ -58,13 +48,9 @@ export function PluginUpdateSection({ plugin }: PluginUpdateSectionProps) {
     const toastId = toast.loading(`Downloading ${name} update…`);
     try {
       const filePath = await downloadPluginUpdate(id);
-      const [preview, trust] = await Promise.all([
-        previewPlugin(filePath),
-        assessPluginTrust(filePath),
-      ]);
-      const { manifest, hostPlatform, platformSupported } = preview;
+      const review = await reviewDownloadedPackage(filePath);
       toast.dismiss(toastId);
-      setPending({ filePath, manifest, trust, hostPlatform, platformSupported });
+      setPending(review);
     } catch (err) {
       frontendLog("plugin_update", `Downloading update for ${id} failed: ${errorMessage(err)}`);
       toast.error(`Could not download the update: ${errorMessage(err)}`, { id: toastId });
