@@ -1360,70 +1360,89 @@ async fn run_cancellable_returns_body_result_when_not_cancelled() {
     assert_eq!(result.unwrap(), 42);
 }
 
-// ── Golden vector: canonical-engine migration (SM-020 slice 3) ──────────
+// ── Golden vector: the agent transport on the shared policy (SM-020, #3730) ──
 //
-// Pins the EXACT reconnect delay sequence + give-up the agent produces, so
-// moving `reconnect_agent` off the hand-rolled capped-exponential onto the
-// canonical `reconnect_backoff` engine is proven behavior-preserving. This is
-// the highest-blast-radius reconnect path (every remote agent session), so the
-// bar is byte-identical: fed the agent's production numbers with jitter
-// disabled, the shared engine must reproduce the old 1,2,4,8,16,30,30,30,30,30 s
-// schedule and then give up after exactly 10 attempts. The config here is spelled
-// out inline (rather than importing the production `AGENT_BACKOFF` const) so this
-// pin lands, red-to-green, *before* the loop is migrated onto the engine.
+// Pins the reconnect schedule + give-up the agent's in-task loop produces. This
+// is the highest-blast-radius reconnect path (every remote agent session), so
+// the bar is exact: the loop must follow the shared policy — nominal (worst-case)
+// schedule 1,2,4,8,16,30,30,30,30,30 s, give up after exactly 10 attempts — and
+// its jitter must only ever shorten a window.
 
-/// The agent reconnect delays, in whole ms, for its production configuration
-/// (base 1 s, factor 2, cap 30 s, 10 attempts) — the exact sequence the
-/// pre-migration `capped_exponential_delay(1s, attempt, 30s)` over
-/// `attempt in 0..10` yielded. Attempts 6..=10 sit at the 30 s cap.
+/// The agent's nominal (worst-case) reconnect delays, in whole ms. Attempts
+/// 6..=10 sit at the 30 s cap.
 const AGENT_GOLDEN_DELAYS_MS: [i64; 10] = [
     1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000, 30_000, 30_000,
 ];
 
-#[test]
-fn golden_vector_agent_backoff_sequence_then_give_up() {
+/// Walk the agent's `Drop → (Attempt → Failure)*` sequence — exactly what
+/// `reconnect_agent` drives — returning the armed delays and the final state.
+fn walk_agent_schedule(
+    rand: &mut dyn FnMut() -> f64,
+) -> (Vec<i64>, termihub_core::reconnect_backoff::ReconnectState) {
     use termihub_core::reconnect_backoff::{
-        reconnect_reducer, BackoffConfig, ReconnectEvent, ReconnectPhase, INITIAL_RECONNECT_STATE,
+        reconnect_reducer, ReconnectEvent, ReconnectPhase, INITIAL_RECONNECT_STATE,
     };
-    // Exactly the agent's production numbers (mirrors `AGENT_BACKOFF`), jitter
-    // disabled → deterministic. Kept inline so this test predates the const.
-    let config = BackoffConfig {
-        base_delay_ms: 1_000.0,
-        factor: 2.0,
-        max_delay_ms: 30_000.0,
-        max_attempts: 10,
-        jitter_ratio: 0.0,
-    };
-    // Jitter is disabled, so the RNG is never consulted; a constant keeps the
-    // schedule deterministic.
-    let mut no_jitter = || 0.0;
-    let mut state = INITIAL_RECONNECT_STATE;
+    let config = super::AGENT_RECONNECT_POLICY;
+    let mut state = reconnect_reducer(
+        &INITIAL_RECONNECT_STATE,
+        ReconnectEvent::Drop,
+        &config,
+        rand,
+    );
     let mut delays = Vec::new();
-
-    // A fresh drop arms the first backoff window; each subsequent window is armed
-    // by a failed attempt (the timer fires, then the attempt fails) — exactly the
-    // Drop → (Attempt → Failure)* sequence `reconnect_agent` drives.
-    state = reconnect_reducer(&state, ReconnectEvent::Drop, &config, &mut no_jitter);
     while state.phase == ReconnectPhase::Waiting {
         delays.push(state.delay_ms);
-        state = reconnect_reducer(&state, ReconnectEvent::Attempt, &config, &mut no_jitter);
-        state = reconnect_reducer(&state, ReconnectEvent::Failure, &config, &mut no_jitter);
+        state = reconnect_reducer(&state, ReconnectEvent::Attempt, &config, rand);
+        state = reconnect_reducer(&state, ReconnectEvent::Failure, &config, rand);
     }
+    (delays, state)
+}
 
+#[test]
+fn agent_transport_follows_the_shared_reconnect_policy() {
+    use termihub_core::reconnect_backoff::RECONNECT_POLICY;
+    assert_eq!(super::AGENT_RECONNECT_POLICY, RECONNECT_POLICY);
+}
+
+#[test]
+fn golden_vector_agent_backoff_sequence_then_give_up() {
+    use termihub_core::reconnect_backoff::ReconnectPhase;
+    // A draw of 0 never shortens a window: the nominal, worst-case schedule.
+    let (delays, state) = walk_agent_schedule(&mut || 0.0);
     assert_eq!(
         delays,
         AGENT_GOLDEN_DELAYS_MS.to_vec(),
-        "agent reconnect backoff must yield exactly 1,2,4,8,16,30,30,30,30,30 s (jitter disabled)"
+        "agent reconnect backoff must be at most 1,2,4,8,16,30,30,30,30,30 s"
     );
     assert_eq!(
         state.phase,
         ReconnectPhase::Gaveup,
-        "after 10 failed attempts the engine gives up (was the for-loop's exhausted Err)"
+        "after 10 failed attempts the engine gives up (the loop's exhausted Err)"
     );
     assert_eq!(
-        state.attempt, config.max_attempts,
+        state.attempt,
+        super::AGENT_RECONNECT_POLICY.max_attempts,
         "exactly `max_attempts` (10) attempts are made before giving up"
     );
+}
+
+#[test]
+fn agent_jittered_schedule_stays_within_the_shared_bounds() {
+    use termihub_core::reconnect_backoff::{SeededJitter, RECONNECT_GIVE_UP_WINDOW_MS};
+    for seed in 0..64u64 {
+        let mut jitter = SeededJitter::new(seed);
+        let (delays, state) = walk_agent_schedule(&mut || jitter.next_f64());
+        assert_eq!(delays.len(), AGENT_GOLDEN_DELAYS_MS.len());
+        assert_eq!(state.attempt, super::AGENT_RECONNECT_POLICY.max_attempts);
+        for (d, nominal) in delays.iter().zip(AGENT_GOLDEN_DELAYS_MS) {
+            assert!(*d <= nominal, "seed {seed}: {d} above nominal {nominal}");
+            assert!(
+                *d >= nominal / 2,
+                "seed {seed}: {d} below half of {nominal}"
+            );
+        }
+        assert!(delays.iter().sum::<i64>() <= RECONNECT_GIVE_UP_WINDOW_MS);
+    }
 }
 
 // ── Streaming tool-run routing (#3353) ─────────────────────────────

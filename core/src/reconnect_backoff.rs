@@ -297,7 +297,12 @@ impl Default for ReconnectState {
 /// would change its rounding/jitter/factor semantics, so it stays here.
 pub fn backoff_delay(attempt: i64, config: &BackoffConfig) -> f64 {
     let n = attempt.max(1);
-    let raw = config.base_delay_ms * config.factor.powi((n - 1) as i32);
+    // Saturate the exponent instead of truncating it: a plain `as i32` would
+    // wrap a huge attempt number to a negative exponent and collapse the delay
+    // far below the cap. With `factor >= 1` a saturated power is `inf`, which
+    // the cap then clamps.
+    let exponent = i32::try_from(n - 1).unwrap_or(i32::MAX);
+    let raw = config.base_delay_ms * config.factor.powi(exponent);
     raw.min(config.max_delay_ms)
 }
 

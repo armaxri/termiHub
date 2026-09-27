@@ -42,6 +42,18 @@ fn backoff_delay_caps_at_max_delay() {
 }
 
 #[test]
+fn backoff_delay_stays_at_the_cap_for_huge_attempt_numbers() {
+    // An attempt beyond the i32 range must not wrap to a negative exponent.
+    for attempt in [i64::from(i32::MAX), i64::from(i32::MAX) + 2, i64::MAX] {
+        assert_eq!(
+            backoff_delay(attempt, &NO_JITTER),
+            8_000.0,
+            "attempt {attempt}"
+        );
+    }
+}
+
+#[test]
 fn backoff_delay_treats_attempt_below_one_as_first() {
     assert_eq!(backoff_delay(0, &NO_JITTER), 1_000.0);
     assert_eq!(backoff_delay(-3, &NO_JITTER), 1_000.0);

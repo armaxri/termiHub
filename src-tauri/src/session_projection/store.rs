@@ -47,9 +47,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use termihub_core::reconnect_backoff::{
-    reconnect_reducer, BackoffConfig, ReconnectEvent, ReconnectPhase, ReconnectState,
-    DEFAULT_BACKOFF, INITIAL_RECONNECT_STATE,
+    policy_for, reconnect_reducer, system_jitter, BackoffConfig, ReconnectEvent, ReconnectKind,
+    ReconnectPhase, ReconnectState, INITIAL_RECONNECT_STATE,
 };
+
+/// The retry policy of a terminal tab's reconnect loop — the shared
+/// `RECONNECT_POLICY` (SM-020, #3730), the same one the agent transport,
+/// tunnels, graphical sessions and monitoring follow.
+pub const TERMINAL_RECONNECT_POLICY: BackoffConfig = policy_for(ReconnectKind::Terminal);
 
 /// The canonical session-lifecycle status now lives in `core` (SM-020 slice 0)
 /// so monitoring / graphical consumers can share one vocabulary; it is
@@ -233,13 +238,13 @@ pub struct SessionLifecycleStore {
 
 impl Default for SessionLifecycleStore {
     fn default() -> Self {
-        Self::with_config(DEFAULT_BACKOFF)
+        Self::with_config(TERMINAL_RECONNECT_POLICY)
     }
 }
 
 impl SessionLifecycleStore {
-    /// A store with no sessions yet, using the default backoff schedule and a
-    /// real jitter source.
+    /// A store with no sessions yet, using the shared reconnect policy
+    /// ([`TERMINAL_RECONNECT_POLICY`]) and a real jitter source.
     pub fn new() -> Self {
         Self::default()
     }
@@ -251,7 +256,7 @@ impl SessionLifecycleStore {
             inner: Mutex::new(Inner {
                 sessions: HashMap::new(),
                 config,
-                rand: Box::new(rand::random::<f64>),
+                rand: Box::new(system_jitter),
                 dirty: HashSet::new(),
             }),
         }

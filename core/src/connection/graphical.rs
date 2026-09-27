@@ -147,7 +147,8 @@ pub fn shared_field_base(default_port: u16) -> Vec<SettingsGroup> {
                         super::auto_reconnect::AUTO_RECONNECT_DEFAULT
                     )),
                     description: Some(
-                        "Automatically retry (up to 3 times) after an unexpected drop".to_string(),
+                        "Automatically retry (up to 10 times, with backoff) after an unexpected drop"
+                            .to_string(),
                     ),
                     ..field(
                         super::auto_reconnect::AUTO_RECONNECT_KEY,
@@ -694,12 +695,16 @@ impl GraphicalState {
     }
 }
 
-/// Maximum automatic reconnect attempts after an unexpected drop.
-pub const MAX_RECONNECT_ATTEMPTS: u32 = 3;
+/// Maximum automatic reconnect attempts after an unexpected drop — the shared
+/// reconnect policy's budget (SM-020, #3730), the same one terminal tabs,
+/// tunnels, the agent transport and monitoring use.
+pub const MAX_RECONNECT_ATTEMPTS: u32 =
+    crate::reconnect_backoff::policy_for(crate::reconnect_backoff::ReconnectKind::Graphical)
+        .max_attempts as u32;
 
 /// Pure, protocol-agnostic driver of the shared session state machine.
 ///
-/// Holds no I/O; it exists so the transition rules (and the max-3 auto-retry
+/// Holds no I/O; it exists so the transition rules (and the bounded auto-retry
 /// cap) are unit-testable without a backend or Tauri. The
 /// [`GraphicalSessionManager`](../../session) drives it in response to backend
 /// and user events and emits `remote-desktop-state` on each change.
@@ -750,7 +755,7 @@ impl SessionStateMachine {
 
     /// Authentication succeeded and the first frame arrived; become `Active`.
     ///
-    /// Resets the reconnect counter — a fresh live session starts the max-3
+    /// Resets the reconnect counter — a fresh live session starts the retry
     /// budget over.
     pub fn activated(&mut self) -> GraphicalState {
         if matches!(

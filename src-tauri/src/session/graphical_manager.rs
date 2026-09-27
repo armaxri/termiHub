@@ -218,6 +218,9 @@ pub struct GraphicalSessionManager {
     registry: Arc<ConnectionTypeRegistry>,
     /// Persisted per-host RDP certificate trust store (#1767).
     trust_store: Arc<RdpTrustStore>,
+    /// Backoff jitter source handed to every session's reconnect loop
+    /// (SM-020, #3730). Production draws from the thread RNG; tests pin it.
+    jitter: fn() -> f64,
 }
 
 impl GraphicalSessionManager {
@@ -228,7 +231,16 @@ impl GraphicalSessionManager {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             registry,
             trust_store,
+            jitter: termihub_core::reconnect_backoff::system_jitter,
         }
+    }
+
+    /// Replace the reconnect backoff jitter source — for deterministic
+    /// paused-time tests (a draw of `0.0` yields the nominal schedule).
+    #[cfg(test)]
+    pub(crate) fn with_jitter(mut self, jitter: fn() -> f64) -> Self {
+        self.jitter = jitter;
+        self
     }
 
     /// The RDP certificate trust store backing this manager, for the
@@ -353,6 +365,7 @@ impl GraphicalSessionManager {
             trust_store: self.trust_store.clone(),
             pending_cert: pending_cert.clone(),
             held: held.clone(),
+            jitter: self.jitter,
             sink,
         };
         let tasks = vec![tokio::spawn(supervisor.run(generation))];

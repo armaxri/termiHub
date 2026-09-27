@@ -13,6 +13,7 @@ import { useAppStore } from "@/store/appStore";
 import { useProjectedSessionLifecycle, useSessionAutoReconnect } from "@/store/useSessionLifecycle";
 import { Button, ContentOverlay, Tooltip } from "@/components/ui";
 import type { TerminalExitInfo } from "@/types/terminal";
+import { RECONNECTING_HEADING, reconnectAttemptLabel } from "@/utils/reconnectStatus";
 import "./TerminalDisconnectOverlay.css";
 
 interface TerminalDisconnectOverlayProps {
@@ -84,10 +85,8 @@ function AutoReconnectingOverlay({ tabId }: { tabId: string }) {
   if (!auto) return null;
 
   const secondsLeft = Math.max(0, Math.ceil((auto.nextAttemptAt - now) / 1000));
-  const attemptLabel =
-    auto.maxAttempts > 0
-      ? `Attempt ${auto.attempt + 1} of ${auto.maxAttempts}`
-      : `Attempt ${auto.attempt + 1}`;
+  // `attempt` counts the attempts already started; the countdown is for the next.
+  const attemptLabel = reconnectAttemptLabel(auto.attempt + 1, auto.maxAttempts);
 
   return (
     <div
@@ -97,7 +96,7 @@ function AutoReconnectingOverlay({ tabId }: { tabId: string }) {
       <ContentOverlay
         className="terminal-disconnect-overlay__body"
         icon={<WifiOff size={32} className="terminal-disconnect-overlay__icon" />}
-        heading="Connection lost — reconnecting…"
+        heading={RECONNECTING_HEADING}
         actions={
           <Button
             variant="secondary"
