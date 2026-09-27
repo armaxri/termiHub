@@ -316,15 +316,16 @@ class TestExternalApp(
             "The tab ran the ssh-agent setup command.",
         )
 
-    # ── X11 forwarding (MT-SSH-14/15/16/18, MT-XPLAT-03) ─────────────────────
+    # ── X11 forwarding (MT-SSH-14/15, MT-XPLAT-03) ─────────────────────
     @pytest.mark.skipif(
         "sys.platform == 'win32'", reason="X11 forwarding is a macOS/Linux feature"
     )
     @pytest.mark.usefixtures("ssh_x11_fixtures")
     def test_x11_forwarding_window_appears(self):
-        """Harness saves an SSH connection (X11 forwarding is on by default),
-        connects to the X11-capable fixture, and auto-asserts the server handed
-        back a forwarded ``$DISPLAY``; the operator only confirms a window."""
+        """Harness saves an SSH connection (X11 forwarding is on by default) and
+        connects to the X11-capable fixture; the operator only confirms a window.
+        The forwarded ``$DISPLAY`` itself is asserted by the non-manual
+        ``test_ssh.py::TestSshX11Display`` (MT-SSH-16)."""
         self.close_all_tabs()
         name = unique_name("x11")
         self._fill_ssh_editor(name, port=SSH_X11_PORT)
@@ -344,20 +345,11 @@ class TestExternalApp(
         self.handle_password_prompt(SSH_PASSWORD)
         assert self.wait(self.has_terminal, what="the X11 SSH terminal")
 
-        # In-app verification: the ssh-x11 fixture has X11Forwarding + xauth, so a
-        # session opened with X11 enabled gets a server-allocated $DISPLAY (e.g.
-        # 'localhost:10.0'). Auto-assert it rather than leaving it to the operator
-        # (#957) — a unique marker keeps the typed command line ('$DISPLAY') from
-        # matching before the echoed value does.
-        self.run_command("echo TH_X11_DISPLAY=$DISPLAY")
-        output = self.wait_for_output("TH_X11_DISPLAY=localhost:")
-        assert "TH_X11_DISPLAY=localhost:" in output, (
-            "SSH server did not allocate a forwarded $DISPLAY — X11 forwarding "
-            "was not negotiated"
-        )
+        # The forwarded-$DISPLAY assertion (MT-SSH-16) is automated without an operator in
+        # test_ssh.py::TestSshX11Display; only the window check stays manual.
 
-        # KNOWN ISSUE #1304: forwarding negotiates and $DISPLAY is set (asserted
-        # above), but the forwarded X11 channel never reaches termiHub, so no
+        # KNOWN ISSUE #1304: forwarding negotiates and $DISPLAY is set (asserted by
+        # TestSshX11Display), but the forwarded X11 channel never reaches termiHub, so no
         # window appears yet. This step is expected to fail until #1304 is fixed;
         # it stays active so it re-verifies once forwarding delivers the channel.
         self.manual_step(
