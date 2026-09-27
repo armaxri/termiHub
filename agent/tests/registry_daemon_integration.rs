@@ -45,6 +45,8 @@ use tempfile::TempDir;
 
 mod common;
 
+use common::parent_death::GuardedSpawn;
+
 fn agent_binary() -> &'static str {
     env!("CARGO_BIN_EXE_termihub-agent")
 }
@@ -151,7 +153,7 @@ fn spawn_agent_inner(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_guarded()
         .expect("spawn agent");
 
     let stderr = child.stderr.take().expect("piped stderr");
@@ -208,7 +210,7 @@ fn spawn_registry(registry_endpoint: &str) -> RegistryProcess {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()
+        .spawn_guarded()
         .expect("spawn registry daemon");
     RegistryProcess { child }
 }

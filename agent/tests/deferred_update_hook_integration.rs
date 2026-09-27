@@ -64,6 +64,8 @@ use tempfile::TempDir;
 
 mod common;
 
+use common::parent_death::GuardedSpawn;
+
 /// The hook's gate and its binary override — mirrored from
 /// `agent/src/update/test_hook.rs`.
 const HOOK_ENV: &str = "TERMIHUB_AGENT_TEST_PENDING_UPDATE";
@@ -167,7 +169,7 @@ impl LiveAgent {
             }
         }
 
-        let child = cmd.spawn().expect("spawn agent process");
+        let child = cmd.spawn_guarded().expect("spawn agent process");
         // `spawn` returns only once the child has exec'd, so the inherited-fd
         // window is closed here. Release before the log wait below, which blocks
         // for as long as the agent takes to bind — holding it there would

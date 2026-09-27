@@ -93,6 +93,8 @@ use termihub_core::monitoring::BackoffSchedule;
 
 mod common;
 
+use common::parent_death::GuardedSpawn;
+
 // ── Binary path ───────────────────────────────────────────────────────────────
 
 fn agent_binary() -> &'static str {
@@ -596,7 +598,7 @@ fn spawn_listener_process(
         cmd.env("RUST_LOG", log);
     }
 
-    let child = cmd.spawn().expect("failed to spawn termihub-agent");
+    let child = cmd.spawn_guarded().expect("failed to spawn termihub-agent");
     (child, stderr_file)
 }
 
@@ -1982,7 +1984,7 @@ fn spawn_daemon_for_local_shell(session_id: &str, socket_path: &Path) -> (Child,
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::from(stderr_handle))
-        .spawn()
+        .spawn_guarded()
         .expect("failed to spawn daemon");
     // The daemon reads its connection settings from stdin (AGT-021), not an env
     // var. Write the JSON and close the pipe so the daemon reads to EOF.

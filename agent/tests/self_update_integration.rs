@@ -60,6 +60,8 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 mod common;
 
+use common::parent_death::GuardedSpawn;
+
 /// Published asset suffix the mock release advertises. Forced via
 /// `TERMIHUB_AGENT_UPDATE_ASSET_SUFFIX` so the test is independent of the host
 /// architecture (the real `current_asset_suffix()` only resolves on Linux).
@@ -216,7 +218,7 @@ impl LiveAgent {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::from(stderr_handle))
-            .spawn()
+            .spawn_guarded()
             .expect("spawn agent process");
         // `spawn` returns only once the child has exec'd, so the inherited-fd
         // window is closed here.
