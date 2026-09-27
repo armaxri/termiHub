@@ -48,7 +48,15 @@ The grade (mirrors the retired manual checklist in
    vanishing, then settles a clean **Disconnected** via the overlay's Stop
    affordance — the anti-stranding invariant.
 
-Skips cleanly when the app / agent binary is not built or no ``sshd`` is present.
+Skips cleanly when the app / agent binary is not built or no ``sshd`` is present
+— except on CI with ``TERMIHUB_LIVE_AGENT=1``, where the lane provisioned the
+endpoint, so an unavailable one is a hard failure, never a silent skip.
+
+**Windows (CI-020, TIN-007).** Win32-OpenSSH cannot be spawned as a throwaway
+unprivileged process, so the Windows leg provisions a native sshd service up
+front (``scripts/internal/native-sshd-fixture.sh up`` → ``.ps1``) and the grade
+drives it through :func:`local_agent_endpoint`. The agent's shell there is
+PowerShell, so the counter is a PowerShell loop.
 """
 
 from __future__ import annotations
@@ -67,10 +75,12 @@ from termihub_harness import (
     ConfigRecoveryUi,
     LocalAgentSshd,
     LocalAgentUnavailable,
+    NativeSshdFixture,
     SidebarUi,
     SystemTest,
     TabsUi,
     TerminalUi,
+    local_agent_endpoint,
     unique_name,
 )
 
@@ -121,6 +131,10 @@ OVERLAY_RECONNECT = "terminal-disconnect-reconnect-btn"
 # across the outage is the #2512 headline. ``sleep 1`` keeps it cheap; the marker
 # is greppable so the buffer read can parse the current count.
 COUNTER_CMD = "i=0; while true; do echo TICK=$i; i=$((i+1)); sleep 1; done"
+if os.name == "nt":
+    # A Windows agent host has no POSIX shell in its capability list, so the new
+    # shell tab runs PowerShell (the core default); same output, same cadence.
+    COUNTER_CMD = '$i=0; while ($true) { "TICK=$i"; $i++; Start-Sleep -Seconds 1 }'
 _TICK_RE = re.compile(r"TICK=(\d+)")
 
 # The transport retries with exponential backoff (2s, 4s, …) and the daemon
@@ -128,7 +142,7 @@ _TICK_RE = re.compile(r"TICK=(\d+)")
 RECOVERY_TIMEOUT = 90.0
 
 
-def _agent_doc(sshd: LocalAgentSshd) -> str:
+def _agent_doc(sshd: LocalAgentSshd | NativeSshdFixture) -> str:
     """A v2 nested connections store carrying one key-auth agent at ``sshd``."""
     return json.dumps(
         {
@@ -170,8 +184,12 @@ class TestAgentReconnectUi(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syst
     @pytest.fixture(autouse=True)
     def _local_agent(self):
         try:
-            sshd = LocalAgentSshd()
+            sshd = local_agent_endpoint()
         except LocalAgentUnavailable as exc:
+            if _ON_CI and _LIVE_AGENT_OPT_IN:
+                # The lane opted in, so it provisioned the endpoint: a missing one
+                # is a broken fixture, not a reason to go green (CI-020).
+                pytest.fail(f"live agent endpoint unavailable on an opted-in CI leg: {exc}")
             pytest.skip(str(exc))
         sshd.start()
         self.sshd = sshd
