@@ -2565,6 +2565,48 @@ the graceful "incompatible, auto-disabled" path — could not see that skew at a
   flag set on session disconnect/drop (before `close`) and on plugin unload/disable. Settings are
   not duplicated — they remain `settings_json` (PLG-008).
 
+**Amendment — the 0.1 capability ceiling: plugin backends are terminal-only** (maintainer,
+2026-09-27, #3719, PLG-004/PLG-005):
+
+- **Decision.** A plugin connection type offers an interactive terminal (input, output, resize) and
+  nothing else in 0.1: no file browser, no monitoring, no graphical/remote-desktop surface, no
+  auto-reconnect, no persistent sessions, no tunneling, and no hosting on a remote agent (agents do
+  not run a `PluginHost`).
+- **Enforced by the host, not trusted from the plugin.** `PluginConnectionType::capabilities()`
+  (`core/src/plugin/connection.rs`) hard-codes `terminal` + `resize` and every other flag off, and
+  `monitoring()` / `file_browser()` / `graphical()` return `None`. The desktop derives every
+  surface from the registry capabilities — the sidebar file browser from `fileBrowser`, the
+  status-bar monitoring from `monitoring`, tunnels from `tunneling` — and resilient reconnect only
+  from direct SSH (`autoReconnect`) or agent-hosted tabs (`isResilientReconnectTab`), so a plugin tab
+  is never offered them, even with an `autoReconnect: true` field of its own. Pinned by
+  `core/tests/plugin_package_load.rs` (capabilities of the _packaged_ artifact) and
+  `src/store/appStore.autoReconnect.test.ts` (plugin tabs are never resilient).
+- **Rationale.** The ABI is now frozen for the whole 1.x line (above), so every surface added to it
+  is permanent. File browsing, monitoring and graphical sessions each carry a large, stateful
+  contract (paths and transfers, polling and units, framebuffers and input) that would have to be
+  designed, frozen and security-reviewed before 0.1 with no plugin yet asking for it. Reconnect for
+  an in-process native backend additionally needs a defined re-create/resume protocol and
+  cancellation semantics under the ventilator-grade bar. Shipping terminal-only keeps the frozen
+  surface to the one contract that is exercised end to end today.
+- **How it grows.** Append-only, opt-in, per surface: a later minor adds a host-owned capability
+  table — e.g. `PluginFileBrowserVTable`, `PluginMonitoringVTable` — resolved through an optional
+  exported symbol only when the plugin's ABI `supports(1.x)` and the symbol is present. The host
+  then sets the matching `Capabilities` flag for that plugin's type only. Plugins that do not export
+  a table, including every plugin built before it existed, keep loading unchanged with the
+  terminal-only ceiling, so no existing plugin breaks.
+- **Dogfooding (PLG-005).** The coverage that stands in for a first-party plugin is the per-OS
+  package-then-load lane (`.github/workflows/plugin-packaging.yml`, #3508): on ubuntu, windows and
+  macOS it builds `examples/plugins/echo-backend` with the real packer, installs the
+  `.termihub-plugin` through `PluginManager`, satisfies the hash-bound trust gate, `dlopen`s it
+  through the real `PluginHost`, asserts the terminal-only capabilities, connects, echoes I/O,
+  disconnects and unloads (`core/tests/plugin_package_load.rs`); a merge job repeats this on
+  Linux with the combined multi-platform package. `core/tests/plugin_abi_1_1.rs` covers toolchain enforcement,
+  the host context and 1.0 compatibility across a real `dlopen`, and
+  `core/tests/plugin_host_roundtrip.rs` the unpackaged load path. **Moving a first-party built-in
+  backend onto the ABI is deferred together with the ceiling:** the built-ins worth porting (SSH, local
+  shell) rely on the file browser, monitoring and reconnect the ceiling excludes, so porting one now
+  would regress it; that becomes worthwhile once the capability tables above exist.
+
 ### ADR-16: Local-Only Diagnosability — No Telemetry, No Phone-Home Crash Reporting
 
 **Context:** A bundled desktop app has nowhere for a crash to go: before OBS-002 a panic left
