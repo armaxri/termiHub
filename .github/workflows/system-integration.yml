@@ -360,23 +360,23 @@ jobs:
         # minutes and removes the over-subscription. macOS stays at 2.
         # Re-tune if a runner's core count changes or a lane over-subscribes.
         #
-        # TERMIHUB_WAIT_SCALE multiplies every harness wait/command budget under
-        # this contention (#2690): even at 2 workers macOS still shed a *few*
-        # flaky `timed out waiting …` failures run-to-run, so the two facets are
-        # fixed together — right-size the workers AND give the shared readiness
-        # primitives headroom, so a slow-but-fine op is not read as a failure.
-        # Passing ops return immediately, so a scale up costs wall-time only on a
-        # (now rare) genuine failure. Serial/local runs leave it unset (1.0).
+        # No global wait multiplier (#3660, WA-CI-006; replaced #2690's
+        # TERMIHUB_WAIT_SCALE=2). The harness sizes each deadline per operation
+        # from observed CI timings (tests/system/termihub_harness/deadlines.py):
+        # an absolute app-connect deadline, plus one documented slow category —
+        # webview-bound commands/poll loops on a macOS/Windows xdist worker —
+        # which the harness detects itself (OS + PYTEST_XDIST_WORKER_COUNT > 1).
+        # Every run prints `[termihub-test-timing]` lines; resize the deadlines
+        # from them with scripts/system-test-timing.py.
         if: runner.os != 'Linux'
         shell: bash
         env:
           TERMIHUB_XDIST_WORKERS: '2'
-          TERMIHUB_WAIT_SCALE: '2'
         #
         # --reruns 2 --reruns-delay 1 (#2698, lowered from 4 per CI-002): same
         # bounded auto-retries as the Linux step. rerunfailures composes with xdist
         # — a failed test is re-scheduled on its worker up to 2 times — and with
-        # TERMIHUB_WAIT_SCALE above, so a contention-timeout flake gets both more
+        # the contended-worker deadlines above, so a contention-timeout flake gets
         # per-op headroom and a retry, while a deterministic regression still fails
         # after all retries. The display-critical grades are likewise excluded here
         # via `-k "not (...)"` and run only in the `display-grades` job at
@@ -549,13 +549,12 @@ jobs:
 
       - name: Run the display-critical grades (macOS/Windows, native display)
         # No fixtures needed, so no xdist — the two suites run quickly serially.
-        # Carry the same TERMIHUB_WAIT_SCALE headroom as the bulk lane (#2690):
-        # these grades share the harness readiness primitives, and a busy runner
-        # can still starve the webview JS thread even for a serial suite.
+        # Serial, so the harness applies no contended-worker slow category and no
+        # multiplier (#3660): the macOS/Windows display-grade failures seen at 1x
+        # were real scrollback losses (#2561/#2583), not contention timeouts — see
+        # the evidence in tests/system/termihub_harness/deadlines.py.
         if: runner.os != 'Linux'
         shell: bash
-        env:
-          TERMIHUB_WAIT_SCALE: '2'
         run: >-
           ./tests/system/pytest.sh -m integration
           -k "test_agent_reconnect_ui or test_layout_scrollback_ui" -v
