@@ -396,3 +396,28 @@ describe("appStore — unified autoReconnect eligibility (PARITY-008)", () => {
     expect(isResilientReconnectTabId(addSsh({ resilientReconnect: true }))).toBe(true);
   });
 });
+
+describe("appStore — plugin connections never auto-reconnect (PLG-004)", () => {
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+  });
+
+  // Plugin backends are terminal-only for 0.1: no reconnect, file browser,
+  // monitoring or graphical surface. A plugin type never opts into resilient
+  // reconnect, even when its settings bag happens to carry `autoReconnect: true`
+  // (a plugin's configSchema may declare a same-named field of its own).
+  function addPluginTab(config: Record<string, unknown>): string {
+    const type = "plugin:test-echo:echo";
+    return useAppStore
+      .getState()
+      .addTab("Echo", type, { type, config }, { contentType: "terminal", sessionId: "sess-p" });
+  }
+
+  it("is not resilient with no setting (the SSH default-on does not leak to plugins)", () => {
+    expect(isResilientReconnectTabId(addPluginTab({}))).toBe(false);
+  });
+
+  it("is not resilient even with an explicit autoReconnect: true", () => {
+    expect(isResilientReconnectTabId(addPluginTab({ autoReconnect: true }))).toBe(false);
+  });
+});

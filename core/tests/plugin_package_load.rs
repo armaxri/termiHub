@@ -160,6 +160,25 @@ async fn packaged_native_plugin_installs_and_loads_on_this_host() {
         .unwrap()
         .create(&type_id)
         .expect("the plugin's connection type is registered");
+
+    // The 0.1 capability ceiling (PLG-004): a plugin backend is terminal-only.
+    // Asserted on the packaged artifact, so the app never offers file-browser,
+    // monitoring, graphical or persistent/reconnect surfaces for it.
+    let caps = conn.capabilities();
+    assert!(caps.terminal, "a plugin backend is a terminal");
+    assert!(caps.resize, "a plugin terminal accepts resize");
+    assert!(!caps.file_browser, "no file browser for plugins in 0.1");
+    assert!(!caps.monitoring, "no monitoring for plugins in 0.1");
+    assert!(!caps.graphical, "no graphical surface for plugins in 0.1");
+    assert!(
+        !caps.persistent,
+        "no persistent/reattach sessions for plugins"
+    );
+    assert!(!caps.tunneling, "no port forwarding for plugins");
+    assert!(conn.file_browser().is_none());
+    assert!(conn.monitoring().is_none());
+    assert!(conn.graphical().is_none());
+
     let mut rx = conn.subscribe_output();
     conn.connect(serde_json::json!({}))
         .await
