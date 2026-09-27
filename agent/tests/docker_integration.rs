@@ -25,14 +25,14 @@ use tokio::net::UnixStream;
 
 const MSG_INPUT: u8 = 0x01;
 const MSG_RESIZE: u8 = 0x02;
-#[allow(dead_code)]
+#[expect(dead_code, reason = "kept so the frame-type table is complete")]
 const MSG_DETACH: u8 = 0x03;
 const MSG_KILL: u8 = 0x04;
 
 const MSG_OUTPUT: u8 = 0x81;
 const MSG_BUFFER_REPLAY: u8 = 0x82;
 const MSG_EXITED: u8 = 0x83;
-#[allow(dead_code)]
+#[expect(dead_code, reason = "kept so the frame-type table is complete")]
 const MSG_ERROR: u8 = 0x84;
 const MSG_READY: u8 = 0x85;
 

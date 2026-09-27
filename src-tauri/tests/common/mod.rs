@@ -4,7 +4,10 @@
 //! Each test binary uses a different subset, so unused-item lints are allowed
 //! here (the usual `tests/common` pattern).
 
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "shared test-support module: each test binary uses a different subset"
+)]
 
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
