@@ -94,7 +94,9 @@ function Assert-Admin {
 }
 
 function Invoke-Native([string]$Exe, [string[]]$Arguments) {
-    & $Exe @Arguments
+    # Tool chatter (icacls' "Successfully processed ...") goes to stderr: stdout
+    # carries only the exports the Git Bash wrapper evals.
+    & $Exe @Arguments | ForEach-Object { [Console]::Error.WriteLine("native-sshd:   $_") }
     if ($LASTEXITCODE -ne 0) {
         throw "$Exe $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
     }
@@ -300,7 +302,8 @@ function Get-SshdDescendantPid([int]$RootPid) {
         }
         $frontier = $next
     }
-    return , $found.ToArray()
+    # Unrolled on return: callers wrap in @(), so none yields an empty array.
+    return $found.ToArray()
 }
 
 function Show-SshdDiagnostic {
