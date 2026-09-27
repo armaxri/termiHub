@@ -108,7 +108,7 @@ needs_build() {
 if [ "$SKIP_BUILD" -eq 1 ]; then
     if [ "$DRY_RUN" -eq 0 ] && [ ! -f "$APP_BINARY" ]; then
         echo "ERROR: app binary not found at $APP_BINARY" >&2
-        echo "Build it (drop --skip-build) or run: VITE_TEST_BRIDGE=1 pnpm tauri build${PROFILE:+ --$PROFILE} --features \"mock-remote-desktop test-bridge\"" >&2
+        echo "Build it (drop --skip-build) or run: scripts/internal/build-system-test-app.sh --$PROFILE" >&2
         exit 1
     fi
     BUILD_ACTION="skip (--skip-build)"
@@ -137,33 +137,11 @@ if [ "$BUILD_ACTION" = "build" ]; then
         pnpm install
     fi
     echo "=== Building termiHub ($PROFILE) ==="
-    # The system-test bridge's in-app client connects out over a loopback
-    # WebSocket (ws://127.0.0.1:<port>), but the production CSP in
-    # tauri.conf.json no longer allows any ws:// in connect-src (#2059 — real
-    # users never run the bridge, so the app needs no WebSocket connect-src). The
-    # loopback allowance is re-added ONLY in test builds, at startup, by the
-    # bridge itself (--features test-bridge below; relax_csp_if_test_bridge in
-    # src-tauri/src/utils/test_bridge.rs). There is deliberately no --config CSP
-    # overlay (#3628): a merge patch would replace connect-src on every platform
-    # and drop that platform's IPC origin.
-    #
-    # --features mock-remote-desktop (DEAD-001): the mock graphical backend is no
-    # longer in the desktop crate's `default` feature set (a test/demo backend
-    # must not ship in a release). The E2E lane still needs it so the shared
-    # remote-desktop layer is testable with no real VNC/RDP server, so the test
-    # app opts back into it here — matching system-integration.yml.
-    #
-    # --features test-bridge (SEC-005): the WebSocket test bridge + its CSP
-    # relaxation are compiled out of release builds, so the harness must opt the
-    # bridge back in. VITE_TEST_BRIDGE=1 does the same for the frontend — a
-    # production frontend build ignores the bridge activation signals unless it
-    # is set. Both are required for the bridge to connect; keep in sync with
-    # system-integration.yml.
-    if [ "$PROFILE" = "debug" ]; then
-        VITE_TEST_BRIDGE=1 pnpm tauri build --debug --features "mock-remote-desktop test-bridge"
-    else
-        VITE_TEST_BRIDGE=1 pnpm tauri build --features "mock-remote-desktop test-bridge"
-    fi
+    # The test-app build recipe (--features test-bridge + VITE_TEST_BRIDGE=1 for
+    # the bridge, --features mock-remote-desktop for the mock graphical backend)
+    # lives in one script shared with system-integration.yml, so the two can
+    # never drift apart again (#3664). See that script's header for the reasons.
+    scripts/internal/build-system-test-app.sh "--$PROFILE"
 else
     echo "=== Build $BUILD_ACTION, using $APP_BINARY ==="
 fi

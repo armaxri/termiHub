@@ -581,19 +581,20 @@ in the unit suite, so without this they would read as uncovered (TOOL-005, see
 ```mermaid
 flowchart LR
     N["integration-coverage-nightly.yml<br/>(daily 03:47 UTC)"] -- "dispatch on develop" --> F
-    S["cron on main / manual dispatch"] --> F
+    S["manual dispatch"] --> F
     F["integration-fixtures.yml<br/>cargo llvm-cov core/tests"] -- "artifact: integration-coverage" --> C
     P["push to develop / main"] --> C
     C["coverage.yml<br/>unit coverage + merge"] --> R["coverage-unified artifact<br/>+ job summary"]
 ```
 
-- **Measured:** scheduled and manually dispatched runs of
+- **Measured:** manually dispatched runs of
   [`integration-fixtures.yml`](../.github/workflows/integration-fixtures.yml) run
   the `core/tests` suite under `cargo llvm-cov` and upload
-  `integration-coverage/integration.lcov` (14-day retention). Its own cron only
-  fires on the default branch (`main`), so
+  `integration-coverage/integration.lcov` (14-day retention);
   [`integration-coverage-nightly.yml`](../.github/workflows/integration-coverage-nightly.yml)
-  dispatches it on `develop` daily. PR-triggered fixture runs stay a plain
+  dispatches it on `develop` daily. The lane's own cron is not instrumented: it
+  fires from the default branch (`main`) but checks out `develop` (#3664), so
+  its run's branch and commit would not match the code it measured. PR-triggered fixture runs stay a plain
   `cargo test`, so PR runtime is unchanged, and so do the runs
   [`release-candidate.yml`](../.github/workflows/release-candidate.yml) makes of
   this lane via `workflow_call`: the release gate is not slowed by

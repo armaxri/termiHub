@@ -100,9 +100,9 @@ pub type PluginShutdownFn = unsafe extern "C" fn();
 /// The `#[deny(...)]` below turns any `improper_ctypes*` finding into a hard
 /// build error, so this module fails to compile if a type in one of the exported
 /// signatures ever stops being FFI-safe. The functions are never called; they
-/// exist purely so the lint runs over their signatures.
+/// exist purely so the lint runs over their signatures (their `_` prefix keeps
+/// the dead-code lint quiet without an exemption).
 #[deny(improper_ctypes, improper_ctypes_definitions)]
-#[allow(dead_code)]
 mod ffi_safety_check {
     use super::*;
     use crate::capabilities::{

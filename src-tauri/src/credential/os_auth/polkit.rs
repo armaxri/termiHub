@@ -25,8 +25,17 @@
 use super::{OsAuthCapability, OsAuthError, OsAuthPurpose, OsAuthSuccess, OsUserVerifier};
 
 mod authority;
+// Test builds never construct the real D-Bus authority (the unit tests drive a
+// fake `PolkitAuthority`), so the module is expected dead there; production
+// builds lint it fully.
 #[cfg(target_os = "linux")]
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(
+    test,
+    expect(
+        dead_code,
+        reason = "test builds never construct the real D-Bus authority"
+    )
+)]
 pub mod dbus;
 
 pub use authority::{classify_dbus_error, AuthorityError, AuthorizationResult, PolkitAuthority};

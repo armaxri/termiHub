@@ -35,7 +35,7 @@ const MSG_KILL: u8 = 0x04;
 const MSG_OUTPUT: u8 = 0x81;
 const MSG_BUFFER_REPLAY: u8 = 0x82;
 const MSG_EXITED: u8 = 0x83;
-#[allow(dead_code)]
+#[expect(dead_code, reason = "kept so the frame-type table is complete")]
 const MSG_ERROR: u8 = 0x84;
 const MSG_READY: u8 = 0x85;
 
@@ -152,16 +152,6 @@ fn encode_resize(cols: u16, rows: u16) -> [u8; 4] {
     buf[0..2].copy_from_slice(&cols.to_be_bytes());
     buf[2..4].copy_from_slice(&rows.to_be_bytes());
     buf
-}
-
-#[allow(dead_code)]
-fn decode_exit_code(payload: &[u8]) -> Option<i32> {
-    if payload.len() < 4 {
-        return None;
-    }
-    Some(i32::from_be_bytes([
-        payload[0], payload[1], payload[2], payload[3],
-    ]))
 }
 
 // ── Test helpers ────────────────────────────────────────────────────

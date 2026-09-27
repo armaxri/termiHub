@@ -132,8 +132,11 @@ the WebSocket client alongside the in-process bridge.
 > `VITE_TEST_BRIDGE=1 pnpm tauri build --features test-bridge` (plus the usual
 > `--features mock-remote-desktop`). No `--config` CSP overlay is needed: the
 > bridge widens `connect-src` itself at startup (#3628).
-> `./scripts/test-system-py.sh` and the nightly `system-integration.yml` pass all
-> of this for you.
+> `scripts/internal/build-system-test-app.sh` is the one place this recipe lives;
+> `./scripts/test-system-py.sh` and the nightly `system-integration.yml` both call
+> it (#3664). The harness also refuses a bridgeless binary up front: the Rust
+> `TEST_BRIDGE_BUILD_MARKER` is only compiled into a `test-bridge` build, and
+> the harness scans the binary for it before launch.
 
 With the bridge compiled in, it is **inert and uninstalled** in normal use. It
 activates only when one of these explicit opt-in signals is present:

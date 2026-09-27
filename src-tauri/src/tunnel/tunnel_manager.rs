@@ -82,7 +82,10 @@ type GatewayConnect = (
 /// The fields are never read — they are held purely so their `Drop` releases the
 /// pool reference when the tunnel is torn down (RAII).
 #[derive(Default)]
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "RAII: fields are held only so their Drop releases the pool ref"
+)]
 struct PooledSessionGuards {
     /// Pooled endpoint session, shared by local/dynamic forwarders on the same
     /// connection. `None` when the endpoint is reached through a jump host.

@@ -245,7 +245,7 @@ uv run pytest -k "roundtrip or protocol"
 
 ```sh
 # from the repo root — build the app once (test flags required; see the note below)
-VITE_TEST_BRIDGE=1 pnpm tauri build --features "mock-remote-desktop test-bridge"
+scripts/internal/build-system-test-app.sh
 cargo build --release -p termihub-agent  # only needed for agent tests
 cd tests/system
 uv run pytest -m integration -v -s
@@ -260,7 +260,7 @@ frontend-change → run loop is far tighter:
 
 ```sh
 # quicker than a release build (test flags required; see the note below)
-VITE_TEST_BRIDGE=1 pnpm tauri build --debug --features "mock-remote-desktop test-bridge"
+scripts/internal/build-system-test-app.sh --debug
 cd tests/system && ./pytest.sh -m integration -k sftp_infra -x -s
 ```
 
@@ -269,12 +269,18 @@ Point at an arbitrary binary (e.g. a bundle in a non-standard location) with
 
 > **A hand-built test app needs test-only flags.** A bare `pnpm tauri build`
 > produces a **release** app with the test scaffolding compiled out, so the
-> harness cannot drive it. Build with:
+> harness cannot drive it. Build with the shared recipe script (CI and
+> `scripts/test-system-py.sh` use it too, so the flags cannot drift, #3664):
 >
 > ```sh
-> VITE_TEST_BRIDGE=1 pnpm tauri build \
->   --features "mock-remote-desktop test-bridge"
+> scripts/internal/build-system-test-app.sh [--debug]
+> # runs: VITE_TEST_BRIDGE=1 pnpm tauri build [--debug] \
+> #         --features "mock-remote-desktop test-bridge"
 > ```
+>
+> The harness checks the binary before launching it. An app built without the
+> bridge fails at once with `MissingTestBridgeError` instead of timing out with
+> "no app connected to the bridge".
 >
 > - **`--features test-bridge` + `VITE_TEST_BRIDGE=1` (SEC-005):** the WebSocket
 >   bridge and its CSP relaxation are compiled out of release builds, and the
@@ -438,7 +444,7 @@ docker compose -f tests/docker/docker-compose.yml up -d ssh-password ssh-keys
 podman compose -f tests/docker/docker-compose.yml up -d ssh-password ssh-keys
 
 # the app must include the bridge verbs the test uses (test flags required; see the note above)
-VITE_TEST_BRIDGE=1 pnpm tauri build --features "mock-remote-desktop test-bridge"
+scripts/internal/build-system-test-app.sh
 cd tests/system && ./pytest.sh -m integration -k ssh -v -s   # or pytest.cmd on Windows
 # (the harness can also bring the containers up itself; CONTAINER_CMD=podman forces Podman)
 ```

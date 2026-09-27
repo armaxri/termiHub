@@ -9,7 +9,10 @@
 //! kills it only if the endpoint is *still* served by that same PID — so a PID
 //! recycled after the daemon exited on its own is never touched.
 
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "shared test-support module: each test binary uses a different subset"
+)]
 
 use std::time::{Duration, Instant};
 

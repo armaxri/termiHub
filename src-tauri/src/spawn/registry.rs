@@ -286,10 +286,10 @@ fn uninstall() -> anyhow::Result<()> {
 //
 // These four helpers are hoisted to file scope so the Windows, macOS and Linux
 // `Registrar` arms below share one implementation each instead of carrying
-// near-identical private copies. Each arm is `#[cfg]`-gated, so on any given
-// platform some helpers have no non-test caller; `#[allow(dead_code)]` keeps
-// that from tripping the `-D warnings` build. The `shared_helper_tests` module
-// pins their exact output on every platform.
+// near-identical private copies. Each arm is `#[cfg]`-gated, so on a given
+// platform a helper with no caller there carries a `cfg_attr(.., expect(dead_code))`
+// naming exactly the platforms that lack a caller. The `shared_helper_tests`
+// module pins their exact output on every platform.
 
 /// The termiHub spawn command line a surface invokes:
 /// `"{exe_path}" spawn --entry-id {entry_id} --location {location}`, with
@@ -306,7 +306,10 @@ fn uninstall() -> anyhow::Result<()> {
 /// falling through the presence-based inference to a local shell. [`SpawnKind::Auto`]
 /// (no remembered choice) emits no flag at all, keeping the pre-#1561 command
 /// line byte-for-byte.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(any(test, target_os = "macos", windows, target_os = "linux")),
+    expect(dead_code, reason = "no OS registrar on this platform")
+)]
 fn spawn_command_line(exe_path: &str, entry_id: &str, kind: SpawnKind, location: &str) -> String {
     let kind_flag = match kind {
         SpawnKind::Auto => String::new(),
@@ -321,7 +324,10 @@ fn spawn_command_line(exe_path: &str, entry_id: &str, kind: SpawnKind, location:
 /// unset the mapped string is kept verbatim (Windows registry key names). If the
 /// result is empty, `empty_fallback` is returned — pass `""` to allow an empty
 /// slug through unchanged.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(any(test, windows, target_os = "linux")),
+    expect(dead_code, reason = "only the Windows and Linux registrars call it")
+)]
 fn id_slug(id: &str, separator: char, trim: bool, empty_fallback: &str) -> String {
     let mapped: String = id
         .chars()
@@ -349,7 +355,10 @@ fn id_slug(id: &str, separator: char, trim: bool, empty_fallback: &str) -> Strin
 /// `replace` becomes `-`, then surrounding whitespace is trimmed. The result may
 /// be empty (e.g. an all-whitespace name), in which case the caller supplies its
 /// own fallback and any suffix.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(any(test, target_os = "macos", target_os = "linux")),
+    expect(dead_code, reason = "only the macOS and Linux registrars call it")
+)]
 fn sanitize_display_name(name: &str, replace: &[char]) -> String {
     name.chars()
         .map(|c| if replace.contains(&c) { '-' } else { c })
@@ -360,7 +369,10 @@ fn sanitize_display_name(name: &str, replace: &[char]) -> String {
 
 /// True when the file at `path` can be read and contains `marker`. A missing or
 /// unreadable file yields `false` (it is simply "not ours").
-#[allow(dead_code)]
+#[cfg_attr(
+    not(any(test, target_os = "macos", target_os = "linux")),
+    expect(dead_code, reason = "only the macOS and Linux registrars call it")
+)]
 fn file_contains_marker(path: &Path, marker: &str) -> bool {
     std::fs::read_to_string(path)
         .map(|contents| contents.contains(marker))

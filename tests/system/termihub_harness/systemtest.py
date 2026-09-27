@@ -38,7 +38,7 @@ import pytest
 from .artifacts import ARTIFACT_ROOT, sanitize_nodeid
 from .bridge import DEFAULT_REQUEST_TIMEOUT, Bridge, BridgeError, Driver, scale_timeout
 from .display import ensure_local_display
-from .orchestrator import AppInstance
+from .orchestrator import AppInstance, require_test_bridge_build
 
 T = TypeVar("T")
 
@@ -145,6 +145,8 @@ class SystemTest:
             app = AppInstance(echo_logs=echo_logs)
         except FileNotFoundError as exc:
             pytest.skip(str(exc))
+        # A bridgeless build must fail loudly here, not time out 30s later (#3664).
+        require_test_bridge_build(app.binary)
         if manual and not echo_logs:
             print(f"\n[manual] app logs captured (not echoed) at: {app.log_path}")
 

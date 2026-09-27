@@ -21,6 +21,19 @@ use tauri::Runtime;
 /// Env var holding the runner's WebSocket port the app should connect out to.
 pub const TEST_BRIDGE_PORT_ENV: &str = "TERMIHUB_TEST_BRIDGE_PORT";
 
+/// Byte marker that is present in an app binary only when it was built with the
+/// `test-bridge` feature. It is logged when the bridge activates (see
+/// `boot::builder`), which keeps the string in the binary's read-only data.
+///
+/// The Python harness scans the built binary for it before launching
+/// (`termihub_harness.orchestrator.require_test_bridge_build`, #3664). A binary
+/// built without the bridge boots normally but never dials the bridge, so every
+/// suite used to time out after 30s with "no app connected to the bridge". The
+/// scan turns that into an immediate, explicit error. Keep the value in sync
+/// with `TEST_BRIDGE_BUILD_MARKER` in `tests/system/termihub_harness/orchestrator.py`
+/// (a harness unit test checks the two match).
+pub const TEST_BRIDGE_BUILD_MARKER: &str = "termihub-test-bridge-build-marker:v1";
+
 /// Env var to opt out of pinning the test window always-on-top under the test
 /// bridge (#2504). When set to a truthy value (`1`/`true`, any case), the
 /// anti-occlusion pin (#957) is skipped so an operator can background the

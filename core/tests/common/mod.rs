@@ -6,7 +6,10 @@
 
 // Each integration test is compiled as its own crate, so not every test file
 // uses every function from this shared module. Suppress dead_code warnings.
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "shared test-support module: each test binary uses a different subset"
+)]
 
 use std::net::TcpStream;
 use std::path::PathBuf;

@@ -84,8 +84,8 @@ jobs:
     timeout-minutes: 60
 
     env:
-      # Integration coverage (TOOL-005, #3656): scheduled and manually dispatched
-      # runs measure the suite with cargo-llvm-cov and upload the lcov, which the
+      # Integration coverage (TOOL-005, #3656): manually dispatched runs
+      # (including the nightly develop dispatch) measure the suite with cargo-llvm-cov and upload the lcov, which the
       # advisory Coverage workflow (coverage.yml) merges into the unified report.
       # PR-triggered runs stay a plain `cargo test`, so PR runtime is unchanged.
       # The develop nightly is dispatched by integration-coverage-nightly.yml.
@@ -98,13 +98,26 @@ jobs:
       # fetch-integration-coverage.mjs (it lists integration-fixtures.yml runs)
       # never reads, so instrumenting it would only slow the gate. The
       # workflow_ref check tells a direct run of this file from a called one.
+      #
+      # NOT on `schedule` either (#3664): a scheduled run fires from main but
+      # checks out develop, so its run metadata (branch, head_sha) would not
+      # match the code it measured and fetch-integration-coverage.mjs would
+      # merge develop's lcov into main's report. develop's instrumented run is
+      # the integration-coverage-nightly.yml dispatch.
       MEASURE_COVERAGE: >-
-        ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        ${{ github.event_name == 'workflow_dispatch'
         && contains(github.workflow_ref, '/.github/workflows/integration-fixtures.yml@') }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          # The nightly grades develop, the active branch (#3664). A scheduled
+          # run fires from the default branch (main), so without this it would
+          # only ever re-test main's frozen code. Every other trigger keeps
+          # checkout's default ref: a PR's merge ref, the dispatching branch, or
+          # the release-candidate caller's sha.
+          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -247,6 +260,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          # Nightly grades develop; see core-integration's checkout (#3664).
+          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
 
       - name: Run the polkit D-Bus integration test
         run: tests/docker/polkit/run.sh --clean

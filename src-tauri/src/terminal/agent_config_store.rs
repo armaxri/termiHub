@@ -91,6 +91,13 @@ impl AgentConfigStore {
     /// Retain (replacing any prior) the transport config for `agent_id`. A
     /// re-connect overwrites the previous config; the replaced value is zeroized
     /// as it drops.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "only caller is the unwired `retain_agent_config` seam (#3661)"
+        )
+    )]
     pub(crate) fn retain(
         &self,
         agent_id: &str,
@@ -121,7 +128,7 @@ impl AgentConfigStore {
     }
 
     /// Whether a config is currently retained for `agent_id`.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) fn contains(&self, agent_id: &str) -> bool {
         self.lock().contains_key(agent_id)
     }
