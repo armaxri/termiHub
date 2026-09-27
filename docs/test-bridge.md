@@ -314,11 +314,13 @@ await driver.editorCursor("down", { times: 2 }); // caret to line 3; Ln/Col upda
 theme color, or a CSS variable resolved from a stylesheet. Two verbs close those
 gaps:
 
-- `{ action: "drag", testId, dx, dy? }` dispatches `mousedown` on the element,
-  then `mousemove`/`mouseup` on the document offset by `(dx, dy)` from the
-  element's center — the sequence handlers like `useSidebarResize` listen for
-  (they read `event.clientX`). Only the delta matters, so absolute coordinates
-  need not be known.
+- `{ action: "drag", testId, dx, dy? }` presses on the element's center, then
+  moves and releases on the document offset by `(dx, dy)`. Each step fires the
+  pointer event (`pointerdown`/`pointermove`/`pointerup`, with the button held on
+  the move) followed by its compatibility mouse event, as a real browser does —
+  so both mouse-based handlers like `useSidebarResize` and the pointer-based
+  split separators (react-resizable-panels, `split-view-resize-handle-<panelId>`)
+  respond. Only the delta matters, so absolute coordinates need not be known.
 - `{ action: "getComputedStyle", testId?, property }` returns
   `getComputedStyle(el).getPropertyValue(property).trim()`. Omit `testId` to read
   the document root (`:root`), where theme custom properties like `--bg-primary`
