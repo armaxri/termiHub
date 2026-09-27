@@ -39,8 +39,8 @@ use vnc::{
 
 use crate::connection::{
     AuthKind, Capabilities, ConnectionType, CursorReceiver, CursorShape, CursorUpdate, DirtyRect,
-    FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities, InputEvent,
-    MonitorLayout, MonitorRect, MultiMonitorCapability, OutputReceiver, SettingsSchema,
+    FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities, InputEvent, MonitorLayout,
+    MonitorRect, MultiMonitorCapability, OutputReceiver, SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;

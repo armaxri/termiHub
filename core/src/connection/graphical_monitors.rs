@@ -143,8 +143,12 @@ impl MonitorRect {
         let min = u32::from(MIN_FIXED_DIMENSION);
         let max = u32::from(MAX_FIXED_DIMENSION);
         Self {
-            x: self.x.clamp(-MAX_MONITOR_COORDINATE, MAX_MONITOR_COORDINATE),
-            y: self.y.clamp(-MAX_MONITOR_COORDINATE, MAX_MONITOR_COORDINATE),
+            x: self
+                .x
+                .clamp(-MAX_MONITOR_COORDINATE, MAX_MONITOR_COORDINATE),
+            y: self
+                .y
+                .clamp(-MAX_MONITOR_COORDINATE, MAX_MONITOR_COORDINATE),
             width: self.width.clamp(min, max) & !1,
             height: self.height.clamp(min, max),
             primary: self.primary,

@@ -10,9 +10,18 @@ fn mon(x: i32, y: i32, width: u32, height: u32, primary: bool) -> MonitorRect {
 #[test]
 fn mode_parsing_defaults_to_single() {
     assert_eq!(MonitorMode::from_settings("", None), MonitorMode::Single);
-    assert_eq!(MonitorMode::from_settings("bogus", Some(4)), MonitorMode::Single);
-    assert_eq!(MonitorMode::from_settings("single", Some(4)), MonitorMode::Single);
-    assert_eq!(MonitorMode::from_settings(" All ", None), MonitorMode::AllLocal);
+    assert_eq!(
+        MonitorMode::from_settings("bogus", Some(4)),
+        MonitorMode::Single
+    );
+    assert_eq!(
+        MonitorMode::from_settings("single", Some(4)),
+        MonitorMode::Single
+    );
+    assert_eq!(
+        MonitorMode::from_settings(" All ", None),
+        MonitorMode::AllLocal
+    );
     assert_eq!(
         MonitorMode::from_settings("custom", None),
         MonitorMode::Custom { count: 2 }
@@ -38,11 +47,9 @@ fn a_single_monitor_is_not_a_layout() {
 
 #[test]
 fn two_side_by_side_monitors_make_a_combined_desktop() {
-    let layout = MonitorLayout::normalize(&[
-        mon(0, 0, 1920, 1080, true),
-        mon(1920, 0, 1280, 1024, false),
-    ])
-    .expect("two monitors");
+    let layout =
+        MonitorLayout::normalize(&[mon(0, 0, 1920, 1080, true), mon(1920, 0, 1280, 1024, false)])
+            .expect("two monitors");
     assert_eq!(layout.desktop_size(), (3200, 1080));
     assert_eq!(
         layout.bounds(),
@@ -77,10 +84,14 @@ fn the_primary_moves_to_the_origin_and_framebuffer_rects_are_zero_based() {
 
 #[test]
 fn exactly_one_primary_is_kept() {
-    let none = MonitorLayout::normalize(&[mon(0, 0, 800, 600, false), mon(800, 0, 800, 600, false)])
-        .unwrap();
+    let none =
+        MonitorLayout::normalize(&[mon(0, 0, 800, 600, false), mon(800, 0, 800, 600, false)])
+            .unwrap();
     assert_eq!(
-        none.monitors().iter().map(|m| m.primary).collect::<Vec<_>>(),
+        none.monitors()
+            .iter()
+            .map(|m| m.primary)
+            .collect::<Vec<_>>(),
         vec![true, false]
     );
     let both = MonitorLayout::normalize(&[mon(0, 0, 800, 600, true), mon(800, 0, 800, 600, true)])
@@ -136,9 +147,7 @@ fn a_layout_larger_than_the_frame_bound_drops_trailing_monitors() {
 
 #[test]
 fn at_most_sixteen_monitors_are_kept() {
-    let rects: Vec<MonitorRect> = (0..20)
-        .map(|i| mon(i * 400, 0, 400, 300, i == 0))
-        .collect();
+    let rects: Vec<MonitorRect> = (0..20).map(|i| mon(i * 400, 0, 400, 300, i == 0)).collect();
     let layout = MonitorLayout::normalize(&rects).unwrap();
     assert_eq!(layout.monitors().len(), MAX_MONITORS);
 }
@@ -212,11 +221,19 @@ fn monitor_rect_serializes_camel_case() {
 
 #[test]
 fn multi_monitor_requested_reads_raw_settings() {
-    assert!(multi_monitor_requested(&serde_json::json!({ "monitors": "all" })));
-    assert!(multi_monitor_requested(&serde_json::json!({ "monitors": "custom" })));
-    assert!(!multi_monitor_requested(&serde_json::json!({ "monitors": "single" })));
+    assert!(multi_monitor_requested(
+        &serde_json::json!({ "monitors": "all" })
+    ));
+    assert!(multi_monitor_requested(
+        &serde_json::json!({ "monitors": "custom" })
+    ));
+    assert!(!multi_monitor_requested(
+        &serde_json::json!({ "monitors": "single" })
+    ));
     // Connections saved before #3696 carry no key at all.
-    assert!(!multi_monitor_requested(&serde_json::json!({ "host": "h" })));
+    assert!(!multi_monitor_requested(
+        &serde_json::json!({ "host": "h" })
+    ));
 }
 
 #[test]

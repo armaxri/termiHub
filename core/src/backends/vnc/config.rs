@@ -9,16 +9,16 @@
 use serde::Deserialize;
 
 use crate::config::SshConfig;
+use crate::connection::graphical_monitors::{
+    deserialize_monitor_count, deserialize_monitor_rects, monitor_fields, resolve_monitor_layout,
+    MonitorLayout, MonitorMode, MonitorRect, MONITORS_SINGLE,
+};
 use crate::connection::graphical_resolution::{
     normalize_fixed_size, server_resolution_fields, DEFAULT_FIXED_HEIGHT, DEFAULT_FIXED_WIDTH,
     RESOLUTION_MODE_DYNAMIC, RESOLUTION_MODE_SERVER,
 };
 use crate::connection::schema::{
     Condition, FieldType, FilePathKind, SelectOption, SettingsField, SettingsGroup,
-};
-use crate::connection::graphical_monitors::{
-    deserialize_monitor_count, deserialize_monitor_rects, monitor_fields, resolve_monitor_layout,
-    MonitorLayout, MonitorMode, MonitorRect, MONITORS_SINGLE,
 };
 use crate::connection::{is_fixed_mode, shared_field_base, SettingsSchema};
 
