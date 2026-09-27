@@ -34,7 +34,7 @@ use crate::session_projection::store::{SessionLifecycleStore, TerminalExit, Term
 /// flight, so a subscriber sees a populated baseline.
 fn seeded_store() -> Arc<SessionLifecycleStore> {
     let store = Arc::new(SessionLifecycleStore::new());
-    store.set_rand_for_test(Box::new(|| 0.5));
+    store.set_rand_for_test(Box::new(|| 0.0));
     store.connect("s1");
     store.connect("s2");
     store.connected("s2");
@@ -629,12 +629,12 @@ fn server_side_connected_fold_settles_the_session_live() {
 fn server_side_connect_fold_matches_the_client_session_connect_route() {
     // (a) Server-side fold: the store method the fold applies at the source.
     let server = SessionLifecycleStore::new();
-    server.set_rand_for_test(Box::new(|| 0.5));
+    server.set_rand_for_test(Box::new(|| 0.0));
     server.connect("tab-1");
 
     // (b) Client route: the `session.connect` intent through the production registry.
     let client = Arc::new(SessionLifecycleStore::new());
-    client.set_rand_for_test(Box::new(|| 0.5));
+    client.set_rand_for_test(Box::new(|| 0.0));
     let projector = Arc::new(Projector::new());
     projector.register_region(SESSION_LIFECYCLE_REGION, client.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(client.clone())));
@@ -707,13 +707,13 @@ fn server_side_connect_failed_fold_matches_the_client_session_connect_failed_rou
     // path to have an entry to settle `Failed`.
     // (a) Server-side fold: the store method the fold applies at the source.
     let server = SessionLifecycleStore::new();
-    server.set_rand_for_test(Box::new(|| 0.5));
+    server.set_rand_for_test(Box::new(|| 0.0));
     server.connect("tab-1");
     server.connect_failed("tab-1", Some("boom".to_string()));
 
     // (b) Client route: the `session.connectFailed` intent through the registry.
     let client = Arc::new(SessionLifecycleStore::new());
-    client.set_rand_for_test(Box::new(|| 0.5));
+    client.set_rand_for_test(Box::new(|| 0.0));
     client.connect("tab-1");
     let projector = Arc::new(Projector::new());
     projector.register_region(SESSION_LIFECYCLE_REGION, client.snapshot());
@@ -812,7 +812,7 @@ fn server_side_kill_disconnect_fold_matches_the_client_session_disconnect_route(
 fn server_side_resilient_drop_fold_starts_reconnecting() {
     let app = tauri::test::mock_app();
     let store = Arc::new(SessionLifecycleStore::new());
-    store.set_rand_for_test(Box::new(|| 0.5));
+    store.set_rand_for_test(Box::new(|| 0.0));
     store.connect("tab-1");
     store.connected("tab-1");
     app.manage(store.clone());
@@ -899,13 +899,13 @@ fn server_side_nonresilient_drop_fold_settles_disconnected() {
 fn server_side_drop_folds_match_the_client_routes() {
     // Resilient drop → reconnect parity.
     let server_r = SessionLifecycleStore::new();
-    server_r.set_rand_for_test(Box::new(|| 0.5));
+    server_r.set_rand_for_test(Box::new(|| 0.0));
     server_r.connect("tab-1");
     server_r.connected("tab-1");
     server_r.reconnect("tab-1");
 
     let client_r = Arc::new(SessionLifecycleStore::new());
-    client_r.set_rand_for_test(Box::new(|| 0.5));
+    client_r.set_rand_for_test(Box::new(|| 0.0));
     client_r.connect("tab-1");
     client_r.connected("tab-1");
     let projector_r = Arc::new(Projector::new());
@@ -1055,7 +1055,7 @@ fn assert_incremental_equals_full(
 #[test]
 fn incremental_publish_is_byte_identical_to_the_whole_region_diff() {
     let store = SessionLifecycleStore::new();
-    store.set_rand_for_test(Box::new(|| 0.5));
+    store.set_rand_for_test(Box::new(|| 0.0));
     // A populated region: several live sessions, so a whole-region rebuild would
     // be O(N) per fold and a single-entry change must not touch the rest.
     for i in 0..6 {
@@ -1115,7 +1115,7 @@ fn incremental_publish_is_byte_identical_to_the_whole_region_diff() {
 #[test]
 fn incremental_publish_coalesces_multi_entry_changes_identically() {
     let store = SessionLifecycleStore::new();
-    store.set_rand_for_test(Box::new(|| 0.5));
+    store.set_rand_for_test(Box::new(|| 0.0));
     for i in 0..4 {
         let id = format!("s{i}");
         store.connect(&id);

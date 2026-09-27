@@ -11,7 +11,6 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_BACKOFF,
   MAX_JITTER_RATIO,
   RECONNECT_GIVE_UP_WINDOW_MS,
   RECONNECT_POLICY,
@@ -75,7 +74,8 @@ function runCase(operation: string, c: GoldenCase): unknown {
         case null:
           return RECONNECT_POLICY;
         case "default":
-          return DEFAULT_BACKOFF;
+          // The Rust `DEFAULT_BACKOFF` alias; TypeScript uses RECONNECT_POLICY directly.
+          return RECONNECT_POLICY;
         case "giveUpWindowMs":
           return RECONNECT_GIVE_UP_WINDOW_MS;
         case "maxJitterRatio":

@@ -2,18 +2,53 @@
 //!
 //! Drives the store directly (no projector) to pin the connect / reconnect /
 //! disconnect / error transitions, including the composed ported #2144 backoff
-//! engine. A deterministic jitter source (`rand() == 0.5` → zero swing) makes the
-//! backoff delays exact: attempt 1 → 1000 ms, attempt 2 → 2000 ms, ….
+//! engine. A deterministic jitter source (`rand() == 0.0` → no shortening) makes
+//! the backoff delays exact and nominal: attempt 1 → 1000 ms, attempt 2 → 2000 ms,
+//! … (the shared reconnect policy, #3730).
 
 use super::*;
 use termihub_core::reconnect_backoff::ReconnectPhase;
 
-/// A store whose jitter source always returns 0.5, so the symmetric jitter swing
-/// is exactly 0 and each backoff delay equals its uncapped base.
+/// A store whose jitter source always returns 0.0, so jitter never shortens a
+/// window and each backoff delay equals its nominal (worst-case) value.
 fn deterministic_store() -> SessionLifecycleStore {
     let store = SessionLifecycleStore::new();
-    store.set_rand_for_test(Box::new(|| 0.5));
+    store.set_rand_for_test(Box::new(|| 0.0));
     store
+}
+
+#[test]
+fn the_store_runs_the_shared_reconnect_policy() {
+    use termihub_core::reconnect_backoff::RECONNECT_POLICY;
+    assert_eq!(TERMINAL_RECONNECT_POLICY, RECONNECT_POLICY);
+}
+
+#[test]
+fn store_jitter_shortens_windows_within_half_and_full_nominal() {
+    // A fully-shortening draw halves each window (#3730): never longer than
+    // the nominal delay, never shorter than half of it.
+    let store = SessionLifecycleStore::new();
+    store.set_rand_for_test(Box::new(|| 0.999_999));
+    store.connect("s1");
+    store.connected("s1");
+    store.reconnect("s1");
+    assert_eq!(store.get("s1").unwrap().reconnect.delay_ms, 500);
+    store.reconnect_attempt("s1");
+    store.reconnect_failed("s1", None);
+    assert_eq!(store.get("s1").unwrap().reconnect.delay_ms, 1_000);
+}
+
+#[test]
+fn production_store_jitter_stays_within_the_shared_bounds() {
+    // The real jitter source: every first window lands in [500, 1000] ms.
+    for _ in 0..64 {
+        let store = SessionLifecycleStore::new();
+        store.connect("s1");
+        store.connected("s1");
+        store.reconnect("s1");
+        let d = store.get("s1").unwrap().reconnect.delay_ms;
+        assert!((500..=1_000).contains(&d), "first window {d} ms");
+    }
 }
 
 #[test]

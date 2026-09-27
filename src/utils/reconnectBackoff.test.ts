@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import {
-  DEFAULT_BACKOFF,
   MAX_JITTER_RATIO,
   RECONNECT_GIVE_UP_WINDOW_MS,
   RECONNECT_POLICY,
@@ -82,7 +81,7 @@ describe("reconnectBackoff — nextReconnectDelay (jitter)", () => {
   });
 
   it("keeps jittered delays within [nominal/2, nominal] and under the cap", () => {
-    const cfg: BackoffConfig = { ...DEFAULT_BACKOFF };
+    const cfg: BackoffConfig = { ...RECONNECT_POLICY };
     for (let attempt = 1; attempt <= 15; attempt++) {
       for (let r = 0; r <= 1; r += 0.05) {
         const d = nextReconnectDelay(attempt, cfg, () => r);
@@ -105,7 +104,6 @@ describe("reconnectBackoff — shared policy (#3730)", () => {
       maxAttempts: 10,
       jitterRatio: 0.5,
     });
-    expect(DEFAULT_BACKOFF).toBe(RECONNECT_POLICY);
   });
 
   it("its nominal schedule is the worst case and sums to the give-up window", () => {
@@ -137,7 +135,7 @@ describe("reconnectBackoff — shouldGiveUp", () => {
 });
 
 describe("reconnectBackoff — reconnectReducer transitions", () => {
-  const rand = () => 0.5; // no swing → deterministic delays
+  const rand = () => 0; // never shortens → nominal, deterministic delays
 
   it("drop from idle arms the first backoff window", () => {
     const s = reconnectReducer(initialReconnectState, "drop", NO_JITTER, rand);

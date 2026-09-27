@@ -1663,7 +1663,7 @@ async fn manager_test_sever_drives_reconnect_and_region_folds_headlessly() {
     handle.manage(agents_store.clone());
 
     let lifecycle_store = Arc::new(SessionLifecycleStore::new());
-    lifecycle_store.set_rand_for_test(Box::new(|| 0.5));
+    lifecycle_store.set_rand_for_test(Box::new(|| 0.0));
     handle.manage(lifecycle_store.clone());
 
     let projection = ProjectionState::new();

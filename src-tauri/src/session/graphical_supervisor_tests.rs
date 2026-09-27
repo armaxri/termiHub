@@ -548,7 +548,7 @@ async fn exhausted_budget_rests_disconnected_after_the_shared_backed_off_attempt
     idle().await;
     assert_eq!(
         h.ctl.dials(),
-        MAX_RECONNECT_ATTEMPTS as usize + 1,
+        MAX_RECONNECT_ATTEMPTS + 1,
         "no attempts beyond the budget"
     );
 }
@@ -718,7 +718,7 @@ async fn reconnect_that_closes_before_painting_is_a_failed_attempt() {
     })
     .await;
     idle().await;
-    assert_eq!(h.ctl.dials(), MAX_RECONNECT_ATTEMPTS as usize + 1);
+    assert_eq!(h.ctl.dials(), MAX_RECONNECT_ATTEMPTS + 1);
     assert_eq!(h.sink.tail(3), exhausted_tail());
 }
 
@@ -811,7 +811,7 @@ async fn async_connect_failure_on_redial_is_still_retried() {
     })
     .await;
     idle().await;
-    assert_eq!(h.ctl.dials(), MAX_RECONNECT_ATTEMPTS as usize + 1);
+    assert_eq!(h.ctl.dials(), MAX_RECONNECT_ATTEMPTS + 1);
     assert_eq!(h.sink.tail(3), exhausted_tail());
 }
 

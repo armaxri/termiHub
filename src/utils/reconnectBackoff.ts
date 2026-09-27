@@ -53,7 +53,8 @@ export const MAX_JITTER_RATIO = 0.5;
 /**
  * The one shared reconnect policy (SM-020, #3730) every reconnect loop follows —
  * terminal tabs, the agent transport, tunnels, graphical sessions and monitoring.
- * Twin of the Rust `RECONNECT_POLICY` (the golden fixtures pin the two equal).
+ * Twin of the Rust `RECONNECT_POLICY` (and its `DEFAULT_BACKOFF` alias); the golden
+ * fixtures pin the two equal.
  *
  * Tuned for a truck-on-cellular field scenario (#1962): a quick first retry so a
  * brief blip recovers almost instantly, doubling up to a 30 s ceiling so a long
@@ -70,9 +71,6 @@ export const RECONNECT_POLICY: BackoffConfig = {
   maxAttempts: 10,
   jitterRatio: MAX_JITTER_RATIO,
 };
-
-/** The default backoff schedule — an alias of {@link RECONNECT_POLICY}. */
-export const DEFAULT_BACKOFF: BackoffConfig = RECONNECT_POLICY;
 
 /**
  * The shared policy's total give-up window in ms: the longest a loop waits

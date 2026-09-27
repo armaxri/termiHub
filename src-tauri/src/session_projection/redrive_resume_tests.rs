@@ -366,7 +366,7 @@ fn agent_reconnect_resumes_after_transport_restore() {
     handle.manage(manager);
 
     let store = Arc::new(SessionLifecycleStore::new());
-    store.set_rand_for_test(Box::new(|| 0.5));
+    store.set_rand_for_test(Box::new(|| 0.0));
     handle.manage(store.clone());
 
     let projection = ProjectionState::new();
@@ -489,7 +489,7 @@ fn agent_reconnect_folds_session_lost_when_live_session_unrecoverable() {
     handle.manage(manager);
 
     let store = Arc::new(SessionLifecycleStore::new());
-    store.set_rand_for_test(Box::new(|| 0.5));
+    store.set_rand_for_test(Box::new(|| 0.0));
     handle.manage(store.clone());
 
     let projection = ProjectionState::new();
@@ -589,7 +589,7 @@ fn source_side_resilient_drop_fold_arms_the_reconnect_timer() {
     let handle = app.handle().clone();
 
     let store = Arc::new(SessionLifecycleStore::new());
-    store.set_rand_for_test(Box::new(|| 0.5));
+    store.set_rand_for_test(Box::new(|| 0.0));
     store.connect("tab-1");
     store.connected("tab-1");
     handle.manage(store.clone());
@@ -661,7 +661,7 @@ fn transient_agent_break_folds_region_server_side_without_arming_the_timer() {
     handle.manage(manager);
 
     let store = Arc::new(SessionLifecycleStore::new());
-    store.set_rand_for_test(Box::new(|| 0.5));
+    store.set_rand_for_test(Box::new(|| 0.0));
     handle.manage(store.clone());
 
     let projection = ProjectionState::new();
@@ -815,7 +815,7 @@ fn user_cancel_wins_over_agent_recover_fold_and_tears_the_session_down() {
     handle.manage(manager);
 
     let store = Arc::new(SessionLifecycleStore::new());
-    store.set_rand_for_test(Box::new(|| 0.5));
+    store.set_rand_for_test(Box::new(|| 0.0));
     handle.manage(store.clone());
 
     let projection = ProjectionState::new();
@@ -935,7 +935,7 @@ fn fully_failed_agent_break_folds_region_failed_at_the_source() {
     handle.manage(manager);
 
     let store = Arc::new(SessionLifecycleStore::new());
-    store.set_rand_for_test(Box::new(|| 0.5));
+    store.set_rand_for_test(Box::new(|| 0.0));
     handle.manage(store.clone());
 
     let projection = ProjectionState::new();
@@ -1060,7 +1060,7 @@ fn unconfirmed_agent_break_settles_region_off_reconnecting_at_the_source() {
     handle.manage(manager);
 
     let store = Arc::new(SessionLifecycleStore::new());
-    store.set_rand_for_test(Box::new(|| 0.5));
+    store.set_rand_for_test(Box::new(|| 0.0));
     handle.manage(store.clone());
 
     let projection = ProjectionState::new();
@@ -1191,7 +1191,7 @@ fn clean_exit_folds_status_disconnected_and_disarms_the_timer() {
     let handle = app.handle().clone();
 
     let store = Arc::new(SessionLifecycleStore::new());
-    store.set_rand_for_test(Box::new(|| 0.5));
+    store.set_rand_for_test(Box::new(|| 0.0));
     store.connect("tab-1");
     store.connected("tab-1");
     handle.manage(store.clone());
@@ -1288,7 +1288,7 @@ fn dropped_exit_is_pure_metadata_and_leaves_the_timer_untouched() {
     let handle = app.handle().clone();
 
     let store = Arc::new(SessionLifecycleStore::new());
-    store.set_rand_for_test(Box::new(|| 0.5));
+    store.set_rand_for_test(Box::new(|| 0.0));
     store.connect("tab-1");
     store.connected("tab-1");
     handle.manage(store.clone());
@@ -1360,7 +1360,7 @@ fn evicted_agent_tab_never_auto_reconnects_and_reclaim_flips_ownership() {
     handle.manage(manager);
 
     let store = Arc::new(SessionLifecycleStore::new());
-    store.set_rand_for_test(Box::new(|| 0.5));
+    store.set_rand_for_test(Box::new(|| 0.0));
     handle.manage(store.clone());
 
     let projection = ProjectionState::new();
@@ -1485,7 +1485,7 @@ fn held_by_peer_reattach_folds_evicted_without_retry_and_reclaims() {
     handle.manage(manager);
 
     let store = Arc::new(SessionLifecycleStore::new());
-    store.set_rand_for_test(Box::new(|| 0.5));
+    store.set_rand_for_test(Box::new(|| 0.0));
     handle.manage(store.clone());
 
     let projection = ProjectionState::new();
