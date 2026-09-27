@@ -203,11 +203,9 @@ A skipped check reports as **skipped**, which is a pass. The classifier is
 detection job itself runs every per-PR job. An `audit/**`-only PR runs only
 commit-lint; a docs-only PR runs commit-lint plus the Markdown checks.
 
-**Required checks.** Branch protection lives in the repository settings, not in
-the repo. Mark a check required by its job name as listed above (for example
-`Agent Live Tests (Windows, serial)`). Because a path-skipped job reports
-**skipped** and counts as a pass, requiring a gated job does not block PRs that
-cannot affect it.
+**Required checks.** The intended branch protection is committed in
+[`.github/branch-protection.json`](../.github/branch-protection.json); see
+[Required checks per branch](#required-checks-per-branch).
 
 **So a green PR proves:** formatting, Clippy (Linux and Windows) and lint are
 clean; the PR's Rust tests pass on Linux and Windows; the vitest suite and its
@@ -246,6 +244,75 @@ but whether a newer run cancels an in-progress one depends on what the run is fo
   `cancel-in-progress: true`. Only the newest commit's result matters for them.
 
 A new workflow that gates correctness post-merge must use the PR-only form.
+
+### Required checks per branch
+
+Branch protection is kept as code (CI-017, #3675). The source of truth is
+[`.github/branch-protection.json`](../.github/branch-protection.json): the
+required checks, the "up to date" (`strict`) rule, admin enforcement,
+pull-request, force-push and deletion rules for each long-lived branch.
+
+| Branch    | Status in the file                       | Required checks                                                                                                                                                                                                                                            |
+| --------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `main`    | enforced (mirrors the live settings)     | Rust Code Quality, Frontend Code Quality, Lint Commit Messages, Security Audit, Run Tests (ubuntu-latest), Run Tests (macos-latest), Run Tests (windows-latest), Build on ubuntu-latest, Build on macos-latest-arm, Build on windows-latest                |
+| `develop` | **proposed** — the maintainer applies it | Lint Commit Messages, Rust Code Quality, Rust Code Quality (Windows), Frontend Code Quality, Agent Live Tests (Windows, serial), RDP Sidecar Quality, Shell Script Quality, Windows cmd Script Smoke, System-Test Harness (machinery), Test-ID Drift Guard |
+
+Other rules: `main` enforces the rules for admins and requires a pull request
+(0 approvals); `develop` lets an admin override (for example to land a fix past
+a known flake) and requires no pull request review. Neither allows force pushes
+or deletion, and neither uses `strict` (an up-to-date requirement would force a
+re-run after every merge). Every required check is pinned to the GitHub Actions
+app (`app_id` 15368), so only an Actions run can satisfy it.
+
+**Which checks are safe to require.** GitHub waits for every required check
+name to report. Only require a name that reports on **every** PR:
+
+- A job skipped by its own job-level `if` (the changed-area gates) reports
+  **skipped**, which counts as a pass. All of `develop`'s checks are this kind.
+- A **matrix** job that is skipped reports under its bare name (`Run Tests`,
+  `Build on ${{ matrix.platform }}`), and a leg that is not in the PR's matrix
+  never reports. Requiring `Run Tests (ubuntu-latest)` would block every
+  docs-only PR forever, so no matrix leg is required on `develop`.
+- A workflow with a workflow-level `paths` filter (Security Audit, Vendored
+  Forks) reports **nothing** on a PR outside its paths; never require it on a
+  branch whose PRs do not always touch those paths.
+- A PR opened by `GITHUB_TOKEN` (the daily `chore(deps): update cargo lockfile`
+  PR) starts no workflows; close and reopen it so the required checks report.
+
+`main`'s set predates the slim PR lane (#3325) and still names checks the
+current `develop` workflows no longer run on a PR (the macOS/Windows Build legs,
+`Run Tests (macos-latest)`, the path-filtered Security Audit). It matches the
+workflows on `main` today; reconcile it before the next `develop` → `main`
+merge brings the slim lane there.
+
+**Drift detection.** The weekly **Branch Protection Drift** workflow
+([`branch-protection.yml`](../.github/workflows/branch-protection.yml), Mondays
+and on demand) runs
+[`scripts/internal/check-branch-protection.mjs`](../scripts/internal/check-branch-protection.mjs),
+which compares the live protection with the file and prints every difference.
+A branch marked `enforced` that drifts fails the run; a `proposed` branch is
+reported as "not applied yet" only. Run it locally with
+`node scripts/internal/check-branch-protection.mjs` (uses your `gh` login).
+
+Reading branch protection needs repository **admin read**, which the workflow's
+`GITHUB_TOKEN` cannot be granted. Create a fine-grained personal access token
+limited to this repository with **Administration: Read-only** (no other
+permission) and store it as the `BRANCH_PROTECTION_TOKEN` Actions secret.
+Without the secret the workflow skips with a notice; with a secret that cannot
+read, it fails.
+
+**Applying.** A repository admin applies the file with
+[`scripts/internal/apply-branch-protection.sh`](../scripts/internal/apply-branch-protection.sh).
+It is a dry run by default (drift report plus the exact PUT body); `--apply`
+writes it with `gh api -X PUT`. CI never runs it.
+
+```bash
+scripts/internal/apply-branch-protection.sh --branch develop           # dry run
+scripts/internal/apply-branch-protection.sh --branch develop --apply   # write
+```
+
+After applying a `proposed` branch, change its status to `enforced` in the file
+(in a PR). To change protection, edit the file in a PR first, then apply it.
 
 ### Rust toolchain version
 
