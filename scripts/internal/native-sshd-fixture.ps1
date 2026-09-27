@@ -142,6 +142,24 @@ function Protect-FixtureFile([string]$Path, [string[]]$Grants) {
         [Security.Principal.NTAccount]).Value
     Invoke-Native 'icacls.exe' @($Path, '/setowner', $adminsName, '/Q')
     Invoke-Native 'icacls.exe' (@($Path, '/inheritance:r', '/Q') + ($Grants | ForEach-Object { @('/grant:r', $_) }))
+    # /grant:r leaves other explicit ACEs alone -- notably the one ssh-keygen
+    # gives its creator (runneradmin on CI), which sshd running as SYSTEM
+    # rejects ("Bad permissions ... host key"). Strip every ACE not granted.
+    $allowed = @($Grants | ForEach-Object {
+            $who = ($_ -split ':')[0]
+            if ($who.StartsWith('*')) {
+                $who.Substring(1)
+            } else {
+                [Security.Principal.NTAccount]::new($who).Translate([Security.Principal.SecurityIdentifier]).Value
+            }
+        })
+    $acl = Get-Acl -LiteralPath $Path
+    $extra = @($acl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]) |
+            ForEach-Object { $_.IdentityReference.Value } | Where-Object { $allowed -notcontains $_ } |
+            Select-Object -Unique)
+    foreach ($sid in $extra) {
+        Invoke-Native 'icacls.exe' @($Path, '/remove', "*$sid", '/Q')
+    }
 }
 
 function Get-TestUserSid {
@@ -318,7 +336,7 @@ function Write-SshdDiagnostic {
         Write-FixtureLog "  process $($_.ProcessId) (parent $($_.ParentProcessId)): $($_.CommandLine)"
     }
     try {
-        Get-WinEvent -LogName 'OpenSSH/Operational' -MaxEvents 40 -ErrorAction Stop |
+        Get-WinEvent -LogName 'OpenSSH/Operational' -MaxEvents 15 -ErrorAction Stop |
             Sort-Object TimeCreated | ForEach-Object {
                 Write-FixtureLog "  event $($_.TimeCreated.ToString('HH:mm:ss')) [$($_.LevelDisplayName)] $($_.Message)"
             }
@@ -349,9 +367,18 @@ function Resume-Fixture {
         Show-SshdDiagnostic
         throw
     }
-    if (-not (Wait-Listening $tcpPort $true)) {
-        Show-SshdDiagnostic
-        throw "sshd did not listen on 127.0.0.1:$tcpPort"
+    $graceEnd = [DateTime]::UtcNow.AddSeconds(3)
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    while (-not (Test-Listening $tcpPort)) {
+        # sshd exits at once on a config / host key error: fail fast then
+        # (after a short grace, while the task may still be spawning it).
+        $state = (Get-ScheduledTask -TaskName $TaskName).State
+        $gone = [DateTime]::UtcNow -gt $graceEnd -and $state -ne 'Running' -and $null -eq (Get-SshdMasterPid)
+        if ($gone -or [DateTime]::UtcNow -gt $deadline) {
+            Show-SshdDiagnostic
+            throw "sshd did not listen on 127.0.0.1:$tcpPort (task state $state)"
+        }
+        Start-Sleep -Milliseconds 200
     }
     Write-FixtureLog "sshd listening on 127.0.0.1:$tcpPort (pid $(Get-SshdMasterPid), task $TaskName)"
 }
