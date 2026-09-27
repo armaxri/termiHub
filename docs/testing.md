@@ -656,15 +656,12 @@ Reproduce the Windows split locally with `CI_RUST_TESTS_SPLIT_SERIAL=1 scripts/i
 
 ## Coverage Goals
 
-These are **aspirational guidelines**, not enforced gates. Rust coverage is measured by
-`cargo-llvm-cov` in the advisory unified report (see [Measuring coverage](#measuring-coverage)),
-but no Rust figure is CI-gated. The frontend vitest floors in `vitest.config.ts` are the only
-blocking coverage gate.
+Coverage is gated by a **fail-on-decrease ratchet** (see [Coverage ratchet](#coverage-ratchet)):
+the frontend, `core`, `agent`, and `src-tauri` line coverage may not drop below the committed
+baseline. The guideline levels below are targets to grow toward, not gates:
 
-Guideline coverage levels:
-
-- **Rust Backend**: aim for high line coverage (guideline ~80%) — measured (advisory), not gated
-- **React Components**: aim for ~70% coverage — measurable via `pnpm test:coverage`, not gated
+- **Rust Backend**: aim for high line coverage (guideline ~80%) — ratcheted per crate
+- **React Components**: aim for ~70% coverage — ratcheted, plus the vitest floors in `vitest.config.ts`
 - **E2E Critical Paths**: cover all main user flows
 
 ### Measuring coverage
@@ -673,7 +670,8 @@ Run `./scripts/coverage.sh` (or `scripts\coverage.cmd`) for a **unified whole-ap
 number**: it runs the frontend suite under vitest/v8, the Rust workspace under
 [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) (`--workspace
 --all-features`), merges both lcov tracefiles, and prints one repo-wide line/
-function/branch percentage plus a merged `coverage-unified/merged.lcov`. Install
+function/branch percentage plus a merged `coverage-unified/merged.lcov`. It then
+runs the [coverage ratchet](#coverage-ratchet) and exits non-zero on a drop. Install
 the Rust tool once with `cargo install cargo-llvm-cov` (it needs the
 `llvm-tools-preview` rustup component).
 
@@ -682,14 +680,55 @@ the Rust tool once with `cargo install cargo-llvm-cov` (it needs the
   `src/**/*.ts`, which silently excluded every React component from the
   percentage; it is now `src/**/*.{ts,tsx}`.
 - CI runs the unified report in the [`coverage.yml`](../.github/workflows/coverage.yml)
-  workflow on every push to `develop`/`main` (post-merge only since #3325) and uploads the merged lcov + summary as an artifact. It is
-  **advisory** (`continue-on-error`) for now: it establishes the baseline without
-  reddening PRs. The planned follow-up is a fail-on-decrease ratchet against a
-  captured baseline (remove `continue-on-error`).
+  workflow on every push to `develop`/`main` (post-merge only since #3325) and uploads
+  the merged lcov + summary as an artifact. The job is **blocking**: a ratchet failure
+  reds the `develop`/`main` run (not the PR that caused it — the job does not run per PR).
 - The nightly integration lane contributes too — see
   [Integration coverage](#integration-coverage-nightly-fixtures-lane) below.
-- `release-check.sh` runs the unified report too (advisory), so the release path
-  can produce the number.
+- `release-check.sh` / `release-check.cmd` run the same script, so a coverage drop (or a
+  missing `cargo-llvm-cov`) fails the release gate.
+
+### Coverage ratchet
+
+`scripts/internal/coverage-ratchet.mjs` (called at the end of `coverage.sh`/`.cmd`) grades
+the **unit-test** line coverage of five components against
+[`scripts/coverage-baseline.json`](../scripts/coverage-baseline.json):
+
+| Component   | Source files                                              |
+| ----------- | --------------------------------------------------------- |
+| `frontend`  | `src/**` (vitest lcov)                                    |
+| `core`      | `core/**`                                                 |
+| `agent`     | `agent/**`                                                |
+| `src-tauri` | `src-tauri/**`                                            |
+| `unified`   | every unit lcov record (also `plugin-api`, `vendor`, ...) |
+
+- **Fail rule:** a component fails when its line % is more than `tolerance` (0.25 percentage
+  points) below its baseline. Recent `develop` runs vary by at most ~0.02 pp on unchanged
+  code, so the tolerance absorbs noise without hiding a real drop. The per-component table
+  lands in `coverage-unified/ratchet.md` and in the CI job summary.
+- **Per platform:** baselines are keyed by `process.platform` (`linux`, `darwin`, `win32`)
+  because `cfg`-gated Rust code makes the numbers OS-dependent. CI grades `linux`; the
+  release check grades the machine it runs on. A platform with no baseline fails with the
+  command that records one.
+- **Not gated:** the nightly integration overlay (its availability and staleness vary run to
+  run) and function/branch percentages (reported only).
+- **Raising the baseline (one command):** when coverage improves — the ratchet prints
+  `ok (raise baseline)` / "lock it in" — run
+
+  ```bash
+  ./scripts/coverage.sh --update-baseline      # scripts\coverage.cmd --update-baseline on Windows
+  ```
+
+  and commit the updated `scripts/coverage-baseline.json`. It raises each value to the
+  measured one (rounded down to 2 decimals) and **never lowers** one, so a bump on a worse
+  tree cannot loosen the gate. For the CI (`linux`) values, take the numbers from the
+  `develop` Coverage run's job summary. An intentional decrease is a deliberate, reviewed
+  edit of the JSON (or `node scripts/internal/coverage-ratchet.mjs --update --allow-decrease`).
+
+- **Truncated profiles:** the Rust tests run with `--no-report` and the report is produced by
+  `scripts/internal/llvm-cov-report.mjs`, which drops a truncated `.profraw` that
+  `llvm-profdata` rejects ("no profile can be merged") and retries, so that intermittent
+  failure cannot red the gate.
 
 ### Integration coverage (nightly fixtures lane)
 

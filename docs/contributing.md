@@ -232,14 +232,14 @@ release commit (see [Release integration gate](#release-integration-gate)). The 
 but whether a newer run cancels an in-progress one depends on what the run is for:
 
 - **Correctness gates** — Code Quality, Security Audit, Agent, Plugin Packaging,
-  Vendored Forks — use `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`.
+  Vendored Forks, Coverage (a blocking ratchet since #3740) — use `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`.
   A superseded **PR** run is cancelled, but a push to `develop`/`main` always
   runs to completion. The post-merge lane is the only place these checks run on
   every platform, so cancelling on push would leave `develop` ungated: under
   frequent merges, no Code Quality run ever finished. GitHub still keeps only
   the newest _queued_ run per group, so merges that land mid-run are covered by
   the next completed run.
-- **Advisory, heavy or publish-only workflows** — Coverage, Dev Build,
+- **Advisory, heavy or publish-only workflows** — Dev Build,
   Build (PR-only), and the scheduled/manual lanes — keep
   `cancel-in-progress: true`. Only the newest commit's result matters for them.
 
