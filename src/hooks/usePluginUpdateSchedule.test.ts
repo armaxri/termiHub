@@ -1,6 +1,6 @@
 /**
- * Tests for the opt-in periodic plugin update check (PROD-051): nothing runs
- * while the setting is off (the default) or no plugin publishes updates; when
+ * Tests for the opt-in periodic plugin update check (PROD-051, #3717): nothing
+ * runs while the setting is off (the default) or no plugin is installed; when
  * on, a check runs after the startup delay and then daily, and stops again when
  * the setting is turned off.
  */
@@ -22,7 +22,6 @@ vi.mock("@/store/appStore", () => ({
     selector({ plugins: mockPlugins }),
 }));
 vi.mock("@/plugins/pluginUpdateStore", () => ({
-  hasUpdateSource: (p: InstalledPlugin) => Boolean(p.manifest.updateUrl),
   usePluginUpdateStore: { getState: () => ({ checkForUpdates }) },
 }));
 
@@ -67,12 +66,20 @@ describe("usePluginUpdateSchedule", () => {
     expect(checkForUpdates).not.toHaveBeenCalled();
   });
 
-  it("never checks when no plugin publishes updates", () => {
+  it("never checks when no plugin is installed", () => {
     mockSettings = { pluginUpdateCheckEnabled: true };
-    mockPlugins = [plain];
+    mockPlugins = [];
     mountHook();
     vi.advanceTimersByTime(PLUGIN_UPDATE_CHECK_INTERVAL_MS * 2);
     expect(checkForUpdates).not.toHaveBeenCalled();
+  });
+
+  it("also checks a plugin without an updateUrl (the plugin index may list it)", () => {
+    mockSettings = { pluginUpdateCheckEnabled: true };
+    mockPlugins = [plain];
+    mountHook();
+    vi.advanceTimersByTime(FIRST_PLUGIN_UPDATE_CHECK_DELAY_MS);
+    expect(checkForUpdates).toHaveBeenCalledTimes(1);
   });
 
   it("checks after the startup delay and then daily, until turned off", () => {
