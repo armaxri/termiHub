@@ -33,6 +33,25 @@ on:
       - "tests/docker/**"
       - "core/tests/**"
       - "core/src/backends/**"
+      # The session/connection plumbing that drives those backends, and the core
+      # modules the fixture suites call into directly (#3652, WA-CI-024): every
+      # core/tests file goes through `termihub_core::connection` (registry, schema
+      # defaults), the transfer suites through `files`, the tunnel suite through
+      # `tunnel`, and the FTP/SSH backends retry through `reconnect_backoff`. A change
+      # there can break a live backend path as surely as a backends/** edit.
+      # Deliberately NOT widened to agent/** or src-tauri/**: this lane runs
+      # `-p termihub-core` only, so an agent/desktop change gains no coverage here
+      # (the agent's Docker/live suites run in system-integration and Code
+      # Quality). Cargo.lock is also left out: lockfile bumps land weekly and
+      # would run this Docker lane on every one; the nightly run and the release
+      # gate catch a dependency regression before it ships.
+      - "core/src/connection/**"
+      - "core/src/session/**"
+      - "core/src/files/**"
+      - "core/src/tunnel/**"
+      - "core/src/reconnect_backoff.rs"
+      - "core/src/reconnect_backoff/**"
+      - "core/Cargo.toml"
       # The RDP sidecar is backend source too: rdp.rs drives it end to end.
       - "rdp-sidecar/**"
       # The Linux polkit verifier's D-Bus transport + the shipped action file
