@@ -46,6 +46,15 @@ jobs:
           set -euo pipefail
           scripts/release-check.sh --versions-only --expect-version "${TAG_NAME#v}"
 
+      # Strict production audit (WA-CI-008): the Security Audit lane soft-passes an
+      # unreachable npm registry, which is fine for develop but must never let an
+      # UNAUDITED tree ship. AUDIT_STRICT=1 turns "registry unreachable" into a
+      # failure here (re-run the job once the registry is back).
+      - name: pnpm audit (production deps, strict)
+        env:
+          AUDIT_STRICT: '1'
+        run: ./scripts/internal/pnpm-audit-prod-gate.sh
+
   # Release gate (#3652, WA-CI-004, WA-CI-024): refuse to publish unless the full
   # integration lanes passed on the EXACT commit being released. Per-PR CI is the
   # slim lane (#3325) — no bridge integration lane, a path-filtered fixture lane,

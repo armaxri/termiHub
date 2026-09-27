@@ -70,7 +70,11 @@ runs on pull requests that change a dependency manifest or lockfile, on every pu
   [`scripts/internal/pnpm-audit-prod-gate.sh`](../scripts/internal/pnpm-audit-prod-gate.sh)
   runs `pnpm audit --prod` and fails on any high or critical advisory in the code that ships in
   the app. It soft-passes only when the registry is unreachable (#2589), never on a real
-  advisory.
+  advisory, and every soft-pass writes an **AUDIT SKIPPED — registry unreachable** marker to
+  the job summary. On `main`, `release/*` branches and tags — and in the Release workflow,
+  which sets `AUDIT_STRICT=1` — it runs in **strict mode**: an unreachable registry fails the
+  job instead, so an unaudited tree never ships (WA-CI-008). Re-run the job once the registry
+  is reachable.
 - **Full tree (incl. devDependencies) — advisory.** Dev/build tooling does not ship, so a
   dev-only advisory does not block unrelated PRs. The step still writes a per-severity count to
   the job summary and raises a warning annotation when any high or critical advisory is present,
