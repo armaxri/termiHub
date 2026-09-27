@@ -8,14 +8,20 @@ name: Integration (Docker fixtures)
 # up and runs that suite against them, so a broken fixture fails CI.
 #
 # Not on every PR (it builds container images and runs network tests, so it is
-# slower and Docker-bound): nightly + manual instead. Trigger by hand from the
-# Actions tab ("Run workflow") when touching tests/docker or core/tests.
+# slower and Docker-bound): nightly + manual + a path-filtered PR subset instead.
+# Trigger by hand from the Actions tab ("Run workflow") when touching tests/docker
+# or core/tests. A release is never cut on the path-filtered PR subset: the
+# Release workflow requires release-candidate.yml, which calls this lane with no
+# path filter on the exact release commit (#3652).
 
 on:
   schedule:
     # 03:17 UTC daily (off the top of the hour to dodge scheduler congestion).
     - cron: "17 3 * * *"
   workflow_dispatch:
+  # Called by release-candidate.yml (#3652) on the exact release commit; the
+  # checkouts below default to the caller's sha, and no path filter applies.
+  workflow_call:
   # Also run when the fixtures, the integration tests, or the backend *source*
   # they exercise change — so a PR that edits the SSH/SFTP/telnet/serial/Docker
   # backends gets integration feedback without waiting for the nightly run. The
@@ -37,9 +43,11 @@ on:
       - ".github/workflows/integration-fixtures.yml"
 
 # A fixture run is self-contained; cancel an in-flight run when a newer commit
-# lands on the same ref.
+# lands on the same ref. `github.workflow` is the CALLER's name when this lane is
+# called by release-candidate.yml, so a candidate run and a nightly/PR run on the
+# same ref never cancel each other.
 concurrency:
-  group: integration-fixtures-${{ github.ref }}
+  group: integration-fixtures-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 # Least-privilege token (CI-010). The job checks out, brings up Docker fixtures,
