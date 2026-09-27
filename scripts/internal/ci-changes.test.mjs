@@ -93,6 +93,10 @@ describe("classify", () => {
     expect(on(classify(["tests/system/tests/test_x.py"]))).toEqual(["harness"]);
   });
 
+  it("runs the harness contract test when the in-app test bridge changes", () => {
+    expect(on(classify(["src/testbridge/protocol.ts"]))).toEqual(["frontend", "harness"]);
+  });
+
   it("fails open on CI plumbing", () => {
     expect(classify([".github/workflows/code-quality.yml"])).toEqual(allAreas());
     expect(classify([".github/actions/setup-pnpm/action.yml"])).toEqual(allAreas());
