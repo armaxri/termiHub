@@ -11,7 +11,8 @@ evidence:
   - agent/tests/local_agent_integration.rs:1095
   - agent/tests/tcp_listener_readiness.rs
   - .github/workflows/agent.yml:96
-status: open
+status: fixed
+resolution: "#3617 — Windows live-agent-TCP quarantine removed; tests run serially in blocking 'Agent Live Tests (Windows, serial)' job with count guard + hang-proof runner; manual/non-blocking grade lanes retired"
 ---
 
 ## What

@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/agent-integration-windows-serial-grade.yml:72
   - .github/workflows/agent-integration-windows-grade.yml:40
   - .github/workflows/agent-integration-windows-serial-grade.yml:15
-status: open
+status: fixed
+resolution: "#3617 — Windows live-agent-TCP quarantine removed; tests run serially in blocking 'Agent Live Tests (Windows, serial)' job with count guard + hang-proof runner; manual/non-blocking grade lanes retired"
 ---
 
 ## What
