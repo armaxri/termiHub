@@ -353,6 +353,67 @@ fn kill_sshd_only(root: u32) {
     let _ = cmd.stderr(Stdio::null()).status();
 }
 
+/// Watchdog script for [`SshdParentGuard`]. `$1` is the sshd master PID, `$2`
+/// the harness temp dir. It blocks reading its stdin, a pipe whose only write
+/// end lives in this test process: a disarm line means a clean `stop()` (exit
+/// quietly); EOF means the test process died (the kernel closed the write end),
+/// so SIGKILL the sshd — only if that PID still names an sshd, never a reused
+/// PID — and drop the temp dir. INT/HUP/TERM/QUIT are ignored so a Ctrl-C sent
+/// to the test's process group cannot take the watchdog down before it acts.
+const SSHD_GUARD_SCRIPT: &str = r#"trap '' INT HUP TERM QUIT
+if read -r _; then exit 0; fi
+case "$(ps -o comm= -p "$1" 2>/dev/null)" in
+  *sshd*) kill -KILL "$1" 2>/dev/null ;;
+esac
+rm -rf -- "$2"
+"#;
+
+/// Parent-death guard for the throwaway `sshd -D` master (#3649).
+///
+/// The agent that sshd launches is armed through `TERMIHUB_TEST_PARENT_PID`
+/// (#3641), but sshd itself ignores that variable: when the test binary is
+/// killed before `Drop` runs, the master is re-parented to init/launchd and
+/// keeps listening. This guard is an external `sh` watchdog holding the read
+/// end of a pipe whose write end only this process holds (Rust creates pipes
+/// close-on-exec, so no other child inherits it). The kernel closes the write
+/// end however this process dies, so the watchdog sees EOF and kills the sshd.
+///
+/// Why not Linux `PR_SET_PDEATHSIG`: it fires when the spawning *thread* exits,
+/// and each libtest test runs on its own thread (see #3648); it also has no
+/// macOS equivalent. The pipe EOF is process-level and portable to every Unix.
+struct SshdParentGuard {
+    watchdog: Child,
+    disarm: Option<std::process::ChildStdin>,
+}
+
+impl SshdParentGuard {
+    /// Arm a watchdog for the sshd master `pid`, owning temp dir `dir`.
+    fn arm(pid: u32, dir: &Path) -> std::io::Result<Self> {
+        let mut watchdog = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(SSHD_GUARD_SCRIPT)
+            .arg("termihub-sshd-guard")
+            .arg(pid.to_string())
+            .arg(dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let disarm = watchdog.stdin.take();
+        Ok(Self { watchdog, disarm })
+    }
+
+    /// Stand the watchdog down without killing anything (a clean `stop()`),
+    /// and reap it so no zombie lingers.
+    fn disarm(mut self) {
+        if let Some(mut stdin) = self.disarm.take() {
+            use std::io::Write;
+            let _ = stdin.write_all(b"disarm\n");
+        }
+        let _ = self.watchdog.wait();
+    }
+}
+
 /// A killable/restartable loopback `sshd` with the real agent binary
 /// reachable over key auth — the Rust analog of the Python `LocalAgentSshd`
 /// (#2481). `start`/`stop` own the whole process tree so a `stop` severs an
@@ -376,6 +437,9 @@ struct LocalAgentSshd {
     /// (#2580). Shared via `Arc` so a driver thread that spawns/severs a
     /// daemon-backed session off this instance can record into the same sink.
     daemon_pids: Arc<std::sync::Mutex<Vec<u32>>>,
+    /// Watchdog that kills the running sshd master if this test process dies
+    /// before `stop()`/`Drop` can (#3649). Armed per `start()`.
+    guard: Option<SshdParentGuard>,
 }
 
 impl LocalAgentSshd {
@@ -460,6 +524,7 @@ impl LocalAgentSshd {
             child: None,
             agent_comm,
             daemon_pids: Arc::new(std::sync::Mutex::new(Vec::new())),
+            guard: None,
         })
     }
 
@@ -475,6 +540,8 @@ impl LocalAgentSshd {
             .stderr(Stdio::null())
             .spawn()
             .expect("spawn sshd");
+        // Arm before anything can panic, so even a failed start is covered.
+        self.guard = Some(SshdParentGuard::arm(child.id(), &self.dir).expect("arm sshd guard"));
         self.child = Some(child);
 
         let deadline = Instant::now() + Duration::from_secs(15);
@@ -490,6 +557,11 @@ impl LocalAgentSshd {
     /// Kill the sshd tree (SIGKILL) — an abrupt server-side drop that severs
     /// the established agent connection, then wait for the port to close.
     fn stop(&mut self) {
+        // Disarm first: once we kill + reap the master its PID is free for
+        // reuse, and the watchdog must never act on a stale PID.
+        if let Some(guard) = self.guard.take() {
+            guard.disarm();
+        }
         if let Some(mut child) = self.child.take() {
             kill_subtree(child.id());
             let _ = child.kill();
@@ -517,6 +589,9 @@ impl LocalAgentSshd {
         // after the sshd kill the reparented daemon is no longer reachable via
         // the subtree, so only an exact-PID reap in `Drop` can clean it (#2580).
         self.record_session_daemons();
+        if let Some(guard) = self.guard.take() {
+            guard.disarm();
+        }
         if let Some(mut child) = self.child.take() {
             kill_sshd_only(child.id());
             let _ = child.wait();
@@ -1978,4 +2053,130 @@ async fn manager_user_cancel_settles_distinct_from_a_parked_permanent_drop() {
     );
 
     drop(app);
+}
+
+/// Env var that turns [`sshd_guard_helper_process`] from a no-op into the
+/// helper side of [`killed_test_process_takes_its_sshd_down`].
+const SSHD_GUARD_HELPER_ENV: &str = "TERMIHUB_TEST_SSHD_GUARD_HELPER";
+
+/// Helper half of the #3649 regression test, run in a child copy of this test
+/// binary. It starts an sshd through the real harness, reports its PID, port and
+/// temp dir on stdout, then parks until it is SIGKILLed — so its `Drop` never
+/// runs, exactly like a killed test run. Without the env var (a normal suite
+/// run) it returns at once. The park is bounded so an orphaned helper still
+/// exits (and cleans up) on its own.
+#[test]
+fn sshd_guard_helper_process() {
+    if std::env::var_os(SSHD_GUARD_HELPER_ENV).is_none() {
+        return;
+    }
+    let sshd = find_sshd().expect("helper needs sshd");
+    // Only sshd matters here; the agent path is never exec'd by this helper.
+    let mut harness =
+        LocalAgentSshd::new(sshd, PathBuf::from("/usr/bin/true")).expect("stand up sshd");
+    harness.start();
+    println!(
+        "SSHD_GUARD_HELPER pid={} port={} dir={}",
+        harness.master_pid().expect("sshd running"),
+        harness.port,
+        harness.dir.display()
+    );
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    std::thread::sleep(Duration::from_secs(60));
+}
+
+/// Whether `pid` is alive and still names an sshd (so a reused PID never
+/// counts, and is never killed by the cleanup below).
+fn is_live_sshd(pid: u32) -> bool {
+    comm_of(pid).contains("sshd")
+}
+
+/// Regression for #3649: a test process killed before `Drop` runs must not
+/// leave its throwaway `sshd -D` listening. A helper copy of this test binary
+/// starts an sshd through the harness; we SIGKILL the helper and assert the
+/// sshd — which the helper never got to stop — exits, its port closes and its
+/// temp dir is removed. Only PIDs this test spawned (the helper, and the sshd
+/// it reported) are ever signalled. Skips when no `sshd` is installed.
+#[test]
+fn killed_test_process_takes_its_sshd_down() {
+    use std::io::BufRead;
+
+    if find_sshd().is_none() {
+        eprintln!("SKIP: no sshd binary found");
+        return;
+    }
+    let exe = std::env::current_exe().expect("current test binary");
+    // libtest filters on the path without the crate name.
+    let module = module_path!()
+        .split_once("::")
+        .map(|(_, rest)| rest)
+        .unwrap_or(module_path!());
+    let mut helper = Command::new(exe)
+        .arg(format!("{module}::sshd_guard_helper_process"))
+        .args(["--exact", "--nocapture", "--test-threads=1"])
+        .env(SSHD_GUARD_HELPER_ENV, "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn helper test process");
+
+    // Read the helper's report on a thread so a wedged helper cannot hang us.
+    let stdout = helper.stdout.take().expect("helper stdout");
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stdout)
+            .lines()
+            .map_while(Result::ok)
+        {
+            // libtest prints `test <name> ... ` without a newline first, so the
+            // marker lands mid-line.
+            if let Some((_, rest)) = line.split_once("SSHD_GUARD_HELPER ") {
+                let _ = tx.send(rest.to_string());
+                return;
+            }
+        }
+    });
+    let report = rx.recv_timeout(Duration::from_secs(30));
+    // SIGKILL the helper before asserting anything, so it never outlives us.
+    let _ = helper.kill();
+    let _ = helper.wait();
+    let report = report.expect("helper did not report its sshd in time");
+
+    let field = |key: &str| -> String {
+        report
+            .split_whitespace()
+            .find_map(|kv| kv.strip_prefix(&format!("{key}=")).map(str::to_string))
+            .unwrap_or_else(|| panic!("helper report missing {key}: {report}"))
+    };
+    let pid: u32 = field("pid").parse().expect("sshd pid");
+    let port: u16 = field("port").parse().expect("sshd port");
+    let dir = PathBuf::from(field("dir"));
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline && (is_live_sshd(pid) || is_listening(port) || dir.exists()) {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let (alive, listening, dir_left) = (is_live_sshd(pid), is_listening(port), dir.exists());
+
+    // Clean up whatever the guard missed before failing, so a regression does
+    // not itself leak an sshd.
+    if alive {
+        let _ = Command::new("kill")
+            .arg("-KILL")
+            .arg(pid.to_string())
+            .status();
+    }
+    if dir_left {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    assert!(
+        !alive && !listening,
+        "sshd {pid} outlived its killed test process (alive={alive}, listening={listening})"
+    );
+    assert!(
+        !dir_left,
+        "sshd harness temp dir {} was not removed",
+        dir.display()
+    );
 }
