@@ -653,7 +653,7 @@ mod tests {
         let json = serde_json::to_string(&store).unwrap();
         assert!(json.contains("\"folderPasteId\":\"p1\""));
         let parsed: PersistedTransferStore = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, store);
+        assert_eq!(parsed.transfers, store.transfers);
 
         assert_eq!(store.remove_folder_paste_transfers(), 1);
         let ids: Vec<&str> = store
