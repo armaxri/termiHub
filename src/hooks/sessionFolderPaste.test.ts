@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("@/services/api", () => ({
   folderPasteBegin: vi.fn(() => Promise.resolve("paste-2")),
   folderPasteEnd: vi.fn(() => Promise.resolve()),
+  folderPasteLinkTransfer: vi.fn(() => Promise.resolve()),
   localListDir: vi.fn(() => Promise.resolve([])),
   sessionCopy: vi.fn(() => Promise.resolve()),
   sessionCopyRemote: vi.fn(() => Promise.resolve(0)),
@@ -28,7 +29,9 @@ vi.mock("./transferFeedback", () => ({
 import {
   folderPasteBegin,
   folderPasteEnd,
+  folderPasteLinkTransfer,
   localListDir,
+  sessionCopyRemote,
   sessionListFiles,
   sessionMkdir,
   sessionReadFile,
@@ -42,6 +45,7 @@ import type { FileEntry } from "@/types/connection";
 import type { TerminalTab } from "@/types/terminal";
 import {
   FolderPasteEndpointUnavailable,
+  pasteFolderRecorded,
   pasteFolderTree,
   resolveLiveSession,
   retryInterruptedFolderPaste,
@@ -136,6 +140,82 @@ describe("pasteFolderTree — continuing an interrupted paste (#3630)", () => {
   });
 });
 
+describe("pasteFolderRecorded — linking files to the manifest (#3643)", () => {
+  const uploadTransport: PasteTransport = {
+    operation: "copy",
+    sourceMode: "local",
+    srcSession: null,
+    destSession: "sftp-dst",
+    srcSftp: false,
+    destSftp: true,
+    destQueueCapable: true,
+  };
+
+  it("links every tracked upload to the recorded paste", async () => {
+    vi.mocked(localListDir).mockResolvedValue([
+      entry("a.txt", "/src/f/a.txt", 5),
+      entry("b.txt", "/src/f/b.txt", 5),
+    ]);
+    let n = 0;
+    vi.mocked(sessionUpload).mockImplementation(async (_s, _l, _r, onRegistered) => {
+      onRegistered?.(`t-${++n}`);
+      return 5;
+    });
+
+    await pasteFolderRecorded(uploadTransport, "/src/f", "/dst/f");
+
+    expect(vi.mocked(folderPasteLinkTransfer).mock.calls).toEqual([
+      ["paste-2", "t-1"],
+      ["paste-2", "t-2"],
+    ]);
+    expect(vi.mocked(folderPasteEnd)).toHaveBeenCalledWith("paste-2");
+  });
+
+  it("links a session-to-session streamed copy too", async () => {
+    vi.mocked(sessionListFiles).mockImplementation(async (id) =>
+      id === "sftp-src" ? [entry("a.txt", "/src/f/a.txt", 5)] : []
+    );
+    vi.mocked(sessionCopyRemote).mockImplementation(async (_s, _p, _d, _dp, onRegistered) => {
+      onRegistered?.("remote-1");
+      return 5;
+    });
+
+    await pasteFolderRecorded(
+      { ...uploadTransport, sourceMode: "session", srcSession: "sftp-src", srcSftp: true },
+      "/src/f",
+      "/dst/f"
+    );
+
+    expect(vi.mocked(folderPasteLinkTransfer)).toHaveBeenCalledWith("paste-2", "remote-1");
+  });
+
+  it("links nothing when the paste could not be recorded", async () => {
+    vi.mocked(folderPasteBegin).mockRejectedValueOnce(new Error("no persistence"));
+    vi.mocked(localListDir).mockResolvedValue([entry("a.txt", "/src/f/a.txt", 5)]);
+    vi.mocked(sessionUpload).mockImplementation(async (_s, _l, _r, onRegistered) => {
+      onRegistered?.("t-1");
+      return 5;
+    });
+
+    await pasteFolderRecorded(uploadTransport, "/src/f", "/dst/f");
+
+    expect(vi.mocked(sessionUpload)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(folderPasteLinkTransfer)).not.toHaveBeenCalled();
+  });
+
+  it("never fails the paste when linking fails", async () => {
+    vi.mocked(folderPasteLinkTransfer).mockRejectedValueOnce(new Error("ipc down"));
+    vi.mocked(localListDir).mockResolvedValue([entry("a.txt", "/src/f/a.txt", 5)]);
+    vi.mocked(sessionUpload).mockImplementation(async (_s, _l, _r, onRegistered) => {
+      onRegistered?.("t-1");
+      return 5;
+    });
+
+    await expect(pasteFolderRecorded(uploadTransport, "/src/f", "/dst/f")).resolves.toBe(true);
+    expect(vi.mocked(folderPasteEnd)).toHaveBeenCalledWith("paste-2");
+  });
+});
+
 describe("resolveLiveSession", () => {
   it("prefers the recorded session, else the open tab of the same connection", () => {
     vi.mocked(getAllTabsAcrossGroupTrees).mockReturnValue([
@@ -194,6 +274,40 @@ describe("retryInterruptedFolderPaste (#3630)", () => {
       "/srv/proj/b.txt",
       expect.any(Function)
     );
+    expect(vi.mocked(folderPasteEnd)).toHaveBeenCalledWith("paste-2");
+  });
+
+  it("re-copies the file that was in flight at the quit, linked to the new paste", async () => {
+    // After a restart the file in flight has no paused row of its own (the
+    // backend drops it, #3643): its partial destination is shorter than the
+    // source, so the Retry copies it again as part of the folder.
+    vi.mocked(getAllTabsAcrossGroupTrees).mockReturnValue([tab("web-2", "conn-web")]);
+    vi.mocked(localListDir).mockResolvedValue([
+      entry("done.bin", "/home/u/proj/done.bin", 50),
+      entry("in-flight.bin", "/home/u/proj/in-flight.bin", 50),
+      entry("todo.bin", "/home/u/proj/todo.bin", 50),
+    ]);
+    vi.mocked(sessionListFiles).mockResolvedValue([
+      entry("done.bin", "/srv/proj/done.bin", 50),
+      entry("in-flight.bin", "/srv/proj/in-flight.bin", 20),
+    ]);
+    const { sessionSupportsTransferQueue } = await import("@/services/api");
+    vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(true);
+    vi.mocked(sessionUpload).mockImplementation(async (_s, local, _r, onRegistered) => {
+      onRegistered?.(`t:${local}`);
+      return 50;
+    });
+
+    await retryInterruptedFolderPaste(interrupted);
+
+    expect(vi.mocked(sessionUpload).mock.calls.map((c) => c[1])).toEqual([
+      "/home/u/proj/in-flight.bin",
+      "/home/u/proj/todo.bin",
+    ]);
+    expect(vi.mocked(folderPasteLinkTransfer).mock.calls).toEqual([
+      ["paste-2", "t:/home/u/proj/in-flight.bin"],
+      ["paste-2", "t:/home/u/proj/todo.bin"],
+    ]);
     expect(vi.mocked(folderPasteEnd)).toHaveBeenCalledWith("paste-2");
   });
 });

@@ -231,6 +231,22 @@ pub fn folder_paste_end(paste_id: String, app_handle: tauri::AppHandle) {
     }
 }
 
+/// Link a registered session transfer to the folder paste it copies a file
+/// for (#3643). A restart mid-paste then reports that file through the paste's
+/// notice (whose Retry re-copies it) instead of as an orphan paused row.
+/// Best-effort: a no-op without persistence or for an unknown transfer.
+#[tauri::command]
+pub fn folder_paste_link_transfer(
+    paste_id: String,
+    transfer_id: String,
+    app_handle: tauri::AppHandle,
+) {
+    debug!(paste_id, transfer_id, "folder paste link transfer");
+    if let Some(pm) = app_handle.try_state::<TransferPersistenceManager>() {
+        pm.record_folder_paste(&transfer_id, &paste_id);
+    }
+}
+
 /// Take the folder pastes a previous run left unfinished (#3630). Each is
 /// returned exactly once (its record is removed), so only one window shows the
 /// notice and a Retry records a paste of its own.

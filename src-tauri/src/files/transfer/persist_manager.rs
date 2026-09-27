@@ -92,13 +92,29 @@ impl TransferPersistenceManager {
             tracing::warn!(error = %e, "could not start transfer-persist writer; queue persistence disabled");
         }
 
+        let mut data = data;
         let interrupted = data.folder_pastes.iter().map(|p| p.id.clone()).collect();
-        Self {
+        // The file a session folder paste had in flight belongs to that paste's
+        // interrupted-paste notice (#3643): its Retry re-copies the file (the
+        // partial destination never matches the source size), and the file's
+        // session id does not survive the restart, so a paused row of its own
+        // could never resume. Drop those records before anything rehydrates
+        // them, so the folder is reported as ONE unit.
+        let dropped = data.remove_folder_paste_transfers();
+        let manager = Self {
             store: Mutex::new(data),
             writer,
             recovery_warnings: Mutex::new(warnings),
             interrupted_pastes: Mutex::new(interrupted),
+        };
+        if dropped > 0 {
+            tracing::debug!(
+                dropped,
+                "Dropped transfers owned by interrupted folder pastes"
+            );
+            manager.schedule_write(&manager.lock());
         }
+        manager
     }
 
     /// Take ownership of any recovery warnings (only the first call returns them).
@@ -138,6 +154,7 @@ impl TransferPersistenceManager {
             updated_at_ms: now,
             docker: None,
             group_id: None,
+            folder_paste_id: None,
         };
         let mut store = self.lock();
         store.upsert(entry);
@@ -168,6 +185,20 @@ impl TransferPersistenceManager {
             return;
         };
         entry.group_id = Some(group_id.to_string());
+        store.upsert(entry);
+        self.schedule_write(&store);
+    }
+
+    /// Link a registered transfer to the session folder paste it copies a file
+    /// for (#3643), so a restart mid-paste reports the file through the paste's
+    /// notice instead of as an orphan paused row. A no-op for an unknown id
+    /// (never fabricates a record).
+    pub fn record_folder_paste(&self, transfer_id: &str, paste_id: &str) {
+        let mut store = self.lock();
+        let Some(mut entry) = store.get(transfer_id).cloned() else {
+            return;
+        };
+        entry.folder_paste_id = Some(paste_id.to_string());
         store.upsert(entry);
         self.schedule_write(&store);
     }
@@ -695,6 +726,68 @@ mod tests {
         assert_eq!(taken[0].destination.path, "/srv/photos");
         assert!(relaunched.take_interrupted_folder_pastes().is_empty());
         assert!(relaunched.snapshot().folder_pastes.is_empty());
+    }
+
+    /// The file a session folder paste had in flight at quit comes back only
+    /// through the paste's notice, never as its own paused row (#3643).
+    /// Unlinked records, and records of a paste that finished, rehydrate as
+    /// before.
+    #[test]
+    fn in_flight_file_of_an_interrupted_folder_paste_is_not_rehydrated() {
+        let dir = TempDir::new().unwrap();
+        let paste = {
+            let m = TransferPersistenceManager::new_test(dir.path());
+            let paste = m.begin_folder_paste(
+                FolderPasteOperation::Copy,
+                endpoint(None, "/home/u/photos"),
+                endpoint(Some("sess-b"), "/srv/photos"),
+            );
+            let finished = m.begin_folder_paste(
+                FolderPasteOperation::Copy,
+                endpoint(None, "/home/u/docs"),
+                endpoint(Some("sess-b"), "/srv/docs"),
+            );
+            m.end_folder_paste(&finished);
+            register(&m, "in-flight");
+            m.record_folder_paste("in-flight", &paste);
+            m.note_progress(
+                "in-flight",
+                PersistedTransferStatus::Active,
+                1024,
+                2048,
+                false,
+            );
+            register(&m, "unlinked");
+            register(&m, "of-finished");
+            m.record_folder_paste("of-finished", &finished);
+            m.record_folder_paste("unknown-transfer", &paste);
+            assert!(m.snapshot().get("unknown-transfer").is_none());
+            // Quit teardown: the in-flight file survives on disk as before.
+            m.note_progress(
+                "in-flight",
+                PersistedTransferStatus::Cancelled,
+                1024,
+                2048,
+                true,
+            );
+            paste
+        };
+        wait_for_file(dir.path(), "of-finished", true);
+        wait_for_file(dir.path(), "folderPasteId", true);
+
+        let relaunched = TransferPersistenceManager::new_test(dir.path());
+        let mut ids: Vec<String> = relaunched
+            .load_incomplete_as_paused()
+            .into_iter()
+            .map(|t| t.transfer_id)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, ["of-finished", "unlinked"]);
+        let taken = relaunched.take_interrupted_folder_pastes();
+        assert_eq!(taken.len(), 1, "the folder is reported as one notice");
+        assert_eq!(taken[0].id, paste);
+        // The drop is persisted, so a later launch never resurrects the row.
+        wait_for_file(dir.path(), "in-flight", false);
     }
 
     #[test]

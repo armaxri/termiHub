@@ -1972,7 +1972,12 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
   launch — a quit, crash or failure part-way — is shown as a notice whose
   Retry resolves both sides to their reconnected sessions (by saved connection
   id; session ids do not survive a restart) and continues the paste, skipping
-  every file the destination already holds with the same size. Drag-out
+  every file the destination already holds with the same size. Each tracked
+  file transfer of such a paste is linked to its manifest (`folderPasteId` on
+  the transfer record, #3643); at startup a record still linked to a recorded
+  manifest is dropped instead of rehydrating as its own paused row, because
+  its session id is gone and the notice's Retry re-copies the partly written
+  file anyway — so the folder is reported as one unit. Drag-out
   staging downloads are never persisted: their directories are deleted at
   quit, and records under the staging root are pruned at startup (#3629).
 - **Desktop-only for v1** — the `ftp` cargo feature is desktop-only (registered in
