@@ -79,6 +79,22 @@ describe("OpenPortsPanel — Button migration", () => {
     expect(container.textContent).toContain("permission denied");
   });
 
+  it("shows the 'update the agent' message for an agent that is too old (#3731)", async () => {
+    // A command error arrives as the structured IPC envelope, not an Error.
+    vi.mocked(networkOpenPorts).mockRejectedValue({
+      code: "agent_outdated",
+      message: "This agent is too old to run network tools. Update the agent to use network tools.",
+      details: null,
+    });
+    await act(async () => {
+      root.render(<OpenPortsPanel />);
+    });
+    await flush();
+
+    expect(container.textContent).toContain("Update the agent to use network tools");
+    expect(container.textContent).not.toContain("[object Object]");
+  });
+
   it("drops the stale list when Run on switches vantage (PROD-033)", async () => {
     useRunLocationStore.setState({ networkToolLocations: {}, serverLocations: {} });
     vi.mocked(networkOpenPorts).mockResolvedValue([

@@ -175,7 +175,7 @@ describe("DnsLookupPanel run history", () => {
     await act(async () => q("dns-run")!.click());
     await flush();
 
-    expect(recorded()[0]).toMatchObject({ status: "error", error: "Error: NXDOMAIN" });
+    expect(recorded()[0]).toMatchObject({ status: "error", error: "NXDOMAIN" });
   });
 });
 
