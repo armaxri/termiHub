@@ -77,6 +77,7 @@ from .orchestrator import (
     require_test_bridge_build,
 )
 from .local_agent import LocalAgentSshd, LocalAgentUnavailable
+from .local_http import LocalThreadingHTTPServer
 from .projection import ProjectionHarness
 from .ssh_agent import agent_has_key, key_fingerprint, sha256_fingerprints
 from .systemtest import SystemTest, unique_name
@@ -125,6 +126,7 @@ __all__ = [
     "AgentInstance",
     "LocalAgentSshd",
     "LocalAgentUnavailable",
+    "LocalThreadingHTTPServer",
     "app_binary_path",
     "agent_binary_path",
     "SystemTest",
