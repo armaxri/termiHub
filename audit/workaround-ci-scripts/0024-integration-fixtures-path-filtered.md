@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: .github/workflows
 evidence:
   - .github/workflows/integration-fixtures.yml:25
-status: open
+status: fixed
+resolution: "#3655 — release.yml gate requires green release-candidate (full system-integration + unfiltered integration-fixtures) and post-merge Code Quality on the tagged sha; manual Release Candidate workflow; fixtures PR filter widened to core plumbing"
 ---
 
 ## What

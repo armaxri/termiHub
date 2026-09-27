@@ -11,7 +11,8 @@ evidence:
   - .github/workflows/code-quality.yml:216
   - .github/workflows/integration-fixtures.yml:22
   - .github/workflows/system-integration.yml:6
-status: open
+status: fixed
+resolution: "#3655 — release.yml gate requires green release-candidate (full system-integration + unfiltered integration-fixtures) and post-merge Code Quality on the tagged sha; manual Release Candidate workflow; fixtures PR filter widened to core plumbing"
 ---
 
 ## What
