@@ -79,6 +79,7 @@ from .orchestrator import (
 from .local_agent import LocalAgentSshd, LocalAgentUnavailable
 from .local_http import LocalThreadingHTTPServer
 from .projection import ProjectionHarness
+from .serial_echo import SerialEchoPair, SerialEchoUnavailable
 from .ssh_agent import agent_has_key, key_fingerprint, sha256_fingerprints
 from .systemtest import SystemTest, unique_name
 from .transfers import TftpUnavailable, ftp_download, ftp_list, tftp_download
@@ -126,6 +127,8 @@ __all__ = [
     "AgentInstance",
     "LocalAgentSshd",
     "LocalAgentUnavailable",
+    "SerialEchoPair",
+    "SerialEchoUnavailable",
     "LocalThreadingHTTPServer",
     "app_binary_path",
     "agent_binary_path",
