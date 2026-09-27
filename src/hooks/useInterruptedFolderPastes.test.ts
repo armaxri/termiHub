@@ -35,7 +35,8 @@ const paste: InterruptedFolderPaste = {
 
 /** The Retry action of the latest `toast.error` call. */
 function lastRetryAction(): () => void {
-  const opts = vi.mocked(toast.error).mock.calls.at(-1)?.[1];
+  const calls = vi.mocked(toast.error).mock.calls;
+  const opts = calls[calls.length - 1]?.[1];
   expect(opts?.action?.label).toBe("Retry");
   return opts!.action!.onClick;
 }
