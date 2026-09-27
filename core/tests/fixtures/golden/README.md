@@ -22,10 +22,13 @@ regenerate the affected vectors). Never "fix" a red case by editing `expected`
 to match whatever Rust currently emits; that silently ratifies a divergence,
 which is exactly what these fixtures exist to catch.
 
-(The fixtures are plain JSON so a future `vitest` loader could replay them
-against the TS implementation too — a genuine dual-run. Today only the Rust
-`cargo test` side loads them; the TS side remains the authoring source rather
-than a second reader.)
+(The fixtures are plain JSON so a `vitest` loader can replay them against the
+TS implementation too — a genuine dual-run. The reconnect-backoff vectors are
+dual-run: `src/utils/reconnectBackoff.golden.test.ts` replays every file under
+`golden/reconnect_backoff/` against the TypeScript engine, which also pins the
+shared reconnect policy constants on both sides (#3730). The other utils are
+loaded by the Rust `cargo test` side only; there the TS side remains the
+authoring source rather than a second reader.)
 
 ## Layout
 

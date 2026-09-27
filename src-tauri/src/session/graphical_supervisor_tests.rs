@@ -13,7 +13,7 @@ use tokio::time::Instant;
 use termihub_core::connection::{
     AuthKind, Capabilities, ConnectionType, ConnectionTypeRegistry, CursorReceiver, CursorUpdate,
     DirtyRect, FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities, GraphicalState,
-    InputEvent, OutputReceiver, SettingsSchema, MAX_FRAMEBUFFER_DIMENSION,
+    InputEvent, OutputReceiver, SettingsSchema, MAX_FRAMEBUFFER_DIMENSION, MAX_RECONNECT_ATTEMPTS,
 };
 use termihub_core::errors::SessionError;
 use termihub_core::files::FileBrowser;
@@ -361,8 +361,10 @@ async fn open_first(settings: serde_json::Value, first: Dial, redials: Vec<Dial>
     let registry = fake_registry(&ctl);
     ctl.script([first]);
     ctl.script(redials);
+    // A draw of 0 never shortens a window: the nominal (worst-case) schedule.
     let mgr =
-        GraphicalSessionManager::new(Arc::new(registry), Arc::new(RdpTrustStore::in_memory()));
+        GraphicalSessionManager::new(Arc::new(registry), Arc::new(RdpTrustStore::in_memory()))
+            .with_jitter(|| 0.0);
     let sink = Sink::default();
     let sid = mgr
         .connect(FAKE, settings, sink.clone())
@@ -495,10 +497,36 @@ async fn fixed_resolution_survives_reconnect_without_any_resize() {
     h.mgr.disconnect(&h.sid, h.sink.clone()).await.unwrap();
 }
 
+/// `n` copies of a scripted dial.
+fn dials(n: u32, dial: impl Fn() -> Dial) -> Vec<Dial> {
+    (0..n).map(|_| dial()).collect()
+}
+
+/// The `(state, attempt)` tail of a loop that spent the whole budget: one
+/// `Reconnecting` per attempt, then the manual-prompt `Disconnected`.
+fn exhausted_tail() -> Vec<(GraphicalState, u32)> {
+    let mut tail: Vec<_> = (1..=MAX_RECONNECT_ATTEMPTS)
+        .map(|n| (GraphicalState::Reconnecting, n))
+        .collect();
+    tail.push((GraphicalState::Disconnected, MAX_RECONNECT_ATTEMPTS));
+    tail
+}
+
+#[test]
+fn graphical_follows_the_shared_reconnect_policy() {
+    use termihub_core::reconnect_backoff::RECONNECT_POLICY;
+    assert_eq!(super::GRAPHICAL_BACKOFF, RECONNECT_POLICY);
+    assert_eq!(MAX_RECONNECT_ATTEMPTS, 10);
+}
+
 #[tokio::test(start_paused = true)]
-async fn exhausted_budget_rests_disconnected_after_three_backed_off_attempts() {
+async fn exhausted_budget_rests_disconnected_after_the_shared_backed_off_attempts() {
     let refused = || Dial::Err(SessionError::ConnectionFailed("refused".into()));
-    let h = open(serde_json::json!({}), vec![refused(), refused(), refused()]).await;
+    let h = open(
+        serde_json::json!({}),
+        dials(MAX_RECONNECT_ATTEMPTS, refused),
+    )
+    .await;
     let before = h.sink.states().len();
 
     let dropped_at = Instant::now();
@@ -507,26 +535,52 @@ async fn exhausted_budget_rests_disconnected_after_three_backed_off_attempts() {
         last_state(&h.sink) == Some(GraphicalState::Disconnected)
     })
     .await;
-    // Backoff schedule 1 s + 2 s + 4 s before the three attempts.
-    assert!(dropped_at.elapsed() >= Duration::from_secs(7));
-    assert_eq!(
-        h.sink.tail(before),
-        vec![
-            (GraphicalState::Reconnecting, 1),
-            (GraphicalState::Reconnecting, 2),
-            (GraphicalState::Reconnecting, 3),
-            (GraphicalState::Disconnected, 3),
-        ]
-    );
+    // The nominal schedule 1+2+4+8+16+30+30+30+30+30 s before the ten attempts.
+    assert!(dropped_at.elapsed() >= Duration::from_secs(181));
+    assert_eq!(h.sink.tail(before), exhausted_tail());
     let message = h.sink.last().and_then(|e| e.message).unwrap_or_default();
     assert!(
-        message.contains("Reconnect failed after 3 attempts"),
+        message.contains("Reconnect failed after 10 attempts"),
         "{message}"
     );
     assert!(message.contains("refused"), "{message}");
 
     idle().await;
-    assert_eq!(h.ctl.dials(), 4, "no attempts beyond the budget");
+    assert_eq!(
+        h.ctl.dials(),
+        MAX_RECONNECT_ATTEMPTS + 1,
+        "no attempts beyond the budget"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn jitter_shortens_the_graphical_backoff_but_never_below_half() {
+    // A fully-shortening draw halves every window: the first re-dial comes
+    // after 500 ms instead of 1 s — and never sooner.
+    let ctl = Arc::new(Control::default());
+    ctl.script([Dial::Ok, Dial::Ok]);
+    let mgr = GraphicalSessionManager::new(
+        Arc::new(fake_registry(&ctl)),
+        Arc::new(RdpTrustStore::in_memory()),
+    )
+    .with_jitter(|| 0.999_999);
+    let sink = Sink::default();
+    let sid = mgr
+        .connect(FAKE, serde_json::json!({}), sink.clone())
+        .await
+        .expect("initial connect");
+    ctl.send_frame().await;
+    wait_until("first frame", || sink.frames.load(Ordering::SeqCst) == 1).await;
+
+    let dropped_at = Instant::now();
+    ctl.drop_stream();
+    tokio::time::sleep(Duration::from_millis(450)).await;
+    assert_eq!(ctl.dials(), 1, "no re-dial before half the nominal window");
+    wait_until("re-dial", || ctl.dials() == 2).await;
+    let waited = dropped_at.elapsed();
+    assert!(waited >= Duration::from_millis(500), "{waited:?}");
+    assert!(waited < Duration::from_millis(1_000), "{waited:?}");
+    mgr.disconnect(&sid, sink.clone()).await.unwrap();
 }
 
 #[tokio::test(start_paused = true)]
@@ -655,7 +709,7 @@ async fn reconnect_that_closes_before_painting_is_a_failed_attempt() {
     // that as success would reset the budget on every dial and loop forever.
     let h = open(
         serde_json::json!({}),
-        vec![Dial::OkThenClose, Dial::OkThenClose, Dial::OkThenClose],
+        dials(MAX_RECONNECT_ATTEMPTS, || Dial::OkThenClose),
     )
     .await;
     h.ctl.drop_stream();
@@ -664,16 +718,8 @@ async fn reconnect_that_closes_before_painting_is_a_failed_attempt() {
     })
     .await;
     idle().await;
-    assert_eq!(h.ctl.dials(), 4);
-    assert_eq!(
-        h.sink.tail(3),
-        vec![
-            (GraphicalState::Reconnecting, 1),
-            (GraphicalState::Reconnecting, 2),
-            (GraphicalState::Reconnecting, 3),
-            (GraphicalState::Disconnected, 3),
-        ]
-    );
+    assert_eq!(h.ctl.dials(), MAX_RECONNECT_ATTEMPTS + 1);
+    assert_eq!(h.sink.tail(3), exhausted_tail());
 }
 
 // ── Typed failures reported after connect() returned (#3390) ─────────
@@ -758,23 +804,15 @@ async fn async_connect_failure_on_redial_is_still_retried() {
     // Only a credential rejection is terminal on a re-dial; an unreachable
     // host keeps using the retry budget, as before.
     let fail = || Dial::OkThenFail(Fatal::Connect);
-    let h = open(serde_json::json!({}), vec![fail(), fail(), fail()]).await;
+    let h = open(serde_json::json!({}), dials(MAX_RECONNECT_ATTEMPTS, fail)).await;
     h.ctl.drop_stream();
     wait_until("give up", || {
         last_state(&h.sink) == Some(GraphicalState::Disconnected)
     })
     .await;
     idle().await;
-    assert_eq!(h.ctl.dials(), 4);
-    assert_eq!(
-        h.sink.tail(3),
-        vec![
-            (GraphicalState::Reconnecting, 1),
-            (GraphicalState::Reconnecting, 2),
-            (GraphicalState::Reconnecting, 3),
-            (GraphicalState::Disconnected, 3),
-        ]
-    );
+    assert_eq!(h.ctl.dials(), MAX_RECONNECT_ATTEMPTS + 1);
+    assert_eq!(h.sink.tail(3), exhausted_tail());
 }
 
 // ── Server protocol errors are terminal and carry their reason (#3479) ──
@@ -891,7 +929,8 @@ async fn initial_connect_auth_rejection_emits_auth_failed() {
     let mgr = GraphicalSessionManager::new(
         Arc::new(fake_registry(&ctl)),
         Arc::new(RdpTrustStore::in_memory()),
-    );
+    )
+    .with_jitter(|| 0.0);
     let sink = Sink::default();
     let err = mgr
         .connect(FAKE, serde_json::json!({}), sink.clone())

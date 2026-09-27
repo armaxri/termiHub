@@ -6,9 +6,14 @@
  * toolbar, overlays, input pipeline) is protocol-blind — VNC (#1681) and RDP
  * (#1682) both drive it through these same generic types.
  */
+import { RECONNECT_POLICY } from "@/utils/reconnectBackoff";
 
-/** Maximum automatic reconnect attempts (mirrors Rust `MAX_RECONNECT_ATTEMPTS`). */
-export const MAX_RECONNECT_ATTEMPTS = 3;
+/**
+ * Maximum automatic reconnect attempts (mirrors Rust `MAX_RECONNECT_ATTEMPTS`):
+ * the shared reconnect policy's budget (SM-020, #3730), the same every other
+ * reconnect loop uses.
+ */
+export const MAX_RECONNECT_ATTEMPTS = RECONNECT_POLICY.maxAttempts;
 
 /**
  * Upper bound on either framebuffer dimension, in pixels (mirrors Rust

@@ -208,6 +208,24 @@ describe("StatusBar — monitoring controls (#1233)", () => {
     expect(cpu!.className).toContain("monitoring-status__stat--stale");
   });
 
+  it("shows the link problem, not Paused, when a paused monitor drops (#3730)", () => {
+    setActiveMonitor({
+      monitorSessionId: "sess-1",
+      stats: makeStats(),
+      sampleCount: 3,
+      status: "reconnecting",
+      paused: true,
+    });
+    renderStatusBar();
+
+    // One badge at a time: reconnecting outranks the user's pause.
+    expect(container.querySelector('[data-testid="monitoring-reconnecting"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="monitoring-paused"]')).toBeNull();
+    expect(container.querySelector('[data-testid="monitoring-stale"]')).toBeNull();
+    const cpu = container.querySelector('[data-testid="monitoring-cpu"]');
+    expect(cpu!.className).toContain("monitoring-status__stat--stale");
+  });
+
   it("shows an inline Retry affordance when the monitor is offline", () => {
     setActiveMonitor({
       monitorSessionId: "sess-1",

@@ -2,6 +2,7 @@ import { RefreshCw, AlertCircle, Power } from "lucide-react";
 import { Button, Spinner, ContentOverlay } from "@/components/ui";
 import type { GraphicalSessionState } from "@/types/remoteDesktop";
 import { MAX_RECONNECT_ATTEMPTS } from "@/types/remoteDesktop";
+import { RECONNECTING_HEADING, reconnectAttemptLabel } from "@/utils/reconnectStatus";
 
 interface RemoteDesktopOverlayProps {
   state: GraphicalSessionState;
@@ -17,7 +18,9 @@ interface RemoteDesktopOverlayProps {
 /**
  * The one shared set of connection-state overlays for graphical remote-desktop
  * sessions (#1680): connecting, reconnecting (with attempt counter + Cancel)
- * while the backend auto-reconnect loop is retrying (#3364), and the
+ * while the backend auto-reconnect loop is retrying (#3364) — worded like a
+ * terminal tab's reconnect (#3730: "Connection lost — reconnecting…",
+ * "Attempt n of N") — and the
  * dropped / auth / connect / close resting states (with a Reconnect action).
  * `disconnected` means no retry is running — Auto-Reconnect is off, its budget
  * is spent, or the drop was non-retryable — so it gets the manual prompt. Returns
@@ -55,8 +58,8 @@ export function RemoteDesktopOverlay({
               className="rd-overlay__icon rd-overlay__spin motion-essential-spinner"
             />
           }
-          heading="Connection lost. Reconnecting…"
-          subheading={`attempt ${Math.max(reconnectAttempt, 1)}/${MAX_RECONNECT_ATTEMPTS}`}
+          heading={RECONNECTING_HEADING}
+          subheading={reconnectAttemptLabel(reconnectAttempt, MAX_RECONNECT_ATTEMPTS)}
           actions={
             <Button variant="secondary" size="sm" onClick={onCancel}>
               Cancel

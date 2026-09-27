@@ -633,7 +633,8 @@ impl ConnectionType for Ssh {
                             help_text: Some(concat!(
                                 "On by default. For flaky links (cellular, spotty Wi-Fi), termiHub ",
                                 "automatically re-establishes a dropped SSH connection with an ",
-                                "exponential backoff instead of showing the manual reconnect prompt. ",
+                                "exponential backoff (up to 10 attempts, pauses of at most 30 s) ",
+                                "instead of showing the manual reconnect prompt. ",
                                 "It reattaches to the same tab and keeps the local scrollback visible ",
                                 "while it retries; a Cancel control lets you stop and browse the ",
                                 "scrollback.\n\n",

@@ -69,9 +69,11 @@ describe("RemoteDesktopOverlay", () => {
   it("shows the reconnecting overlay with a clamped attempt counter and Cancel", () => {
     const { onCancel } = render("reconnecting", { reconnectAttempt: 0 });
     const el = query("remote-desktop-overlay-reconnecting");
-    expect(el?.textContent).toContain("Connection lost");
-    // reconnectAttempt 0 is clamped up to 1 for display.
-    expect(el?.textContent).toContain("attempt 1/3");
+    // Worded exactly like a terminal tab's reconnect (#3730).
+    expect(el?.textContent).toContain("Connection lost — reconnecting…");
+    // reconnectAttempt 0 is clamped up to 1 for display; the budget is the
+    // shared reconnect policy's 10 attempts.
+    expect(el?.textContent).toContain("Attempt 1 of 10");
     const cancel = Array.from(el?.querySelectorAll("button") ?? []).find(
       (b) => b.textContent === "Cancel"
     );
@@ -81,7 +83,7 @@ describe("RemoteDesktopOverlay", () => {
 
   it("reflects a higher reconnect attempt number", () => {
     render("reconnecting", { reconnectAttempt: 2 });
-    expect(query("remote-desktop-overlay-reconnecting")?.textContent).toContain("attempt 2/3");
+    expect(query("remote-desktop-overlay-reconnecting")?.textContent).toContain("Attempt 2 of 10");
   });
 
   it("shows the auth-failed error overlay with a Reconnect action and guidance", () => {
@@ -115,13 +117,13 @@ describe("RemoteDesktopOverlay", () => {
     // `disconnected` = Auto-Reconnect off, budget spent, or a non-retryable drop
     // (#3364): no spinner, but a Reconnect action and the backend's reason.
     const { onReconnect } = render("disconnected", {
-      reconnectAttempt: 3,
-      message: "Reconnect failed after 3 attempts",
+      reconnectAttempt: 10,
+      message: "Reconnect failed after 10 attempts",
     });
     expect(query("remote-desktop-overlay-reconnecting")).toBeNull();
     const el = query("remote-desktop-overlay-error");
     expect(el?.textContent).toContain("Connection lost");
-    expect(el?.textContent).toContain("Reconnect failed after 3 attempts");
+    expect(el?.textContent).toContain("Reconnect failed after 10 attempts");
     act(() => query("remote-desktop-reconnect")?.click());
     expect(onReconnect).toHaveBeenCalledOnce();
   });

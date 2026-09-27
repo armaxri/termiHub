@@ -21,8 +21,8 @@ use tracing::{debug, info, warn};
 
 use termihub_core::errors::CoreError;
 use termihub_core::monitoring::{
-    BackoffSchedule, CollectLoopState, MonitorStatus, BACKOFF_CAP, DEFAULT_BACKOFF_BASE,
-    DEFAULT_COLLECT_TIMEOUT, DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_MONITORING_INTERVAL_MS,
+    BackoffSchedule, CollectLoopState, MonitorStatus, DEFAULT_COLLECT_TIMEOUT,
+    DEFAULT_MONITORING_INTERVAL_MS,
 };
 
 use crate::io::transport::NotificationSender;
@@ -172,11 +172,8 @@ impl MonitoringManager {
         let host_label = host.to_string();
         let tx = self.notification_tx.clone();
 
-        let reconnect_backoff = BackoffSchedule::new(
-            DEFAULT_BACKOFF_BASE,
-            BACKOFF_CAP,
-            DEFAULT_MAX_RECONNECT_ATTEMPTS,
-        );
+        // The shared reconnect policy (SM-020, #3730), jittered.
+        let reconnect_backoff = BackoffSchedule::default();
 
         let join_handle = tokio::spawn(monitoring_task(
             host_label.clone(),
