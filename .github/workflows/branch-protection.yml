@@ -1,0 +1,67 @@
+name: Branch Protection Drift
+
+# Branch protection as code (audit finding CI-017, #3675). Compares the live
+# protection of main and develop with .github/branch-protection.json and FAILS
+# when an "enforced" branch drifts (a required check dropped, force pushes
+# allowed, admin enforcement relaxed, ...). A "proposed" branch is reported
+# only. See docs/contributing.md -> "Required checks per branch".
+#
+# Token: reading branch protection needs repository ADMIN read, which
+# GITHUB_TOKEN cannot be granted (there is no `administration` permission for
+# it). Store a fine-grained PAT scoped to this repository with
+# "Administration: Read-only" (nothing else) as the BRANCH_PROTECTION_TOKEN
+# secret. Without it the check SKIPS with a notice instead of failing; with a
+# broken one it fails. The check only reads: applying protection is done by an
+# admin with scripts/internal/apply-branch-protection.sh, never by CI.
+
+on:
+  schedule:
+    # Mondays 06:17 UTC (off the hour to dodge scheduler congestion).
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: branch-protection-drift
+  cancel-in-progress: true
+
+# Least privilege (CI-010): checkout only. The protection read uses the
+# dedicated secret, not this token.
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: Branch Protection Drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      # A scheduled run starts on the default branch (main); the expectation
+      # that is kept current lives on develop, so read that one.
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+
+      # Dependency-free script: no pnpm install needed. GH_TOKEN/GITHUB_TOKEN
+      # are deliberately NOT passed: only the admin-read secret is used, so a
+      # missing secret is an explicit skip rather than a confusing 403.
+      - name: Compare live protection with .github/branch-protection.json
+        env:
+          BRANCH_PROTECTION_TOKEN: ${{ secrets.BRANCH_PROTECTION_TOKEN }}
+        run: |
+          if [ -z "$BRANCH_PROTECTION_TOKEN" ]; then
+            msg="BRANCH_PROTECTION_TOKEN is not set; skipping the drift check."
+            msg="$msg Add a fine-grained PAT with Administration: Read-only on this repo."
+            echo "::notice title=Branch protection check skipped::$msg"
+            printf '## Branch protection drift\n\nSkipped: %s\n' "$msg" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          node scripts/internal/check-branch-protection.mjs \
+            --repo "$GITHUB_REPOSITORY" --summary "$GITHUB_STEP_SUMMARY"
