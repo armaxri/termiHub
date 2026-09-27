@@ -6,7 +6,7 @@
 //! `Arc<Mutex<HandlerState>>`; the shutdown signal is conveyed through
 //! `Arc<AtomicBool>` so the transport can stop after `agent.shutdown`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -2700,7 +2700,7 @@ fn detect_available_shells() -> Vec<String> {
 fn detect_available_shells() -> Vec<String> {
     SHELL_CANDIDATES
         .iter()
-        .filter(|p| Path::new(p).exists())
+        .filter(|p| std::path::Path::new(p).exists())
         .map(|p| p.to_string())
         .collect()
 }
@@ -2889,6 +2889,7 @@ mod tests {
     use super::*;
     use crate::session::manager::SessionManager;
     use serde_json::json;
+    use std::path::Path;
 
     // ── to_result_value helper tests (WA-RS-007) ───────────────────
 
