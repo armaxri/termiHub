@@ -64,6 +64,53 @@ the app's own `listen` subscriptions and store-folding hooks still run. See
 [Injecting backend events](test-bridge.md#injecting-backend-events-emitevent)
 for the gating and payload rules.
 
+#### Harness deadlines and timing policy (#3660)
+
+Every harness deadline is a **named, per-operation** value in
+[`tests/system/termihub_harness/deadlines.py`](../tests/system/termihub_harness/deadlines.py),
+sized from timings observed in CI. There is **no global timeout multiplier**: the
+old `TERMIHUB_WAIT_SCALE=2` that the macOS/Windows nightly legs set (#2690)
+doubled every budget, which hid genuinely slow operations and made a real hang
+take twice as long to fail (audit finding WA-CI-006, tracked together with
+WA-CI-005).
+
+| Deadline              | Value              | Applies to                                                                            |
+| --------------------- | ------------------ | ------------------------------------------------------------------------------------- |
+| `APP_CONNECT`         | 60 s               | `Bridge.wait_for_app`: a launched app's bridge client dialling in                     |
+| `COMMAND`             | 10 s               | one bridge command round trip (`Driver` default)                                      |
+| `LIVE_COMMAND`        | 60 s               | commands of the live-connect / SFTP suites (#2460)                                    |
+| `UI_WAIT`             | 20 s               | default `SystemTest.wait` poll budget (call sites pass their own)                     |
+| `DIAGNOSTIC_PROBE`    | 60 s               | failure-artifact probes, which must outlive `LIVE_COMMAND`                            |
+| `CONTENDED_UI_FACTOR` | 2× (slow category) | commands and UI poll loops on a macOS/Windows process that is one of >1 xdist workers |
+
+- **Headroom rule.** A deadline is at least `HEADROOM` (2) × the largest duration
+  observed for that operation in CI, rounded up to 5 s, and never below its
+  serial-tuned base. Never size one from a single fast run.
+- **Slow categories must be earned by data.** The only one is the
+  contended-webview category above: on the 2-worker macOS/Windows bulk legs, UI
+  waits and commands hit their deadline 5.8 (macOS) / 12.6 (Windows) times per
+  job at 1× but 0.7 / 1.8 at 2×. Serial runs — Linux, the display-critical
+  grades, local — get no factor: their 1× failures were real bugs. The harness
+  detects the category itself (`sys.platform` + `PYTEST_XDIST_WORKER_COUNT`), so
+  no workflow sets anything. `APP_CONNECT` has no slow category: the slowest
+  passing class setup was 28.3 s (Linux), within 2 s of the old 30 s budget.
+- **Timing lines.** The harness records every app-connect, bridge command
+  (`command:<action>`) and `wait` (`wait:<what>`, dynamic parts collapsed) and,
+  in CI (or locally with `TERMIHUB_TEST_TIMING=1`), prints one
+  `[termihub-test-timing] {json}` line per operation at session end
+  (`n`/`p50`/`p95`/`max`/`deadline`/`timeouts`; xdist workers are merged).
+- **Resizing.** Summarise recent runs and resize from the p95/max columns:
+
+  ```bash
+  python scripts/system-test-timing.py --runs 10            # successful jobs only
+  python scripts/system-test-timing.py --runs 30 --all-jobs # + deadline hits in failed jobs
+  ```
+
+- **Local debugging override.** `TERMIHUB_WAIT_SCALE` still multiplies every
+  budget when running locally — `0.5` makes a suspected hang fail fast, `3` gives
+  a slow VM slack. It is **ignored in CI** (`GITHUB_ACTIONS=true`, with a
+  warning), so no lane can reintroduce a global multiplier.
+
 #### Display-backed runner (frontend-dependent live E2E, macOS)
 
 Some live suites drive a **frontend** flow that only advances while the app's JS
