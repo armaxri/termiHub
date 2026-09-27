@@ -101,16 +101,6 @@ pub trait SessionManagerApi: Send + Sync + 'static {
     /// Close a session; returns `true` if found and removed.
     async fn close(&self, session_id: &str) -> bool;
 
-    /// Close all sessions (called during agent shutdown).
-    // Called on the concrete type in io/tcp.rs and io/stdio.rs; not yet via trait.
-    #[allow(dead_code)]
-    async fn close_all(&self);
-
-    /// Detach all sessions without closing them.
-    // Called on the concrete type in io/tcp.rs; not yet via trait.
-    #[allow(dead_code)]
-    async fn detach_all(&self);
-
     /// Return the number of sessions with status `Running`.
     async fn active_count(&self) -> u32;
 
@@ -808,7 +798,6 @@ impl SessionManager {
             title: title.clone(),
             type_id: type_id.to_string(),
             status: SessionStatus::Running,
-            settings: settings.clone(),
             created_at: now,
             last_activity: now,
             attached: false,
@@ -1467,7 +1456,6 @@ impl SessionManager {
             title: persisted.title.clone(),
             type_id: persisted.type_id.clone(),
             status: SessionStatus::Running,
-            settings: persisted.settings.clone(),
             created_at,
             last_activity: Utc::now(),
             attached: true,
@@ -2058,14 +2046,6 @@ impl SessionManagerApi for SessionManager {
 
     async fn close(&self, session_id: &str) -> bool {
         SessionManager::close(self, session_id).await
-    }
-
-    async fn close_all(&self) {
-        SessionManager::close_all(self).await
-    }
-
-    async fn detach_all(&self) {
-        SessionManager::detach_all(self).await
     }
 
     async fn active_count(&self) -> u32 {
@@ -3062,7 +3042,6 @@ mod tests {
                 title,
                 type_id: type_id.to_string(),
                 status: SessionStatus::Running,
-                settings: serde_json::json!({}),
                 created_at: now,
                 last_activity: now,
                 attached: false,

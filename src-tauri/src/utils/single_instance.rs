@@ -38,9 +38,12 @@ use super::portable::AppMode;
 /// directly by unit tests across both build flavors.
 ///
 /// Only the release registration path and the (debug) unit tests call this, so a
-/// plain non-test debug build sees it as dead — allowed there, genuinely used in
+/// plain non-test debug build sees it as dead — expected there, genuinely used in
 /// release.
-#[cfg_attr(debug_assertions, allow(dead_code))]
+#[cfg_attr(
+    all(debug_assertions, not(test)),
+    expect(dead_code, reason = "only release builds and the unit tests call it")
+)]
 pub fn should_enforce_single_instance(mode: &AppMode, is_debug: bool) -> bool {
     !is_debug && !mode.is_portable()
 }

@@ -190,10 +190,22 @@ pub struct AgentHandler {
     ki_binding: Arc<KiBinding>,
     /// Shared with [`HandlerState`] so tests can read a hosted server's bound
     /// address (a server started on port `0`, #3533) without an RPC for it.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "read only by tests; production reads it via HandlerState"
+        )
+    )]
     service_registry: Arc<AgentServiceRegistry>,
     /// Shared with [`HandlerState::crash_dir`]; see [`with_crash_dir`](Self::with_crash_dir).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "read only by tests; production reads it via HandlerState"
+        )
+    )]
     crash_dir: Arc<OnceLock<PathBuf>>,
 }
 
@@ -319,7 +331,7 @@ impl AgentHandler {
     /// In `--stdio` mode there is one [`AgentHandler`] per process, so this is
     /// the process-wide view; in `--listen` mode each connection has its own
     /// handler and registry.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn client_registry(&self) -> Arc<ConnectionRegistry> {
         self.client_registry.clone()
     }
@@ -385,7 +397,7 @@ impl AgentHandler {
     }
 
     /// Whether `agent.shutdown` has been invoked.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn is_shutdown(&self) -> bool {
         self.shutdown_flag.load(Ordering::Acquire)
     }
@@ -5800,12 +5812,6 @@ mod tests {
             sessions.retain(|s| s.id != session_id);
             sessions.len() < before
         }
-
-        async fn close_all(&self) {
-            self.sessions.lock().await.clear();
-        }
-
-        async fn detach_all(&self) {}
 
         async fn active_count(&self) -> u32 {
             self.sessions.lock().await.len() as u32

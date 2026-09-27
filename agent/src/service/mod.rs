@@ -194,7 +194,7 @@ impl AgentServiceRegistry {
     /// when it is not hosted or cannot report it. Lets a test start a server on
     /// port `0` and learn the OS-assigned port, instead of reserving one by
     /// binding and dropping it first (#3533).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub async fn local_addr(&self, instance_id: &str) -> Option<std::net::SocketAddr> {
         let running = self.running.lock().await;
         running
@@ -203,7 +203,7 @@ impl AgentServiceRegistry {
     }
 
     /// Number of currently-hosted instances.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub async fn active_count(&self) -> usize {
         self.running.lock().await.len()
     }

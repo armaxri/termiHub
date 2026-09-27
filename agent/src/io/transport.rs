@@ -31,7 +31,7 @@ pub type NotificationSender = tokio::sync::mpsc::UnboundedSender<JsonRpcNotifica
 ///
 /// Equivalent to [`run_transport_loop_with_priority`] with no priority
 /// channel.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub async fn run_transport_loop<R, W>(
     reader: &mut R,
     writer: &mut W,

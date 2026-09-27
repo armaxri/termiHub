@@ -184,9 +184,11 @@ fn decide_bind_outcome(signal: Result<BindResult, RecvTimeoutError>) -> BindOutc
 /// A running server instance.
 struct ActiveServer {
     shutdown: ShutdownSignal,
-    // allow(dead_code): retained to own the spawned server thread's handle for the
-    // ActiveServer's lifetime; the thread is stopped via `shutdown`, never joined.
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "owns the server thread's handle for the ActiveServer's lifetime; \
+                  the thread is stopped via `shutdown`, never joined"
+    )]
     thread_handle: thread::JoinHandle<()>,
     stats: Arc<AtomicServerStats>,
     started_at: String,
