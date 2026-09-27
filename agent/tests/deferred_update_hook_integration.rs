@@ -148,6 +148,8 @@ impl LiveAgent {
         cmd.arg("--listen")
             .arg("127.0.0.1:0")
             .env("XDG_CONFIG_HOME", config_home.path())
+            // Keep off the developer's live registry; bound leaked daemons (#3636).
+            .envs(common::isolated_registry_env(config_home.path()))
             // Pin the log level the port is parsed from, so a developer with
             // RUST_LOG exported cannot silence it.
             .env("RUST_LOG", "info")
