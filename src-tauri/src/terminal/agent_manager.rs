@@ -33,7 +33,8 @@ use termihub_core::protocol::methods::{
     ClientCapabilities, MonitoringStatusNotification, UpdateAuthToken,
 };
 use termihub_core::reconnect_backoff::{
-    reconnect_reducer, BackoffConfig, ReconnectEvent, ReconnectPhase, INITIAL_RECONNECT_STATE,
+    policy_for, reconnect_reducer, system_jitter, BackoffConfig, ReconnectEvent, ReconnectKind,
+    ReconnectPhase, INITIAL_RECONNECT_STATE,
 };
 use zeroize::Zeroizing;
 
@@ -364,7 +365,7 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     /// Read the connected agent instance's update auth token (AGT-003, #3213),
     /// to send as `authToken` on `agent.request_update` /
     /// `agent.request_deferred_update`. `None` when the agent advertised no
-    /// token file (it predates protocol 0.12.0 and needs none) or it could not
+    /// token file (it predates protocol 0.13.0 and needs none) or it could not
     /// be read — the agent then refuses the update. Default `None` so mock
     /// clients need not implement it. Call from a blocking context.
     fn update_auth_token(&self, _agent_id: &str) -> Option<UpdateAuthToken> {
@@ -981,7 +982,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
                             .unwrap_or_default()
                             .to_string();
                         // AGT-003 (#3213): where this instance's update auth token
-                        // lives (protocol 0.12.0+; absent on older agents).
+                        // lives (protocol 0.13.0+; absent on older agents).
                         let update_auth_token_path = token_path_from_initialize(&result);
                         // Copy agent_version into capabilities so the UI can read it.
                         capabilities.agent_version = agent_version.clone();
@@ -3881,23 +3882,12 @@ async fn cancel_connect_when_disconnected(alive: Arc<AtomicBool>, token: Cancell
     token.cancel();
 }
 
-/// Agent reconnect backoff as a canonical [`BackoffConfig`] (SM-020 slice 3).
-///
-/// The agent's long-standing schedule — a 1 s first retry, doubling up to a 30 s
-/// ceiling, 10 attempts — now driven through the shared [`reconnect_reducer`]
-/// engine instead of a hand-rolled capped-exponential. `jitter_ratio: 0.0` keeps
-/// the schedule deterministic and byte-identical (1, 2, 4, 8, 16, 30, 30, 30,
-/// 30, 30 s) to what it replaced; the agent-reconnect golden-vector test pins
-/// that equivalence. These numbers equal the workspace `DEFAULT_BACKOFF` in every
-/// field except `jitter_ratio` (which `DEFAULT_BACKOFF` sets to `0.2`), so the
-/// agent path spells its jitterless config out explicitly rather than reusing it.
-const AGENT_BACKOFF: BackoffConfig = BackoffConfig {
-    base_delay_ms: 1_000.0,
-    factor: 2.0,
-    max_delay_ms: 30_000.0,
-    max_attempts: 10,
-    jitter_ratio: 0.0,
-};
+/// The agent transport's in-task reconnect policy — the shared
+/// `RECONNECT_POLICY` (SM-020, #3730): a 1 s first retry doubling to a 30 s
+/// ceiling, 10 attempts, with bounded jitter so a fleet of agents dropped by
+/// the same outage does not re-dial their hosts in lockstep. Driven through the
+/// shared [`reconnect_reducer`] engine.
+pub(crate) const AGENT_RECONNECT_POLICY: BackoffConfig = policy_for(ReconnectKind::AgentTransport);
 
 /// Attempt to reconnect to an agent with exponential backoff.
 ///
@@ -3920,20 +3910,18 @@ async fn reconnect_agent(
     ),
     String,
 > {
-    // SM-020 slice 3: the reconnect delay, attempt count, and give-up decision
-    // are driven through the canonical reconnect engine ([`reconnect_backoff`])
-    // rather than a hand-rolled capped-exponential. Jitter is disabled
-    // ([`AGENT_BACKOFF`]), so the RNG is never consulted and the schedule stays
-    // deterministic and byte-identical to what it replaced. The separate bounded
-    // `connection.list` re-probe budget and the `fold_agent_session_*` paths are
-    // unchanged.
-    let mut no_jitter = || 0.0;
+    // SM-020: the reconnect delay, attempt count, and give-up decision are driven
+    // through the canonical reconnect engine ([`reconnect_backoff`]) on the
+    // shared policy ([`AGENT_RECONNECT_POLICY`], #3730), with production jitter.
+    // The separate bounded `connection.list` re-probe budget and the
+    // `fold_agent_session_*` paths are unchanged.
+    let mut jitter = system_jitter;
     // A fresh drop arms the first backoff window.
     let mut state = reconnect_reducer(
         &INITIAL_RECONNECT_STATE,
         ReconnectEvent::Drop,
-        &AGENT_BACKOFF,
-        &mut no_jitter,
+        &AGENT_RECONNECT_POLICY,
+        &mut jitter,
     );
 
     while state.phase == ReconnectPhase::Waiting {
@@ -3943,8 +3931,8 @@ async fn reconnect_agent(
         state = reconnect_reducer(
             &state,
             ReconnectEvent::Attempt,
-            &AGENT_BACKOFF,
-            &mut no_jitter,
+            &AGENT_RECONNECT_POLICY,
+            &mut jitter,
         );
         // 0-based attempt index, preserved for the existing `attempt + 1` logs.
         let attempt = state.attempt - 1;
@@ -3995,8 +3983,8 @@ async fn reconnect_agent(
                 state = reconnect_reducer(
                     &state,
                     ReconnectEvent::Failure,
-                    &AGENT_BACKOFF,
-                    &mut no_jitter,
+                    &AGENT_RECONNECT_POLICY,
+                    &mut jitter,
                 );
                 continue;
             }
@@ -4010,8 +3998,8 @@ async fn reconnect_agent(
                 state = reconnect_reducer(
                     &state,
                     ReconnectEvent::Failure,
-                    &AGENT_BACKOFF,
-                    &mut no_jitter,
+                    &AGENT_RECONNECT_POLICY,
+                    &mut jitter,
                 );
                 continue;
             }
@@ -4022,8 +4010,8 @@ async fn reconnect_agent(
             state = reconnect_reducer(
                 &state,
                 ReconnectEvent::Failure,
-                &AGENT_BACKOFF,
-                &mut no_jitter,
+                &AGENT_RECONNECT_POLICY,
+                &mut jitter,
             );
             continue;
         }
@@ -4052,8 +4040,8 @@ async fn reconnect_agent(
                 state = reconnect_reducer(
                     &state,
                     ReconnectEvent::Failure,
-                    &AGENT_BACKOFF,
-                    &mut no_jitter,
+                    &AGENT_RECONNECT_POLICY,
+                    &mut jitter,
                 );
                 continue;
             }
@@ -4068,8 +4056,8 @@ async fn reconnect_agent(
             state = reconnect_reducer(
                 &state,
                 ReconnectEvent::Failure,
-                &AGENT_BACKOFF,
-                &mut no_jitter,
+                &AGENT_RECONNECT_POLICY,
+                &mut jitter,
             );
             continue;
         }
@@ -4163,14 +4151,14 @@ async fn reconnect_agent(
         state = reconnect_reducer(
             &state,
             ReconnectEvent::Failure,
-            &AGENT_BACKOFF,
-            &mut no_jitter,
+            &AGENT_RECONNECT_POLICY,
+            &mut jitter,
         );
     }
 
     Err(format!(
         "Failed to reconnect after {} attempts",
-        AGENT_BACKOFF.max_attempts
+        AGENT_RECONNECT_POLICY.max_attempts
     ))
 }
 

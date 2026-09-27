@@ -2,8 +2,8 @@
 //!
 //! A `ManualScheduler` records armed delays and fires on command, so a full
 //! reconnect sequence runs synchronously with exact delays (the store's jitter
-//! source is pinned to 0.5 → zero swing, so attempt N's delay is its uncapped
-//! base: 1000, 2000, 4000, … ms). No wall-clock, no `tokio`, no flake.
+//! source is pinned to 0.0 → no shortening, so attempt N's delay is its nominal
+//! value: 1000, 2000, 4000, … ms). No wall-clock, no `tokio`, no flake.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -69,7 +69,7 @@ type Harness = (
 /// both drive intents and inspect the timer.
 fn harness() -> Harness {
     let store = Arc::new(SessionLifecycleStore::new());
-    store.set_rand_for_test(Box::new(|| 0.5));
+    store.set_rand_for_test(Box::new(|| 0.0));
     let projector = Arc::new(Projector::new());
     projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
     let scheduler = Arc::new(ManualScheduler::new());
@@ -236,7 +236,7 @@ fn harness_with_redrive() -> (
     Arc<RecordingRedrive>,
 ) {
     let store = Arc::new(SessionLifecycleStore::new());
-    store.set_rand_for_test(Box::new(|| 0.5));
+    store.set_rand_for_test(Box::new(|| 0.0));
     let projector = Arc::new(Projector::new());
     projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
     let scheduler = Arc::new(ManualScheduler::new());
@@ -437,7 +437,7 @@ fn cancelling_a_pending_timer_from_a_non_runtime_thread_stops_it() {
 #[test]
 fn driver_sync_with_the_production_scheduler_arms_off_runtime_without_panicking() {
     let store = Arc::new(SessionLifecycleStore::new());
-    store.set_rand_for_test(Box::new(|| 0.5));
+    store.set_rand_for_test(Box::new(|| 0.0));
     let scheduler = Arc::new(TokioReconnectScheduler::new());
     let driver = Arc::new(ReconnectTimerDriver::new(
         store.clone(),

@@ -1297,7 +1297,7 @@ mod tests {
     #[test]
     fn coordinated_push_without_a_token_omits_it() {
         // An older agent advertises no token file: the request goes out without
-        // one (and a 0.12.0+ agent would refuse it — fail closed there).
+        // one (and a 0.13.0+ agent would refuse it — fail closed there).
         let params = coordinated_push_params(
             "/tmp/x".to_string(),
             "0.4.0".to_string(),

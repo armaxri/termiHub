@@ -72,6 +72,12 @@ Operational notes for that PR:
   piling up new ones. That force-update touches only this bot-owned branch —
   never a human branch, `develop`, or `main`.
 
+- **A pre-release bump reds the tripwire.** If `cargo update` moves a pre-release
+  crate (e.g. `rsa 0.10.0-rc.18` → `rc.19`), Rust Code Quality fails at "Check
+  pre-release crates are reviewed" (`scripts/internal/check-prerelease-crates.mjs`,
+  SUP-002). That is intended: review the bump, then update the exact version in
+  `.github/prerelease-allowlist.json` on the same PR.
+
 ## Fast manual fix (when a yank or advisory slips through between runs)
 
 When a yank or a fresh advisory reds the PRs before the daily chore catches it,

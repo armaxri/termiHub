@@ -112,14 +112,6 @@ pub const AGENT_FORWARD_OPEN: &str = "agent.forward.open";
 pub const AGENT_FORWARD_DATA: &str = "agent.forward.data";
 pub const AGENT_FORWARD_CLOSE: &str = "agent.forward.close";
 
-// Network diagnostics.
-pub const NETWORK_PORT_SCAN: &str = "network.port_scan";
-pub const NETWORK_PING: &str = "network.ping";
-pub const NETWORK_DNS_LOOKUP: &str = "network.dns_lookup";
-pub const NETWORK_OPEN_PORTS: &str = "network.open_ports";
-pub const NETWORK_TRACEROUTE: &str = "network.traceroute";
-pub const NETWORK_WOL: &str = "network.wol";
-
 // Agent-hosted tunnel forwarding (#2185).
 pub const TUNNEL_START: &str = "tunnel.start";
 pub const TUNNEL_STOP: &str = "tunnel.stop";
@@ -370,8 +362,8 @@ pub struct InitializeResult {
     /// update auth token file (AGT-003, #3213). The desktop reads the token from
     /// it out of band — over its SSH session, so only a peer able to read the
     /// agent owner's files can obtain it — and sends it as `authToken` on the
-    /// update RPCs. Absent from agents older than protocol 0.12.0, which do not
-    /// require the token. Added in protocol 0.12.0.
+    /// update RPCs. Absent from agents older than protocol 0.13.0, which do not
+    /// require the token. Added in protocol 0.13.0.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update_auth_token_path: Option<String>,
 }
@@ -1194,97 +1186,6 @@ pub struct UpdatePendingNotification {
     /// How long the agent expects to be unavailable, for the notice's restart
     /// progress. An estimate, not a guarantee.
     pub estimated_restart_secs: u64,
-}
-
-// ── network.port_scan ───────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkPortScanParams {
-    /// Target spec as typed: one host, an IP, a CIDR range, or a comma list.
-    pub host: String,
-    /// The desktop's already-expanded target list (#3385). Optional and omitted
-    /// when absent, so the wire stays compatible both ways: an older agent
-    /// ignores it (and scans `host`), a newer agent falls back to expanding
-    /// `host` when an older desktop does not send it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub targets: Option<Vec<String>>,
-    /// Port specification: "22", "80,443", "1-1024"
-    pub ports: String,
-    pub timeout_ms: Option<u64>,
-    pub concurrency: Option<usize>,
-}
-
-pub use crate::network::types::{
-    OpenPort, PingResult, PingStats, PortScanResult, PortScanSummary, TracerouteHop,
-};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkPortScanResponse {
-    pub results: Vec<PortScanResult>,
-    pub summary: PortScanSummary,
-}
-
-// ── network.ping ────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkPingParams {
-    pub host: String,
-    pub count: Option<u32>,
-    pub interval_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkPingResponse {
-    pub results: Vec<PingResult>,
-    pub stats: PingStats,
-}
-
-// ── network.dns_lookup ──────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkDnsLookupParams {
-    pub hostname: String,
-    pub record_type: String,
-    pub server: Option<String>,
-}
-
-// ── network.open_ports ──────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize)]
-pub struct NetworkOpenPortsResponse {
-    pub ports: Vec<OpenPort>,
-}
-
-// ── network.traceroute ──────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkTracerouteParams {
-    pub host: String,
-    pub max_hops: Option<u8>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkTracerouteResponse {
-    pub hops: Vec<TracerouteHop>,
-}
-
-// ── network.wol ─────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkWolParams {
-    pub mac: String,
-    #[serde(default = "default_broadcast")]
-    pub broadcast: String,
-    #[serde(default = "default_wol_port")]
-    pub port: u16,
-}
-
-fn default_broadcast() -> String {
-    crate::network::defaults::WOL_BROADCAST.to_string()
-}
-
-fn default_wol_port() -> u16 {
-    crate::network::defaults::WOL_PORT
 }
 
 // ── monitoring.subscribe ────────────────────────────────────────────
@@ -3328,12 +3229,6 @@ mod tests {
         assert_eq!(AGENT_FORWARD_OPEN, "agent.forward.open");
         assert_eq!(AGENT_FORWARD_DATA, "agent.forward.data");
         assert_eq!(AGENT_FORWARD_CLOSE, "agent.forward.close");
-        assert_eq!(NETWORK_PORT_SCAN, "network.port_scan");
-        assert_eq!(NETWORK_PING, "network.ping");
-        assert_eq!(NETWORK_DNS_LOOKUP, "network.dns_lookup");
-        assert_eq!(NETWORK_OPEN_PORTS, "network.open_ports");
-        assert_eq!(NETWORK_TRACEROUTE, "network.traceroute");
-        assert_eq!(NETWORK_WOL, "network.wol");
         assert_eq!(TUNNEL_START, "tunnel.start");
         assert_eq!(TUNNEL_STOP, "tunnel.stop");
         assert_eq!(TUNNEL_STATUS, "tunnel.status");

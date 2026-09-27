@@ -28,7 +28,6 @@ use crate::io::transport::NotificationSender;
 use crate::io::update_auth::{carries_update_auth_token, UpdateAuth};
 use crate::ki_prompt::{is_secret_bearing_request, KiBinding, KiPromptHub};
 use crate::monitoring::MonitoringManagerApi;
-use crate::network;
 use crate::network::streaming::{RunLimits, StartError, ToolRunManager};
 use crate::protocol::errors;
 use crate::protocol::methods::{
@@ -44,17 +43,16 @@ use crate::protocol::methods::{
     FilesReadResult, FilesRenameParams, FilesSetOwnerParams, FilesSetPermissionsParams,
     FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams, FolderUpdateParams,
     HealthCheckResult, HostSessionEntry, HostSessionListResult, InitializeParams, InitializeResult,
-    MonitoringSubscribeParams, MonitoringUnsubscribeParams, NetworkDnsLookupParams,
-    NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams, NetworkWolParams,
-    ProcessKillParams, ProcessesListParams, ProcessesListResult, ServicePauseParams,
-    ServicePauseResult, ServiceResumeParams, ServiceResumeResult, ServiceStartParams,
-    ServiceStartResult, ServiceStatusParams, ServiceStatusResult, ServiceStopParams,
-    ServiceStopResult, SessionAttachParams, SessionCloseParams, SessionCreateParams,
-    SessionCreateResult, SessionDetachParams, SessionGetBufferParams, SessionGetBufferResult,
-    SessionInputParams, SessionListEntry, SessionListResult, SessionResizeParams, ToolCancelParams,
-    ToolCancelResult, ToolStartParams, ToolStartResult, TunnelForwardSpec, TunnelStartParams,
-    TunnelStartResult, TunnelStatusParams, TunnelStatusResult, TunnelStopParams, TunnelStopResult,
-    UpdateAuthToken, UpdatePendingNotification, AGENT_UPDATE_PENDING,
+    MonitoringSubscribeParams, MonitoringUnsubscribeParams, ProcessKillParams, ProcessesListParams,
+    ProcessesListResult, ServicePauseParams, ServicePauseResult, ServiceResumeParams,
+    ServiceResumeResult, ServiceStartParams, ServiceStartResult, ServiceStatusParams,
+    ServiceStatusResult, ServiceStopParams, ServiceStopResult, SessionAttachParams,
+    SessionCloseParams, SessionCreateParams, SessionCreateResult, SessionDetachParams,
+    SessionGetBufferParams, SessionGetBufferResult, SessionInputParams, SessionListEntry,
+    SessionListResult, SessionResizeParams, ToolCancelParams, ToolCancelResult, ToolStartParams,
+    ToolStartResult, TunnelForwardSpec, TunnelStartParams, TunnelStartResult, TunnelStatusParams,
+    TunnelStatusResult, TunnelStopParams, TunnelStopResult, UpdateAuthToken,
+    UpdatePendingNotification, AGENT_UPDATE_PENDING,
 };
 use termihub_core::protocol::methods::{KbdInteractiveRespondParams, KbdInteractiveRespondResult};
 // Shared method-name constants (DUP-002); referenced as `pm::CONNECTION_CREATE`
@@ -99,11 +97,16 @@ use termihub_core::monitoring::{LocalProcessManager, ProcessError, ProcessManage
 /// Bumped to 0.11.0 for the additive `embedded_server.activity` /
 /// `embedded_server.clear_activity` methods and the `embeddedServerActivity`
 /// capability (#3453).
-/// Bumped to 0.12.0 because the update RPCs now **require** the per-instance
+/// Bumped to 0.12.0 for the **removal** of the dedicated `network.*` methods
+/// (#3731): every network tool now runs through `tool.*`. Pre-1.0, a minor bump
+/// may remove methods (as 0.2.0 did); the desktop gates network tools on the
+/// `toolStreaming` capability (0.9.0+), so an older agent gets a clear
+/// "update the agent" message rather than a missing-method failure.
+/// Bumped to 0.13.0 because the update RPCs now **require** the per-instance
 /// `authToken` (AGT-003) and honour a matched-downgrade `pinnedVersion`
 /// (SEC-006), and `initialize` advertises `update_auth_token_path` (#3213). An
 /// older desktop that does not send the token can no longer update this agent.
-const AGENT_PROTOCOL_VERSION: &str = "0.12.0";
+const AGENT_PROTOCOL_VERSION: &str = "0.13.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -137,8 +140,8 @@ struct HandlerState {
     shutdown_flag: Arc<AtomicBool>,
     /// Registry of one-shot / streaming tools this agent can host (#2148).
     /// Populated with the built-in network diagnostics; the `tool.*` methods
-    /// dispatch through it, mirroring how `network.*` calls the same core
-    /// functions directly.
+    /// dispatch through it — the agent's only network-tool entry point (the
+    /// dedicated `network.*` methods were retired in protocol 0.12.0, #3731).
     tool_registry: Arc<ToolRegistry>,
     /// Registry of long-lived services this agent can host (#2148), plus the live
     /// instances currently hosted. Populated with the embedded HTTP/FTP/TFTP
@@ -663,12 +666,6 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_monitoring_unsubscribe(module)?;
     register_processes_list(module)?;
     register_processes_kill(module)?;
-    register_network_port_scan(module)?;
-    register_network_ping(module)?;
-    register_network_dns_lookup(module)?;
-    register_network_open_ports(module)?;
-    register_network_traceroute(module)?;
-    register_network_wol(module)?;
     register_tunnel_start(module)?;
     register_tunnel_stop(module)?;
     register_tunnel_status(module)?;
@@ -1826,106 +1823,12 @@ fn register_monitoring_unsubscribe(
     Ok(())
 }
 
-// ── network.* ─────────────────────────────────────────────────────
-
-fn register_network_port_scan(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method(pm::NETWORK_PORT_SCAN, |params, ctx, _ext| async move {
-        check_initialized(&ctx).await?;
-
-        let p: NetworkPortScanParams = params
-            .parse()
-            .map_err(|e| invalid_params("network.port_scan", e))?;
-
-        network::handle_port_scan(p)
-            .await
-            .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
-            .and_then(|r| to_result_value(&r))
-    })?;
-    Ok(())
-}
-
-fn register_network_ping(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method(pm::NETWORK_PING, |params, ctx, _ext| async move {
-        check_initialized(&ctx).await?;
-
-        let p: NetworkPingParams = params
-            .parse()
-            .map_err(|e| invalid_params("network.ping", e))?;
-
-        network::handle_ping(p)
-            .await
-            .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
-            .and_then(|r| to_result_value(&r))
-    })?;
-    Ok(())
-}
-
-fn register_network_dns_lookup(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method(pm::NETWORK_DNS_LOOKUP, |params, ctx, _ext| async move {
-        check_initialized(&ctx).await?;
-
-        let p: NetworkDnsLookupParams = params
-            .parse()
-            .map_err(|e| invalid_params("network.dns_lookup", e))?;
-
-        network::handle_dns_lookup(p)
-            .await
-            .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
-            .and_then(|r| to_result_value(&r))
-    })?;
-    Ok(())
-}
-
-fn register_network_open_ports(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method(pm::NETWORK_OPEN_PORTS, |_params, ctx, _ext| async move {
-        check_initialized(&ctx).await?;
-
-        network::handle_open_ports()
-            .await
-            .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
-            .and_then(|r| to_result_value(&r))
-    })?;
-    Ok(())
-}
-
-fn register_network_traceroute(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method(pm::NETWORK_TRACEROUTE, |params, ctx, _ext| async move {
-        check_initialized(&ctx).await?;
-
-        let p: NetworkTracerouteParams = params
-            .parse()
-            .map_err(|e| invalid_params("network.traceroute", e))?;
-
-        network::handle_traceroute(p)
-            .await
-            .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
-            .and_then(|r| to_result_value(&r))
-    })?;
-    Ok(())
-}
-
-fn register_network_wol(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method(pm::NETWORK_WOL, |params, ctx, _ext| async move {
-        check_initialized(&ctx).await?;
-
-        let p: NetworkWolParams = params
-            .parse()
-            .map_err(|e| invalid_params("network.wol", e))?;
-
-        network::handle_wol(p)
-            .await
-            .map(|()| json!({}))
-            .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
-    })?;
-    Ok(())
-}
-
 // ── tool.* / service.* ────────────────────────────────────────────
 //
 // The uniform Service/Tool substrate (#2148, part of #2139). `tool.*`
-// dispatches through the agent's ToolRegistry — the same core network
-// diagnostics `network.*` calls, now reachable behind the location-agnostic
-// trait. `service.*` exposes the (S1-empty) ServiceRegistry so the namespace
+// dispatches through the agent's ToolRegistry — the only way to run the
+// built-in network diagnostics on an agent since the dedicated `network.*`
+// methods were retired in protocol 0.12.0 (#3731). `service.*` exposes the (S1-empty) ServiceRegistry so the namespace
 // exists before S2 lifts concrete services onto the agent.
 
 fn register_tool_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
@@ -1948,10 +1851,8 @@ fn register_tool_run(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Res
             .to_string();
         let tool_params = p.get("params").cloned().unwrap_or_else(|| json!({}));
 
-        // Collect the streamed events into a single JSON-RPC response, the same
-        // way `network.*` collects its results (the NDJSON transport is
-        // request/response, not streaming). Real-time streaming to the desktop
-        // is a later phase.
+        // Collect the streamed events into a single JSON-RPC response (the
+        // one-shot counterpart of the streaming `tool.start`).
         let host = CollectingHost::new();
         let result = registry
             .run(
@@ -3473,10 +3374,10 @@ mod tests {
     /// `service.*` agent-hosted embedded servers, the `service.pause/resume`
     /// in-place monitor pause, the streaming `tool.start/cancel` runs, the
     /// SSH keyboard-interactive prompt relay, and the embedded-server access
-    /// log RPC) may now arrive.
+    /// log RPC) may now arrive — and, from 0.12.0, that `network.*` is gone.
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.12.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.13.0");
     }
 
     // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────
@@ -4770,75 +4671,96 @@ mod tests {
         assert!(SHELL_CANDIDATES.contains(&"/snap/bin/nu"));
     }
 
-    // ── network.* tests ────────────────────────────────────────────
+    // ── network.* retired (#3731) ──────────────────────────────────
 
+    /// The dedicated `network.*` methods were retired in protocol 0.12.0: every
+    /// network tool runs through `tool.*`. A caller that still sends one gets a
+    /// plain `-32601` — the method is gone, not merely uninitialized.
     #[tokio::test]
-    async fn network_dns_lookup_invalid_type_returns_error() {
+    async fn retired_network_methods_are_method_not_found() {
         let handler = make_handler();
         init_handler(&handler).await;
 
-        let result = dispatch(
-            &handler,
-            "network.dns_lookup",
-            json!({"hostname": "example.com", "record_type": "BOGUS"}),
-            2,
-        )
-        .await;
-        assert!(
-            result.get("error").is_some(),
-            "expected error for unknown record type"
-        );
-    }
-
-    #[tokio::test]
-    async fn network_port_scan_invalid_port_spec_returns_error() {
-        let handler = make_handler();
-        init_handler(&handler).await;
-
-        let result = dispatch(
-            &handler,
+        for method in [
             "network.port_scan",
-            json!({"host": "localhost", "ports": "not-a-port"}),
+            "network.ping",
+            "network.dns_lookup",
+            "network.open_ports",
+            "network.traceroute",
+            "network.wol",
+        ] {
+            let result = dispatch(&handler, method, json!({}), 2).await;
+            assert_eq!(
+                result["error"]["code"],
+                errors::METHOD_NOT_FOUND,
+                "{method} must be gone: {result}"
+            );
+        }
+    }
+
+    // ── network tools via tool.run (the replacement path, #3731) ───
+
+    #[tokio::test]
+    async fn tool_run_dns_invalid_type_returns_error() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let result = dispatch(
+            &handler,
+            "tool.run",
+            json!({
+                "toolId": "dns",
+                "params": { "hostname": "example.com", "recordType": "BOGUS" }
+            }),
             2,
         )
         .await;
         assert!(
             result.get("error").is_some(),
-            "expected error for invalid port spec"
+            "expected error for unknown record type: {result}"
         );
     }
 
     #[tokio::test]
-    async fn network_wol_invalid_mac_returns_error() {
+    async fn tool_run_port_scan_invalid_port_spec_returns_error() {
         let handler = make_handler();
         init_handler(&handler).await;
 
-        let result = dispatch(&handler, "network.wol", json!({"mac": "not-a-mac"}), 2).await;
+        let result = dispatch(
+            &handler,
+            "tool.run",
+            json!({
+                "toolId": "port_scan",
+                "params": { "host": "localhost", "ports": "not-a-port" }
+            }),
+            2,
+        )
+        .await;
         assert!(
             result.get("error").is_some(),
-            "expected error for invalid MAC"
+            "expected error for invalid port spec: {result}"
         );
     }
 
     #[tokio::test]
-    async fn network_open_ports_returns_result() {
+    async fn tool_run_wol_invalid_mac_returns_error() {
         let handler = make_handler();
         init_handler(&handler).await;
 
-        let result = dispatch(&handler, "network.open_ports", json!({}), 2).await;
+        let result = dispatch(
+            &handler,
+            "tool.run",
+            json!({
+                "toolId": "wol",
+                "params": { "mac": "not-a-mac", "broadcast": "255.255.255.255" }
+            }),
+            2,
+        )
+        .await;
         assert!(
-            result.get("result").is_some(),
-            "expected result for open_ports"
+            result.get("error").is_some(),
+            "expected error for invalid MAC: {result}"
         );
-        assert!(result["result"]["ports"].is_array());
-    }
-
-    #[tokio::test]
-    async fn network_methods_require_initialization() {
-        let handler = make_handler();
-
-        let result = dispatch(&handler, "network.open_ports", json!({}), 1).await;
-        assert_eq!(result["error"]["code"], errors::NOT_INITIALIZED);
     }
 
     // ── tool.* / service.* (#2148) ─────────────────────────────────
@@ -5065,14 +4987,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn network_open_ports_reply_is_wrapped_ports_array() {
-        // PROD-033: the desktop proxy parses `network.open_ports` as
-        // `{ports: [{protocol, localAddr, pid, process}]}`.
+    async fn tool_run_open_ports_reply_is_wrapped_ports_array() {
+        // The desktop reads `tool.run`'s `result` for open ports as
+        // `{ports: [{protocol, localAddr, pid, process}]}` (#3731).
         let handler = make_handler();
         init_handler(&handler).await;
 
-        let result = dispatch(&handler, "network.open_ports", json!({}), 2).await;
-        let ports = result["result"]["ports"].as_array().expect("ports array");
+        let result = dispatch(
+            &handler,
+            "tool.run",
+            json!({ "toolId": "open_ports", "params": {} }),
+            2,
+        )
+        .await;
+        let ports = result["result"]["result"]["ports"]
+            .as_array()
+            .unwrap_or_else(|| panic!("ports array: {result}"));
         for p in ports {
             assert!(p["protocol"] == "TCP" || p["protocol"] == "UDP", "{p}");
             assert!(p["localAddr"].is_string(), "{p}");

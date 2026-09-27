@@ -15,5 +15,5 @@
   passed off as a new one. Upgrades and same-version reinstalls are unchanged.
   The desktop's coordinated push pins its bundled agent to its own version, so
   putting back the agent that matches the desktop keeps working.
-- Agent protocol 0.12.0. A desktop older than this can still use a 0.12.0 agent
+- Agent protocol 0.13.0. A desktop older than this can still use a 0.13.0 agent
   for everything except updating it.

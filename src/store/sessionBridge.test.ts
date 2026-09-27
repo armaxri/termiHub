@@ -11,7 +11,7 @@ import type {
 } from "@/services/transport";
 import type { TerminalAutoReconnectState } from "@/types/terminal";
 import {
-  DEFAULT_BACKOFF,
+  RECONNECT_POLICY,
   initialReconnectState,
   nextReconnectDelay,
   reconnectReducer,
@@ -147,7 +147,7 @@ describe("dispatchSessionIntent", () => {
 });
 
 describe("projectedToAutoReconnect — cut-vs-local parity", () => {
-  const maxAttempts = DEFAULT_BACKOFF.maxAttempts;
+  const maxAttempts = RECONNECT_POLICY.maxAttempts;
 
   /** The exact `terminalAutoReconnect` record `appStore.driveAutoReconnect`
    * builds locally for a reducer result, so the mapping is asserted equal. */
@@ -189,20 +189,20 @@ describe("projectedToAutoReconnect — cut-vs-local parity", () => {
 
   it("reproduces the local record for waiting and connecting phases", () => {
     const now = 1_000_000;
-    const rand = () => 0.5; // zero jitter → exact delays
+    const rand = () => 0; // never shortens → exact, nominal delays
     // drop → waiting (attempt 0, delay for attempt 1)
-    const waiting = reconnectReducer(initialReconnectState, "drop", DEFAULT_BACKOFF, rand);
+    const waiting = reconnectReducer(initialReconnectState, "drop", RECONNECT_POLICY, rand);
     expect(projectedToAutoReconnect(projectedFrom(waiting), now, "tmux attach")).toEqual(
       localRecord(waiting, now, "tmux attach")
     );
     // attempt → connecting (attempt 1)
-    const connecting = reconnectReducer(waiting, "attempt", DEFAULT_BACKOFF, rand);
+    const connecting = reconnectReducer(waiting, "attempt", RECONNECT_POLICY, rand);
     expect(projectedToAutoReconnect(projectedFrom(connecting), now)).toEqual(
       localRecord(connecting, now)
     );
     // failure → waiting again (attempt 1, delay for attempt 2)
-    const waiting2 = reconnectReducer(connecting, "failure", DEFAULT_BACKOFF, rand);
-    expect(waiting2.delayMs).toBe(nextReconnectDelay(waiting2.attempt + 1, DEFAULT_BACKOFF, rand));
+    const waiting2 = reconnectReducer(connecting, "failure", RECONNECT_POLICY, rand);
+    expect(waiting2.delayMs).toBe(nextReconnectDelay(waiting2.attempt + 1, RECONNECT_POLICY, rand));
     expect(projectedToAutoReconnect(projectedFrom(waiting2), now)).toEqual(
       localRecord(waiting2, now)
     );
@@ -342,7 +342,7 @@ describe("effectiveAutoReconnect — purely region-sourced (#2205 PR-B)", () => 
     expect(record).toEqual({
       phase: "waiting",
       attempt: 2,
-      maxAttempts: DEFAULT_BACKOFF.maxAttempts,
+      maxAttempts: RECONNECT_POLICY.maxAttempts,
       delayMs: 4_000,
       nextAttemptAt: 1_004_000,
       onReconnectCommand: "tmux attach",

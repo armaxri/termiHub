@@ -59,6 +59,7 @@ import { BroadcastStatus } from "./BroadcastStatus";
 import { ScheduleStatus } from "./ScheduleStatus";
 import { PluginStatusBarWidgets } from "./PluginStatusBarWidgets";
 import { monitorOfflineLabel, monitorOfflineReasonText } from "@/utils/monitorStatusReason";
+import { isFrozenMonitorBadge, monitorStatusBadge } from "@/utils/reconnectStatus";
 import "./StatusBar.css";
 
 const INDENT_SIZES = [1, 2, 4, 8] as const;
@@ -807,17 +808,22 @@ function MonitoringStatus() {
   // Connected (or reconnecting with cached stats): show compact stats.
   // A "stale" status (mid-stream drop) dims the numbers and shows a warning
   // badge so frozen data is never rendered as live (#1229, audit gap G1).
-  const isStale = monitoringStatus === "stale";
-  const isOffline = monitoringStatus === "offline";
+  //
+  // Exactly one status badge shows at a time, by the shared precedence
+  // offline > reconnecting > stale > paused (#3730, `monitorStatusBadge`): a link
+  // problem always outranks a user pause.
+  const badge = monitorStatusBadge(monitoringStatus, monitoringPaused);
+  const isStale = badge === "stale";
+  const isOffline = badge === "offline";
   // A mid-stream drop that has entered the bounded reconnect campaign reports
   // "reconnecting" (SM-014). The last-known numbers are frozen while the
   // transport is re-dialled, so they get the same "not live" treatment as stale
   // — dimmed, with an explicit badge — rather than being shown as live.
-  const isReconnecting = monitoringStatus === "reconnecting";
+  const isReconnecting = badge === "reconnecting";
   // Paused dims the numbers like stale (they are frozen), but is signalled with a
   // neutral badge rather than a warning one (#1233).
-  const staleModifier =
-    isStale || isReconnecting || monitoringPaused ? " monitoring-status__stat--stale" : "";
+  const isPausedBadge = badge === "paused";
+  const staleModifier = isFrozenMonitorBadge(badge) ? " monitoring-status__stat--stale" : "";
   return (
     <>
       <MonitoringDetailDropdown
@@ -836,7 +842,7 @@ function MonitoringStatus() {
         onCancel={handleCancel}
         onRetry={handleRetry}
       />
-      {monitoringPaused && (
+      {isPausedBadge && (
         <span
           className="status-bar__item monitoring-status__paused-badge"
           title="Monitoring is paused — collection is stopped but the connection stays open."
@@ -1043,9 +1049,15 @@ function MonitoringDetailDropdown({
             className="status-bar__item status-bar__item--interactive monitoring-status__host"
             // Intentional no-tooltip (#1163): the visible label already shows the
             // hostname, so a normal-state hover would only duplicate it. Keep a
-            // title only while reconnecting, where it conveys transient state the
-            // collapsed spinner label does not spell out.
-            title={showSpinner ? `Reconnecting to ${host ?? "monitor"}…` : undefined}
+            // title only while connecting / reconnecting, where it conveys
+            // transient state the collapsed spinner label does not spell out.
+            title={
+              isReconnecting
+                ? `Reconnecting to ${host ?? "monitor"}…`
+                : loading
+                  ? `Connecting to ${host ?? "monitor"}…`
+                  : undefined
+            }
             data-testid="monitoring-host"
           >
             {showSpinner ? <Spinner size="xs" label={null} /> : <Activity size={12} />}

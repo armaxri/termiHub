@@ -15,8 +15,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::reconnect_backoff::{
-    reconnect_reducer, BackoffConfig, ReconnectEvent, ReconnectPhase, ReconnectState,
-    INITIAL_RECONNECT_STATE,
+    policy_for, reconnect_reducer, system_jitter, BackoffConfig, ReconnectEvent, ReconnectKind,
+    ReconnectPhase, ReconnectState, INITIAL_RECONNECT_STATE,
 };
 
 /// Observable lifecycle state of a monitoring collector loop.
@@ -136,23 +136,33 @@ pub const PRE_LIVE_FAILURE_LIMIT_FACTOR: u32 = 3;
 // The transport bound must stay strictly more generous than the parse bound.
 const _: () = assert!(PRE_LIVE_FAILURE_LIMIT_FACTOR > 1);
 
-/// Default first backoff delay before a reconnect attempt.
+/// The monitoring collectors' re-dial policy — the shared `RECONNECT_POLICY`
+/// (SM-020, #3730), the same one terminal tabs, tunnels, the agent transport
+/// and graphical sessions follow. [`BackoffSchedule::default`] uses it.
+pub const MONITORING_RECONNECT_POLICY: BackoffConfig = policy_for(ReconnectKind::Monitoring);
+
+/// Default first backoff delay before a reconnect attempt (the shared policy's
+/// base).
 ///
 /// The schedule doubles this each attempt up to [`BACKOFF_CAP`].
-pub const DEFAULT_BACKOFF_BASE: Duration = Duration::from_secs(1);
+pub const DEFAULT_BACKOFF_BASE: Duration =
+    Duration::from_millis(MONITORING_RECONNECT_POLICY.base_delay_ms as u64);
 
-/// Upper bound on any single backoff delay.
+/// Upper bound on any single backoff delay (the shared policy's cap).
 ///
 /// Capping the exponential growth keeps a long-lived reconnect loop probing at
 /// a sensible ceiling instead of drifting into multi-minute gaps.
-pub const BACKOFF_CAP: Duration = Duration::from_secs(30);
+pub const BACKOFF_CAP: Duration =
+    Duration::from_millis(MONITORING_RECONNECT_POLICY.max_delay_ms as u64);
 
-/// Default number of reconnect attempts before the loop declares `Offline`.
+/// Default number of reconnect attempts before the loop declares `Offline` (the
+/// shared policy's budget).
 ///
-/// With the default base/cap this spans roughly 1+2+4+8+16+30+30+30 s of
+/// With the default base/cap this spans at most 1+2+4+8+16+30+30+30+30+30 s of
 /// probing before giving up — long enough to ride out a transient drop, short
-/// enough to resolve to `Offline` in bounded time (audit gap G2).
-pub const DEFAULT_MAX_RECONNECT_ATTEMPTS: u32 = 8;
+/// enough to resolve to `Offline` in bounded time (audit gap G2). Before #3730
+/// monitoring used its own budget of 8.
+pub const DEFAULT_MAX_RECONNECT_ATTEMPTS: u32 = MONITORING_RECONNECT_POLICY.max_attempts as u32;
 
 /// Maximum time a single collect may take before it is treated as a failure.
 ///
@@ -170,13 +180,14 @@ pub const DEFAULT_COLLECT_TIMEOUT: Duration = Duration::from_secs(10);
 ///
 /// 1. `DEFAULT_STALE_THRESHOLD` failed collects reaching `Stale`, each up to
 ///    `interval + DEFAULT_COLLECT_TIMEOUT`;
-/// 2. the full reconnect backoff — the sum of every [`BackoffSchedule`] delay
-///    (`1+2+4+8+16+30+30+30 = 121 s` by default);
+/// 2. the full reconnect backoff — the worst-case sum of every
+///    [`BackoffSchedule`] delay (`1+2+4+8+16+30+30+30+30+30 = 181 s` by
+///    default; jitter only shortens it);
 /// 3. after a re-dial that succeeds, `pre_live_failure_limit` failed collects
 ///    (`DEFAULT_STALE_THRESHOLD × PRE_LIVE_FAILURE_LIMIT_FACTOR`), each up to
 ///    `interval + DEFAULT_COLLECT_TIMEOUT`, before resolving `Offline` (#3300).
 ///
-/// At the default 2 s interval that is `2×12 + 121 + 6×12 = 217 s`. It excludes
+/// At the default 2 s interval that is `2×12 + 181 + 6×12 = 277 s`. It excludes
 /// the SSH connect time of the re-dials themselves (bounded by the SSH layer,
 /// not by the loop); a sample arriving after the desktop gave up still recovers
 /// the monitor to `Live`, so the budget only has to cover the common case.
@@ -197,10 +208,10 @@ pub fn agent_recovery_budget(interval: Duration) -> Duration {
 /// Capped exponential-backoff schedule for reconnect attempts.
 ///
 /// A thin wrapper over the canonical reconnect engine
-/// ([`crate::reconnect_backoff`], SM-020 slice 1): it drives
-/// [`reconnect_reducer`] with a jitterless [`BackoffConfig`] and reads the armed
-/// backoff delay off each `Waiting` phase, so monitoring shares one reconnect
-/// model with the rest of the workspace instead of hand-rolling the math.
+/// ([`crate::reconnect_backoff`], SM-020): it drives [`reconnect_reducer`] with a
+/// [`BackoffConfig`] and reads the armed backoff delay off each `Waiting`
+/// phase, so monitoring shares one reconnect model with the rest of the
+/// workspace instead of hand-rolling the math.
 ///
 /// Yields delays `base, base*2, base*4, …` clamped to `cap`, for at most
 /// `max_attempts` attempts. Once the attempt budget is exhausted (the reducer
@@ -208,9 +219,11 @@ pub fn agent_recovery_budget(interval: Duration) -> Duration {
 /// returns `None` so the caller stops retrying and transitions to
 /// [`MonitorStatus::Offline`].
 ///
-/// Monitoring keeps `jitter_ratio: 0`, so the sequence is deterministic and
-/// byte-identical to the hand-rolled capped-exponential this replaced; the
-/// golden-vector tests pin that equivalence.
+/// [`BackoffSchedule::default`] follows the shared policy
+/// ([`MONITORING_RECONNECT_POLICY`], #3730) with production jitter, so each
+/// window is drawn from `[d/2, d]` and collectors dropped by the same outage do
+/// not re-dial in lockstep. [`BackoffSchedule::new`] builds an explicit,
+/// jitterless schedule (exact delays, for tests and custom callers).
 #[derive(Debug, Clone)]
 pub struct BackoffSchedule {
     config: BackoffConfig,
@@ -219,10 +232,19 @@ pub struct BackoffSchedule {
     /// arms it via a `Drop`; each later call simulates a failed attempt to arm
     /// the next window.
     started: bool,
+    /// Jitter source for the armed windows (unused when `jitter_ratio` is 0).
+    jitter: fn() -> f64,
+}
+
+/// The jitter source of a jitterless schedule (never consulted).
+fn no_jitter() -> f64 {
+    0.0
 }
 
 impl BackoffSchedule {
-    /// Create a schedule from an explicit base delay, cap, and attempt budget.
+    /// Create an explicit, jitterless schedule from a base delay, cap, and
+    /// attempt budget — exact delays, for tests and custom callers. Production
+    /// loops use [`BackoffSchedule::default`] (the shared policy, jittered).
     ///
     /// `max_attempts` is clamped to `>= 1` so at least one reconnect is tried —
     /// the canonical engine reads `0` as its retry-forever sentinel, which the
@@ -235,27 +257,40 @@ impl BackoffSchedule {
             max_attempts: i64::from(max_attempts.max(1)),
             jitter_ratio: 0.0,
         };
+        Self::from_policy(config, no_jitter)
+    }
+
+    /// A schedule following `config`, drawing jitter from `jitter`. A
+    /// `max_attempts` below 1 is raised to 1 (never retry forever).
+    pub fn from_policy(config: BackoffConfig, jitter: fn() -> f64) -> Self {
         Self {
-            config,
+            config: BackoffConfig {
+                max_attempts: config.max_attempts.max(1),
+                ..config
+            },
             state: INITIAL_RECONNECT_STATE,
             started: false,
+            jitter,
         }
+    }
+
+    /// The same schedule with a different jitter source (deterministic tests).
+    pub fn with_jitter(mut self, jitter: fn() -> f64) -> Self {
+        self.jitter = jitter;
+        self
     }
 
     /// The next backoff delay, or `None` once the attempt budget is exhausted.
     ///
-    /// The first call returns `base`, then `base*2`, `base*4`, … each clamped
-    /// to `cap`. After `max_attempts` calls it returns `None`.
+    /// The first call returns (up to) `base`, then `base*2`, `base*4`, … each
+    /// clamped to `cap` and shortened by at most the jitter ratio. After
+    /// `max_attempts` calls it returns `None`.
     pub fn next_delay(&mut self) -> Option<Duration> {
-        let mut no_jitter = || 0.0;
+        let mut jitter = self.jitter;
         if !self.started {
             // The first drop arms the first backoff window.
-            self.state = reconnect_reducer(
-                &self.state,
-                ReconnectEvent::Drop,
-                &self.config,
-                &mut no_jitter,
-            );
+            self.state =
+                reconnect_reducer(&self.state, ReconnectEvent::Drop, &self.config, &mut jitter);
             self.started = true;
         } else {
             // Each subsequent delay follows a failed attempt: the timer fires
@@ -265,13 +300,13 @@ impl BackoffSchedule {
                 &self.state,
                 ReconnectEvent::Attempt,
                 &self.config,
-                &mut no_jitter,
+                &mut jitter,
             );
             self.state = reconnect_reducer(
                 &self.state,
                 ReconnectEvent::Failure,
                 &self.config,
-                &mut no_jitter,
+                &mut jitter,
             );
         }
         match self.state.phase {
@@ -282,12 +317,13 @@ impl BackoffSchedule {
         }
     }
 
-    /// Sum of every remaining delay the schedule would yield before its
-    /// attempt budget is exhausted (a fresh schedule: the whole budget).
+    /// Worst-case sum of every remaining delay the schedule would yield before
+    /// its attempt budget is exhausted (a fresh schedule: the whole budget).
+    /// Jitter only shortens a window, so this is an upper bound on any run.
     ///
-    /// Does not advance `self` — it walks a clone.
+    /// Does not advance `self` — it walks a jitterless clone.
     pub fn total_delay(&self) -> Duration {
-        let mut walk = self.clone();
+        let mut walk = self.clone().with_jitter(no_jitter);
         let mut total = Duration::ZERO;
         while let Some(delay) = walk.next_delay() {
             total = total.saturating_add(delay);
@@ -305,12 +341,10 @@ impl BackoffSchedule {
 }
 
 impl Default for BackoffSchedule {
+    /// The shared reconnect policy ([`MONITORING_RECONNECT_POLICY`]) with
+    /// production jitter.
     fn default() -> Self {
-        Self::new(
-            DEFAULT_BACKOFF_BASE,
-            BACKOFF_CAP,
-            DEFAULT_MAX_RECONNECT_ATTEMPTS,
-        )
+        Self::from_policy(MONITORING_RECONNECT_POLICY, system_jitter)
     }
 }
 
@@ -834,28 +868,63 @@ mod tests {
     }
 
     #[test]
-    fn default_backoff_total_delay_is_121s() {
+    fn default_backoff_total_delay_is_the_181s_give_up_window() {
         assert_eq!(
             BackoffSchedule::default().total_delay(),
-            Duration::from_secs(1 + 2 + 4 + 8 + 16 + 30 + 30 + 30)
+            Duration::from_secs(1 + 2 + 4 + 8 + 16 + 30 + 30 + 30 + 30 + 30)
+        );
+        assert_eq!(
+            BackoffSchedule::default().total_delay(),
+            Duration::from_millis(crate::reconnect_backoff::RECONNECT_GIVE_UP_WINDOW_MS as u64)
         );
     }
 
     #[test]
     fn total_delay_does_not_advance_the_schedule() {
-        let mut schedule = BackoffSchedule::default();
+        let mut schedule = BackoffSchedule::default().with_jitter(|| 0.0);
         let _ = schedule.total_delay();
         assert_eq!(schedule.next_delay(), Some(DEFAULT_BACKOFF_BASE));
     }
 
     #[test]
-    fn agent_recovery_budget_at_default_interval_is_217s() {
-        // 2 stale collects + 6 pre-Live collects at (2 s + 10 s), plus 121 s of
-        // reconnect backoff.
+    fn agent_recovery_budget_at_default_interval_is_277s() {
+        // 2 stale collects + 6 pre-Live collects at (2 s + 10 s), plus 181 s of
+        // worst-case reconnect backoff.
         assert_eq!(
             agent_recovery_budget(Duration::from_secs(2)),
-            Duration::from_secs(2 * 12 + 121 + 6 * 12)
+            Duration::from_secs(2 * 12 + 181 + 6 * 12)
         );
+    }
+
+    #[test]
+    fn monitoring_follows_the_shared_reconnect_policy() {
+        use crate::reconnect_backoff::RECONNECT_POLICY;
+        assert_eq!(MONITORING_RECONNECT_POLICY, RECONNECT_POLICY);
+        assert_eq!(DEFAULT_BACKOFF_BASE, Duration::from_secs(1));
+        assert_eq!(BACKOFF_CAP, Duration::from_secs(30));
+        assert_eq!(DEFAULT_MAX_RECONNECT_ATTEMPTS, 10);
+    }
+
+    #[test]
+    fn default_schedule_is_jittered_within_the_shared_bounds() {
+        // The production schedule draws real jitter: every window sits in
+        // [nominal/2, nominal], and the budget is exactly the shared 10.
+        let nominal = [1, 2, 4, 8, 16, 30, 30, 30, 30, 30].map(Duration::from_secs);
+        for _ in 0..32 {
+            let mut schedule = BackoffSchedule::default();
+            for n in nominal {
+                let d = schedule.next_delay().expect("within budget");
+                assert!(d <= n && d >= n / 2, "{d:?} outside [{:?}, {n:?}]", n / 2);
+            }
+            assert_eq!(schedule.next_delay(), None, "budget exhausted");
+        }
+    }
+
+    #[test]
+    fn a_fully_shortening_draw_halves_each_window() {
+        let mut schedule = BackoffSchedule::default().with_jitter(|| 0.999_999);
+        assert_eq!(schedule.next_delay(), Some(Duration::from_millis(500)));
+        assert_eq!(schedule.next_delay(), Some(Duration::from_millis(1_000)));
     }
 
     #[test]
@@ -1365,20 +1434,18 @@ mod tests {
         );
     }
 
-    // ── Golden vector: canonical-engine migration (SM-020 slice 1) ──────
+    // ── Golden vector: monitoring on the shared policy (SM-020, #3730) ──
     //
-    // These pin the EXACT delay sequence the monitoring backoff produces, so
-    // migrating `BackoffSchedule` onto the canonical `reconnect_backoff` engine
-    // is proven behavior-preserving: with jitter disabled the schedule must stay
-    // byte-identical to the hand-rolled capped-exponential it replaced.
+    // These pin the nominal (worst-case) delay sequence the monitoring backoff
+    // produces: the shared policy's 1,2,4,8,16,30,30,30,30,30 s, then give up.
 
-    /// The monitoring reconnect budget's delays, in whole seconds, for its
-    /// production configuration (base 1s, factor 2, cap 30s, 8 attempts).
-    const MONITORING_GOLDEN_DELAYS_SECS: [u64; 8] = [1, 2, 4, 8, 16, 30, 30, 30];
+    /// The monitoring reconnect budget's nominal delays, in whole seconds.
+    const MONITORING_GOLDEN_DELAYS_SECS: [u64; 10] = [1, 2, 4, 8, 16, 30, 30, 30, 30, 30];
 
     #[test]
     fn golden_vector_monitoring_backoff_sequence_then_give_up() {
-        let mut schedule = BackoffSchedule::default();
+        // A draw of 0 never shortens a window: the nominal schedule.
+        let mut schedule = BackoffSchedule::default().with_jitter(|| 0.0);
         let mut got = Vec::new();
         while let Some(delay) = schedule.next_delay() {
             got.push(delay);
@@ -1389,41 +1456,33 @@ mod tests {
             .collect();
         assert_eq!(
             got, expected,
-            "monitoring backoff must yield exactly 1,2,4,8,16,30,30,30 s then give up"
+            "monitoring backoff must be at most 1,2,4,8,16,30,30,30,30,30 s then give up"
         );
     }
 
     #[test]
     fn golden_vector_canonical_reducer_matches_monitoring_sequence() {
         use crate::reconnect_backoff::{
-            reconnect_reducer, BackoffConfig, ReconnectEvent, ReconnectPhase,
-            INITIAL_RECONNECT_STATE,
+            reconnect_reducer, ReconnectEvent, ReconnectPhase, INITIAL_RECONNECT_STATE,
         };
-        // Exactly monitoring's numbers, jitter disabled → deterministic.
-        let config = BackoffConfig {
-            base_delay_ms: 1_000.0,
-            factor: 2.0,
-            max_delay_ms: 30_000.0,
-            max_attempts: DEFAULT_MAX_RECONNECT_ATTEMPTS as i64,
-            jitter_ratio: 0.0,
-        };
-        let mut no_jitter = || 0.0;
+        let config = MONITORING_RECONNECT_POLICY;
+        let mut nominal = || 0.0;
         let mut state = INITIAL_RECONNECT_STATE;
         let mut delays = Vec::new();
 
         // The first drop arms the first backoff window; each subsequent window is
         // armed by a failed attempt (the timer fires, the attempt fails).
-        state = reconnect_reducer(&state, ReconnectEvent::Drop, &config, &mut no_jitter);
+        state = reconnect_reducer(&state, ReconnectEvent::Drop, &config, &mut nominal);
         while state.phase == ReconnectPhase::Waiting {
             delays.push(state.delay_ms);
-            state = reconnect_reducer(&state, ReconnectEvent::Attempt, &config, &mut no_jitter);
-            state = reconnect_reducer(&state, ReconnectEvent::Failure, &config, &mut no_jitter);
+            state = reconnect_reducer(&state, ReconnectEvent::Attempt, &config, &mut nominal);
+            state = reconnect_reducer(&state, ReconnectEvent::Failure, &config, &mut nominal);
         }
 
         assert_eq!(
             state.phase,
             ReconnectPhase::Gaveup,
-            "the reducer must give up once the 8-attempt budget is spent"
+            "the reducer must give up once the 10-attempt budget is spent"
         );
         let expected: Vec<i64> = MONITORING_GOLDEN_DELAYS_SECS
             .iter()
@@ -1431,7 +1490,7 @@ mod tests {
             .collect();
         assert_eq!(
             delays, expected,
-            "the canonical reducer must reproduce monitoring's delay sequence (jitter:0)"
+            "the canonical reducer must reproduce monitoring's nominal sequence"
         );
     }
 

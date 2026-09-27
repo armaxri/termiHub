@@ -47,7 +47,7 @@ import {
 } from "@/services/transport";
 import type { TerminalAutoReconnectState, TerminalExitInfo } from "@/types/terminal";
 import {
-  DEFAULT_BACKOFF,
+  RECONNECT_POLICY,
   initialReconnectState,
   reconnectReducer,
   type BackoffConfig,
@@ -340,7 +340,7 @@ const OPTIMISTIC_SESSION_FOLDS: Partial<Record<SessionIntentKind, SessionOptimis
     const reconnect = reconnectReducer(
       prev?.reconnect ?? initialReconnectState,
       "drop",
-      DEFAULT_BACKOFF
+      RECONNECT_POLICY
     );
     return {
       ...view,
@@ -648,7 +648,7 @@ export async function runSessionIntent(
 // ── Projected status → appStore display fields (the reconcile mapping) ──────────
 
 /** The backoff schedule the display mapping reports (matches the store's). */
-const displayBackoff: BackoffConfig = DEFAULT_BACKOFF;
+const displayBackoff: BackoffConfig = RECONNECT_POLICY;
 
 /**
  * Map a projected lifecycle to the `terminalAutoReconnect` display record the

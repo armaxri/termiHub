@@ -41,8 +41,8 @@ use crate::errors::CoreError;
 use crate::monitoring::{
     parse_stats, BackoffSchedule, CollectLoopState, CpuDeltaTracker, MonitorStatusSender,
     MonitoringProvider, MonitoringReceiver, MonitoringSender, MonitoringSubscription,
-    NetDeltaTracker, PerCoreCpuTracker, SystemStats, BACKOFF_CAP, DEFAULT_BACKOFF_BASE,
-    DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_MONITORING_INTERVAL_MS, DEFAULT_STALE_THRESHOLD,
+    NetDeltaTracker, PerCoreCpuTracker, SystemStats, DEFAULT_MONITORING_INTERVAL_MS,
+    DEFAULT_STALE_THRESHOLD,
 };
 
 /// Default polling interval for collecting stats.
@@ -180,11 +180,7 @@ impl ExecMonitoringProvider {
             source,
             interval: MONITORING_INTERVAL,
             stale_threshold: DEFAULT_STALE_THRESHOLD,
-            reconnect_backoff: BackoffSchedule::new(
-                DEFAULT_BACKOFF_BASE,
-                BACKOFF_CAP,
-                DEFAULT_MAX_RECONNECT_ATTEMPTS,
-            ),
+            reconnect_backoff: BackoffSchedule::default(),
             task: Arc::new(Mutex::new(None)),
         }
     }

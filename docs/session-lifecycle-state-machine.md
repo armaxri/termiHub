@@ -224,20 +224,25 @@ add a **still-current-run guard** (TBE-011): they act only when the phase is
 `Connecting`, so a stale outcome arriving after the loop was cancelled/superseded
 never re-animates a stopped tab.
 
-### Backoff schedule (`DEFAULT_BACKOFF`, `reconnect_backoff.rs:52-58`)
+### Backoff schedule (`RECONNECT_POLICY`, `reconnect_backoff.rs`)
 
-| Tunable         | Default | Meaning                                                                      |
-| --------------- | ------- | ---------------------------------------------------------------------------- |
-| `base_delay_ms` | `1000`  | Delay before the first retry.                                                |
-| `factor`        | `2.0`   | Multiplier per attempt (doubles each time).                                  |
-| `max_delay_ms`  | `30000` | Ceiling on any single delay (applied before jitter).                         |
-| `max_attempts`  | `10`    | Attempt budget before giving up. `0` = retry forever (only Cancel stops it). |
-| `jitter_ratio`  | `0.2`   | Symmetric random jitter (±20%) so a fleet of dropped tabs does not stampede. |
+The store runs the shared reconnect policy (SM-020, #3730) — the same one every
+other reconnect loop follows; see [Reconnect Policy](architecture.md#reconnect-policy-sm-020).
+`DEFAULT_BACKOFF` is kept as an alias.
 
-Per-attempt delay: `min(base * factor^(n-1), max) * (1 ± jitter)`, clamped `>= 0`
-and rounded to whole ms (`backoff_delay` / `next_reconnect_delay`,
-`reconnect_backoff.rs:142-165`). Give-up is `attempt >= max_attempts`
-(`should_give_up`, `:171-176`).
+| Tunable         | Default | Meaning                                                                                     |
+| --------------- | ------- | ------------------------------------------------------------------------------------------- |
+| `base_delay_ms` | `1000`  | Nominal delay before the first retry.                                                       |
+| `factor`        | `2.0`   | Multiplier per attempt (doubles each time).                                                 |
+| `max_delay_ms`  | `30000` | Ceiling on any single delay. Jitter never exceeds it.                                       |
+| `max_attempts`  | `10`    | Attempt budget before giving up. `0` = retry forever (never used by a production policy).   |
+| `jitter_ratio`  | `0.5`   | Share of each window random jitter may shave off (clamped to `0.5`): windows in `[d/2, d]`. |
+
+Per-attempt delay: `d = min(base * factor^(n-1), max)`, then `d * (1 - jitter * u)`
+for a draw `u` in `[0, 1)`, rounded to whole ms (`backoff_delay` /
+`next_reconnect_delay`). The nominal schedule `1, 2, 4, 8, 16, 30, 30, 30, 30, 30`
+s is therefore the worst case, 181 s in total (`RECONNECT_GIVE_UP_WINDOW_MS`).
+Give-up is `attempt >= max_attempts` (`should_give_up`).
 
 ### How the timer drives it (`ReconnectTimerDriver`, `timer.rs`)
 

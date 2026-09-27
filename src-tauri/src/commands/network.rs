@@ -1,71 +1,62 @@
 //! Tauri commands for built-in network diagnostic tools.
 //!
-//! Long-running operations (port scan, ping, traceroute) are launched as
-//! background tasks and stream results back via Tauri events. One-shot
-//! operations (DNS, WoL, open ports) return immediately.
+//! Every tool runs a core `ToolRegistry` tool through
+//! [`tool_runner`](crate::network::tool_runner) — on this computer, or on the
+//! agent its run-location names (#3731). Long-running operations (port scan,
+//! ping, ping sweep, traceroute) are launched as background tasks and stream
+//! results back via Tauri events. One-shot operations (DNS, WoL, open ports)
+//! return immediately.
+//!
+//! An agent below the network-tool version floor is refused before the task
+//! starts, so the command itself rejects with the "update the agent" error.
 
 use std::sync::Arc;
 
-use tauri::{AppHandle, State};
+use serde_json::Value;
+use tauri::{AppHandle, Emitter, State};
 
-use termihub_core::network::{
-    defaults, dns, open_ports, ping, ping_sweep, port_scan, traceroute, wol, DnsRecordType,
-    ParseDnsRecordTypeError, PingSweepResult, PortScanResult, WolDevice,
-};
+use termihub_core::network::{port_scan, DnsRecordType, ParseDnsRecordTypeError, WolDevice};
 
-use crate::network::agent_stream::{self, StreamTool};
+use crate::network::agent_stream::StreamTool;
 use crate::network::http_monitor::{HttpCheckResult, HttpMonitorConfig, HttpMonitorState};
 use crate::network::monitor_history_manager::HttpMonitorHistoryManager;
 use crate::network::tool_history::{NetworkHistoryTool, NetworkToolRun};
 use crate::network::tool_history_manager::NetworkToolHistoryManager;
-use crate::network::{agent_tools, events, NetworkManager};
-use crate::run_location::{ResolvedLocation, RunLocation};
-use crate::terminal::agent_manager::AgentRpcClient;
+use crate::network::tool_runner::{self, ToolTarget};
+use crate::network::{agent_tools, NetworkManager};
+use crate::run_location::RunLocation;
 use crate::utils::errors::TerminalError;
 
-/// Fetch the agent RPC client when a tool's run-location resolves to an agent
-/// (#2190). `Ok(None)` for a local run; an error when an agent is requested but
-/// no agent client is available.
-fn agent_client_for(
-    manager: &NetworkManager,
-    location: &ResolvedLocation,
-) -> Result<Option<Arc<dyn AgentRpcClient>>, TerminalError> {
-    match location {
-        ResolvedLocation::Local => Ok(None),
-        ResolvedLocation::Agent(_) => manager
-            .agent_rpc_client()
-            .map(Some)
-            .ok_or_else(|| TerminalError::NetworkError("agent manager is not available".into())),
-    }
-}
-
-/// Guard that an agent-located request actually carries a resolved agent client
-/// before a background task branches on it (WA-RS-005).
-///
-/// `agent_client_for` upholds this invariant for every normal path, so a `None`
-/// here means a routing/state bug. Surfacing it as a recoverable `Err` lets the
-/// caller show an error instead of the background task panicking on an
-/// `.expect(...)` — a panicking command handler is worse UX and can destabilize
-/// the backend.
-fn ensure_agent_client<T>(
-    location: &ResolvedLocation,
-    agent_client: &Option<T>,
-) -> Result<(), TerminalError> {
-    if matches!(location, ResolvedLocation::Agent(_)) && agent_client.is_none() {
-        return Err(TerminalError::NetworkError(
-            "no agent client for agent-located request".into(),
-        ));
-    }
-    Ok(())
+/// Start `tool` as a background task on `target`, streaming its `network-*`
+/// events to the frontend. Returns the task id the events carry.
+fn spawn_streaming_task(
+    manager: &Arc<NetworkManager>,
+    app: AppHandle,
+    target: ToolTarget,
+    tool: StreamTool,
+    params: Value,
+) -> String {
+    let (task_id, cancel) = manager.register_task();
+    let tid = task_id.clone();
+    // The owned `Arc<NetworkManager>` clone keeps the manager alive for exactly
+    // as long as this task needs it.
+    let manager = Arc::clone(manager);
+    tokio::spawn(async move {
+        tool_runner::run_streaming(target, tool, &tid, params, &cancel, move |name, payload| {
+            let _ = app.emit(name, payload);
+        })
+        .await;
+        manager.complete_task(&tid);
+    });
+    task_id
 }
 
 /// Set (or clear) the run-location preference for a network tool (#2190).
 ///
 /// Recording an agent routes that tool's next invocation to the agent's
-/// `network.*` methods; [`RunLocation::ThisComputer`] clears the preference
+/// `tool.*` methods; [`RunLocation::ThisComputer`] clears the preference
 /// (back to running on the desktop). The desktop-only HTTP monitor refuses an
-/// agent location. Backs the run-location selector UI (#2191) and is the hook
-/// for exercising agent-routed tools meanwhile.
+/// agent location. Backs the run-location selector UI (#2191).
 #[tauri::command]
 pub fn set_network_tool_run_location(
     tool: String,
@@ -85,6 +76,7 @@ pub fn set_network_tool_run_location(
 /// Events emitted:
 /// - `network-scan-result` per port: `{ taskId, host, port, state, latencyMs? }`
 /// - `network-scan-complete`: `{ taskId, summary }`
+/// - `network-scan-error`: `{ taskId, error }`
 #[tauri::command]
 pub async fn network_port_scan(
     host: String,
@@ -94,113 +86,22 @@ pub async fn network_port_scan(
     manager: State<'_, Arc<NetworkManager>>,
     app: AppHandle,
 ) -> Result<String, TerminalError> {
-    let port_list = port_scan::parse_port_spec(&ports)
-        .map_err(|e| TerminalError::NetworkError(e.to_string()))?;
+    // Validate up front so a bad spec rejects the command itself, wherever the
+    // scan would run.
+    port_scan::parse_port_spec(&ports).map_err(|e| TerminalError::NetworkError(e.to_string()))?;
     let targets = port_scan::parse_target_spec(&host)
         .map_err(|e| TerminalError::NetworkError(e.to_string()))?;
 
-    // Route by run-location (#2190). A tool with no recorded preference resolves
-    // local and takes the existing desktop path; an agent preference proxies the
-    // scan to that agent's `network.port_scan` and re-emits the same events.
-    let location = manager.resolve_tool_location(agent_tools::tool::PORT_SCAN)?;
-    let agent_client = agent_client_for(&manager, &location)?;
-    ensure_agent_client(&location, &agent_client)?;
-
-    let (task_id, cancel) = manager.register_task();
-
-    let app_clone = app.clone();
-    let task_id_clone = task_id.clone();
-    let manager = Arc::clone(manager.inner());
-
-    tokio::spawn(async move {
-        let app = app_clone;
-        let tid = task_id_clone.clone();
-
-        match location {
-            ResolvedLocation::Agent(agent_id) => {
-                // Guarded by `ensure_agent_client` before spawning; emit a
-                // recoverable error instead of panicking should that invariant
-                // ever be bypassed (WA-RS-005).
-                let Some(client) = agent_client else {
-                    events::emit_error(
-                        &app,
-                        events::name::SCAN_ERROR,
-                        &tid,
-                        "no agent client for agent-located request",
-                    );
-                    manager.complete_task(&tid);
-                    return;
-                };
-                if agent_stream::supports_streaming(&client, &agent_id) {
-                    // Live results, no 60 s cap, Stop cancels on the agent (#3353).
-                    let params = agent_tools::port_scan_tool_params(
-                        &host,
-                        &targets,
-                        &ports,
-                        timeout_ms,
-                        concurrency,
-                    );
-                    agent_stream::run_streaming_to_app(
-                        StreamTool::PortScan,
-                        client,
-                        &agent_id,
-                        &app,
-                        &tid,
-                        params,
-                        &cancel,
-                    )
-                    .await;
-                } else {
-                    // Older agent: one-shot `network.port_scan`.
-                    let params = agent_tools::port_scan_params(
-                        &host,
-                        &targets,
-                        &ports,
-                        timeout_ms,
-                        concurrency,
-                    );
-                    let (app2, tid2) = (app.clone(), tid.clone());
-                    let _ = tokio::task::spawn_blocking(move || {
-                        agent_tools::dispatch_port_scan(&client, &agent_id, &app2, &tid2, params);
-                    })
-                    .await;
-                }
-            }
-            ResolvedLocation::Local => {
-                let on_result = {
-                    let app = app.clone();
-                    let tid = tid.clone();
-                    move |result: PortScanResult| {
-                        events::emit_scan_result(&app, &tid, &result);
-                    }
-                };
-
-                let summary = port_scan::scan_targets(
-                    &targets,
-                    &port_list,
-                    timeout_ms.unwrap_or(defaults::PORT_SCAN_TIMEOUT_MS),
-                    concurrency.unwrap_or(defaults::PORT_SCAN_CONCURRENCY),
-                    on_result,
-                    cancel,
-                )
-                .await;
-
-                match summary {
-                    Ok(s) => events::emit_scan_complete(&app, &tid, s),
-                    Err(e) => {
-                        events::emit_error(&app, events::name::SCAN_ERROR, &tid, &e.to_string())
-                    }
-                }
-            }
-        }
-
-        // Clean up the task entry.
-        // The owned `Arc<NetworkManager>` clone keeps the manager alive for
-        // exactly as long as this task needs it.
-        manager.complete_task(&tid);
-    });
-
-    Ok(task_id)
+    let target = tool_runner::resolve_target(&manager, agent_tools::tool::PORT_SCAN)?;
+    let params =
+        agent_tools::port_scan_tool_params(&host, &targets, &ports, timeout_ms, concurrency);
+    Ok(spawn_streaming_task(
+        manager.inner(),
+        app,
+        target,
+        StreamTool::PortScan,
+        params,
+    ))
 }
 
 /// Cancel a running port scan.
@@ -245,6 +146,7 @@ pub async fn probe_target_reachable(
 /// Events emitted:
 /// - `network-ping-result` per echo: `{ taskId, result }`
 /// - `network-ping-complete`: `{ taskId, stats, canceled }`
+/// - `network-ping-error`: `{ taskId, error }`
 #[tauri::command]
 pub async fn network_ping_start(
     host: String,
@@ -253,97 +155,15 @@ pub async fn network_ping_start(
     manager: State<'_, Arc<NetworkManager>>,
     app: AppHandle,
 ) -> Result<String, TerminalError> {
-    // Route by run-location (#2190): a recorded agent preference proxies the ping
-    // to that agent's `network.ping` (a bounded, collect-and-return batch) and
-    // re-emits the same events; no preference keeps the existing desktop path.
-    let location = manager.resolve_tool_location(agent_tools::tool::PING)?;
-    let agent_client = agent_client_for(&manager, &location)?;
-    ensure_agent_client(&location, &agent_client)?;
-
-    let (task_id, cancel) = manager.register_task();
-
-    let app_clone = app.clone();
-    let task_id_clone = task_id.clone();
-    let manager = Arc::clone(manager.inner());
-    let cancel_clone = cancel.clone();
-
-    tokio::spawn(async move {
-        let app = app_clone;
-        let tid = task_id_clone.clone();
-
-        match location {
-            ResolvedLocation::Agent(agent_id) => {
-                // Guarded by `ensure_agent_client` before spawning; emit a
-                // recoverable error instead of panicking should that invariant
-                // ever be bypassed (WA-RS-005).
-                let Some(client) = agent_client else {
-                    events::emit_error(
-                        &app,
-                        events::name::PING_ERROR,
-                        &tid,
-                        "no agent client for agent-located request",
-                    );
-                    manager.complete_task(&tid);
-                    return;
-                };
-                if agent_stream::supports_streaming(&client, &agent_id) {
-                    // Live echoes; an absent count runs until Stop (#3353).
-                    let params = agent_tools::ping_tool_params(&host, interval_ms, count);
-                    agent_stream::run_streaming_to_app(
-                        StreamTool::Ping,
-                        client,
-                        &agent_id,
-                        &app,
-                        &tid,
-                        params,
-                        &cancel,
-                    )
-                    .await;
-                } else {
-                    // Older agent: one-shot, count-bounded `network.ping`.
-                    let params = agent_tools::ping_params(&host, interval_ms, count);
-                    let (app2, tid2) = (app.clone(), tid.clone());
-                    let _ = tokio::task::spawn_blocking(move || {
-                        agent_tools::dispatch_ping(&client, &agent_id, &app2, &tid2, params);
-                    })
-                    .await;
-                }
-            }
-            ResolvedLocation::Local => {
-                let on_result = {
-                    let app = app.clone();
-                    let tid = tid.clone();
-                    move |result| {
-                        events::emit_ping_result(&app, &tid, result);
-                    }
-                };
-
-                let result = ping::ping_stream(
-                    &host,
-                    interval_ms.unwrap_or(defaults::PING_INTERVAL_MS),
-                    count,
-                    on_result,
-                    cancel,
-                )
-                .await;
-                // Check cancellation *after* the stream ends so Stop is reported
-                // as canceled rather than completed (the token is set while it
-                // runs).
-                let canceled = cancel_clone.is_cancelled();
-
-                match result {
-                    Ok(stats) => events::emit_ping_complete(&app, &tid, stats, canceled),
-                    Err(e) => {
-                        events::emit_error(&app, events::name::PING_ERROR, &tid, &e.to_string())
-                    }
-                }
-            }
-        }
-
-        manager.complete_task(&tid);
-    });
-
-    Ok(task_id)
+    let target = tool_runner::resolve_target(&manager, agent_tools::tool::PING)?;
+    let params = agent_tools::ping_tool_params(&host, interval_ms, count);
+    Ok(spawn_streaming_task(
+        manager.inner(),
+        app,
+        target,
+        StreamTool::Ping,
+        params,
+    ))
 }
 
 /// Stop a running ping session.
@@ -380,112 +200,16 @@ pub async fn network_ping_sweep(
     let targets = port_scan::parse_target_spec(&host)
         .map_err(|e| TerminalError::NetworkError(e.to_string()))?;
 
-    // Route by run-location (PROD-033): an agent preference runs the sweep from
-    // the agent's vantage through its `tool.run` (`ping_sweep`) and re-emits the
-    // same events; no preference keeps the desktop path.
-    let location = manager.resolve_tool_location(agent_tools::tool::PING_SWEEP)?;
-    let agent_client = agent_client_for(&manager, &location)?;
-    ensure_agent_client(&location, &agent_client)?;
-
-    let (task_id, cancel) = manager.register_task();
-
-    let app_clone = app.clone();
-    let task_id_clone = task_id.clone();
-    let manager = Arc::clone(manager.inner());
-    let cancel_clone = cancel.clone();
-
-    tokio::spawn(async move {
-        let app = app_clone;
-        let tid = task_id_clone.clone();
-
-        if let ResolvedLocation::Agent(agent_id) = location {
-            // Guarded by `ensure_agent_client` before spawning (WA-RS-005).
-            match agent_client {
-                Some(client) if agent_stream::supports_streaming(&client, &agent_id) => {
-                    // Live results, no 60 s cap, Stop cancels on the agent (#3353).
-                    let params = agent_tools::ping_sweep_tool_params(
-                        &targets,
-                        timeout_ms,
-                        concurrency,
-                        resolve_hostnames,
-                    );
-                    agent_stream::run_streaming_to_app(
-                        StreamTool::PingSweep,
-                        client,
-                        &agent_id,
-                        &app,
-                        &tid,
-                        params,
-                        &cancel,
-                    )
-                    .await;
-                }
-                Some(client) => {
-                    // Older agent: one-shot `tool.run`.
-                    let params = agent_tools::ping_sweep_tool_run_params(
-                        &targets,
-                        timeout_ms,
-                        concurrency,
-                        resolve_hostnames,
-                    );
-                    let (app2, tid2) = (app.clone(), tid.clone());
-                    let _ = tokio::task::spawn_blocking(move || {
-                        agent_tools::dispatch_ping_sweep(
-                            &client, &agent_id, &app2, &tid2, params, &cancel,
-                        );
-                    })
-                    .await;
-                }
-                None => events::emit_error(
-                    &app,
-                    events::name::SWEEP_ERROR,
-                    &tid,
-                    "no agent client for agent-located request",
-                ),
-            }
-            manager.complete_task(&tid);
-            return;
-        }
-
-        let on_result = {
-            let app = app.clone();
-            let tid = tid.clone();
-            move |result: PingSweepResult| {
-                events::emit_sweep_result(
-                    &app,
-                    &tid,
-                    result.host,
-                    result.latency_ms,
-                    result.hostname,
-                );
-            }
-        };
-
-        let summary = ping_sweep::ping_sweep(
-            &targets,
-            timeout_ms.unwrap_or(defaults::PING_SWEEP_TIMEOUT_MS),
-            concurrency.unwrap_or(defaults::PING_SWEEP_CONCURRENCY),
-            resolve_hostnames.unwrap_or(defaults::PING_SWEEP_RESOLVE_HOSTNAMES),
-            on_result,
-            cancel,
-        )
-        .await;
-
-        // The token is set while the sweep runs; check *after* it ends so Stop
-        // is reported as canceled rather than completed.
-        let canceled = cancel_clone.is_cancelled();
-
-        match summary {
-            Ok(s) => events::emit_sweep_complete(&app, &tid, s, canceled),
-            Err(e) => events::emit_error(&app, events::name::SWEEP_ERROR, &tid, &e.to_string()),
-        }
-
-        // The owned `Arc<NetworkManager>` clone keeps the manager alive for
-        // exactly as long as this task needs it.
-        manager.complete_task(&tid);
-    });
-
-    Ok(task_id)
+    let target = tool_runner::resolve_target(&manager, agent_tools::tool::PING_SWEEP)?;
+    let params =
+        agent_tools::ping_sweep_tool_params(&targets, timeout_ms, concurrency, resolve_hostnames);
+    Ok(spawn_streaming_task(
+        manager.inner(),
+        app,
+        target,
+        StreamTool::PingSweep,
+        params,
+    ))
 }
 
 /// Cancel a running ping sweep.
@@ -499,158 +223,42 @@ pub fn network_ping_sweep_cancel(
 
 // ── DNS Lookup ───────────────────────────────────────────────────────────────
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ensure_agent_client_errors_when_agent_location_has_no_client() {
-        // A routing/state bug could reach the agent branch without a resolved
-        // client. The handler must surface a recoverable error to the frontend
-        // rather than panic inside the spawned task (WA-RS-005).
-        let location = ResolvedLocation::Agent("agent-1".to_string());
-        let agent_client: Option<()> = None;
-
-        let err = ensure_agent_client(&location, &agent_client)
-            .expect_err("agent location with no client must be an error, not a panic");
-
-        assert!(matches!(err, TerminalError::NetworkError(_)));
-    }
-
-    #[test]
-    fn ensure_agent_client_ok_when_agent_location_has_client() {
-        // The normal agent path: `agent_client_for` resolved a client.
-        let location = ResolvedLocation::Agent("agent-1".to_string());
-        let agent_client: Option<()> = Some(());
-
-        ensure_agent_client(&location, &agent_client)
-            .expect("agent location with a resolved client must be Ok");
-    }
-
-    #[test]
-    fn ensure_agent_client_ok_for_local_location() {
-        // Local runs never carry an agent client; a missing client is expected.
-        let location = ResolvedLocation::Local;
-        let agent_client: Option<()> = None;
-
-        ensure_agent_client(&location, &agent_client)
-            .expect("a local location without an agent client must be Ok");
-    }
-
-    #[tokio::test]
-    async fn probe_reports_open_listener_reachable() {
-        // A bound (even non-accepting) listener completes the TCP handshake.
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test listener");
-        let port = listener.local_addr().unwrap().port();
-
-        let reachable = probe_target_reachable("127.0.0.1".to_string(), port, Some(1000))
-            .await
-            .expect("probe should not error");
-
-        assert!(reachable, "an open TCP listener should be reachable");
-    }
-
-    #[tokio::test]
-    async fn probe_reports_closed_port_unreachable() {
-        // Hold a bound, never-listening socket for the whole probe: its port
-        // cannot be connected to (Linux/Windows refuse, macOS drops the SYN) and,
-        // without `SO_REUSEADDR`, no concurrent test can bind it. The old
-        // bind-a-listener-then-drop-it port could be reassigned to another test's
-        // live listener before the probe fired (#2008, #3532).
-        use socket2::{Domain, Protocol, Socket, Type};
-        let held = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))
-            .expect("create TCP socket");
-        held.bind(&std::net::SocketAddr::from(([127, 0, 0, 1], 0)).into())
-            .expect("bind loopback TCP socket");
-        let port = held
-            .local_addr()
-            .expect("local addr")
-            .as_socket()
-            .expect("an IP socket address")
-            .port();
-
-        let reachable = probe_target_reachable("127.0.0.1".to_string(), port, Some(500))
-            .await
-            .expect("probe should not error");
-        assert!(!reachable, "closed port {port} was reported reachable");
-    }
-}
-
-/// Perform a DNS lookup and return the records immediately.
-///
-/// Routes by run-location (#2190): an agent preference proxies to the agent's
-/// `network.dns_lookup` (returning the same `DnsResult` shape); no preference
-/// resolves on the desktop as before.
+/// Perform a DNS lookup and return the records (a `DnsResult`) immediately.
 #[tauri::command]
 pub async fn network_dns_lookup(
     hostname: String,
     record_type: String,
     server: Option<String>,
     manager: State<'_, Arc<NetworkManager>>,
-) -> Result<serde_json::Value, TerminalError> {
-    // Validate the record type locally so the error is identical regardless of
+) -> Result<Value, TerminalError> {
+    // Validate the record type up front so the error is identical regardless of
     // where the lookup runs.
-    let rtype: DnsRecordType = record_type
-        .parse()
+    record_type
+        .parse::<DnsRecordType>()
         .map_err(|e: ParseDnsRecordTypeError| TerminalError::NetworkError(e.to_string()))?;
 
-    match manager.resolve_tool_location(agent_tools::tool::DNS)? {
-        ResolvedLocation::Agent(agent_id) => {
-            let client = manager.agent_rpc_client().ok_or_else(|| {
-                TerminalError::NetworkError("agent manager is not available".into())
-            })?;
-            let params = serde_json::to_value(agent_tools::dns_params(
-                &hostname,
-                &record_type,
-                server.as_deref(),
-            ))
-            .map_err(|e| TerminalError::NetworkError(e.to_string()))?;
-            tokio::task::spawn_blocking(move || {
-                client.send_request(
-                    &agent_id,
-                    termihub_core::protocol::methods::NETWORK_DNS_LOOKUP,
-                    params,
-                )
-            })
-            .await
-            .map_err(|e| TerminalError::NetworkError(e.to_string()))?
-        }
-        ResolvedLocation::Local => {
-            let result = dns::dns_lookup(&hostname, rtype, server.as_deref())
-                .await
-                .map_err(|e| TerminalError::NetworkError(e.to_string()))?;
-            serde_json::to_value(result).map_err(|e| TerminalError::NetworkError(e.to_string()))
-        }
-    }
+    let target = tool_runner::resolve_target(&manager, agent_tools::tool::DNS)?;
+    let params = agent_tools::dns_tool_params(&hostname, &record_type, server.as_deref());
+    tool_runner::run_one_shot(&target, agent_tools::tool::DNS, params).await
 }
 
 // ── Open Ports ───────────────────────────────────────────────────────────────
 
-/// List listening ports.
-///
-/// Routes by run-location (PROD-033): an agent preference proxies to the
-/// agent's `network.open_ports` and lists the **agent host's** listening ports
-/// (the same bare `OpenPort[]` shape); no preference lists this computer's.
+/// List listening ports as a bare `OpenPort[]` — this computer's, or the
+/// **agent host's** when the tool runs on an agent (PROD-033).
 #[tauri::command]
 pub async fn network_open_ports(
     manager: State<'_, Arc<NetworkManager>>,
-) -> Result<serde_json::Value, TerminalError> {
-    let ports = match manager.resolve_tool_location(agent_tools::tool::OPEN_PORTS)? {
-        ResolvedLocation::Agent(agent_id) => {
-            let client = manager.agent_rpc_client().ok_or_else(|| {
-                TerminalError::NetworkError("agent manager is not available".into())
-            })?;
-            tokio::task::spawn_blocking(move || {
-                agent_tools::dispatch_open_ports(&client, &agent_id)
-            })
-            .await
-            .map_err(|e| TerminalError::NetworkError(e.to_string()))?
-            .map_err(TerminalError::NetworkError)?
-        }
-        ResolvedLocation::Local => {
-            open_ports::list_open_ports().map_err(|e| TerminalError::NetworkError(e.to_string()))?
-        }
-    };
+) -> Result<Value, TerminalError> {
+    let target = tool_runner::resolve_target(&manager, agent_tools::tool::OPEN_PORTS)?;
+    let result = tool_runner::run_one_shot(
+        &target,
+        agent_tools::tool::OPEN_PORTS,
+        serde_json::json!({}),
+    )
+    .await?;
+    let ports = agent_tools::parse_open_ports_result(result)
+        .map_err(|e| TerminalError::NetworkError(e.to_string()))?;
     serde_json::to_value(ports).map_err(|e| TerminalError::NetworkError(e.to_string()))
 }
 
@@ -661,6 +269,7 @@ pub async fn network_open_ports(
 /// Events emitted:
 /// - `network-traceroute-hop`: `{ taskId, hop }`
 /// - `network-traceroute-complete`: `{ taskId }`
+/// - `network-traceroute-error`: `{ taskId, error }`
 #[tauri::command]
 pub async fn network_traceroute(
     host: String,
@@ -668,95 +277,15 @@ pub async fn network_traceroute(
     manager: State<'_, Arc<NetworkManager>>,
     app: AppHandle,
 ) -> Result<String, TerminalError> {
-    // Route by run-location (#2190): a recorded agent preference proxies the
-    // traceroute to that agent's `network.traceroute` (showing the agent's path
-    // to the target) and re-emits the same hop events; no preference keeps the
-    // existing desktop path.
-    let location = manager.resolve_tool_location(agent_tools::tool::TRACEROUTE)?;
-    let agent_client = agent_client_for(&manager, &location)?;
-    ensure_agent_client(&location, &agent_client)?;
-
-    let (task_id, cancel) = manager.register_task();
-
-    let app_clone = app.clone();
-    let task_id_clone = task_id.clone();
-    let manager = Arc::clone(manager.inner());
-
-    tokio::spawn(async move {
-        let app = app_clone;
-        let tid = task_id_clone.clone();
-
-        match location {
-            ResolvedLocation::Agent(agent_id) => {
-                // Guarded by `ensure_agent_client` before spawning; emit a
-                // recoverable error instead of panicking should that invariant
-                // ever be bypassed (WA-RS-005).
-                let Some(client) = agent_client else {
-                    events::emit_error(
-                        &app,
-                        events::name::TRACEROUTE_ERROR,
-                        &tid,
-                        "no agent client for agent-located request",
-                    );
-                    manager.complete_task(&tid);
-                    return;
-                };
-                if agent_stream::supports_streaming(&client, &agent_id) {
-                    // Live hops, Stop cancels on the agent (#3353).
-                    let params = agent_tools::traceroute_tool_params(&host, max_hops);
-                    agent_stream::run_streaming_to_app(
-                        StreamTool::Traceroute,
-                        client,
-                        &agent_id,
-                        &app,
-                        &tid,
-                        params,
-                        &cancel,
-                    )
-                    .await;
-                } else {
-                    // Older agent: one-shot `network.traceroute`.
-                    let params = agent_tools::traceroute_params(&host, max_hops);
-                    let (app2, tid2) = (app.clone(), tid.clone());
-                    let _ = tokio::task::spawn_blocking(move || {
-                        agent_tools::dispatch_traceroute(&client, &agent_id, &app2, &tid2, params);
-                    })
-                    .await;
-                }
-            }
-            ResolvedLocation::Local => {
-                let on_hop = {
-                    let app = app.clone();
-                    let tid = tid.clone();
-                    move |hop| {
-                        events::emit_traceroute_hop(&app, &tid, hop);
-                    }
-                };
-
-                let result = traceroute::traceroute(
-                    &host,
-                    max_hops.unwrap_or(defaults::TRACEROUTE_MAX_HOPS),
-                    on_hop,
-                    cancel,
-                )
-                .await;
-
-                match result {
-                    Ok(()) => events::emit_traceroute_complete(&app, &tid),
-                    Err(e) => events::emit_error(
-                        &app,
-                        events::name::TRACEROUTE_ERROR,
-                        &tid,
-                        &e.to_string(),
-                    ),
-                }
-            }
-        }
-
-        manager.complete_task(&tid);
-    });
-
-    Ok(task_id)
+    let target = tool_runner::resolve_target(&manager, agent_tools::tool::TRACEROUTE)?;
+    let params = agent_tools::traceroute_tool_params(&host, max_hops);
+    Ok(spawn_streaming_task(
+        manager.inner(),
+        app,
+        target,
+        StreamTool::Traceroute,
+        params,
+    ))
 }
 
 /// Cancel a running traceroute.
@@ -770,36 +299,20 @@ pub fn network_traceroute_cancel(
 
 // ── Wake-on-LAN ──────────────────────────────────────────────────────────────
 
-/// Send a Wake-on-LAN magic packet.
-///
-/// Routes by run-location (#2190): an agent preference sends the magic packet
-/// from the agent's LAN via `network.wol`; no preference sends it from the
-/// desktop as before.
+/// Send a Wake-on-LAN magic packet — from this computer, or from the agent's
+/// LAN when the tool runs on an agent.
 #[tauri::command]
-pub fn network_wol_send(
+pub async fn network_wol_send(
     mac: String,
     broadcast: String,
     port: u16,
     manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<(), TerminalError> {
-    match manager.resolve_tool_location(agent_tools::tool::WOL)? {
-        ResolvedLocation::Agent(agent_id) => {
-            let client = manager.agent_rpc_client().ok_or_else(|| {
-                TerminalError::NetworkError("agent manager is not available".into())
-            })?;
-            let params = serde_json::to_value(agent_tools::wol_params(&mac, &broadcast, port))
-                .map_err(|e| TerminalError::NetworkError(e.to_string()))?;
-            client
-                .send_request(
-                    &agent_id,
-                    termihub_core::protocol::methods::NETWORK_WOL,
-                    params,
-                )
-                .map(|_| ())
-        }
-        ResolvedLocation::Local => wol::send_magic_packet(&mac, &broadcast, port)
-            .map_err(|e| TerminalError::NetworkError(e.to_string())),
-    }
+    let target = tool_runner::resolve_target(&manager, agent_tools::tool::WOL)?;
+    let params = agent_tools::wol_tool_params(&mac, &broadcast, port);
+    tool_runner::run_one_shot(&target, agent_tools::tool::WOL, params)
+        .await
+        .map(|_| ())
 }
 
 /// List saved WoL devices.
@@ -988,4 +501,47 @@ pub fn clear_http_monitor_history(
     manager: State<'_, HttpMonitorHistoryManager>,
 ) -> Result<(), TerminalError> {
     manager.clear(monitor_id.as_deref())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn probe_reports_open_listener_reachable() {
+        // A bound (even non-accepting) listener completes the TCP handshake.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test listener");
+        let port = listener.local_addr().unwrap().port();
+
+        let reachable = probe_target_reachable("127.0.0.1".to_string(), port, Some(1000))
+            .await
+            .expect("probe should not error");
+
+        assert!(reachable, "an open TCP listener should be reachable");
+    }
+
+    #[tokio::test]
+    async fn probe_reports_closed_port_unreachable() {
+        // Hold a bound, never-listening socket for the whole probe: its port
+        // cannot be connected to (Linux/Windows refuse, macOS drops the SYN) and,
+        // without `SO_REUSEADDR`, no concurrent test can bind it. The old
+        // bind-a-listener-then-drop-it port could be reassigned to another test's
+        // live listener before the probe fired (#2008, #3532).
+        use socket2::{Domain, Protocol, Socket, Type};
+        let held = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))
+            .expect("create TCP socket");
+        held.bind(&std::net::SocketAddr::from(([127, 0, 0, 1], 0)).into())
+            .expect("bind loopback TCP socket");
+        let port = held
+            .local_addr()
+            .expect("local addr")
+            .as_socket()
+            .expect("an IP socket address")
+            .port();
+
+        let reachable = probe_target_reachable("127.0.0.1".to_string(), port, Some(500))
+            .await
+            .expect("probe should not error");
+        assert!(!reachable, "closed port {port} was reported reachable");
+    }
 }

@@ -1,0 +1,25 @@
+{
+  "operation": "reconnectPolicy",
+  "cases": [
+    {
+      "name": "the shared reconnect policy every loop follows (#3730)",
+      "input": null,
+      "expected": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 30000, "maxAttempts": 10, "jitterRatio": 0.5 }
+    },
+    {
+      "name": "DEFAULT_BACKOFF is an alias of the shared policy",
+      "input": "default",
+      "expected": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 30000, "maxAttempts": 10, "jitterRatio": 0.5 }
+    },
+    {
+      "name": "the give-up window is the shared policy's worst-case total backoff",
+      "input": "giveUpWindowMs",
+      "expected": 181000
+    },
+    {
+      "name": "the jitter ratio ceiling",
+      "input": "maxJitterRatio",
+      "expected": 0.5
+    }
+  ]
+}

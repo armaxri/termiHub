@@ -80,6 +80,13 @@ jobs:
       - name: Check Rust toolchain pin consistency
         run: node scripts/internal/check-rust-version.mjs
 
+      # Fails if Cargo.lock or rdp-sidecar/Cargo.lock locks a pre-release crate
+      # version (e.g. `-rc.N`) that is not in the reviewed set
+      # .github/prerelease-allowlist.json, or the list has a stale entry
+      # (SUP-002, tracker #3734). Plain Node, preinstalled on the runner.
+      - name: Check pre-release crates are reviewed
+        run: node scripts/internal/check-prerelease-crates.mjs
+
       # Pinned toolchain (#2549, CI-005): a floating `@stable` lets any new Rust
       # release introduce clippy lints that fire under the `-D warnings` gate
       # below, reddening every PR with no code change (this blocked all PRs on
@@ -388,6 +395,13 @@ jobs:
 
       - name: Lint Markdown
         run: pnpm run markdownlint
+
+      # The manual-test counts in docs/testing.md and docs/release-plan-0.1.0.md
+      # are a generated block (#3721), so PRs that automate different manual
+      # items never conflict on hand-edited totals. Stdlib-only Python, no venv.
+      # Fix a failure with: python3 scripts/manual-inventory.py --write
+      - name: Check generated manual-inventory doc blocks
+        run: python3 scripts/manual-inventory.py --check
 
       # Advisory unused-code report (audit findings TOOL-009 + TOOL-008 JS slice).
       # knip statically finds unused files, exports, and dependencies; knip.json

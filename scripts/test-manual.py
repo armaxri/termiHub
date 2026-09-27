@@ -127,9 +127,9 @@ def category_inventory(
 ) -> list[tuple[str, str, int]]:
     """Aggregate the loaded tests into ``(category, display_name, count)`` rows.
 
-    Rows preserve first-seen (file/alphabetical) order. This is the source of
-    truth for the manual-test counts quoted in ``docs/release-plan-0.1.0.md`` —
-    see :func:`print_inventory` and the ``--inventory`` flag.
+    Rows preserve first-seen (file/alphabetical) order. Backs the terminal
+    ``--inventory`` listing; the counts in the docs are the generated blocks
+    written by ``scripts/manual-inventory.py`` (#3721).
     """
     order: list[str] = []
     counts: dict[str, int] = {}

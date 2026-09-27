@@ -15,7 +15,8 @@ use termihub_core::protocol::methods::{
     TunnelStatusResult, TunnelStopParams,
 };
 use termihub_core::reconnect_backoff::{
-    reconnect_reducer, BackoffConfig, ReconnectEvent, ReconnectPhase, INITIAL_RECONNECT_STATE,
+    policy_for, reconnect_reducer, system_jitter, BackoffConfig, ReconnectEvent, ReconnectKind,
+    ReconnectPhase, INITIAL_RECONNECT_STATE,
 };
 use termihub_core::tunnel::ActiveForwarder;
 use tokio_util::sync::CancellationToken;
@@ -1777,16 +1778,18 @@ async fn supervise(
         map.insert(tunnel_id.clone(), loop_cancel.clone());
     }
 
+    let mut jitter = system_jitter;
     let outcome = run_reconnect_loop(
         &loop_cancel,
-        &TUNNEL_BACKOFF,
+        &TUNNEL_RECONNECT_POLICY,
+        &mut jitter,
         |attempt, delay| {
             emit_tunnel_status(
                 &app_handle,
                 &tunnel_id,
                 TunnelStatus::Reconnecting,
                 Some(format!(
-                    "reconnecting — attempt {attempt}/{RECONNECT_MAX_ATTEMPTS} (retry in {}s)",
+                    "reconnecting — attempt {attempt} of {RECONNECT_MAX_ATTEMPTS} (retry in {}s)",
                     delay.as_secs()
                 )),
             );
@@ -1818,23 +1821,16 @@ async fn supervise(
     }
 }
 
-/// Max reconnect attempts before giving up to `Error` (#1246).
-const RECONNECT_MAX_ATTEMPTS: u32 = 5;
+/// The tunnel reconnect-on-disconnect policy — the shared `RECONNECT_POLICY`
+/// (SM-020, #3730): a 1 s first retry doubling to a 30 s ceiling, 10 attempts,
+/// with bounded jitter so tunnels dropped by the same outage do not re-dial in
+/// lockstep. Driven through the shared [`reconnect_reducer`] engine. (Before
+/// #3730 tunnels gave up after 5 jitterless attempts.)
+const TUNNEL_RECONNECT_POLICY: BackoffConfig = policy_for(ReconnectKind::Tunnel);
 
-/// Tunnel reconnect backoff as a canonical [`BackoffConfig`] (SM-020 slice 2).
-///
-/// These are the tunnel's long-standing numbers — a 1 s first retry, doubling up
-/// to a 30 s ceiling, `RECONNECT_MAX_ATTEMPTS` attempts — now driven through the
-/// shared [`reconnect_reducer`] engine instead of a hand-rolled
-/// capped-exponential. `jitter_ratio: 0.0` keeps the schedule deterministic and
-/// byte-identical to what it replaced; the golden-vector test pins that.
-const TUNNEL_BACKOFF: BackoffConfig = BackoffConfig {
-    base_delay_ms: 1_000.0,
-    factor: 2.0,
-    max_delay_ms: 30_000.0,
-    max_attempts: RECONNECT_MAX_ATTEMPTS as i64,
-    jitter_ratio: 0.0,
-};
+/// Max reconnect attempts before giving up to `Error` (#1246) — the shared
+/// policy's budget.
+const RECONNECT_MAX_ATTEMPTS: u32 = TUNNEL_RECONNECT_POLICY.max_attempts as u32;
 
 /// Outcome of a reconnect-backoff loop (#1246).
 #[derive(Debug, PartialEq, Eq)]
@@ -1865,8 +1861,9 @@ where
 }
 
 /// Run the reconnect-backoff loop (#1246, GAP 5) on the canonical reconnect
-/// engine (SM-020 slice 2). The loop drives [`reconnect_reducer`] with a
-/// jitterless [`BackoffConfig`]: a `Drop` arms the first backoff window, each
+/// engine (SM-020). The loop drives [`reconnect_reducer`] with the given
+/// [`BackoffConfig`] and jitter source (`rand`, injectable so tests are
+/// deterministic): a `Drop` arms the first backoff window, each
 /// failed attempt arms the next, and the reducer reaches
 /// [`ReconnectPhase::Gaveup`] once the attempt budget is spent.
 ///
@@ -1879,25 +1876,22 @@ where
 async fn run_reconnect_loop(
     cancel: &CancellationToken,
     config: &BackoffConfig,
+    rand: &mut (dyn FnMut() -> f64 + Send),
     mut on_attempt: impl FnMut(u32, Duration),
     mut attempt: impl FnMut(u32) -> bool,
 ) -> ReconnectOutcome {
-    // Jitter is disabled (`jitter_ratio: 0.0`), so the RNG is never consulted; a
-    // constant keeps the schedule deterministic and byte-identical to the
-    // hand-rolled capped-exponential this replaced.
-    let mut no_jitter = || 0.0;
     // A fresh drop arms the first backoff window.
     let mut state = reconnect_reducer(
         &INITIAL_RECONNECT_STATE,
         ReconnectEvent::Drop,
         config,
-        &mut no_jitter,
+        &mut *rand,
     );
     while state.phase == ReconnectPhase::Waiting {
         // The armed backoff delay for the attempt about to start.
         let delay = Duration::from_millis(state.delay_ms.max(0) as u64);
         // The backoff timer fires: begin an attempt (advances the attempt count).
-        state = reconnect_reducer(&state, ReconnectEvent::Attempt, config, &mut no_jitter);
+        state = reconnect_reducer(&state, ReconnectEvent::Attempt, config, &mut *rand);
         let n = state.attempt as u32;
         on_attempt(n, delay);
         tokio::select! {
@@ -1914,7 +1908,7 @@ async fn run_reconnect_loop(
             return ReconnectOutcome::Reconnected;
         }
         // The attempt failed: arm the next backoff window or give up.
-        state = reconnect_reducer(&state, ReconnectEvent::Failure, config, &mut no_jitter);
+        state = reconnect_reducer(&state, ReconnectEvent::Failure, config, &mut *rand);
     }
     ReconnectOutcome::Exhausted
 }
@@ -1980,7 +1974,7 @@ mod tests {
         last_error_for, record_last_error, resolve_managed_arc, resolve_tunnel_host,
         resting_status, run_reconnect_loop, snapshot_active_stats, stats_from_status_reply,
         type_supports_tunneling, wait_forwarder_death, wait_session_death, ActiveTunnel,
-        CompanionAction, ReconnectOutcome, TunnelStatsUpdate, TUNNEL_BACKOFF,
+        CompanionAction, ReconnectOutcome, TunnelStatsUpdate, TUNNEL_RECONNECT_POLICY,
     };
     use crate::run_location::{ResolvedLocation, RunLocation};
     use crate::tunnel::config::{LocalForwardConfig, TunnelConfig, TunnelStatus, TunnelType};
@@ -2446,70 +2440,119 @@ mod tests {
     // unit test. These lock in the risky part — the backoff schedule and the loop's
     // success/exhaustion/cancel control flow — with injected closures + paused time.
 
-    // ── Golden vector: canonical-engine migration (SM-020 slice 2) ──────
+    // ── Golden vector: the tunnel on the shared policy (SM-020, #3730) ──
     //
-    // Pins the EXACT delay sequence + give-up the tunnel reconnect produces, so
-    // moving `run_reconnect_loop` onto the canonical `reconnect_backoff` engine
-    // is proven behavior-preserving: fed the tunnel's production [`TUNNEL_BACKOFF`]
-    // with jitter disabled, the shared engine must yield the same 1,2,4,8,16 s
-    // schedule then give up that the hand-rolled `backoff_delay(1..=5)` did.
+    // Pins the delay sequence + give-up the tunnel reconnect produces: the shared
+    // policy's nominal (worst-case) 1,2,4,8,16,30,30,30,30,30 s schedule, give up
+    // after 10 attempts, and jitter that only ever shortens a window.
 
-    /// The tunnel reconnect delays, in whole ms, for its production
-    /// configuration ([`TUNNEL_BACKOFF`]: base 1 s, factor 2, cap 30 s, 5
-    /// attempts). All five stay under the 30 s cap, so the cap never clamps here.
-    const TUNNEL_GOLDEN_DELAYS_MS: [i64; 5] = [1_000, 2_000, 4_000, 8_000, 16_000];
+    /// The tunnel's nominal (worst-case) reconnect delays, in whole ms.
+    const TUNNEL_GOLDEN_DELAYS_MS: [i64; 10] = [
+        1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000, 30_000, 30_000,
+    ];
 
-    #[test]
-    fn golden_vector_tunnel_backoff_sequence_then_give_up() {
-        let mut no_jitter = || 0.0;
-        let mut state = INITIAL_RECONNECT_STATE;
-        let mut delays = Vec::new();
-
-        // A fresh drop arms the first backoff window; each subsequent window is
-        // armed by a failed attempt (the timer fires, then the attempt fails).
-        state = reconnect_reducer(
-            &state,
+    /// Walk the `Drop → (Attempt → Failure)*` sequence on the tunnel policy.
+    fn walk_tunnel_schedule(
+        rand: &mut dyn FnMut() -> f64,
+    ) -> (Vec<i64>, termihub_core::reconnect_backoff::ReconnectState) {
+        let mut state = reconnect_reducer(
+            &INITIAL_RECONNECT_STATE,
             ReconnectEvent::Drop,
-            &TUNNEL_BACKOFF,
-            &mut no_jitter,
+            &TUNNEL_RECONNECT_POLICY,
+            rand,
         );
+        let mut delays = Vec::new();
         while state.phase == ReconnectPhase::Waiting {
             delays.push(state.delay_ms);
             state = reconnect_reducer(
                 &state,
                 ReconnectEvent::Attempt,
-                &TUNNEL_BACKOFF,
-                &mut no_jitter,
+                &TUNNEL_RECONNECT_POLICY,
+                rand,
             );
             state = reconnect_reducer(
                 &state,
                 ReconnectEvent::Failure,
-                &TUNNEL_BACKOFF,
-                &mut no_jitter,
+                &TUNNEL_RECONNECT_POLICY,
+                rand,
             );
         }
+        (delays, state)
+    }
 
+    #[test]
+    fn tunnel_follows_the_shared_reconnect_policy() {
+        use termihub_core::reconnect_backoff::RECONNECT_POLICY;
+        assert_eq!(TUNNEL_RECONNECT_POLICY, RECONNECT_POLICY);
+        assert_eq!(super::RECONNECT_MAX_ATTEMPTS, 10);
+    }
+
+    #[test]
+    fn golden_vector_tunnel_backoff_sequence_then_give_up() {
+        let (delays, state) = walk_tunnel_schedule(&mut || 0.0);
         assert_eq!(
             delays,
             TUNNEL_GOLDEN_DELAYS_MS.to_vec(),
-            "tunnel backoff must yield exactly 1,2,4,8,16 s (jitter disabled)"
+            "tunnel backoff must be at most 1,2,4,8,16,30,30,30,30,30 s"
         );
         assert_eq!(
             state.phase,
             ReconnectPhase::Gaveup,
-            "after 5 failed attempts the engine gives up (was `Exhausted`)"
+            "after 10 failed attempts the engine gives up (`Exhausted`)"
         );
     }
 
-    /// A jitterless config with the tunnel's factor and attempt budget but fast
-    /// (sub-ms) timings, so the loop tests below don't actually sleep seconds.
+    #[test]
+    fn tunnel_jittered_schedule_stays_within_the_shared_bounds() {
+        use termihub_core::reconnect_backoff::{SeededJitter, RECONNECT_GIVE_UP_WINDOW_MS};
+        for seed in 0..64u64 {
+            let mut jitter = SeededJitter::new(seed);
+            let (delays, _) = walk_tunnel_schedule(&mut || jitter.next_f64());
+            assert_eq!(delays.len(), TUNNEL_GOLDEN_DELAYS_MS.len());
+            for (d, nominal) in delays.iter().zip(TUNNEL_GOLDEN_DELAYS_MS) {
+                assert!(
+                    *d <= nominal && *d >= nominal / 2,
+                    "seed {seed}: {d} vs {nominal}"
+                );
+            }
+            assert!(delays.iter().sum::<i64>() <= RECONNECT_GIVE_UP_WINDOW_MS);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn reconnect_loop_sleeps_the_jittered_delay_it_announces() {
+        // The delay passed to `on_attempt` (the "retry in Ns" status) is exactly
+        // the window the loop then sleeps, and follows the injected jitter.
+        let cancel = CancellationToken::new();
+        let mut announced: Vec<Duration> = Vec::new();
+        let mut draw = || 0.999_999;
+        let start = tokio::time::Instant::now();
+        let outcome = run_reconnect_loop(
+            &cancel,
+            &TUNNEL_RECONNECT_POLICY,
+            &mut draw,
+            |_, delay| announced.push(delay),
+            |n| n == 2,
+        )
+        .await;
+        assert_eq!(outcome, ReconnectOutcome::Reconnected);
+        // Fully shortened windows: 1 s → 500 ms, 2 s → 1 s.
+        assert_eq!(
+            announced,
+            vec![Duration::from_millis(500), Duration::from_millis(1_000)]
+        );
+        assert_eq!(start.elapsed(), Duration::from_millis(1_500));
+    }
+
+    /// The tunnel policy with fast (sub-ms) timings and a 5-attempt budget, so
+    /// the loop tests below don't actually sleep seconds.
     fn fast_backoff() -> BackoffConfig {
         BackoffConfig {
             base_delay_ms: 1.0,
             factor: 2.0,
             max_delay_ms: 20.0,
             max_attempts: 5,
-            jitter_ratio: 0.0,
+            ..TUNNEL_RECONNECT_POLICY
         }
     }
 
@@ -2521,6 +2564,7 @@ mod tests {
         let outcome = run_reconnect_loop(
             &cancel,
             &fast_backoff(),
+            &mut || 0.5,
             |n, _delay| emitted.push(n),
             |n| {
                 tries += 1;
@@ -2544,6 +2588,7 @@ mod tests {
         let outcome = run_reconnect_loop(
             &cancel,
             &fast_backoff(),
+            &mut || 0.5,
             |n, _delay| emitted.push(n),
             |_| false, // every attempt fails
         )
@@ -2560,6 +2605,7 @@ mod tests {
         let outcome = run_reconnect_loop(
             &cancel,
             &fast_backoff(),
+            &mut || 0.5,
             |_, _| {},
             |_| {
                 tries += 1;

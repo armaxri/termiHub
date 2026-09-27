@@ -33,7 +33,7 @@ tests:
 
   - id: MT-NET-19
     automation_issue: 3692
-    title: Remote agent — network.open_ports via JSON-RPC
+    title: Remote agent — open ports via tool.run
     automated_by: null
     steps:
       - Configure an SSH connection with a remote agent

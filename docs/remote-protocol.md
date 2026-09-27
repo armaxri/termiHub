@@ -2,9 +2,9 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.8.0
+**Version**: 0.13.0
 **Status**: Draft
-**Issue**: #17, #360, #1349, #2185, #2192, #2607
+**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213
 
 ---
 
@@ -259,6 +259,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 - Protocol versions follow [Semantic Versioning](https://semver.org/) (`MAJOR.MINOR.PATCH`)
 - **Major** version changes indicate breaking changes — the agent MUST reject incompatible major versions
 - **Minor** version changes add new methods or optional fields — backwards compatible
+- **Pre-1.0 exception:** while the major version is `0`, a minor version may also **remove** methods (0.2.0 removed `session.*`; 0.12.0 removed `network.*`). The removal is documented below, and the desktop gates the affected feature on a capability so an older peer gets a clear message instead of a missing-method failure
 - **Patch** version changes are bug fixes — no protocol impact
 - The agent selects the highest compatible version it supports (matching major, up to its minor)
 
@@ -280,46 +281,53 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 > [`-32601` Method not found](#standard-json-rpc-errors) and the desktop falls back to the
 > pre-feature behaviour (see the per-version notes below, which describe exactly these `-32601`
 > fallbacks). Anyone implementing a third-party client should not rely on the desktop rejecting an
-> incompatible agent by version.
+> incompatible agent by version. Network tools are gated up front instead: the desktop requires the
+> `toolStreaming` capability (see [Agent-run network tools](#agent-run-network-tools-tool)).
 
 ### Compatibility Matrix
 
-| Desktop Version | Agent Version | Compatible?                                                                                                                   |
-| --------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| 0.12.0          | 0.12.0        | Yes                                                                                                                           |
-| 0.12.0          | 0.11.0        | Yes (no `update_auth_token_path` — the desktop sends no `authToken`, which a pre-0.12.0 agent does not require)               |
-| 0.11.0          | 0.12.0        | Partly (everything except agent updates: the update RPCs are refused with `-32026` because no `authToken` is sent)            |
-| 0.11.0          | 0.11.0        | Yes                                                                                                                           |
-| 0.11.0          | 0.10.0        | Yes (no `embeddedServerActivity` — an agent-hosted server's panel says the access log is not supported by this agent version) |
-| 0.10.0          | 0.11.0        | Yes (new methods / capability ignored)                                                                                        |
-| 0.10.0          | 0.10.0        | Yes                                                                                                                           |
-| 0.10.0          | 0.9.0         | Yes (`clientCapabilities` ignored — agent-authenticated SSH keeps auto-answer-only keyboard-interactive)                      |
-| 0.9.0           | 0.10.0        | Yes (no `clientCapabilities` — the agent never relays prompts to this desktop)                                                |
-| 0.9.0           | 0.9.0         | Yes                                                                                                                           |
-| 0.9.0           | 0.8.0         | Yes (no `toolStreaming` — agent-run network tools fall back to collect-and-return `network.*` / `tool.run`)                   |
-| 0.8.0           | 0.9.0         | Yes (new methods / notifications / capability ignored)                                                                        |
-| 0.8.0           | 0.8.0         | Yes                                                                                                                           |
-| 0.8.0           | 0.7.0         | Yes (`service.pause/resume` absent — agent-hosted monitor pause falls back to stop-and-relist)                                |
-| 0.7.0           | 0.8.0         | Yes (new methods ignored)                                                                                                     |
-| 0.7.0           | 0.7.0         | Yes                                                                                                                           |
-| 0.7.0           | 0.6.0         | Yes (`service.*` absent — agent-hosted embedded servers fall back to hosting on desktop)                                      |
-| 0.6.0           | 0.7.0         | Yes (new methods ignored)                                                                                                     |
-| 0.6.0           | 0.6.0         | Yes                                                                                                                           |
-| 0.6.0           | 0.5.0         | Yes (`tunnel.*` absent — agent-hosted tunnels fall back to the "not supported" path)                                          |
-| 0.5.0           | 0.6.0         | Yes (new methods ignored)                                                                                                     |
-| 0.5.0           | 0.5.0         | Yes                                                                                                                           |
-| 0.5.0           | 0.4.0         | Yes (`agent.forward.*` absent — relay is a no-op)                                                                             |
-| 0.4.0           | 0.5.0         | Yes (new methods / notifications ignored)                                                                                     |
-| 0.4.0           | 0.4.0         | Yes                                                                                                                           |
-| 0.4.0           | 0.3.0         | Yes (`agent.request_update` absent — see below)                                                                               |
-| 0.3.0           | 0.4.0         | Yes (new method / notification ignored)                                                                                       |
-| 0.3.0           | 0.2.0         | Yes (`agent.list_connections` / `client_id` absent)                                                                           |
-| 0.2.0           | 0.3.0         | Yes (new method / field ignored)                                                                                              |
-| 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                    |
-| 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                          |
-| 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                           |
+| Desktop Version | Agent Version | Compatible?                                                                                                                          |
+| --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.13.0          | 0.13.0        | Yes                                                                                                                                  |
+| 0.13.0          | 0.9.0–0.12.0  | Yes (no `update_auth_token_path` — the desktop sends no `authToken`, which a pre-0.13.0 agent does not require)                      |
+| 0.12.0          | 0.13.0        | Partly (everything except agent updates: the update RPCs are refused with `-32026` because no `authToken` is sent)                   |
+| 0.12.0          | 0.12.0        | Yes                                                                                                                                  |
+| 0.12.0          | 0.9.0–0.11.0  | Yes (network tools run through `tool.*`, which these agents already offer)                                                           |
+| 0.12.0          | < 0.9.0       | Partly (no `toolStreaming` — network tools refuse with "update the agent to use network tools"; everything else works)               |
+| 0.11.0          | 0.12.0        | Partly (agent-run DNS / Wake-on-LAN / open ports fail with `-32601` — they still call the removed `network.*`; streaming tools work) |
+| 0.11.0          | 0.11.0        | Yes                                                                                                                                  |
+| 0.11.0          | 0.10.0        | Yes (no `embeddedServerActivity` — an agent-hosted server's panel says the access log is not supported by this agent version)        |
+| 0.10.0          | 0.11.0        | Yes (new methods / capability ignored)                                                                                               |
+| 0.10.0          | 0.10.0        | Yes                                                                                                                                  |
+| 0.10.0          | 0.9.0         | Yes (`clientCapabilities` ignored — agent-authenticated SSH keeps auto-answer-only keyboard-interactive)                             |
+| 0.9.0           | 0.10.0        | Yes (no `clientCapabilities` — the agent never relays prompts to this desktop)                                                       |
+| 0.9.0           | 0.9.0         | Yes                                                                                                                                  |
+| 0.9.0           | 0.8.0         | Yes (no `toolStreaming` — agent-run network tools fall back to collect-and-return `network.*` / `tool.run`)                          |
+| 0.8.0           | 0.9.0         | Yes (new methods / notifications / capability ignored)                                                                               |
+| 0.8.0           | 0.8.0         | Yes                                                                                                                                  |
+| 0.8.0           | 0.7.0         | Yes (`service.pause/resume` absent — agent-hosted monitor pause falls back to stop-and-relist)                                       |
+| 0.7.0           | 0.8.0         | Yes (new methods ignored)                                                                                                            |
+| 0.7.0           | 0.7.0         | Yes                                                                                                                                  |
+| 0.7.0           | 0.6.0         | Yes (`service.*` absent — agent-hosted embedded servers fall back to hosting on desktop)                                             |
+| 0.6.0           | 0.7.0         | Yes (new methods ignored)                                                                                                            |
+| 0.6.0           | 0.6.0         | Yes                                                                                                                                  |
+| 0.6.0           | 0.5.0         | Yes (`tunnel.*` absent — agent-hosted tunnels fall back to the "not supported" path)                                                 |
+| 0.5.0           | 0.6.0         | Yes (new methods ignored)                                                                                                            |
+| 0.5.0           | 0.5.0         | Yes                                                                                                                                  |
+| 0.5.0           | 0.4.0         | Yes (`agent.forward.*` absent — relay is a no-op)                                                                                    |
+| 0.4.0           | 0.5.0         | Yes (new methods / notifications ignored)                                                                                            |
+| 0.4.0           | 0.4.0         | Yes                                                                                                                                  |
+| 0.4.0           | 0.3.0         | Yes (`agent.request_update` absent — see below)                                                                                      |
+| 0.3.0           | 0.4.0         | Yes (new method / notification ignored)                                                                                              |
+| 0.3.0           | 0.2.0         | Yes (`agent.list_connections` / `client_id` absent)                                                                                  |
+| 0.2.0           | 0.3.0         | Yes (new method / field ignored)                                                                                                     |
+| 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                           |
+| 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                 |
+| 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                  |
 
-**0.12.0 (minor, update RPCs only)** — hardens agent updates (#3213, AGT-003 / SEC-006). [`agent.request_update`](#agentrequest_update) and [`agent.request_deferred_update`](#agentrequest_deferred_update) now **require** the agent instance's per-instance update auth token in a new `authToken` param, in addition to the release signature; the `initialize` result advertises the owner-only file holding it as `update_auth_token_path`. Both methods also take an optional `pinnedVersion` for a **matched downgrade** (see [Update authorization and downgrade policy](#update-authorization-and-downgrade-policy)). New error codes `-32026` (unauthorized) and `-32027` (downgrade refused). A 0.12.0 desktop against an older agent sends no token (none is advertised) and the older agent ignores the unknown params. An older desktop against a 0.12.0 agent can do everything except update it.
+**0.13.0 (minor, update RPCs only)** — hardens agent updates (#3213, AGT-003 / SEC-006). [`agent.request_update`](#agentrequest_update) and [`agent.request_deferred_update`](#agentrequest_deferred_update) now **require** the agent instance's per-instance update auth token in a new `authToken` param, in addition to the release signature; the `initialize` result advertises the owner-only file holding it as `update_auth_token_path`. Both methods also take an optional `pinnedVersion` for a **matched downgrade** (see [Update authorization and downgrade policy](#update-authorization-and-downgrade-policy)). New error codes `-32026` (unauthorized) and `-32027` (downgrade refused). A 0.13.0 desktop against an older agent sends no token (none is advertised) and the older agent ignores the unknown params. An older desktop against a 0.13.0 agent can do everything except update it.
+
+**0.12.0 (removal, minor — pre-1.0)** — removes the dedicated `network.port_scan` / `network.ping` / `network.dns_lookup` / `network.open_ports` / `network.traceroute` / `network.wol` methods (#3731, audit DUP-027). They duplicated the core `ToolRegistry` path the agent already exposed as [`tool.run`](#agent-run-network-tools-tool) / [`tool.start`](#toolstart), so every network tool now has exactly one code path, locally and on the agent. An agent answers the removed methods with `-32601`. The desktop sets a **minimum agent version for network tools**: it requires `capabilities.toolStreaming` (0.9.0+) and, for an older agent, shows "update the agent to use network tools" (error code `agent_outdated`) before sending anything; the rest of an older agent keeps working. A 0.9.0–0.11.0 desktop talking to a 0.12.0 agent still streams the streaming tools, but its DNS / Wake-on-LAN / open-ports calls hit the removed methods — update the desktop too.
 
 **0.11.0 (additive, minor)** — adds the access log of agent-hosted embedded servers (#3453): the [`embedded_server.activity`](#embedded_serveractivity) / [`embedded_server.clear_activity`](#embedded_serverclear_activity) methods and the `capabilities.embeddedServerActivity` flag in the `initialize` result. Negotiation is by **capability**: the desktop calls the methods only when the hosting agent advertises `embeddedServerActivity: true`. Backwards compatible in both directions: a pre-0.11.0 agent never advertises the flag, so the desktop reads no log for its hosted servers (`get_embedded_server_activity` returns `null`) and the UI says the access log is not supported by this agent version; a `-32601` reply is treated the same way. A pre-0.11.0 desktop never calls the methods.
 
@@ -412,7 +420,7 @@ On a successful `initialize`, the agent records the client (`client`, `client_ve
 | `protocol_version`                        | `string`               | Negotiated protocol version                                                                                                                                                              |
 | `agent_version`                           | `string`               | Agent binary version                                                                                                                                                                     |
 | `client_id`                               | `string`               | Agent-assigned id for this client (0.3.0+)                                                                                                                                               |
-| `update_auth_token_path`                  | `string`               | Owner-only file (on the agent host) holding this instance's update auth token — see [Update authorization](#update-authorization-and-downgrade-policy) (0.12.0+; absent on older agents) |
+| `update_auth_token_path`                  | `string`               | Owner-only file (on the agent host) holding this instance's update auth token — see [Update authorization](#update-authorization-and-downgrade-policy) (0.13.0+; absent on older agents) |
 | `capabilities.connectionTypes`            | `ConnectionTypeInfo[]` | Available connection types with schemas/caps                                                                                                                                             |
 | `capabilities.maxSessions`                | `integer`              | Maximum concurrent sessions                                                                                                                                                              |
 | `capabilities.availableShells`            | `string[]`             | Available shell paths                                                                                                                                                                    |
@@ -1218,8 +1226,8 @@ Coordination is best-effort and never blocks the update. If the host-wide regist
 | `version`        | `string`  | No       | Target version label (bookkeeping only)                                                                                                                   |
 | `expectedSha256` | `string`  | No       | Lowercase-hex SHA-256 of the binary at `binaryPath`; re-verified immediately before the swap (AGT-004). Required with `binaryPath`.                       |
 | `signature`      | `string`  | No       | Base64 Ed25519 signature (the published `<binary>.sig`) over the SHA-256 — see [Update signatures](#update-signatures). Required by release-built agents. |
-| `authToken`      | `string`  | Yes      | This agent instance's update auth token (0.12.0+) — see [Update authorization](#update-authorization-and-downgrade-policy). Missing or wrong → `-32026`.  |
-| `pinnedVersion`  | `string`  | No       | Matched-downgrade pin (0.12.0+): must equal the desktop's own `clientVersion` and the binary's embedded version. Honoured only with `binaryPath`.         |
+| `authToken`      | `string`  | Yes      | This agent instance's update auth token (0.13.0+) — see [Update authorization](#update-authorization-and-downgrade-policy). Missing or wrong → `-32026`.  |
+| `pinnedVersion`  | `string`  | No       | Matched-downgrade pin (0.13.0+): must equal the desktop's own `clientVersion` and the binary's embedded version. Honoured only with `binaryPath`.         |
 | `ackTimeoutSecs` | `integer` | No       | How long other hosts get to disconnect. Defaults to `10`.                                                                                                 |
 
 **Response:**
@@ -1344,8 +1352,8 @@ Applying swaps the on-disk agent binary with the staged one and re-execs it (Uni
 | `version`        | `string` | No       | Target version label (bookkeeping only)                                                                                             |
 | `expectedSha256` | `string` | No       | Lowercase-hex SHA-256 of the binary at `binaryPath`; re-verified immediately before the swap (AGT-004). Required with `binaryPath`. |
 | `signature`      | `string` | No       | Base64 Ed25519 signature over the SHA-256 — see [Update signatures](#update-signatures). Required by release-built agents.          |
-| `authToken`      | `string` | Yes      | This agent instance's update auth token (0.12.0+) — see [Update authorization](#update-authorization-and-downgrade-policy).         |
-| `pinnedVersion`  | `string` | No       | Matched-downgrade pin (0.12.0+) — see [Update authorization](#update-authorization-and-downgrade-policy).                           |
+| `authToken`      | `string` | Yes      | This agent instance's update auth token (0.13.0+) — see [Update authorization](#update-authorization-and-downgrade-policy).         |
+| `pinnedVersion`  | `string` | No       | Matched-downgrade pin (0.13.0+) — see [Update authorization](#update-authorization-and-downgrade-policy).                           |
 
 **Response:**
 
@@ -2234,23 +2242,23 @@ Report whether an agent-hosted tunnel is currently forwarding, with live traffic
 
 ---
 
-### Agent-run network tools (`network.*`, `tool.run`)
+### Agent-run network tools (`tool.*`)
 
-A network diagnostic whose "Run on" location is an agent runs **from the agent's network vantage**. The desktop proxies it (`src-tauri/src/network/agent_tools.rs`) and re-emits the reply as the same Tauri events or return value as the local path, so the UI cannot tell where it ran.
+A network diagnostic whose "Run on" location is an agent runs **from the agent's network vantage**. Every network tool — locally and on an agent — runs a core `ToolRegistry` tool (`src-tauri/src/network/tool_runner.rs`), and the desktop re-emits the tool's events as the same Tauri events or return value either way, so the UI cannot tell where it ran. The dedicated `network.*` methods were **removed in 0.12.0** (#3731); an agent answers them with [`-32601` Method not found](#standard-json-rpc-errors).
 
-When the agent advertises `capabilities.toolStreaming` (0.9.0+), the streaming tools — ping, traceroute, port scan and ping sweep — run as [streaming tool runs](#streaming-tool-runs-toolstart-toolcancel) instead (`src-tauri/src/network/agent_stream.rs`): results arrive live, there is no request timeout, and Stop cancels the run on the agent. Otherwise, and always for the one-shot tools, the methods below are **collect-and-return**: the agent gathers the whole run before replying, bounded by the desktop's 60 s agent-request timeout.
+| Tool        | Agent method               | `toolId`     | Params                                                | Result (aggregate)                               |
+| ----------- | -------------------------- | ------------ | ----------------------------------------------------- | ------------------------------------------------ |
+| Ping        | [`tool.start`](#toolstart) | `ping`       | `{host, intervalMs, count}`                           | `PingStats`                                      |
+| Traceroute  | [`tool.start`](#toolstart) | `traceroute` | `{host, maxHops}`                                     | `{}`                                             |
+| Port scan   | [`tool.start`](#toolstart) | `port_scan`  | `{host, targets, ports, timeoutMs, concurrency}`      | `PortScanSummary`                                |
+| Ping sweep  | [`tool.start`](#toolstart) | `ping_sweep` | `{targets, timeoutMs, concurrency, resolveHostnames}` | `{total, up, down, elapsedMs}`                   |
+| DNS lookup  | `tool.run`                 | `dns`        | `{hostname, recordType, server}`                      | `DnsResult`                                      |
+| Wake-on-LAN | `tool.run`                 | `wol`        | `{mac, broadcast, port}`                              | `{}`                                             |
+| Open ports  | `tool.run`                 | `open_ports` | `{}`                                                  | `{ports: [{protocol, localAddr, pid, process}]}` |
 
-| Tool        | Agent method                           | Params                                                | Result                                                   |
-| ----------- | -------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------- |
-| Ping        | `network.ping`                         | `{host, count, interval_ms}`                          | `{results, stats}`                                       |
-| Traceroute  | `network.traceroute`                   | `{host, max_hops}`                                    | `{hops}`                                                 |
-| Port scan   | `network.port_scan`                    | `{host, ports, timeout_ms, concurrency}`              | `{results, summary}`                                     |
-| DNS lookup  | `network.dns_lookup`                   | `{hostname, record_type, server}`                     | `DnsResult`                                              |
-| Wake-on-LAN | `network.wol`                          | `{mac, broadcast, port}`                              | `{}`                                                     |
-| Open ports  | `network.open_ports`                   | `{}`                                                  | `{ports: [{protocol, localAddr, pid, process}]}`         |
-| Ping sweep  | `tool.run` with `toolId: "ping_sweep"` | `{targets, timeoutMs, concurrency, resolveHostnames}` | `{events: [{kind: "result", payload}], result: summary}` |
+Tool params are camelCase. The streaming tools always run as [streaming tool runs](#streaming-tool-runs-toolstart-toolcancel): results arrive live, there is no request timeout, and Stop cancels the run on the agent. The one-shot tools use `tool.run`, which wraps the params as `{toolId, params}` and replies `{events, result}` once the run ends (bounded by the desktop's 60 s agent-request timeout). The desktop expands a scan's or sweep's target spec (CIDR, ranges) itself and sends the concrete address list.
 
-`network.*` params are snake_case. `tool.run` wraps camelCase tool params as `{toolId, params}` and runs the agent's core `ToolRegistry`. Each `result` event payload of a ping sweep is `{host, latencyMs, hostname}`, and `result` is the summary `{total, up, down, elapsedMs}`. The desktop expands the sweep's target spec (CIDR, ranges) itself and sends the concrete address list. An agent without `tool.run` returns [`-32601` Method not found](#standard-json-rpc-errors), which the desktop surfaces as a sweep error.
+**Minimum agent version.** Network tools need an agent that advertises `capabilities.toolStreaming` — protocol **0.9.0** or newer. The desktop checks the capability before it sends anything: an older agent is refused with an `agent_outdated` error telling the user to update the agent to use network tools (the agent-update flow is the remedy). It never fails silently or on a missing method.
 
 The HTTP monitor is not on this path: a monitor is agent-hosted per monitor through [`service.*`](#agent-hosted-embedded-servers-service).
 
@@ -2935,7 +2943,7 @@ A monitored host's collect-loop status changed (#3321). The agent sends one on e
 **Compatibility.** The notification is optional and additive:
 
 - An older desktop ignores it (unknown notification methods are dropped).
-- A newer desktop applies it in preference to inferring status from the sample flow. Against an older agent, which never sends it, the desktop keeps inferring: missed samples mark the monitor `stale`, and a `stale` monitor whose agent transport stays up resolves `offline` once the agent's worst-case recovery budget has passed (217 s at the default 2 s interval: 2 failed collects to `stale` plus 6 failed collects after a re-dial, each up to `interval + 10 s` collect timeout, plus the 121 s reconnect backoff `1+2+4+8+16+30+30+30`). A later sample still recovers the monitor to `live`.
+- A newer desktop applies it in preference to inferring status from the sample flow. Against an older agent, which never sends it, the desktop keeps inferring: missed samples mark the monitor `stale`, and a `stale` monitor whose agent transport stays up resolves `offline` once the agent's worst-case recovery budget has passed (277 s at the default 2 s interval: 2 failed collects to `stale` plus 6 failed collects after a re-dial, each up to `interval + 10 s` collect timeout, plus the worst-case 181 s reconnect backoff `1+2+4+8+16+30+30+30+30+30` of the shared reconnect policy; an older agent with the former 8-attempt budget resolves sooner, which only makes this bound more generous). A later sample still recovers the monitor to `live`.
 - A desktop must ignore a `status` or `reason` value it does not recognize rather than fail.
 
 ---

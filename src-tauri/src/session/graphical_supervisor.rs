@@ -18,7 +18,8 @@
 //! ```
 //!
 //! - **Auto-Reconnect on** ([`auto_reconnect_enabled`], default on): the drop
-//!   arms the backoff schedule ([`GRAPHICAL_BACKOFF`], 1 s doubling, at most
+//!   arms the backoff schedule ([`GRAPHICAL_BACKOFF`], the shared reconnect
+//!   policy: 1 s doubling to 30 s with bounded jitter, at most
 //!   [`MAX_RECONNECT_ATTEMPTS`] attempts). Each attempt re-dials a fresh backend
 //!   instance with the session's original settings, swaps it into the shared
 //!   connection slot (so input/resize/clipboard commands reach it), re-attaches
@@ -83,8 +84,8 @@ use termihub_core::connection::{
 };
 use termihub_core::errors::SessionError;
 use termihub_core::reconnect_backoff::{
-    reconnect_reducer, BackoffConfig, ReconnectEvent, ReconnectPhase, ReconnectState,
-    INITIAL_RECONNECT_STATE,
+    policy_for, reconnect_reducer, BackoffConfig, ReconnectEvent, ReconnectKind, ReconnectPhase,
+    ReconnectState, INITIAL_RECONNECT_STATE,
 };
 
 use crate::session::frame_guard::REJECTED_FRAMES_MESSAGE;
@@ -97,23 +98,20 @@ use crate::session::rdp_trust_store::RdpTrustStore;
 #[cfg(doc)]
 use termihub_core::connection::auto_reconnect_enabled;
 
-/// Graphical auto-reconnect backoff on the canonical engine (#3364).
-///
-/// A 1 s first retry doubling up to a 30 s ceiling — the same shape as the
-/// tunnel/agent schedules — capped at [`MAX_RECONNECT_ATTEMPTS`] attempts, the
-/// "up to 3 times" the Auto-Reconnect toggle promises. Jitter is off: one
-/// graphical tab does not stampede a server, and a deterministic schedule is
-/// what the paused-time tests pin.
-pub(crate) const GRAPHICAL_BACKOFF: BackoffConfig = BackoffConfig {
-    base_delay_ms: 1_000.0,
-    factor: 2.0,
-    max_delay_ms: 30_000.0,
-    max_attempts: MAX_RECONNECT_ATTEMPTS as i64,
-    jitter_ratio: 0.0,
-};
+/// Graphical auto-reconnect policy on the canonical engine (#3364) — the
+/// shared `RECONNECT_POLICY` (SM-020, #3730): a 1 s first retry doubling to a
+/// 30 s ceiling, at most [`MAX_RECONNECT_ATTEMPTS`] (10) attempts, with bounded
+/// jitter. The same schedule terminal tabs, tunnels, the agent transport and
+/// monitoring follow. (Before #3730 graphical sessions gave up after 3
+/// jitterless attempts.)
+pub(crate) const GRAPHICAL_BACKOFF: BackoffConfig = policy_for(ReconnectKind::Graphical);
+
+// The attempt counter the frontend renders ("Attempt n of N") must match the
+// budget the engine actually enforces.
+const _: () = assert!(GRAPHICAL_BACKOFF.max_attempts == MAX_RECONNECT_ATTEMPTS as i64);
 
 /// Upper bound on one re-dial, so a black-holed host cannot pin an attempt
-/// (and the "attempt n/3" overlay) indefinitely.
+/// (and the "Attempt n of N" overlay) indefinitely.
 pub(crate) const RECONNECT_DIAL_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The pixel size most recently requested for a session, re-sent to the
@@ -177,6 +175,9 @@ pub(crate) struct Supervisor<S: GraphicalEventSink> {
     /// Held keys / buttons (#3402), released on the fresh connection after a
     /// re-dial so nothing stays stuck across the reconnect.
     pub(crate) held: SharedHeldInput,
+    /// Backoff jitter source: [`system_jitter`](termihub_core::reconnect_backoff::system_jitter)
+    /// in production, a constant under the paused-time tests.
+    pub(crate) jitter: fn() -> f64,
     pub(crate) sink: S,
 }
 
@@ -185,7 +186,7 @@ impl<S: GraphicalEventSink> Supervisor<S> {
     /// unexpected drop either reconnect (and pump the new generation) or rest
     /// in a terminal / manual-prompt state.
     pub(crate) async fn run(self, first: Generation) {
-        let mut no_jitter = || 0.0;
+        let mut jitter = self.jitter;
         let mut engine = INITIAL_RECONNECT_STATE;
         let mut generation = first;
         let mut retrying = false;
@@ -215,11 +216,11 @@ impl<S: GraphicalEventSink> Supervisor<S> {
                 ReconnectEvent::Failure
             } else {
                 if retrying {
-                    engine = self.step(&engine, ReconnectEvent::Success, &mut no_jitter);
+                    engine = self.step(&engine, ReconnectEvent::Success, &mut jitter);
                 }
                 ReconnectEvent::Drop
             };
-            engine = self.step(&engine, event, &mut no_jitter);
+            engine = self.step(&engine, event, &mut jitter);
             match self.reconnect(engine).await {
                 Some((next, state)) => {
                     generation = next;
@@ -304,11 +305,11 @@ impl<S: GraphicalEventSink> Supervisor<S> {
     /// generation plus the engine state to resolve once it paints, or `None`
     /// when the session came to rest (budget spent, terminal error, closed).
     async fn reconnect(&self, mut engine: ReconnectState) -> Option<(Generation, ReconnectState)> {
-        let mut no_jitter = || 0.0;
+        let mut jitter = self.jitter;
         let mut last_error: Option<String> = None;
         while engine.phase == ReconnectPhase::Waiting {
             let delay = Duration::from_millis(engine.delay_ms.max(0) as u64);
-            engine = self.step(&engine, ReconnectEvent::Attempt, &mut no_jitter);
+            engine = self.step(&engine, ReconnectEvent::Attempt, &mut jitter);
             if !self.begin_attempt(engine.attempt).await {
                 return None;
             }
@@ -326,7 +327,7 @@ impl<S: GraphicalEventSink> Supervisor<S> {
                 Err(DialError::Retryable(message)) => {
                     debug!(session_id = %self.session_id, attempt = engine.attempt, %message, "graphical re-dial failed");
                     last_error = Some(message);
-                    engine = self.step(&engine, ReconnectEvent::Failure, &mut no_jitter);
+                    engine = self.step(&engine, ReconnectEvent::Failure, &mut jitter);
                 }
             }
         }

@@ -8,28 +8,64 @@
       "expected": 4000
     },
     {
-      "name": "rand=0 swings to the lower jitter bound",
+      "name": "rand=0 does not shorten: exactly the nominal delay (the upper bound)",
       "input": 1,
       "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0.2 }, "rand": 0 },
+      "expected": 1000
+    },
+    {
+      "name": "rand near 1 shortens by the full jitter ratio",
+      "input": 1,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0.2 }, "rand": 0.999999 },
       "expected": 800
     },
     {
-      "name": "rand near 1 swings to the upper jitter bound",
-      "input": 1,
-      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0.2 }, "rand": 0.999999 },
-      "expected": 1200
-    },
-    {
-      "name": "rand=0.5 yields no swing (exactly base)",
+      "name": "rand=0.5 shortens by half the jitter ratio",
       "input": 1,
       "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0.2 }, "rand": 0.5 },
-      "expected": 1000
+      "expected": 900
+    },
+    {
+      "name": "an oversized jitter ratio is clamped: never below half the nominal delay",
+      "input": 1,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 2 }, "rand": 0.999999 },
+      "expected": 500
     },
     {
       "name": "never returns a negative delay under extreme jitter",
       "input": 1,
       "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 2 }, "rand": 0 },
-      "expected": 0
+      "expected": 1000
+    },
+    {
+      "name": "a capped attempt never exceeds the cap",
+      "input": 10,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0.5 }, "rand": 0 },
+      "expected": 8000
+    },
+    {
+      "name": "a capped attempt is shortened within [cap/2, cap]",
+      "input": 10,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0.5 }, "rand": 0.25 },
+      "expected": 7000
+    },
+    {
+      "name": "an out-of-range draw above 1 is clamped",
+      "input": 1,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0.5 }, "rand": 7 },
+      "expected": 500
+    },
+    {
+      "name": "an out-of-range draw below 0 is clamped",
+      "input": 1,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0.5 }, "rand": -5 },
+      "expected": 1000
+    },
+    {
+      "name": "the shared policy's first window with a mid draw",
+      "input": 1,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 30000, "maxAttempts": 10, "jitterRatio": 0.5 }, "rand": 0.5 },
+      "expected": 750
     }
   ]
 }

@@ -16,6 +16,7 @@ import type { PingResult, PingStats, DiagnosticStatus, NetworkToolRun } from "@/
 import { LatencyChart } from "./LatencyChart";
 import { deriveLivePingStats } from "./pingStats";
 import { validateHost, validateIntRange } from "@/utils/fieldValidation";
+import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 
 interface PingPanelProps {
@@ -132,7 +133,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
         count !== "" ? Number(count) : undefined
       );
     } catch (err) {
-      setError(String(err));
+      setError(errorMessage(err));
       setStatus("error");
       endSession();
       frontendLog("ping_panel", `Ping failed: ${err}`);

@@ -9,6 +9,7 @@ import type { DnsRecord, DnsRecordType, DnsResult, NetworkToolRun } from "@/type
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { validateHost } from "@/utils/fieldValidation";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
+import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 
 const RECORD_TYPES: DnsRecordType[] = [
@@ -84,7 +85,7 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
           .catch((e) => {
             clearTimeout(timer);
             cancelRef.current = null;
-            reject(e instanceof Error ? e : new Error(String(e)));
+            reject(e instanceof Error ? e : new Error(errorMessage(e)));
           });
       });
       setRecords(result.records);
@@ -98,14 +99,14 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
         table: dnsRecordsTable(result.records),
       });
     } catch (err) {
-      setError(String(err));
+      setError(errorMessage(err));
       void recordToolRun({
         tool: "dns-lookup",
         status: canceled ? "canceled" : "error",
         startedAt,
         params,
         summary: canceled ? "Lookup canceled" : "Lookup failed",
-        error: canceled ? undefined : String(err),
+        error: canceled ? undefined : errorMessage(err),
       });
       frontendLog("dns_lookup", `DNS lookup failed: ${err}`);
       throw err; // keep the async Button in its error path (no false success flash)

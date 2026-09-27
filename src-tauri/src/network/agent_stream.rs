@@ -1,9 +1,9 @@
 //! Stream agent-run network tools live (`tool.start`, #3353).
 //!
-//! The collect-and-return path in [`super::agent_tools`] waits for the agent's
-//! whole run inside one RPC, so it is capped by the 60 s agent request timeout,
-//! delivers every result at the end, and cannot stop the agent-side run. When
-//! the agent advertises the `toolStreaming` capability the desktop instead:
+//! A collect-and-return `tool.run` waits for the agent's whole run inside one
+//! RPC, so it is capped by the 60 s agent request timeout, delivers every result
+//! at the end, and cannot stop the agent-side run. The streaming tools (port
+//! scan, ping, ping sweep, traceroute) therefore always stream:
 //!
 //! 1. registers a route for a fresh run id with the agent I/O task, **then**
 //!    sends `tool.start` — so no early `tool.event` can be missed;
@@ -14,7 +14,10 @@
 //! 4. fails the run if the agent transport breaks (the agent cancels the run on
 //!    its side when the connection drops).
 //!
-//! An agent without the capability keeps the one-shot path, 60 s cap included.
+//! An agent without the `toolStreaming` capability is below the network-tool
+//! version floor and is refused up front by [`super::tool_runner`] (#3731).
+//! [`StreamTool`]'s event mapping is shared with the local path, so a tool's
+//! `network-*` events are identical wherever it ran.
 
 use std::pin::Pin;
 use std::sync::Arc;
@@ -22,7 +25,6 @@ use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 use tokio::time::Sleep;
 use tokio_util::sync::CancellationToken;
@@ -58,13 +60,6 @@ pub enum StreamOutcome {
     /// The run never finished normally: start refused, transport lost, or the
     /// agent did not confirm a cancel in time.
     Failed(String),
-}
-
-/// Whether `agent_id` can stream tool runs (advertised `toolStreaming`).
-pub fn supports_streaming(client: &Arc<dyn AgentRpcClient>, agent_id: &str) -> bool {
-    client
-        .get_capabilities(agent_id)
-        .is_some_and(|caps| caps.tool_streaming)
 }
 
 /// Run `tool_id` on the agent as a streaming run, handing each event to
@@ -183,9 +178,9 @@ async fn wait_optional(timer: &mut Option<Pin<Box<Sleep>>>) {
     }
 }
 
-// ── Per-tool re-emission as the local path's `network-*` events ──────────────
+// ── Per-tool re-emission as the `network-*` Tauri events ─────────────────────
 
-/// A streaming network tool the desktop can run on an agent.
+/// A streaming network tool, run locally or on an agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamTool {
     PortScan,
@@ -330,30 +325,6 @@ pub async fn run_streaming<E>(
     .await;
     let (event_name, payload) = tool.completion_payload(task_id, outcome);
     emit(event_name, payload);
-}
-
-/// [`run_streaming`] emitting straight to the frontend as Tauri events.
-pub async fn run_streaming_to_app(
-    tool: StreamTool,
-    client: Arc<dyn AgentRpcClient>,
-    agent_id: &str,
-    app: &AppHandle,
-    task_id: &str,
-    params: Value,
-    cancel: &CancellationToken,
-) {
-    run_streaming(
-        tool,
-        client,
-        agent_id,
-        task_id,
-        params,
-        cancel,
-        |event_name, payload| {
-            let _ = app.emit(event_name, payload);
-        },
-    )
-    .await;
 }
 
 #[cfg(test)]

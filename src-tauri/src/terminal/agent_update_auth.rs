@@ -1,6 +1,6 @@
 //! Desktop half of the agent-update authorization (AGT-003, #3213).
 //!
-//! A 0.12.0+ agent refuses `agent.request_update` / `agent.request_deferred_update`
+//! A 0.13.0+ agent refuses `agent.request_update` / `agent.request_deferred_update`
 //! unless the request carries the agent instance's per-instance update auth
 //! token. The agent never sends the token over the RPC channel; it advertises
 //! the **path** of an owner-only file in its `initialize` result

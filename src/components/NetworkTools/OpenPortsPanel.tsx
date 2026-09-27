@@ -7,6 +7,7 @@ import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { openPortsTable } from "./exportResults";
 import { NetworkToolHistory } from "./NetworkToolHistory";
 import { recordToolRun } from "./runHistory";
+import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 import { useRunLocationStore } from "@/store/runLocationStore";
 
@@ -41,14 +42,14 @@ export function OpenPortsPanel() {
         table: openPortsTable(result),
       });
     } catch (err) {
-      setError(String(err));
+      setError(errorMessage(err));
       void recordToolRun({
         tool: "open-ports",
         status: "error",
         startedAt,
         params: {},
         summary: "Listing failed",
-        error: String(err),
+        error: errorMessage(err),
       });
       frontendLog("open_ports", `Failed to list open ports: ${err}`);
       throw err; // keep the async Button in its error path (no false success flash)

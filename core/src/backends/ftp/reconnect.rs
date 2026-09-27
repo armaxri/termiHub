@@ -16,25 +16,44 @@ use std::time::Duration;
 
 use suppaftp::FtpError;
 
+#[cfg(doc)]
+use crate::reconnect_backoff::FTP_OPERATION_RETRY_POLICY;
+use crate::reconnect_backoff::{
+    next_reconnect_delay, policy_for, system_jitter, BackoffConfig, ReconnectKind,
+};
+
+/// The FTP per-operation retry policy — the one documented override of the
+/// shared reconnect policy (SM-020, #3730): an in-line retry of the file
+/// operation the user is waiting on must resolve in about a second, not minutes.
+/// See [`FTP_OPERATION_RETRY_POLICY`].
+const FTP_RETRY_POLICY: BackoffConfig = policy_for(ReconnectKind::FtpOperation);
+
 /// Maximum number of reconnect attempts before giving up (concept: "up to 3
 /// retries"). The initial attempt is not counted, so an operation is tried at
 /// most `1 + MAX_RECONNECT_RETRIES` times.
-pub(crate) const MAX_RECONNECT_RETRIES: usize = 3;
+pub(crate) const MAX_RECONNECT_RETRIES: usize = FTP_RETRY_POLICY.max_attempts as usize;
 
-/// Backoff before the `attempt`-th reconnect (0-based): an exponential ramp
-/// (100ms, 200ms, 400ms, 800ms, 1600ms) that plateaus at 1600ms to bound
-/// worst-case latency.
-///
-/// Uses the shared capped-exponential MATH (DUP-007). The historical
-/// hand-rolled form capped the *shift* at 4, so the delay plateaued at
-/// `100ms * 2^4 = 1600ms` (its nominal 2s clamp was never reached); passing a
-/// `1600ms` cap here reproduces that exact sequence.
+/// Nominal (worst-case) backoff before the `attempt`-th reconnect (0-based): an
+/// exponential ramp (100ms, 200ms, 400ms, 800ms, 1600ms) that plateaus at
+/// 1600ms to bound worst-case latency — the schedule FTP has always used.
+#[cfg(test)]
+pub(crate) fn nominal_reconnect_backoff(attempt: usize) -> Duration {
+    reconnect_backoff_with(attempt, &mut || 0.0)
+}
+
+/// Backoff before the `attempt`-th reconnect (0-based), drawn with `rand` from
+/// the shared engine's bounded jitter: within `[nominal/2, nominal]` of
+/// [`nominal_reconnect_backoff`].
+pub(crate) fn reconnect_backoff_with(attempt: usize, rand: &mut dyn FnMut() -> f64) -> Duration {
+    let n = i64::try_from(attempt)
+        .unwrap_or(i64::MAX - 1)
+        .saturating_add(1);
+    Duration::from_millis(next_reconnect_delay(n, &FTP_RETRY_POLICY, rand).max(0) as u64)
+}
+
+/// Backoff before the `attempt`-th reconnect (0-based), with production jitter.
 pub(crate) fn reconnect_backoff(attempt: usize) -> Duration {
-    crate::util::backoff::capped_exponential_delay(
-        Duration::from_millis(100),
-        attempt.min(u32::MAX as usize) as u32,
-        Duration::from_millis(1600),
-    )
+    reconnect_backoff_with(attempt, &mut system_jitter)
 }
 
 /// Whether a [`FtpError`] indicates a broken control connection that a
@@ -119,32 +138,50 @@ mod tests {
 
     #[test]
     fn backoff_is_monotonic_and_capped() {
-        // Exact sequence (DUP-007 bit-identity guard): 100, 200, 400, 800, 1600.
-        assert_eq!(reconnect_backoff(0), Duration::from_millis(100));
-        assert_eq!(reconnect_backoff(1), Duration::from_millis(200));
-        assert_eq!(reconnect_backoff(2), Duration::from_millis(400));
-        assert_eq!(reconnect_backoff(3), Duration::from_millis(800));
-        assert_eq!(reconnect_backoff(4), Duration::from_millis(1600));
-        assert!(
-            reconnect_backoff(2) > reconnect_backoff(1)
-                && reconnect_backoff(1) > reconnect_backoff(0),
-            "backoff must grow"
-        );
+        // Exact nominal sequence (DUP-007 bit-identity guard): 100, 200, 400,
+        // 800, 1600.
+        assert_eq!(nominal_reconnect_backoff(0), Duration::from_millis(100));
+        assert_eq!(nominal_reconnect_backoff(1), Duration::from_millis(200));
+        assert_eq!(nominal_reconnect_backoff(2), Duration::from_millis(400));
+        assert_eq!(nominal_reconnect_backoff(3), Duration::from_millis(800));
+        assert_eq!(nominal_reconnect_backoff(4), Duration::from_millis(1600));
         // Far-out attempts plateau at 1600ms and never exceed 2s.
-        let far = reconnect_backoff(100);
+        let far = nominal_reconnect_backoff(100);
+        assert_eq!(far, Duration::from_millis(1600));
         assert_eq!(
-            far,
-            Duration::from_millis(1600),
-            "backoff plateaus at 1600ms once doubling reaches the cap"
-        );
-        assert_eq!(
-            far,
-            reconnect_backoff(4),
-            "plateau equals the last growing step"
+            nominal_reconnect_backoff(usize::MAX),
+            Duration::from_millis(1600)
         );
         assert!(
             far <= Duration::from_millis(2000),
             "backoff is bounded at 2s"
+        );
+    }
+
+    #[test]
+    fn ftp_uses_its_documented_override_of_the_shared_policy() {
+        use crate::reconnect_backoff::FTP_OPERATION_RETRY_POLICY;
+        assert_eq!(FTP_RETRY_POLICY, FTP_OPERATION_RETRY_POLICY);
+        assert_eq!(MAX_RECONNECT_RETRIES, 3);
+    }
+
+    #[test]
+    fn jittered_backoff_stays_within_half_and_full_nominal() {
+        for attempt in 0..8usize {
+            let nominal = nominal_reconnect_backoff(attempt);
+            for r in [0.0, 0.3, 0.6, 0.999_999] {
+                let d = reconnect_backoff_with(attempt, &mut || r);
+                assert!(d <= nominal && d >= nominal / 2, "{d:?} vs {nominal:?}");
+            }
+            let live = reconnect_backoff(attempt);
+            assert!(
+                live <= nominal && live >= nominal / 2,
+                "{live:?} vs {nominal:?}"
+            );
+        }
+        assert_eq!(
+            reconnect_backoff_with(0, &mut || 0.999_999),
+            Duration::from_millis(50)
         );
     }
 
