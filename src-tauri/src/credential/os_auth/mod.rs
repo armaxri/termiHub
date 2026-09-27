@@ -33,7 +33,6 @@ use serde::Serialize;
 // The real verifiers are compiled (and linted) in test builds too, but only
 // constructed by production builds — tests must never reach the real OS.
 #[cfg(target_os = "macos")]
-#[cfg_attr(test, allow(dead_code))]
 mod macos;
 #[cfg(test)]
 pub mod mock;
@@ -41,8 +40,17 @@ pub mod mock;
 mod polkit;
 #[cfg(any(test, not(any(target_os = "macos", windows, target_os = "linux"))))]
 mod unsupported;
+// Test builds never construct the verifier (`platform_verifier` hands tests the
+// unsupported one) and the module has no unit tests, so the whole module is
+// expected dead there; production builds lint it fully.
 #[cfg(windows)]
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(
+    test,
+    expect(
+        dead_code,
+        reason = "test builds never construct the real Windows Hello verifier"
+    )
+)]
 mod windows_hello;
 
 #[cfg(any(test, not(any(target_os = "macos", windows, target_os = "linux"))))]

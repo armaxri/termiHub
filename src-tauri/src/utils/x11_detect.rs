@@ -1,25 +1,10 @@
-//! Legacy X11 server detection and DISPLAY parsing utilities.
+//! Local X11 server availability check for the `check_x11_available` command.
 //!
-//! The canonical implementation is now in
-//! [`termihub_core::backends::ssh::x11`](termihub_core::backends::ssh).
-//! This module will be removed once all callers are migrated to use
-//! the core SSH backend.
-
-#![allow(dead_code)]
-
-/// Describes how to connect to the local X server.
-#[derive(Debug, Clone)]
-pub enum LocalXConnection {
-    UnixSocket(String),
-    Tcp(String, u16),
-}
-
-/// Local X server info needed for forwarding.
-#[derive(Debug, Clone)]
-pub struct LocalXServerInfo {
-    pub display_number: u32,
-    pub connection: LocalXConnection,
-}
+//! The full detection (socket/TCP resolution used by the SSH X11 forwarder) lives
+//! in [`termihub_core::backends::ssh::x11`](termihub_core::backends::ssh). This
+//! module keeps only the yes/no answer the UI needs, with its original semantics:
+//! a non-empty `DISPLAY` counts when it parses, otherwise a `/tmp/.X11-unix/X<N>`
+//! socket entry does.
 
 /// Parse a DISPLAY string into (host, display_number, screen_number).
 ///
@@ -52,148 +37,32 @@ fn parse_display(display: &str) -> Option<(Option<String>, u32, u32)> {
     Some((host, display_num, screen_num))
 }
 
-/// Build a `LocalXServerInfo` from a parsed DISPLAY value.
-fn info_from_parsed(host: Option<String>, display_number: u32) -> LocalXServerInfo {
-    match host {
-        None => {
-            // Local display `:N` — try Unix socket first, fall back to TCP
-            let socket_path = format!("/tmp/.X11-unix/X{}", display_number);
-            if std::path::Path::new(&socket_path).exists() {
-                LocalXServerInfo {
-                    display_number,
-                    connection: LocalXConnection::UnixSocket(socket_path),
-                }
-            } else {
-                LocalXServerInfo {
-                    display_number,
-                    connection: LocalXConnection::Tcp(
-                        "localhost".to_string(),
-                        6000 + display_number as u16,
-                    ),
-                }
-            }
-        }
-        Some(ref h) if h.starts_with('/') => {
-            // macOS XQuartz: /private/tmp/com.apple.launchd.xxx/org.xquartz:0.
-            // Connect to whichever socket file exists — XQuartz's launchd socket
-            // carries the `:<N>` display suffix with no bare file, so using the
-            // bare `<h>` would fail with ENOENT (#1311).
-            let with_display = format!("{}:{}", h, display_number);
-            let socket = if std::path::Path::new(h).exists() {
-                Some(h.clone())
-            } else if std::path::Path::new(&with_display).exists() {
-                Some(with_display)
-            } else {
-                None
-            };
-            match socket {
-                Some(socket_path) => LocalXServerInfo {
-                    display_number,
-                    connection: LocalXConnection::UnixSocket(socket_path),
-                },
-                None => LocalXServerInfo {
-                    display_number,
-                    connection: LocalXConnection::Tcp(
-                        "localhost".to_string(),
-                        6000 + display_number as u16,
-                    ),
-                },
-            }
-        }
-        Some(ref h) if h == "localhost" || h == "127.0.0.1" || h == "::1" => {
-            let socket_path = format!("/tmp/.X11-unix/X{}", display_number);
-            if std::path::Path::new(&socket_path).exists() {
-                LocalXServerInfo {
-                    display_number,
-                    connection: LocalXConnection::UnixSocket(socket_path),
-                }
-            } else {
-                LocalXServerInfo {
-                    display_number,
-                    connection: LocalXConnection::Tcp(h.clone(), 6000 + display_number as u16),
-                }
-            }
-        }
-        Some(h) => {
-            // Remote host — TCP only
-            LocalXServerInfo {
-                display_number,
-                connection: LocalXConnection::Tcp(h, 6000 + display_number as u16),
-            }
-        }
-    }
-}
-
-/// Detect the local X server.
-///
-/// Checks the DISPLAY environment variable first, then falls back to
-/// scanning `/tmp/.X11-unix/` for live sockets (covers macOS XQuartz
-/// when DISPLAY is not propagated to the process environment).
-pub fn detect_local_x_server() -> Option<LocalXServerInfo> {
-    // Try DISPLAY env var first
-    if let Ok(display) = std::env::var("DISPLAY") {
-        if !display.is_empty() {
-            let (host, display_number, _screen) = parse_display(&display)?;
-            return Some(info_from_parsed(host, display_number));
-        }
-    }
-
-    // DISPLAY not set — scan for X11 sockets directly
-    detect_from_sockets()
-}
-
-/// Scan `/tmp/.X11-unix/` for X server sockets.
-fn detect_from_sockets() -> Option<LocalXServerInfo> {
-    let x11_dir = std::path::Path::new("/tmp/.X11-unix");
-    if !x11_dir.is_dir() {
-        return None;
-    }
-
-    let entries = std::fs::read_dir(x11_dir).ok()?;
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if let Some(num_str) = name.strip_prefix('X') {
-            if let Ok(display_num) = num_str.parse::<u32>() {
-                let socket_path = format!("/tmp/.X11-unix/X{}", display_num);
-                return Some(LocalXServerInfo {
-                    display_number: display_num,
-                    connection: LocalXConnection::UnixSocket(socket_path),
-                });
-            }
-        }
-    }
-    None
+/// Whether `/tmp/.X11-unix/` holds an X server socket entry (`X<N>`).
+fn has_x11_socket() -> bool {
+    let Ok(entries) = std::fs::read_dir("/tmp/.X11-unix") else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        entry
+            .file_name()
+            .to_string_lossy()
+            .strip_prefix('X')
+            .is_some_and(|num| num.parse::<u32>().is_ok())
+    })
 }
 
 /// Check if a local X server is likely running and reachable.
-pub fn is_x_server_likely_running() -> bool {
-    detect_local_x_server().is_some()
-}
-
-/// Read the MIT-MAGIC-COOKIE-1 for the given local display number.
 ///
-/// Runs `xauth list :N` and parses the hex cookie from the output.
-/// Returns `None` if xauth is not installed or no cookie is found.
-pub fn read_local_xauth_cookie(display_number: u32) -> Option<String> {
-    let output = std::process::Command::new("xauth")
-        .args(["list", &format!(":{}", display_number)])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // Format: "hostname/unix:N  MIT-MAGIC-COOKIE-1  hexcookie"
-    for line in stdout.lines() {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 3 && parts[1] == "MIT-MAGIC-COOKIE-1" {
-            return Some(parts[2].to_string());
+/// Honors `DISPLAY` first: when set and non-empty, the answer is whether it
+/// parses. Otherwise scans `/tmp/.X11-unix/` for a live socket entry (covers
+/// macOS XQuartz when `DISPLAY` is not propagated to the process environment).
+pub fn is_x_server_likely_running() -> bool {
+    if let Ok(display) = std::env::var("DISPLAY") {
+        if !display.is_empty() {
+            return parse_display(&display).is_some();
         }
     }
-    None
+    has_x11_socket()
 }
 
 #[cfg(test)]
@@ -238,25 +107,6 @@ mod tests {
         assert_eq!(host.as_deref(), Some("myhost"));
         assert_eq!(display, 5);
         assert_eq!(screen, 0);
-    }
-
-    /// XQuartz's launchd socket is `<dir>/org.xquartz:0` (with the `:0` suffix),
-    /// and there is no bare `<dir>/org.xquartz`. Resolution must use the path
-    /// that exists, else the forwarder connects to a missing socket (#1311).
-    #[cfg(unix)]
-    #[test]
-    fn test_xquartz_launchd_socket_resolves_with_display_suffix() {
-        let dir = tempfile::tempdir().unwrap();
-        let base = dir.path().join("org.xquartz");
-        let base = base.to_str().unwrap().to_string();
-        let socket_with_suffix = format!("{base}:0");
-        std::fs::File::create(&socket_with_suffix).unwrap();
-
-        let info = info_from_parsed(Some(base), 0);
-        match info.connection {
-            LocalXConnection::UnixSocket(path) => assert_eq!(path, socket_with_suffix),
-            other => panic!("expected UnixSocket at the `:0` path, got {other:?}"),
-        }
     }
 
     #[test]

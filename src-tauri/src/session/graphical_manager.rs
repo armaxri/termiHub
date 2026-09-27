@@ -684,11 +684,11 @@ impl GraphicalSessionManager {
     /// Only the platform-native OS-clipboard binding calls this (on the real paste
     /// gesture); macOS (`macos_clipboard`), Windows (`windows_clipboard`), and
     /// Linux (`linux_clipboard`) are all wired. Off those platforms it has no
-    /// in-crate caller yet, so the dead-code lint is suppressed there rather than
+    /// in-crate caller yet, so the dead-code lint is expected there rather than
     /// deleting a method the pending binding needs.
     #[cfg_attr(
-        not(any(target_os = "macos", target_os = "linux", windows)),
-        allow(dead_code)
+        not(any(test, target_os = "macos", target_os = "linux", windows)),
+        expect(dead_code, reason = "no OS-clipboard binding on this platform")
     )]
     pub async fn fetch_remote_clipboard_file(
         &self,

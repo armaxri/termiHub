@@ -1448,7 +1448,7 @@ impl SessionManager {
     /// shared transport config is refcount-scrubbed too (#2473); this narrower form
     /// stays as the direct-only building block. Idempotent: clearing a tab with no
     /// retained request is a no-op.
-    #[allow(dead_code)] // building block for the agent-scrub variant + the idempotency test
+    #[cfg(test)]
     pub fn clear_retained_request(&self, tab_id: &str) {
         self.retained_requests.clear(tab_id);
     }
@@ -1480,8 +1480,8 @@ impl SessionManager {
     }
 
     /// Whether a resilient-reconnect connection request is currently retained for
-    /// a tab (#2454). Used by tests and the (follow-up) backend redrive.
-    #[allow(dead_code)] // consumed by the retention tests and the follow-up backend redrive
+    /// a tab (#2454). Test-only observer.
+    #[cfg(test)]
     pub fn has_retained_request(&self, tab_id: &str) -> bool {
         self.retained_requests.contains(tab_id)
     }

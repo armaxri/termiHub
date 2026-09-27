@@ -57,13 +57,19 @@ use super::os_auth::{OsAuthError, OsAuthSuccess};
 /// File (in the config directory) holding the wrapped vault key + bindings.
 pub const METADATA_FILE_NAME: &str = "biometric-unlock.json";
 // The keyring slot is only constructed by production builds (tests use
-// `MemorySlot`), hence the test-only dead-code allowances below.
+// `MemorySlot`), hence the test-only dead-code expectations below.
 /// OS credential-store service name for the wrapping key. Distinct from the
 /// `termiHub` service used by OS-keychain credential storage.
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(
+    test,
+    expect(dead_code, reason = "tests use MemorySlot, never the OS keyring")
+)]
 const KEYRING_SERVICE: &str = "termiHub-biometric-unlock";
 /// OS credential-store account name for the wrapping key.
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(
+    test,
+    expect(dead_code, reason = "tests use MemorySlot, never the OS keyring")
+)]
 const KEYRING_ACCOUNT: &str = "master-password-store";
 /// Metadata format version written by this build.
 const METADATA_VERSION: u32 = 1;
@@ -99,13 +105,19 @@ impl<T: SecretSlot + ?Sized> SecretSlot for Arc<T> {
 
 /// [`SecretSlot`] in the native OS credential store via `keyring`.
 #[derive(Default)]
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(
+    test,
+    expect(dead_code, reason = "tests use MemorySlot, never the OS keyring")
+)]
 pub struct KeyringSlot {
     entry: Mutex<Option<Arc<keyring::Entry>>>,
 }
 
 impl KeyringSlot {
-    #[cfg_attr(test, allow(dead_code))]
+    #[cfg_attr(
+        test,
+        expect(dead_code, reason = "tests use MemorySlot, never the OS keyring")
+    )]
     fn entry(&self) -> Result<Arc<keyring::Entry>> {
         let mut guard = self.entry.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(entry) = guard.as_ref() {
