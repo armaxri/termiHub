@@ -1629,7 +1629,7 @@ script-src 'self' plugin://localhost 'wasm-unsafe-eval';
 style-src 'self' 'unsafe-inline';
 img-src 'self' data: blob:;
 font-src 'self';
-connect-src 'self' ipc: http://ipc.localhost;
+connect-src 'self' ipc:;
 worker-src 'self' blob:;
 child-src 'self' blob:;
 object-src 'none';
@@ -1638,11 +1638,20 @@ base-uri 'self';
 form-action 'none'
 ```
 
-On Windows, `src-tauri/tauri.windows.conf.json` replaces only `script-src`, swapping
-`plugin://localhost` for `http://plugin.localhost`. The system-test build overlay
-(`src-tauri/tauri.test.conf.json`) replaces only `connect-src`, adding the loopback `ws://` bridge
-sources; the separate runtime widening in test-bridge builds (`src-tauri/src/utils/test_bridge.rs`,
-compiled out of release builds) is unchanged.
+On Windows, `src-tauri/tauri.windows.conf.json` replaces `script-src` and `connect-src`, swapping
+the WebKit custom-scheme origins for their WebView2 forms: `plugin://localhost` becomes
+`http://plugin.localhost` and `ipc:` becomes `http://ipc.localhost`. Tauri's injected IPC script
+(`convertFileSrc` in `tauri/scripts/core.js`) builds `http://<scheme>.localhost/…` on Windows and
+Android and `<scheme>://localhost/…` everywhere else, so each platform lists only the origin its
+webview actually uses.
+
+The system-test build has **no** config overlay. Its CSP is the production policy of the platform
+it runs on, widened at startup by the test bridge (`relax_csp_if_test_bridge` in
+`src-tauri/src/utils/test_bridge.rs`), which appends only the loopback `ws://127.0.0.1:*` and
+`ws://localhost:*` bridge sources to `connect-src`. The widening is compiled in only with
+`--features test-bridge` and runs only when `TERMIHUB_TEST_BRIDGE_PORT` is set, so no release
+bundle can carry it. (A `--config` overlay cannot do this per platform: JSON merge patch replaces
+the whole `connect-src` array, and the Tauri CLI has no platform-plus-flavor file stacking.)
 
 The baseline is strict: `default-src 'self'`, **no** `unsafe-eval`, **no** inline or remote
 `script-src` hosts (only this platform's local plugin origin), `object-src 'none'`,
@@ -1650,10 +1659,11 @@ The baseline is strict: `default-src 'self'`, **no** `unsafe-eval`, **no** inlin
 content can be loaded or arbitrary JavaScript evaluated.
 
 **Guard.** `src/security/cspConfig.test.ts` computes the effective policy for each platform (and
-for the test build) exactly as Tauri merges it, and fails on any directive or source that is not
-on its reviewed allow-list, each entry carrying the reason below. Adding a source means adding it
-there with a reason **and** documenting it here. Because the guard is a vitest suite, the PR
-change classifier runs the frontend suite for any `src-tauri/tauri*.conf.json` change.
+for the test build, applying the runtime bridge widening) exactly as Tauri builds it, and fails
+on any directive or source that is not on its reviewed allow-list, each entry carrying the reason
+below. Adding a source means adding it there with a reason **and** documenting it here. Because
+the guard is a vitest suite, the PR change classifier runs the frontend suite for any
+`src-tauri/tauri*.conf.json` change.
 
 #### The deliberate relaxations
 
@@ -1701,7 +1711,8 @@ change classifier runs the frontend suite for any `src-tauri/tauri*.conf.json` c
 
 #### CSP relaxation review (WA-CI-035)
 
-Signed off in #3627 against the production bundle (`pnpm build`, `dist/assets`):
+Signed off in #3627 (and #3628 for the IPC origin) against the production bundle (`pnpm build`,
+`dist/assets`):
 
 | Directive / source                   | Decision                              | Evidence                                                                                                                                |
 | ------------------------------------ | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1712,7 +1723,8 @@ Signed off in #3627 against the production bundle (`pnpm build`, `dist/assets`):
 | `img-src data:`                      | Keep                                  | Monaco's stylesheet embeds `data:` SVG/PNG backgrounds                                                                                  |
 | `img-src blob:`                      | Keep                                  | `@xterm/addon-image` shows inline images through blob URLs                                                                              |
 | `font-src data:`                     | **Removed**                           | No shipped font is a `data:` URL; Geist, Meslo and codicon load as bundled files                                                        |
-| `connect-src http://ipc.localhost`   | Keep (follow-up #3628)                | Windows form of Tauri's IPC protocol (`ipc:` is the WebKit form). Scoping it per platform also needs the test overlay reworked          |
+| `connect-src ipc:`                   | Keep, **macOS/Linux only**            | WebKit form of Tauri's IPC protocol: the IPC script fetches `ipc://localhost/<cmd>`                                                     |
+| `connect-src http://ipc.localhost`   | Keep, **Windows only** (was every OS) | WebView2 form of the IPC protocol (`http://ipc.localhost/<cmd>`). On WebKit it is an ordinary loopback URL                              |
 | `worker-src` / `child-src blob:`     | Keep (follow-up #3639)                | Monaco's workers now load as bundled `'self'` files (#3632), not a `blob:` bootstrap; `child-src` covers engines without `worker-src`   |
 
 #### Native file drag-out (no drag capability granted)

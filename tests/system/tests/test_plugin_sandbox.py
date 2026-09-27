@@ -17,9 +17,9 @@ renders with zero CSP violations and the parser rewrites terminal output.
 
 Runs on the integration legs only (real built app; not per-PR CI), like
 ``test_csp.py`` — the CSP is only enforced in a production WebView build. The
-test build re-adds only the loopback ``ws://`` bridge allowance via
-``src-tauri/tauri.test.conf.json``; ``script-src`` still carries the production
-policy.
+test build re-adds only the loopback ``ws://`` bridge allowance to
+``connect-src`` at startup (``src-tauri/src/utils/test_bridge.rs``);
+``script-src`` still carries the production policy.
 """
 
 import pytest
