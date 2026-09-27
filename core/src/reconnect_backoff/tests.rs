@@ -55,17 +55,29 @@ fn next_delay_equals_plain_backoff_when_jitter_disabled() {
 }
 
 #[test]
-fn next_delay_applies_symmetric_jitter() {
+fn next_delay_applies_bounded_jitter_below_the_nominal_delay() {
     let cfg = BackoffConfig {
         jitter_ratio: 0.2,
         ..NO_JITTER
     };
-    // rand=0 → factor (1 + (-0.2)) = 0.8 → 800 for base 1000.
-    assert_eq!(next_reconnect_delay(1, &cfg, &mut rng(0.0)), 800);
-    // rand→1 (upper bound) → factor (1 + 0.2) = 1.2 → 1200.
-    assert_eq!(next_reconnect_delay(1, &cfg, &mut rng(0.999999)), 1_200);
-    // rand=0.5 → no swing → exactly base.
-    assert_eq!(next_reconnect_delay(1, &cfg, &mut rng(0.5)), 1_000);
+    // rand=0 → no shortening → exactly the nominal delay (the upper bound).
+    assert_eq!(next_reconnect_delay(1, &cfg, &mut rng(0.0)), 1_000);
+    // rand→1 → shortened by the full ratio → 1000 * (1 - 0.2) = 800.
+    assert_eq!(next_reconnect_delay(1, &cfg, &mut rng(0.999999)), 800);
+    // rand=0.5 → shortened by half the ratio → 900.
+    assert_eq!(next_reconnect_delay(1, &cfg, &mut rng(0.5)), 900);
+}
+
+#[test]
+fn next_delay_never_exceeds_the_cap() {
+    let cfg = BackoffConfig {
+        jitter_ratio: MAX_JITTER_RATIO,
+        ..NO_JITTER
+    };
+    // Attempt 10 sits at the 8 s cap; no draw may push it above.
+    for r in [0.0, 0.25, 0.5, 0.75, 0.999_999] {
+        assert!(next_reconnect_delay(10, &cfg, &mut rng(r)) <= 8_000);
+    }
 }
 
 #[test]
@@ -75,6 +87,211 @@ fn next_delay_never_negative() {
         ..NO_JITTER
     };
     assert!(next_reconnect_delay(1, &cfg, &mut rng(0.0)) >= 0);
+}
+
+#[test]
+fn an_oversized_jitter_ratio_is_clamped_so_no_window_collapses() {
+    // A ratio of 2 would allow negative/zero windows; it is clamped to
+    // MAX_JITTER_RATIO, so the shortest window is half the nominal delay.
+    let cfg = BackoffConfig {
+        jitter_ratio: 2.0,
+        ..NO_JITTER
+    };
+    assert_eq!(next_reconnect_delay(1, &cfg, &mut rng(0.999_999)), 500);
+    assert_eq!(next_reconnect_delay(1, &cfg, &mut rng(1.0)), 500);
+}
+
+#[test]
+fn a_broken_rng_cannot_break_the_bounds() {
+    let cfg = BackoffConfig {
+        jitter_ratio: MAX_JITTER_RATIO,
+        ..NO_JITTER
+    };
+    // Out-of-range draws are clamped, non-finite ones read as "no shortening".
+    assert_eq!(next_reconnect_delay(1, &cfg, &mut rng(-5.0)), 1_000);
+    assert_eq!(next_reconnect_delay(1, &cfg, &mut rng(7.0)), 500);
+    assert_eq!(next_reconnect_delay(1, &cfg, &mut rng(f64::NAN)), 1_000);
+    assert_eq!(
+        next_reconnect_delay(1, &cfg, &mut rng(f64::INFINITY)),
+        1_000
+    );
+    let nan_ratio = BackoffConfig {
+        jitter_ratio: f64::NAN,
+        ..NO_JITTER
+    };
+    assert_eq!(next_reconnect_delay(1, &nan_ratio, &mut rng(0.9)), 1_000);
+}
+
+// ── Shared policy (#3730) ───────────────────────────────────────────────────
+
+#[test]
+fn shared_policy_numbers_are_pinned() {
+    assert_eq!(
+        RECONNECT_POLICY,
+        BackoffConfig {
+            base_delay_ms: 1_000.0,
+            factor: 2.0,
+            max_delay_ms: 30_000.0,
+            max_attempts: 10,
+            jitter_ratio: 0.5,
+        }
+    );
+    assert_eq!(DEFAULT_BACKOFF, RECONNECT_POLICY);
+}
+
+#[test]
+fn shared_policy_nominal_schedule_is_the_worst_case() {
+    let delays: Vec<i64> = (1..=RECONNECT_POLICY.max_attempts)
+        .map(|n| next_reconnect_delay(n, &RECONNECT_POLICY, &mut rng(0.0)))
+        .collect();
+    assert_eq!(
+        delays,
+        vec![1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000, 30_000, 30_000]
+    );
+    assert_eq!(
+        worst_case_total_backoff_ms(&RECONNECT_POLICY),
+        Some(RECONNECT_GIVE_UP_WINDOW_MS)
+    );
+}
+
+#[test]
+fn every_kind_but_ftp_follows_the_shared_policy() {
+    for kind in ReconnectKind::ALL {
+        let policy = policy_for(kind);
+        if kind == ReconnectKind::FtpOperation {
+            assert_eq!(policy, FTP_OPERATION_RETRY_POLICY);
+        } else {
+            assert_eq!(
+                policy, RECONNECT_POLICY,
+                "{kind:?} must use the shared policy"
+            );
+        }
+    }
+}
+
+#[test]
+fn every_policy_is_bounded_jittered_and_inside_the_give_up_window() {
+    for kind in ReconnectKind::ALL {
+        let policy = policy_for(kind);
+        assert!(policy.max_attempts >= 1, "{kind:?} must be bounded");
+        assert!(
+            policy.base_delay_ms >= 100.0,
+            "{kind:?} first window too short"
+        );
+        assert!(policy.max_delay_ms >= policy.base_delay_ms);
+        assert!(policy.factor >= 1.0);
+        assert!(
+            policy.jitter_ratio > 0.0 && policy.jitter_ratio <= MAX_JITTER_RATIO,
+            "{kind:?} must carry bounded jitter"
+        );
+        let total = worst_case_total_backoff_ms(&policy).expect("bounded");
+        assert!(
+            total <= RECONNECT_GIVE_UP_WINDOW_MS,
+            "{kind:?} waits {total} ms, beyond the give-up window"
+        );
+    }
+}
+
+#[test]
+fn ftp_override_keeps_its_short_in_line_schedule() {
+    let delays: Vec<i64> = (1..=FTP_OPERATION_RETRY_POLICY.max_attempts)
+        .map(|n| next_reconnect_delay(n, &FTP_OPERATION_RETRY_POLICY, &mut rng(0.0)))
+        .collect();
+    assert_eq!(delays, vec![100, 200, 400]);
+    assert_eq!(
+        worst_case_total_backoff_ms(&FTP_OPERATION_RETRY_POLICY),
+        Some(700)
+    );
+}
+
+#[test]
+fn worst_case_total_is_none_when_unbounded() {
+    let cfg = BackoffConfig {
+        max_attempts: 0,
+        ..NO_JITTER
+    };
+    assert_eq!(worst_case_total_backoff_ms(&cfg), None);
+}
+
+/// The shared policy's jittered schedule for seed 42 — the deterministic golden
+/// the injectable RNG makes possible (#3730). Cross-checked against an
+/// independent SplitMix64 + `d * (1 - 0.5 * u)` reference implementation. A
+/// change to the jitter formula, the policy numbers or the seeded generator
+/// shows up here. Every value sits in `[nominal/2, nominal]` of
+/// `1, 2, 4, 8, 16, 30, 30, 30, 30, 30` s.
+const SEEDED_POLICY_SCHEDULE_SEED_42: [i64; 10] = [
+    629, 1_840, 3_443, 6_623, 15_696, 16_977, 26_724, 17_991, 24_901, 20_723,
+];
+
+#[test]
+fn seeded_jitter_schedule_is_deterministic_and_pinned() {
+    let walk = |seed: u64| {
+        let mut jitter = SeededJitter::new(seed);
+        let mut draw = || jitter.next_f64();
+        let mut state = reconnect_reducer(
+            &INITIAL_RECONNECT_STATE,
+            ReconnectEvent::Drop,
+            &RECONNECT_POLICY,
+            &mut draw,
+        );
+        let mut delays = Vec::new();
+        while state.phase == ReconnectPhase::Waiting {
+            delays.push(state.delay_ms);
+            state = reconnect_reducer(
+                &state,
+                ReconnectEvent::Attempt,
+                &RECONNECT_POLICY,
+                &mut draw,
+            );
+            state = reconnect_reducer(
+                &state,
+                ReconnectEvent::Failure,
+                &RECONNECT_POLICY,
+                &mut draw,
+            );
+        }
+        assert_eq!(state.phase, ReconnectPhase::Gaveup);
+        assert_eq!(state.attempt, RECONNECT_POLICY.max_attempts);
+        delays
+    };
+    let first = walk(42);
+    assert_eq!(first, walk(42), "same seed, same schedule");
+    assert_ne!(first, walk(7), "different seeds spread apart");
+    assert_eq!(first, SEEDED_POLICY_SCHEDULE_SEED_42.to_vec());
+}
+
+#[test]
+fn seeded_jitter_draws_stay_in_the_unit_interval() {
+    let mut jitter = SeededJitter::new(0);
+    for _ in 0..10_000 {
+        let u = jitter.next_f64();
+        assert!((0.0..1.0).contains(&u), "draw {u} outside [0, 1)");
+    }
+}
+
+#[test]
+fn system_jitter_draws_stay_in_the_unit_interval() {
+    for _ in 0..1_000 {
+        let u = system_jitter();
+        assert!((0.0..1.0).contains(&u), "draw {u} outside [0, 1)");
+    }
+}
+
+#[test]
+fn a_fleet_dropped_together_spreads_apart() {
+    // Thundering-herd guard: 200 clients dropped by the same outage must not
+    // all arm the same first window.
+    let mut jitter = SeededJitter::new(2026);
+    let mut draw = || jitter.next_f64();
+    let windows: std::collections::HashSet<i64> = (0..200)
+        .map(|_| next_reconnect_delay(1, &RECONNECT_POLICY, &mut draw))
+        .collect();
+    assert!(
+        windows.len() > 100,
+        "only {} distinct first windows",
+        windows.len()
+    );
+    assert!(windows.iter().all(|&d| (500..=1_000).contains(&d)));
 }
 
 // ── shouldGiveUp ────────────────────────────────────────────────────────────
@@ -327,17 +544,63 @@ proptest! {
         prop_assert!(backoff_delay(a, &cfg) >= 0.0);
     }
 
-    /// The jittered delay stays within the symmetric `±jitter_ratio` band
-    /// around the pre-jitter value and is never negative, for any RNG output in
-    /// `[0, 1)`.
+    /// The jittered delay stays within `[nominal * (1 - ratio), nominal]` —
+    /// never above the nominal (capped) delay and never below half of it — for
+    /// any RNG output in `[0, 1)`.
     #[test]
     fn next_delay_stays_within_jitter_band(cfg in arb_config(), a in 1i64..40, r in 0.0f64..1.0) {
-        let base = backoff_delay(a, &cfg);
+        let nominal = backoff_delay(a, &cfg);
+        let ratio = cfg.jitter_ratio.clamp(0.0, MAX_JITTER_RATIO);
         let d = next_reconnect_delay(a, &cfg, &mut rng(r));
-        prop_assert!(d >= 0, "negative delay: {d}");
-        let lo = (base * (1.0 - cfg.jitter_ratio)).round() as i64 - 1;
-        let hi = (base * (1.0 + cfg.jitter_ratio)).round() as i64 + 1;
+        let lo = (nominal * (1.0 - ratio)).round() as i64 - 1;
+        let hi = nominal.round() as i64;
         prop_assert!(d >= lo && d <= hi, "delay {d} outside [{lo}, {hi}]");
+    }
+
+    /// Monotone cap: no jittered delay ever exceeds `max_delay_ms`, whatever
+    /// the attempt number and RNG draw — including out-of-range draws.
+    #[test]
+    fn jittered_delay_never_exceeds_the_cap(cfg in arb_config(), a in -5i64..200, r in -2.0f64..3.0) {
+        let d = next_reconnect_delay(a, &cfg, &mut rng(r));
+        prop_assert!(d as f64 <= cfg.max_delay_ms.round() + 1e-6, "delay {d} above cap {}", cfg.max_delay_ms);
+    }
+
+    /// No zero-delay storms: every window is at least half its nominal delay,
+    /// so with a base of at least 2 ms no window is ever zero.
+    #[test]
+    fn no_window_collapses_below_half_nominal(cfg in arb_config(), a in 1i64..40, r in 0.0f64..=1.0) {
+        let nominal = backoff_delay(a, &cfg);
+        let d = next_reconnect_delay(a, &cfg, &mut rng(r));
+        prop_assert!(d as f64 >= (nominal / 2.0).floor(), "delay {d} below half of {nominal}");
+        if cfg.base_delay_ms >= 2.0 {
+            prop_assert!(d > 0, "zero-delay window");
+        }
+    }
+
+    /// The shared policy under arbitrary seeds: every armed window sits in
+    /// `[nominal/2, nominal]`, the loop gives up after exactly `max_attempts`,
+    /// and the total wait never exceeds the give-up window.
+    #[test]
+    fn shared_policy_runs_are_bounded_for_any_seed(seed in any::<u64>()) {
+        let mut jitter = SeededJitter::new(seed);
+        let mut draw = || jitter.next_f64();
+        let policy = RECONNECT_POLICY;
+        let mut state = reconnect_reducer(&INITIAL_RECONNECT_STATE, ReconnectEvent::Drop, &policy, &mut draw);
+        let mut total = 0i64;
+        let mut n = 0i64;
+        while state.phase == ReconnectPhase::Waiting {
+            n += 1;
+            let nominal = backoff_delay(n, &policy);
+            prop_assert!(state.delay_ms as f64 <= nominal);
+            prop_assert!(state.delay_ms as f64 >= nominal / 2.0);
+            total += state.delay_ms;
+            state = reconnect_reducer(&state, ReconnectEvent::Attempt, &policy, &mut draw);
+            state = reconnect_reducer(&state, ReconnectEvent::Failure, &policy, &mut draw);
+        }
+        prop_assert_eq!(state.phase, ReconnectPhase::Gaveup);
+        prop_assert_eq!(n, policy.max_attempts);
+        prop_assert!(total <= RECONNECT_GIVE_UP_WINDOW_MS);
+        prop_assert!(total >= RECONNECT_GIVE_UP_WINDOW_MS / 2);
     }
 
     /// With jitter disabled the concrete delay is exactly the rounded curve,

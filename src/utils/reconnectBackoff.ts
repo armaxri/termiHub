@@ -5,8 +5,8 @@
  * connections over flaky links. It answers two questions the store's timer
  * driver needs:
  *
- *   1. How long to wait before the next connection attempt (exponential backoff
- *      with jitter, capped).
+ *   1. How long to wait before the next connection attempt (exponential backoff,
+ *      capped, with bounded jitter below the cap).
  *   2. What the next phase is after each event (drop / attempt / success /
  *      failure / cancel), including when to give up.
  *
@@ -34,27 +34,52 @@ export interface BackoffConfig {
    */
   maxAttempts: number;
   /**
-   * Fraction of the computed delay applied as symmetric random jitter, in
-   * `[0, 1]`. `0.2` spreads each delay by ±20% so a fleet of dropped tabs does
-   * not stampede the server in lockstep. `0` disables jitter (deterministic).
+   * Fraction of the computed delay that random jitter may shave off, in
+   * `[0, MAX_JITTER_RATIO]` (larger values are clamped). `0.5` draws each window
+   * from `[d/2, d]` so a fleet of dropped tabs does not stampede the server in
+   * lockstep. `0` disables jitter (deterministic).
    */
   jitterRatio: number;
 }
 
 /**
- * Defaults tuned for a truck-on-cellular field scenario (#1962): a quick first
- * retry so a brief blip recovers almost instantly, doubling up to a 30 s ceiling
- * so a long outage does not hammer the network, and a bounded attempt count so a
- * permanently-dead host eventually surfaces the manual "Reconnect failed"
- * overlay instead of spinning forever.
+ * Largest jitter ratio the engine honours (#3730). A configured `jitterRatio` is
+ * clamped to `[0, MAX_JITTER_RATIO]`, so a jittered delay is never shorter than
+ * half its nominal value — jitter spreads clients apart but can never collapse a
+ * backoff window into a reconnect storm. Twin of the Rust `MAX_JITTER_RATIO`.
  */
-export const DEFAULT_BACKOFF: BackoffConfig = {
+export const MAX_JITTER_RATIO = 0.5;
+
+/**
+ * The one shared reconnect policy (SM-020, #3730) every reconnect loop follows —
+ * terminal tabs, the agent transport, tunnels, graphical sessions and monitoring.
+ * Twin of the Rust `RECONNECT_POLICY` (the golden fixtures pin the two equal).
+ *
+ * Tuned for a truck-on-cellular field scenario (#1962): a quick first retry so a
+ * brief blip recovers almost instantly, doubling up to a 30 s ceiling so a long
+ * outage does not hammer the network, and a bounded attempt count so a
+ * permanently-dead host eventually surfaces the manual "Reconnect failed" overlay
+ * instead of spinning forever. Jitter draws each window from `[d/2, d]`, so the
+ * nominal schedule (1, 2, 4, 8, 16, 30, 30, 30, 30, 30 s = 181 s) is the worst
+ * case.
+ */
+export const RECONNECT_POLICY: BackoffConfig = {
   baseDelayMs: 1_000,
   factor: 2,
   maxDelayMs: 30_000,
   maxAttempts: 10,
-  jitterRatio: 0.2,
+  jitterRatio: MAX_JITTER_RATIO,
 };
+
+/** The default backoff schedule — an alias of {@link RECONNECT_POLICY}. */
+export const DEFAULT_BACKOFF: BackoffConfig = RECONNECT_POLICY;
+
+/**
+ * The shared policy's total give-up window in ms: the longest a loop waits
+ * between attempts before giving up (the sum of the nominal delays; jitter only
+ * shortens a window). Twin of the Rust `RECONNECT_GIVE_UP_WINDOW_MS`.
+ */
+export const RECONNECT_GIVE_UP_WINDOW_MS = 181_000;
 
 /**
  * Phase of the auto-reconnect loop for one tab.
@@ -111,22 +136,47 @@ export function backoffDelay(attempt: number, config: BackoffConfig): number {
 }
 
 /**
- * The concrete delay to wait before the given attempt (1-based), applying the
- * cap and then symmetric jitter of `±jitterRatio`. `rand` is injectable for
- * deterministic tests; it must return a value in `[0, 1)`.
+ * The concrete delay to wait before the given attempt (1-based): the capped
+ * exponential delay `d` ({@link backoffDelay}) shortened by bounded "equal
+ * jitter" (#3730) to `d * (1 - jitterRatio * rand())`.
  *
- * The result is clamped to `>= 0` and rounded to whole milliseconds.
+ * - Never above the cap — jitter only shortens a window.
+ * - Never a zero-delay storm — `jitterRatio` is clamped to
+ *   `[0, MAX_JITTER_RATIO]`, so the result is `>= d / 2`.
+ * - Deterministic under test — `rand` is injectable and should return a value in
+ *   `[0, 1)`; a value outside `[0, 1]` is clamped and a non-finite one reads as
+ *   `0` (no shortening).
+ *
+ * The result is rounded to whole milliseconds.
  */
 export function nextReconnectDelay(
   attempt: number,
   config: BackoffConfig,
   rand: () => number = Math.random
 ): number {
-  const base = backoffDelay(attempt, config);
-  if (config.jitterRatio <= 0) return Math.round(base);
-  // Map rand() ∈ [0,1) to a symmetric factor in [-1, 1).
-  const swing = (rand() * 2 - 1) * config.jitterRatio;
-  return Math.max(0, Math.round(base * (1 + swing)));
+  const nominal = backoffDelay(attempt, config);
+  const ratio = Number.isFinite(config.jitterRatio)
+    ? Math.min(Math.max(config.jitterRatio, 0), MAX_JITTER_RATIO)
+    : 0;
+  if (ratio <= 0) return Math.max(0, Math.round(nominal));
+  const draw = rand();
+  const u = Number.isFinite(draw) ? Math.min(Math.max(draw, 0), 1) : 0;
+  return Math.max(0, Math.round(nominal * (1 - ratio * u)));
+}
+
+/**
+ * The worst-case total backoff, in whole ms, a loop following `config` waits
+ * across its whole attempt budget: the sum of the nominal (rounded) delays for
+ * attempts `1..maxAttempts`. `null` for an unbounded config (`maxAttempts <= 0`).
+ * Twin of the Rust `worst_case_total_backoff_ms`.
+ */
+export function worstCaseTotalBackoffMs(config: BackoffConfig): number | null {
+  if (config.maxAttempts <= 0) return null;
+  let total = 0;
+  for (let n = 1; n <= config.maxAttempts; n++) {
+    total += Math.round(backoffDelay(n, config));
+  }
+  return total;
 }
 
 /**

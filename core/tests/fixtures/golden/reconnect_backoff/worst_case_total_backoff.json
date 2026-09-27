@@ -1,0 +1,25 @@
+{
+  "operation": "worstCaseTotalBackoffMs",
+  "cases": [
+    {
+      "name": "the shared policy waits at most 181 s across its 10 attempts",
+      "input": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 30000, "maxAttempts": 10, "jitterRatio": 0.5 },
+      "expected": 181000
+    },
+    {
+      "name": "the FTP per-operation override waits at most 700 ms",
+      "input": { "baseDelayMs": 100, "factor": 2, "maxDelayMs": 1600, "maxAttempts": 3, "jitterRatio": 0.5 },
+      "expected": 700
+    },
+    {
+      "name": "jitter does not change the worst case",
+      "input": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 },
+      "expected": 23000
+    },
+    {
+      "name": "an unbounded config has no worst case",
+      "input": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 0, "jitterRatio": 0.5 },
+      "expected": null
+    }
+  ]
+}

@@ -6,7 +6,7 @@
 //! driver needs:
 //!
 //!   1. How long to wait before the next connection attempt (exponential
-//!      backoff with jitter, capped).
+//!      backoff, capped, with bounded jitter below the cap).
 //!   2. What the next phase is after each event (drop / attempt / success /
 //!      failure / cancel), including when to give up.
 //!
@@ -17,6 +17,10 @@
 //! golden-vector fixtures (`core/tests/fixtures/golden/reconnect_backoff/`)
 //! extracted from the TS test suite, and gains property tests over the backoff
 //! invariants. Phase 4 (session lifecycle) activates it server-side.
+//!
+//! It is also the home of the one shared retry policy (SM-020, #3730):
+//! [`RECONNECT_POLICY`], the per-loop mapping [`policy_for`] with its single
+//! documented override, and the give-up window [`RECONNECT_GIVE_UP_WINDOW_MS`].
 //!
 //! No agent means the remote shell state cannot be recovered — this machine
 //! only models re-establishing the *transport*, not restoring server-side
@@ -37,25 +41,177 @@ pub struct BackoffConfig {
     /// Maximum number of connection attempts before giving up. `0` means retry
     /// forever (the user's Cancel is then the only way to stop).
     pub max_attempts: i64,
-    /// Fraction of the computed delay applied as symmetric random jitter, in
-    /// `[0, 1]`. `0.2` spreads each delay by ±20% so a fleet of dropped tabs
-    /// does not stampede the server in lockstep. `0` disables jitter
-    /// (deterministic).
+    /// Fraction of the computed delay that random jitter may shave off, in
+    /// `[0, MAX_JITTER_RATIO]` (larger values are clamped). `0.5` draws each
+    /// window from `[d/2, d]` so a fleet of dropped tabs does not stampede the
+    /// server in lockstep. `0` disables jitter (deterministic).
     pub jitter_ratio: f64,
 }
 
-/// Defaults tuned for a truck-on-cellular field scenario (#1962): a quick first
-/// retry so a brief blip recovers almost instantly, doubling up to a 30 s
-/// ceiling so a long outage does not hammer the network, and a bounded attempt
-/// count so a permanently-dead host eventually surfaces the manual "Reconnect
-/// failed" overlay instead of spinning forever.
-pub const DEFAULT_BACKOFF: BackoffConfig = BackoffConfig {
+/// Largest jitter ratio the engine honours (#3730). A configured
+/// `jitter_ratio` is clamped to `[0, MAX_JITTER_RATIO]`, so a jittered delay is
+/// never shorter than half its nominal value: jitter can spread a fleet of
+/// reconnecting clients apart, but it can never collapse a backoff window
+/// towards zero and turn a backoff into a reconnect storm.
+pub const MAX_JITTER_RATIO: f64 = 0.5;
+
+/// The one shared reconnect policy (SM-020, #3730) every reconnect loop in the
+/// workspace follows: terminal tabs (SSH and agent-hosted), the agent transport's
+/// in-task loop, SSH tunnels, graphical sessions (VNC/RDP) and monitoring.
+///
+/// Tuned for a truck-on-cellular field scenario (#1962): a quick first retry so
+/// a brief blip recovers almost instantly, doubling up to a 30 s ceiling so a
+/// long outage does not hammer the network, and a bounded attempt count so a
+/// permanently-dead host eventually surfaces the manual "Reconnect failed" state
+/// instead of spinning forever.
+///
+/// Jitter is "equal jitter" below the nominal delay (see
+/// [`next_reconnect_delay`]): each window is drawn from `[d/2, d]`, where `d` is
+/// the capped exponential delay. The nominal schedule is therefore also the
+/// worst case — `1, 2, 4, 8, 16, 30, 30, 30, 30, 30` s, 181 s in total
+/// ([`RECONNECT_GIVE_UP_WINDOW_MS`]) — and a fleet of clients dropped by the
+/// same outage spreads over half of every window instead of retrying in
+/// lockstep.
+///
+/// Only the documented overrides in [`policy_for`] may deviate from it.
+pub const RECONNECT_POLICY: BackoffConfig = BackoffConfig {
     base_delay_ms: 1_000.0,
     factor: 2.0,
     max_delay_ms: 30_000.0,
     max_attempts: 10,
-    jitter_ratio: 0.2,
+    jitter_ratio: MAX_JITTER_RATIO,
 };
+
+/// The default backoff schedule — an alias of [`RECONNECT_POLICY`], kept so the
+/// session-lifecycle store and its TypeScript twin keep their historical name.
+pub const DEFAULT_BACKOFF: BackoffConfig = RECONNECT_POLICY;
+
+/// The total give-up window of the shared policy, in ms (#3730): the longest a
+/// reconnect loop may spend *waiting* between attempts before it gives up. It is
+/// the worst-case total backoff of [`RECONNECT_POLICY`]
+/// (`1+2+4+8+16+30+30+30+30+30 s`); jitter only ever shortens a window, so no
+/// run of the loop waits longer. Every per-type policy ([`policy_for`]) must fit
+/// inside it — a test pins that.
+///
+/// It bounds the backoff only. The time the attempts themselves take is bounded
+/// separately by each transport's connect / dial timeout.
+pub const RECONNECT_GIVE_UP_WINDOW_MS: i64 = 181_000;
+
+/// The reconnect loops of the workspace, keyed by what they re-establish
+/// (#3730). [`policy_for`] maps each to its retry policy.
+///
+/// Telnet and serial connections have no automatic reconnect (they do not
+/// expose the Auto-Reconnect setting); a dropped telnet/serial tab shows the
+/// manual reconnect prompt, so there is no loop to configure for them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ReconnectKind {
+    /// A terminal tab's backend-driven reconnect loop (the session-lifecycle
+    /// store): direct SSH tabs with Auto-Reconnect on, and agent-hosted tabs.
+    Terminal,
+    /// The remote agent's in-task transport reconnect loop (re-dials the agent's
+    /// SSH transport after a transient break).
+    AgentTransport,
+    /// An SSH tunnel's reconnect-on-disconnect loop.
+    Tunnel,
+    /// A graphical (VNC/RDP) session's auto-reconnect loop.
+    Graphical,
+    /// A monitoring collector's re-dial loop (desktop and agent).
+    Monitoring,
+    /// The FTP file browser's per-operation retry: reconnect the control
+    /// connection and repeat the one operation the user is waiting on.
+    FtpOperation,
+}
+
+impl ReconnectKind {
+    /// Every kind, for exhaustive policy checks.
+    pub const ALL: [ReconnectKind; 6] = [
+        ReconnectKind::Terminal,
+        ReconnectKind::AgentTransport,
+        ReconnectKind::Tunnel,
+        ReconnectKind::Graphical,
+        ReconnectKind::Monitoring,
+        ReconnectKind::FtpOperation,
+    ];
+}
+
+/// The FTP per-operation retry override (#1339, kept by #3730).
+///
+/// FTP is the one documented deviation from [`RECONNECT_POLICY`]: its retry is
+/// not a session reconnect loop but an in-line retry of a single file operation
+/// the user is actively waiting on (a listing, a download). It must resolve in
+/// well under a second or two rather than minutes, so it retries at most 3 times
+/// with 100 ms doubling to a 1.6 s ceiling — 700 ms of worst-case backoff. It
+/// still uses the shared engine and jitter.
+pub const FTP_OPERATION_RETRY_POLICY: BackoffConfig = BackoffConfig {
+    base_delay_ms: 100.0,
+    factor: 2.0,
+    max_delay_ms: 1_600.0,
+    max_attempts: 3,
+    jitter_ratio: MAX_JITTER_RATIO,
+};
+
+/// The retry policy a reconnect loop of the given kind follows (#3730).
+///
+/// Every kind uses the shared [`RECONNECT_POLICY`] except
+/// [`ReconnectKind::FtpOperation`] ([`FTP_OPERATION_RETRY_POLICY`]).
+pub const fn policy_for(kind: ReconnectKind) -> BackoffConfig {
+    match kind {
+        ReconnectKind::Terminal
+        | ReconnectKind::AgentTransport
+        | ReconnectKind::Tunnel
+        | ReconnectKind::Graphical
+        | ReconnectKind::Monitoring => RECONNECT_POLICY,
+        ReconnectKind::FtpOperation => FTP_OPERATION_RETRY_POLICY,
+    }
+}
+
+/// Production jitter source: a uniform draw in `[0, 1)` from the thread RNG.
+/// Loops take the RNG as an injectable `FnMut() -> f64` so tests substitute a
+/// constant or a [`SeededJitter`].
+pub fn system_jitter() -> f64 {
+    rand::random::<f64>()
+}
+
+/// A small deterministic jitter source (SplitMix64) for tests and goldens
+/// (#3730). Seeded, portable and dependency-free, so a pinned jittered
+/// schedule stays byte-identical across platforms and `rand` versions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SeededJitter {
+    state: u64,
+}
+
+impl SeededJitter {
+    /// A generator seeded with `seed`.
+    pub const fn new(seed: u64) -> Self {
+        Self { state: seed }
+    }
+
+    /// The next uniform draw in `[0, 1)`.
+    pub fn next_f64(&mut self) -> f64 {
+        self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^= z >> 31;
+        // The top 53 bits map exactly onto the f64 mantissa.
+        (z >> 11) as f64 / (1u64 << 53) as f64
+    }
+}
+
+/// The worst-case total backoff, in whole ms, a loop following `config` waits
+/// across its whole attempt budget: the sum of the nominal (un-jittered, rounded)
+/// delays for attempts `1..=max_attempts`. Jitter only shortens a window, so no
+/// run waits longer. `None` for an unbounded config (`max_attempts <= 0`).
+pub fn worst_case_total_backoff_ms(config: &BackoffConfig) -> Option<i64> {
+    if config.max_attempts <= 0 {
+        return None;
+    }
+    Some(
+        (1..=config.max_attempts)
+            .map(|n| backoff_delay(n, config).round() as i64)
+            .sum(),
+    )
+}
 
 /// Phase of the auto-reconnect loop for one tab.
 ///
@@ -136,7 +292,7 @@ impl Default for ReconnectState {
 /// [`crate::util::backoff::capped_exponential_delay`]). That shared helper is a
 /// different numeric domain — integer `Duration`, a fixed factor of 2, no jitter
 /// — whereas this schedule is `f64` milliseconds with a *configurable* `factor`
-/// and symmetric random jitter, proven equivalent to the TypeScript
+/// and bounded random jitter, proven equivalent to the TypeScript
 /// `reconnectBackoff.ts` via golden vectors. Folding it into the integer helper
 /// would change its rounding/jitter/factor semantics, so it stays here.
 pub fn backoff_delay(attempt: i64, config: &BackoffConfig) -> f64 {
@@ -145,23 +301,40 @@ pub fn backoff_delay(attempt: i64, config: &BackoffConfig) -> f64 {
     raw.min(config.max_delay_ms)
 }
 
-/// The concrete delay to wait before the given attempt (1-based), applying the
-/// cap and then symmetric jitter of `±jitter_ratio`. `rand` is injectable for
-/// deterministic tests; it must return a value in `[0, 1)`.
+/// The concrete delay to wait before the given attempt (1-based): the capped
+/// exponential delay `d` ([`backoff_delay`]) shortened by bounded "equal
+/// jitter" (#3730) to `d * (1 - jitter_ratio * rand())`.
 ///
-/// The result is clamped to `>= 0` and rounded to whole milliseconds.
+/// - **Never above the cap.** Jitter only shortens a window, so the result is
+///   `<= d <= max_delay_ms`, and the nominal schedule is the worst case.
+/// - **Never a zero-delay storm.** `jitter_ratio` is clamped to
+///   `[0, MAX_JITTER_RATIO]`, so the result is `>= d / 2`.
+/// - **Deterministic under test.** `rand` is injectable; it should return a
+///   value in `[0, 1)`. A value outside `[0, 1]` is clamped and a non-finite
+///   one reads as `0` (no shortening), so a broken RNG cannot break the bounds.
+///
+/// The result is rounded to whole milliseconds.
 pub fn next_reconnect_delay(
     attempt: i64,
     config: &BackoffConfig,
     rand: &mut dyn FnMut() -> f64,
 ) -> i64 {
-    let base = backoff_delay(attempt, config);
-    if config.jitter_ratio <= 0.0 {
-        return base.round() as i64;
+    let nominal = backoff_delay(attempt, config);
+    let ratio = if config.jitter_ratio.is_finite() {
+        config.jitter_ratio.clamp(0.0, MAX_JITTER_RATIO)
+    } else {
+        0.0
+    };
+    if ratio <= 0.0 {
+        return nominal.round().max(0.0) as i64;
     }
-    // Map rand() ∈ [0,1) to a symmetric factor in [-1, 1).
-    let swing = (rand() * 2.0 - 1.0) * config.jitter_ratio;
-    (base * (1.0 + swing)).round().max(0.0) as i64
+    let draw = rand();
+    let u = if draw.is_finite() {
+        draw.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (nominal * (1.0 - ratio * u)).round().max(0.0) as i64
 }
 
 /// Whether the loop should give up rather than start another attempt. With

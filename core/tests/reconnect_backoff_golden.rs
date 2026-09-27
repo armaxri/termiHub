@@ -19,7 +19,9 @@ use serde_json::{json, Value};
 use support::golden::{from, run_golden_suite};
 use termihub_core::reconnect_backoff::{
     backoff_delay, is_active_reconnect_phase, next_reconnect_delay, reconnect_reducer,
-    should_give_up, BackoffConfig, ReconnectEvent, ReconnectPhase, ReconnectState,
+    should_give_up, worst_case_total_backoff_ms, BackoffConfig, ReconnectEvent, ReconnectPhase,
+    ReconnectState, DEFAULT_BACKOFF, MAX_JITTER_RATIO, RECONNECT_GIVE_UP_WINDOW_MS,
+    RECONNECT_POLICY,
 };
 
 /// The per-case constant RNG (`() => rand`), defaulting to the no-swing 0.5 when
@@ -62,6 +64,19 @@ fn run_case(operation: &str, case: &Value) -> Value {
             serde_json::to_value(reconnect_reducer(&state, event, &config, &mut rand))
                 .expect("serialize state")
         }
+        "worstCaseTotalBackoffMs" => {
+            let config: BackoffConfig = from(input);
+            json!(worst_case_total_backoff_ms(&config))
+        }
+        // The shared policy constants (#3730): pins the Rust constants to the
+        // same values the TypeScript twin replays from this fixture.
+        "reconnectPolicy" => match input.as_str() {
+            None => serde_json::to_value(RECONNECT_POLICY).expect("serialize policy"),
+            Some("default") => serde_json::to_value(DEFAULT_BACKOFF).expect("serialize policy"),
+            Some("giveUpWindowMs") => json!(RECONNECT_GIVE_UP_WINDOW_MS),
+            Some("maxJitterRatio") => json!(MAX_JITTER_RATIO),
+            Some(other) => panic!("unknown reconnectPolicy input: {other}"),
+        },
         "isActiveReconnectPhase" => {
             let phase: ReconnectPhase = from(input);
             json!(is_active_reconnect_phase(phase))
@@ -72,5 +87,5 @@ fn run_case(operation: &str, case: &Value) -> Value {
 
 #[test]
 fn golden_vectors_match_typescript() {
-    run_golden_suite("reconnect_backoff", 30, run_case);
+    run_golden_suite("reconnect_backoff", 45, run_case);
 }

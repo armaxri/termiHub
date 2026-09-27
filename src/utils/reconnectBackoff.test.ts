@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_BACKOFF,
+  MAX_JITTER_RATIO,
+  RECONNECT_GIVE_UP_WINDOW_MS,
+  RECONNECT_POLICY,
   backoffDelay,
+  worstCaseTotalBackoffMs,
   nextReconnectDelay,
   shouldGiveUp,
   reconnectReducer,
@@ -48,14 +52,14 @@ describe("reconnectBackoff — nextReconnectDelay (jitter)", () => {
     expect(nextReconnectDelay(3, NO_JITTER, () => 0.5)).toBe(4_000);
   });
 
-  it("applies symmetric jitter within ±jitterRatio", () => {
+  it("applies bounded jitter below the nominal delay", () => {
     const cfg: BackoffConfig = { ...NO_JITTER, jitterRatio: 0.2 };
-    // rand=0 → factor (1 + (-0.2)) = 0.8 → 800 for base 1000
-    expect(nextReconnectDelay(1, cfg, () => 0)).toBe(800);
-    // rand→1 (upper bound) → factor (1 + 0.2) = 1.2 → 1200
-    expect(nextReconnectDelay(1, cfg, () => 0.999999)).toBeCloseTo(1_200, -1);
-    // rand=0.5 → no swing → exactly base
-    expect(nextReconnectDelay(1, cfg, () => 0.5)).toBe(1_000);
+    // rand=0 → no shortening → exactly the nominal delay (the upper bound)
+    expect(nextReconnectDelay(1, cfg, () => 0)).toBe(1_000);
+    // rand→1 → shortened by the full ratio → 1000 * (1 - 0.2) = 800
+    expect(nextReconnectDelay(1, cfg, () => 0.999999)).toBe(800);
+    // rand=0.5 → shortened by half the ratio → 900
+    expect(nextReconnectDelay(1, cfg, () => 0.5)).toBe(900);
   });
 
   it("never returns a negative delay", () => {
@@ -63,14 +67,59 @@ describe("reconnectBackoff — nextReconnectDelay (jitter)", () => {
     expect(nextReconnectDelay(1, cfg, () => 0)).toBeGreaterThanOrEqual(0);
   });
 
-  it("keeps jittered delays bounded across the full rand range", () => {
+  it("clamps an oversized jitter ratio so no window collapses below half", () => {
+    const cfg: BackoffConfig = { ...NO_JITTER, jitterRatio: 2 };
+    expect(nextReconnectDelay(1, cfg, () => 0.999999)).toBe(500);
+    expect(nextReconnectDelay(1, cfg, () => 1)).toBe(500);
+  });
+
+  it("cannot be pushed out of bounds by a broken rng", () => {
+    const cfg: BackoffConfig = { ...NO_JITTER, jitterRatio: MAX_JITTER_RATIO };
+    expect(nextReconnectDelay(1, cfg, () => -5)).toBe(1_000);
+    expect(nextReconnectDelay(1, cfg, () => 7)).toBe(500);
+    expect(nextReconnectDelay(1, cfg, () => NaN)).toBe(1_000);
+    expect(nextReconnectDelay(1, { ...NO_JITTER, jitterRatio: NaN }, () => 0.9)).toBe(1_000);
+  });
+
+  it("keeps jittered delays within [nominal/2, nominal] and under the cap", () => {
     const cfg: BackoffConfig = { ...DEFAULT_BACKOFF };
-    for (let r = 0; r <= 1; r += 0.05) {
-      const d = nextReconnectDelay(3, cfg, () => r);
-      const base = backoffDelay(3, cfg);
-      expect(d).toBeGreaterThanOrEqual(Math.round(base * (1 - cfg.jitterRatio)) - 1);
-      expect(d).toBeLessThanOrEqual(Math.round(base * (1 + cfg.jitterRatio)) + 1);
+    for (let attempt = 1; attempt <= 15; attempt++) {
+      for (let r = 0; r <= 1; r += 0.05) {
+        const d = nextReconnectDelay(attempt, cfg, () => r);
+        const nominal = backoffDelay(attempt, cfg);
+        expect(d).toBeGreaterThanOrEqual(Math.floor(nominal / 2));
+        expect(d).toBeLessThanOrEqual(nominal);
+        expect(d).toBeLessThanOrEqual(cfg.maxDelayMs);
+        expect(d).toBeGreaterThan(0);
+      }
     }
+  });
+});
+
+describe("reconnectBackoff — shared policy (#3730)", () => {
+  it("pins the shared policy numbers", () => {
+    expect(RECONNECT_POLICY).toEqual({
+      baseDelayMs: 1_000,
+      factor: 2,
+      maxDelayMs: 30_000,
+      maxAttempts: 10,
+      jitterRatio: 0.5,
+    });
+    expect(DEFAULT_BACKOFF).toBe(RECONNECT_POLICY);
+  });
+
+  it("its nominal schedule is the worst case and sums to the give-up window", () => {
+    const delays = Array.from({ length: RECONNECT_POLICY.maxAttempts }, (_, i) =>
+      nextReconnectDelay(i + 1, RECONNECT_POLICY, () => 0)
+    );
+    expect(delays).toEqual([
+      1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000, 30_000, 30_000,
+    ]);
+    expect(worstCaseTotalBackoffMs(RECONNECT_POLICY)).toBe(RECONNECT_GIVE_UP_WINDOW_MS);
+  });
+
+  it("reports no worst case for an unbounded config", () => {
+    expect(worstCaseTotalBackoffMs({ ...NO_JITTER, maxAttempts: 0 })).toBeNull();
   });
 });
 
