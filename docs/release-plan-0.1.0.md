@@ -556,11 +556,15 @@ Or manually verify:
 - [ ] README.md has installation instructions
 - [ ] No blocker bugs open
 - [ ] Release branch is up to date with `origin/main`
+- [ ] **Release integration gate green** (#3652) — dispatch
+      `gh workflow run release-candidate.yml --ref main` on the release commit and
+      wait for it to pass; the Release workflow refuses to publish without a green
+      run of it (and of the post-merge Code Quality push run) on the tagged commit.
+      See [Release integration gate](contributing.md#release-integration-gate).
 - [ ] **Tunnel forwarding integration lanes green on the exact release commit**
-      (#2044) — confirm **both** the nightly system-integration lane **and** the
-      Docker backend-integration lane ran green against the precise commit being
-      tagged, and that their run covered **≥1 local forward** and **≥1 dynamic
-      (SOCKS) forward** end-to-end. These lanes do **not** run in per-PR CI (the
+      (#2044) — confirm the release-candidate run above (system-integration **and**
+      the Docker backend-integration lane, on the precise commit being tagged)
+      covered **≥1 local forward** and **≥1 dynamic (SOCKS) forward** end-to-end. These lanes do **not** run in per-PR CI (the
       per-PR lane is `-m "not integration"`), and the SSH tunnel data path is
       only unit-tested at the forwarder level (loopback + mock channel) — so
       end-to-end tunnel coverage is inherently a release-day confirmation, not
@@ -600,11 +604,13 @@ git push origin v0.1.0-beta
 
 This triggers the `release.yml` GitHub Actions workflow which:
 
-1. Creates a GitHub Release with changelog notes
-2. Builds for all 5 platforms (macOS Intel, macOS ARM, Windows, Linux x64,
+1. Refuses to publish unless the full integration lanes are green on the tagged
+   commit ([release integration gate](contributing.md#release-integration-gate))
+2. Creates a GitHub Release with changelog notes
+3. Builds for all 5 platforms (macOS Intel, macOS ARM, Windows, Linux x64,
    Linux ARM64)
-3. Cross-compiles agent binaries (x86_64-musl, aarch64-musl)
-4. Uploads all artifacts to the release
+4. Cross-compiles agent binaries (x86_64-musl, aarch64-musl)
+5. Uploads all artifacts to the release
 
 ### 6.4 Monitor CI (~30 min)
 

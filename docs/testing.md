@@ -446,7 +446,9 @@ restarted and the file is byte-exact. Without `docker exec` access those tests
 print `SKIPPED:` (or fail under `TERMIHUB_REQUIRE_DOCKER=1`).
 
 The [`integration-fixtures.yml`](../.github/workflows/integration-fixtures.yml)
-lane (nightly + on `tests/docker`/`core/tests`/backend changes) brings the
+lane (nightly, on `tests/docker`/`core/tests`/backend and core session-plumbing
+changes, and via the release candidate run on every release commit — see
+[Release integration gate](contributing.md#release-integration-gate)) brings the
 fixtures up and runs the suite — it is the natural place to opt in. Its
 bring-up currently omits the `vnc` and `ftp` profiles (and `vnc` is separately
 known-flaky, #1585), so `TERMIHUB_REQUIRE_DOCKER=1` cannot be flipped on
