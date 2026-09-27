@@ -410,7 +410,9 @@ impl LocalAgentSshd {
         // Loopback-only key auth, no PAM/strict-modes so it runs unprivileged
         // (mirrors scripts/dev.sh and the Python harness). `SetEnv` forces the
         // per-test registry endpoint + config home into the agent's env so it
-        // never touches shared ADR-11 registry state (#2489).
+        // never touches shared ADR-11 registry state (#2489), and bounds how
+        // long the registry and any session daemon the agent spawns (both
+        // inherit it) outlive the test if `Drop` never runs (#3636).
         let config_body = [
             format!("Port {}", 0), // placeholder, rewritten per start
             "ListenAddress 127.0.0.1".to_string(),
@@ -422,7 +424,9 @@ impl LocalAgentSshd {
             "StrictModes no".to_string(),
             "LogLevel ERROR".to_string(),
             format!(
-                "SetEnv TERMIHUB_REGISTRY_ENDPOINT={} XDG_CONFIG_HOME={}",
+                "SetEnv TERMIHUB_REGISTRY_ENDPOINT={} XDG_CONFIG_HOME={} \
+                 TERMIHUB_REGISTRY_IDLE_TIMEOUT_SECS=15 \
+                 TERMIHUB_DAEMON_DETACHED_TIMEOUT_SECS=120",
                 registry_endpoint.display(),
                 xdg.display()
             ),

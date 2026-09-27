@@ -24,6 +24,40 @@ use termihub_core::connection::{ConnectionType, OutputReceiver};
 /// daemon and core agree on a single value (DUP-006).
 const DEFAULT_BUFFER_SIZE: usize = DEFAULT_BUFFER_CAPACITY;
 
+/// Env var bounding how long a session daemon may run with **no worker
+/// attached** before it ends its session and exits (#3636).
+///
+/// Unset (the production default) means *unbounded*: a persistent session
+/// survives a desktop crash, an agent binary swap or an SSH drop for as long as
+/// its shell lives, and is recovered by the next worker (see
+/// `docs/architecture.md` → Agent Update Flow). That is the whole point of the
+/// daemon, so it is never bounded implicitly.
+///
+/// Set to a positive number of seconds, it turns an abandoned daemon into a
+/// self-reaping one: once no worker has been attached for that long, the daemon
+/// disconnects its connection and exits. Test harnesses set it so a daemon they
+/// leave behind — because the test binary was killed or panicked before its
+/// drop guard ran — cannot outlive the run by hours (#3636). It reaches the
+/// daemon through the spawning worker's inherited environment.
+pub const DETACHED_TIMEOUT_ENV: &str = "TERMIHUB_DAEMON_DETACHED_TIMEOUT_SECS";
+
+/// Parse a positive whole-seconds duration from an env value.
+///
+/// `None` for an absent, empty, zero, negative or non-numeric value, so a typo
+/// can never shorten a lifetime: it falls back to the caller's default.
+pub(crate) fn positive_secs(raw: Option<&str>) -> Option<Duration> {
+    raw?.trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|secs| *secs > 0)
+        .map(Duration::from_secs)
+}
+
+/// The configured [`DETACHED_TIMEOUT_ENV`] bound, or `None` (unbounded).
+fn detached_timeout_from_env() -> Option<Duration> {
+    positive_secs(std::env::var(DETACHED_TIMEOUT_ENV).ok().as_deref())
+}
+
 /// Configuration for the session daemon, read from environment variables.
 #[derive(Debug)]
 struct DaemonConfig {
@@ -160,6 +194,11 @@ pub async fn run_daemon(session_id: &str) -> anyhow::Result<()> {
     // Subscribe to output
     let output_rx = connection.subscribe_output();
 
+    let detached_timeout = detached_timeout_from_env();
+    if let Some(timeout) = detached_timeout {
+        info!("Session daemon will exit after {timeout:?} with no worker attached");
+    }
+
     // Run the main event loop
     let result = daemon_loop(
         &config.session_id,
@@ -167,6 +206,7 @@ pub async fn run_daemon(session_id: &str) -> anyhow::Result<()> {
         output_rx,
         &mut listener,
         config.buffer_size,
+        detached_timeout,
     )
     .await;
 
@@ -201,12 +241,16 @@ enum AgentCommand {
 ///
 /// Multiplexes between connection output, new agent connections, and
 /// agent commands using `tokio::select!`.
+///
+/// `detached_timeout` is the optional [`DETACHED_TIMEOUT_ENV`] bound: when set,
+/// the loop ends the session once no worker has been attached for that long.
 async fn daemon_loop(
     session_id: &str,
     mut connection: Box<dyn ConnectionType>,
     mut output_rx: OutputReceiver,
     listener: &mut DaemonListener,
     buffer_size: usize,
+    detached_timeout: Option<Duration>,
 ) -> anyhow::Result<()> {
     let mut ring_buffer = RingBuffer::new(buffer_size);
     let mut agent_writer: Option<BoxedWriter> = None;
@@ -220,8 +264,33 @@ async fn daemon_loop(
     // Channel for receiving commands from the agent reader task.
     let (agent_cmd_tx, mut agent_cmd_rx) = mpsc::channel::<AgentCommand>(64);
 
+    // When the current unattached stretch began (`None` while a worker is
+    // attached). Recomputed from `agent_writer` at the top of every iteration,
+    // so every path that drops the writer — EOF, read error, failed write,
+    // detach — starts the clock without having to remember to.
+    let mut detached_since: Option<tokio::time::Instant> = None;
+
     loop {
+        detached_since = next_detached_since(agent_writer.is_some(), detached_since);
+        let detached_deadline = detached_timeout
+            .zip(detached_since)
+            .map(|(timeout, since)| since + timeout);
+
         tokio::select! {
+            // No worker has been attached for the whole `detached_timeout`
+            // window (#3636): end the session rather than orphan it forever.
+            _ = sleep_until_opt(detached_deadline) => {
+                info!(
+                    session_id,
+                    "No worker attached for {:?}, ending session and exiting",
+                    detached_timeout.unwrap_or_default()
+                );
+                if let Err(e) = connection.disconnect().await {
+                    warn!("Disconnect error: {e}");
+                }
+                return Ok(());
+            }
+
             // Output from the ConnectionType
             output = output_rx.recv() => {
                 match output {
@@ -542,6 +611,29 @@ async fn read_attach_intent(reader: &mut BoxedReader) -> u8 {
     }
 }
 
+/// Advance the "unattached since" clock for one loop iteration.
+///
+/// Attached → `None`. Unattached → keep the existing start, or start it now on
+/// the transition from attached.
+fn next_detached_since(
+    attached: bool,
+    since: Option<tokio::time::Instant>,
+) -> Option<tokio::time::Instant> {
+    if attached {
+        None
+    } else {
+        Some(since.unwrap_or_else(tokio::time::Instant::now))
+    }
+}
+
+/// Sleep until `deadline`, or forever when there is none.
+async fn sleep_until_opt(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(deadline) => tokio::time::sleep_until(deadline).await,
+        None => std::future::pending().await,
+    }
+}
+
 /// Abort a running reader task if there is one.
 fn abort_reader(task: &mut Option<tokio::task::JoinHandle<()>>) {
     if let Some(t) = task.take() {
@@ -564,6 +656,40 @@ pub(crate) mod tests {
 
     /// Env var tests mutate the process environment and must run serially.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    // ── detached-lifetime bound (#3636) ───────────────────────────────
+
+    #[test]
+    fn positive_secs_accepts_only_positive_whole_seconds() {
+        assert_eq!(positive_secs(Some("5")), Some(Duration::from_secs(5)));
+        assert_eq!(positive_secs(Some(" 30 ")), Some(Duration::from_secs(30)));
+        // Anything else falls back to the caller's default — a typo must never
+        // shorten a daemon's lifetime.
+        for raw in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("-1"),
+            Some("1.5"),
+            Some("x"),
+        ] {
+            assert_eq!(positive_secs(raw), None, "{raw:?}");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn detached_clock_starts_on_detach_and_clears_on_attach() {
+        // Attached: no clock.
+        assert_eq!(next_detached_since(true, None), None);
+        // Detach: the clock starts now and then holds its start.
+        let started = next_detached_since(false, None).expect("clock started");
+        tokio::time::advance(Duration::from_secs(3)).await;
+        assert_eq!(next_detached_since(false, Some(started)), Some(started));
+        // Re-attach clears it; the next detach starts a fresh window.
+        assert_eq!(next_detached_since(true, Some(started)), None);
+        let restarted = next_detached_since(false, None).expect("clock restarted");
+        assert!(restarted > started);
+    }
 
     // ── attach-ownership decision (AGT-015 / OBS-012) ─────────────────
 
@@ -999,9 +1125,15 @@ pub(crate) mod tests {
                 // it would close the output channel and make `daemon_loop` exit.
                 let _out_tx = out_tx;
                 let conn: Box<dyn ConnectionType> = Box::new(FakeConnection);
-                let _ =
-                    super::super::daemon_loop("test-session", conn, out_rx, &mut listener, 4096)
-                        .await;
+                let _ = super::super::daemon_loop(
+                    "test-session",
+                    conn,
+                    out_rx,
+                    &mut listener,
+                    4096,
+                    None,
+                )
+                .await;
                 listener.cleanup();
             })
         }

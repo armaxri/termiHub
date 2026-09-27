@@ -1,0 +1,45 @@
+# Drive one `polkit-probe check` through a real pkttyagent (#3553).
+#
+# usage: expect pkttyagent.exp <probe> <action-id> <password-to-type>
+#
+# Starts the probe (which prints its pid and waits), registers pkttyagent for
+# that pid, waits until pkttyagent reports the registration (--notify-fd,
+# through a FIFO), lets the probe call CheckAuthorization, types the password
+# at pkttyagent's prompt (real PAM check via polkit-agent-helper-1) and prints
+# the probe's answer as `RESULT <line>`.
+set timeout 30
+lassign $argv probe action password
+
+set env(POLKIT_PROBE_WAIT_FOR_AGENT) 1
+spawn $probe check $action
+set probe_id $spawn_id
+expect -i $probe_id -re {pid=([0-9]+)} {
+    set pid $expect_out(1,string)
+} timeout {
+    puts "RESULT <probe printed no pid>"
+    exit 3
+}
+
+# pkttyagent closes --notify-fd once it is registered; the FIFO read sees EOF.
+set fifo [exec mktemp -u]
+exec mkfifo $fifo
+spawn sh -c "exec pkttyagent --process $pid --notify-fd 3 3>$fifo"
+set agent_id $spawn_id
+set notify [open $fifo RDONLY]
+read $notify
+close $notify
+file delete $fifo
+
+send -i $probe_id "go\r"
+expect -i $agent_id "Password: " {
+    send -i $agent_id "$password\r"
+} timeout {
+    puts "RESULT <pkttyagent never prompted>"
+    exit 3
+}
+expect -i $probe_id -re {(authorized=[^\r\n]*|error=[^\r\n]*)} {
+    puts "RESULT $expect_out(1,string)"
+} timeout {
+    puts "RESULT <probe never answered>"
+    exit 3
+}

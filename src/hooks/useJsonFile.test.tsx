@@ -82,6 +82,20 @@ describe("useJsonFileExport / useJsonFileImport", () => {
       expect(fsWriteTextFile).toHaveBeenCalledWith("/out/macros.json", "GENERATED");
     });
 
+    it("calls onWritten only after the file is written", async () => {
+      const onWritten = vi.fn();
+      dialogSave.mockResolvedValueOnce("/out/macros.json").mockResolvedValueOnce(null);
+      fsWriteTextFile.mockResolvedValue(undefined);
+      await act(async () => {
+        await exportFn({ defaultPath: "x.json", content: "DATA", successMessage: "ok", onWritten });
+      });
+      expect(onWritten).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        await exportFn({ defaultPath: "x.json", content: "DATA", successMessage: "ok", onWritten });
+      });
+      expect(onWritten).toHaveBeenCalledTimes(1);
+    });
+
     it("is a silent no-op when the save dialog is cancelled", async () => {
       dialogSave.mockResolvedValue(null);
       await act(async () => {

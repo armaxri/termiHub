@@ -65,8 +65,8 @@ const ALLOW_LIST: Record<string, Record<string, AllowedSource>> = {
     "http://ipc.localhost": { reason: "Tauri IPC custom protocol (Windows)" },
   },
   "worker-src": {
-    "'self'": { reason: "Monaco language workers and the plugin sandbox worker" },
-    "blob:": { reason: "Monaco's blob: worker bootstrap fallback" },
+    "'self'": { reason: "Monaco's bundled workers (#3632) and the plugin sandbox worker" },
+    "blob:": { reason: "no known consumer since #3632; removal tracked in #3639" },
   },
   "child-src": {
     "'self'": { reason: "worker fallback for engines without worker-src" },

@@ -171,6 +171,8 @@ impl LiveAgent {
             // suite reads it back from the log (see `LiveAgent::addr`, #3533).
             .arg("127.0.0.1:0")
             .env("XDG_CONFIG_HOME", config_home.path())
+            // Keep off the developer's live registry; bound leaked daemons (#3636).
+            .envs(common::isolated_registry_env(config_home.path()))
             .env("RUST_LOG", "info")
             .stdin(Stdio::null())
             .stdout(Stdio::null())

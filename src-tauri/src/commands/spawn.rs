@@ -11,7 +11,7 @@ use std::path::Path;
 use serde::Serialize;
 use tauri::State;
 
-use crate::connection::config::SavedConnection;
+use crate::connection::jump_host_resolver::{JumpHostScope, ReferenceRole};
 use crate::connection::manager::ConnectionManager;
 use crate::connection::shell_integration::{ShellEntry, ShellIntegrationSettings};
 use crate::spawn::container::{self, ContainerSpawn};
@@ -211,25 +211,17 @@ pub fn resolve_shell_spawn(
         ..SpawnRequest::default()
     };
     let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-    let connections = all_saved_connections(&manager);
+    // The same scope and lookup rule jump hosts and tunnels use (#3602, #3619,
+    // #3624): main store + enabled external files, ambiguous ids refused.
+    let (connections, unavailable) = manager.reference_scope().map_err(|e| e.to_string())?;
+    let scope = JumpHostScope::new(&connections).with_unavailable(unavailable);
     resolve_shell_spawn_with(
         &request,
         &home,
-        &connections,
+        &scope,
         default_wsl_distribution().as_deref(),
         shell.as_deref(),
     )
-}
-
-/// Gather every saved connection (main store + external files) so a spawn's
-/// `--connection <id>` can be resolved regardless of which file it lives in.
-/// Mirrors the flattening in `load_connections_and_folders`.
-fn all_saved_connections(manager: &ConnectionManager) -> Vec<SavedConnection> {
-    let mut connections = manager.get_all().map(|f| f.connections).unwrap_or_default();
-    for source in manager.load_external_sources() {
-        connections.extend(source.connections);
-    }
-    connections
 }
 
 /// The system default WSL distribution (the first installed one), used when a
@@ -253,15 +245,14 @@ fn default_wsl_distribution() -> Option<String> {
 fn resolve_shell_spawn_with(
     req: &SpawnRequest,
     home: &Path,
-    connections: &[SavedConnection],
+    scope: &JumpHostScope<'_>,
     default_wsl_distro: Option<&str>,
     shell: Option<&str>,
 ) -> Result<ShellSpawn, String> {
     match req.kind {
-        SpawnKind::Ssh => resolve_ssh_spawn(req, connections),
+        SpawnKind::Ssh => resolve_ssh_spawn(req, scope),
         SpawnKind::Wsl => {
-            let distribution =
-                resolve_wsl_distribution(req, connections, default_wsl_distro, shell)?;
+            let distribution = resolve_wsl_distribution(req, scope, default_wsl_distro, shell)?;
             Ok(handler::build_wsl_spawn(req, home, &distribution))
         }
         // Local / Auto (and any unexpected kind) open a local shell — the #1365
@@ -274,9 +265,15 @@ fn resolve_shell_spawn_with(
 /// (SI-3, #1366), else the saved WSL connection referenced by `--connection` (if
 /// it names a non-empty distribution), else the system default distro. Errors
 /// when none is available.
+///
+/// A `--connection` id is looked up under the shared saved-connection rule
+/// (#3624): an id held by more than one connection file is refused rather than
+/// silently taking the main-store one, and an id held only by a disabled
+/// external file is refused naming that file. An id no connection file knows
+/// keeps falling back to the default distro.
 fn resolve_wsl_distribution(
     req: &SpawnRequest,
-    connections: &[SavedConnection],
+    scope: &JumpHostScope<'_>,
     default_wsl_distro: Option<&str>,
     picked: Option<&str>,
 ) -> Result<String, String> {
@@ -291,7 +288,10 @@ fn resolve_wsl_distribution(
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        if let Some(conn) = connections.iter().find(|c| c.id == id) {
+        if scope.knows(id) {
+            let conn = scope
+                .find_as(id, ReferenceRole::SpawnTarget)
+                .map_err(|e| e.to_string())?;
             if conn.config.type_id == "wsl" {
                 if let Some(distro) = conn
                     .config
@@ -318,11 +318,9 @@ fn resolve_wsl_distribution(
 }
 
 /// Resolve an SSH spawn to a saved SSH connection referenced by `--connection`.
-/// Errors with a clear message when the id is missing, unknown, or not SSH.
-fn resolve_ssh_spawn(
-    req: &SpawnRequest,
-    connections: &[SavedConnection],
-) -> Result<ShellSpawn, String> {
+/// Errors with a clear message when the id is missing, unknown, ambiguous (held
+/// by more than one connection file, #3624), or not SSH.
+fn resolve_ssh_spawn(req: &SpawnRequest, scope: &JumpHostScope<'_>) -> Result<ShellSpawn, String> {
     let id = req
         .connection
         .as_deref()
@@ -332,10 +330,9 @@ fn resolve_ssh_spawn(
             "an SSH spawn requires a saved connection (--connection <id>)".to_string()
         })?;
 
-    let conn = connections
-        .iter()
-        .find(|c| c.id == id)
-        .ok_or_else(|| format!("SSH connection '{id}' not found"))?;
+    let conn = scope
+        .find_as(id, ReferenceRole::SpawnTarget)
+        .map_err(|e| e.to_string())?;
 
     if conn.config.type_id != "ssh" {
         return Err(format!(
@@ -500,18 +497,22 @@ mod tests {
         };
 
         let picked =
-            resolve_shell_spawn_with(&req, home, &[], None, Some("zsh")).expect("resolves");
+            resolve_shell_spawn_with(&req, home, &JumpHostScope::default(), None, Some("zsh"))
+                .expect("resolves");
         assert_eq!(
             picked.settings.get("shell").and_then(|v| v.as_str()),
             Some("zsh")
         );
 
         // No pick (every pre-#1366 spawn) must not pin a shell at all.
-        let default = resolve_shell_spawn_with(&req, home, &[], None, None).expect("resolves");
+        let default = resolve_shell_spawn_with(&req, home, &JumpHostScope::default(), None, None)
+            .expect("resolves");
         assert!(default.settings.get("shell").is_none());
 
         // A blank pick means "no choice", not a shell literally named "".
-        let blank = resolve_shell_spawn_with(&req, home, &[], None, Some("  ")).expect("resolves");
+        let blank =
+            resolve_shell_spawn_with(&req, home, &JumpHostScope::default(), None, Some("  "))
+                .expect("resolves");
         assert!(blank.settings.get("shell").is_none());
     }
 
@@ -523,8 +524,14 @@ mod tests {
             ..SpawnRequest::default()
         };
 
-        let spawn = resolve_shell_spawn_with(&req, home, &[], Some("Ubuntu"), Some("Debian"))
-            .expect("resolves");
+        let spawn = resolve_shell_spawn_with(
+            &req,
+            home,
+            &JumpHostScope::default(),
+            Some("Ubuntu"),
+            Some("Debian"),
+        )
+        .expect("resolves");
         assert_eq!(
             spawn.settings.get("distribution").and_then(|v| v.as_str()),
             Some("Debian")
@@ -653,7 +660,7 @@ mod tests {
         let spawn = resolve_shell_spawn_with(
             &req,
             Path::new("/home/u"),
-            &[],
+            &JumpHostScope::default(),
             None,
             entry.resolved_shell(),
         )
@@ -683,7 +690,7 @@ mod tests {
         let spawn = resolve_shell_spawn_with(
             &req,
             Path::new("/home/u"),
-            &[],
+            &JumpHostScope::default(),
             // No default distro available: only the remembered pick can resolve.
             None,
             entry.resolved_shell(),
@@ -809,6 +816,8 @@ mod tests {
 
     // ---- WSL / SSH shell-spawn resolution (#1511) --------------------------
 
+    use crate::connection::config::SavedConnection;
+    use crate::connection::jump_host_resolver::UnavailableFile;
     use crate::terminal::backend::ConnectionConfig;
 
     fn saved_conn(
@@ -856,7 +865,8 @@ mod tests {
         let home = Path::new(r"C:\Users\foo");
         let req = wsl_request(None, None);
         let spawn =
-            resolve_shell_spawn_with(&req, home, &[], Some("Ubuntu"), None).expect("resolves");
+            resolve_shell_spawn_with(&req, home, &JumpHostScope::default(), Some("Ubuntu"), None)
+                .expect("resolves");
         assert_eq!(spawn.session_type, "wsl");
         assert_eq!(spawn.settings["distribution"], "Ubuntu");
         assert_eq!(spawn.settings["startingDirectory"], "/mnt/c/Users/foo");
@@ -874,8 +884,14 @@ mod tests {
             serde_json::json!({ "distribution": "Debian" }),
         )];
         let req = wsl_request(None, Some("Work/Debian box"));
-        let spawn =
-            resolve_shell_spawn_with(&req, home, &conns, Some("Ubuntu"), None).expect("resolves");
+        let spawn = resolve_shell_spawn_with(
+            &req,
+            home,
+            &JumpHostScope::new(&conns),
+            Some("Ubuntu"),
+            None,
+        )
+        .expect("resolves");
         assert_eq!(spawn.settings["distribution"], "Debian");
     }
 
@@ -884,7 +900,8 @@ mod tests {
         // No connection and no default distro (e.g. a non-Windows host) → error.
         let home = Path::new("/home/user");
         let req = wsl_request(None, None);
-        let err = resolve_shell_spawn_with(&req, home, &[], None, None).expect_err("no distro");
+        let err = resolve_shell_spawn_with(&req, home, &JumpHostScope::default(), None, None)
+            .expect_err("no distro");
         assert!(err.contains("WSL distribution"), "err: {err}");
     }
 
@@ -898,7 +915,8 @@ mod tests {
         });
         let conns = vec![saved_conn("Prod/Web", "Web", "ssh", ssh_settings.clone())];
         let req = ssh_request(Some("/srv/app"), Some("Prod/Web"));
-        let spawn = resolve_shell_spawn_with(&req, home, &conns, None, None).expect("resolves");
+        let spawn = resolve_shell_spawn_with(&req, home, &JumpHostScope::new(&conns), None, None)
+            .expect("resolves");
         assert_eq!(spawn.session_type, "ssh");
         assert_eq!(spawn.settings, ssh_settings);
         assert_eq!(spawn.cd_path.as_deref(), Some("/srv/app"));
@@ -988,8 +1006,14 @@ mod tests {
             ..SpawnRequest::default()
         };
 
-        let spawn = resolve_shell_spawn_with(&req, Path::new("/home/u"), &conns, None, None)
-            .expect("resolves from the entry's saved connection");
+        let spawn = resolve_shell_spawn_with(
+            &req,
+            Path::new("/home/u"),
+            &JumpHostScope::new(&conns),
+            None,
+            None,
+        )
+        .expect("resolves from the entry's saved connection");
         assert_eq!(spawn.session_type, "ssh");
         assert_eq!(spawn.settings, ssh_settings);
         assert_eq!(spawn.cd_path.as_deref(), Some("/srv/app"));
@@ -1033,7 +1057,7 @@ mod tests {
         let spawn = resolve_shell_spawn_with(
             &req,
             Path::new(r"C:\Users\foo"),
-            &conns,
+            &JumpHostScope::new(&conns),
             Some("Ubuntu"),
             None,
         )
@@ -1045,7 +1069,8 @@ mod tests {
     fn ssh_spawn_without_connection_id_is_an_error() {
         let home = Path::new("/home/user");
         let req = ssh_request(Some("/srv/app"), None);
-        let err = resolve_shell_spawn_with(&req, home, &[], None, None).expect_err("needs id");
+        let err = resolve_shell_spawn_with(&req, home, &JumpHostScope::default(), None, None)
+            .expect_err("needs id");
         assert!(err.contains("--connection"), "err: {err}");
     }
 
@@ -1053,7 +1078,8 @@ mod tests {
     fn ssh_spawn_unknown_connection_is_an_error() {
         let home = Path::new("/home/user");
         let req = ssh_request(Some("/srv/app"), Some("nope"));
-        let err = resolve_shell_spawn_with(&req, home, &[], None, None).expect_err("not found");
+        let err = resolve_shell_spawn_with(&req, home, &JumpHostScope::default(), None, None)
+            .expect_err("not found");
         assert!(err.contains("not found"), "err: {err}");
     }
 
@@ -1067,7 +1093,8 @@ mod tests {
             serde_json::json!({ "shell": "bash" }),
         )];
         let req = ssh_request(Some("/srv/app"), Some("Local/Home"));
-        let err = resolve_shell_spawn_with(&req, home, &conns, None, None).expect_err("wrong type");
+        let err = resolve_shell_spawn_with(&req, home, &JumpHostScope::new(&conns), None, None)
+            .expect_err("wrong type");
         assert!(err.contains("not an SSH connection"), "err: {err}");
     }
 
@@ -1080,8 +1107,152 @@ mod tests {
             kind: SpawnKind::Local,
             ..SpawnRequest::default()
         };
-        let spawn = resolve_shell_spawn_with(&req, home, &[], None, None).expect("resolves");
+        let spawn = resolve_shell_spawn_with(&req, home, &JumpHostScope::default(), None, None)
+            .expect("resolves");
         assert_eq!(spawn.session_type, "local");
         assert_eq!(spawn.settings["startingDirectory"], "/home/user");
+    }
+
+    // ---- Shared saved-connection lookup rule (#3624) ------------------------
+
+    fn in_file(mut conn: SavedConnection, path: &str) -> SavedConnection {
+        conn.source_file = Some(path.to_string());
+        conn
+    }
+
+    /// The main store and an external file both hold `Prod/Web`: an SSH spawn
+    /// must refuse naming both files instead of opening the main-store one.
+    #[test]
+    fn ssh_spawn_refuses_an_id_held_by_several_connection_files() {
+        let settings = serde_json::json!({ "host": "main.example.com" });
+        let conns = vec![
+            saved_conn("Prod/Web", "Web", "ssh", settings),
+            in_file(
+                saved_conn(
+                    "Prod/Web",
+                    "Web",
+                    "ssh",
+                    serde_json::json!({ "host": "ext.example.com" }),
+                ),
+                "/team/shared.json",
+            ),
+        ];
+        let req = ssh_request(Some("/srv/app"), Some("Prod/Web"));
+        let err = resolve_shell_spawn_with(
+            &req,
+            Path::new("/home/user"),
+            &JumpHostScope::new(&conns),
+            None,
+            None,
+        )
+        .expect_err("ambiguous id must be refused");
+        assert!(err.contains("ambiguous"), "err: {err}");
+        assert!(err.contains("the main connection store"), "err: {err}");
+        assert!(err.contains("/team/shared.json"), "err: {err}");
+    }
+
+    /// Two external files holding the same id are equally ambiguous for a WSL
+    /// spawn — no silent first-match and no fallback to the default distro.
+    #[test]
+    fn wsl_spawn_refuses_an_id_held_by_several_connection_files() {
+        let conns = vec![
+            in_file(
+                saved_conn(
+                    "Dev/Box",
+                    "Box",
+                    "wsl",
+                    serde_json::json!({ "distribution": "Debian" }),
+                ),
+                "/a.json",
+            ),
+            in_file(
+                saved_conn(
+                    "Dev/Box",
+                    "Box",
+                    "wsl",
+                    serde_json::json!({ "distribution": "Alpine" }),
+                ),
+                "/b.json",
+            ),
+        ];
+        let req = wsl_request(None, Some("Dev/Box"));
+        let err = resolve_shell_spawn_with(
+            &req,
+            Path::new(r"C:\Users\foo"),
+            &JumpHostScope::new(&conns),
+            Some("Ubuntu"),
+            None,
+        )
+        .expect_err("ambiguous id must be refused");
+        assert!(err.contains("ambiguous"), "err: {err}");
+        assert!(
+            err.contains("/a.json") && err.contains("/b.json"),
+            "err: {err}"
+        );
+    }
+
+    /// A unique id resolves wherever it lives, including an external file.
+    #[test]
+    fn ssh_spawn_resolves_a_unique_id_from_an_external_file() {
+        let settings = serde_json::json!({ "host": "ext.example.com" });
+        let conns = vec![in_file(
+            saved_conn("Prod/Web", "Web", "ssh", settings.clone()),
+            "/team/shared.json",
+        )];
+        let req = ssh_request(None, Some("Prod/Web"));
+        let spawn = resolve_shell_spawn_with(
+            &req,
+            Path::new("/home/user"),
+            &JumpHostScope::new(&conns),
+            None,
+            None,
+        )
+        .expect("unique id resolves");
+        assert_eq!(spawn.settings, settings);
+    }
+
+    fn disabled(path: &str, id: &str) -> Vec<UnavailableFile> {
+        vec![UnavailableFile::Disabled {
+            path: path.to_string(),
+            ids: [id.to_string()].into_iter().collect(),
+        }]
+    }
+
+    /// An id only a disabled external file holds names that file.
+    #[test]
+    fn ssh_spawn_names_the_disabled_file_holding_the_id() {
+        let req = ssh_request(None, Some("Prod/Web"));
+        let err = resolve_shell_spawn_with(
+            &req,
+            Path::new("/home/user"),
+            &JumpHostScope::default().with_unavailable(disabled("/off.json", "Prod/Web")),
+            None,
+            None,
+        )
+        .expect_err("disabled file is not in scope");
+        assert!(err.contains("not found"), "err: {err}");
+        assert!(
+            err.contains("disabled external connection file '/off.json'"),
+            "err: {err}"
+        );
+    }
+
+    /// The same for WSL: no silent fallback to the default distro when the
+    /// named connection sits in a disabled file.
+    #[test]
+    fn wsl_spawn_names_the_disabled_file_holding_the_id() {
+        let req = wsl_request(None, Some("Dev/Box"));
+        let err = resolve_shell_spawn_with(
+            &req,
+            Path::new(r"C:\Users\foo"),
+            &JumpHostScope::default().with_unavailable(disabled("/off.json", "Dev/Box")),
+            Some("Ubuntu"),
+            None,
+        )
+        .expect_err("disabled file is not in scope");
+        assert!(
+            err.contains("disabled external connection file '/off.json'"),
+            "err: {err}"
+        );
     }
 }

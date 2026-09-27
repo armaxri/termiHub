@@ -1659,6 +1659,60 @@ export async function transferRetry(transferId: string): Promise<boolean> {
   return await invoke<boolean>("transfer_retry", { transferId });
 }
 
+// --- Folder-paste manifests (#3630) ---
+
+/** Whether a folder paste copies or moves its folder. */
+export type FolderPasteOperation = "copy" | "cut";
+
+/**
+ * One side of a folder paste: the local disk (no `sessionId`) or a session's
+ * file system. `connectionId` (the saved connection the session was opened
+ * from) is what a Retry after a restart uses to find the reconnected session;
+ * `label` is a display name for the notice.
+ */
+export interface FolderPasteEndpoint {
+  sessionId?: string | null;
+  connectionId?: string | null;
+  label?: string | null;
+  path: string;
+}
+
+/** A folder paste a previous run never finished (#3630). */
+export interface InterruptedFolderPaste {
+  id: string;
+  operation: FolderPasteOperation;
+  source: FolderPasteEndpoint;
+  destination: FolderPasteEndpoint;
+  startedAtMs: number;
+}
+
+/**
+ * Record a folder paste that is about to be copied file by file and resolve
+ * its manifest id (#3630). End it with {@link folderPasteEnd} once every file
+ * landed; one still recorded at the next launch is reported by
+ * {@link folderPasteTakeInterrupted}.
+ */
+export async function folderPasteBegin(
+  operation: FolderPasteOperation,
+  source: FolderPasteEndpoint,
+  destination: FolderPasteEndpoint
+): Promise<string> {
+  return await invoke<string>("folder_paste_begin", { operation, source, destination });
+}
+
+/** Remove a folder-paste manifest (the folder landed, or its notice was handled). */
+export async function folderPasteEnd(pasteId: string): Promise<void> {
+  await invoke("folder_paste_end", { pasteId });
+}
+
+/**
+ * Take the folder pastes a previous run left unfinished (#3630). Each is
+ * returned once, so only one window shows its notice.
+ */
+export async function folderPasteTakeInterrupted(): Promise<InterruptedFolderPaste[]> {
+  return await invoke<InterruptedFolderPaste[]>("folder_paste_take_interrupted");
+}
+
 /** List queued transfers, optionally filtered by session. */
 export async function transferList(sessionId?: string): Promise<TransferSnapshot[]> {
   return await invoke<TransferSnapshot[]>("transfer_list", { sessionId });

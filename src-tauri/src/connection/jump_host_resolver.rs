@@ -121,27 +121,32 @@ impl<'a> JumpHostScope<'a> {
     /// Every by-id lookup of a saved connection that must honour external
     /// connection files goes through here — jump hosts (#3602) and the SSH
     /// connection a tunnel is hosted on (#3619) — so they cannot drift apart.
-    /// `role` only shapes the wording of the error.
+    /// The rule itself lives in [`match_unique`], which the workspace
+    /// export/import maps (#3625) share. `role` only shapes the error wording.
     pub(crate) fn find_as(&self, id: &str, role: ReferenceRole) -> Result<&'a SavedConnection> {
-        let mut matches = self.connections.iter().filter(|c| c.id == id);
-        let Some(first) = matches.next() else {
-            bail!("{}", self.not_found_message(id, role));
-        };
-        let rest: Vec<&SavedConnection> = matches.collect();
-        if rest.is_empty() {
-            return Ok(first);
+        match match_unique(self.connections, |c| c.id == id) {
+            UniqueMatch::One(conn) => Ok(conn),
+            UniqueMatch::None => bail!("{}", self.not_found_message(id, role)),
+            UniqueMatch::Ambiguous(all) => bail!(
+                "Referenced {} '{id}' is ambiguous: a connection with this id exists in {}. \
+                 Rename or move one of them, or {}.",
+                role.noun(),
+                source_labels(&all),
+                role.ambiguous_remedy()
+            ),
         }
-        let sources: Vec<String> = std::iter::once(first)
-            .chain(rest)
-            .map(|c| source_label(c.source_file.as_deref()))
-            .collect();
-        bail!(
-            "Referenced {} '{id}' is ambiguous: a connection with this id exists in {}. \
-             Rename or move one of them, or {}.",
-            role.noun(),
-            sources.join(" and "),
-            role.ambiguous_remedy()
-        )
+    }
+
+    /// Whether any connection file — in the scope, or a disabled external file —
+    /// holds `id`. Lets a caller with its own fallback for an unknown id (a WSL
+    /// spawn falls back to the default distro) still refuse an ambiguous id or
+    /// one that sits in a disabled file.
+    pub(crate) fn knows(&self, id: &str) -> bool {
+        self.connections.iter().any(|c| c.id == id)
+            || self.unavailable.iter().any(|f| match f {
+                UnavailableFile::Disabled { ids, .. } => ids.contains(id),
+                UnavailableFile::FailedToLoad { .. } => false,
+            })
     }
 
     fn not_found_message(&self, id: &str, role: ReferenceRole) -> String {
@@ -169,6 +174,46 @@ impl<'a> JumpHostScope<'a> {
     }
 }
 
+/// Outcome of looking a reference up in a set of saved connections under the
+/// [`JumpHostScope`] rule: exactly one match resolves, several are ambiguous.
+#[derive(Debug)]
+pub(crate) enum UniqueMatch<'a> {
+    /// No connection matches.
+    None,
+    /// Exactly one connection matches.
+    One(&'a SavedConnection),
+    /// Several connections match (in scope order); the reference must be
+    /// refused or left unresolved rather than guessed.
+    Ambiguous(Vec<&'a SavedConnection>),
+}
+
+/// Look up the connection in `connections` matching `pred` under the one rule
+/// every by-reference lookup over the unified view shares (#3602): a single
+/// match resolves, no match is not found, several matches are ambiguous — there
+/// is no precedence between files. The jump-host resolver matches on id; the
+/// workspace export/import maps (#3625) reuse it for ids and names.
+pub(crate) fn match_unique<'a>(
+    connections: &'a [SavedConnection],
+    pred: impl Fn(&SavedConnection) -> bool,
+) -> UniqueMatch<'a> {
+    let mut matches: Vec<&'a SavedConnection> = connections.iter().filter(|c| pred(c)).collect();
+    match matches.len() {
+        0 => UniqueMatch::None,
+        1 => UniqueMatch::One(matches.remove(0)),
+        _ => UniqueMatch::Ambiguous(matches),
+    }
+}
+
+/// The connection files `connections` live in, as one human-readable phrase
+/// (`the main connection store and the external connection file '…'`).
+pub(crate) fn source_labels(connections: &[&SavedConnection]) -> String {
+    connections
+        .iter()
+        .map(|c| source_label(c.source_file.as_deref()))
+        .collect::<Vec<_>>()
+        .join(" and ")
+}
+
 /// What a saved-connection reference is used for. The lookup rule is the same
 /// for every role ([`JumpHostScope::find_as`]); only the error wording differs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,6 +222,9 @@ pub(crate) enum ReferenceRole {
     JumpHost,
     /// The saved SSH connection a tunnel is hosted on (`sshConnectionId`, #3619).
     TunnelHost,
+    /// The saved connection a CLI/context-menu spawn names with `--connection`
+    /// (#3624).
+    SpawnTarget,
 }
 
 impl ReferenceRole {
@@ -184,6 +232,7 @@ impl ReferenceRole {
         match self {
             Self::JumpHost => "jump host connection",
             Self::TunnelHost => "tunnel SSH connection",
+            Self::SpawnTarget => "spawn connection",
         }
     }
 
@@ -191,6 +240,7 @@ impl ReferenceRole {
         match self {
             Self::JumpHost => "use it as a jump host",
             Self::TunnelHost => "host tunnels on it",
+            Self::SpawnTarget => "spawn sessions with it",
         }
     }
 
@@ -198,6 +248,7 @@ impl ReferenceRole {
         match self {
             Self::JumpHost => "configure the hop inline",
             Self::TunnelHost => "pick another SSH connection for the tunnel",
+            Self::SpawnTarget => "pass a --connection id held by only one connection file",
         }
     }
 
@@ -205,6 +256,7 @@ impl ReferenceRole {
         match self {
             Self::JumpHost => "Pick an existing SSH connection or switch to inline configuration.",
             Self::TunnelHost => "Pick an existing SSH connection for the tunnel.",
+            Self::SpawnTarget => "Pass the id of an existing saved connection to --connection.",
         }
     }
 }

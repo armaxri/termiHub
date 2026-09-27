@@ -17,8 +17,17 @@
 #   heavy  ONLY the tests matching a heavy filter, with --test-threads capped
 #          (CI_HEAVY_TEST_THREADS, default 2), after the bulk has finished, so
 #          nothing else competes for the cores.
+#   serial ONLY the live-agent-TCP tests (SERIAL_FILTERS), one at a time
+#          (--test-threads=1), then verify at least SERIAL_MIN_TESTS ran and
+#          none was ignored (#2495, #3615); killed at CI_SERIAL_TIMEOUT_SECS.
 #   list   print what each phase selects and verify the partition is exact
-#          (bulk + heavy == the full test set, no overlap). Builds, never runs.
+#          (bulk + heavy [+ serial] == the full test set, no overlap). Builds,
+#          never runs.
+#
+# CI_RUST_TESTS_SPLIT_SERIAL=1 makes bulk and heavy SKIP the serial set, so it
+# can run in its own job instead. Only set it on a leg whose workflow also runs
+# the `serial` phase (the Windows legs, #3615) -- otherwise those tests are
+# skipped with nothing to run them. Unset (Linux/macOS), they run in bulk.
 #
 # Both phases pass the same filters (`--skip F` vs `F`) over the same targets,
 # so every test runs exactly once -- a test either matches a filter or it does
@@ -26,9 +35,10 @@
 # path (e.g. `backends::local_shell::tests::foo`), across every binary.
 #
 # Usage:
-#   scripts/internal/ci-rust-tests.sh <bulk|heavy|list> [cargo selection args]
+#   scripts/internal/ci-rust-tests.sh <bulk|heavy|serial|list> [cargo selection args]
 #   scripts/internal/ci-rust-tests.sh bulk --workspace
 #   scripts/internal/ci-rust-tests.sh heavy -p termihub-agent -p termihub-core
+#   scripts/internal/ci-rust-tests.sh serial -p termihub-agent
 #
 # `--all-features` is always added. Everything after the phase is passed to
 # cargo as the package selection.
@@ -36,7 +46,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '3,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,44p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # Contention-sensitive tests, as libtest substring filters. Add a module here
@@ -55,13 +65,38 @@ HEAVY_FILTERS=(
 
 HEAVY_TEST_THREADS="${CI_HEAVY_TEST_THREADS:-2}"
 
+# Live-agent-TCP tests: each cold-starts a real `termihub-agent --listen` and
+# drives it over TCP. In the shared parallel Windows leg they oversubscribed the
+# runner and timed out on a random test (#2495), so Windows runs them in their
+# own serial job (#3615). The prefix is a naming contract -- see
+# agent/tests/local_agent_integration.rs.
+SERIAL_FILTERS=(
+  "live_agent_tcp_"
+)
+# How many tests the serial set holds today: 16 on unix (15 in
+# local_agent_integration.rs + 1 in tcp_listener_readiness.rs), 10 on Windows
+# (six of them are `#[cfg(unix)]` daemon-recovery tests). Raise the count when
+# adding one; a rename that drops a test out of the prefix then fails the serial
+# phase instead of going unseen.
+if [ "${OS:-}" = "Windows_NT" ]; then
+  SERIAL_MIN_TESTS_DEFAULT=10
+else
+  SERIAL_MIN_TESTS_DEFAULT=16
+fi
+SERIAL_MIN_TESTS="${CI_SERIAL_MIN_TESTS:-$SERIAL_MIN_TESTS_DEFAULT}"
+# Hard ceiling for the whole serial phase (incremental build + the tests). The
+# 10 Windows tests take ~20s; on a timeout the phase is killed and the last
+# started test is named, instead of the job silently eating its own timeout.
+SERIAL_TIMEOUT_SECS="${CI_SERIAL_TIMEOUT_SECS:-1200}"
+SPLIT_SERIAL="${CI_RUST_TESTS_SPLIT_SERIAL:-0}"
+
 phase="${1:-}"
 case "$phase" in
   -h | --help)
     usage
     exit 0
     ;;
-  bulk | heavy | list)
+  bulk | heavy | serial | list)
     shift
     ;;
   *)
@@ -84,6 +119,14 @@ for filter in "${HEAVY_FILTERS[@]}"; do
   skip_args+=(--skip "$filter")
 done
 
+# Skips applied to bulk AND heavy when the serial set runs in its own job.
+serial_skip_args=()
+if [ "$SPLIT_SERIAL" = "1" ]; then
+  for filter in "${SERIAL_FILTERS[@]}"; do
+    serial_skip_args+=(--skip "$filter")
+  done
+fi
+
 cores() {
   getconf _NPROCESSORS_ONLN 2>/dev/null || echo "${NUMBER_OF_PROCESSORS:-unknown}"
 }
@@ -100,30 +143,122 @@ list_tests() {
 case "$phase" in
   bulk)
     echo "runner cores: $(cores); bulk phase: default parallelism, skipping ${#HEAVY_FILTERS[@]} heavy filter(s)"
-    cargo test "${selection[@]}" "${targets[@]}" -- "${skip_args[@]}"
+    if [ "$SPLIT_SERIAL" = "1" ]; then
+      echo "  also skipping the serial set (runs in its own job): ${SERIAL_FILTERS[*]}"
+    fi
+    cargo test "${selection[@]}" "${targets[@]}" -- "${skip_args[@]}" ${serial_skip_args[@]+"${serial_skip_args[@]}"}
     cargo test "${selection[@]}" --all-features --doc
     ;;
   heavy)
     echo "runner cores: $(cores); heavy phase: --test-threads=${HEAVY_TEST_THREADS}"
     printf '  filter: %s\n' "${HEAVY_FILTERS[@]}"
     cargo test "${selection[@]}" "${targets[@]}" -- \
-      --test-threads="$HEAVY_TEST_THREADS" "${HEAVY_FILTERS[@]}"
+      --test-threads="$HEAVY_TEST_THREADS" "${HEAVY_FILTERS[@]}" ${serial_skip_args[@]+"${serial_skip_args[@]}"}
+    ;;
+  serial)
+    echo "runner cores: $(cores); serial phase: --test-threads=1, expecting >= ${SERIAL_MIN_TESTS} test(s), deadline ${SERIAL_TIMEOUT_SECS}s"
+    printf '  filter: %s\n' "${SERIAL_FILTERS[@]}"
+    log="$(mktemp)"
+    trap 'rm -f "$log"' EXIT
+    # cargo writes to a FILE, never a pipe. The fresh-after-reconnect test
+    # deliberately leaves a detached registry daemon behind (it models one that
+    # outlives the agent), and on Windows every inheritable handle -- including
+    # the write end of a `cargo | tee` pipe -- leaks into that grandchild. The
+    # pipe then never reaches EOF: all 10 tests passed in 16s and the job still
+    # hung until its 60-minute timeout (#3615, first run). A file has no EOF to
+    # wait for, so we poll cargo itself and stream the log while it runs.
+    cargo test "${selection[@]}" "${targets[@]}" -- \
+      --test-threads=1 --nocapture "${SERIAL_FILTERS[@]}" >"$log" 2>&1 &
+    cargo_pid=$!
+    streamed=0
+    stream_log() {
+      local size
+      size=$(wc -c <"$log" | tr -d ' ')
+      if [ "$size" -gt "$streamed" ]; then
+        tail -c +"$((streamed + 1))" "$log" | head -c "$((size - streamed))" || true
+        streamed=$size
+      fi
+    }
+    deadline=$((SECONDS + SERIAL_TIMEOUT_SECS))
+    timed_out=0
+    while kill -0 "$cargo_pid" 2>/dev/null; do
+      stream_log
+      if [ "$SECONDS" -ge "$deadline" ]; then
+        timed_out=1
+        break
+      fi
+      sleep 2
+    done
+    if [ "$timed_out" = "1" ]; then
+      # Kill the whole tree (cargo -> test binary -> agent). Git Bash's `kill`
+      # only reaches the top native process, so use taskkill /T there.
+      if [ -r "/proc/$cargo_pid/winpid" ]; then
+        taskkill //F //T //PID "$(cat "/proc/$cargo_pid/winpid")" >/dev/null 2>&1 || true
+      fi
+      kill "$cargo_pid" 2>/dev/null || true
+    fi
+    status=0
+    wait "$cargo_pid" || status=$?
+    stream_log
+    if [ "$timed_out" = "1" ]; then
+      # The last "test NAME ..." line with no result after it is the wedged one.
+      hung="$(tr -d '\r' <"$log" | grep -oE '^test [^ ]+ \.\.\.' | tail -n 1 || true)"
+      echo "serial phase: TIMED OUT after ${SERIAL_TIMEOUT_SECS}s (CI_SERIAL_TIMEOUT_SECS)." >&2
+      echo "  last test started: ${hung:-<none -- still building?>}" >&2
+      exit 124
+    fi
+    # Say so when a test leaked an agent process: harmless now that nothing waits
+    # on a pipe, but a leak that starts accumulating should be visible.
+    if [ "${OS:-}" = "Windows_NT" ]; then
+      leaked="$(tasklist //FI "IMAGENAME eq termihub-agent.exe" //NH 2>/dev/null | grep -ci 'termihub-agent' || true)"
+      if [ "${leaked:-0}" -gt 0 ]; then
+        echo "serial phase: note: ${leaked} termihub-agent process(es) still running after cargo exited (leaked by a test)"
+      fi
+    fi
+    # Sum libtest's per-binary summaries. A guard, not a formality: a filter that
+    # silently matched nothing would otherwise "pass" with zero tests run.
+    read -r passed failed ignored < <(
+      tr -d '\r' <"$log" |
+        grep -oE 'test result: [A-Za-z]+\. [0-9]+ passed; [0-9]+ failed; [0-9]+ ignored' |
+        awk '{p += $4; f += $6; i += $8} END {print p + 0, f + 0, i + 0}'
+    )
+    echo "serial phase: passed=${passed} failed=${failed} ignored=${ignored} (cargo exit ${status})"
+    if [ "$status" -ne 0 ]; then
+      exit "$status"
+    fi
+    if [ "$ignored" -ne 0 ]; then
+      echo "serial phase: ${ignored} live-agent test(s) were IGNORED -- none may be quarantined (#3615)" >&2
+      exit 1
+    fi
+    if [ "$passed" -lt "$SERIAL_MIN_TESTS" ]; then
+      echo "serial phase: only ${passed} test(s) ran, expected >= ${SERIAL_MIN_TESTS}." >&2
+      echo "  A live-agent test lost its live_agent_tcp_ prefix, or the selection is wrong." >&2
+      exit 1
+    fi
     ;;
   list)
     export LC_ALL=C
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' EXIT
     list_tests >"$tmp/all"
-    list_tests "${skip_args[@]}" >"$tmp/bulk"
-    list_tests "${HEAVY_FILTERS[@]}" >"$tmp/heavy"
+    list_tests "${skip_args[@]}" ${serial_skip_args[@]+"${serial_skip_args[@]}"} >"$tmp/bulk"
+    list_tests "${HEAVY_FILTERS[@]}" ${serial_skip_args[@]+"${serial_skip_args[@]}"} >"$tmp/heavy"
+    : >"$tmp/serial"
+    if [ "$SPLIT_SERIAL" = "1" ]; then
+      list_tests "${SERIAL_FILTERS[@]}" >"$tmp/serial"
+    fi
     echo "heavy tests:"
     sed 's/^/  /' "$tmp/heavy"
     for filter in "${HEAVY_FILTERS[@]}"; do
       echo "filter ${filter}: $(grep -cF -- "$filter" "$tmp/heavy" || true) test(s)"
     done
-    echo "all=$(wc -l <"$tmp/all") bulk=$(wc -l <"$tmp/bulk") heavy=$(wc -l <"$tmp/heavy")"
-    overlap="$(comm -12 "$tmp/bulk" "$tmp/heavy" | wc -l)"
-    LC_ALL=C sort -m "$tmp/bulk" "$tmp/heavy" >"$tmp/union"
+    if [ "$SPLIT_SERIAL" = "1" ]; then
+      echo "serial tests:"
+      sed 's/^/  /' "$tmp/serial"
+    fi
+    echo "all=$(wc -l <"$tmp/all") bulk=$(wc -l <"$tmp/bulk") heavy=$(wc -l <"$tmp/heavy") serial=$(wc -l <"$tmp/serial")"
+    overlap="$(($(comm -12 "$tmp/bulk" "$tmp/heavy" | wc -l) + $(comm -12 "$tmp/bulk" "$tmp/serial" | wc -l) + $(comm -12 "$tmp/heavy" "$tmp/serial" | wc -l)))"
+    LC_ALL=C sort -m "$tmp/bulk" "$tmp/heavy" "$tmp/serial" >"$tmp/union"
     if [ "$overlap" -ne 0 ] || ! cmp -s "$tmp/all" "$tmp/union"; then
       echo "partition NOT exact (overlap=${overlap})" >&2
       diff "$tmp/all" "$tmp/union" >&2 || true

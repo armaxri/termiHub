@@ -1768,7 +1768,7 @@ Signed off in #3627 against the production bundle (`pnpm build`, `dist/assets`):
 | `img-src blob:`                      | Keep                                  | `@xterm/addon-image` shows inline images through blob URLs                                                                              |
 | `font-src data:`                     | **Removed**                           | No shipped font is a `data:` URL; Geist, Meslo and codicon load as bundled files                                                        |
 | `connect-src http://ipc.localhost`   | Keep (follow-up #3628)                | Windows form of Tauri's IPC protocol (`ipc:` is the WebKit form). Scoping it per platform also needs the test overlay reworked          |
-| `worker-src` / `child-src blob:`     | Keep                                  | Monaco's worker bootstrap falls back to a `blob:` worker; `child-src` covers engines without `worker-src`                               |
+| `worker-src` / `child-src blob:`     | Keep (follow-up #3639)                | Monaco's workers now load as bundled `'self'` files (#3632), not a `blob:` bootstrap; `child-src` covers engines without `worker-src`   |
 
 #### Native file drag-out (no drag capability granted)
 
@@ -2019,6 +2019,17 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
   as a rehydrated paused row — cancels the folder's rest. The rows stay
   individual queue rows; the folder-level result the paste awaited does not
   survive the restart, so each row reports its own outcome afterwards.
+  A **session folder paste** (local → session, session → session, or a
+  byte-based backend) is still copied file by file from the frontend
+  (`src/hooks/sessionFolderPaste.ts`), so it records a **folder-paste
+  manifest** in `transfers.json` (`folderPastes`) before its first file and
+  removes it once the whole folder landed (#3630). A manifest left at the next
+  launch — a quit, crash or failure part-way — is shown as a notice whose
+  Retry resolves both sides to their reconnected sessions (by saved connection
+  id; session ids do not survive a restart) and continues the paste, skipping
+  every file the destination already holds with the same size. Drag-out
+  staging downloads are never persisted: their directories are deleted at
+  quit, and records under the staging root are pruned at startup (#3629).
 - **Desktop-only for v1** — the `ftp` cargo feature is desktop-only (registered in
   `src-tauri/src/session/registry.rs::build_desktop_registry()`); the remote agent has no FTP
   backend. Wiring the connection-type-agnostic `file_browser()` dispatch into the sidebar (so FTP

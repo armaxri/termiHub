@@ -270,6 +270,21 @@ pub struct WorkspaceImportPreview {
     pub total_tab_count: usize,
 }
 
+/// Outcome of exporting workspaces as portable JSON (#3625).
+///
+/// Carries the exported JSON plus any non-fatal warnings — a tab bound to a
+/// connection id that several connection files hold (the main store and an
+/// external file, or two external files) is exported by its raw id without a
+/// portable name, and the warning tells the user which tab and which files.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceExportResult {
+    /// The portable export JSON (file format unchanged).
+    pub json: String,
+    /// Human-readable, non-blocking warnings raised during the export.
+    pub warnings: Vec<String>,
+}
+
 /// Outcome of importing workspaces from portable JSON.
 ///
 /// Carries the number of workspaces actually imported plus any non-fatal

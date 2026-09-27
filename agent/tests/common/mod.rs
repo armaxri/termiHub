@@ -175,3 +175,48 @@ pub fn wait_for_listen_addr(
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+pub mod daemon_reaper;
+
+/// Idle window (seconds) the suites give registry daemons their agents spawn,
+/// via the inherited `TERMIHUB_REGISTRY_IDLE_TIMEOUT_SECS` (#3636). Short, so a
+/// registry left behind by a test is gone seconds after its last worker, not a
+/// minute; long enough to ride out one agent being swapped for the next.
+#[allow(dead_code)]
+pub const TEST_REGISTRY_IDLE_SECS: &str = "15";
+
+/// Detached lifetime (seconds) the suites give session daemons, via the
+/// inherited `TERMIHUB_DAEMON_DETACHED_TIMEOUT_SECS` (#3636). Production leaves
+/// it unbounded; here it is the safety net for a test binary that is killed
+/// before its drop guards run, so a leaked shell daemon reaps itself instead of
+/// living for days. Far longer than any deliberate detach-and-recover gap a
+/// test exercises.
+#[allow(dead_code)]
+pub const TEST_DAEMON_DETACHED_SECS: &str = "120";
+
+/// Env for a to-be-spawned `--listen` agent (pass to `Command::envs`) that
+/// points it at a registry endpoint inside `config_home` (a unix socket path)
+/// instead of the developer's real per-user one, and bounds the lifetimes of
+/// the registry and of any session daemon it spawns (#3636).
+///
+/// Without this an agent joins — or spawns — the live shared registry at
+/// `/tmp/termihub/<uid>/registry.sock`, which then stays up for as long as any
+/// leaked test agent is still connected to it.
+#[cfg(unix)]
+#[allow(dead_code)]
+pub fn isolated_registry_env(config_home: &Path) -> [(&'static str, std::ffi::OsString); 3] {
+    [
+        (
+            "TERMIHUB_REGISTRY_ENDPOINT",
+            config_home.join("registry.sock").into_os_string(),
+        ),
+        (
+            "TERMIHUB_REGISTRY_IDLE_TIMEOUT_SECS",
+            TEST_REGISTRY_IDLE_SECS.into(),
+        ),
+        (
+            "TERMIHUB_DAEMON_DETACHED_TIMEOUT_SECS",
+            TEST_DAEMON_DETACHED_SECS.into(),
+        ),
+    ]
+}

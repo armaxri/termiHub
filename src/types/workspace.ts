@@ -132,6 +132,20 @@ export interface WorkspaceImportPreview {
 }
 
 /**
+ * Outcome of exporting workspaces as portable JSON.
+ *
+ * Carries the exported JSON plus any non-fatal warnings — a tab bound to a
+ * connection id that several connection files hold is exported by its raw id,
+ * without a portable name, and the warning says which tab and which files.
+ */
+export interface WorkspaceExportResult {
+  /** The portable export JSON. */
+  json: string;
+  /** Human-readable, non-blocking warnings raised during the export. */
+  warnings: string[];
+}
+
+/**
  * Outcome of importing workspaces from portable JSON.
  *
  * Carries the number of workspaces imported plus any non-fatal warnings raised

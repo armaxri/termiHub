@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useId, useMemo } from "react";
 import Editor, { loader } from "@monaco-editor/react";
+// Before any editor exists: route Monaco workers to bundled files, not data: URLs (#3632).
+import "@/utils/monacoEnvironment";
 import * as monaco from "monaco-editor";
 import {
   Save,

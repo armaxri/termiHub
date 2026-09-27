@@ -849,6 +849,15 @@ fn init_transfer_persistence(app: &tauri::App) {
             for w in manager.take_recovery_warnings() {
                 tracing::warn!(file = %w.file_name, details = ?w.details, "{}", w.message);
             }
+            // Drag-out staging downloads never survive a quit (their directories
+            // are deleted), so drop any a previous build persisted (#3629).
+            if let Ok(cache) = app.path().app_cache_dir() {
+                let root = cache.join(crate::files::drag_out::STAGING_DIR_NAME);
+                let pruned = manager.prune_local_paths_under(&root);
+                if pruned > 0 {
+                    tracing::debug!(pruned, "Pruned persisted drag-out staging downloads");
+                }
+            }
             app.manage(manager);
         }
         Err(e) => {

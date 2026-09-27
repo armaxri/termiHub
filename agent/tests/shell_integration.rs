@@ -187,9 +187,19 @@ impl Drop for DaemonHandle {
 ///
 /// Returns a handle that cleans up the process on drop.
 fn spawn_daemon(session_id: &str, socket_path: &Path) -> DaemonHandle {
+    spawn_daemon_with_env(session_id, socket_path, &[])
+}
+
+/// [`spawn_daemon`] with extra environment variables for the daemon.
+fn spawn_daemon_with_env(
+    session_id: &str,
+    socket_path: &Path,
+    extra_env: &[(&str, &str)],
+) -> DaemonHandle {
     let mut child = Command::new(agent_binary())
         .arg("--daemon")
         .arg(session_id)
+        .envs(extra_env.iter().copied())
         .env("TERMIHUB_SOCKET_PATH", socket_path)
         .env("TERMIHUB_TYPE_ID", "local")
         .env("TERMIHUB_BUFFER_SIZE", "65536")
@@ -605,4 +615,101 @@ async fn test_multiple_resizes() {
         read_until_output_contains(&mut reader, b"STILL_ALIVE", Duration::from_secs(5)).await;
 
     assert!(found, "Shell should still work after multiple resizes");
+}
+
+// ── Detached lifetime bound (#3636) ─────────────────────────────────
+
+/// Wait up to `timeout` for the daemon process to exit, returning its status.
+async fn wait_for_daemon_exit(
+    daemon: &mut DaemonHandle,
+    timeout: Duration,
+) -> Option<std::process::ExitStatus> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if let Ok(Some(status)) = daemon.child.try_wait() {
+            return Some(status);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// With `TERMIHUB_DAEMON_DETACHED_TIMEOUT_SECS` set, a session daemon whose
+/// worker vanished without a word — the connection just ends, as it does when
+/// the worker is SIGKILLed — must end its session and exit once the window
+/// passes, instead of living on as an orphan for hours (#3636).
+#[tokio::test]
+async fn test_detached_timeout_exits_after_worker_vanishes() {
+    let (_dir, socket_path) = temp_socket_path("detached-exit");
+    let mut daemon = spawn_daemon_with_env(
+        "test-detached-exit",
+        &socket_path,
+        &[("TERMIHUB_DAEMON_DETACHED_TIMEOUT_SECS", "2")],
+    );
+    assert!(
+        wait_for_socket(&socket_path, Duration::from_secs(5)).await,
+        "Daemon socket did not appear"
+    );
+
+    let (reader, writer, _replay) = connect_and_handshake(&socket_path).await;
+    // Vanish abruptly: no MSG_DETACH, no MSG_KILL — the socket just closes.
+    drop((reader, writer));
+    let vanished = std::time::Instant::now();
+
+    let status = wait_for_daemon_exit(&mut daemon, Duration::from_secs(15)).await;
+    assert!(
+        status.is_some(),
+        "daemon still running {:?} after its worker vanished (window 2s)",
+        vanished.elapsed()
+    );
+    assert!(
+        status.unwrap().success(),
+        "an expired detached daemon exits cleanly"
+    );
+    assert!(
+        vanished.elapsed() >= Duration::from_millis(1500),
+        "daemon exited after {:?}, before its 2s detached window",
+        vanished.elapsed()
+    );
+}
+
+/// The bound only counts time with **no** worker attached: an attached daemon
+/// outlives the window untouched, and the window restarts on detach.
+#[tokio::test]
+async fn test_detached_timeout_spares_an_attached_daemon() {
+    let (_dir, socket_path) = temp_socket_path("detached-attached");
+    let mut daemon = spawn_daemon_with_env(
+        "test-detached-attached",
+        &socket_path,
+        &[("TERMIHUB_DAEMON_DETACHED_TIMEOUT_SECS", "1")],
+    );
+    assert!(
+        wait_for_socket(&socket_path, Duration::from_secs(5)).await,
+        "Daemon socket did not appear"
+    );
+
+    let (mut reader, mut writer, _replay) = connect_and_handshake(&socket_path).await;
+    // Stay attached for well over the window.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(
+        matches!(daemon.child.try_wait(), Ok(None)),
+        "an attached daemon must not be reaped by the detached bound"
+    );
+    write_frame(&mut writer, MSG_INPUT, b"printf 'STILL_ATTACHED\\n'\n")
+        .await
+        .expect("Failed to send input");
+    assert!(
+        read_until_output_contains(&mut reader, b"STILL_ATTACHED", Duration::from_secs(5)).await,
+        "the attached session must still work past the window"
+    );
+
+    drop((reader, writer));
+    assert!(
+        wait_for_daemon_exit(&mut daemon, Duration::from_secs(15))
+            .await
+            .is_some(),
+        "the window must start on detach and then expire"
+    );
 }

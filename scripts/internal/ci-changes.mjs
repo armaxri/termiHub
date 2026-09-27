@@ -25,6 +25,9 @@
  *   harness   the Python system-test harness (tests/system, its generators)
  *   markdown  docs/** and *.md (Prettier + markdownlint in Frontend Code Quality)
  *   deps      dependency manifests/lockfiles (Security Audit on the PR)
+ *   agent     anything the termihub-agent binary or its tests are built from
+ *             (agent/, core/ and their workspace inputs) — gates the serial
+ *             Windows live-agent job (#3615). Always a subset of `rust`.
  *
  * Usage:
  *   git diff --name-only HEAD^1 HEAD | node scripts/internal/ci-changes.mjs
@@ -35,7 +38,16 @@
 
 import { readFileSync } from "node:fs";
 
-export const AREAS = ["rust", "frontend", "sidecar", "scripts", "harness", "markdown", "deps"];
+export const AREAS = [
+  "rust",
+  "frontend",
+  "sidecar",
+  "scripts",
+  "harness",
+  "markdown",
+  "deps",
+  "agent",
+];
 
 /** Every OS the "Run Tests" matrix knows about (the post-merge set). */
 export const ALL_TEST_OS = ["ubuntu-latest", "windows-latest", "macos-latest"];
@@ -52,6 +64,13 @@ const RUST_ROOTS = [
   ".cargo/",
 ];
 const RUST_FILES = new Set(["Cargo.toml", "Cargo.lock", "deny.toml", "Cross.toml"]);
+
+// What the termihub-agent crate and its integration tests compile from: the
+// agent itself, core (a path dependency) and core's own path dependencies, plus
+// the workspace-wide manifests/toolchain. src-tauri/ and examples/ are NOT here —
+// the agent does not build from them.
+const AGENT_ROOTS = ["agent/", "core/", "plugin-api/", "vendor/", ".cargo/"];
+const AGENT_FILES = new Set(["Cargo.toml", "Cargo.lock"]);
 
 const FRONTEND_ROOTS = ["src/", "public/"];
 const FRONTEND_FILES = new Set([
@@ -137,6 +156,9 @@ function locationAreas(path) {
     // Plugin packaging is exercised by Rust Code Quality.
     if (basename(path).startsWith("package-plugin.")) return ["rust", "scripts"];
     if (basename(path).startsWith("pnpm-audit-prod-gate.")) return ["deps", "scripts"];
+    // The Rust test-leg driver (bulk/heavy/serial split) changes what the Rust
+    // test jobs run, including the serial Windows live-agent job.
+    if (basename(path).startsWith("ci-rust-tests.")) return ["rust", "agent", "scripts"];
     return ["scripts"];
   }
 
@@ -161,6 +183,13 @@ export function classify(paths) {
     // Additive rules, independent of location.
     if (/\.(sh|cmd)$/.test(path)) flags.scripts = true;
     if (DEP_FILES.has(basename(path)) && !path.startsWith("rdp-sidecar/")) flags.deps = true;
+    if (
+      startsWithAny(path, AGENT_ROOTS) ||
+      AGENT_FILES.has(path) ||
+      path.startsWith("rust-toolchain")
+    ) {
+      flags.agent = true;
+    }
   }
   return flags;
 }

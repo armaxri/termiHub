@@ -130,12 +130,12 @@ impl Drop for AgentProcess {
 /// The agent does not advertise `Listening on …` until it is genuinely ready to
 /// accept, and a client that connects on the strength of that log gets a timely
 /// `initialize` response rather than an accepted-then-stalled socket.
+///
+/// Named `live_agent_tcp_*` so Windows CI runs it in the isolated serial job
+/// rather than the shared parallel leg (#2495, #3615); see
+/// `local_agent_integration.rs` for why the prefix is load-bearing.
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky under Windows-runner oversubscription; see #2495"
-)]
-fn listening_log_is_a_true_readiness_signal() {
+fn live_agent_tcp_listening_log_is_a_true_readiness_signal() {
     let spawned_at = Instant::now();
     // Isolate the agent's config dir so its per-instance auth token file
     // (AGT-002/SEC-004) is readable and does not touch the developer's real
