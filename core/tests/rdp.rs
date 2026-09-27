@@ -1,5 +1,5 @@
 #![cfg(feature = "rdp-sidecar")]
-//! RDP Integration Tests (RDP-01 through RDP-07, #3609 / TIN-005).
+//! RDP Integration Tests (RDP-01 through RDP-09, #3609 / TIN-005).
 //!
 //! Exercises termiHub's `rdp` graphical backend — the IronRDP sidecar
 //! (`termihub-rdp-helper`) spawned and bridged by [`SidecarRdp`] — against a
@@ -30,7 +30,9 @@ use std::time::Duration;
 
 use common::{port_rdp, port_rdp_nla, require_docker};
 use termihub_core::backends::rdp_sidecar::{SidecarRdp, HELPER_PATH_ENV};
-use termihub_core::connection::{ConnectionType, FrameReceiver, FrameUpdate, GraphicalBackend};
+use termihub_core::connection::{
+    ConnectionType, FrameReceiver, FrameUpdate, GraphicalBackend, MonitorLayout,
+};
 use termihub_core::errors::SessionError;
 
 /// The fixture's test user (see `tests/docker/rdp-server/Dockerfile`).
@@ -697,4 +699,102 @@ async fn rdp_07_drop_without_disconnect_leaves_no_orphan() {
     drop(frames);
     drop(rdp);
     assert_helper_gone(pid, "RDP-07").await;
+}
+
+// ── RDP-09: multi-monitor layout (#3696) ────────────────────────────
+
+/// Two 1024x768 monitors side by side, the left one primary.
+fn two_monitor_layout() -> serde_json::Value {
+    serde_json::json!([
+        { "x": 0, "y": 0, "width": 1024, "height": 768, "primary": true },
+        { "x": 1024, "y": 0, "width": 1024, "height": 768 }
+    ])
+}
+
+/// Ask for `layout` over Display Control until the desktop reflows to
+/// `(w, h)`. Like [`resize_until`], re-sends while the channel is opening.
+async fn set_layout_until(
+    graphical: &dyn GraphicalBackend,
+    frames: &mut FrameReceiver,
+    fb: &mut Framebuffer,
+    layout: MonitorLayout,
+    label: &str,
+) {
+    let (w, h) = layout.desktop_size();
+    let (w, h) = (u32::from(w), u32::from(h));
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        graphical
+            .set_monitor_layout(layout.clone())
+            .await
+            .unwrap_or_else(|e| panic!("{label}: layout request should be accepted: {e}"));
+        let window = tokio::time::Instant::now() + Duration::from_secs(3);
+        while let Ok(next) = tokio::time::timeout_at(window, frames.recv()).await {
+            let frame =
+                next.unwrap_or_else(|| panic!("{label}: the session ended instead of re-laying"));
+            fb.apply(&frame);
+            if (fb.width, fb.height) == (w, h) && fb.is_solid(Solid::Red) {
+                return;
+            }
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{label}: desktop never became {w}x{h} (last {}x{})",
+            fb.width,
+            fb.height
+        );
+    }
+}
+
+/// How many monitors the xrdp session's X server has (`xrandr --listmonitors`
+/// on its display, :10 and up — :1 is the FreeRDP shadow server's Xvfb), read
+/// inside this checkout's fixture container. Proves the server applied the
+/// layout, not just a wide single monitor of the same size.
+fn xrdp_session_monitors(label: &str) -> usize {
+    let project = std::env::var("TERMIHUB_TEST_PROJECT").unwrap_or_else(|_| "termihub".into());
+    let script = "for d in /tmp/.X11-unix/X1?; do \
+        su testuser -c \"DISPLAY=:${d##*X} xrandr --listmonitors\"; done";
+    let out = std::process::Command::new("docker")
+        .args(["exec", &format!("{project}-rdp"), "bash", "-c", script])
+        .output()
+        .unwrap_or_else(|e| panic!("{label}: docker exec failed: {e}"));
+    let text = String::from_utf8_lossy(&out.stdout);
+    text.lines()
+        .find_map(|line| line.strip_prefix("Monitors: ")?.trim().parse().ok())
+        .unwrap_or_else(|| panic!("{label}: no xrandr monitor list in {text:?}"))
+}
+
+/// The client monitor layout (TS_UD_CS_MONITOR) is accepted at connect: the
+/// session desktop is the combined 2048x768 bounding box, and the backend
+/// reports both monitors for the per-monitor viewports. A runtime layout change
+/// over Display Control then re-lays the session to three monitors.
+#[tokio::test]
+async fn rdp_09_multi_monitor_layout() {
+    let _serial = SERIAL.lock().await;
+    require_rdp!();
+    assert_no_helpers("RDP-09");
+
+    let mut settings = rdp_settings(port_rdp(), RDP_PASSWORD);
+    settings["monitors"] = serde_json::json!("all");
+    settings["monitorLayout"] = two_monitor_layout();
+    let mut rdp = SidecarRdp::new();
+    rdp.connect(settings).await.expect("RDP-09: connect");
+    let pid = spawned_helper_pid("RDP-09");
+    let graphical = rdp.graphical().expect("graphical");
+    let mut frames = graphical.subscribe_frames();
+    wait_for_desktop(&mut frames, Solid::Red, 2048, 768, "RDP-09 connect").await;
+
+    let monitors = graphical.monitor_layout();
+    assert_eq!(monitors.len(), 2, "RDP-09: both monitors are reported");
+    assert_eq!((monitors[1].x, monitors[1].width), (1024, 1024));
+    assert_eq!(xrdp_session_monitors("RDP-09 connect"), 2);
+
+    let three = MonitorLayout::side_by_side(3, 800, 600).expect("three monitors");
+    let mut fb = Framebuffer::default();
+    set_layout_until(graphical, &mut frames, &mut fb, three, "RDP-09 runtime").await;
+    assert_eq!(graphical.monitor_layout().len(), 3);
+    assert_eq!(xrdp_session_monitors("RDP-09 runtime"), 3);
+
+    rdp.disconnect().await.expect("disconnect should succeed");
+    assert_helper_gone(pid, "RDP-09").await;
 }

@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
 import { flushAsync } from "@/test/flushAsync";
+import { getHomeDir } from "@/services/api";
 import { FileBrowser, FileMenuItems, MultiSelectMenuItems } from "./FileBrowser";
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
@@ -639,6 +640,96 @@ describe("FileBrowser – useFileBrowserSync", () => {
     await flushAsync();
 
     expect(currentFileBrowsersView().local.path).toBe("C:/Users/testuser");
+  });
+
+  // --- CWD follow across tab switches (MT-FB-08/09/10, #3694) ---
+
+  /** Seed one leaf panel holding `tabs`, with `activeId` as the active tab. */
+  function seedTabs(tabs: TerminalTab[], activeId: string) {
+    const panel: LeafPanel = {
+      type: "leaf",
+      id: "panel-1",
+      tabs: tabs.map((t) => ({ ...t, isActive: t.id === activeId })),
+      activeTabId: activeId,
+    };
+    seedLayoutState({ activePanelId: "panel-1", rootPanel: panel });
+  }
+
+  async function renderBrowser() {
+    await act(async () => {
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
+    });
+    await flushAsync();
+  }
+
+  async function activate(tabs: TerminalTab[], activeId: string) {
+    await act(async () => {
+      seedTabs(tabs, activeId);
+    });
+    await flushAsync();
+  }
+
+  it("shows the Windows home for a PowerShell tab without CWD, then returns to WSL (MT-FB-08/09)", async () => {
+    const wslTab = makeTab({
+      id: "tab-wsl",
+      sessionId: "sess-wsl",
+      connectionType: "wsl",
+      config: { type: "wsl", config: { distribution: "Ubuntu" } },
+    });
+    const psTab = makeTab({
+      id: "tab-ps",
+      sessionId: "sess-ps",
+      connectionType: "local",
+      config: { type: "local", config: { shell: "powershell" } },
+    });
+    const tabs = [wslTab, psTab];
+    seedTabs(tabs, "tab-wsl");
+    useAppStore.setState({
+      sidebarView: "files",
+      tabCwds: { "tab-wsl": "/home/user/projects" },
+    });
+
+    await renderBrowser();
+    expect(currentFileBrowsersView().local.path).toBe("//wsl$/Ubuntu/home/user/projects");
+
+    // MT-FB-08: PowerShell tab has no reported CWD → the (mocked) Windows home.
+    await activate(tabs, "tab-ps");
+    expect(currentFileBrowsersView().mode).toBe("local");
+    expect(currentFileBrowsersView().local.path).toBe("C:/Users/test");
+
+    // MT-FB-09: switching back to the WSL tab restores its WSL path.
+    await activate(tabs, "tab-wsl");
+    expect(currentFileBrowsersView().local.path).toBe("//wsl$/Ubuntu/home/user/projects");
+  });
+
+  it("shows home, not the previous tab's path, for a tab without OSC 7 CWD (MT-FB-10)", async () => {
+    vi.mocked(getHomeDir).mockResolvedValue("/home/tester");
+    const first = makeTab({
+      id: "tab-a",
+      sessionId: "sess-a",
+      config: { type: "local", config: { shell: "zsh" } },
+    });
+    const second = makeTab({
+      id: "tab-b",
+      sessionId: "sess-b",
+      config: { type: "local", config: { shell: "bash" } },
+    });
+    const tabs = [first, second];
+    seedTabs(tabs, "tab-a");
+    useAppStore.setState({ sidebarView: "files", tabCwds: { "tab-a": "/tmp/x" } });
+
+    await renderBrowser();
+    expect(currentFileBrowsersView().local.path).toBe("/tmp/x");
+
+    await activate(tabs, "tab-b");
+    expect(currentFileBrowsersView().local.path).toBe("/home/tester");
+    expect(currentFileBrowsersView().local.path).not.toBe("/tmp/x");
+    // Restore the module-level default (clearAllMocks keeps implementations).
+    vi.mocked(getHomeDir).mockResolvedValue("C:\\Users\\test");
   });
 });
 

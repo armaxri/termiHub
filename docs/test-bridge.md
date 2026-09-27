@@ -174,6 +174,7 @@ unmount.
 | `getComputedStyle`    | Read a _computed_ CSS property — incl. theme custom properties |
 | `readTerminal`        | Read a terminal's reconstructed logical-line text              |
 | `getTerminalViewport` | Read a terminal's `{ viewportY, baseY }` scroll position       |
+| `sampleCanvas`        | Read RGBA pixels of a `<canvas>` (remote-desktop frames)       |
 | `getState`            | Read app store state, optionally by dot-path                   |
 | `screenshot`          | Capture a PNG of the rendered app as a data URL (see below)    |
 | `emitEvent`           | Inject a Tauri event to drive event-only UI (see below)        |
@@ -249,6 +250,29 @@ await driver.scrollTerminal({ toBottom: true }); // re-arm auto-scroll
 
 The scenario runner (#800) exposes these as the `scrollTerminal` step and the
 `terminalAtBottom` check (`{ assert: "terminalAtBottom", atBottom?, tolerance? }`).
+
+### Canvas pixels (`sampleCanvas`)
+
+A graphical remote-desktop tab (VNC/RDP) paints the remote framebuffer into a
+`<canvas>`, so no DOM verb can tell whether a frame actually reached the screen,
+and the `screenshot` DOM rasterizer does not capture canvas content reliably.
+`{ action: "sampleCanvas", testId, points? }` reads `getImageData` at each
+integer `{ x, y }` of the canvas's **backing store** and returns
+`{ width, height, pixels }`, with one `[r, g, b, a]` per point in request order.
+With no points it returns only the size. It fails (`ok: false`) for a missing
+element, a non-canvas element, a canvas without a 2D context, or a point that is
+fractional or outside the canvas. Like the other query verbs it only reads the
+DOM.
+
+The VNC suite (`tests/system/tests/test_vnc.py`, TIN-006) uses it to check that
+each quadrant of the fixture's test pattern shows the server's colour. It maps
+framebuffer points to canvas pixels with the same Fit / Match / 1:1 geometry the
+canvas draws with (`termihub_harness/ui/remote_desktop.py`).
+
+```python
+sample = driver.sample_canvas("remote-desktop-canvas", [(120, 80)])
+sample["pixels"][0]  # [255, 0, 0, 255] — the red top-left quadrant
+```
 
 ### Keyboard chords (`pressKey` modifiers)
 

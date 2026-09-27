@@ -35,6 +35,8 @@ import {
   remoteDesktopConnect,
   remoteDesktopResize,
   remoteDesktopRequestFullFrame,
+  remoteDesktopMonitorLayout,
+  remoteDesktopSetMonitorLayout,
   remoteDesktopSendInput,
   remoteDesktopReleaseInput,
   remoteDesktopSendClipboard,
@@ -128,6 +130,9 @@ import {
   uninstallPlugin,
   checkPluginUpdates,
   downloadPluginUpdate,
+  downloadPluginFromIndex,
+  downloadPluginFromUrl,
+  fetchPluginIndex,
   enablePlugin,
   disablePlugin,
   // misc
@@ -365,6 +370,32 @@ describe("api pass-through wrappers (#2975)", () => {
 
       expect(mockedInvoke).toHaveBeenCalledWith("remote_desktop_request_full_frame", {
         sessionId: "rd-1",
+      });
+    });
+
+    it("remoteDesktopMonitorLayout forwards the session id and returns the monitors", async () => {
+      const monitors = [
+        { x: 0, y: 0, width: 800, height: 600, primary: true, scale: 100 },
+        { x: 800, y: 0, width: 800, height: 600, primary: false, scale: 100 },
+      ];
+      mockedInvoke.mockResolvedValue(monitors);
+
+      await expect(remoteDesktopMonitorLayout("rd-1")).resolves.toEqual(monitors);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("remote_desktop_monitor_layout", {
+        sessionId: "rd-1",
+      });
+    });
+
+    it("remoteDesktopSetMonitorLayout forwards the session id and monitors", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+      const monitors = [{ x: 0, y: 0, width: 800, height: 600, primary: true, scale: 100 }];
+
+      await remoteDesktopSetMonitorLayout("rd-1", monitors);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("remote_desktop_set_monitor_layout", {
+        sessionId: "rd-1",
+        monitors,
       });
     });
 
@@ -1347,6 +1378,33 @@ describe("api pass-through wrappers (#2975)", () => {
         "/cache/plugin-updates/p1-1.1.0.termihub-plugin"
       );
       expect(mockedInvoke).toHaveBeenCalledWith("download_plugin_update", { pluginId: "p1" });
+    });
+
+    it("fetchPluginIndex invokes the backend index fetch with no arguments (PROD-048)", async () => {
+      const result = { url: "https://e.com/i.json", isDefault: false, entries: [] };
+      mockedInvoke.mockResolvedValue(result);
+
+      await expect(fetchPluginIndex()).resolves.toEqual(result);
+      expect(mockedInvoke).toHaveBeenCalledWith("fetch_plugin_index");
+    });
+
+    it("downloadPluginFromIndex forwards the plugin id and returns the package path", async () => {
+      mockedInvoke.mockResolvedValue("/cache/plugin-downloads/p1-1.0.0.termihub-plugin");
+
+      await expect(downloadPluginFromIndex("p1")).resolves.toBe(
+        "/cache/plugin-downloads/p1-1.0.0.termihub-plugin"
+      );
+      expect(mockedInvoke).toHaveBeenCalledWith("download_plugin_from_index", { pluginId: "p1" });
+    });
+
+    it("downloadPluginFromUrl forwards the URL and the expected checksum", async () => {
+      mockedInvoke.mockResolvedValue("/cache/plugin-downloads/url-abc.termihub-plugin");
+
+      await downloadPluginFromUrl("https://e.com/p.termihub-plugin", "ab".repeat(32));
+      expect(mockedInvoke).toHaveBeenCalledWith("download_plugin_from_url", {
+        url: "https://e.com/p.termihub-plugin",
+        sha256: "ab".repeat(32),
+      });
     });
   });
 

@@ -2565,6 +2565,48 @@ the graceful "incompatible, auto-disabled" path — could not see that skew at a
   flag set on session disconnect/drop (before `close`) and on plugin unload/disable. Settings are
   not duplicated — they remain `settings_json` (PLG-008).
 
+**Amendment — the 0.1 capability ceiling: plugin backends are terminal-only** (maintainer,
+2026-09-27, #3719, PLG-004/PLG-005):
+
+- **Decision.** A plugin connection type offers an interactive terminal (input, output, resize) and
+  nothing else in 0.1: no file browser, no monitoring, no graphical/remote-desktop surface, no
+  auto-reconnect, no persistent sessions, no tunneling, and no hosting on a remote agent (agents do
+  not run a `PluginHost`).
+- **Enforced by the host, not trusted from the plugin.** `PluginConnectionType::capabilities()`
+  (`core/src/plugin/connection.rs`) hard-codes `terminal` + `resize` and every other flag off, and
+  `monitoring()` / `file_browser()` / `graphical()` return `None`. The desktop derives every
+  surface from the registry capabilities — the sidebar file browser from `fileBrowser`, the
+  status-bar monitoring from `monitoring`, tunnels from `tunneling` — and resilient reconnect only
+  from direct SSH (`autoReconnect`) or agent-hosted tabs (`isResilientReconnectTab`), so a plugin tab
+  is never offered them, even with an `autoReconnect: true` field of its own. Pinned by
+  `core/tests/plugin_package_load.rs` (capabilities of the _packaged_ artifact) and
+  `src/store/appStore.autoReconnect.test.ts` (plugin tabs are never resilient).
+- **Rationale.** The ABI is now frozen for the whole 1.x line (above), so every surface added to it
+  is permanent. File browsing, monitoring and graphical sessions each carry a large, stateful
+  contract (paths and transfers, polling and units, framebuffers and input) that would have to be
+  designed, frozen and security-reviewed before 0.1 with no plugin yet asking for it. Reconnect for
+  an in-process native backend additionally needs a defined re-create/resume protocol and
+  cancellation semantics under the ventilator-grade bar. Shipping terminal-only keeps the frozen
+  surface to the one contract that is exercised end to end today.
+- **How it grows.** Append-only, opt-in, per surface: a later minor adds a host-owned capability
+  table — e.g. `PluginFileBrowserVTable`, `PluginMonitoringVTable` — resolved through an optional
+  exported symbol only when the plugin's ABI `supports(1.x)` and the symbol is present. The host
+  then sets the matching `Capabilities` flag for that plugin's type only. Plugins that do not export
+  a table, including every plugin built before it existed, keep loading unchanged with the
+  terminal-only ceiling, so no existing plugin breaks.
+- **Dogfooding (PLG-005).** The coverage that stands in for a first-party plugin is the per-OS
+  package-then-load lane (`.github/workflows/plugin-packaging.yml`, #3508): on ubuntu, windows and
+  macOS it builds `examples/plugins/echo-backend` with the real packer, installs the
+  `.termihub-plugin` through `PluginManager`, satisfies the hash-bound trust gate, `dlopen`s it
+  through the real `PluginHost`, asserts the terminal-only capabilities, connects, echoes I/O,
+  disconnects and unloads (`core/tests/plugin_package_load.rs`); a merge job repeats this on
+  Linux with the combined multi-platform package. `core/tests/plugin_abi_1_1.rs` covers toolchain enforcement,
+  the host context and 1.0 compatibility across a real `dlopen`, and
+  `core/tests/plugin_host_roundtrip.rs` the unpackaged load path. **Moving a first-party built-in
+  backend onto the ABI is deferred together with the ceiling:** the built-ins worth porting (SSH, local
+  shell) rely on the file browser, monitoring and reconnect the ceiling excludes, so porting one now
+  would regress it; that becomes worthwhile once the capability tables above exist.
+
 ### ADR-16: Local-Only Diagnosability — No Telemetry, No Phone-Home Crash Reporting
 
 **Context:** A bundled desktop app has nowhere for a crash to go: before OBS-002 a panic left
@@ -2577,7 +2619,8 @@ terminal sessions for people who expect nothing to leave their machine.
 
 - **No network telemetry of any kind.** termiHub never uploads crash reports, logs, usage data or
   analytics. The only network call it makes on its own is the update check (see the README
-  privacy note), which can be turned off.
+  privacy note), which can be turned off. Plugin discovery (ADR-17) fetches its index only when
+  the user asks.
 - **Crashes are diagnosable fully offline.** The desktop panic hook (`src-tauri/src/utils/panic_hook.rs`)
   and the agent panic hook (`agent/src/panic_hook.rs`) log the panic and write one small text report
   per crash into a `crash-reports/` folder next to the app's log (desktop: the platform log dir,
@@ -2624,6 +2667,60 @@ terminal sessions for people who expect nothing to leave their machine.
 - Redaction is pattern-based, so it can mask harmless text (e.g. a dotted identifier that looks
   like a host name); the tests in `core/src/diagnostics/redact_tests.rs` pin what must be masked
   and what must stay readable.
+
+### ADR-17: Plugin Discovery via a Curated, Checksum-Carrying Index over HTTPS
+
+**Context:** Plugins could only be installed from a local file (audit PROD-048). Users need an
+in-app way to find plugins, but termiHub loads native code in-process, so discovery must not
+become a new way to install or trust something the user did not review. The webview's CSP
+forbids it from fetching remote content, so any network access has to happen in the backend.
+
+**Decision** (#3715):
+
+- **A curated index, not a store.** `plugins/index.json` in this repository lists plugins (id,
+  name, description, author, version, `minHostAbi`, native flag, toolchain record, and one or
+  more packages, each with its platform triples, HTTPS URL and SHA-256). The default index URL is
+  that file on the stable `main` branch
+  (`https://raw.githubusercontent.com/armaxri/termiHub/main/plugins/index.json`), so a listing
+  only changes through a reviewed PR. It ships **empty**: nothing third-party is suggested by
+  default. The URL is a setting (`pluginIndexUrl`, https only) for users who run their own index.
+- **Backend-only, bounded fetching.** `src-tauri/src/commands/plugin_fetch.rs` is the one client
+  for every plugin network call (this and the PROD-051 update check): HTTPS only (validated before
+  the request, `https_only` client), at most 3 redirects and only to HTTPS, no credentials in
+  URLs, no cookies or auth headers, connect and overall timeouts, and hard size caps (index 1 MiB,
+  package 50 MB) enforced by `Content-Length` and again while streaming. Nothing is fetched until
+  the user clicks **Load plugin index**.
+- **Checksum before parse.** A package is streamed into a private temp file (`0600` in a `0700`
+  cache directory on Unix) while it is hashed; only a file whose SHA-256 equals the index entry's
+  is kept. Only then is it opened: package validation, then the id and version must equal the
+  entry's. The URL and checksum always come from a fresh **backend** fetch of the index, never
+  from the webview. A user-pasted URL must come with the expected SHA-256.
+- **The unchanged install pipeline decides.** The verified file goes through the same install
+  dialog as **Install from file…**: package signature and publisher trust, the per-plugin native
+  trust acknowledgement (#3296), ABI / toolchain / platform checks (#3508, #3582) and the
+  downgrade / signer-change confirmations (#3383, #3490). Discovery never installs, enables or
+  trusts anything by itself.
+- **v0.1 trust level: HTTPS plus a checksum in the index; the index itself is not signed.**
+  Considered: a detached Ed25519 signature over the index with a compiled-in key (the agent-update
+  scheme, #3213 / #3331). Deferred because (1) the index is a discovery aid, not a trust anchor —
+  what a package may do is still decided by its own signature and the user's explicit
+  acknowledgement, and an index cannot bypass either; (2) the default index is served over TLS
+  from the maintainer's own repository, where changes need a reviewed PR; (3) a signing key
+  needs a maintainer key ceremony first (the agent-update key is still a placeholder), and a
+  fail-closed check against a placeholder key would disable the feature. Signing the index is
+  tracked as a follow-up.
+
+**Consequences:**
+
+- Someone who can change the served index (a compromised repository or hosting) could list a
+  malicious package with a matching checksum. It still reaches the user as an unsigned or
+  unknown-publisher package behind the trust banner and, for native code, the per-plugin trust
+  acknowledgement, with native plugins off by default. A signed index would close this gap.
+- An index entry's `author` is display text; the package signature, not the index, identifies
+  the publisher.
+- A custom index URL is the user's choice of trust. Because the client runs on the user's own
+  machine, server-side SSRF concerns do not apply, and the size, timeout and redirect limits
+  bound what a hostile index can make the app do.
 
 ---
 

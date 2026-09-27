@@ -1,5 +1,5 @@
 #![cfg(feature = "vnc")]
-//! VNC (RFB) Integration Tests (VNC-01 through VNC-08).
+//! VNC (RFB) Integration Tests (VNC-01 through VNC-12).
 //!
 //! Exercises termiHub's `vnc` graphical backend against a real VNC server — the
 //! live negotiate -> authenticate -> decode path (#1681/#1715) that only exists
@@ -594,5 +594,95 @@ async fn vnc_10_refused_dynamic_resolution_is_reported() {
         ),
         "VNC-10: the refusal must not end the session"
     );
+    vnc.disconnect().await.expect("disconnect should succeed");
+}
+
+// ── VNC-11 / VNC-12: multi-monitor layout (#3696) ───────────────────
+
+/// Two 640x480 screens side by side, the left one primary.
+fn two_screen_layout() -> serde_json::Value {
+    serde_json::json!([
+        { "x": 0, "y": 0, "width": 640, "height": 480, "primary": true },
+        { "x": 640, "y": 0, "width": 640, "height": 480 }
+    ])
+}
+
+/// TigerVNC's Xvnc accepts a multi-screen `SetDesktopSize`: the session
+/// becomes the combined 1280x480 desktop and the backend reports both screens
+/// for the per-monitor viewports. The fixture is restored to one 1024x768
+/// screen at the end.
+#[tokio::test]
+async fn vnc_11_multi_monitor_layout() {
+    require_docker!(port_vnc_vencrypt());
+    let _desktop = VENCRYPT_DESKTOP.lock().await;
+
+    let mut settings = vencrypt_settings(port_vnc_vencrypt(), "insecure", None);
+    settings["monitors"] = serde_json::json!("all");
+    settings["monitorLayout"] = two_screen_layout();
+    let mut vnc = Vnc::new();
+    vnc.connect(settings)
+        .await
+        .expect("VNC-11: multi-monitor connect");
+    let graphical = vnc.graphical().expect("graphical backend");
+    assert!(
+        !graphical.graphical_capabilities().supports_dynamic_resize,
+        "VNC-11: a multi-monitor session does not follow the tab"
+    );
+    let mut frames = graphical.subscribe_frames();
+    wait_for_size(&mut frames, 1280, 480, "VNC-11 layout").await;
+    // The server's layout report (with both screens) may trail the resize.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let screens = loop {
+        let screens = graphical.monitor_layout();
+        if screens.len() == 2 || tokio::time::Instant::now() >= deadline {
+            break screens;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    assert_eq!(screens.len(), 2, "VNC-11: both screens are reported");
+    assert_eq!((screens[1].x, screens[1].width), (640, 640));
+    vnc.disconnect().await.expect("disconnect should succeed");
+
+    // Restore the shared fixture for VNC-06/07: one 1024x768 screen.
+    let mut settings = vencrypt_settings(port_vnc_vencrypt(), "insecure", None);
+    settings["resolutionMode"] = serde_json::json!("fixed");
+    settings["width"] = serde_json::json!(FB_WIDTH);
+    settings["height"] = serde_json::json!(FB_HEIGHT);
+    let mut vnc = Vnc::new();
+    vnc.connect(settings)
+        .await
+        .expect("VNC-11: restore connect");
+    let graphical = vnc.graphical().expect("graphical backend");
+    let mut frames = graphical.subscribe_frames();
+    wait_for_size(&mut frames, FB_WIDTH, FB_HEIGHT, "VNC-11 restore").await;
+    vnc.disconnect().await.expect("disconnect should succeed");
+}
+
+/// x11vnc does not let clients change its layout: a multi-monitor session
+/// degrades to the server's single 1024x768 screen and reports no monitors.
+#[tokio::test]
+async fn vnc_12_multi_monitor_degrades_to_the_server_layout() {
+    require_docker!(port_vnc());
+
+    let mut settings = vnc_settings(port_vnc());
+    settings["monitors"] = serde_json::json!("all");
+    settings["monitorLayout"] = two_screen_layout();
+    let mut vnc = Vnc::new();
+    vnc.connect(settings)
+        .await
+        .expect("VNC-12: multi-monitor connect");
+    let graphical = vnc.graphical().expect("graphical backend");
+    let mut frames = graphical.subscribe_frames();
+    wait_for_size(&mut frames, FB_WIDTH, FB_HEIGHT, "VNC-12").await;
+    // Give a refused request time to come back; the size must not change.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    while let Ok(frame) = frames.try_recv() {
+        assert_eq!(
+            (frame.width, frame.height),
+            (FB_WIDTH, FB_HEIGHT),
+            "VNC-12: the server's size is kept"
+        );
+    }
+    assert!(graphical.monitor_layout().is_empty());
     vnc.disconnect().await.expect("disconnect should succeed");
 }

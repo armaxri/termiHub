@@ -39,8 +39,8 @@ use vnc::{
 
 use crate::connection::{
     AuthKind, Capabilities, ConnectionType, CursorReceiver, CursorShape, CursorUpdate, DirtyRect,
-    FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities, InputEvent,
-    OutputReceiver, SettingsSchema,
+    FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities, InputEvent, MonitorLayout,
+    MonitorRect, MultiMonitorCapability, OutputReceiver, SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
@@ -101,6 +101,26 @@ impl VncShared {
             Ok(mut desktop) => desktop.request(width, height, std::time::Instant::now()),
             Err(_) => ResizeOutcome::default(),
         }
+    }
+
+    /// The server's reported screens, when it has more than one (#3696).
+    fn desktop_screens(&self) -> Vec<MonitorRect> {
+        self.desktop
+            .lock()
+            .map(|desktop| desktop.screens())
+            .unwrap_or_default()
+    }
+
+    /// A runtime monitor-layout change (#3696): the `SetDesktopSize` to send,
+    /// or the reason the server's layout is kept.
+    fn desktop_set_monitors(&self, layout: MonitorLayout) -> Result<Option<X11Event>, String> {
+        let mut desktop = self
+            .desktop
+            .lock()
+            .map_err(|_| "VNC desktop state unavailable".to_string())?;
+        desktop
+            .set_monitors(layout, std::time::Instant::now())
+            .map(|request| request.map(X11Event::SetDesktopSize))
     }
 
     fn supports_dynamic_resize(&self) -> bool {
@@ -217,7 +237,7 @@ fn encodings_for(cfg: &VncConfig) -> Vec<VncEncoding> {
         encs.push(VncEncoding::CursorPseudo);
     }
     encs.push(VncEncoding::DesktopSizePseudo);
-    if cfg.resolution_mode().negotiates_layout() {
+    if cfg.desktop_size().negotiates_layout() {
         encs.push(VncEncoding::ExtendedDesktopSizePseudo);
     }
     encs
@@ -749,7 +769,7 @@ impl ConnectionType for Vnc {
             show_remote_cursor: cfg.show_remote_cursor,
             pixels,
             failure: StdMutex::new(None),
-            desktop: StdMutex::new(DesktopSize::new(cfg.resolution_mode())),
+            desktop: StdMutex::new(cfg.desktop_size()),
         });
         let cancel = CancellationToken::new();
         let (frame_tx, frame_rx) = mpsc::channel(CHANNEL_DEPTH);
@@ -864,6 +884,9 @@ impl GraphicalBackend for Vnc {
             // Latin-1 text only; vnc-rs has no Extended Clipboard support.
             supports_clipboard_image: false,
             view_only_capable: true,
+            // A multi-screen SetDesktopSize (RFB ExtendedDesktopSize), honored
+            // only by servers that support it (#3696).
+            multi_monitor: MultiMonitorCapability::supported(),
         }
     }
 
@@ -913,6 +936,30 @@ impl GraphicalBackend for Vnc {
         match outcome.notice {
             Some(notice) => Err(SessionError::ProtocolError(notice)),
             None => Ok(()),
+        }
+    }
+
+    /// The server's own screen layout, when it reports more than one screen
+    /// through RFB ExtendedDesktopSize (#3696) — whether requested by this
+    /// client or configured on a multi-head server.
+    fn monitor_layout(&self) -> Vec<MonitorRect> {
+        self.runtime
+            .as_ref()
+            .map(|rt| rt.shared.desktop_screens())
+            .unwrap_or_default()
+    }
+
+    /// Request a new multi-screen layout (#3696). A server without
+    /// ExtendedDesktopSize keeps its layout; that is reported as an error so
+    /// the frontend can say why, and the session continues unchanged.
+    async fn set_monitor_layout(&self, layout: MonitorLayout) -> Result<(), SessionError> {
+        let Some(rt) = &self.runtime else {
+            return Err(SessionError::NotRunning("vnc not connected".to_string()));
+        };
+        match rt.shared.desktop_set_monitors(layout) {
+            Ok(Some(request)) => rt.client.input(request).await.map_err(map_vnc_err),
+            Ok(None) => Ok(()),
+            Err(notice) => Err(SessionError::ProtocolError(notice)),
         }
     }
 
@@ -1462,6 +1509,8 @@ mod tests {
         assert!(caps.auth_kinds.contains(&AuthKind::UsernamePassword));
         assert!(caps.supports_clipboard);
         assert!(!caps.supports_clipboard_image);
+        assert_eq!(caps.multi_monitor, MultiMonitorCapability::supported());
+        assert!(Vnc::new().monitor_layout().is_empty());
         assert!(caps.view_only_capable);
         assert!(!caps.supports_dynamic_resize);
     }

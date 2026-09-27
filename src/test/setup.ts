@@ -185,6 +185,8 @@ vi.mock("@tauri-apps/api/window", () => ({
       public height: number
     ) {}
   },
+  availableMonitors: vi.fn(() => Promise.resolve([])),
+  primaryMonitor: vi.fn(() => Promise.resolve(null)),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({

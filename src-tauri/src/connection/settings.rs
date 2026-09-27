@@ -300,6 +300,11 @@ pub struct AppSettings {
     /// A check never installs anything.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin_update_check_enabled: Option<bool>,
+    /// URL of the curated plugin index browsed in Settings → Plugins
+    /// (PROD-048). `None` (or empty) uses the maintainer-hosted default. Must be
+    /// `https://`; the index is fetched only when the user asks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_index_url: Option<String>,
     /// Update checker configuration and state.
     #[serde(default)]
     pub updates: UpdateSettings,
@@ -445,6 +450,7 @@ impl Default for AppSettings {
             experimental_features_enabled: None,
             frontend_plugins_enabled: None,
             plugin_update_check_enabled: None,
+            plugin_index_url: None,
             updates: UpdateSettings::default(),
             serial_port_scan_prefixes: None,
             shell_integration: ShellIntegrationSettings::default(),
@@ -1207,6 +1213,23 @@ mod tests {
         assert_eq!(settings.frontend_plugins_enabled, None);
         let json = serde_json::to_string(&settings).unwrap();
         assert!(!json.contains("frontendPluginsEnabled"));
+    }
+
+    #[test]
+    fn plugin_index_url_defaults_unset_and_round_trips() {
+        let settings = AppSettings::default();
+        assert_eq!(settings.plugin_index_url, None);
+        assert!(!serde_json::to_string(&settings)
+            .unwrap()
+            .contains("pluginIndexUrl"));
+        let settings = AppSettings {
+            plugin_index_url: Some("https://example.com/index.json".into()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("\"pluginIndexUrl\":\"https://example.com/index.json\""));
+        let back: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.plugin_index_url, settings.plugin_index_url);
     }
 
     #[test]

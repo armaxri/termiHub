@@ -26,9 +26,10 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use termihub_core::connection::{
-    auto_reconnect_enabled, fixed_resolution_requested, CertPrompt, CertPromptReceiver,
-    ClipboardImage, ConnectionType, ConnectionTypeRegistry, CursorUpdate, FrameUpdate,
-    GraphicalState, InputEvent, RemoteClipboardFile, SessionStateMachine,
+    auto_reconnect_enabled, fixed_resolution_requested, multi_monitor_requested, CertPrompt,
+    CertPromptReceiver, ClipboardImage, ConnectionType, ConnectionTypeRegistry, CursorUpdate,
+    FrameUpdate, GraphicalState, InputEvent, MonitorLayout, MonitorRect, RemoteClipboardFile,
+    SessionStateMachine,
 };
 use termihub_core::errors::SessionError;
 
@@ -196,9 +197,10 @@ struct GraphicalSession {
     tasks: Vec<JoinHandle<()>>,
     /// The last requested pixel size, re-sent after an auto-reconnect.
     last_size: LastSize,
-    /// The user pinned this session to a fixed resolution (PROD-026): resize
-    /// requests are refused, so neither the live session nor an auto-reconnect
-    /// (which re-dials with the same settings) ever leaves the configured size.
+    /// The user pinned this session to a fixed resolution (PROD-026) or to a
+    /// multi-monitor layout (#3696): resize requests are refused, so neither the
+    /// live session nor an auto-reconnect (which re-dials with the same
+    /// settings) ever leaves the configured size.
     fixed_resolution: bool,
     /// Backend type id (for diagnostics).
     type_id: String,
@@ -289,7 +291,9 @@ impl GraphicalSessionManager {
         // Keep the settings for re-dials only when Auto-Reconnect is on (#3364),
         // so a session that never re-dials does not retain its credentials.
         let redial_settings = auto_reconnect_enabled(&settings).then(|| settings.clone());
-        let fixed_resolution = fixed_resolution_requested(&settings);
+        // A multi-monitor session's size is its layout, never the tab (#3696).
+        let fixed_resolution =
+            fixed_resolution_requested(&settings) || multi_monitor_requested(&settings);
 
         // Authenticating → establish.
         emit_state(&sink, &session_id, GraphicalState::Authenticating, 0, None);
@@ -503,6 +507,42 @@ impl GraphicalSessionManager {
             .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
         backend
             .request_full_frame()
+            .await
+            .map_err(|e| TerminalError::InternalError(e.to_string()))
+    }
+
+    /// The session's monitors in framebuffer coordinates (#3696) — one per
+    /// remote monitor, empty for a single-monitor session.
+    pub async fn monitor_layout(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<MonitorRect>, TerminalError> {
+        let conn = self.connection_of(session_id).await?;
+        let guard = conn.lock().await;
+        let backend = guard
+            .graphical()
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        Ok(backend.monitor_layout())
+    }
+
+    /// Replace a session's monitor layout at runtime (#3696), e.g. after a
+    /// local display was added. The untrusted `monitors` are normalized first;
+    /// fewer than two usable monitors is refused.
+    pub async fn set_monitor_layout(
+        &self,
+        session_id: &str,
+        monitors: &[MonitorRect],
+    ) -> Result<(), TerminalError> {
+        let layout = MonitorLayout::normalize(monitors).ok_or_else(|| {
+            TerminalError::InvalidParams("a monitor layout needs at least two monitors".into())
+        })?;
+        let conn = self.connection_of(session_id).await?;
+        let guard = conn.lock().await;
+        let backend = guard
+            .graphical()
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        backend
+            .set_monitor_layout(layout)
             .await
             .map_err(|e| TerminalError::InternalError(e.to_string()))
     }
@@ -1322,6 +1362,50 @@ mod tests {
             .unwrap()
             .contains(&GraphicalState::Resizing));
         mgr.disconnect(&sid, sink).await.expect("disconnect");
+    }
+
+    #[tokio::test]
+    async fn monitor_layout_round_trips_through_the_manager() {
+        let mgr = manager();
+        let sink = RecordingSink::default();
+        let sid = mgr
+            .connect("mock-remote-desktop", serde_json::json!({}), sink.clone())
+            .await
+            .unwrap();
+        assert!(mgr.monitor_layout(&sid).await.unwrap().is_empty());
+        let two = [
+            MonitorRect {
+                primary: true,
+                ..MonitorRect::new(0, 0, 640, 480)
+            },
+            MonitorRect::new(640, 0, 640, 480),
+        ];
+        mgr.set_monitor_layout(&sid, &two).await.unwrap();
+        let reported = mgr.monitor_layout(&sid).await.unwrap();
+        assert_eq!(reported.len(), 2);
+        assert_eq!(reported[1].x, 640);
+        // A single monitor is not a layout.
+        let err = mgr.set_monitor_layout(&sid, &two[..1]).await.unwrap_err();
+        assert!(matches!(err, TerminalError::InvalidParams(_)));
+        let err = mgr.monitor_layout("nope").await.unwrap_err();
+        assert!(matches!(err, TerminalError::SessionNotFound(_)));
+        mgr.disconnect(&sid, sink).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_multi_monitor_session_ignores_tab_resizes() {
+        let mgr = manager();
+        let sink = RecordingSink::default();
+        let sid = mgr
+            .connect(
+                "mock-remote-desktop",
+                serde_json::json!({ "monitors": "custom", "monitorCount": 2 }),
+                sink.clone(),
+            )
+            .await
+            .unwrap();
+        assert!(mgr.is_fixed_resolution(&sid).await.unwrap());
+        mgr.disconnect(&sid, sink).await.unwrap();
     }
 
     #[tokio::test]

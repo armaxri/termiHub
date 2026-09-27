@@ -2,13 +2,13 @@ import { useCallback, useState } from "react";
 import { CircleArrowUp, FileUp, RefreshCw } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store/appStore";
-import { assessPluginTrust, previewPlugin } from "@/services/api";
-import type { InstalledPlugin, PluginManifest, PluginTrustInfo } from "@/types/plugin";
+import type { InstalledPlugin } from "@/types/plugin";
 import { Button, SearchInput, StatusDot, toast } from "@/components/ui";
 import { useListFilter, type ListFilterMatcher } from "@/hooks/useListFilter";
 import { frontendLog } from "@/utils/frontendLog";
 import { pluginDotState, pluginDotTone, pluginTypeIcon } from "./pluginPresentation";
 import { PluginInstallDialog } from "./PluginInstallDialog";
+import { reviewDownloadedPackage, type DownloadedPackageReview } from "./pluginDownloadReview";
 import "./Plugins.css";
 import { errorMessage } from "@/utils/errorMessage";
 import {
@@ -16,17 +16,6 @@ import {
   hasUpdateSource,
   usePluginUpdateStore,
 } from "@/plugins/pluginUpdateStore";
-
-/** A picked-and-validated package awaiting the user's install confirmation. */
-interface PendingInstall {
-  filePath: string;
-  manifest: PluginManifest;
-  trust: PluginTrustInfo;
-  /** This computer's target triple (PLG-011, #3507). */
-  hostPlatform: string;
-  /** Whether the package ships a native library for this computer. */
-  platformSupported: boolean;
-}
 
 /**
  * Case-insensitive match of a plugin against the (already normalized) query on
@@ -53,17 +42,20 @@ export function PluginManagerView() {
   const selectPlugin = useAppStore((s) => s.selectPlugin);
 
   const updateEntries = usePluginUpdateStore((s) => s.entries);
+  const indexOffers = usePluginUpdateStore((s) => s.indexOffers);
   const checkingAll = usePluginUpdateStore((s) => s.checkingAll);
   const checkForUpdates = usePluginUpdateStore((s) => s.checkForUpdates);
 
-  const [pending, setPending] = useState<PendingInstall | null>(null);
+  const [pending, setPending] = useState<DownloadedPackageReview | null>(null);
 
-  const updatable = plugins.some(hasUpdateSource);
+  // Every installed plugin can be checked: its own `updateUrl` and/or the
+  // plugin index.
+  const updatable = plugins.length > 0;
 
   const handleCheckUpdates = useCallback(async () => {
     await checkForUpdates();
-    const { entries } = usePluginUpdateStore.getState();
-    const available = plugins.filter((p) => hasAvailableUpdate(entries, p)).length;
+    const { entries, indexOffers: offers, indexError } = usePluginUpdateStore.getState();
+    const available = plugins.filter((p) => hasAvailableUpdate(entries, p, offers)).length;
     const failed = plugins.filter(
       (p) => hasUpdateSource(p) && entries[p.manifest.id]?.phase === "error"
     ).length;
@@ -73,6 +65,8 @@ export function PluginManagerView() {
       );
     } else if (failed > 0) {
       toast.error(`Update check failed for ${failed} ${failed === 1 ? "plugin" : "plugins"}`);
+    } else if (indexError !== null) {
+      toast.error(`Could not check the plugin index: ${indexError}`);
     } else {
       toast.success("All plugins are up to date");
     }
@@ -97,13 +91,9 @@ export function PluginManagerView() {
 
     const toastId = toast.loading("Validating plugin…");
     try {
-      const [preview, trust] = await Promise.all([
-        previewPlugin(filePath),
-        assessPluginTrust(filePath),
-      ]);
-      const { manifest, hostPlatform, platformSupported } = preview;
+      const review = await reviewDownloadedPackage(filePath);
       toast.dismiss(toastId);
-      setPending({ filePath, manifest, trust, hostPlatform, platformSupported });
+      setPending(review);
     } catch (err) {
       toast.error(`Invalid plugin package: ${errorMessage(err)}`, {
         id: toastId,
@@ -155,7 +145,7 @@ export function PluginManagerView() {
                 />
                 <TypeIcon className="plugin-row__icon" aria-hidden="true" />
                 <span className="plugin-row__name">{manifest.name}</span>
-                {hasAvailableUpdate(updateEntries, plugin) && (
+                {hasAvailableUpdate(updateEntries, plugin, indexOffers) && (
                   <CircleArrowUp
                     className="plugin-row__update"
                     aria-label="Update available"

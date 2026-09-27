@@ -258,6 +258,16 @@ fn is_custom_baud_rate_rejected(err: &std::io::Error, baud_rate: u32) -> bool {
 
 /// Open a serial port using a pre-parsed configuration.
 ///
+/// The port is switched to **raw mode** before the user's framing is applied:
+/// `serial2`'s closure form of `SerialPort::open` starts from the port's
+/// *current* settings and only changes what the closure touches, so without
+/// [`serial2::Settings::set_raw`] a device left in canonical/echo mode (the
+/// default for a fresh pty, and what some drivers start in) would buffer input
+/// until a newline, echo it back to the device, translate CR/LF and turn
+/// control characters into signals (#3704). On Unix `set_raw` is
+/// `cfmakeraw` plus `VMIN = 1` / `VTIME = 0`; on Windows it enables binary mode
+/// and disables error-character and NUL stripping.
+///
 /// Returns a [`serial2_tokio::SerialPort`] ready for async I/O.
 pub fn open_serial_port(config: &ParsedSerialConfig) -> Result<SerialPort, SessionError> {
     let baud_rate = config.baud_rate;
@@ -267,6 +277,9 @@ pub fn open_serial_port(config: &ParsedSerialConfig) -> Result<SerialPort, Sessi
     let flow_control = config.flow_control;
 
     SerialPort::open(&config.port, |mut settings: serial2::Settings| {
+        // Raw first: it also resets framing to 8N1 / no flow control, which the
+        // user's settings below then override.
+        settings.set_raw();
         settings.set_baud_rate(baud_rate)?;
         settings.set_char_size(char_size);
         settings.set_stop_bits(stop_bits);

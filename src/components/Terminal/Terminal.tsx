@@ -1448,6 +1448,12 @@ export function Terminal({
     };
     xtermTextarea?.addEventListener("paste", suppressNativePaste, true);
 
+    // Tag xterm's hidden input so the system-test bridge can key this terminal
+    // directly — e.g. Enter in view mode raising the reconnect prompt (MT-SSH-25);
+    // xterm only handles keydown on this textarea. Rendered per tab as
+    // data-testid={`terminal-input-${tabId}`} so split panes stay addressable.
+    xtermTextarea?.setAttribute("data-testid", `terminal-input-${tabId}`);
+
     // GPU-accelerated rendering (#2078). The WebGL addon replaces xterm's DOM
     // renderer with a WebGL2 canvas renderer — the single biggest render-
     // throughput win on high-volume output. It must be loaded AFTER open() so it

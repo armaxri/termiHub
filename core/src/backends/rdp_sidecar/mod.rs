@@ -61,7 +61,8 @@ use tracing::{debug, warn};
 use crate::connection::{
     AuthKind, Capabilities, CertPrompt, CertPromptReceiver, ClipboardImage, ConnectionType,
     CursorReceiver, FrameReceiver, GraphicalBackend, GraphicalCapabilities, InputEvent,
-    OutputReceiver, RemoteClipboardFile, SettingsSchema,
+    MonitorLayout, MonitorRect, MultiMonitorCapability, OutputReceiver, RemoteClipboardFile,
+    SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
@@ -326,6 +327,9 @@ struct SidecarShared {
     /// [`GraphicalBackend::fatal_error`]. `None` for an ordinary drop — and
     /// always for an older sidecar that predates the message.
     failure: StdMutex<Option<(SidecarFailureKind, String)>>,
+    /// The multi-monitor layout the session was opened with, or last set at
+    /// runtime (#3696). `None` for a single-monitor session.
+    monitor_layout: StdMutex<Option<MonitorLayout>>,
 }
 
 impl SidecarShared {
@@ -702,6 +706,7 @@ impl ConnectionType for SidecarRdp {
 
         // The connect payload — credentials included — travels over stdin, never
         // argv/env. It is always the first message.
+        let monitor_layout = cfg.multi_monitor_layout();
         write_message(&mut stdin, &HostMessage::Connect(Box::new(cfg)))
             .await
             .map_err(|e| {
@@ -715,6 +720,7 @@ impl ConnectionType for SidecarRdp {
             fetches: StdMutex::new(HashMap::new()),
             view_only,
             failure: StdMutex::new(None),
+            monitor_layout: StdMutex::new(monitor_layout),
         });
         let cancel = CancellationToken::new();
         let (frame_tx, frame_rx) = mpsc::channel(CHANNEL_DEPTH);
@@ -824,6 +830,10 @@ impl GraphicalBackend for SidecarRdp {
             // Images bridge both ways as CF_DIB over CLIPRDR (PROD-021).
             supports_clipboard_image: true,
             view_only_capable: true,
+            // The client monitor layout goes out in the GCC Conference Create
+            // Request (TS_UD_CS_MONITOR) and, at runtime, over Display Control
+            // (#3696).
+            multi_monitor: MultiMonitorCapability::supported(),
         }
     }
 
@@ -873,6 +883,30 @@ impl GraphicalBackend for SidecarRdp {
                 height: height_px,
             })
             .await;
+        Ok(())
+    }
+
+    fn monitor_layout(&self) -> Vec<MonitorRect> {
+        self.runtime
+            .as_ref()
+            .and_then(|rt| rt.shared.monitor_layout.lock().ok()?.clone())
+            .map(|layout| layout.framebuffer_rects())
+            .unwrap_or_default()
+    }
+
+    async fn set_monitor_layout(&self, layout: MonitorLayout) -> Result<(), SessionError> {
+        let Some(rt) = &self.runtime else {
+            return Err(SessionError::NotRunning("rdp not connected".to_string()));
+        };
+        // The sidecar sends the layout as one Display Control monitor-layout
+        // PDU; the server answers with a resized (combined) framebuffer (#3696).
+        rt.to_sidecar
+            .send(HostMessage::SetMonitorLayout(layout.monitors().to_vec()))
+            .await
+            .map_err(|_| SessionError::NotRunning("rdp session ended".to_string()))?;
+        if let Ok(mut current) = rt.shared.monitor_layout.lock() {
+            *current = Some(layout);
+        }
         Ok(())
     }
 
@@ -1163,6 +1197,7 @@ mod tests {
         assert!(caps.supports_dynamic_resize);
         assert!(caps.supports_clipboard);
         assert!(caps.supports_clipboard_image);
+        assert_eq!(caps.multi_monitor, MultiMonitorCapability::supported());
     }
 
     #[test]
@@ -1341,6 +1376,7 @@ mod tests {
             fetches: StdMutex::new(HashMap::new()),
             view_only: false,
             failure: StdMutex::new(None),
+            monitor_layout: StdMutex::new(None),
         })
     }
 
@@ -1709,6 +1745,7 @@ mod tests {
             fetches: StdMutex::new(HashMap::new()),
             view_only: false,
             failure: StdMutex::new(None),
+            monitor_layout: StdMutex::new(None),
         });
         let cancel = CancellationToken::new();
         let reader = tokio::spawn(run_reader(
@@ -1806,6 +1843,43 @@ mod tests {
         assert!(sanitize_leaf("nul\0byte").is_none());
     }
 
+    // ── multi-monitor (#3696) ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn monitor_layout_is_empty_for_single_monitor_and_disconnected() {
+        assert!(SidecarRdp::new().monitor_layout().is_empty());
+        let (rdp, _rx) = rdp_with_channel(false);
+        assert!(rdp.monitor_layout().is_empty());
+    }
+
+    #[tokio::test]
+    async fn set_monitor_layout_forwards_to_the_sidecar_and_is_reported() {
+        let (rdp, mut rx) = rdp_with_channel(false);
+        let layout = MonitorLayout::normalize(&[
+            MonitorRect::new(-1280, 0, 1280, 1024),
+            MonitorRect {
+                primary: true,
+                ..MonitorRect::new(0, 0, 1920, 1080)
+            },
+        ])
+        .unwrap();
+        rdp.set_monitor_layout(layout.clone()).await.unwrap();
+        assert_eq!(
+            rx.recv().await,
+            Some(HostMessage::SetMonitorLayout(layout.monitors().to_vec()))
+        );
+        // Reported in framebuffer coordinates: the left monitor starts at 0.
+        let fb = rdp.monitor_layout();
+        assert_eq!((fb[0].x, fb[0].width), (0, 1280));
+        assert_eq!((fb[1].x, fb[1].width), (1280, 1920));
+    }
+
+    #[tokio::test]
+    async fn set_monitor_layout_errors_when_disconnected() {
+        let layout = MonitorLayout::side_by_side(2, 800, 600).unwrap();
+        assert!(SidecarRdp::new().set_monitor_layout(layout).await.is_err());
+    }
+
     // ── image clipboard (PROD-021) ────────────────────────────────────────────
 
     fn rdp_with_channel(view_only: bool) -> (SidecarRdp, mpsc::Receiver<HostMessage>) {
@@ -1817,6 +1891,7 @@ mod tests {
             fetches: StdMutex::new(HashMap::new()),
             view_only,
             failure: StdMutex::new(None),
+            monitor_layout: StdMutex::new(None),
         });
         let rdp = SidecarRdp {
             runtime: Some(Arc::new(SidecarRuntime {

@@ -15,6 +15,7 @@ import { XServerConsentDecision, XServerStatusReport } from "@/types/xserver";
 import type {
   ClipboardImageInfo,
   ClipboardImageStatus,
+  MonitorRect,
   RemoteClipboardFile,
   RemoteDesktopInput,
 } from "@/types/remoteDesktop";
@@ -72,6 +73,7 @@ import type {
   PluginManifest,
   PluginPackagePreview,
   PluginTrustInfo,
+  PluginIndexResult,
   PluginUpdateCheckResult,
   TrustedPublisher,
 } from "@/types/plugin";
@@ -712,6 +714,25 @@ export async function remoteDesktopResize(
  */
 export async function remoteDesktopRequestFullFrame(sessionId: SessionId): Promise<void> {
   await invoke("remote_desktop_request_full_frame", { sessionId });
+}
+
+/**
+ * The session's monitors in framebuffer coordinates (#3696) — one per remote
+ * monitor; empty for a single-monitor session.
+ */
+export async function remoteDesktopMonitorLayout(sessionId: SessionId): Promise<MonitorRect[]> {
+  return await invoke<MonitorRect[]>("remote_desktop_monitor_layout", { sessionId });
+}
+
+/**
+ * Replace the session's monitor layout at runtime (#3696). The backend
+ * normalizes it; ownership-gated like a resize.
+ */
+export async function remoteDesktopSetMonitorLayout(
+  sessionId: SessionId,
+  monitors: MonitorRect[]
+): Promise<void> {
+  await invoke("remote_desktop_set_monitor_layout", { sessionId, monitors });
 }
 
 /** Forward a protocol-agnostic input event (key / pointer / wheel). */
@@ -3471,6 +3492,34 @@ export async function checkPluginUpdates(pluginId?: string): Promise<PluginUpdat
  */
 export async function downloadPluginUpdate(pluginId: string): Promise<string> {
   return await invoke<string>("download_plugin_update", { pluginId });
+}
+
+/**
+ * Fetch the configured curated plugin index (PROD-048) in the backend and
+ * evaluate each entry's compatibility with this computer. Never downloads or
+ * installs a plugin.
+ */
+export async function fetchPluginIndex(): Promise<PluginIndexResult> {
+  return await invoke<PluginIndexResult>("fetch_plugin_index");
+}
+
+/**
+ * Download the package the plugin index lists for `pluginId` on this computer,
+ * verify its SHA-256 (from a fresh backend fetch of the index), id and version,
+ * and return the local package path. It is **not** installed: pass the path
+ * through the normal install flow (validate → trust → confirm).
+ */
+export async function downloadPluginFromIndex(pluginId: string): Promise<string> {
+  return await invoke<string>("download_plugin_from_index", { pluginId });
+}
+
+/**
+ * Download a `.termihub-plugin` from an HTTPS `url`, verify it against the
+ * expected `sha256`, validate it, and return the local package path. It is
+ * **not** installed: pass the path through the normal install flow.
+ */
+export async function downloadPluginFromUrl(url: string, sha256: string): Promise<string> {
+  return await invoke<string>("download_plugin_from_url", { url, sha256 });
 }
 
 /** List every trusted publisher key (bundled and user-pinned). */

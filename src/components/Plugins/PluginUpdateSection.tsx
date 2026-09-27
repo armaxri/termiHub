@@ -8,38 +8,38 @@ import {
   ExternalLink,
   RefreshCw,
 } from "lucide-react";
-import { assessPluginTrust, downloadPluginUpdate, previewPlugin } from "@/services/api";
-import type { InstalledPlugin, PluginManifest, PluginTrustInfo } from "@/types/plugin";
+import { downloadPluginFromIndex, downloadPluginUpdate } from "@/services/api";
+import type { InstalledPlugin } from "@/types/plugin";
 import { Button, toast } from "@/components/ui";
-import { currentEntry, usePluginUpdateStore } from "@/plugins/pluginUpdateStore";
+import {
+  currentEntry,
+  effectiveUpdate,
+  hasUpdateSource,
+  usePluginUpdateStore,
+} from "@/plugins/pluginUpdateStore";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 import { PluginInstallDialog } from "./PluginInstallDialog";
+import { reviewDownloadedPackage, type DownloadedPackageReview } from "./pluginDownloadReview";
 import "./Plugins.css";
 
 /** Props for {@link PluginUpdateSection}. */
 export interface PluginUpdateSectionProps {
-  /** The installed plugin; must declare a `manifest.updateUrl`. */
+  /**
+   * The installed plugin. It declares a `manifest.updateUrl`, or the plugin
+   * index offers an update for it (or both).
+   */
   plugin: InstalledPlugin;
 }
 
-/** A downloaded, verified update package awaiting the install dialog. */
-interface PendingUpdate {
-  filePath: string;
-  manifest: PluginManifest;
-  trust: PluginTrustInfo;
-  /** This computer's target triple (PLG-011, #3507). */
-  hostPlatform: string;
-  /** Whether the package ships a native library for this computer. */
-  platformSupported: boolean;
-}
-
 /**
- * The "Updates" block of the plugin detail panel (PROD-051), shown only for a
- * plugin that declares an `updateUrl`.
+ * The "Updates" block of the plugin detail panel (PROD-051, #3717), shown for a
+ * plugin that declares an `updateUrl` or that the plugin index offers an update
+ * for.
  *
- * "Check for updates" asks the backend to fetch the plugin's update document;
- * nothing is downloaded. When a newer version is offered, "Download & install…"
+ * "Check for updates" asks the backend to fetch the plugin's update document
+ * and the plugin index; nothing is downloaded. When a newer version is offered
+ * (by the winning source, see `effectiveUpdate`), "Download & install…"
  * downloads it, the backend verifies its SHA-256 / id / version, and the package
  * then opens in the **same install dialog** as a manual install — trust banner,
  * permissions, and the downgrade / same-version confirmation all apply. An
@@ -47,29 +47,37 @@ interface PendingUpdate {
  */
 export function PluginUpdateSection({ plugin }: PluginUpdateSectionProps) {
   const entry = usePluginUpdateStore((s) => currentEntry(s.entries, plugin));
+  const entries = usePluginUpdateStore((s) => s.entries);
+  const indexOffers = usePluginUpdateStore((s) => s.indexOffers);
+  const checkingIndex = usePluginUpdateStore((s) => s.checkingIndex);
+  const indexError = usePluginUpdateStore((s) => s.indexError);
   const checkForUpdates = usePluginUpdateStore((s) => s.checkForUpdates);
-  const [pending, setPending] = useState<PendingUpdate | null>(null);
+  const checkIndexForUpdates = usePluginUpdateStore((s) => s.checkIndexForUpdates);
+  const [pending, setPending] = useState<DownloadedPackageReview | null>(null);
 
   const { id, name } = plugin.manifest;
+  const hasOwnSource = hasUpdateSource(plugin);
+  const update = effectiveUpdate(entries, indexOffers, plugin);
+  const fromIndex = update?.source === "index";
 
-  const handleCheck = useCallback(() => checkForUpdates([id]), [checkForUpdates, id]);
+  const handleCheck = useCallback(async () => {
+    await Promise.all([hasOwnSource ? checkForUpdates([id]) : null, checkIndexForUpdates()]);
+  }, [checkForUpdates, checkIndexForUpdates, hasOwnSource, id]);
 
   const handleDownload = useCallback(async () => {
     const toastId = toast.loading(`Downloading ${name} update…`);
     try {
-      const filePath = await downloadPluginUpdate(id);
-      const [preview, trust] = await Promise.all([
-        previewPlugin(filePath),
-        assessPluginTrust(filePath),
-      ]);
-      const { manifest, hostPlatform, platformSupported } = preview;
+      const filePath = fromIndex
+        ? await downloadPluginFromIndex(id)
+        : await downloadPluginUpdate(id);
+      const review = await reviewDownloadedPackage(filePath);
       toast.dismiss(toastId);
-      setPending({ filePath, manifest, trust, hostPlatform, platformSupported });
+      setPending(review);
     } catch (err) {
       frontendLog("plugin_update", `Downloading update for ${id} failed: ${errorMessage(err)}`);
       toast.error(`Could not download the update: ${errorMessage(err)}`, { id: toastId });
     }
-  }, [id, name]);
+  }, [fromIndex, id, name]);
 
   const handleChangelog = useCallback(async (url: string) => {
     try {
@@ -79,13 +87,15 @@ export function PluginUpdateSection({ plugin }: PluginUpdateSectionProps) {
     }
   }, []);
 
-  const outcome = entry?.phase === "checked" ? entry.outcome : null;
+  // The own-source outcome is only described when the index does not win.
+  const outcome = entry?.phase === "checked" && !fromIndex ? entry.outcome : null;
+  const checking = entry?.phase === "checking" || checkingIndex;
 
   return (
     <div className="plugin-detail__block" data-testid="plugin-update">
       <div className="plugin-detail__section-title">Updates</div>
 
-      {entry?.phase === "checking" && (
+      {checking && (
         <p className="plugin-update__line" data-testid="plugin-update-checking">
           <RefreshCw className="plugin-update__icon" aria-hidden="true" />
           Checking for updates…
@@ -117,6 +127,29 @@ export function PluginUpdateSection({ plugin }: PluginUpdateSectionProps) {
         </p>
       )}
 
+      {!hasOwnSource && !update && !checking && indexError !== null && (
+        <p
+          className="plugin-update__line plugin-update__line--error"
+          data-testid="plugin-update-index-error"
+        >
+          <CircleAlert className="plugin-update__icon" aria-hidden="true" />
+          Plugin index check failed: {indexError}
+        </p>
+      )}
+
+      {update?.source === "index" && (
+        <p
+          className="plugin-update__line plugin-update__line--available"
+          data-testid="plugin-update-index-available"
+        >
+          <CircleArrowUp
+            className="plugin-update__icon plugin-update__icon--accent"
+            aria-hidden="true"
+          />
+          Update available (plugin index): v{plugin.manifest.version} → v{update.version}
+        </p>
+      )}
+
       {outcome?.status === "updateAvailable" && (
         <p
           className="plugin-update__line plugin-update__line--available"
@@ -130,13 +163,14 @@ export function PluginUpdateSection({ plugin }: PluginUpdateSectionProps) {
         </p>
       )}
 
-      {!entry && (
+      {!entry && !update && !checking && (hasOwnSource || indexError === null) && (
         <p
           className="plugin-update__line plugin-update__line--muted"
           data-testid="plugin-update-idle"
         >
-          This plugin publishes updates. termiHub only checks when you ask (or when periodic checks
-          are turned on in Settings → Plugins) and never installs without your confirmation.
+          {hasOwnSource ? "This plugin publishes updates." : "Listed in the plugin index."} termiHub
+          only checks when you ask (or when periodic checks are turned on in Settings → Plugins) and
+          never installs without your confirmation.
         </p>
       )}
 
@@ -146,20 +180,20 @@ export function PluginUpdateSection({ plugin }: PluginUpdateSectionProps) {
           size="sm"
           icon={<RefreshCw size={14} />}
           onClick={handleCheck}
-          disabled={entry?.phase === "checking"}
+          disabled={checking}
           errorToast={false}
           data-testid="plugin-update-check"
         >
           Check for updates
         </Button>
-        {outcome?.status === "updateAvailable" && (
+        {update && (
           <Button
             variant="primary"
             size="sm"
             icon={<Download size={14} />}
             onClick={handleDownload}
             errorToast={false}
-            data-testid="plugin-update-download"
+            data-testid={fromIndex ? "plugin-update-index-download" : "plugin-update-download"}
           >
             Download &amp; install…
           </Button>

@@ -281,3 +281,114 @@ fn another_clients_resize_does_not_clear_an_outstanding_request() {
     // Still awaiting our reply: the next size is held back.
     assert!(ds.request(910, 710, now).request.is_none());
 }
+
+// -------------------------------------------------------- multi-monitor ---
+
+fn two_monitors() -> MonitorLayout {
+    MonitorLayout::side_by_side(2, 1024, 768).expect("two monitors")
+}
+
+fn screen_at(id: u32, x: u16, width: u16, height: u16) -> DesktopScreen {
+    DesktopScreen {
+        id,
+        x,
+        y: 0,
+        width,
+        height,
+        flags: 0,
+    }
+}
+
+#[test]
+fn a_monitor_layout_is_negotiated_even_in_server_mode() {
+    let ds = DesktopSize::new(ResolutionMode::Server);
+    assert!(!ds.negotiates_layout());
+    let ds = DesktopSize::new(ResolutionMode::Server).with_monitors(Some(two_monitors()));
+    assert!(ds.negotiates_layout());
+}
+
+#[test]
+fn a_monitor_layout_is_requested_as_one_multi_screen_set_desktop_size() {
+    let now = Instant::now();
+    let mut ds = DesktopSize::new(ResolutionMode::Server).with_monitors(Some(two_monitors()));
+    let req = ds
+        .on_event(&initial((1280, 800)), now)
+        .expect("layout requested once supported");
+    assert_eq!(size_of(&req), (2048, 768));
+    // The server's screen lends its id and flags; the extra one gets a new id.
+    assert_eq!(
+        req.screens,
+        vec![
+            DesktopScreen {
+                flags: 7,
+                ..screen_at(42, 0, 1024, 768)
+            },
+            screen_at(43, 1024, 1024, 768),
+        ]
+    );
+    // Asked once: an acceptance or a later server change sends nothing more.
+    let accepted = VncEvent::DesktopLayout(ExtendedDesktopSize {
+        reason: DesktopSizeReason::Client,
+        status: DesktopSizeStatus::Ok,
+        width: 2048,
+        height: 768,
+        screens: req.screens.clone(),
+    });
+    assert!(ds.on_event(&accepted, now).is_none());
+    assert!(ds.on_event(&initial((1280, 800)), now).is_none());
+}
+
+#[test]
+fn a_multi_monitor_session_ignores_tab_resizes() {
+    let now = Instant::now();
+    let mut ds = DesktopSize::new(ResolutionMode::Dynamic).with_monitors(Some(two_monitors()));
+    ds.on_event(&initial((1280, 800)), now);
+    assert!(!ds.supports_dynamic_resize());
+    assert_eq!(ds.request(900, 700, now), ResizeOutcome::default());
+}
+
+#[test]
+fn reported_screens_become_framebuffer_monitors() {
+    let now = Instant::now();
+    let mut ds = DesktopSize::new(ResolutionMode::Dynamic);
+    ds.on_event(&initial((1024, 768)), now);
+    // A single screen is not a multi-monitor layout.
+    assert!(ds.screens().is_empty());
+    let multi_head = VncEvent::DesktopLayout(ExtendedDesktopSize {
+        reason: DesktopSizeReason::Server,
+        status: DesktopSizeStatus::Ok,
+        width: 3200,
+        height: 1080,
+        screens: vec![screen_at(1, 0, 1920, 1080), screen_at(2, 1920, 1280, 1024)],
+    });
+    ds.on_event(&multi_head, now);
+    let screens = ds.screens();
+    assert_eq!(screens.len(), 2);
+    assert!(screens[0].primary && !screens[1].primary);
+    assert_eq!((screens[1].x, screens[1].width), (1920, 1280));
+}
+
+#[test]
+fn set_monitors_at_runtime_requests_the_new_layout() {
+    let now = Instant::now();
+    let mut ds = DesktopSize::new(ResolutionMode::Server).with_monitors(Some(two_monitors()));
+    ds.on_event(&initial((1280, 800)), now);
+    let three = MonitorLayout::side_by_side(3, 800, 600).unwrap();
+    let req = ds
+        .set_monitors(three, now)
+        .expect("supported")
+        .expect("request due");
+    assert_eq!(size_of(&req), (2400, 600));
+    assert_eq!(req.screens.len(), 3);
+}
+
+#[test]
+fn set_monitors_on_a_server_without_the_extension_is_refused() {
+    let now = Instant::now();
+    let mut ds = DesktopSize::new(ResolutionMode::Server).with_monitors(Some(two_monitors()));
+    assert!(ds
+        .on_event(&VncEvent::DesktopLayoutUnsupported, now)
+        .is_none());
+    assert!(ds.set_monitors(two_monitors(), now).is_err());
+    assert!(ds.screens().is_empty());
+}

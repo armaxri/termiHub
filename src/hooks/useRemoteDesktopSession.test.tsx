@@ -22,7 +22,9 @@ import {
   remoteDesktopBindClipboardFiles,
   remoteDesktopCertDecision,
   remoteDesktopRequestFullFrame,
+  remoteDesktopSetMonitorLayout,
 } from "@/services/api";
+import { availableMonitors, getCurrentWindow, primaryMonitor } from "@tauri-apps/api/window";
 import type {
   RemoteClipboardFile,
   RemoteDesktopStatePayload,
@@ -47,6 +49,7 @@ vi.mock("@/services/api", () => ({
   remoteDesktopBindClipboardFiles: vi.fn(() => Promise.resolve(0)),
   remoteDesktopCertDecision: vi.fn(() => Promise.resolve()),
   remoteDesktopRequestFullFrame: vi.fn(() => Promise.resolve()),
+  remoteDesktopSetMonitorLayout: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("@/services/events", () => ({
@@ -659,5 +662,70 @@ describe("useRemoteDesktopSession — fixed resolution (PROD-026)", () => {
     act(() => useAppStore.setState({ sessionOwners: { "rd-1": "main" } }));
     expect(mockedRequestFullFrame).toHaveBeenCalledWith("rd-1");
     expect(mockedResize).not.toHaveBeenCalled();
+  });
+});
+
+describe("useRemoteDesktopSession — multi-monitor (#3696)", () => {
+  const display = (x: number, width: number) =>
+    ({
+      name: null,
+      position: { x, y: 0 },
+      size: { width, height: 1080 },
+      workArea: { position: { x, y: 0 }, size: { width, height: 1080 } },
+      scaleFactor: 1,
+    }) as unknown as Awaited<ReturnType<typeof availableMonitors>>[number];
+
+  it("stamps the custom layout into the connect settings and never resizes", async () => {
+    vi.mocked(primaryMonitor).mockResolvedValueOnce(display(0, 1280));
+    const tabId = addTab(false, { monitors: "custom", monitorCount: 2 });
+    const h = renderSession(tabId);
+    await flush();
+    await flush();
+    const settings = mockedConnect.mock.calls[0][1] as Record<string, unknown>;
+    expect(settings.monitorLayout).toEqual([
+      { x: 0, y: 0, width: 1280, height: 1080, primary: true, scale: 100 },
+      { x: 1280, y: 0, width: 1280, height: 1080, primary: false, scale: 100 },
+    ]);
+    expect(h.get().multiMonitor).toBe(true);
+    expect(h.get().fixedResolution).toBe(true);
+    act(() => h.get().resize(640, 480));
+    expect(mockedResize).not.toHaveBeenCalled();
+  });
+
+  it("re-sends the local layout on window focus when the displays changed", async () => {
+    let onFocus: ((e: { payload: boolean }) => void) | null = null;
+    const originalWindow = vi.mocked(getCurrentWindow).getMockImplementation();
+    vi.mocked(getCurrentWindow).mockReturnValue({
+      label: "main",
+      onFocusChanged: vi.fn((cb: (e: { payload: boolean }) => void) => {
+        onFocus = cb;
+        return Promise.resolve(() => {});
+      }),
+    } as unknown as ReturnType<typeof getCurrentWindow>);
+    const one = display(0, 1920);
+    vi.mocked(primaryMonitor).mockResolvedValue(one);
+    vi.mocked(availableMonitors).mockResolvedValue([one, display(1920, 1920)]);
+    const tabId = addTab(false, { monitors: "all" });
+    renderSession(tabId);
+    await flush();
+    await flush();
+    await flush();
+    expect(onFocus).not.toBeNull();
+
+    // Same displays: nothing is re-sent.
+    await act(async () => onFocus?.({ payload: true }));
+    await flush();
+    expect(vi.mocked(remoteDesktopSetMonitorLayout)).not.toHaveBeenCalled();
+
+    // A third display was plugged in.
+    vi.mocked(availableMonitors).mockResolvedValue([one, display(1920, 1920), display(3840, 1280)]);
+    await act(async () => onFocus?.({ payload: true }));
+    await flush();
+    const sent = vi.mocked(remoteDesktopSetMonitorLayout).mock.calls[0];
+    expect(sent[0]).toBe("rd-1");
+    expect(sent[1]).toHaveLength(3);
+    vi.mocked(availableMonitors).mockResolvedValue([]);
+    vi.mocked(primaryMonitor).mockResolvedValue(null);
+    if (originalWindow) vi.mocked(getCurrentWindow).mockImplementation(originalWindow);
   });
 });
