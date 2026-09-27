@@ -29,7 +29,9 @@ use termihub_core::protocol::methods::{
     SessionCreateResult, SessionInputParams, SessionListEntry, SessionListResult,
     SessionResizeParams,
 };
-use termihub_core::protocol::methods::{ClientCapabilities, MonitoringStatusNotification};
+use termihub_core::protocol::methods::{
+    ClientCapabilities, MonitoringStatusNotification, UpdateAuthToken,
+};
 use termihub_core::reconnect_backoff::{
     reconnect_reducer, BackoffConfig, ReconnectEvent, ReconnectPhase, INITIAL_RECONNECT_STATE,
 };
@@ -52,6 +54,9 @@ use crate::terminal::agent_deploy::ConnectedHost;
 use crate::terminal::agent_forward::DesktopAgentForward;
 use crate::terminal::agent_ki_prompt::{
     recv_excluding_prompts, AgentKiPromptRelay, AgentPromptActivity, KiResponses,
+};
+use crate::terminal::agent_update_auth::{
+    read_update_auth_token, token_path_from_initialize, UPDATE_TOKEN_READ_TIMEOUT,
 };
 use crate::terminal::backend::{OutputSender, RemoteAgentConfig, RemoteStateChangeEvent};
 use crate::terminal::jsonrpc;
@@ -182,6 +187,13 @@ pub(crate) enum AgentIoCommand {
     KiRespond {
         request_id: String,
         responses: KiResponses,
+    },
+    /// Read this agent instance's update auth token (AGT-003, #3213) from the
+    /// file its latest `initialize` advertised, over the I/O task's current SSH
+    /// session. Replies `None` when the agent advertised no file (an older agent)
+    /// or the read failed.
+    ReadUpdateAuthToken {
+        reply: oneshot::Sender<Option<UpdateAuthToken>>,
     },
     /// Disconnect the agent.
     Disconnect,
@@ -347,6 +359,16 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     /// production [`AgentConnectionManager`] queries `agent.list_connections`.
     fn list_connections(&self, _agent_id: &str) -> Result<Vec<ConnectedHost>, TerminalError> {
         Ok(Vec::new())
+    }
+
+    /// Read the connected agent instance's update auth token (AGT-003, #3213),
+    /// to send as `authToken` on `agent.request_update` /
+    /// `agent.request_deferred_update`. `None` when the agent advertised no
+    /// token file (it predates protocol 0.12.0 and needs none) or it could not
+    /// be read — the agent then refuses the update. Default `None` so mock
+    /// clients need not implement it. Call from a blocking context.
+    fn update_auth_token(&self, _agent_id: &str) -> Option<UpdateAuthToken> {
+        None
     }
 
     /// Send a JSON-RPC request to an agent and wait for the response.
@@ -909,7 +931,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             let mut skipped: u32 = 0;
             let mut pending_notifications: Vec<(String, Value)> = Vec::new();
             let mut line_buf = String::new();
-            let (capabilities, agent_version, protocol_version, client_id) = loop {
+            let (capabilities, agent_version, protocol_version, client_id, update_auth_token_path) = loop {
                 let resp_line =
                     match read_handshake_line(&mut channel, &agent_id_str, &mut line_buf).await {
                         Some(line) => line,
@@ -958,6 +980,9 @@ impl<R: Runtime> AgentConnectionManager<R> {
                             .and_then(|v| v.as_str())
                             .unwrap_or_default()
                             .to_string();
+                        // AGT-003 (#3213): where this instance's update auth token
+                        // lives (protocol 0.12.0+; absent on older agents).
+                        let update_auth_token_path = token_path_from_initialize(&result);
                         // Copy agent_version into capabilities so the UI can read it.
                         capabilities.agent_version = agent_version.clone();
                         // Diagnostic for #2480: the handshake completed — the
@@ -968,7 +993,13 @@ impl<R: Runtime> AgentConnectionManager<R> {
                             "Agent {}: initialize response received (agent v{}, protocol {}); marking connected",
                             agent_id_str, agent_version, protocol_version
                         );
-                        break (capabilities, agent_version, protocol_version, client_id);
+                        break (
+                            capabilities,
+                            agent_version,
+                            protocol_version,
+                            client_id,
+                            update_auth_token_path,
+                        );
                     }
                     jsonrpc::HandshakeOutcome::Rejected(message) => {
                         emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
@@ -1063,6 +1094,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
                     agents_weak_task,
                     pending_notifications,
                     ki_activity_task,
+                    update_auth_token_path,
                 )
                 .await;
             })
@@ -1424,6 +1456,28 @@ impl<R: Runtime> AgentConnectionManager<R> {
             .collect();
 
         Ok(hosts)
+    }
+
+    /// Read the connected agent instance's update auth token (AGT-003, #3213).
+    ///
+    /// The I/O task reads it over its current SSH session from the file the
+    /// agent's latest `initialize` advertised. Blocking, like
+    /// [`send_request`](Self::send_request): call only from `spawn_blocking`.
+    pub fn update_auth_token(&self, agent_id: &str) -> Option<UpdateAuthToken> {
+        let (reply, rx) = oneshot::channel();
+        {
+            let agents = self.agents.lock().ok()?;
+            agents
+                .get(agent_id)?
+                .command_tx
+                .send(AgentIoCommand::ReadUpdateAuthToken { reply })
+                .ok()?;
+        }
+        let wait = UPDATE_TOKEN_READ_TIMEOUT + std::time::Duration::from_secs(5);
+        tokio::runtime::Handle::current()
+            .block_on(async { tokio::time::timeout(wait, rx).await })
+            .ok()?
+            .ok()?
     }
 
     /// Send a JSON-RPC request to an agent and wait for the response.
@@ -2191,6 +2245,10 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
         AgentConnectionManager::list_connections(self, agent_id)
     }
 
+    fn update_auth_token(&self, agent_id: &str) -> Option<UpdateAuthToken> {
+        AgentConnectionManager::update_auth_token(self, agent_id)
+    }
+
     fn send_request(
         &self,
         agent_id: &str,
@@ -2785,8 +2843,12 @@ async fn agent_io_task<R: Runtime>(
     agents: WeakAgentMap,
     pending_notifications: Vec<(String, Value)>,
     ki_activity: Arc<AgentPromptActivity>,
+    update_auth_token_path: Option<String>,
 ) {
     let b64 = base64::engine::general_purpose::STANDARD;
+    // AGT-003 (#3213): refreshed from every (re)connect's `initialize`, since a
+    // re-launched agent is a new instance with a new token file.
+    let mut update_auth_token_path = update_auth_token_path;
     let mut line_buf = String::new();
     let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
     let mut monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
@@ -2834,7 +2896,7 @@ async fn agent_io_task<R: Runtime>(
 
     // Keep the current session handle alive. On reconnect this is replaced so
     // the old session is dropped and the new one is held for the next loop iteration.
-    let mut _current_session: Option<SshSession> = Some(session);
+    let mut current_session: Option<SshSession> = Some(session);
 
     // TEST-ONLY (#2573): set when a `TestSeverTransport` command broke the inner
     // loop, so the reconnect path knows to drop the transport eagerly (a real
@@ -2858,6 +2920,13 @@ async fn agent_io_task<R: Runtime>(
                         }
                     };
                     match cmd {
+                        AgentIoCommand::ReadUpdateAuthToken { reply } => {
+                            let token = match (current_session.as_ref(), update_auth_token_path.as_deref()) {
+                                (Some(session), Some(path)) => read_update_auth_token(session, path).await,
+                                _ => None,
+                            };
+                            let _ = reply.send(token);
+                        }
                         AgentIoCommand::Request { method, params, response_tx } => {
                             request_id += 1;
                             match serialize_request(request_id, &method, params) {
@@ -3103,7 +3172,7 @@ async fn agent_io_task<R: Runtime>(
         // leaves `test_severed` false, so this path is inert in production.
         if test_severed {
             test_severed = false;
-            test_sever_desktop_transport(channel, _current_session.take());
+            test_sever_desktop_transport(channel, current_session.take());
         }
 
         // Connection lost — try to reconnect. Fold every hosted session's
@@ -3133,11 +3202,12 @@ async fn agent_io_task<R: Runtime>(
         }
 
         match reconnect_agent(&config, &agent_settings, &mut request_id, &alive).await {
-            Ok((new_session, new_channel, reconnect_notifications)) => {
+            Ok((new_session, new_channel, reconnect_notifications, new_token_path)) => {
+                update_auth_token_path = new_token_path;
                 // Replace the current session handle with the new one.
                 // This drops the old (broken) session and keeps the new one alive
                 // for the next iteration of the outer loop.
-                _current_session = Some(new_session);
+                current_session = Some(new_session);
                 channel = new_channel;
                 line_buf.clear();
                 connection_error = None;
@@ -3846,6 +3916,7 @@ async fn reconnect_agent(
         SshSession,
         russh::Channel<russh::client::Msg>,
         Vec<(String, Value)>,
+        Option<String>,
     ),
     String,
 > {
@@ -4010,6 +4081,8 @@ async fn reconnect_agent(
         let mut line_buf = String::new();
         let mut skipped: u32 = 0;
         let mut success = false;
+        // AGT-003 (#3213): the new instance's update auth token file.
+        let mut token_path: Option<String> = None;
         // Notifications the agent emits before answering `initialize` on this
         // reconnect — buffered for replay after the channel is handed back, so
         // an on-attach notice is not dropped (#1660). Reset per attempt: a
@@ -4041,7 +4114,8 @@ async fn reconnect_agent(
             };
 
             match jsonrpc::classify_handshake_message(msg, *request_id) {
-                jsonrpc::HandshakeOutcome::Response(_) => {
+                jsonrpc::HandshakeOutcome::Response(result) => {
+                    token_path = token_path_from_initialize(&result);
                     success = true;
                     break;
                 }
@@ -4080,7 +4154,7 @@ async fn reconnect_agent(
         }
 
         if success {
-            return Ok((session, channel, buffered));
+            return Ok((session, channel, buffered, token_path));
         }
 
         // The init handshake did not complete (channel closed / rejected / parse

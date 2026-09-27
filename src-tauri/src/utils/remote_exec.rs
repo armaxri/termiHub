@@ -331,6 +331,24 @@ pub fn remove_via_sftp(session: &SshSession, remote_path: &str) -> Result<(), Te
     ))
 }
 
+/// Read a small remote file over SFTP on an async caller, bounded as a whole by
+/// `limit`. Used to fetch an agent's owner-only update auth token (AGT-003,
+/// #3213) over the desktop's already-authenticated SSH session — SFTP works the
+/// same on POSIX and Windows hosts, with no shell quoting involved.
+pub async fn read_small_file_async(
+    session: &SshSession,
+    remote_path: &str,
+    limit: Duration,
+) -> Result<Vec<u8>, TerminalError> {
+    bounded(limit, "Reading the remote file", async {
+        let sftp = open_sftp(session).await?;
+        sftp.read(remote_path)
+            .await
+            .map_err(|e| TerminalError::SshError(format!("SFTP read failed: {e}")))
+    })
+    .await
+}
+
 /// Open a fresh SFTP subsystem on the given session.
 ///
 /// Delegates to the shared core mechanism so every SFTP path opens the
