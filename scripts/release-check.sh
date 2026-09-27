@@ -248,7 +248,7 @@ echo "=== Integration / System Tests (CI lanes on this commit) ==="
 HEAD_SHA=$(git rev-parse HEAD)
 GATE_REF=$(git rev-parse --abbrev-ref HEAD)
 if [ "$GATE_REF" = "HEAD" ]; then
-    GATE_REF="<branch-or-tag-at-$HEAD_SHA>"
+    GATE_REF="RELEASE-BRANCH-OR-TAG"
 fi
 GATE_REPO="armaxri/termiHub"
 if command -v gh >/dev/null 2>&1; then
