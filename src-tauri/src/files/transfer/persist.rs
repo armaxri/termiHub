@@ -122,6 +122,15 @@ pub struct PersistedTransfer {
     /// secret.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group_id: Option<String>,
+    /// The session folder paste (#3630) this file was copied for — the id of
+    /// its manifest in [`PersistedTransferStore::folder_pastes`] (#3643). A
+    /// record still linked to a recorded manifest at the next launch belongs
+    /// to that paste's interrupted-paste notice, whose Retry re-copies the
+    /// file, so it is dropped instead of rehydrating as its own paused row.
+    /// Absent for every other transfer and for records written before it
+    /// existed. An opaque id, not a secret.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder_paste_id: Option<String>,
 }
 
 /// The persisted identity of a Docker transfer's container (#3585).
@@ -318,6 +327,21 @@ impl PersistedTransferStore {
         self.folder_pastes.len() != before
     }
 
+    /// Drop every transfer record linked to a still-recorded folder paste
+    /// (#3643): the paste's notice owns that file, and its Retry re-copies it.
+    /// Records without a link, or linked to a paste that is no longer
+    /// recorded, are kept. Returns how many were dropped.
+    pub fn remove_folder_paste_transfers(&mut self) -> usize {
+        let before = self.transfers.len();
+        let pastes = &self.folder_pastes;
+        self.transfers.retain(|t| {
+            !t.folder_paste_id
+                .as_deref()
+                .is_some_and(|id| pastes.iter().any(|p| p.id == id))
+        });
+        before - self.transfers.len()
+    }
+
     /// Drop the oldest records until at most [`MAX_PERSISTED_TRANSFERS`] remain.
     fn cap(&mut self) {
         if self.transfers.len() > MAX_PERSISTED_TRANSFERS {
@@ -362,6 +386,7 @@ mod tests {
             updated_at_ms: 2_000,
             docker: None,
             group_id: None,
+            folder_paste_id: None,
         }
     }
 
@@ -613,6 +638,43 @@ mod tests {
 
     /// A store written before folder pastes existed still loads, and an empty
     /// list is not written (so older files stay byte-compatible).
+    #[test]
+    fn folder_paste_link_round_trips_and_drops_only_recorded_pastes() {
+        let mut store = PersistedTransferStore::default();
+        store.add_folder_paste(paste("p1", "/src/a", "/dst/a"));
+        let linked = |id: &str, paste_id: Option<&str>| PersistedTransfer {
+            folder_paste_id: paste_id.map(str::to_string),
+            ..sample(id, PersistedTransferStatus::Paused)
+        };
+        store.upsert(linked("in-p1", Some("p1")));
+        store.upsert(linked("in-gone", Some("gone")));
+        store.upsert(linked("plain", None));
+
+        let json = serde_json::to_string(&store).unwrap();
+        assert!(json.contains("\"folderPasteId\":\"p1\""));
+        let parsed: PersistedTransferStore = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.transfers, store.transfers);
+
+        assert_eq!(store.remove_folder_paste_transfers(), 1);
+        let ids: Vec<&str> = store
+            .transfers
+            .iter()
+            .map(|t| t.transfer_id.as_str())
+            .collect();
+        assert_eq!(ids, ["in-gone", "plain"]);
+        assert_eq!(store.remove_folder_paste_transfers(), 0);
+
+        // A record written before the link existed loads without it.
+        let old = r#"{"transferId":"x","sessionId":"s","direction":"upload","fileName":"f",
+            "remotePath":"/f","status":"paused","transferred":0,"total":0,"resumeOffset":0,
+            "createdAtMs":0,"updatedAtMs":0}"#;
+        let rec: PersistedTransfer = serde_json::from_str(old).unwrap();
+        assert_eq!(rec.folder_paste_id, None);
+        assert!(!serde_json::to_string(&rec)
+            .unwrap()
+            .contains("folderPasteId"));
+    }
+
     #[test]
     fn store_without_folder_pastes_loads_and_empty_list_is_omitted() {
         let parsed: PersistedTransferStore =

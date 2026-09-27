@@ -1340,6 +1340,61 @@ flowchart LR
     R --> S[credential store<br/>named-credential:nc-1:password]
 ```
 
+#### Per-connection credential keys and connection files
+
+A saved connection's secrets live under a credential **owner id** plus the credential type
+(`src-tauri/src/connection/credential_scope.rs`, #3591). Connection ids are tree paths
+(`Folder/Name`) and only unique within one connection file, so the owner id is scoped by file:
+
+| Where the connection lives | Owner id                                    |
+| -------------------------- | ------------------------------------------- |
+| Main store (and agents)    | `<connection-id>` (unchanged)               |
+| External connection file   | `connection-file:<file-id>:<connection-id>` |
+
+The **file id** is a random UUID stored in the external file itself (`"fileId"`), so renaming or
+moving the file — or adding it again from another path — keeps its secrets, and a vault export
+carries them to the same file on another machine. Because a file's content is not trusted, the
+machine also remembers which file (canonical path) it bound each id to
+(`connection-file-scopes.json` in the config directory), and that local binding wins: a file
+edited to claim another file's id keeps its own, a copy of a configured file gets a fresh id (and
+starts without secrets), and a file that lost its id (rewritten by another tool) gets it back. A
+read-only file keeps a locally remembered id.
+
+Every place that reads, writes or deletes a per-connection secret uses the scoped owner id: the
+`store_credential` / `resolve_credential` / `remove_credential` commands (which take the
+connection's `sourceFile`), saving, renaming, moving (including between files, which changes the
+scope even when the id stays) and deleting connections, the jump-host resolver, and the vault /
+backup owner list.
+
+**Migration.** Secrets saved before #3591 sit under the bare connection id. The first time an
+external file is seen with the store unlocked (at startup for the OS keychain, on unlock for the
+master-password store, or lazily on the next credential access), its connections' secrets are
+**copied** to the scoped keys in one batch; a scoped key that already holds a secret is kept. A bare
+key is deleted only after every copy is written, and only when neither the main store (or an
+agent) nor another not-yet-migrated file uses the id. Where a bare key was shared, every holder
+keeps the value although it may belong to only one of them; a one-time notice (shown in the
+recovery dialog) lists those connections so the user can re-enter any that fail. Migration is
+recorded per file id, so it runs once, never re-copies a secret removed later, and works from the
+known connection ids alone (the OS keychain cannot list its entries).
+
+```mermaid
+flowchart TD
+    L[External file loaded / store unlocked] --> B{File bound on this machine?}
+    B -- no --> R[Bind: id from the file, or a fresh id if it has none, is invalid or is taken]
+    B -- yes --> M
+    R --> M{Migrated?}
+    M -- yes --> D[Use scoped keys]
+    M -- no --> U{Store unlocked?}
+    U -- no --> D
+    U -- yes --> C[Copy bare-id secrets to scoped keys, one batch]
+    C --> K{Bare id still used by main store, agent or unmigrated file?}
+    K -- yes --> N[Keep bare key; notice if shared]
+    K -- no --> X[Delete bare key]
+    N --> F[Record file id as migrated]
+    X --> F
+    F --> D
+```
+
 #### OS user verification and biometric unlock
 
 `src-tauri/src/credential/os_auth/` asks the operating system to confirm that the person at the
@@ -1984,7 +2039,12 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
   launch — a quit, crash or failure part-way — is shown as a notice whose
   Retry resolves both sides to their reconnected sessions (by saved connection
   id; session ids do not survive a restart) and continues the paste, skipping
-  every file the destination already holds with the same size. Drag-out
+  every file the destination already holds with the same size. Each tracked
+  file transfer of such a paste is linked to its manifest (`folderPasteId` on
+  the transfer record, #3643); at startup a record still linked to a recorded
+  manifest is dropped instead of rehydrating as its own paused row, because
+  its session id is gone and the notice's Retry re-copies the partly written
+  file anyway — so the folder is reported as one unit. Drag-out
   staging downloads are never persisted: their directories are deleted at
   quit, and records under the staging root are pruned at startup (#3629).
 - **Desktop-only for v1** — the `ftp` cargo feature is desktop-only (registered in

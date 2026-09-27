@@ -8,14 +8,20 @@ name: Integration (Docker fixtures)
 # up and runs that suite against them, so a broken fixture fails CI.
 #
 # Not on every PR (it builds container images and runs network tests, so it is
-# slower and Docker-bound): nightly + manual instead. Trigger by hand from the
-# Actions tab ("Run workflow") when touching tests/docker or core/tests.
+# slower and Docker-bound): nightly + manual + a path-filtered PR subset instead.
+# Trigger by hand from the Actions tab ("Run workflow") when touching tests/docker
+# or core/tests. A release is never cut on the path-filtered PR subset: the
+# Release workflow requires release-candidate.yml, which calls this lane with no
+# path filter on the exact release commit (#3652).
 
 on:
   schedule:
     # 03:17 UTC daily (off the top of the hour to dodge scheduler congestion).
     - cron: "17 3 * * *"
   workflow_dispatch:
+  # Called by release-candidate.yml (#3652) on the exact release commit; the
+  # checkouts below default to the caller's sha, and no path filter applies.
+  workflow_call:
   # Also run when the fixtures, the integration tests, or the backend *source*
   # they exercise change — so a PR that edits the SSH/SFTP/telnet/serial/Docker
   # backends gets integration feedback without waiting for the nightly run. The
@@ -27,6 +33,25 @@ on:
       - "tests/docker/**"
       - "core/tests/**"
       - "core/src/backends/**"
+      # The session/connection plumbing that drives those backends, and the core
+      # modules the fixture suites call into directly (#3652, WA-CI-024): every
+      # core/tests file goes through `termihub_core::connection` (registry, schema
+      # defaults), the transfer suites through `files`, the tunnel suite through
+      # `tunnel`, and the FTP/SSH backends retry through `reconnect_backoff`. A change
+      # there can break a live backend path as surely as a backends/** edit.
+      # Deliberately NOT widened to agent/** or src-tauri/**: this lane runs
+      # `-p termihub-core` only, so an agent/desktop change gains no coverage here
+      # (the agent's Docker/live suites run in system-integration and Code
+      # Quality). Cargo.lock is also left out: lockfile bumps land weekly and
+      # would run this Docker lane on every one; the nightly run and the release
+      # gate catch a dependency regression before it ships.
+      - "core/src/connection/**"
+      - "core/src/session/**"
+      - "core/src/files/**"
+      - "core/src/tunnel/**"
+      - "core/src/reconnect_backoff.rs"
+      - "core/src/reconnect_backoff/**"
+      - "core/Cargo.toml"
       # The RDP sidecar is backend source too: rdp.rs drives it end to end.
       - "rdp-sidecar/**"
       # The Linux polkit verifier's D-Bus transport + the shipped action file
@@ -37,9 +62,11 @@ on:
       - ".github/workflows/integration-fixtures.yml"
 
 # A fixture run is self-contained; cancel an in-flight run when a newer commit
-# lands on the same ref.
+# lands on the same ref. `github.workflow` is the CALLER's name when this lane is
+# called by release-candidate.yml, so a candidate run and a nightly/PR run on the
+# same ref never cancel each other.
 concurrency:
-  group: integration-fixtures-${{ github.ref }}
+  group: integration-fixtures-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 # Least-privilege token (CI-010). The job checks out, brings up Docker fixtures,
@@ -62,7 +89,18 @@ jobs:
       # advisory Coverage workflow (coverage.yml) merges into the unified report.
       # PR-triggered runs stay a plain `cargo test`, so PR runtime is unchanged.
       # The develop nightly is dispatched by integration-coverage-nightly.yml.
-      MEASURE_COVERAGE: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+      #
+      # NOT when called by release-candidate.yml (#3652): under workflow_call,
+      # `github.event_name` and `github.workflow_ref` are the CALLER's, so a
+      # dispatched candidate run would otherwise read as `workflow_dispatch` and
+      # instrument. The release gate runs the plain `cargo test` instead — its
+      # artifact would sit on the Release Candidate run, which
+      # fetch-integration-coverage.mjs (it lists integration-fixtures.yml runs)
+      # never reads, so instrumenting it would only slow the gate. The
+      # workflow_ref check tells a direct run of this file from a called one.
+      MEASURE_COVERAGE: >-
+        ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        && contains(github.workflow_ref, '/.github/workflows/integration-fixtures.yml@') }}
 
     steps:
       - name: Checkout code

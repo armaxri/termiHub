@@ -42,6 +42,7 @@ vi.mock("@/services/api", () => ({
   sessionVscodeOpenRemote: vi.fn(() => Promise.resolve()),
   folderPasteBegin: vi.fn(() => Promise.resolve("paste-1")),
   folderPasteEnd: vi.fn(() => Promise.resolve()),
+  folderPasteLinkTransfer: vi.fn(() => Promise.resolve()),
   localDelete: vi.fn(() => Promise.resolve()),
   // Default: reject → session is byte-based (Docker / FTP / agent). The
   // SFTP-backed suite overrides this to resolve.

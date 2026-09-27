@@ -446,7 +446,9 @@ restarted and the file is byte-exact. Without `docker exec` access those tests
 print `SKIPPED:` (or fail under `TERMIHUB_REQUIRE_DOCKER=1`).
 
 The [`integration-fixtures.yml`](../.github/workflows/integration-fixtures.yml)
-lane (nightly + on `tests/docker`/`core/tests`/backend changes) brings the
+lane (nightly, on `tests/docker`/`core/tests`/backend and core session-plumbing
+changes, and via the release candidate run on every release commit — see
+[Release integration gate](contributing.md#release-integration-gate)) brings the
 fixtures up and runs the suite — it is the natural place to opt in. Its
 bring-up currently omits the `vnc` and `ftp` profiles (and `vnc` is separately
 known-flaky, #1585), so `TERMIHUB_REQUIRE_DOCKER=1` cannot be flipped on
@@ -592,7 +594,15 @@ flowchart LR
   fires on the default branch (`main`), so
   [`integration-coverage-nightly.yml`](../.github/workflows/integration-coverage-nightly.yml)
   dispatches it on `develop` daily. PR-triggered fixture runs stay a plain
-  `cargo test`, so PR runtime is unchanged.
+  `cargo test`, so PR runtime is unchanged, and so do the runs
+  [`release-candidate.yml`](../.github/workflows/release-candidate.yml) makes of
+  this lane via `workflow_call`: the release gate is not slowed by
+  instrumentation, and its artifact would sit on the candidate run, which the
+  merge step never reads.
+- **Activation:** scheduled runs execute the workflow files of the default
+  branch (`main`), so `integration-coverage-nightly.yml`'s cron starts firing
+  only once develop's workflows have reached `main`. Until then, dispatch
+  `integration-fixtures.yml` on `develop` by hand to produce an instrumented run.
 - **Merged:** each `coverage.yml` run fetches the newest instrumented run's
   artifact for its own branch
   (`scripts/internal/fetch-integration-coverage.mjs`) and hands it to
@@ -3815,7 +3825,7 @@ limits, symlinks, merge layout, group cancel, end-to-end temp tree) and
    neither comes back after another restart. Automated coverage:
    `src-tauri/src/files/transfer/relaunch.rs` (`cancelling_*` tests).
 
-### Transfer Queue: restart gaps (#3629, #3630)
+### Transfer Queue: restart gaps (#3629, #3630, #3643)
 
 Automated coverage: `src-tauri/src/files/transfer/persist*.rs`,
 `src-tauri/src/files/drag_out.rs`, `src/hooks/sessionFolderPaste.test.ts` and
@@ -3832,6 +3842,9 @@ Automated coverage: `src-tauri/src/files/transfer/persist*.rs`,
    Press Retry before reconnecting → the notice asks to connect first.
    Reconnect the saved SFTP connection and press Retry → only the files that
    were missing (or partly written) are copied, then `Finished pasting …`.
+   The file that was copying at the quit never shows up as a paused Transfer
+   Queue row of its own after the relaunch (#3643): the notice is the only
+   trace of the paste, and after Retry the queue holds no stale row from it.
 
 ### Transfer Queue panel: rows, controls, minimized state (#1337)
 

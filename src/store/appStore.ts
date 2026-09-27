@@ -6583,7 +6583,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
               conn.id,
               authMethod,
               savePassword,
-              readConfigString(conn.config, "credentialRef")
+              readConfigString(conn.config, "credentialRef"),
+              conn.sourceFile
             );
             if (!resolution.usedStoredCredential || !resolution.password) return conn;
             return {

@@ -252,6 +252,11 @@ impl ConnectionStorage {
         self.save_store(&store)
     }
 
+    /// A path next to `connections.json` (in the config directory).
+    pub fn sibling(&self, file_name: &str) -> PathBuf {
+        self.file_path.with_file_name(file_name)
+    }
+
     /// Create a storage instance pointing directly at `file_path`.
     /// Only available in tests; production code must go through `new()`.
     #[cfg(test)]

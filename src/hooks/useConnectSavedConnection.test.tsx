@@ -245,8 +245,24 @@ describe("useConnectSavedConnection", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(mockedRemoveCredential).toHaveBeenCalledWith("pw-stale", "password");
+    expect(mockedRemoveCredential).toHaveBeenCalledWith("pw-stale", "password", undefined);
     expect(useAppStore.getState().passwordPromptOpen).toBe(true);
+  });
+
+  it("clears only the external connection's own stale credential (#3591)", async () => {
+    mockedResolveCredential.mockResolvedValue("stale-secret");
+    mockedCreateTerminal.mockRejectedValue(
+      new Error("[thub-code:auth_failed] Authentication failed")
+    );
+    const { connect } = await renderHook();
+    const conn = { ...makeSshConn("x", "password"), sourceFile: "/team.json" };
+    await act(async () => {
+      void connect(conn);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mockedResolveCredential).toHaveBeenCalledWith("x", "password", "/team.json");
+    expect(mockedRemoveCredential).toHaveBeenCalledWith("x", "password", "/team.json");
   });
 
   it("surfaces (not swallows) a failed stale-credential removal to the LogViewer (WA-FE-005)", async () => {
@@ -264,7 +280,7 @@ describe("useConnectSavedConnection", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(mockedRemoveCredential).toHaveBeenCalledWith("pw-clearfail", "password");
+    expect(mockedRemoveCredential).toHaveBeenCalledWith("pw-clearfail", "password", undefined);
     expect(vi.mocked(frontendError)).toHaveBeenCalledWith(
       "connection_list",
       expect.stringContaining("Failed to remove stale password credential for pw-clearfail")
@@ -287,7 +303,7 @@ describe("useConnectSavedConnection", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(mockedRemoveCredential).toHaveBeenCalledWith("pw-i18n", "password");
+    expect(mockedRemoveCredential).toHaveBeenCalledWith("pw-i18n", "password", undefined);
     expect(useAppStore.getState().passwordPromptOpen).toBe(true);
   });
 
@@ -384,7 +400,8 @@ describe("useConnectSavedConnection", () => {
     expect(mockedStoreCredential).toHaveBeenCalledWith(
       "key-store",
       "key_passphrase",
-      "my-passphrase"
+      "my-passphrase",
+      undefined
     );
   });
 
@@ -453,7 +470,7 @@ describe("useConnectSavedConnection", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(mockedRemoveCredential).toHaveBeenCalledWith("pw-reprompt", "password");
+    expect(mockedRemoveCredential).toHaveBeenCalledWith("pw-reprompt", "password", undefined);
     expect(useAppStore.getState().passwordPromptOpen).toBe(true);
     expect(useAppStore.getState().passwordPromptNotice).toBe(
       "Saved password was rejected — please re-enter."

@@ -50,6 +50,7 @@ import {
   onCredentialStoreStatusChanged,
   onCredentialStoreUnlockNeeded,
 } from "@/services/events";
+import { getRecoveryWarnings } from "@/services/storage";
 import { useAppStore } from "@/store/appStore";
 import { toast } from "@/components/ui";
 import { useCredentialStoreEvents } from "./useCredentialStoreEvents";
@@ -191,6 +192,22 @@ describe("useCredentialStoreEvents", () => {
     });
 
     expect(useAppStore.getState().unlockDialogOpen).toBe(false);
+  });
+
+  it("shows warnings produced by the unlock, like the per-file credential notice (#3591)", async () => {
+    const warning = { fileName: "team.json", message: "copied", details: null };
+    vi.mocked(getRecoveryWarnings).mockResolvedValueOnce([warning]);
+    useAppStore.setState({ recoveryWarnings: [], recoveryDialogOpen: false });
+    await act(async () => {
+      root.render(createElement(HookConsumer));
+    });
+
+    await act(async () => {
+      unlockedHandler?.();
+    });
+
+    expect(useAppStore.getState().recoveryWarnings).toEqual([warning]);
+    expect(useAppStore.getState().recoveryDialogOpen).toBe(true);
   });
 
   it("resolves requestUnlock() with true when unlocked event fires", async () => {

@@ -10,6 +10,7 @@ use super::config::{
     SavedRemoteAgent,
 };
 use super::credential_migration::follow_id_changes;
+use super::credential_scope::{owner_id, FileScopes, STATE_FILE_NAME};
 use super::id_changes::{diff_connection_ids, ConnectionIdRemap};
 pub use super::id_changes::{ConnectionIdChange, ConnectionIdChangeListener};
 use super::jump_host_resolver::{
@@ -33,11 +34,15 @@ use termihub_core::connection::LegacyTypeIdResolver;
 /// Route credentials to the active store (if `savePassword` is set),
 /// then strip the password field so it is never written to disk.
 ///
+/// `file_scope` is the credential scope of the file the connection is stored
+/// in — `None` for the main store (#3591, see [`owner_id`]).
+///
 /// A connection that references a shared named credential (#3557) never
 /// stores a per-connection secret: the reference is authoritative, so a typed
 /// password is dropped rather than saved where it would never be read.
 pub(crate) fn prepare_for_storage(
     mut connection: SavedConnection,
+    file_scope: Option<&str>,
     store: &dyn CredentialStore,
 ) -> Result<SavedConnection> {
     let uses_named = named::settings_ref(&connection.config.settings).is_some();
@@ -60,7 +65,8 @@ pub(crate) fn prepare_for_storage(
             } else {
                 CredentialType::Password
             };
-            store.set(&CredentialKey::new(&connection.id, cred_type), &password)?;
+            let owner = owner_id(&connection.id, file_scope);
+            store.set(&CredentialKey::new(&owner, cred_type), &password)?;
         }
         if let Some(obj) = settings.as_object_mut() {
             obj.remove("password");
@@ -131,6 +137,10 @@ pub struct ConnectionManager {
     recovery_warnings: Mutex<Vec<RecoveryWarning>>,
     /// Told about every persisted connection id change (#3569).
     id_change_listener: Mutex<Option<ConnectionIdChangeListener>>,
+    /// External files' credential scopes on this machine (#3591).
+    file_scopes: FileScopes,
+    /// Serializes migrations of pre-#3591 external-file secrets.
+    scope_migration: Mutex<()>,
 }
 
 impl ConnectionManager {
@@ -146,6 +156,7 @@ impl ConnectionManager {
         let settings_result = settings_storage.load_with_recovery()?;
         warnings.extend(settings_result.warnings);
 
+        let file_scopes = FileScopes::load(storage.sibling(STATE_FILE_NAME));
         Ok(Self {
             store: Mutex::new(flat),
             storage,
@@ -154,6 +165,8 @@ impl ConnectionManager {
             credential_store,
             recovery_warnings: Mutex::new(warnings),
             id_change_listener: Mutex::new(None),
+            file_scopes,
+            scope_migration: Mutex::new(()),
         })
     }
 
@@ -176,6 +189,8 @@ impl ConnectionManager {
             credential_store,
             recovery_warnings: Mutex::new(Vec::new()),
             id_change_listener: Mutex::new(None),
+            file_scopes: FileScopes::load(dir.join(STATE_FILE_NAME)),
+            scope_migration: Mutex::new(()),
         })
     }
 
@@ -302,19 +317,24 @@ impl ConnectionManager {
     }
 
     /// Carry stored secrets along `changes`, which are already persisted in the
-    /// tree `connections` / `folders` (#3578). A failure leaves every secret
-    /// under its old key, so it is logged rather than failing the operation.
+    /// tree `connections` / `folders` of the file with credential scope `scope`
+    /// (#3578, #3591). `arrived` are connections that came from another file:
+    /// `(owner id in that file, id in this tree)`. `also_in_use` are owner ids
+    /// still held outside this tree. A failure leaves every secret under its
+    /// old key, so it is logged rather than failing the operation.
     fn follow_credentials(
         &self,
         changes: &[ConnectionIdChange],
-        connections: &[SavedConnection],
-        folders: &[ConnectionFolder],
+        arrived: &[(String, String)],
+        scope: Option<&str>,
+        tree: (&[SavedConnection], &[ConnectionFolder]),
         also_in_use: &HashSet<String>,
     ) {
         if let Err(e) = follow_id_changes(
             changes,
-            connections,
-            folders,
+            arrived,
+            scope,
+            tree,
             also_in_use,
             &*self.credential_store,
         ) {
@@ -374,7 +394,10 @@ impl ConnectionManager {
             return Ok(());
         }
         let (connections, unavailable) = self.reference_scope()?;
-        let scope = JumpHostScope::new(&connections).with_unavailable(unavailable);
+        let credential_scopes = self.credential_scopes_of(&connections);
+        let scope = JumpHostScope::new(&connections)
+            .with_unavailable(unavailable)
+            .with_credential_scopes(credential_scopes);
         super::jump_host_resolver::resolve_proxy_jump_refs(
             settings,
             &scope,
@@ -583,7 +606,8 @@ impl ConnectionManager {
     /// in-memory copy immediately instead of waiting for a disk reload — closing
     /// the window in which a credential could be stored under the stale id.
     pub fn save_connection(&self, connection: SavedConnection) -> Result<String> {
-        let connection = prepare_for_storage(connection, &*self.credential_store)?;
+        self.migrate_credential_scopes();
+        let connection = prepare_for_storage(connection, None, &*self.credential_store)?;
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
         let FlatConnectionStore {
@@ -609,8 +633,9 @@ impl ConnectionManager {
             .context("Failed to persist connection")?;
         self.follow_credentials(
             &placement.changes,
-            &store.connections,
-            &store.folders,
+            &[],
+            None,
+            (&store.connections, &store.folders),
             &HashSet::new(),
         );
         drop(store);
@@ -621,6 +646,8 @@ impl ConnectionManager {
 
     /// Delete a connection by ID.
     pub fn delete_connection(&self, id: &str) -> Result<()> {
+        // An external file still sharing this id's pre-#3591 key copies it first.
+        self.migrate_credential_scopes();
         // Best-effort credential cleanup: if the store is locked (e.g. master-password
         // mode with auto-lock engaged), we cannot remove credentials but must still
         // delete the connection config from disk.  Orphaned credential entries are
@@ -644,6 +671,7 @@ impl ConnectionManager {
     /// If a folder is renamed, recomputes path-based IDs for all descendant
     /// connections and folders, migrating credentials as needed.
     pub fn save_folder(&self, folder: ConnectionFolder) -> Result<()> {
+        self.migrate_credential_scopes();
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
         let ids_before = connection_ids(&store.connections);
@@ -696,8 +724,9 @@ impl ConnectionManager {
             .context("Failed to persist folder")?;
         self.follow_credentials(
             &id_changes,
-            &store.connections,
-            &store.folders,
+            &[],
+            None,
+            (&store.connections, &store.folders),
             &HashSet::new(),
         );
         drop(store);
@@ -710,6 +739,7 @@ impl ConnectionManager {
     /// and reparents child folders, recomputing path-based IDs and migrating
     /// credentials.
     pub fn delete_folder(&self, id: &str) -> Result<()> {
+        self.migrate_credential_scopes();
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
         let ids_before = connection_ids(&store.connections);
@@ -778,8 +808,9 @@ impl ConnectionManager {
             .context("Failed to persist after folder delete")?;
         self.follow_credentials(
             &id_changes,
-            &store.connections,
-            &store.folders,
+            &[],
+            None,
+            (&store.connections, &store.folders),
             &HashSet::new(),
         );
         drop(store);
@@ -794,7 +825,7 @@ impl ConnectionManager {
         let mut export_conns = store.connections.clone();
         export_conns = export_conns
             .into_iter()
-            .map(|c| prepare_for_storage(c, &*self.credential_store))
+            .map(|c| prepare_for_storage(c, None, &*self.credential_store))
             .collect::<Result<Vec<_>>>()?;
 
         let tree = build_tree(&export_conns, &store.folders);
@@ -810,6 +841,7 @@ impl ConnectionManager {
     /// Import connections and folders from a JSON string.
     /// Returns the number of connections imported.
     pub fn import_json(&self, json: &str) -> Result<usize> {
+        self.migrate_credential_scopes();
         let imported: ConnectionStore =
             serde_json::from_str(json).context("Failed to parse import data")?;
 
@@ -832,7 +864,7 @@ impl ConnectionManager {
             if !store.connections.iter().any(|c| c.id == conn.id) {
                 store
                     .connections
-                    .push(prepare_for_storage(conn, &*self.credential_store)?);
+                    .push(prepare_for_storage(conn, None, &*self.credential_store)?);
             }
         }
 
@@ -926,8 +958,10 @@ impl ConnectionManager {
                 continue;
             }
 
+            let scope = self.external_scope(&file_cfg.path);
             sources.push(load_single_external_file(
                 &file_cfg.path,
+                &scope,
                 &ids_ref,
                 &*self.credential_store,
                 resolver.as_ref(),
@@ -977,22 +1011,24 @@ impl ConnectionManager {
                 // External-file connections keep their incoming id (best-effort);
                 // the frontend reload still reconciles if it changed on disk.
                 let conn_id = connection.id.clone();
-                let mut conn = prepare_for_storage(connection, &*self.credential_store)?;
+                let scope = self.external_scope(&file_path);
+                let mut conn =
+                    prepare_for_storage(connection, Some(&scope), &*self.credential_store)?;
                 conn.source_file = None; // Strip before writing to disk
                 let main_folders = self.main_folders();
-                let written = place_in_external_file(
+                let written = self.place_in_external_file(
                     &file_path,
+                    &scope,
                     conn,
                     PlaceMode::ReplaceById,
                     &main_folders,
                 )?;
-                // Credential keys are not scoped by file: keep a secret whose old
-                // id a main-store connection still uses.
                 self.follow_credentials(
                     &written.changes,
-                    &written.connections,
-                    &written.folders,
-                    &self.main_ids(),
+                    &[],
+                    Some(&scope),
+                    (&written.connections, &written.folders),
+                    &HashSet::new(),
                 );
                 self.follow_references(&written.changes, ChangeOrigin::ExternalFile(&file_path));
                 self.notify_id_changes(&written.changes);
@@ -1006,7 +1042,10 @@ impl ConnectionManager {
         match source_file {
             None => self.delete_connection(id),
             Some(file_path) => {
-                if let Err(e) = self.credential_store.remove_all_for_connection(id) {
+                // Only this file's secrets: a same-id connection in another
+                // file keeps its own (#3591).
+                let owner = owner_id(id, Some(&self.external_scope(file_path)));
+                if let Err(e) = self.credential_store.remove_all_for_connection(&owner) {
                     tracing::warn!(
                         connection_id = id,
                         "Failed to remove credentials for connection in external file (best-effort, proceeding with delete): {e}"
@@ -1043,7 +1082,7 @@ impl ConnectionManager {
         // Strip inline passwords
         let connections: Vec<SavedConnection> = connections
             .into_iter()
-            .map(|c| prepare_for_storage(c, &*self.credential_store))
+            .map(|c| prepare_for_storage(c, None, &*self.credential_store))
             .collect::<Result<Vec<_>>>()?;
 
         // Build the encrypted credentials section if a password is provided
@@ -1109,6 +1148,7 @@ impl ConnectionManager {
         json: &str,
         password: Option<&str>,
     ) -> Result<ImportResult> {
+        self.migrate_credential_scopes();
         let imported: EncryptedConnectionExport =
             serde_json::from_str(json).context("Failed to parse import data")?;
 
@@ -1148,7 +1188,7 @@ impl ConnectionManager {
             if !store.connections.iter().any(|c| c.id == conn.id) {
                 store
                     .connections
-                    .push(prepare_for_storage(conn, &*self.credential_store)?);
+                    .push(prepare_for_storage(conn, None, &*self.credential_store)?);
             }
         }
 
@@ -1176,12 +1216,6 @@ impl ConnectionManager {
             connections_imported,
             credentials_imported,
         })
-    }
-
-    /// The main store's connection ids, as last loaded.
-    fn main_ids(&self) -> HashSet<String> {
-        let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
-        store.connections.iter().map(|c| c.id.clone()).collect()
     }
 
     /// The main store's folders, as last loaded.
@@ -1247,15 +1281,30 @@ impl ConnectionManager {
         target_source: Option<String>,
     ) -> Result<SavedConnection> {
         let connection_id = connection.id.clone();
-        let mut disk_conn = prepare_for_storage(connection, &*self.credential_store)?;
+        // Main-store keys change below: files sharing a pre-#3591 key copy it first.
+        self.migrate_credential_scopes();
+        let source_scope = current_source.map(|path| self.external_scope(path));
+        let target_scope = target_source
+            .as_deref()
+            .map(|path| self.external_scope(path));
+        // A password typed in the editor is stored where the connection is now;
+        // it follows the connection below like every other secret.
+        let mut disk_conn =
+            prepare_for_storage(connection, source_scope.as_deref(), &*self.credential_store)?;
         disk_conn.source_file = None; // Strip before writing to disk
 
-        let written = match &target_source {
-            None => self.place_in_main_store(disk_conn)?,
-            Some(file_path) => {
+        let written = match (&target_source, &target_scope) {
+            (Some(file_path), Some(scope)) => {
                 let main_folders = self.main_folders();
-                place_in_external_file(file_path, disk_conn, PlaceMode::Append, &main_folders)?
+                self.place_in_external_file(
+                    file_path,
+                    scope,
+                    disk_conn,
+                    PlaceMode::Append,
+                    &main_folders,
+                )?
             }
+            _ => self.place_in_main_store(disk_conn)?,
         };
 
         let source_ids = match current_source {
@@ -1269,14 +1318,26 @@ impl ConnectionManager {
             )
         })?;
 
-        // Credential keys are not scoped by file: keep a secret whose old id the
-        // source file or the main store still uses.
-        let mut in_use = self.main_ids();
-        in_use.extend(source_ids);
+        // The moved connection's secrets change scope (#3591): they move from
+        // its owner id in the source file to its owner id in the target, even
+        // when its id is unchanged. Residents of the target keep theirs.
+        let placed_id = written.connections[written.index].id.clone();
+        let resident_changes: Vec<ConnectionIdChange> = written
+            .changes
+            .iter()
+            .filter(|c| !(c.old_id == connection_id && c.new_id == placed_id))
+            .cloned()
+            .collect();
+        let arrived = [(owner_id(&connection_id, source_scope.as_deref()), placed_id)];
+        let in_use: HashSet<String> = source_ids
+            .iter()
+            .map(|id| owner_id(id, source_scope.as_deref()))
+            .collect();
         self.follow_credentials(
-            &written.changes,
-            &written.connections,
-            &written.folders,
+            &resident_changes,
+            &arrived,
+            target_scope.as_deref(),
+            (&written.connections, &written.folders),
             &in_use,
         );
         let origin = match &target_source {
@@ -1457,11 +1518,12 @@ pub fn preview_import_json(json: &str) -> Result<ImportPreview> {
 /// Load a single external connection file, flattening connections.
 fn load_single_external_file(
     file_path: &str,
+    file_scope: &str,
     main_folder_ids: &HashSet<&str>,
     store: &dyn CredentialStore,
     resolver: Option<&LegacyTypeIdResolver>,
 ) -> ExternalSource {
-    match try_load_external_file(file_path, main_folder_ids, store, resolver) {
+    match try_load_external_file(file_path, file_scope, main_folder_ids, store, resolver) {
         Ok(source) => source,
         Err(err) => ExternalSource {
             file_path: file_path.to_string(),
@@ -1473,6 +1535,8 @@ fn load_single_external_file(
 
 /// Try to load and parse an external connection file.
 /// Connections get `source_file` set and `folder_id` validated against the main folder tree.
+/// Plaintext passwords go to the store under the file's credential scope
+/// `file_scope` (#3591).
 ///
 /// With a `resolver`, legacy plugin connection-type ids are rewritten to their
 /// stable `plugin:<plugin-id>:<type>` form (PLG-007, #3343) and the file is
@@ -1480,6 +1544,7 @@ fn load_single_external_file(
 /// installed is kept unchanged, exactly as in `connections.json`.
 pub(crate) fn try_load_external_file(
     file_path: &str,
+    file_scope: &str,
     main_folder_ids: &HashSet<&str>,
     store: &dyn CredentialStore,
     resolver: Option<&LegacyTypeIdResolver>,
@@ -1507,7 +1572,7 @@ pub(crate) fn try_load_external_file(
     if has_plaintext_passwords {
         connections = connections
             .into_iter()
-            .map(|c| prepare_for_storage(c, store))
+            .map(|c| prepare_for_storage(c, Some(file_scope), store))
             .collect::<Result<Vec<_>>>()?;
     }
 
@@ -1518,6 +1583,7 @@ pub(crate) fn try_load_external_file(
         let cleaned_tree = build_tree(&connections, &folders);
         let cleaned_store = ExternalConnectionStore {
             name: ext_store.name,
+            file_id: ext_store.file_id,
             version: "2".to_string(),
             children: cleaned_tree,
         };
@@ -1548,7 +1614,7 @@ pub(crate) fn try_load_external_file(
     // Strip passwords from in-memory connections
     connections = connections
         .into_iter()
-        .map(|c| prepare_for_storage(c, store))
+        .map(|c| prepare_for_storage(c, Some(file_scope), store))
         .collect::<Result<Vec<_>>>()?;
 
     Ok(ExternalSource {
@@ -1587,6 +1653,7 @@ fn read_external_store(file_path: &str) -> Result<ExternalConnectionStore> {
 fn empty_external_store() -> ExternalConnectionStore {
     ExternalConnectionStore {
         name: None,
+        file_id: None,
         version: "2".to_string(),
         children: Vec::new(),
     }
@@ -1594,13 +1661,16 @@ fn empty_external_store() -> ExternalConnectionStore {
 
 /// Place a connection into an external file (see [`place_connection`]) and
 /// write the file. `folder_source` supplies a folder chain the file lacks.
+/// A file without a file id gets `file_id` (#3591).
 fn place_in_external_file(
     file_path: &str,
+    file_id: &str,
     connection: SavedConnection,
     mode: PlaceMode,
     folder_source: &[ConnectionFolder],
 ) -> Result<WrittenTree> {
     let mut ext_store = read_external_store(file_path)?;
+    ext_store.file_id.get_or_insert_with(|| file_id.to_string());
     let (mut conns, mut folders) = flatten_tree(&ext_store.children, None);
     let placement = place_connection(&mut conns, &mut folders, connection, mode, folder_source);
     // Jump-host references in this file follow in the same write (#3596).
@@ -1637,22 +1707,46 @@ fn write_external_store(file_path: &str, ext_store: &ExternalConnectionStore) ->
         .with_context(|| format!("Failed to write external file: {}", file_path))
 }
 
-/// Write an `ExternalConnectionStore` to a given file path.
-pub fn save_external_file(
+/// Test fixture: write an external connection file the way termiHub did
+/// before #3591 — without a file id, with saved passwords under the bare
+/// connection ids.
+#[cfg(test)]
+pub(crate) fn save_external_file(
     file_path: &str,
     name: &str,
     folders: Vec<ConnectionFolder>,
     connections: Vec<SavedConnection>,
     credential_store: &dyn CredentialStore,
 ) -> Result<()> {
+    write_new_external_file(
+        file_path,
+        name,
+        None,
+        folders,
+        connections,
+        credential_store,
+    )
+}
+
+/// Write an `ExternalConnectionStore` with `connections` to `file_path`, their
+/// saved passwords going to the store under `file_id`'s scope.
+fn write_new_external_file(
+    file_path: &str,
+    name: &str,
+    file_id: Option<&str>,
+    folders: Vec<ConnectionFolder>,
+    connections: Vec<SavedConnection>,
+    credential_store: &dyn CredentialStore,
+) -> Result<()> {
     let connections: Vec<SavedConnection> = connections
         .into_iter()
-        .map(|c| prepare_for_storage(c, credential_store))
+        .map(|c| prepare_for_storage(c, file_id, credential_store))
         .collect::<Result<Vec<_>>>()?;
 
     let tree = build_tree(&connections, &folders);
     let store = ExternalConnectionStore {
         name: Some(name.to_string()),
+        file_id: file_id.map(String::from),
         version: "2".to_string(),
         children: tree,
     };
@@ -1670,11 +1764,20 @@ mod tests {
     use crate::terminal::backend::{ConnectionConfig, RemoteAgentConfig};
     use std::sync::Mutex;
 
+    /// A file credential scope for tests that load or write external files.
+    const TEST_SCOPE: &str = "00000000-0000-4000-8000-000000000000";
+
     fn save_or_update_in_external_file(
         file_path: &str,
         connection: SavedConnection,
     ) -> Result<WrittenTree> {
-        place_in_external_file(file_path, connection, PlaceMode::ReplaceById, &[])
+        place_in_external_file(
+            file_path,
+            TEST_SCOPE,
+            connection,
+            PlaceMode::ReplaceById,
+            &[],
+        )
     }
 
     /// Simple mock credential store that records `set` and `remove_all_for_connection` calls.
@@ -1853,7 +1956,7 @@ mod tests {
     fn prepare_for_storage_strips_password_when_save_false() {
         let store = MockStore::new();
         let conn = make_ssh_conn("c1", "password", Some("secret"), None);
-        let result = prepare_for_storage(conn, &store).unwrap();
+        let result = prepare_for_storage(conn, None, &store).unwrap();
         assert!(result.config.settings.get("password").is_none());
         assert!(store.stored.lock().unwrap().is_empty());
     }
@@ -1862,7 +1965,7 @@ mod tests {
     fn prepare_for_storage_stores_and_strips_when_save_true() {
         let store = MockStore::new();
         let conn = make_ssh_conn("c1", "password", Some("secret"), Some(true));
-        let result = prepare_for_storage(conn, &store).unwrap();
+        let result = prepare_for_storage(conn, None, &store).unwrap();
         assert!(
             result.config.settings.get("password").is_none(),
             "Password should be stripped"
@@ -1878,7 +1981,7 @@ mod tests {
     fn prepare_for_storage_uses_key_passphrase_type_for_key_auth() {
         let store = MockStore::new();
         let conn = make_ssh_conn("c2", "key", Some("my-passphrase"), Some(true));
-        prepare_for_storage(conn, &store).unwrap();
+        prepare_for_storage(conn, None, &store).unwrap();
         let stored = store.stored.lock().unwrap();
         assert_eq!(stored.len(), 1);
         assert_eq!(stored[0].0.credential_type, CredentialType::KeyPassphrase);
@@ -1889,7 +1992,7 @@ mod tests {
     fn prepare_for_storage_leaves_non_ssh_unchanged() {
         let store = MockStore::new();
         let conn = make_local_conn("c3");
-        let result = prepare_for_storage(conn, &store).unwrap();
+        let result = prepare_for_storage(conn, None, &store).unwrap();
         assert_eq!(result.config.type_id, "local");
         assert_eq!(result.config.settings["shell"], "bash");
         assert!(store.stored.lock().unwrap().is_empty());
@@ -1902,7 +2005,7 @@ mod tests {
         // previously stored credential in the credential store.
         let store = MockStore::new();
         let conn = make_ssh_conn("c4", "password", Some(""), Some(true));
-        let result = prepare_for_storage(conn, &store).unwrap();
+        let result = prepare_for_storage(conn, None, &store).unwrap();
         assert!(
             result.config.settings.get("password").is_none(),
             "Empty password should still be stripped from disk"
@@ -1942,7 +2045,7 @@ mod tests {
         let store = MockStore::new();
         let mut conn = make_ssh_conn("c5", "password", Some("typed"), Some(true));
         conn.config.settings["credentialRef"] = serde_json::json!("nc-1");
-        let result = prepare_for_storage(conn, &store).unwrap();
+        let result = prepare_for_storage(conn, None, &store).unwrap();
         assert!(result.config.settings.get("password").is_none());
         assert_eq!(result.config.settings["credentialRef"], "nc-1");
         assert!(store.stored.lock().unwrap().is_empty());
@@ -1982,7 +2085,8 @@ mod tests {
 
         // Load with "My Folder" in the main folder set so it's recognized
         let main_folders: HashSet<&str> = vec!["My Folder"].into_iter().collect();
-        let source = try_load_external_file(path_str, &main_folders, &store, None).unwrap();
+        let source =
+            try_load_external_file(path_str, TEST_SCOPE, &main_folders, &store, None).unwrap();
         assert!(source.error.is_none());
 
         assert_eq!(source.connections.len(), 1);
@@ -2012,7 +2116,8 @@ mod tests {
         // The file was created and parses back into one connection.
         assert!(file_path.exists());
         let main_folders: HashSet<&str> = HashSet::new();
-        let source = try_load_external_file(path_str, &main_folders, &store, None).unwrap();
+        let source =
+            try_load_external_file(path_str, TEST_SCOPE, &main_folders, &store, None).unwrap();
         assert!(source.error.is_none());
         assert_eq!(source.connections.len(), 1);
     }
@@ -2076,7 +2181,8 @@ mod tests {
         save_or_update_in_external_file(path_str, conn).unwrap();
 
         let main_folders: HashSet<&str> = HashSet::new();
-        let source = try_load_external_file(path_str, &main_folders, &store, None).unwrap();
+        let source =
+            try_load_external_file(path_str, TEST_SCOPE, &main_folders, &store, None).unwrap();
         assert!(source.error.is_none());
         assert_eq!(source.connections.len(), 1);
     }
@@ -2120,7 +2226,8 @@ mod tests {
 
         // Load with empty main folders — folder_id should fall to None
         let main_folders: HashSet<&str> = HashSet::new();
-        let source = try_load_external_file(path_str, &main_folders, &store, None).unwrap();
+        let source =
+            try_load_external_file(path_str, TEST_SCOPE, &main_folders, &store, None).unwrap();
         assert_eq!(source.connections[0].folder_id, None);
     }
 
@@ -2217,7 +2324,7 @@ mod tests {
     fn prepare_for_storage_does_not_call_get_for_serial_connection() {
         let store = SpyStore::new();
         let conn = make_serial_conn("serial-1");
-        prepare_for_storage(conn, &store).unwrap();
+        prepare_for_storage(conn, None, &store).unwrap();
         assert_eq!(
             store.get_call_count(),
             0,
@@ -2229,7 +2336,7 @@ mod tests {
     fn prepare_for_storage_does_not_call_get_for_local_connection() {
         let store = SpyStore::new();
         let conn = make_local_conn("local-1");
-        prepare_for_storage(conn, &store).unwrap();
+        prepare_for_storage(conn, None, &store).unwrap();
         assert_eq!(store.get_call_count(), 0);
     }
 
@@ -2769,9 +2876,14 @@ mod tests {
 
         // Verify the connection was removed from the external file.
         let main_folders = std::collections::HashSet::new();
-        let source =
-            try_load_external_file(ext_path, &main_folders, &crate::credential::NullStore, None)
-                .unwrap();
+        let source = try_load_external_file(
+            ext_path,
+            TEST_SCOPE,
+            &main_folders,
+            &crate::credential::NullStore,
+            None,
+        )
+        .unwrap();
         assert!(
             source.connections.is_empty(),
             "connection must be gone from external file; got: {:?}",
@@ -2965,6 +3077,7 @@ mod tests {
         let main_folders: HashSet<&str> = ["Ops"].into_iter().collect();
         let source = try_load_external_file(
             ext_str,
+            TEST_SCOPE,
             &main_folders,
             &crate::credential::NullStore,
             Some(&resolver),
@@ -2978,9 +3091,14 @@ mod tests {
 
         // Persisted: a plain re-read (no resolver) sees the namespaced ids, and
         // the foldered connection survived the rewrite.
-        let reread =
-            try_load_external_file(ext_str, &main_folders, &crate::credential::NullStore, None)
-                .unwrap();
+        let reread = try_load_external_file(
+            ext_str,
+            TEST_SCOPE,
+            &main_folders,
+            &crate::credential::NullStore,
+            None,
+        )
+        .unwrap();
         assert_eq!(reread.connections.len(), 4);
         assert_eq!(type_of(&reread.connections, "Legacy"), "plugin:beta:k8s");
         assert_eq!(type_of(&reread.connections, "Suffixed"), "plugin:beta:k8s");
@@ -3011,6 +3129,7 @@ mod tests {
         let resolver = legacy_resolver(dir.path());
         let source = try_load_external_file(
             ext_str,
+            TEST_SCOPE,
             &HashSet::new(),
             &crate::credential::NullStore,
             Some(&resolver),
@@ -3041,6 +3160,7 @@ mod tests {
         std::fs::write(&ext, data.to_string()).unwrap();
         try_load_external_file(
             ext_str,
+            TEST_SCOPE,
             &HashSet::new(),
             &crate::credential::NullStore,
             None,
@@ -3050,6 +3170,7 @@ mod tests {
         assert!(!on_disk.contains("secret"), "password must be stripped");
         let reread = try_load_external_file(
             ext_str,
+            TEST_SCOPE,
             &HashSet::new(),
             &crate::credential::NullStore,
             None,
@@ -3138,6 +3259,13 @@ mod tests {
         assert_eq!(type_of(&all.connections, "Gone"), "mqtt");
     }
 }
+
+#[path = "manager_credential_scope.rs"]
+mod credential_scopes;
+
+#[cfg(test)]
+#[path = "manager_credential_scope_tests.rs"]
+mod credential_scope_tests;
 
 #[cfg(test)]
 #[path = "manager_id_change_tests.rs"]

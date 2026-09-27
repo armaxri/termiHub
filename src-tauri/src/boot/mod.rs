@@ -381,6 +381,9 @@ pub(crate) fn init_credentials_and_connections(
     ) {
         Ok(manager) => {
             recovery_warnings.extend(manager.take_recovery_warnings());
+            // Scope pre-#3591 external-file secrets by file now when the store
+            // is readable (OS keychain); a locked store does it on unlock.
+            manager.migrate_credential_scopes();
             app.manage(manager);
         }
         Err(e) => {
