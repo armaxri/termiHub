@@ -10,7 +10,8 @@
     "Only require a check whose NAME is reported on every PR: a job skipped by its",
     "job-level `if` reports 'skipped' (a pass), but a skipped MATRIX job reports under",
     "its bare name (e.g. 'Run Tests'), so a leg name like 'Run Tests (ubuntu-latest)'",
-    "is never reported on a docs-only PR and would block it forever. A workflow-level",
+    "is never reported on a docs-only PR and would block it forever; require the",
+    "always-reporting 'PR Gate' aggregate job (#3678) instead. A workflow-level",
     "`paths` filter (Security Audit, Vendored Forks) reports nothing at all.",
     "app_id 15368 is GitHub Actions: a required check is only satisfied by an Actions run.",
     "See docs/contributing.md -> 'Required checks per branch'."
@@ -56,7 +57,7 @@
     },
     "develop": {
       "status": "proposed",
-      "note": "PROPOSED - maintainer applies with scripts/internal/apply-branch-protection.sh --branch develop --apply, then flips status to enforced. Every context is a non-matrix job of code-quality.yml gated by a job-level `if`, so it reports (success or skipped) on every PR to develop.",
+      "note": "PROPOSED - maintainer applies with scripts/internal/apply-branch-protection.sh --branch develop --apply, then flips status to enforced. Every context is a non-matrix job of code-quality.yml gated by a job-level `if`, so it reports (success or skipped) on every PR to develop. 'PR Gate' (#3678) is the always-reporting aggregate that gates the Run Tests matrix legs.",
       "protection": {
         "required_status_checks": {
           "strict": false,
@@ -71,7 +72,8 @@
             "Shell Script Quality",
             "Windows cmd Script Smoke",
             "System-Test Harness (machinery)",
-            "Test-ID Drift Guard"
+            "Test-ID Drift Guard",
+            "PR Gate"
           ]
         },
         "enforce_admins": false,

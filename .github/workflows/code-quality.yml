@@ -881,3 +881,41 @@ jobs:
         run: |
           BASE=$(git merge-base HEAD origin/${{ github.base_ref }})
           pnpm exec commitlint --from "$BASE" --to ${{ github.sha }} --verbose
+
+  # Aggregate gate (#3678): the ONE check branch protection requires for the
+  # per-PR test legs. Matrix legs depend on the changed areas, so no leg name can
+  # be required without blocking docs-only PRs; this job always reports under one
+  # fixed name. It needs every correctness job above (a new one must be added
+  # here or to GATE_EXCLUDED in scripts/internal/pr-gate.mjs; pr-gate.test.mjs
+  # enforces it) and fails if any failed or was cancelled — skipped passes.
+  # `always()` (not `!cancelled()`) so a cancelled run still reports a failure
+  # instead of a skipped (= passing) gate.
+  pr-gate:
+    name: PR Gate
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - rust-quality
+      - rust-quality-windows
+      - rdp-sidecar-quality
+      - frontend-quality
+      - shellcheck
+      - cmd-scripts-windows
+      - tests
+      - agent-live-windows
+      - system-test-machinery
+      - testid-drift-guard
+      - commit-lint
+    if: always()
+
+    steps:
+      - name: Checkout gate script
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: scripts/internal/pr-gate.mjs
+          sparse-checkout-cone-mode: false
+
+      - name: Evaluate needed jobs
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: node scripts/internal/pr-gate.mjs

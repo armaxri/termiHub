@@ -252,10 +252,10 @@ Branch protection is kept as code (CI-017, #3675). The source of truth is
 required checks, the "up to date" (`strict`) rule, admin enforcement,
 pull-request, force-push and deletion rules for each long-lived branch.
 
-| Branch    | Status in the file                       | Required checks                                                                                                                                                                                                                                            |
-| --------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `main`    | enforced (mirrors the live settings)     | Rust Code Quality, Frontend Code Quality, Lint Commit Messages, Security Audit, Run Tests (ubuntu-latest), Run Tests (macos-latest), Run Tests (windows-latest), Build on ubuntu-latest, Build on macos-latest-arm, Build on windows-latest                |
-| `develop` | **proposed** — the maintainer applies it | Lint Commit Messages, Rust Code Quality, Rust Code Quality (Windows), Frontend Code Quality, Agent Live Tests (Windows, serial), RDP Sidecar Quality, Shell Script Quality, Windows cmd Script Smoke, System-Test Harness (machinery), Test-ID Drift Guard |
+| Branch    | Status in the file                       | Required checks                                                                                                                                                                                                                                                         |
+| --------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `main`    | enforced (mirrors the live settings)     | Rust Code Quality, Frontend Code Quality, Lint Commit Messages, Security Audit, Run Tests (ubuntu-latest), Run Tests (macos-latest), Run Tests (windows-latest), Build on ubuntu-latest, Build on macos-latest-arm, Build on windows-latest                             |
+| `develop` | **proposed** — the maintainer applies it | Lint Commit Messages, Rust Code Quality, Rust Code Quality (Windows), Frontend Code Quality, Agent Live Tests (Windows, serial), RDP Sidecar Quality, Shell Script Quality, Windows cmd Script Smoke, System-Test Harness (machinery), Test-ID Drift Guard, **PR Gate** |
 
 Other rules: `main` enforces the rules for admins and requires a pull request
 (0 approvals); `develop` lets an admin override (for example to land a fix past
@@ -272,12 +272,25 @@ name to report. Only require a name that reports on **every** PR:
 - A **matrix** job that is skipped reports under its bare name (`Run Tests`,
   `Build on ${{ matrix.platform }}`), and a leg that is not in the PR's matrix
   never reports. Requiring `Run Tests (ubuntu-latest)` would block every
-  docs-only PR forever, so no matrix leg is required on `develop`.
+  docs-only PR forever, so no matrix leg is required on `develop`; the
+  **PR Gate** below gates them instead.
 - A workflow with a workflow-level `paths` filter (Security Audit, Vendored
   Forks) reports **nothing** on a PR outside its paths; never require it on a
   branch whose PRs do not always touch those paths.
 - A PR opened by `GITHUB_TOKEN` (the daily `chore(deps): update cargo lockfile`
   PR) starts no workflows; close and reopen it so the required checks report.
+
+**PR Gate (#3678).** The last job of
+[`code-quality.yml`](../.github/workflows/code-quality.yml) is an aggregate
+that `needs:` every correctness job of the workflow (including the `Run Tests`
+matrix and `Agent Live Tests (Windows, serial)`) and runs with `if: always()`,
+so it reports under the one fixed name `PR Gate` on every PR. It fails when any
+needed job **failed** or was **cancelled**; **success** and **skipped** (an area
+the PR does not touch) pass, so a docs-only PR still goes green. The evaluation
+is [`scripts/internal/pr-gate.mjs`](../scripts/internal/pr-gate.mjs); its test
+fails when a job is added to the workflow but not to the gate's `needs:`. A job
+that must not gate (advisory or push-only) goes in `GATE_EXCLUDED` in that
+script, with its reason. `main` adopts `PR Gate` when its set is reconciled.
 
 `main`'s set predates the slim PR lane (#3325) and still names checks the
 current `develop` workflows no longer run on a PR (the macOS/Windows Build legs,
