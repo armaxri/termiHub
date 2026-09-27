@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/connection/graphical, src/components/RemoteDesktop
 evidence:
   - core/src/connection/graphical.rs:336
-status: open
+status: fixed
+resolution: "#3705 — multi-monitor RDP (TS_UD_CS_MONITOR + DISPLAYCONTROL) and VNC (multi-screen SetDesktopSize); Monitors setting (single default/all/custom); combined tab + viewport cycle; live fixture tests"
 ---
 
 ## What
