@@ -1,0 +1,91 @@
+{
+  "$comment": [
+    "Branch protection as code (audit finding CI-017, #3675).",
+    "This file is the intended protection for each long-lived branch. The weekly",
+    "Branch Protection Drift workflow compares it with the live settings",
+    "(scripts/internal/check-branch-protection.mjs); an admin applies it with",
+    "scripts/internal/apply-branch-protection.sh (dry-run by default). CI never writes it.",
+    "status: 'enforced' = drift fails the check; 'proposed' = drift is reported only,",
+    "until the maintainer applies it and flips the status to 'enforced'.",
+    "Only require a check whose NAME is reported on every PR: a job skipped by its",
+    "job-level `if` reports 'skipped' (a pass), but a skipped MATRIX job reports under",
+    "its bare name (e.g. 'Run Tests'), so a leg name like 'Run Tests (ubuntu-latest)'",
+    "is never reported on a docs-only PR and would block it forever. A workflow-level",
+    "`paths` filter (Security Audit, Vendored Forks) reports nothing at all.",
+    "app_id 15368 is GitHub Actions: a required check is only satisfied by an Actions run.",
+    "See docs/contributing.md -> 'Required checks per branch'."
+  ],
+  "branches": {
+    "main": {
+      "status": "enforced",
+      "note": "Mirrors the live settings as of 2026-09-27 (no drift on day one). Several contexts predate the slim PR lane (#3325) and are not reported on every PR; see the docs.",
+      "protection": {
+        "required_status_checks": {
+          "strict": false,
+          "app_id": 15368,
+          "contexts": [
+            "Rust Code Quality",
+            "Frontend Code Quality",
+            "Lint Commit Messages",
+            "Security Audit",
+            "Run Tests (ubuntu-latest)",
+            "Run Tests (macos-latest)",
+            "Run Tests (windows-latest)",
+            "Build on ubuntu-latest",
+            "Build on macos-latest-arm",
+            "Build on windows-latest"
+          ]
+        },
+        "enforce_admins": true,
+        "required_pull_request_reviews": {
+          "dismiss_stale_reviews": false,
+          "require_code_owner_reviews": false,
+          "require_last_push_approval": false,
+          "required_approving_review_count": 0
+        },
+        "restrictions": null,
+        "required_signatures": false,
+        "required_linear_history": false,
+        "allow_force_pushes": false,
+        "allow_deletions": false,
+        "block_creations": false,
+        "required_conversation_resolution": false,
+        "lock_branch": false,
+        "allow_fork_syncing": false
+      }
+    },
+    "develop": {
+      "status": "proposed",
+      "note": "PROPOSED - maintainer applies with scripts/internal/apply-branch-protection.sh --branch develop --apply, then flips status to enforced. Every context is a non-matrix job of code-quality.yml gated by a job-level `if`, so it reports (success or skipped) on every PR to develop.",
+      "protection": {
+        "required_status_checks": {
+          "strict": false,
+          "app_id": 15368,
+          "contexts": [
+            "Lint Commit Messages",
+            "Rust Code Quality",
+            "Rust Code Quality (Windows)",
+            "Frontend Code Quality",
+            "Agent Live Tests (Windows, serial)",
+            "RDP Sidecar Quality",
+            "Shell Script Quality",
+            "Windows cmd Script Smoke",
+            "System-Test Harness (machinery)",
+            "Test-ID Drift Guard"
+          ]
+        },
+        "enforce_admins": false,
+        "required_pull_request_reviews": null,
+        "restrictions": null,
+        "required_signatures": false,
+        "required_linear_history": false,
+        "allow_force_pushes": false,
+        "allow_deletions": false,
+        "block_creations": false,
+        "required_conversation_resolution": false,
+        "lock_branch": false,
+        "allow_fork_syncing": false
+      }
+    }
+  }
+}
