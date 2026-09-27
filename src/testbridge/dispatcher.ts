@@ -145,7 +145,8 @@ function dispatchPointer(
   target: EventTarget,
   type: string,
   clientX: number,
-  clientY: number
+  clientY: number,
+  buttons?: number
 ): void {
   const Ctor = typeof PointerEvent === "function" ? PointerEvent : MouseEvent;
   target.dispatchEvent(
@@ -153,6 +154,7 @@ function dispatchPointer(
       bubbles: true,
       cancelable: true,
       button: 0,
+      ...(buttons !== undefined ? { buttons } : {}),
       clientX,
       clientY,
       ...(Ctor === PointerEvent ? { pointerId: 1, isPrimary: true } : {}),
@@ -509,10 +511,17 @@ export async function dispatchCommand(
       const endX = startX + command.dx;
       const endY = startY + (command.dy ?? 0);
       // Press on the handle, then move/release on the document — drag handlers
-      // (e.g. useSidebarResize) attach mousemove/mouseup there and read clientX.
+      // attach their move/up listeners there and read clientX. Each step fires the
+      // pointer event then its compatibility mouse event, as a real browser does:
+      // mouse-based handlers (useSidebarResize) see mousedown/move/up, while
+      // react-resizable-panels' split separators (#3693) listen for pointer events
+      // on the document and need `buttons: 1` on the move to stay in drag mode.
       const doc = ownerDocument(deps.root);
+      dispatchPointer(el, "pointerdown", startX, startY, 1);
       dispatchMouse(el, "mousedown", startX, startY);
+      dispatchPointer(doc, "pointermove", endX, endY, 1);
       dispatchMouse(doc, "mousemove", endX, endY);
+      dispatchPointer(doc, "pointerup", endX, endY, 0);
       dispatchMouse(doc, "mouseup", endX, endY);
       return ok("drag");
     }

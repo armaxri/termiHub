@@ -381,8 +381,8 @@ The manual gate is the **Release-gating manual checklist** in
 [`docs/testing.md`](testing.md#release-gating-manual-checklist): the
 guided-manual harness suites plus the `tests/manual/*.yaml` corpus. After the
 triage in #3681 (plus the two macOS-only multi-window items added in #3720) the
-corpus holds **53 tests across 12 categories** — 13 genuinely manual
-(`release_gate: true`) and 40 pending automation (`automation_issue`,
+corpus holds **40 tests across 10 categories** — 13 genuinely manual
+(`release_gate: true`) and 27 pending automation (`automation_issue`,
 walked manually until their issue lands). These counts are not maintained by
 hand — regenerate them any time from the YAMLs with:
 
@@ -393,18 +393,16 @@ python scripts/test-manual.py --inventory
 | Category (`--category`)                         |  Tests |
 | ----------------------------------------------- | -----: |
 | `remote-agent` (Remote Agent)                   |     15 |
-| `ui-layout` (UI / Layout)                       |      8 |
 | `serial` (Serial)                               |      4 |
 | `connection-management` (Connection Management) |      4 |
-| `credential-store` (Credential Store)           |      4 |
+| `credential-store` (Credential Store)           |      3 |
 | `network-tools` (Network Tools)                 |      4 |
-| `file-browser` (File Browser)                   |      3 |
-| `tab-management` (Tab Management)               |      3 |
 | `local-shell` (Local Shell)                     |      2 |
 | `ssh` (SSH)                                     |      2 |
 | `portable-mode` (Portable Mode)                 |      2 |
+| `ui-layout` (UI / Layout)                       |      2 |
 | `multi-window` (Multi-Window, macOS only)       |      2 |
-| **Total**                                       | **53** |
+| **Total**                                       | **40** |
 
 Note: `--category` filtering also honours each test's `platforms:` field, so a
 per-platform run (e.g. Windows) sees fewer than the corpus totals above. The
@@ -438,11 +436,10 @@ python scripts/test-manual.py --resume tests/reports/manual-<timestamp>.json
 ```bash
 python scripts/test-manual.py \
   --category connection-management \
-  --category file-browser \
   --category credential-store \
   --category portable-mode
-# Tests: MT-CONN-*, MT-FB-*, MT-CRED-*, MT-PORT-*
-# Count: 12 + 10 + 4 + 4 = 30 tests
+# Tests: MT-CONN-*, MT-CRED-*, MT-PORT-*
+# Count: 12 + 4 + 4 = 20 tests
 ```
 
 #### Session 3: WSL or Mac — SSH, Remote Agent & Serial (~4 h)
@@ -799,7 +796,7 @@ Total: \~23–27 hours across 13 sessions
 
 > **Note**: This appendix is a **point-in-time snapshot** from when the manual
 > corpus held ~75 tests. The corpus grew to **166 tests across 14
-> categories** (57 after the #3681 triage) (see §5.1; regenerate with `python scripts/test-manual.py
+> categories** (38 after the #3681 triage and its follow-ups) (see §5.1; regenerate with `python scripts/test-manual.py
 --inventory`). The specific IDs and per-reason counts below reflect the
 > original ~75-test analysis and have **not** been re-derived for the full 166 —
 > treat them as illustrative migration candidates, not a current inventory.

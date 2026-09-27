@@ -21,6 +21,7 @@ import {
 import { pluginPlatformSupport } from "./pluginPlatforms";
 import { PluginPlatformList } from "./PluginPlatformList";
 import { PluginUpdateSection } from "./PluginUpdateSection";
+import { currentIndexOffer, usePluginUpdateStore } from "@/plugins/pluginUpdateStore";
 import { usePluginHostPlatform } from "@/hooks/usePluginHostPlatform";
 import "./Plugins.css";
 
@@ -76,6 +77,9 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
   const [confirmUninstall, setConfirmUninstall] = useState(false);
   const activeSessions = useActiveSessionCount(plugin);
   const hostPlatform = usePluginHostPlatform();
+  const hasIndexOffer = usePluginUpdateStore((s) =>
+    plugin ? currentIndexOffer(s.indexOffers, plugin) !== undefined : false
+  );
 
   if (!isVisible) return null;
 
@@ -181,7 +185,7 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
         </div>
       )}
 
-      {manifest.updateUrl && <PluginUpdateSection plugin={plugin} />}
+      {(manifest.updateUrl || hasIndexOffer) && <PluginUpdateSection plugin={plugin} />}
 
       <div className="plugin-detail__actions">
         {isError ? (

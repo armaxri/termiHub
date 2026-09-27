@@ -785,7 +785,14 @@ function SplitChild({
   return (
     <>
       {index > 0 && (
-        <Separator className="split-view__resize-handle" data-testid="split-view-resize-handle" />
+        // react-resizable-panels renders a Separator's `data-testid` from its `id`
+        // (a generated one when unset), overriding a passed `data-testid` — so the
+        // stable test id is set through `id`, keyed by the panel that follows it.
+        <Separator
+          id={`split-view-resize-handle-${id}`}
+          className="split-view__resize-handle"
+          data-testid={`split-view-resize-handle-${id}`}
+        />
       )}
       <Panel id={id} minSize={10} defaultSize={defaultSize}>
         {children}

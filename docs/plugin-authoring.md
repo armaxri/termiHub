@@ -328,6 +328,40 @@ returns `CURRENT_PLUGIN_ABI_VERSION.to_packed()` (the version packed into a `u32
 as `major << 16 | minor`), and `PluginInfo::new` fills in the same value — plus,
 from ABI 1.1, the build toolchain (see [below](#the-toolchain-rule-abi-11)).
 
+### What plugin backends can and cannot do in 0.1
+
+A native backend in termiHub 0.1 is **terminal-only** (maintainer decision
+2026-09-27, audit PLG-004). Your connection type gets a full interactive terminal
+session and nothing else:
+
+| Surface                                            | Plugin backend in 0.1 | Notes                                                                 |
+| -------------------------------------------------- | --------------------- | --------------------------------------------------------------------- |
+| Interactive terminal (input, output, resize)       | Yes                   | The whole `PluginTerminalBackend` contract.                           |
+| Settings form from `configSchema`                  | Yes                   | See [`terminalBackend`](#terminalbackend).                            |
+| Host capability bridge (network, filesystem)       | Yes                   | Scoped to the permissions the user granted.                           |
+| File browser (SFTP-style sidebar, transfers)       | No                    | The sidebar file browser is never offered for a plugin connection.    |
+| System monitoring (status-bar CPU/memory/disk)     | No                    | The monitoring widget stays hidden for a plugin connection.           |
+| Graphical / remote-desktop canvas                  | No                    | Plugin tabs always open as terminal tabs.                             |
+| Auto-reconnect after a drop                        | No                    | A dropped plugin session ends; the user can reconnect it manually.    |
+| Persistent sessions (reattach across app restarts) | No                    | Plugin sessions are not persistent.                                   |
+| Port forwarding / tunnels                          | No                    | A plugin connection cannot be used as a tunnel's transport.           |
+| Hosting on a remote agent                          | No                    | Plugins load only in the desktop app; agents do not run plugin types. |
+
+The host enforces this rather than trusting the plugin: every plugin connection
+type reports terminal-only capabilities (`terminal` and `resize` on; `fileBrowser`,
+`monitoring`, `graphical`, `persistent` and `tunneling` off), and the app derives
+which panels to offer from those capabilities. A field named `autoReconnect` in
+your own `configSchema` is just a setting passed to your backend — it does not
+opt your type into the host's reconnect.
+
+**How this can grow.** The ABI is frozen at 1.x and only grows by appending (see
+[below](#abi-1x-and-the-compatibility-promise) and ADR-15 in
+[`architecture.md`](architecture.md)). Extra surfaces would arrive as **opt-in
+capability tables** in a later minor — for example a `PluginFileBrowserVTable` or a
+`PluginMonitoringVTable` a plugin exports only if it implements them. Existing
+plugins keep loading unchanged and simply keep the terminal-only ceiling. No such
+table exists in 0.1; do not design your plugin around one.
+
 ### ABI 1.x and the compatibility promise
 
 The current ABI is **1.1**. It was **frozen at 1.0** (maintainer decision
@@ -765,6 +799,24 @@ What the host guarantees:
   discarded. Sign your packages (see below) so users also see who built the
   update.
 
+**Updates from the plugin index.** A plugin listed in the
+[plugin index](#getting-listed-in-the-plugin-index) gets update checks too, with
+or without an `updateUrl`: **Check for updates** in the Plugins view (and the
+opt-in daily check) also fetches the index in the backend. An installed plugin
+whose index entry is strictly newer **and** installable on this computer
+(compatible ABI, a package for this platform, no toolchain mismatch) shows the
+same update badge, and its detail panel says "Update available (plugin index)".
+Its **Download & install…** runs the verified index download and opens the
+normal install dialog. Opening **Settings → Plugins → Browse Plugins** and
+loading the index records the same offers.
+
+**Which source wins.** Each source only ever offers a strictly newer, compatible
+version. When a plugin has both an `updateUrl` and an index entry and both offer
+an update, the **strictly greater version wins**; on equal versions the
+plugin's own `updateUrl` wins (it is the publisher's channel and carries the
+changelog link). If only one source offers an update, that one is shown. Keep
+both in step when you publish a release.
+
 Publishing an update: build and (ideally) sign the new package, upload it,
 compute its digest (`shasum -a 256 my-plugin-1.3.0.termihub-plugin`), then
 update the JSON document. Keep `updateUrl` stable across versions.
@@ -825,7 +877,8 @@ the shipped `plugins/index.json`).
 
 What users see and what termiHub guarantees:
 
-- Nothing is fetched until the user clicks **Load plugin index**. Each entry
+- Nothing is fetched until the user clicks **Load plugin index**, **Check for
+  updates**, or turns on the daily update check. Each entry
   shows its ABI, platform and toolchain compatibility with the user's
   termiHub, and whether it is installed or has an update.
 - **Install** downloads the package in the backend (HTTPS only, at most 3
@@ -876,3 +929,9 @@ plugin-side migration callback in 0.1.
   wrapper (`LoadedBackend`) with an `mpsc`-backed `PluginOutputSender` — no
   dynamic library required. See the tests in
   [`echo-backend/src/lib.rs`](../examples/plugins/echo-backend/src/lib.rs).
+- **The full packaged path:** termiHub's own CI packages the echo example on
+  Linux, Windows and macOS, installs the `.termihub-plugin`, loads it through the
+  real plugin host and runs a session (connect, echo, disconnect, unload) —
+  see [`core/tests/plugin_package_load.rs`](../core/tests/plugin_package_load.rs).
+  Mirror it for your own plugin to catch packaging and trust-gate problems before
+  your users do.

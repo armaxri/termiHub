@@ -219,7 +219,7 @@ export function Tab({
       tabIndex={tab.isActive ? 0 : -1}
     >
       {NonTerminalIcon ? (
-        <NonTerminalIcon size={14} className="tab__icon" />
+        <NonTerminalIcon size={14} className="tab__icon" data-testid={`tab-icon-${tab.id}`} />
       ) : (
         <ConnectionIcon config={tab.config} size={14} className="tab__icon" />
       )}

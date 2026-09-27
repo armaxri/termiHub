@@ -12,6 +12,7 @@ import { useAppStore } from "@/store/appStore";
 import type { InstalledPlugin, PluginManifest, PluginState } from "@/types/plugin";
 import { withTooltip } from "@/test/tooltip";
 import { PluginDetailPanel } from "./PluginDetailPanel";
+import { usePluginUpdateStore } from "@/plugins/pluginUpdateStore";
 
 const hostPlatform = vi.hoisted(() => ({ value: "aarch64-apple-darwin" as string | null }));
 vi.mock("@/hooks/usePluginHostPlatform", () => ({
@@ -85,6 +86,37 @@ describe("PluginDetailPanel (#1997)", () => {
     render();
     expect(container.querySelector('[data-testid="plugin-update"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="plugin-update-check"]')).not.toBeNull();
+  });
+
+  it("shows the Updates block for a plugin the plugin index offers an update for (#3717)", () => {
+    useAppStore.setState({ plugins: [plugin("active")] });
+    usePluginUpdateStore.setState({
+      indexOffers: {
+        k8s: {
+          entry: {
+            id: "k8s",
+            name: "Kubernetes Exec",
+            description: "d",
+            author: "a",
+            version: "1.3.0",
+            minHostAbi: "1.0",
+            native: false,
+            packages: [{ platforms: ["any"], url: "https://e/k.zip", sha256: "0".repeat(64) }],
+          },
+          abiCompatible: true,
+          hostAbi: "1.1",
+          platformSupported: true,
+          hostPlatform: "aarch64-apple-darwin",
+          toolchain: "notApplicable",
+          installedVersion: "1.2.0",
+          installStatus: "updateAvailable",
+          installable: true,
+        },
+      },
+    });
+    render();
+    expect(container.querySelector('[data-testid="plugin-update-index-available"]')).not.toBeNull();
+    usePluginUpdateStore.setState({ indexOffers: {} });
   });
 
   it("renders identity, extension points, and permissions", () => {
