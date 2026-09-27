@@ -765,6 +765,24 @@ What the host guarantees:
   discarded. Sign your packages (see below) so users also see who built the
   update.
 
+**Updates from the plugin index.** A plugin listed in the
+[plugin index](#getting-listed-in-the-plugin-index) gets update checks too, with
+or without an `updateUrl`: **Check for updates** in the Plugins view (and the
+opt-in daily check) also fetches the index in the backend. An installed plugin
+whose index entry is strictly newer **and** installable on this computer
+(compatible ABI, a package for this platform, no toolchain mismatch) shows the
+same update badge, and its detail panel says "Update available (plugin index)".
+Its **Download & install…** runs the verified index download and opens the
+normal install dialog. Opening **Settings → Plugins → Browse Plugins** and
+loading the index records the same offers.
+
+**Which source wins.** Each source only ever offers a strictly newer, compatible
+version. When a plugin has both an `updateUrl` and an index entry and both offer
+an update, the **strictly greater version wins**; on equal versions the
+plugin's own `updateUrl` wins (it is the publisher's channel and carries the
+changelog link). If only one source offers an update, that one is shown. Keep
+both in step when you publish a release.
+
 Publishing an update: build and (ideally) sign the new package, upload it,
 compute its digest (`shasum -a 256 my-plugin-1.3.0.termihub-plugin`), then
 update the JSON document. Keep `updateUrl` stable across versions.
@@ -825,7 +843,8 @@ the shipped `plugins/index.json`).
 
 What users see and what termiHub guarantees:
 
-- Nothing is fetched until the user clicks **Load plugin index**. Each entry
+- Nothing is fetched until the user clicks **Load plugin index**, **Check for
+  updates**, or turns on the daily update check. Each entry
   shows its ABI, platform and toolchain compatibility with the user's
   termiHub, and whether it is installed or has an update.
 - **Install** downloads the package in the backend (HTTPS only, at most 3

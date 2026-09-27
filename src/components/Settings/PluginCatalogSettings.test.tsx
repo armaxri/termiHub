@@ -63,6 +63,7 @@ vi.mock("@/components/Plugins/PluginInstallDialog", () => ({
 }));
 
 import { PluginCatalogSettings, entryMatches } from "./PluginCatalogSettings";
+import { usePluginUpdateStore } from "@/plugins/pluginUpdateStore";
 import { shaFieldError, urlFieldError } from "./PluginUrlInstall";
 
 const SHA = "ab".repeat(32);
@@ -238,6 +239,19 @@ describe("PluginCatalogSettings", () => {
     expect(q("plugin-catalog-status-gamma")!.textContent).toBe("Installed");
     expect((q("plugin-catalog-install-gamma") as HTMLButtonElement).disabled).toBe(true);
     expect(q("plugin-catalog-blocked-gamma")).toBeNull();
+  });
+
+  it("shares a loaded index's update offers with the Plugins view (#3717)", async () => {
+    usePluginUpdateStore.setState({ indexOffers: {}, indexError: null });
+    fetchIndexMock.mockResolvedValue(
+      result([
+        view("alpha", { installStatus: "updateAvailable", installedVersion: "1.0.0" }),
+        view("beta"),
+      ])
+    );
+    render();
+    await click("plugin-catalog-load");
+    expect(Object.keys(usePluginUpdateStore.getState().indexOffers)).toEqual(["alpha"]);
   });
 
   it("downloads a listed plugin and opens the normal install dialog", async () => {

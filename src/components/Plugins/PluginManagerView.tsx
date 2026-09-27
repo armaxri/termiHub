@@ -42,17 +42,20 @@ export function PluginManagerView() {
   const selectPlugin = useAppStore((s) => s.selectPlugin);
 
   const updateEntries = usePluginUpdateStore((s) => s.entries);
+  const indexOffers = usePluginUpdateStore((s) => s.indexOffers);
   const checkingAll = usePluginUpdateStore((s) => s.checkingAll);
   const checkForUpdates = usePluginUpdateStore((s) => s.checkForUpdates);
 
   const [pending, setPending] = useState<DownloadedPackageReview | null>(null);
 
-  const updatable = plugins.some(hasUpdateSource);
+  // Every installed plugin can be checked: its own `updateUrl` and/or the
+  // plugin index.
+  const updatable = plugins.length > 0;
 
   const handleCheckUpdates = useCallback(async () => {
     await checkForUpdates();
-    const { entries } = usePluginUpdateStore.getState();
-    const available = plugins.filter((p) => hasAvailableUpdate(entries, p)).length;
+    const { entries, indexOffers: offers, indexError } = usePluginUpdateStore.getState();
+    const available = plugins.filter((p) => hasAvailableUpdate(entries, p, offers)).length;
     const failed = plugins.filter(
       (p) => hasUpdateSource(p) && entries[p.manifest.id]?.phase === "error"
     ).length;
@@ -62,6 +65,8 @@ export function PluginManagerView() {
       );
     } else if (failed > 0) {
       toast.error(`Update check failed for ${failed} ${failed === 1 ? "plugin" : "plugins"}`);
+    } else if (indexError !== null) {
+      toast.error(`Could not check the plugin index: ${indexError}`);
     } else {
       toast.success("All plugins are up to date");
     }
@@ -140,7 +145,7 @@ export function PluginManagerView() {
                 />
                 <TypeIcon className="plugin-row__icon" aria-hidden="true" />
                 <span className="plugin-row__name">{manifest.name}</span>
-                {hasAvailableUpdate(updateEntries, plugin) && (
+                {hasAvailableUpdate(updateEntries, plugin, indexOffers) && (
                   <CircleArrowUp
                     className="plugin-row__update"
                     aria-label="Update available"

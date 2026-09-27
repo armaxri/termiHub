@@ -10,6 +10,7 @@ import type { DownloadedPackageReview } from "@/components/Plugins/pluginDownloa
 import { reviewDownloadedPackage } from "@/components/Plugins/pluginDownloadReview";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
+import { usePluginUpdateStore } from "@/plugins/pluginUpdateStore";
 import { SettingsField } from "./SettingsField";
 import { PluginCatalogEntryCard } from "./PluginCatalogEntryCard";
 import { PluginUrlInstall, urlFieldError } from "./PluginUrlInstall";
@@ -71,7 +72,10 @@ export function PluginCatalogSettings() {
   const handleLoad = useCallback(async () => {
     setLoad({ phase: "loading" });
     try {
-      setLoad({ phase: "loaded", result: await fetchPluginIndex() });
+      const result = await fetchPluginIndex();
+      // Share the offers with the Plugins sidebar badge and detail panel.
+      usePluginUpdateStore.getState().recordIndex(result);
+      setLoad({ phase: "loaded", result });
     } catch (err) {
       const error = errorMessage(err);
       frontendLog("plugin_catalog", `Loading the plugin index failed: ${error}`);
