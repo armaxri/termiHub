@@ -142,7 +142,10 @@ fn a_rename_during_the_move_reports_one_id_change_and_moves_the_secret() {
         take(&recorded),
         vec![vec![ConnectionIdChange::new("n", "m")]]
     );
-    assert_eq!(store.value("m", PW).as_deref(), Some("N"));
+    // The secret moved with it, into the target file's scope (#3591).
+    let scoped_m = owner_id("m", Some(&mgr.file_scope(&file)));
+    assert_eq!(store.value(&scoped_m, PW).as_deref(), Some("N"));
+    assert_eq!(store.value("m", PW), None);
     assert_eq!(store.value("n", PW), None);
 }
 

@@ -44,6 +44,13 @@ fn ssh(id: &str, name: &str, folder_id: Option<&str>) -> SavedConnection {
     }
 }
 
+/// `c` with a typed password it saves.
+fn with_password(mut c: SavedConnection, password: &str) -> SavedConnection {
+    c.config.settings["password"] = serde_json::json!(password);
+    c.config.settings["savePassword"] = serde_json::json!(true);
+    c
+}
+
 fn local(id: &str, name: &str, folder_id: Option<&str>) -> SavedConnection {
     let mut c = ssh(id, name, folder_id);
     c.config = ConnectionConfig {
@@ -210,18 +217,27 @@ fn a_dedup_renamed_sibling_keeps_its_own_credentials() {
 #[test]
 fn renaming_an_external_connection_migrates_its_credentials() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Arc::new(RecordingStore::with(&[("x", PW, "X")]));
+    let store = Arc::new(RecordingStore::default());
     let (mgr, _recorded) = manager(dir.path(), store.clone());
     let file = external_path(dir.path(), "shared.json");
-    let mut c = ssh("x", "x", None);
-    c.source_file = Some(file);
+    let mut c = with_password(ssh("x", "x", None), "X");
+    c.source_file = Some(file.clone());
     mgr.save_connection_routed(c.clone()).unwrap();
 
     c.name = "y".to_string();
+    c.config
+        .settings
+        .as_object_mut()
+        .unwrap()
+        .remove("password");
     mgr.save_connection_routed(c).unwrap();
 
-    assert_eq!(store.value("x", PW), None);
-    assert_eq!(store.value("y", PW).as_deref(), Some("X"));
+    let scope = mgr.file_scope(&file);
+    assert_eq!(store.value(&owner_id("x", Some(&scope)), PW), None);
+    assert_eq!(
+        store.value(&owner_id("y", Some(&scope)), PW).as_deref(),
+        Some("X")
+    );
 }
 
 #[test]
@@ -361,22 +377,30 @@ fn a_named_credential_is_untouched_by_a_rename() {
 }
 
 #[test]
-fn renaming_an_external_connection_keeps_a_main_connections_same_id_secret() {
-    // Credential keys are not scoped by file, so a main-store `x` shares the
-    // key `x` with an external `x`. Renaming the external one must copy, not
-    // take away, the main connection's secret.
+fn renaming_an_external_connection_leaves_a_main_connections_same_id_secret_alone() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Arc::new(RecordingStore::with(&[("x", PW, "X")]));
+    let store = Arc::new(RecordingStore::default());
     let (mgr, _recorded) = manager(dir.path(), store.clone());
-    mgr.save_connection(ssh("x", "x", None)).unwrap();
+    mgr.save_connection(with_password(ssh("x", "x", None), "MAIN"))
+        .unwrap();
     let file = external_path(dir.path(), "shared.json");
-    let mut c = ssh("x", "x", None);
-    c.source_file = Some(file);
+    let mut c = with_password(ssh("x", "x", None), "EXT");
+    c.source_file = Some(file.clone());
     mgr.save_connection_routed(c.clone()).unwrap();
 
     c.name = "y".to_string();
+    c.config
+        .settings
+        .as_object_mut()
+        .unwrap()
+        .remove("password");
     mgr.save_connection_routed(c).unwrap();
 
-    assert_eq!(store.value("x", PW).as_deref(), Some("X"));
-    assert_eq!(store.value("y", PW).as_deref(), Some("X"));
+    let scope = mgr.file_scope(&file);
+    assert_eq!(store.value("x", PW).as_deref(), Some("MAIN"));
+    assert_eq!(
+        store.value(&owner_id("y", Some(&scope)), PW).as_deref(),
+        Some("EXT")
+    );
+    assert_eq!(store.value(&owner_id("x", Some(&scope)), PW), None);
 }

@@ -234,7 +234,12 @@ describe("ConnectionList — password dialog conditions", () => {
       await Promise.resolve();
     });
 
-    expect(mockedStoreCredential).toHaveBeenCalledWith(conn.id, "key_passphrase", "my-passphrase");
+    expect(mockedStoreCredential).toHaveBeenCalledWith(
+      conn.id,
+      "key_passphrase",
+      "my-passphrase",
+      undefined
+    );
   });
 
   it("does not show dialog for a local (non-SSH) connection", async () => {

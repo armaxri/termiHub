@@ -25,7 +25,7 @@ describe("resolveConnectionCredential", () => {
 
     const result = await resolveConnectionCredential("conn-1", "password");
 
-    expect(mockedResolveCredential).toHaveBeenCalledWith("conn-1", "password");
+    expect(mockedResolveCredential).toHaveBeenCalledWith("conn-1", "password", undefined);
     expect(result).toEqual({
       password: "stored-pw",
       usedStoredCredential: true,
@@ -33,12 +33,20 @@ describe("resolveConnectionCredential", () => {
     });
   });
 
+  it("looks up an external connection's secret in its own file (#3591)", async () => {
+    mockedResolveCredential.mockResolvedValue("ext-pw");
+
+    await resolveConnectionCredential("x", "password", undefined, undefined, "/team.json");
+
+    expect(mockedResolveCredential).toHaveBeenCalledWith("x", "password", "/team.json");
+  });
+
   it("returns null when no stored password exists", async () => {
     mockedResolveCredential.mockResolvedValue(null);
 
     const result = await resolveConnectionCredential("conn-1", "password");
 
-    expect(mockedResolveCredential).toHaveBeenCalledWith("conn-1", "password");
+    expect(mockedResolveCredential).toHaveBeenCalledWith("conn-1", "password", undefined);
     expect(result).toEqual({
       password: null,
       usedStoredCredential: false,
@@ -51,7 +59,7 @@ describe("resolveConnectionCredential", () => {
 
     const result = await resolveConnectionCredential("conn-2", "key", true);
 
-    expect(mockedResolveCredential).toHaveBeenCalledWith("conn-2", "key_passphrase");
+    expect(mockedResolveCredential).toHaveBeenCalledWith("conn-2", "key_passphrase", undefined);
     expect(result).toEqual({
       password: "key-pass",
       usedStoredCredential: true,

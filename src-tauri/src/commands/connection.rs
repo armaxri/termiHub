@@ -254,9 +254,10 @@ pub fn save_external_file(
     folders: Vec<ConnectionFolder>,
     connections: Vec<SavedConnection>,
     app: AppHandle,
-    credential_store: State<'_, Arc<CredentialManager>>,
+    manager: State<'_, ConnectionManager>,
 ) -> Result<(), TerminalError> {
-    manager::save_external_file(&file_path, &name, folders, connections, &**credential_store)
+    manager
+        .save_external_file(&file_path, &name, folders, connections)
         .map_err(config_error)?;
     // Server-authority fold (#2394): reflect the external-file overlay (as it is
     // now on disk) into the `ConnectionsStore` when the saved file is a
@@ -532,11 +533,18 @@ pub async fn import_connections_with_credentials(
 #[tauri::command]
 pub fn get_recovery_warnings(
     warnings: State<'_, Mutex<Vec<RecoveryWarning>>>,
+    app: AppHandle,
 ) -> Vec<RecoveryWarning> {
-    warnings
+    let mut all: Vec<RecoveryWarning> = warnings
         .lock()
         .map(|mut w| w.drain(..).collect())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // One-time notices from scoping saved passwords per connection file (#3591),
+    // which may be produced after startup (on unlock).
+    if let Some(connections) = app.try_state::<ConnectionManager>() {
+        all.extend(connections.take_credential_scope_notices());
+    }
+    all
 }
 
 #[cfg(test)]
