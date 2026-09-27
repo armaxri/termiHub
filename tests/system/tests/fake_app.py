@@ -48,8 +48,14 @@ UNHANDLED_ACTIONS: frozenset[str] = frozenset(
 class FakeApp:
     """A controllable stand-in for the in-app bridge over a real WebSocket."""
 
-    def __init__(self, port: int, handler: Handler) -> None:
+    def __init__(
+        self, port: int, handler: Handler, *, window: str | None = None
+    ) -> None:
+        # ``window`` tags the connection like a real window's page does (#3720);
+        # ``None`` dials untagged, as a single-window (legacy) app build would.
         self._url = f"ws://127.0.0.1:{port}"
+        if window is not None:
+            self._url += f"/?window={window}"
         self._handler = handler
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None

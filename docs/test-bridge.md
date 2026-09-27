@@ -109,6 +109,63 @@ const b = await server.awaitNextApp(); // launch + drive instance B over the sam
 The in-app `wsClient` detaches all its socket listeners on `close()` (idempotently),
 so a restarted app boots cleanly with no listeners leaked from a prior connection.
 
+### Multi-window
+
+Every native window of termiHub (#1900) is its own page, with its own store and
+its own `TestBridge` — and so its own runner socket. The injected bridge globals
+reach every window (the plugin init script runs in each webview), so each window
+dials the runner, **tagged with its window label** in the URL query:
+
+```text
+ws://127.0.0.1:<port>/?window=main
+ws://127.0.0.1:<port>/?window=win-1
+```
+
+The runner reads the label at the handshake, before any frame, so there is no
+racy "hello" message and the `{ id, command }` / `{ id, response }` envelope is
+unchanged (TIN-014, #3720). The rules are backward compatible:
+
+- **Only the main window takes part in the connection-generation contract.**
+  `waitForApp()` / `awaitNextApp()` (TS) and `wait_for_app()` (Python) only ever
+  hand out a `main` connection, so single-window tests are unchanged — and a
+  secondary window (opened by a test, or respawned by a windowed-layout restore
+  at boot) can no longer supersede, or be mistaken for, the app. Before this, a
+  second window's socket would have replaced the main one under last-writer-wins.
+- **An untagged connection is the main window**, so an older app build still
+  works with a newer runner.
+- **A malformed label is refused** (the socket is closed with 1008) rather than
+  guessed at. Labels use Tauri's label alphabet (`A–Z a–z 0–9 - / : _`, ≤128).
+
+The Python `Driver` addresses windows by label:
+
+| Call                                | Does                                                                                    |
+| ----------------------------------- | --------------------------------------------------------------------------------------- |
+| `driver.window_label`               | The label of the window this driver drives (`main` for the suite's driver)              |
+| `driver.windows()`                  | Labels of every window with a live bridge connection, main first                        |
+| `driver.window(label)`              | A `Driver` for that window, waiting for it to connect; `window("main")` is `self`       |
+| `driver.wait_for_window(predicate)` | Wait for a window whose label matches (e.g. one not in an earlier `windows()` snapshot) |
+| `driver.wait_until_closed()`        | Block until this window's socket closes (the window was destroyed)                      |
+| `driver.close_window()`             | The `closeWindow` verb — close this window through the OS close path                    |
+| `driver.list_windows()`             | The `listWindows` verb — the backend window registry                                    |
+
+```python
+before = self.driver.windows()                      # ["main"]
+self.driver.press_key("N", "activity-bar-settings", ctrl=True, shift=True)
+second = self.driver.wait_for_window(lambda label: label not in before)
+second.get_state("windowLabel")                     # "win-1"
+second.close_window()                               # empty → closes at once
+second.wait_until_closed()
+```
+
+The TS server mirrors this with `server.windows()` and
+`server.waitForWindow(label)`. The `WindowsUi` mixin
+(`tests/system/termihub_harness/ui/windows.py`) wraps the journeys — open a
+window, move a live tab into another window via the tab context menu, resolve the
+close-with-live-tabs dialog — and `tests/system/tests/test_multi_window.py`
+drives them in the nightly lane. Everything stays behind the same gates as the
+rest of the bridge: the `test-bridge` cargo feature, the `VITE_TEST_BRIDGE=1`
+build flag, and a loopback-only runner.
+
 The backend enables test mode and supplies the port by injecting two globals into
 the webview before any page script runs (a Tauri plugin `js_init_script`, only
 registered when `TERMIHUB_TEST_BRIDGE_PORT` is set):
@@ -179,6 +236,8 @@ unmount.
 | `screenshot`          | Capture a PNG of the rendered app as a data URL (see below)    |
 | `emitEvent`           | Inject a Tauri event to drive event-only UI (see below)        |
 | `severAgentTransport` | Test-only: sever a connected agent's transport (see below)     |
+| `closeWindow`         | Close this window through the OS close path (see below)        |
+| `listWindows`         | Read the backend window registry (`[{ label, tabCount? }]`)    |
 
 Every command returns a structured `BridgeResponse` (`{ ok, action, value?,
 error? }`). Nothing throws across the bridge — failures are `ok: false` with an
@@ -438,6 +497,26 @@ The Python harness exposes it as `driver.sever_agent_transport(agent_id)`.
 is enabled (`TERMIHUB_TEST_BRIDGE_PORT` set), so a production launch can never
 reach the sever. Unit tests inject a stub via the `severAgentTransport` dep.
 
+### Closing a window (`closeWindow`) and listing windows (`listWindows`)
+
+A native window's close has no DOM control, so the close-with-live-tabs decision
+(#1903) and the per-OS quit policy were unreachable from the DOM verbs.
+
+- `{ action: "closeWindow" }` calls Tauri's `getCurrentWindow().close()` on the
+  window whose bridge received it. That emits the same `close-requested` event
+  the title-bar button does, so the app's own interceptor decides: an empty or
+  all-persistent window is destroyed, a window that would lose a live session
+  raises the "Close this window?" dialog. The bridge never force-destroys. The
+  close is **deferred** (~50 ms) until after the `ok` response is sent — a window
+  that closes at once would otherwise tear its socket down before replying.
+- `{ action: "listWindows" }` returns the backend window registry
+  (`list_windows`, #1900) — the authoritative set of native windows, including
+  one whose page has not connected to the runner yet.
+
+Like `emitEvent`, `closeWindow` acts past the DOM, so the live `TestBridge`
+re-checks `isTestBridgeEnabled()` at the call site. Unit tests inject stubs via
+the `closeWindow` / `listWindows` deps.
+
 ### Element-to-element drag (`dragTo`) and @dnd-kit
 
 `drag` moves by a blind pixel delta (resize handles); `dragTo` drags one element
@@ -613,7 +692,7 @@ no terminal to read) is recorded with an `error` rather than throwing.
 | `src/testbridge/driver.ts`      | `Driver` abstraction + `InAppBridgeDriver` adapter   |
 | `src/testbridge/scenario.ts`    | Declarative scenario + result types                  |
 | `src/testbridge/runner.ts`      | `runScenario` — runs scenarios, returns feedback     |
-| `src/testbridge/wsProtocol.ts`  | `{ id, command/response }` correlation envelope      |
+| `src/testbridge/wsProtocol.ts`  | `{ id, command/response }` envelope + window tagging |
 | `src/testbridge/wsClient.ts`    | In-app WS client (connects out, dispatches, replies) |
 | `src/testbridge/wsTransport.ts` | Runner-side `WebSocketBridgeTransport` (correlation) |
 | `src/testbridge/wsServer.ts`    | `ws`-backed runner server (`serveWebSocketBridge`)   |
