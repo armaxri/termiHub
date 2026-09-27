@@ -104,6 +104,9 @@ jobs:
       # registry blip even with a clean tree (#2589). The gate parses the --json
       # payload: it fails only when high+critical > 0, and retries-then-soft-
       # passes a network error. The gate stays genuinely blocking for advisories.
+      # On main (and release branches/tags) it runs in strict mode: an unreachable
+      # registry fails instead of soft-passing (WA-CI-008). Any soft-pass writes an
+      # "AUDIT SKIPPED — registry unreachable" marker to the job summary.
       - name: pnpm audit (production deps, blocking)
         run: ./scripts/internal/pnpm-audit-prod-gate.sh
 
