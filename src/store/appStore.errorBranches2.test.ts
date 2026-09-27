@@ -586,7 +586,13 @@ describe("appStore — launchWorkspace credential-resolution branches (#2983)", 
 
     await useAppStore.getState().launchWorkspace("ws-conn");
 
-    expect(mockResolveCredential).toHaveBeenCalledWith("conn-9", "password", true, undefined);
+    expect(mockResolveCredential).toHaveBeenCalledWith(
+      "conn-9",
+      "password",
+      true,
+      undefined,
+      undefined
+    );
   });
 });
 

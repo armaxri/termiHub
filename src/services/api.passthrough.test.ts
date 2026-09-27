@@ -1509,6 +1509,7 @@ describe("api pass-through wrappers (#2975)", () => {
         connectionId: "c1",
         credentialType: "password",
         value: "secret",
+        sourceFile: null,
       });
     });
   });

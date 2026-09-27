@@ -86,6 +86,7 @@ import {
   changeMasterPassword,
   switchCredentialStore,
   resolveCredential,
+  storeCredential,
   removeCredential,
   sessionMonitoringOpen,
 } from "./api";
@@ -1143,6 +1144,7 @@ describe("api service", () => {
       expect(mockedInvoke).toHaveBeenCalledWith("resolve_credential", {
         connectionId: "conn-1",
         credentialType: "password",
+        sourceFile: null,
       });
       expect(result).toBe("my-secret");
     });
@@ -1155,6 +1157,7 @@ describe("api service", () => {
       expect(mockedInvoke).toHaveBeenCalledWith("resolve_credential", {
         connectionId: "conn-1",
         credentialType: "password",
+        sourceFile: null,
       });
       expect(result).toBeNull();
     });
@@ -1167,8 +1170,26 @@ describe("api service", () => {
       expect(mockedInvoke).toHaveBeenCalledWith("resolve_credential", {
         connectionId: "conn-2",
         credentialType: "key_passphrase",
+        sourceFile: null,
       });
       expect(result).toBe("key-pass");
+    });
+
+    it("scopes credential commands by the connection's file (#3591)", async () => {
+      mockedInvoke.mockResolvedValue(null);
+
+      await storeCredential("x", "password", "secret", "/team/conns.json");
+      await resolveCredential("x", "password", "/team/conns.json");
+      await removeCredential("x", "password", "/team/conns.json");
+
+      const scope = {
+        connectionId: "x",
+        credentialType: "password",
+        sourceFile: "/team/conns.json",
+      };
+      expect(mockedInvoke).toHaveBeenCalledWith("store_credential", { ...scope, value: "secret" });
+      expect(mockedInvoke).toHaveBeenCalledWith("resolve_credential", scope);
+      expect(mockedInvoke).toHaveBeenCalledWith("remove_credential", scope);
     });
 
     it("removeCredential invokes with correct parameters", async () => {
@@ -1179,6 +1200,7 @@ describe("api service", () => {
       expect(mockedInvoke).toHaveBeenCalledWith("remove_credential", {
         connectionId: "conn-1",
         credentialType: "password",
+        sourceFile: null,
       });
     });
   });
