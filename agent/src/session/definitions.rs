@@ -377,16 +377,22 @@ impl ConnectionStore {
 
     /// Ensure a "Default Shell" connection exists if the store is empty.
     /// Call this after loading to auto-create the default on first run.
+    ///
+    /// On Windows it also repairs a previously auto-created "Default Shell"
+    /// that still points at a Unix path such as `/bin/sh` (#3727).
     pub async fn ensure_default_shell(&self) {
         let mut defs = self.definitions.lock().await;
         if !defs.connections.is_empty() {
+            if cfg!(windows) && repair_unix_default_shell(&mut defs, &detect_default_shell()) {
+                self.save_to_disk(&defs);
+            }
             return;
         }
 
         let shell = detect_default_shell();
         let default_conn = Connection {
             id: format!("conn-{}", uuid::Uuid::new_v4()),
-            name: "Default Shell".to_string(),
+            name: DEFAULT_SHELL_NAME.to_string(),
             session_type: "local".to_string(),
             config: serde_json::json!({ "shell": shell }),
             persistent: false,
@@ -601,23 +607,77 @@ struct LegacySessionDefinition {
     persistent: bool,
 }
 
-/// Detect the system's default shell.
+/// Detect the system's default shell as an executable path.
+///
+/// On Windows: PowerShell 7 (`pwsh.exe`) on `PATH`, then Windows PowerShell,
+/// then `cmd.exe` via `%COMSPEC%` — the shared selection in
+/// [`termihub_core::session::shell::detect_windows_default_shell`] (#3727).
+/// Elsewhere: `$SHELL`, then `/bin/bash`, `/bin/sh`, `/bin/zsh`.
 fn detect_default_shell() -> String {
-    // Try $SHELL first
-    if let Ok(shell) = std::env::var("SHELL") {
-        if Path::new(&shell).exists() {
-            return shell;
+    #[cfg(windows)]
+    {
+        termihub_core::session::shell::detect_windows_default_shell()
+    }
+    #[cfg(not(windows))]
+    {
+        select_unix_default_shell(std::env::var("SHELL").ok().as_deref(), |p| {
+            Path::new(p).exists()
+        })
+    }
+}
+
+/// Unix default-shell selection with an injectable existence probe:
+/// `$SHELL` if it exists, then the first existing well-known path, else
+/// `/bin/sh`.
+#[cfg_attr(windows, allow(dead_code))]
+fn select_unix_default_shell(shell_env: Option<&str>, exists: impl Fn(&str) -> bool) -> String {
+    if let Some(shell) = shell_env.filter(|s| exists(s)) {
+        return shell.to_string();
+    }
+    ["/bin/bash", "/bin/sh", "/bin/zsh"]
+        .into_iter()
+        .find(|c| exists(c))
+        .unwrap_or("/bin/sh")
+        .to_string()
+}
+
+/// Name of the connection [`ConnectionStore::ensure_default_shell`] creates.
+const DEFAULT_SHELL_NAME: &str = "Default Shell";
+
+/// Repair an auto-created "Default Shell" whose shell is a Unix path on a host
+/// that cannot run it (#3727: Windows agents used to persist `/bin/sh`).
+///
+/// Only the auto-created entry is touched — a local connection named
+/// [`DEFAULT_SHELL_NAME`] whose `config.shell` is a string starting with `/` —
+/// and it is rewritten to `detected`. Returns whether anything changed. The
+/// caller decides when the host is one where Unix paths are invalid (Windows).
+fn repair_unix_default_shell(defs: &mut Definitions, detected: &str) -> bool {
+    let mut changed = false;
+    for conn in defs.connections.values_mut() {
+        let is_local = matches!(conn.session_type.as_str(), "local" | "shell");
+        if !is_local || conn.name != DEFAULT_SHELL_NAME {
+            continue;
+        }
+        let stale = conn
+            .config
+            .get("shell")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| s.starts_with('/'));
+        if !stale {
+            continue;
+        }
+        if let Some(obj) = conn.config.as_object_mut() {
+            info!(
+                "Repairing default shell connection {} ({:?} -> {})",
+                conn.id,
+                obj.get("shell"),
+                detected
+            );
+            obj.insert("shell".to_string(), serde_json::json!(detected));
+            changed = true;
         }
     }
-
-    // Fallback to well-known paths
-    for candidate in &["/bin/bash", "/bin/sh", "/bin/zsh"] {
-        if Path::new(candidate).exists() {
-            return candidate.to_string();
-        }
-    }
-
-    "/bin/sh".to_string()
+    changed
 }
 
 /// Platform user-config directory used as the parent for `termihub-agent/`.
@@ -1102,6 +1162,131 @@ mod tests {
         let (conns, _) = store.list().await;
         assert_eq!(conns.len(), 1);
         assert_eq!(conns[0].name, "Existing");
+    }
+
+    // ── Default shell selection / repair (#3727) ───────────────────
+
+    #[test]
+    fn unix_default_prefers_existing_shell_env() {
+        let pick = select_unix_default_shell(Some("/usr/bin/fish"), |_| true);
+        assert_eq!(pick, "/usr/bin/fish");
+    }
+
+    #[test]
+    fn unix_default_skips_missing_shell_env() {
+        let pick = select_unix_default_shell(Some("/nope/zsh"), |p| p == "/bin/sh");
+        assert_eq!(pick, "/bin/sh");
+        let pick = select_unix_default_shell(None, |p| p == "/bin/bash" || p == "/bin/sh");
+        assert_eq!(pick, "/bin/bash");
+    }
+
+    #[test]
+    fn unix_default_last_resort_is_bin_sh() {
+        assert_eq!(select_unix_default_shell(None, |_| false), "/bin/sh");
+    }
+
+    #[test]
+    fn detect_default_shell_matches_host_platform() {
+        let shell = detect_default_shell();
+        if cfg!(windows) {
+            let lower = shell.to_ascii_lowercase();
+            assert!(!shell.starts_with('/'), "unix shell on Windows: {shell}");
+            assert!(
+                lower.ends_with("pwsh.exe")
+                    || lower.ends_with("powershell.exe")
+                    || lower.ends_with("cmd.exe"),
+                "unexpected Windows default shell: {shell}"
+            );
+        } else {
+            assert!(shell.starts_with('/'), "expected a unix path, got {shell}");
+        }
+    }
+
+    fn defs_with(conns: Vec<Connection>) -> Definitions {
+        Definitions {
+            connections: conns.into_iter().map(|c| (c.id.clone(), c)).collect(),
+            folders: HashMap::new(),
+        }
+    }
+
+    fn default_shell_conn(id: &str, session_type: &str, shell: &str) -> Connection {
+        Connection {
+            session_type: session_type.to_string(),
+            config: json!({ "shell": shell, "persistent": false }),
+            ..make_connection(id, DEFAULT_SHELL_NAME, false)
+        }
+    }
+
+    const PWSH: &str = r"C:\Program Files\PowerShell\7\pwsh.exe";
+
+    #[test]
+    fn repair_rewrites_stale_unix_default_shell() {
+        let mut defs = defs_with(vec![
+            default_shell_conn("conn-a", "local", "/bin/sh"),
+            default_shell_conn("conn-b", "shell", "/bin/bash"),
+        ]);
+        assert!(repair_unix_default_shell(&mut defs, PWSH));
+        for id in ["conn-a", "conn-b"] {
+            let conn = &defs.connections[id];
+            assert_eq!(conn.config["shell"], json!(PWSH));
+            // Other config keys survive.
+            assert_eq!(conn.config["persistent"], json!(false));
+        }
+    }
+
+    #[test]
+    fn repair_leaves_windows_default_and_user_connections_alone() {
+        let mut user = make_connection("conn-user", "My Bash", false);
+        user.config = json!({ "shell": "/bin/sh" });
+        let mut defs = defs_with(vec![
+            default_shell_conn("conn-ok", "local", PWSH),
+            user,
+            default_shell_conn("conn-ssh", "ssh", "/bin/sh"),
+        ]);
+        assert!(!repair_unix_default_shell(&mut defs, PWSH));
+        assert_eq!(defs.connections["conn-ok"].config["shell"], json!(PWSH));
+        assert_eq!(
+            defs.connections["conn-user"].config["shell"],
+            json!("/bin/sh")
+        );
+        assert_eq!(
+            defs.connections["conn-ssh"].config["shell"],
+            json!("/bin/sh")
+        );
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn ensure_default_shell_repairs_stale_entry_on_windows() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let store = ConnectionStore::new_temp(path);
+        store
+            .create(default_shell_conn("conn-1", "local", "/bin/sh"))
+            .await;
+
+        store.ensure_default_shell().await;
+
+        let (conns, _) = store.list().await;
+        assert_eq!(conns.len(), 1);
+        let shell = conns[0].config["shell"].as_str().unwrap().to_string();
+        assert!(!shell.starts_with('/'), "still a unix shell: {shell}");
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn ensure_default_shell_keeps_unix_entry_off_windows() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let store = ConnectionStore::new_temp(path);
+        store
+            .create(default_shell_conn("conn-1", "local", "/bin/sh"))
+            .await;
+
+        store.ensure_default_shell().await;
+
+        let (conns, _) = store.list().await;
+        assert_eq!(conns[0].config["shell"], json!("/bin/sh"));
     }
 
     // ── Serde ───────────────────────────────────────────────────────
