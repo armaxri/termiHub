@@ -175,6 +175,7 @@ vi.mock("@tauri-apps/api/window", () => ({
     label: "main",
     onFocusChanged: vi.fn(() => Promise.resolve(() => {})),
     onCloseRequested: vi.fn(() => Promise.resolve(() => {})),
+    onDragDropEvent: vi.fn(() => Promise.resolve(() => {})),
     setSize: vi.fn(() => Promise.resolve()),
     destroy: vi.fn(() => Promise.resolve()),
   })),
