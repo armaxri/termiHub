@@ -8,7 +8,6 @@ import { useProjectedSessionLifecycle } from "@/store/useSessionLifecycle";
 import { useElapsed } from "@/hooks/useElapsed";
 import { getPlatform } from "@/utils/platform";
 import { backendFamilyFromSessionType, connectionErrorHint } from "@/utils/connectionErrorHints";
-import { sshAgentStartCommand } from "@/utils/sshAgentSetup";
 import { formatElapsed } from "@/utils/formatters";
 import "./TerminalConnectionOverlay.css";
 
@@ -21,31 +20,10 @@ interface TerminalConnectionOverlayProps {
   /**
    * The effective connection type, e.g. "ssh", "telnet", "serial", "local".
    * For remote-session tabs this should be the inner sessionType.
-   * Used to select contextual error hints.
+   * Used, with the typed failure kind, to select contextual error hints.
    */
   sessionType?: string;
 }
-
-const SSH_AGENT_PATTERN = "Agent auth failed";
-const TIMEOUT_PATTERN = "timed out";
-const SERIAL_NOT_FOUND_PATTERNS = ["No such file", "cannot find", "not found"];
-const SERIAL_PERMISSION_PATTERN = "Permission denied";
-const SERIAL_BUSY_PATTERNS = ["busy", "in use", "Access is denied"];
-
-/**
- * Platform-appropriate guidance for a serial permission error on non-Linux hosts
- * (#1831). Only Linux gates serial ports behind the `dialout` group, so its hint
- * offers the `usermod` fix command (rendered separately as a copyable block). On
- * Windows a denied `COM` port and on macOS a denied `/dev/tty.*` port almost
- * always mean another program holds the port or the user lacks access — there is
- * no group to join, so we show plain guidance rather than a bogus command.
- */
-const SERIAL_PERMISSION_HINT: Record<"windows" | "macos", string> = {
-  windows:
-    "Another application may be using the port, or you may not have permission to access it. Close any program using the port and try again.",
-  macos:
-    "You may not have permission to access this port, or another application may be using it. Close any program using the port and try again.",
-};
 
 /** Seconds after which a still-pending connect is flagged as unusually slow. */
 const SLOW_CONNECT_THRESHOLD_SECONDS = 20;
@@ -114,6 +92,9 @@ export function TerminalConnectionOverlay({
   const waitingForAgent = useAppStore((s) => s.terminalWaitingForAgent[tabId]);
   const isReattaching = useAppStore((s) => s.terminalReattaching[tabId] ?? false);
   const error = useAppStore((s) => s.terminalSpawnErrors[tabId] ?? "");
+  // Typed failure kind from the backend's locale-independent error code
+  // (I18N-009) — the only input, with the backend family, to hint selection.
+  const errorKind = useAppStore((s) => s.terminalSpawnErrorKinds[tabId] ?? "other");
 
   // Tick a wall-clock timer while any active connect attempt is in flight so the
   // overlay can show elapsed time and flag an unusually slow connect (#1127).
@@ -181,37 +162,20 @@ export function TerminalConnectionOverlay({
     reconnectTerminal(tabId);
   }, [tabId, reconnectTerminal]);
 
-  const isSerial = sessionType === "serial";
-  // The serial permission remediation is host-OS specific: only Linux has the
-  // dialout group, so the `usermod` fix must not be shown on Windows/macOS (#1831).
+  // Remediation commands are host-OS specific (e.g. only Linux has the serial
+  // dialout group, #1831; the ssh-agent start command differs per OS).
   const platform = getPlatform();
-  // Resolve the backend family so every failure hint is chosen for the backend
-  // that actually raised it, not shown blanket across all backends (#2088).
+  // The hint is a pure function of (backend family, failure kind): the family
+  // keeps a hint on the backend that raised it (#2088), and the kind comes from
+  // the backend's error code, never from matching the (English or OS-localized)
+  // message text (I18N-009). The message itself carries no remediation clause
+  // — the backend states only the fact — so it is displayed verbatim.
   const backendFamily = backendFamilyFromSessionType(sessionType);
-  // "Agent auth failed" is an SSH ssh-agent (key-auth) failure, so its remedy
-  // (starting ssh-agent) only makes sense on the SSH path — gate it to the SSH
-  // family so the SSH-agent hint can't leak onto telnet/serial/etc. (#2088).
-  const isAgentAuth = backendFamily === "ssh" && error.includes(SSH_AGENT_PATTERN);
-  const isTimeout = error.includes(TIMEOUT_PATTERN) && !isAgentAuth;
-  // Backend-appropriate timeout guidance, sourced from the structured per-backend
-  // table rather than an inline string, so it can never again describe the wrong
-  // backend (e.g. the old "agent binary is installed" hint on an SSH timeout).
-  const timeoutHint = isTimeout ? connectionErrorHint(backendFamily, "timeout") : null;
-  const isSerialNotFound = isSerial && SERIAL_NOT_FOUND_PATTERNS.some((p) => error.includes(p));
-  const isSerialPermission = isSerial && error.includes(SERIAL_PERMISSION_PATTERN);
-  const isSerialBusy =
-    isSerial && !isSerialPermission && SERIAL_BUSY_PATTERNS.some((p) => error.includes(p));
-
-  // When a curated hint panel is shown it fully explains the failure and, since
-  // #1829, offers the fix command with a copy affordance. Backend errors append
-  // that same remediation to the raw message after an em-dash separator (see
-  // core/src/session/serial.rs), so rendering the raw error verbatim repeated
-  // the guidance and command — once as plain text, once in the hint (#1830).
-  // Drop the trailing remediation clause from the raw error box so the hint
-  // panel is the single source of the remediation.
-  const hasHint =
-    isAgentAuth || isTimeout || isSerialNotFound || isSerialPermission || isSerialBusy;
-  const displayError = hasHint ? error.split(" — ")[0].trim() : error;
+  const hint = connectionErrorHint(backendFamily, errorKind, platform);
+  const hintCopyTestId =
+    errorKind === "agent-auth"
+      ? "terminal-connection-agent-copy-btn"
+      : "terminal-connection-serial-copy-btn";
 
   const cls = `terminal-connection-overlay${isVisible ? "" : " terminal-connection-overlay--hidden"}`;
 
@@ -424,55 +388,21 @@ export function TerminalConnectionOverlay({
         }
       >
         <div className="terminal-connection-overlay__error-box">
-          <span className="terminal-connection-overlay__error-text">{displayError}</span>
+          <span className="terminal-connection-overlay__error-text">{error}</span>
         </div>
 
-        {isAgentAuth && (
-          <div className="terminal-connection-overlay__hint">
-            <p className="terminal-connection-overlay__hint-title">SSH Agent not running</p>
-            <p>
-              Open the connection editor and use the <strong>Setup SSH Agent</strong> button, or
-              run:
-            </p>
-            <CommandBlock
-              command={sshAgentStartCommand(platform)}
-              testId="terminal-connection-agent-copy-btn"
-            />
-          </div>
-        )}
-
-        {isTimeout && timeoutHint && (
-          <p className="terminal-connection-overlay__hint-text">{timeoutHint}</p>
-        )}
-
-        {isSerialNotFound && (
-          <p className="terminal-connection-overlay__hint-text">
-            Serial port not found. Check that the device is connected and the port name is correct.
-          </p>
-        )}
-
-        {isSerialPermission && (
-          <div className="terminal-connection-overlay__hint">
-            <p className="terminal-connection-overlay__hint-title">Permission denied</p>
-            {platform === "linux" ? (
-              <>
-                <p>On Linux, add your user to the dialout group and re-login:</p>
-                <CommandBlock
-                  command="sudo usermod -aG dialout $USER"
-                  testId="terminal-connection-serial-copy-btn"
-                />
-              </>
-            ) : (
-              <p>{SERIAL_PERMISSION_HINT[platform]}</p>
-            )}
-          </div>
-        )}
-
-        {isSerialBusy && (
-          <p className="terminal-connection-overlay__hint-text">
-            The serial port is already in use by another application.
-          </p>
-        )}
+        {hint &&
+          (hint.title || hint.command ? (
+            <div className="terminal-connection-overlay__hint">
+              {hint.title && (
+                <p className="terminal-connection-overlay__hint-title">{hint.title}</p>
+              )}
+              <p>{hint.text}</p>
+              {hint.command && <CommandBlock command={hint.command} testId={hintCopyTestId} />}
+            </div>
+          ) : (
+            <p className="terminal-connection-overlay__hint-text">{hint.text}</p>
+          ))}
       </ContentOverlay>
     </div>
   );
