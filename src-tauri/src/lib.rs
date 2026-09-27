@@ -735,6 +735,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::transfer::session_copy_remote,
             commands::transfer::folder_paste_begin,
             commands::transfer::folder_paste_end,
+            commands::transfer::folder_paste_link_transfer,
             commands::transfer::folder_paste_take_interrupted,
             commands::file_bookmarks::list_file_browser_bookmarks,
             commands::file_bookmarks::add_file_browser_bookmark,

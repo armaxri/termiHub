@@ -1706,6 +1706,15 @@ export async function folderPasteEnd(pasteId: string): Promise<void> {
 }
 
 /**
+ * Link a registered session transfer to the folder paste it copies a file for
+ * (#3643), so a restart mid-paste reports that file through the paste's notice
+ * rather than as an orphan paused Transfer Queue row.
+ */
+export async function folderPasteLinkTransfer(pasteId: string, transferId: string): Promise<void> {
+  await invoke("folder_paste_link_transfer", { pasteId, transferId });
+}
+
+/**
  * Take the folder pastes a previous run left unfinished (#3630). Each is
  * returned once, so only one window shows its notice.
  */
