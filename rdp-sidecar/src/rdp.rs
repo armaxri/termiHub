@@ -268,14 +268,13 @@ where
 
     // 3) CredSSP/NLA + channel join + capability exchange.
     let mut network_client = ReqwestNetworkClient::new();
-    let result = ironrdp_tokio::connect_finalize(
+    let result = crate::nla::connect_finalize(
         upgraded,
         connector,
         &mut framed,
         &mut network_client,
         ServerName::new(host),
         server_public_key,
-        None,
     )
     .await
     .context("RDP CredSSP / capability exchange failed")?;
