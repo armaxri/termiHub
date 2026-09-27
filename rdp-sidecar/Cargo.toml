@@ -213,3 +213,12 @@ tempfile = "3"
 # See `vendor/ironrdp-rdpsnd/README.md` for exactly what changed vs upstream.
 [patch.crates-io]
 ironrdp-rdpsnd = { path = "vendor/ironrdp-rdpsnd" }
+# Vendored fork of ironrdp-pdu 0.9.0 (#3611): accept the 6-byte Share Control
+# Header (MS-RDPBCGR 2.2.8.1.1.1.1). xrdp sends its Server Deactivate All PDU as
+# just that header when it resizes the desktop (Display Control), which upstream
+# 0.9.0 rejects, ending every dynamic-resize session against an xrdp host. A port
+# of the unreleased upstream fix Devolutions/IronRDP d4b728a1d40b; drop it once a
+# released ironrdp-pdu carries it. Every `ironrdp-*` crate depends on
+# `ironrdp-pdu = "0.9"`, so this patch redirects the whole graph to the fork. See
+# `vendor/ironrdp-pdu/README.md`.
+ironrdp-pdu = { path = "vendor/ironrdp-pdu" }

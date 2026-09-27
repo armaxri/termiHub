@@ -330,6 +330,33 @@ services:
       retries: 5
 
   # ============================================================
+  # RDP Server (profile: rdp)
+  # ============================================================
+
+  # xrdp 0.10 + xorgxrdp (TLS security, user testuser/testpass). The session
+  # paints its root pure red and echoes `ping:<x>` clipboard text back as
+  # `pong:<x>`. Drives the `rdp` backend's IronRDP sidecar end to end
+  # (core/tests/rdp.rs, #3609): logon, decode, fixed/dynamic resolution over
+  # Display Control, CLIPRDR, a typed wrong-password failure and sidecar cleanup.
+  rdp-server:
+    build: ./rdp-server
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-rdp
+    ports:
+      - "127.0.0.1:${TERMIHUB_TEST_RDP_PORT:-2601}:3389"
+      - "127.0.0.1:${TERMIHUB_TEST_RDP_NLA_PORT:-2602}:3390"
+    networks:
+      - test-net
+    profiles:
+      - rdp
+      - all
+    healthcheck:
+      test:
+        ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/3389 && echo > /dev/tcp/localhost/3390"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ============================================================
   # Network Tools Live Test Target (profile: network)
   # ============================================================
 

@@ -1610,21 +1610,25 @@ dropping them (the preview says so) when credential storage is off.
 ### Content-Security-Policy & capability scoping
 
 termiHub ships a deliberately tight webview Content-Security-Policy and a scoped Tauri capability
-set. This section documents the current posture, the three deliberate relaxations that remain, and
+set. This section documents the current posture, the deliberate relaxations that remain, and
 the reasoning behind each — so future maintainers and auditors can see they are considered
-trade-offs, not oversights. (Audit finding SEC-013: maintainer-accepted; further tightening is
-deferred post-release — see the follow-up issue linked from that finding.)
+trade-offs, not oversights. (Audit finding SEC-013: maintainer-accepted. Audit finding WA-CI-035:
+every CSP source re-reviewed against the built bundle and signed off in #3627 — see
+[Relaxation review](#csp-relaxation-review-wa-ci-035) below.)
 
 #### The policy
 
-The CSP lives in `src-tauri/tauri.conf.json` (`app.security.csp`):
+The CSP lives in `src-tauri/tauri.conf.json` (`app.security.csp`), declared as a **directive map**
+so a platform overlay can patch a single directive without restating the rest. Tauri layers the
+config as RFC 7396 JSON merge patches: base → `tauri.<platform>.conf.json` → any `--config`
+overlay. The effective policy on macOS and Linux is:
 
 ```text
 default-src 'self';
-script-src 'self' plugin://localhost http://plugin.localhost 'wasm-unsafe-eval';
+script-src 'self' plugin://localhost 'wasm-unsafe-eval';
 style-src 'self' 'unsafe-inline';
 img-src 'self' data: blob:;
-font-src 'self' data:;
+font-src 'self';
 connect-src 'self' ipc: http://ipc.localhost;
 worker-src 'self' blob:;
 child-src 'self' blob:;
@@ -1634,34 +1638,54 @@ base-uri 'self';
 form-action 'none'
 ```
 
+On Windows, `src-tauri/tauri.windows.conf.json` replaces only `script-src`, swapping
+`plugin://localhost` for `http://plugin.localhost`. The system-test build overlay
+(`src-tauri/tauri.test.conf.json`) replaces only `connect-src`, adding the loopback `ws://` bridge
+sources; the separate runtime widening in test-bridge builds (`src-tauri/src/utils/test_bridge.rs`,
+compiled out of release builds) is unchanged.
+
 The baseline is strict: `default-src 'self'`, **no** `unsafe-eval`, **no** inline or remote
-`script-src` hosts (only the local Tauri plugin origins), `object-src 'none'`, `frame-src 'none'`,
-`base-uri 'self'`, and `form-action 'none'`. There is no path by which remote content can be loaded
-or arbitrary JavaScript evaluated.
+`script-src` hosts (only this platform's local plugin origin), `object-src 'none'`,
+`frame-src 'none'`, `base-uri 'self'`, and `form-action 'none'`. There is no path by which remote
+content can be loaded or arbitrary JavaScript evaluated.
 
-#### The three deliberate relaxations
+**Guard.** `src/security/cspConfig.test.ts` computes the effective policy for each platform (and
+for the test build) exactly as Tauri merges it, and fails on any directive or source that is not
+on its reviewed allow-list, each entry carrying the reason below. Adding a source means adding it
+there with a reason **and** documenting it here. Because the guard is a vitest suite, the PR
+change classifier runs the frontend suite for any `src-tauri/tauri*.conf.json` change.
 
-1. **`script-src 'wasm-unsafe-eval'` — required by the Shiki WASM highlighter.**
-   The External-Files editor uses Monaco with TextMate-grammar syntax highlighting powered by
-   [Shiki](https://shiki.style/) (`src/utils/monacoCustomLanguages.ts`, via `@shikijs/monaco`).
-   Shiki's regex engine is Oniguruma compiled to **WebAssembly** (`onig.wasm`), and instantiating a
-   WASM module requires `'wasm-unsafe-eval'`. This is a **WASM-compilation-only** relaxation — it
-   permits `WebAssembly.compile`/`instantiate`, and does **not** enable JavaScript `eval` or
-   `new Function`. It is removable only by dropping Shiki-based highlighting.
+#### The deliberate relaxations
+
+1. **`script-src 'wasm-unsafe-eval'` — required by two WebAssembly consumers.**
+   - [Shiki](https://shiki.style/) highlights the External-Files editor
+     (`src/utils/monacoCustomLanguages.ts`, via `@shikijs/monaco`). `createHighlighter` from `shiki`
+     uses the Oniguruma regex engine compiled to WebAssembly: the build emits the base64-inlined
+     `onig.wasm` as a lazy `wasm-*.js` chunk that `monacoCustomLanguages` imports.
+   - `@xterm/addon-image` (`src/components/Terminal/inlineImages.ts`) decodes SIXEL graphics with a
+     WebAssembly decoder (`WebAssembly.instantiate` / `WebAssembly.compile` in its chunk).
+
+   This is a **WASM-compilation-only** relaxation — it permits `WebAssembly.compile`/`instantiate`
+   and does **not** enable JavaScript `eval` or `new Function`. Removing it would mean switching
+   Shiki to its JavaScript regex engine (less grammar-compatible) **and** dropping SIXEL support.
 
 2. **`style-src 'unsafe-inline'` + `dangerousDisableAssetCspModification: ["style-src"]` — forced by third-party runtime `<style>` injection.**
-   Several bundled libraries inject `<style>` elements into the document at runtime — xterm.js
-   (terminal rendering), sonner (toasts), and Monaco (editor). Those styles have no ahead-of-time
-   hash, so `'unsafe-inline'` is required for them to apply. Tauri, by default, auto-appends a hash
+   Several bundled libraries create `<style>` elements at runtime (verified in the production
+   bundle): xterm.js (the renderer's dimension and theme stylesheets), Monaco (per-editor and
+   decoration rules), sonner (its toast stylesheet), and `react-remove-scroll` under the Radix
+   dialogs. Their contents are dynamic, so they have no ahead-of-time hash, and sonner and xterm
+   offer no nonce hook. React `style` props additionally need inline style **attributes**.
+   Splitting the directive into `style-src-elem` / `style-src-attr` would still need
+   `'unsafe-inline'` in both, so it would not narrow anything. Tauri, by default, auto-appends a hash
    for `index.html`'s inline styles to the `style-src` directive; per **CSP Level 3**, the presence
    of a hash or nonce **cancels** `'unsafe-inline'`, which broke xterm/sonner styling (fixed in
    commit `9f4594ab`). Setting `dangerousDisableAssetCspModification: ["style-src"]` disables that
    auto-hash injection for `style-src` only, keeping `'unsafe-inline'` effective.
    Note that termiHub's **own** theming does **not** rely on this: the theme engine writes CSS
    custom properties through the CSSOM (`element.style.setProperty`, `src/themes/engine.ts`), which
-   is a scripted style mutation exempt from `style-src` entirely. A nonce/hash-based `style-src` is
-   high-effort and fragile here (the library-generated styles are dynamic with no stable hash set,
-   and Tauri exposes no runtime-nonce hook), so it is deferred.
+   is a scripted style mutation exempt from `style-src` entirely. Inline styles cannot run script,
+   so the residual risk is CSS-based UI redress after an HTML injection, which `script-src` already
+   limits.
 
 3. **Unscoped `fs` / `opener` capabilities — because they back user-driven, dialog-picked paths.**
    `capabilities/default.json` grants `fs:allow-read-text-file` / `fs:allow-write-text-file` and
@@ -1674,6 +1698,22 @@ or arbitrary JavaScript evaluated.
    to the opener. Scoping the **app-owned** (non-dialog) paths — config, logs, and the portable
    `data/` directory — while keeping user-dialog exports working is a possible future refinement and
    is deferred.
+
+#### CSP relaxation review (WA-CI-035)
+
+Signed off in #3627 against the production bundle (`pnpm build`, `dist/assets`):
+
+| Directive / source                   | Decision                              | Evidence                                                                                                                                |
+| ------------------------------------ | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `script-src 'wasm-unsafe-eval'`      | Keep                                  | Shiki's `onig.wasm` chunk and `@xterm/addon-image`'s SIXEL decoder instantiate WebAssembly                                              |
+| `script-src plugin://localhost`      | Keep, **macOS/Linux only**            | WebKit form of the `plugin` URI scheme (`src-tauri/src/plugin_protocol.rs`); the frontend-plugin sandbox worker `importScripts` from it |
+| `script-src http://plugin.localhost` | Keep, **Windows only** (was every OS) | WebView2 form of the same scheme. On WebKit it is an ordinary loopback URL, so listing it there trusted any local server on port 80     |
+| `style-src 'unsafe-inline'`          | Keep (signed off)                     | Runtime `<style>` from xterm, Monaco, sonner and `react-remove-scroll`; React `style` attributes                                        |
+| `img-src data:`                      | Keep                                  | Monaco's stylesheet embeds `data:` SVG/PNG backgrounds                                                                                  |
+| `img-src blob:`                      | Keep                                  | `@xterm/addon-image` shows inline images through blob URLs                                                                              |
+| `font-src data:`                     | **Removed**                           | No shipped font is a `data:` URL; Geist, Meslo and codicon load as bundled files                                                        |
+| `connect-src http://ipc.localhost`   | Keep (follow-up #3628)                | Windows form of Tauri's IPC protocol (`ipc:` is the WebKit form). Scoping it per platform also needs the test overlay reworked          |
+| `worker-src` / `child-src blob:`     | Keep                                  | Monaco's worker bootstrap falls back to a `blob:` worker; `child-src` covers engines without `worker-src`                               |
 
 #### Native file drag-out (no drag capability granted)
 
@@ -1912,7 +1952,18 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
   above 8 MiB (`local_copy_start`, including local ↔ WSL copies over the
   `\\wsl$` UNC share) runs under the reserved `local` session through
   `core/src/files/transfer/local.rs`, writing a hidden temp file that is
-  renamed over the destination only on completion.
+  renamed over the destination only on completion. A local **folder** copy
+  (#3605, `core/src/files/transfer/local_folder.rs`) is planned by one bounded
+  walk (entries, depth, total size; refused up front beyond them), laid out
+  directly — dirs, symlinks recreated not followed, small files; merging into an
+  existing destination folder — and each large file queued as its own row in a
+  cancel group (cancelling one cancels the folder's rest). Special files are
+  skipped and reported. The group id is persisted with each row, so after an
+  app restart the rehydrated rows keep it (#3613): a resumed row relaunches
+  inside its rebuilt group, and cancelling any row — resumed or still waiting
+  as a rehydrated paused row — cancels the folder's rest. The rows stay
+  individual queue rows; the folder-level result the paste awaited does not
+  survive the restart, so each row reports its own outcome afterwards.
 - **Desktop-only for v1** — the `ftp` cargo feature is desktop-only (registered in
   `src-tauri/src/session/registry.rs::build_desktop_registry()`); the remote agent has no FTP
   backend. Wiring the connection-type-agnostic `file_browser()` dispatch into the sidebar (so FTP

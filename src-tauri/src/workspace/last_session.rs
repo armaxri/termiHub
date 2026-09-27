@@ -6,7 +6,10 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-use super::config::{WorkspaceTabGroupDef, WorkspaceWindowDef};
+use super::config::{
+    follow_connection_id_changes_in_groups, WorkspaceTabGroupDef, WorkspaceWindowDef,
+};
+use crate::connection::id_changes::ConnectionIdRemap;
 use crate::utils::config_paths::resolve_config_dir;
 use crate::utils::fs::write_atomic;
 use crate::utils::migrate::{guard_not_newer, load_versioned, LoadOutcome, VersionedStore};
@@ -197,6 +200,14 @@ impl LastSessionManager {
         Ok(Self::with_storage(LastSessionStorage::new(app_handle)?))
     }
 
+    /// A manager backed by a file in `dir`. Test-only; production uses `new()`.
+    #[cfg(test)]
+    pub(crate) fn new_for_test(dir: &std::path::Path) -> Self {
+        Self::with_storage(LastSessionStorage {
+            file_path: dir.join(FILE_NAME),
+        })
+    }
+
     fn with_storage(storage: LastSessionStorage) -> Self {
         Self {
             storage,
@@ -259,6 +270,21 @@ impl LastSessionManager {
         }
         session.active_workspace_id = id;
         self.save_unlocked(session)
+    }
+
+    /// Re-point the stored session's tab `connectionRef`s along `remap` (#3596),
+    /// so a restart restores tabs of a renamed connection. A no-op when no
+    /// session is stored or no reference changed. Returns whether it changed.
+    pub fn follow_connection_id_changes(&self, remap: &ConnectionIdRemap) -> Result<bool> {
+        let _guard = self.lock()?;
+        let Some(mut session) = self.storage.load()? else {
+            return Ok(false);
+        };
+        if !follow_connection_id_changes_in_groups(&mut session.tab_groups, remap) {
+            return Ok(false);
+        }
+        self.save_unlocked(session)?;
+        Ok(true)
     }
 
     /// The active workspace id recorded in the stored session, if any.
@@ -690,5 +716,67 @@ mod tests {
         });
         assert_eq!(restored, None);
         assert!(!called.get());
+    }
+
+    fn remap(changes: &[(&str, &str)]) -> ConnectionIdRemap {
+        let changes: Vec<crate::connection::id_changes::ConnectionIdChange> = changes
+            .iter()
+            .map(|(o, n)| crate::connection::id_changes::ConnectionIdChange::new(*o, *n))
+            .collect();
+        ConnectionIdRemap::new(&changes)
+    }
+
+    fn tab(connection_ref: &str) -> crate::workspace::config::WorkspaceTabDef {
+        crate::workspace::config::WorkspaceTabDef {
+            connection_ref: Some(connection_ref.to_string()),
+            inline_config: None,
+            agent_ref: None,
+            title: None,
+            initial_command: None,
+        }
+    }
+
+    /// #3596: the stored session's tabs follow a folder rename, so a restart
+    /// reopens the renamed connection instead of a dangling id.
+    #[test]
+    fn stored_session_tabs_follow_connection_id_changes() {
+        let dir = TempDir::new().unwrap();
+        let mgr = test_manager(&dir);
+        let mut session = sample_session();
+        session.tab_groups[0].layout = WorkspaceLayoutNode::Leaf {
+            tabs: vec![tab("Work/a"), tab("other")],
+        };
+        mgr.save(session).unwrap();
+
+        assert!(mgr
+            .follow_connection_id_changes(&remap(&[("Work/a", "Job/a")]))
+            .unwrap());
+
+        let loaded = test_manager(&dir).load().unwrap().unwrap();
+        let WorkspaceLayoutNode::Leaf { tabs } = &loaded.tab_groups[0].layout else {
+            panic!("leaf expected");
+        };
+        assert_eq!(tabs[0].connection_ref.as_deref(), Some("Job/a"));
+        assert_eq!(tabs[1].connection_ref.as_deref(), Some("other"));
+    }
+
+    #[test]
+    fn following_id_changes_without_a_stored_session_or_match_writes_nothing() {
+        let dir = TempDir::new().unwrap();
+        let mgr = test_manager(&dir);
+        assert!(!mgr
+            .follow_connection_id_changes(&remap(&[("a", "b")]))
+            .unwrap());
+        assert!(!dir.path().join(FILE_NAME).exists());
+
+        mgr.save(sample_session()).unwrap();
+        let before = fs::read_to_string(dir.path().join(FILE_NAME)).unwrap();
+        assert!(!mgr
+            .follow_connection_id_changes(&remap(&[("a", "b")]))
+            .unwrap());
+        assert_eq!(
+            fs::read_to_string(dir.path().join(FILE_NAME)).unwrap(),
+            before
+        );
     }
 }

@@ -93,6 +93,7 @@ mod tests {
             created_at_ms: 1,
             updated_at_ms: 2,
             docker: None,
+            group_id: None,
         }
     }
 

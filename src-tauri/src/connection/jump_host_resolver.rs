@@ -18,12 +18,122 @@ use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 
 use super::config::SavedConnection;
+use super::id_changes::ConnectionIdRemap;
 use crate::credential::named;
 use crate::credential::{CredentialKey, CredentialStore, CredentialType};
 
 /// Maximum reference-expansion depth, a runaway guard independent of the editor's
 /// own chain-depth warning. Chains this deep are pathological.
 const MAX_RESOLVE_DEPTH: usize = 16;
+
+/// The saved connections a jump-host reference may point at (#3602).
+///
+/// This is exactly the set the connection editor's jump-host picker offers: the
+/// main store followed by every **enabled** external connection file — the
+/// [`UnifiedConnectionView`](super::manager::UnifiedConnectionView) that also
+/// backs the frontend's `connections` region. Resolver and picker therefore
+/// share one source of truth and one lookup rule:
+///
+/// - An id held by **exactly one** connection in the set resolves to it,
+///   whichever file it lives in.
+/// - An id held by **more than one** connection (ids are tree paths, so the main
+///   store and an external file — or two external files — can both hold
+///   `Folder/Name`) is **ambiguous** and refused. There is no silent precedence
+///   (not even "same file first" or "main store first"): connecting through a
+///   gateway the user did not mean to pick is worse than failing with a message
+///   that says which files collide. The picker marks such ids as unavailable.
+/// - An id held by **no** connection is not found. The error names a disabled
+///   external file that holds it, and any enabled file that failed to load, so
+///   the user knows why a hop they can see on disk does not resolve.
+///
+/// References stay plain ids (no file qualifier): an id already survives a
+/// connection moving between files (#3592), which a file-qualified reference
+/// would not, and refusing ambiguity keeps plain references safe.
+#[derive(Debug, Default)]
+pub(crate) struct JumpHostScope<'a> {
+    connections: &'a [SavedConnection],
+    unavailable: Vec<UnavailableFile>,
+}
+
+/// An external connection file whose connections are not in the scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum UnavailableFile {
+    /// Configured but disabled; `ids` are the connection ids it holds.
+    Disabled { path: String, ids: HashSet<String> },
+    /// Enabled but failed to load, so its ids are unknown.
+    FailedToLoad { path: String, error: String },
+}
+
+impl<'a> JumpHostScope<'a> {
+    /// A scope over `connections` (main store first, then enabled external
+    /// files, each external row carrying its `source_file`).
+    pub(crate) fn new(connections: &'a [SavedConnection]) -> Self {
+        Self {
+            connections,
+            unavailable: Vec::new(),
+        }
+    }
+
+    /// Record external files whose connections are not in the scope, so a
+    /// reference into one fails with an explanation rather than a bare
+    /// "not found".
+    pub(crate) fn with_unavailable(mut self, unavailable: Vec<UnavailableFile>) -> Self {
+        self.unavailable = unavailable;
+        self
+    }
+
+    /// The one connection `id` refers to, or an error when it is ambiguous or
+    /// not in the scope (see the type docs for the rule).
+    fn find(&self, id: &str) -> Result<&'a SavedConnection> {
+        let mut matches = self.connections.iter().filter(|c| c.id == id);
+        let Some(first) = matches.next() else {
+            bail!("{}", self.not_found_message(id));
+        };
+        let rest: Vec<&SavedConnection> = matches.collect();
+        if rest.is_empty() {
+            return Ok(first);
+        }
+        let sources: Vec<String> = std::iter::once(first)
+            .chain(rest)
+            .map(|c| source_label(c.source_file.as_deref()))
+            .collect();
+        bail!(
+            "Referenced jump host connection '{id}' is ambiguous: a connection with this id \
+             exists in {}. Rename or move one of them, or configure the hop inline.",
+            sources.join(" and ")
+        )
+    }
+
+    fn not_found_message(&self, id: &str) -> String {
+        let mut msg = format!("Referenced jump host connection '{id}' not found.");
+        for file in &self.unavailable {
+            match file {
+                UnavailableFile::Disabled { path, ids } if ids.contains(id) => {
+                    msg.push_str(&format!(
+                        " It is in the disabled external connection file '{path}'; enable \
+                         that file to use it as a jump host."
+                    ));
+                }
+                UnavailableFile::FailedToLoad { path, error } => {
+                    msg.push_str(&format!(
+                        " The external connection file '{path}' failed to load ({error})."
+                    ));
+                }
+                UnavailableFile::Disabled { .. } => {}
+            }
+        }
+        msg.push_str(" Pick an existing SSH connection or switch to inline configuration.");
+        msg
+    }
+}
+
+/// Human-readable name of the connection file a connection lives in.
+fn source_label(source_file: Option<&str>) -> String {
+    match source_file {
+        None => "the main connection store".to_string(),
+        Some(path) => format!("the external connection file '{path}'"),
+    }
+}
 
 /// Whether `settings` has a jump-host chain with at least one saved-connection
 /// reference to expand. A cheap pre-check so callers can skip loading the whole
@@ -49,7 +159,7 @@ pub(crate) fn chain_has_reference(settings: &Value) -> bool {
 /// into the visited set rejects a hop that references its own connection.
 pub(crate) fn resolve_proxy_jump_refs(
     settings: &mut Value,
-    connections: &[SavedConnection],
+    scope: &JumpHostScope<'_>,
     creds: &dyn CredentialStore,
     root_id: Option<&str>,
 ) -> Result<()> {
@@ -73,7 +183,7 @@ pub(crate) fn resolve_proxy_jump_refs(
         visited.insert(id.to_string());
     }
 
-    let resolved = resolve_hops(&hops, connections, creds, &mut visited, 0)?;
+    let resolved = resolve_hops(&hops, scope, creds, &mut visited, 0)?;
 
     settings[key] = Value::Array(resolved);
     Ok(())
@@ -82,7 +192,7 @@ pub(crate) fn resolve_proxy_jump_refs(
 /// Recursively resolve a list of hops into a flat list of fully-inline hops.
 fn resolve_hops(
     hops: &[Value],
-    connections: &[SavedConnection],
+    scope: &JumpHostScope<'_>,
     creds: &dyn CredentialStore,
     visited: &mut HashSet<String>,
     depth: usize,
@@ -101,15 +211,7 @@ fn resolve_hops(
                          references itself through the chain"
                     );
                 }
-                let conn = connections
-                    .iter()
-                    .find(|c| c.id == ref_id)
-                    .with_context(|| {
-                        format!(
-                            "Referenced jump host connection '{ref_id}' not found. Pick an \
-                             existing SSH connection or switch to inline configuration."
-                        )
-                    })?;
+                let conn = scope.find(ref_id)?;
                 if conn.config.type_id != "ssh" {
                     bail!(
                         "Referenced jump host connection '{}' is not an SSH connection",
@@ -121,8 +223,7 @@ fn resolve_hops(
                 // The referenced connection's own chain is reached first (its hops
                 // are the *outer* gateways), then the connection itself.
                 let inner = referenced_chain(conn);
-                let mut inner_resolved =
-                    resolve_hops(&inner, connections, creds, visited, depth + 1)?;
+                let mut inner_resolved = resolve_hops(&inner, scope, creds, visited, depth + 1)?;
                 resolved.append(&mut inner_resolved);
                 resolved.push(build_inline_hop(conn, ref_id, hop, creds)?);
                 visited.remove(ref_id);
@@ -131,6 +232,34 @@ fn resolve_hops(
         }
     }
     Ok(resolved)
+}
+
+/// Re-point every saved-connection jump-host reference in `settings` (the
+/// `proxyJump` array or its legacy `jumpHosts` alias) along `remap` (#3596).
+/// Returns whether any reference changed.
+pub(crate) fn follow_jump_host_refs(settings: &mut Value, remap: &ConnectionIdRemap) -> bool {
+    let mut changed = false;
+    for key in ["proxyJump", "jumpHosts"] {
+        if let Some(Value::Array(hops)) = settings.get_mut(key) {
+            for hop in hops {
+                if let Some(Value::String(id)) = hop.get_mut("connectionId") {
+                    changed |= remap.apply(id);
+                }
+            }
+        }
+    }
+    changed
+}
+
+/// [`follow_jump_host_refs`] over every connection's settings; returns whether
+/// any reference changed.
+pub(crate) fn follow_jump_host_refs_in(
+    connections: &mut [SavedConnection],
+    remap: &ConnectionIdRemap,
+) -> bool {
+    connections.iter_mut().fold(false, |changed, conn| {
+        follow_jump_host_refs(&mut conn.config.settings, remap) | changed
+    })
 }
 
 /// The non-empty `connectionId` of a hop, if it references a saved connection.
@@ -326,7 +455,13 @@ mod tests {
             { "host": "bastion", "port": 22, "username": "admin", "authMethod": "agent" }
         ]));
         let before = settings.clone();
-        resolve_proxy_jump_refs(&mut settings, &[], &MemStore::default(), None).unwrap();
+        resolve_proxy_jump_refs(
+            &mut settings,
+            &JumpHostScope::new(&[]),
+            &MemStore::default(),
+            None,
+        )
+        .unwrap();
         assert_eq!(settings, before);
     }
 
@@ -347,7 +482,13 @@ mod tests {
     fn no_chain_is_noop() {
         let mut settings = json!({ "host": "h", "username": "u", "authMethod": "agent" });
         let before = settings.clone();
-        resolve_proxy_jump_refs(&mut settings, &[], &MemStore::default(), None).unwrap();
+        resolve_proxy_jump_refs(
+            &mut settings,
+            &JumpHostScope::new(&[]),
+            &MemStore::default(),
+            None,
+        )
+        .unwrap();
         assert_eq!(settings, before);
     }
 
@@ -367,7 +508,13 @@ mod tests {
         let mut settings =
             settings_with_hops(json!([{ "connectionId": "Work/bastion", "authMethod": "key" }]));
 
-        resolve_proxy_jump_refs(&mut settings, &[bastion], &MemStore::default(), None).unwrap();
+        resolve_proxy_jump_refs(
+            &mut settings,
+            &JumpHostScope::new(&[bastion]),
+            &MemStore::default(),
+            None,
+        )
+        .unwrap();
 
         let hop = &hops(&settings)[0];
         assert_eq!(hop["host"], "bastion.example.com");
@@ -389,7 +536,7 @@ mod tests {
         let creds = MemStore::with(&[("gw", CredentialType::Password, "s3cret")]);
         let mut settings = settings_with_hops(json!([{ "connectionId": "gw" }]));
 
-        resolve_proxy_jump_refs(&mut settings, &[gw], &creds, None).unwrap();
+        resolve_proxy_jump_refs(&mut settings, &JumpHostScope::new(&[gw]), &creds, None).unwrap();
 
         assert_eq!(hops(&settings)[0]["password"], "s3cret");
     }
@@ -414,7 +561,7 @@ mod tests {
         ]);
         let mut settings = settings_with_hops(json!([{ "connectionId": "gw" }]));
 
-        resolve_proxy_jump_refs(&mut settings, &[gw], &creds, None).unwrap();
+        resolve_proxy_jump_refs(&mut settings, &JumpHostScope::new(&[gw]), &creds, None).unwrap();
 
         assert_eq!(hops(&settings)[0]["password"], "shared");
     }
@@ -438,7 +585,7 @@ mod tests {
             ("named-credential:nc-1", CredentialType::KeyPassphrase, "p"),
         ]);
         let mut settings = settings_with_hops(json!([{ "connectionId": "gw" }]));
-        let err = resolve_proxy_jump_refs(&mut settings, &[gw], &creds, None)
+        let err = resolve_proxy_jump_refs(&mut settings, &JumpHostScope::new(&[gw]), &creds, None)
             .expect_err("wrong-kind credential must not resolve");
         assert!(err.to_string().contains("No saved password"));
     }
@@ -452,8 +599,13 @@ mod tests {
         );
         let mut settings = settings_with_hops(json!([{ "connectionId": "gw" }]));
 
-        let err = resolve_proxy_jump_refs(&mut settings, &[gw], &MemStore::default(), None)
-            .expect_err("missing password should fail");
+        let err = resolve_proxy_jump_refs(
+            &mut settings,
+            &JumpHostScope::new(&[gw]),
+            &MemStore::default(),
+            None,
+        )
+        .expect_err("missing password should fail");
         let msg = err.to_string();
         assert!(msg.contains("No saved password"), "got: {msg}");
         assert!(msg.contains("gateway"), "error should name the hop: {msg}");
@@ -462,8 +614,13 @@ mod tests {
     #[test]
     fn missing_reference_errors() {
         let mut settings = settings_with_hops(json!([{ "connectionId": "ghost" }]));
-        let err = resolve_proxy_jump_refs(&mut settings, &[], &MemStore::default(), None)
-            .expect_err("missing reference should fail");
+        let err = resolve_proxy_jump_refs(
+            &mut settings,
+            &JumpHostScope::new(&[]),
+            &MemStore::default(),
+            None,
+        )
+        .expect_err("missing reference should fail");
         assert!(err.to_string().contains("not found"), "got: {err}");
     }
 
@@ -471,8 +628,13 @@ mod tests {
     fn non_ssh_reference_errors() {
         let local = conn("loc", "my-shell", "local", json!({}));
         let mut settings = settings_with_hops(json!([{ "connectionId": "loc" }]));
-        let err = resolve_proxy_jump_refs(&mut settings, &[local], &MemStore::default(), None)
-            .expect_err("non-ssh reference should fail");
+        let err = resolve_proxy_jump_refs(
+            &mut settings,
+            &JumpHostScope::new(&[local]),
+            &MemStore::default(),
+            None,
+        )
+        .expect_err("non-ssh reference should fail");
         assert!(
             err.to_string().contains("not an SSH connection"),
             "got: {err}"
@@ -497,7 +659,13 @@ mod tests {
         );
         let mut settings = settings_with_hops(json!([{ "connectionId": "bastion" }]));
 
-        resolve_proxy_jump_refs(&mut settings, &[bastion], &MemStore::default(), None).unwrap();
+        resolve_proxy_jump_refs(
+            &mut settings,
+            &JumpHostScope::new(&[bastion]),
+            &MemStore::default(),
+            None,
+        )
+        .unwrap();
 
         let chain = hops(&settings);
         assert_eq!(
@@ -530,7 +698,13 @@ mod tests {
         );
         let mut settings = settings_with_hops(json!([{ "connectionId": "A" }]));
 
-        resolve_proxy_jump_refs(&mut settings, &[a, b], &MemStore::default(), None).unwrap();
+        resolve_proxy_jump_refs(
+            &mut settings,
+            &JumpHostScope::new(&[a, b]),
+            &MemStore::default(),
+            None,
+        )
+        .unwrap();
 
         let chain = hops(&settings);
         assert_eq!(chain.len(), 2);
@@ -559,8 +733,13 @@ mod tests {
         );
         let mut settings = settings_with_hops(json!([{ "connectionId": "A" }]));
 
-        let err = resolve_proxy_jump_refs(&mut settings, &[a, b], &MemStore::default(), None)
-            .expect_err("A->B->A should be rejected");
+        let err = resolve_proxy_jump_refs(
+            &mut settings,
+            &JumpHostScope::new(&[a, b]),
+            &MemStore::default(),
+            None,
+        )
+        .expect_err("A->B->A should be rejected");
         assert!(err.to_string().contains("Circular"), "got: {err}");
     }
 
@@ -574,7 +753,7 @@ mod tests {
         let mut settings = settings_with_hops(json!([{ "connectionId": "self" }]));
         let err = resolve_proxy_jump_refs(
             &mut settings,
-            &[self_ref],
+            &JumpHostScope::new(&[self_ref]),
             &MemStore::default(),
             Some("self"),
         )
@@ -594,7 +773,86 @@ mod tests {
         );
         let mut settings =
             settings_with_hops(json!([{ "connectionId": "gw", "connectTimeoutSecs": 45 }]));
-        resolve_proxy_jump_refs(&mut settings, &[gw], &MemStore::default(), None).unwrap();
+        resolve_proxy_jump_refs(
+            &mut settings,
+            &JumpHostScope::new(&[gw]),
+            &MemStore::default(),
+            None,
+        )
+        .unwrap();
         assert_eq!(hops(&settings)[0]["connectTimeoutSecs"], 45);
+    }
+
+    fn remap(changes: &[(&str, &str)]) -> ConnectionIdRemap {
+        let changes: Vec<crate::connection::id_changes::ConnectionIdChange> = changes
+            .iter()
+            .map(|(o, n)| crate::connection::id_changes::ConnectionIdChange::new(*o, *n))
+            .collect();
+        ConnectionIdRemap::new(&changes)
+    }
+
+    #[test]
+    fn follow_jump_host_refs_rewrites_references_and_keeps_inline_hops() {
+        let mut settings = settings_with_hops(json!([
+            { "connectionId": "Work/bastion" },
+            { "host": "inline", "username": "u" },
+            { "connectionId": "other" }
+        ]));
+        assert!(follow_jump_host_refs(
+            &mut settings,
+            &remap(&[("Work/bastion", "Job/bastion")])
+        ));
+        let chain = hops(&settings);
+        assert_eq!(chain[0]["connectionId"], "Job/bastion");
+        assert_eq!(chain[1], json!({ "host": "inline", "username": "u" }));
+        assert_eq!(chain[2]["connectionId"], "other");
+    }
+
+    #[test]
+    fn follow_jump_host_refs_covers_the_legacy_alias_and_swaps() {
+        let mut settings = json!({
+            "host": "t",
+            "jumpHosts": [{ "connectionId": "a" }, { "connectionId": "b" }]
+        });
+        assert!(follow_jump_host_refs(
+            &mut settings,
+            &remap(&[("a", "b"), ("b", "a")])
+        ));
+        assert_eq!(settings["jumpHosts"][0]["connectionId"], "b");
+        assert_eq!(settings["jumpHosts"][1]["connectionId"], "a");
+    }
+
+    #[test]
+    fn follow_jump_host_refs_without_a_matching_reference_changes_nothing() {
+        let mut settings = settings_with_hops(json!([{ "connectionId": "x" }]));
+        let before = settings.clone();
+        assert!(!follow_jump_host_refs(&mut settings, &remap(&[("a", "b")])));
+        assert_eq!(settings, before);
+        let mut no_chain = json!({ "host": "t" });
+        assert!(!follow_jump_host_refs(&mut no_chain, &remap(&[("a", "b")])));
+    }
+
+    #[test]
+    fn follow_jump_host_refs_in_reports_whether_any_connection_changed() {
+        let mut conns = vec![
+            ssh_conn("gw", "gw", json!({ "host": "gw" })),
+            ssh_conn(
+                "t",
+                "t",
+                json!({ "host": "t", "proxyJump": [{ "connectionId": "gw" }] }),
+            ),
+        ];
+        assert!(follow_jump_host_refs_in(
+            &mut conns,
+            &remap(&[("gw", "Net/gw")])
+        ));
+        assert_eq!(
+            conns[1].config.settings["proxyJump"][0]["connectionId"],
+            "Net/gw"
+        );
+        assert!(!follow_jump_host_refs_in(
+            &mut conns,
+            &remap(&[("zz", "yy")])
+        ));
     }
 }

@@ -38,8 +38,9 @@
 //!
 //! **Direct-copy threshold.** A file at or below [`DIRECT_COPY_MAX_BYTES`] is
 //! copied directly (see [`should_queue_local_copy`]): it finishes faster than a
-//! queue row could render, so tracking it would only add noise. Directories are
-//! copied directly and recursively by the caller (`files::local::copy_sync`).
+//! queue row could render, so tracking it would only add noise. A directory is
+//! split file by file by [`super::local_folder`] (#3605): its large files are
+//! queued here, everything else is copied directly.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

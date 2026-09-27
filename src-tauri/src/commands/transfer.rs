@@ -60,13 +60,25 @@ pub async fn transfer_resume(
     .await)
 }
 
-/// Cancel an in-flight transfer (queued, active, or paused). Works for both
-/// SFTP and FTP transfers. Returns `true` when a live transfer was
+/// Cancel a transfer (queued, active, or paused). Works for every queued
+/// transfer, and for a **rehydrated** paused row from a previous run too
+/// (#3613): with no live handle its persisted record is pruned and the row moves
+/// to Cancelled — and a file of a local folder copy cancels the rest of its
+/// folder, as it does before a restart. Returns `true` when something was
 /// cancelled, `false` for an unknown/already-finished id.
 #[tauri::command]
-pub fn transfer_cancel(transfer_id: String, registry: State<'_, TransferRegistry>) -> bool {
+pub fn transfer_cancel(
+    transfer_id: String,
+    registry: State<'_, TransferRegistry>,
+    app_handle: tauri::AppHandle,
+) -> bool {
     debug!(transfer_id, "transfer cancel");
     registry.cancel(&transfer_id)
+        || crate::files::transfer::relaunch::cancel_rehydrated(
+            &transfer_id,
+            registry.inner(),
+            &app_handle,
+        )
 }
 
 /// Manually retry a failed transfer (resets its attempt counter). Returns

@@ -29,20 +29,37 @@ import {
   type PasteOptions,
 } from "@/utils/fileDragMove";
 
+/** How many skipped paths a toast names before summarising the rest. */
+const SKIPPED_NAMED = 3;
+
+/** Toast text for a folder copy's skipped special files (#3605). */
+function describeSkipped(skipped: string[]): string {
+  const n = skipped.length;
+  const named = skipped.slice(0, SKIPPED_NAMED).join(", ");
+  const rest = n > SKIPPED_NAMED ? ` and ${n - SKIPPED_NAMED} more` : "";
+  return `Skipped ${n} special file${n === 1 ? "" : "s"} (sockets, pipes or devices): ${named}${rest}`;
+}
+
 /**
- * Start a local copy of `srcPath` to `destPath` (PARITY-004, #3567): a large
- * file runs through the transfer queue — its row is seeded under
- * {@link LOCAL_TRANSFER_SESSION} — and a small file or a folder is copied
- * directly. Resolves to whether the queue tracked it.
+ * Start a local copy of `srcPath` to `destPath` (PARITY-004 #3567, folders
+ * #3605): a large file — or each large file of a folder — runs through the
+ * transfer queue with its own row seeded under {@link LOCAL_TRANSFER_SESSION};
+ * small files, folders and symlinks are copied directly, and a folder's
+ * skipped special files are reported. Resolves to whether the queue tracked
+ * any of it.
  */
 function copyLocal(srcPath: string, destPath: string): Promise<boolean> {
-  return localCopyStart(srcPath, destPath, (transferId) =>
-    seedTransferQueueRow({
-      transferId,
-      sessionId: LOCAL_TRANSFER_SESSION,
-      direction: "download",
-      remotePath: srcPath,
-    })
+  return localCopyStart(
+    srcPath,
+    destPath,
+    (transferId, fileSrcPath) =>
+      seedTransferQueueRow({
+        transferId,
+        sessionId: LOCAL_TRANSFER_SESSION,
+        direction: "download",
+        remotePath: fileSrcPath,
+      }),
+    (skipped) => toast.info(describeSkipped(skipped))
   );
 }
 

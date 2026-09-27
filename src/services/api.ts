@@ -1645,9 +1645,10 @@ export async function transferResume(transferId: string): Promise<boolean> {
   return await invoke<boolean>("transfer_resume", { transferId });
 }
 
-/** Cancel a transfer (queued, active, or paused). Resolves `true` when a live
+/** Cancel a transfer (queued, active, or paused). Resolves `true` when a
  * transfer was cancelled, `false` for an unknown/already-finished id. Works for
- * every queued transfer (SFTP and FTP). */
+ * every queued transfer, including a paused row rehydrated from a previous run;
+ * a file of a local folder copy cancels the rest of its folder (#3613). */
 export async function transferCancel(transferId: string): Promise<boolean> {
   return await invoke<boolean>("transfer_cancel", { transferId });
 }
@@ -1782,33 +1783,62 @@ export async function dragOutStart(paths: string[]): Promise<DragOutResult> {
  */
 export const LOCAL_TRANSFER_SESSION = "local";
 
+/** One file a local copy runs through the transfer queue (Rust `QueuedLocalCopy`). */
+export interface QueuedLocalCopy {
+  transferId: string;
+  /** The file being copied — its queue row's name and path. */
+  srcPath: string;
+}
+
+/** What `local_copy_start` started (Rust `LocalCopyStarted`, #3605). */
+interface LocalCopyStarted {
+  /** Files copied in the background; empty when everything was copied directly. */
+  queued: QueuedLocalCopy[];
+  /** A folder's special files (sockets, FIFOs, devices) that were not copied. */
+  skipped: string[];
+}
+
 /**
  * Copy a file or directory on the local filesystem, through the transfer queue
- * when it is big enough to be worth tracking (PARITY-004, #3567).
+ * when it is big enough to be worth tracking (PARITY-004 #3567, folders #3605).
  *
  * A file above the backend's direct-copy threshold (8 MiB) registers a queued
- * transfer — progress, pause/resume, cancel, retry — whose id is handed to
- * `onRegistered` (to seed its Transfer Queue row) before this resolves on
- * completion. A smaller file or a directory is copied directly. Local ↔ WSL
- * copies go through here too: WSL paths are host `//wsl$` UNC paths.
+ * transfer — progress, pause/resume, cancel, retry — whose id and source path
+ * are handed to `onRegistered` (to seed its Transfer Queue row) before this
+ * resolves on completion. A smaller file is copied directly. A folder is laid
+ * out directly (dirs, symlinks, small files — merging into an existing
+ * destination folder) and each of its large files queued as its own row;
+ * cancelling one cancels the folder's rest. Special files the folder walk
+ * skipped are handed to `onSkipped`. Local ↔ WSL copies go through here too:
+ * WSL paths are host `//wsl$` UNC paths.
  *
- * Resolves to whether the copy was tracked by the queue (whose event path then
- * owns the terminal toast); rejects with a {@link TransferTerminalError} when a
- * tracked copy is cancelled or fails.
+ * Resolves to whether any of the copy was tracked by the queue (whose event
+ * path then owns the terminal toasts) once every queued file settled; rejects
+ * with a {@link TransferTerminalError} when a tracked file was cancelled or
+ * failed.
  */
 export async function localCopyStart(
   srcPath: string,
   destPath: string,
-  onRegistered?: (transferId: string) => void
+  onRegistered?: (transferId: string, srcPath: string) => void,
+  onSkipped?: (skipped: string[]) => void
 ): Promise<boolean> {
   // Listen *before* starting: a local copy just over the threshold can settle
   // before a listener registered after the command returns would attach.
   const watch = await watchTransferSettlements();
   try {
-    const transferId = await invoke<string | null>("local_copy_start", { srcPath, destPath });
-    if (!transferId) return false;
-    onRegistered?.(transferId);
-    await watch.settled(transferId);
+    const started = await invoke<LocalCopyStarted | null>("local_copy_start", {
+      srcPath,
+      destPath,
+    });
+    const skipped = started?.skipped ?? [];
+    if (skipped.length > 0) onSkipped?.(skipped);
+    const queued = started?.queued ?? [];
+    if (queued.length === 0) return false;
+    for (const copy of queued) onRegistered?.(copy.transferId, copy.srcPath);
+    const outcomes = await Promise.allSettled(queued.map((copy) => watch.settled(copy.transferId)));
+    const failed = outcomes.find((o): o is PromiseRejectedResult => o.status === "rejected");
+    if (failed) throw failed.reason;
     return true;
   } finally {
     watch.stop();

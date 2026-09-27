@@ -136,6 +136,10 @@ function locationAreas(path) {
     return ["markdown"];
   }
 
+  // Tauri config (incl. platform/test overlays) carries the webview CSP, whose
+  // allow-list guard is a vitest suite (src/security/cspConfig.test.ts, #3627).
+  if (/^src-tauri\/tauri(\.[a-z]+)?\.conf\.json$/.test(path)) return ["rust", "frontend"];
+
   if (
     startsWithAny(path, RUST_ROOTS) ||
     RUST_FILES.has(path) ||

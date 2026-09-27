@@ -90,6 +90,24 @@ describe("JumpHostEntry", () => {
     expect(onChange).toHaveBeenCalledWith({ connectionId: undefined });
   });
 
+  it("switching to saved skips an ambiguous first option (#3602)", () => {
+    const saved = [{ id: "dup", label: "dup", ambiguous: true }, ...SAVED];
+    const onChange = render({ hop: hop(), saved });
+    act(() => query("jump-host-source-saved-0")?.click());
+    expect(onChange).toHaveBeenCalledWith({ connectionId: "conn-a", host: "", username: "" });
+  });
+
+  it("warns when the referenced id is held by several connection files (#3602)", () => {
+    const saved = [{ id: "dup", label: "dup", ambiguous: true }, ...SAVED];
+    render({ hop: hop({ connectionId: "dup" }), saved });
+    expect(query("jump-host-ambiguous-0")?.textContent).toMatch(/more than one connection file/);
+  });
+
+  it("shows no ambiguity warning for a unique reference", () => {
+    render({ hop: hop({ connectionId: "conn-a" }) });
+    expect(query("jump-host-ambiguous-0")).toBeNull();
+  });
+
   it("clicking the already-active source is a no-op", () => {
     const onChange = render({ hop: hop({ connectionId: "conn-a" }) });
     act(() => query("jump-host-source-saved-0")?.click());
