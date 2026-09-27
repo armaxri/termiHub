@@ -244,13 +244,11 @@ impl RemoteAgentConfig {
     /// credential sent to the remote host. `key_path` is a *path* to a key
     /// file, not the key itself, so it still expands. (CORE-031 / SEC-001 /
     /// PER-007.)
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the agent connect path does not route through it yet (#3661)"
-        )
-    )]
+    ///
+    /// Applied on every agent path that opens an SSH connection from this config
+    /// (#3661): the manager's connect (command + redrive re-establish, and the
+    /// in-task reconnect via the expanded copy), deploy / update / stage, probe
+    /// and arch detection.
     pub fn expand(mut self) -> Self {
         self.host = expand_config_value(&self.host);
         self.username = expand_config_value(&self.username);

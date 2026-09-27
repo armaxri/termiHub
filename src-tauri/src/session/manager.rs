@@ -1099,6 +1099,23 @@ impl SessionManager {
                         resilient: true,
                     },
                 );
+                // A resilient AGENT tab also opts its agent's SSH transport
+                // config into the reap-surviving reattach store (#3661), so the
+                // redrive's `reconnect_retained_agent` can cold-re-establish a
+                // reaped transport instead of always folding `NoRetainedConfig`.
+                // Gated on `resilient_reconnect` like the request itself, and
+                // refcount-scrubbed with it: the last resilient tab on the agent
+                // releasing its request scrubs the config
+                // (`clear_retained_request_with_agent_scrub`).
+                if let Some(agent_id) = agent_id {
+                    if !self.agent_manager.retain_agent_config(agent_id) {
+                        warn!(
+                            agent_id,
+                            "resilient agent tab connected but the agent has no live \
+                             connection to retain a reattach config from"
+                        );
+                    }
+                }
             }
         }
 
@@ -1369,7 +1386,9 @@ impl SessionManager {
         // binding here — the drop already removed it — so the post-drop terminal
         // states clear the retained request via the lifecycle-intent routes.)
         if let Some(binding) = &removed_binding {
-            self.retained_requests.clear(&binding.tab_id);
+            // Refcounted: closing the last resilient tab on an agent also scrubs
+            // that agent's retained transport config (#3661).
+            self.clear_retained_request_with_agent_scrub(&binding.tab_id);
         }
         let mut sessions = self.sessions.lock().await;
         if let Some(mut entry) = sessions.remove(session_id) {
@@ -1418,7 +1437,8 @@ impl SessionManager {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(session_id)
         {
-            self.retained_requests.clear(&binding.tab_id);
+            // Refcounted agent-config scrub, as in `close_session` (#3661).
+            self.clear_retained_request_with_agent_scrub(&binding.tab_id);
         }
         let removed = self.sessions.lock().await.remove(session_id);
         if let Some(entry) = removed {

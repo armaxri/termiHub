@@ -99,7 +99,9 @@ pub struct RemoteArchInfo {
 /// Called before the setup dialog opens so the dialog can show the detected
 /// architecture and pre-select the correct download URL.
 pub fn detect_agent_arch_info(config: &RemoteAgentConfig) -> Result<RemoteArchInfo, TerminalError> {
-    let ssh_config = config.to_ssh_config();
+    // Expand `${env:…}` / `~` in host / username / key path like the agent
+    // connect path does (#3661); the password stays verbatim.
+    let ssh_config = config.clone().expand().to_ssh_config();
     let session = connect_and_authenticate(&ssh_config)?;
     let (os, arch) = detect_remote_info(&session)?;
     let arch_suffix = agent_binary::artifact_name_for_os_arch(&os, &arch).map(str::to_string);
