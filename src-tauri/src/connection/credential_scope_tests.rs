@@ -98,7 +98,7 @@ fn bindings_survive_a_restart() {
     write_file(&file, None);
     let state = dir.path().join(STATE_FILE_NAME);
     let id = FileScopes::load(state.clone()).resolve(&s(&file), &[s(&file)]);
-    FileScopes::load(state.clone()).complete_migration(&id, None);
+    FileScopes::load(state.clone()).complete_migration(&id, None, &[]);
 
     let reloaded = FileScopes::load(state);
     assert_eq!(reloaded.binding(&s(&file)).as_deref(), Some(id.as_str()));
@@ -221,11 +221,23 @@ fn notices_are_taken_once() {
         file_path: "/f.json".to_string(),
         connection_names: vec!["x".to_string()],
     };
-    scopes.complete_migration(SCOPE, Some(notice.clone()));
+    scopes.complete_migration(SCOPE, Some(notice.clone()), &[]);
 
     // Persisted until shown, so a crash before showing it keeps it.
     assert_eq!(FileScopes::load(state.clone()).take_notices(), vec![notice]);
     assert!(FileScopes::load(state).take_notices().is_empty());
+}
+
+#[test]
+fn kept_bare_keys_survive_a_restart_until_forgotten() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join(STATE_FILE_NAME);
+    FileScopes::load(state.clone()).complete_migration(SCOPE, None, &["x".to_string()]);
+
+    let reloaded = FileScopes::load(state.clone());
+    assert_eq!(reloaded.kept_bare_keys(), vec!["x".to_string()]);
+    reloaded.forget_kept_bare_keys(&["x".to_string()]);
+    assert!(FileScopes::load(state).kept_bare_keys().is_empty());
 }
 
 #[test]
@@ -247,8 +259,8 @@ fn alone(_: &str) -> LegacyHolders {
 #[test]
 fn an_unshared_secret_moves_to_the_scoped_key() {
     let store = RecordingStore::with(&[("x", PW, "X"), ("x", KEY, "XK")]);
-    let shared = migrate_legacy_keys(SCOPE, &[conn("x")], alone, &store).unwrap();
-    assert!(shared.is_empty());
+    let result = migrate_legacy_keys(SCOPE, &[conn("x")], alone, &store).unwrap();
+    assert_eq!(result, MigratedKeys::default());
     assert_eq!(store.value(&scoped("x"), PW).as_deref(), Some("X"));
     assert_eq!(store.value(&scoped("x"), KEY).as_deref(), Some("XK"));
     assert_eq!(store.value("x", PW), None);
@@ -268,7 +280,8 @@ fn a_secret_shared_with_the_main_store_is_copied_and_reported() {
         &store,
     )
     .unwrap();
-    assert_eq!(shared, vec!["x".to_string()]);
+    assert_eq!(shared.shared, vec!["x".to_string()]);
+    assert_eq!(shared.kept_bare, vec!["x".to_string()]);
     assert_eq!(store.value("x", PW).as_deref(), Some("X"));
     assert_eq!(store.value(&scoped("x"), PW).as_deref(), Some("X"));
 }
@@ -292,7 +305,7 @@ fn migration_is_idempotent() {
     migrate_legacy_keys(SCOPE, &[conn("x")], holders, &store).unwrap();
     let after_first = store.snapshot();
     let again = migrate_legacy_keys(SCOPE, &[conn("x")], holders, &store).unwrap();
-    assert!(again.is_empty());
+    assert_eq!(again, MigratedKeys::default());
     assert_eq!(store.snapshot(), after_first);
 }
 

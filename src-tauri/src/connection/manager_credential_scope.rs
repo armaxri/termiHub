@@ -60,8 +60,10 @@ impl ConnectionManager {
     }
 
     /// Migrate the pre-#3591 secrets of every configured external file that
-    /// has not been migrated yet. A no-op while the store is not unlocked; a
-    /// failure is logged and retried on the next call.
+    /// has not been migrated yet, then delete the bare keys kept only because
+    /// a file could not be read once nothing may need them (see
+    /// [`Self::clean_up_kept_bare_keys`]). A no-op while the store is not
+    /// unlocked; a failure is logged and retried on the next call.
     pub fn migrate_credential_scopes(&self) {
         if self.credential_store.status() != CredentialStoreStatus::Unlocked {
             return;
@@ -75,6 +77,85 @@ impl ConnectionManager {
                 self.external_scope(&path);
             }
         }
+        self.clean_up_kept_bare_keys();
+    }
+
+    /// Delete the bare keys a migration kept only because some configured
+    /// file could not be read (#3650), once every configured file is readable
+    /// and migrated — so every scoped copy was written durably and no
+    /// unmigrated file may still need the bare key. An id the main store or an
+    /// agent uses keeps its bare key (it is theirs) and is no longer tracked.
+    /// A file removed from the configuration no longer holds anything back.
+    pub(crate) fn clean_up_kept_bare_keys(&self) {
+        if self.file_scopes.kept_bare_keys().is_empty()
+            || self.credential_store.status() != CredentialStoreStatus::Unlocked
+        {
+            return;
+        }
+        let _one_at_a_time = self
+            .scope_migration
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let kept = self.file_scopes.kept_bare_keys();
+        if kept.is_empty() || !self.all_external_files_migrated() {
+            return;
+        }
+        let main = match self.get_all() {
+            Ok(main) => main,
+            Err(e) => {
+                tracing::warn!(error = %e, "Could not read the connection store; will retry");
+                return;
+            }
+        };
+        let main_ids: HashSet<String> = main
+            .connections
+            .into_iter()
+            .map(|c| c.id)
+            .chain(main.agents.into_iter().map(|a| a.id))
+            .collect();
+
+        let mut done = Vec::new();
+        for id in kept {
+            if main_ids.contains(&id) {
+                done.push(id);
+                continue;
+            }
+            let mut removed = true;
+            for cred_type in CredentialType::ALL {
+                let bare = CredentialKey::new(&id, cred_type);
+                if let Err(e) = self.credential_store.remove(&bare) {
+                    removed = false;
+                    tracing::warn!(
+                        key = %bare,
+                        error = %e,
+                        "Failed to remove a migrated credential's bare key; will retry"
+                    );
+                }
+            }
+            if removed {
+                done.push(id);
+            }
+        }
+        if !done.is_empty() {
+            tracing::info!(
+                count = done.len(),
+                "Removed saved credentials left under bare connection ids"
+            );
+        }
+        self.file_scopes.forget_kept_bare_keys(&done);
+    }
+
+    /// Whether every configured external file exists, can be read and was
+    /// migrated, so none of them may still need a bare key.
+    fn all_external_files_migrated(&self) -> bool {
+        self.configured_external_paths().iter().all(|path| {
+            Path::new(path).exists()
+                && read_external_store(path).is_ok()
+                && self
+                    .file_scopes
+                    .binding(path)
+                    .is_some_and(|id| self.file_scopes.is_migrated(&id))
+        })
     }
 
     /// Take the one-time notices about secrets copied from a key several
@@ -144,7 +225,7 @@ impl ConnectionManager {
         let is_new = !Path::new(path).exists();
         let written = super::place_in_external_file(path, scope, connection, mode, folder_source)?;
         if is_new {
-            self.file_scopes.complete_migration(scope, None);
+            self.file_scopes.complete_migration(scope, None, &[]);
         }
         Ok(written)
     }
@@ -169,7 +250,7 @@ impl ConnectionManager {
             &*self.credential_store,
         )?;
         if is_new {
-            self.file_scopes.complete_migration(&scope, None);
+            self.file_scopes.complete_migration(&scope, None, &[]);
         }
         Ok(())
     }
@@ -189,12 +270,13 @@ impl ConnectionManager {
             return;
         }
         match self.try_migrate_legacy_secrets(path, scope) {
-            Ok(notice) => {
+            Ok((notice, kept_bare)) => {
                 tracing::info!(
                     file = path,
                     "Scoped the saved credentials of an external connection file"
                 );
-                self.file_scopes.complete_migration(scope, notice);
+                self.file_scopes
+                    .complete_migration(scope, notice, &kept_bare);
             }
             Err(e) => tracing::warn!(
                 file = path,
@@ -204,7 +286,13 @@ impl ConnectionManager {
         }
     }
 
-    fn try_migrate_legacy_secrets(&self, path: &str, scope: &str) -> Result<Option<ScopeNotice>> {
+    /// Migrate one file; returns its notice and the ids whose bare key was
+    /// kept while some other configured file could not be read.
+    fn try_migrate_legacy_secrets(
+        &self,
+        path: &str,
+        scope: &str,
+    ) -> Result<(Option<ScopeNotice>, Vec<String>)> {
         if !Path::new(path).exists() {
             bail!("the file does not exist");
         }
@@ -255,11 +343,20 @@ impl ConnectionManager {
                 keep_bare_key: in_main || pending || unreadable,
             }
         };
-        let shared = migrate_legacy_keys(scope, &connections, holders, &*self.credential_store)?;
-        Ok((!shared.is_empty()).then(|| ScopeNotice {
+        let result = migrate_legacy_keys(scope, &connections, holders, &*self.credential_store)?;
+        let notice = (!result.shared.is_empty()).then(|| ScopeNotice {
             file_path: path.to_string(),
-            connection_names: shared,
-        }))
+            connection_names: result.shared,
+        });
+        // Only an unreadable file can leave a bare key behind for good: the
+        // main store's and agents' keys are theirs, and a pending file's
+        // migration decides about the key itself.
+        let kept_bare = if unreadable {
+            result.kept_bare
+        } else {
+            Vec::new()
+        };
+        Ok((notice, kept_bare))
     }
 }
 
