@@ -15,6 +15,7 @@ import { XServerConsentDecision, XServerStatusReport } from "@/types/xserver";
 import type {
   ClipboardImageInfo,
   ClipboardImageStatus,
+  MonitorRect,
   RemoteClipboardFile,
   RemoteDesktopInput,
 } from "@/types/remoteDesktop";
@@ -712,6 +713,25 @@ export async function remoteDesktopResize(
  */
 export async function remoteDesktopRequestFullFrame(sessionId: SessionId): Promise<void> {
   await invoke("remote_desktop_request_full_frame", { sessionId });
+}
+
+/**
+ * The session's monitors in framebuffer coordinates (#3696) — one per remote
+ * monitor; empty for a single-monitor session.
+ */
+export async function remoteDesktopMonitorLayout(sessionId: SessionId): Promise<MonitorRect[]> {
+  return await invoke<MonitorRect[]>("remote_desktop_monitor_layout", { sessionId });
+}
+
+/**
+ * Replace the session's monitor layout at runtime (#3696). The backend
+ * normalizes it; ownership-gated like a resize.
+ */
+export async function remoteDesktopSetMonitorLayout(
+  sessionId: SessionId,
+  monitors: MonitorRect[]
+): Promise<void> {
+  await invoke("remote_desktop_set_monitor_layout", { sessionId, monitors });
 }
 
 /** Forward a protocol-agnostic input event (key / pointer / wheel). */

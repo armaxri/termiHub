@@ -9,6 +9,10 @@
 use serde::Deserialize;
 
 use crate::config::SshConfig;
+use crate::connection::graphical_monitors::{
+    deserialize_monitor_count, deserialize_monitor_rects, monitor_fields, resolve_monitor_layout,
+    MonitorLayout, MonitorMode, MonitorRect, MONITORS_SINGLE,
+};
 use crate::connection::graphical_resolution::{
     normalize_fixed_size, server_resolution_fields, DEFAULT_FIXED_HEIGHT, DEFAULT_FIXED_WIDTH,
     RESOLUTION_MODE_DYNAMIC, RESOLUTION_MODE_SERVER,
@@ -18,7 +22,7 @@ use crate::connection::schema::{
 };
 use crate::connection::{is_fixed_mode, shared_field_base, SettingsSchema};
 
-use super::desktop_size::ResolutionMode;
+use super::desktop_size::{DesktopSize, ResolutionMode};
 
 /// Default RFB display 0 → port 5900.
 pub const VNC_BASE_PORT: u16 = 5900;
@@ -104,6 +108,16 @@ pub struct VncConfig {
     /// SSH gateway password. Doubles as the private-key passphrase when the auth
     /// method is `"key"`; ignored for `"agent"`.
     pub ssh_password: String,
+    /// Monitor mode select (`"single" | "all" | "custom"`, #3696). Anything
+    /// else — including the empty value of a pre-#3696 config — is single.
+    pub monitors: String,
+    /// Monitor count for the custom mode (2..=16).
+    #[serde(deserialize_with = "deserialize_monitor_count")]
+    pub monitor_count: Option<u8>,
+    /// The concrete layout stamped by the frontend at connect time from the
+    /// local display geometry (#3696). Not part of the editor schema.
+    #[serde(deserialize_with = "deserialize_monitor_rects")]
+    pub monitor_layout: Vec<MonitorRect>,
 }
 
 impl Default for VncConfig {
@@ -131,6 +145,9 @@ impl Default for VncConfig {
             ssh_auth_method: "password".to_string(),
             ssh_key_path: None,
             ssh_password: String::new(),
+            monitors: MONITORS_SINGLE.to_string(),
+            monitor_count: None,
+            monitor_layout: Vec::new(),
         }
     }
 }
@@ -164,6 +181,27 @@ impl VncConfig {
         } else {
             ResolutionMode::Server
         }
+    }
+
+    /// The multi-monitor layout this connection asks for, or `None` for a
+    /// single-monitor session (#3696). The custom mode without a stamped layout
+    /// uses the fixed size (or the editor's 1920x1080 default) per monitor.
+    pub fn multi_monitor_layout(&self) -> Option<MonitorLayout> {
+        let per_monitor = match self.resolution_mode() {
+            ResolutionMode::Fixed { width, height } => (width, height),
+            _ => (DEFAULT_FIXED_WIDTH, DEFAULT_FIXED_HEIGHT),
+        };
+        resolve_monitor_layout(
+            MonitorMode::from_settings(&self.monitors, self.monitor_count),
+            &self.monitor_layout,
+            per_monitor,
+        )
+    }
+
+    /// The remote-resolution negotiation state for a new connection: the
+    /// resolution mode plus any multi-monitor layout (#3463, #3696).
+    pub(super) fn desktop_size(&self) -> DesktopSize {
+        DesktopSize::new(self.resolution_mode()).with_monitors(self.multi_monitor_layout())
     }
 
     /// Whether the raw (uncompressed) encoding was requested in preference to ZRLE.
@@ -347,6 +385,7 @@ pub fn vnc_settings_schema() -> SettingsSchema {
     if let Some(display) = groups.iter_mut().find(|g| g.key == "display") {
         display.fields.push(color_depth_field());
         display.fields.extend(server_resolution_fields());
+        display.fields.extend(monitor_fields());
     }
 
     groups.push(SettingsGroup {
@@ -707,6 +746,46 @@ mod tests {
     }
 
     #[test]
+    fn monitors_default_to_single_and_resolve_a_stamped_layout() {
+        let cfg: VncConfig = serde_json::from_value(serde_json::json!({ "host": "h" })).unwrap();
+        assert!(cfg.multi_monitor_layout().is_none());
+        assert!(!cfg.desktop_size().negotiates_layout());
+
+        let cfg: VncConfig = serde_json::from_value(serde_json::json!({
+            "host": "h",
+            "monitors": "all",
+            "monitorLayout": [
+                { "x": 0, "y": 0, "width": 1024, "height": 768, "primary": true },
+                { "x": 1024, "y": 0, "width": 1024, "height": 768 }
+            ]
+        }))
+        .unwrap();
+        assert_eq!(
+            cfg.multi_monitor_layout().map(|l| l.desktop_size()),
+            Some((2048, 768))
+        );
+        // The server-default resolution mode still negotiates the layout.
+        assert!(cfg.desktop_size().negotiates_layout());
+    }
+
+    #[test]
+    fn custom_monitors_without_a_layout_use_the_fixed_size() {
+        let cfg: VncConfig = serde_json::from_value(serde_json::json!({
+            "host": "h",
+            "monitors": "custom",
+            "monitorCount": 2,
+            "resolutionMode": "fixed",
+            "width": 1280,
+            "height": 720
+        }))
+        .unwrap();
+        assert_eq!(
+            cfg.multi_monitor_layout().map(|l| l.desktop_size()),
+            Some((2560, 720))
+        );
+    }
+
+    #[test]
     fn schema_has_no_domain_field() {
         let schema = vnc_settings_schema();
         let has_domain = schema
@@ -812,7 +891,9 @@ mod tests {
                 "colorDepth",
                 "resolutionMode",
                 "width",
-                "height"
+                "height",
+                "monitors",
+                "monitorCount"
             ]
         );
         let depth = &display.fields[1];

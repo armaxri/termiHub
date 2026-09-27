@@ -11,7 +11,10 @@ earlier methods never alias later ones.
 
 from __future__ import annotations
 
+import os
+import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -24,6 +27,7 @@ from termihub_harness import (
     SSH_KEY_PATH,
     SSH_PASSWORD_PORT,
     SSH_USERNAME,
+    SSH_X11_PORT,
     SshServerControl,
     SystemTest,
     TabsUi,
@@ -253,7 +257,12 @@ class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptU
     # WKWebView JS-thread starvation under the always-on Docker/krunkit VMs (#2460).
     request_timeout = LIVE_CONNECT_REQUEST_TIMEOUT
 
-    def test_handles_server_disconnect(self):
+    def _connect_and_drop(self, name: str, *, marker: str | None = None) -> str:
+        """Connect a password SSH tab, optionally echo ``marker``, then drop it.
+
+        Returns the tab id once the client has marked the session exited and the
+        disconnect overlay is up.
+        """
         control = SshServerControl()
         if not control.available:
             pytest.skip("no container runtime to drop the SSH session server-side")
@@ -262,7 +271,6 @@ class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptU
         # connection spawns can be isolated by set difference and killed alone.
         pids_before = control.session_pids()
 
-        name = unique_name("ssh-disconnect")
         self.create_ssh_connection(
             name,
             host=HOST,
@@ -281,6 +289,13 @@ class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptU
         self.wait(self.has_terminal, what="the SSH terminal session")
         tab_id = tab["id"]
 
+        if marker is not None:
+            # Split the marker in the typed command so only the echoed output (not
+            # the command line itself) can satisfy the wait.
+            head, tail = marker[: len(marker) // 2], marker[len(marker) // 2 :]
+            self.run_command(f"echo {head}''{tail}")
+            self.wait_for_output(marker, tab_id=tab_id)
+
         # Drop *only* this connection's sshd session at the server. The server-side
         # sshd session process appears asynchronously *after* the client initiates
         # the connection, and ``has_terminal`` above only proves the xterm mounted
@@ -295,19 +310,155 @@ class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptU
         control.kill_sessions(new_pids)
 
         # The client must surface the disconnect: the tab's session is marked
-        # exited and the disconnect overlay (offering a reconnect) appears. This
-        # is the reconnect/error UX the scenario exists to verify — not weakened
-        # to a bare "did not crash" check.
+        # exited and the disconnect overlay (offering a reconnect) appears.
         self.wait(
             lambda: self.driver.get_state("terminalExitedTabs").get(tab_id) is True,
             what="the SSH tab to be marked disconnected",
         )
+        self.wait(
+            lambda: self.driver.exists("terminal-disconnect-overlay"),
+            what="the disconnect overlay",
+        )
+        return tab_id
+
+    def test_handles_server_disconnect(self):
+        name = unique_name("ssh-disconnect")
+        self._connect_and_drop(name)
+
+        # This is the reconnect/error UX the scenario exists to verify — not
+        # weakened to a bare "did not crash" check.
         assert self.driver.exists("terminal-disconnect-overlay")
         assert self.driver.exists("terminal-disconnect-reconnect-btn")
 
         # A dropped session must leave the tab in place (disconnect ≠ tab closed),
         # so the user can read the scrollback and reconnect.
         assert self.find_tab(name) is not None
+
+    # ── MT-SSH-24 / MT-SSH-25: view mode after a server-side drop ────────────
+    def test_view_mode_keeps_scrollback_and_enter_offers_reconnect(self):
+        marker = "TH_VIEWMODE_SCROLLBACK_4417"
+        tab_id = self._connect_and_drop(unique_name("ssh-viewmode"), marker=marker)
+
+        # MT-SSH-24: "View Scrollback" dismisses the overlay into view mode — a
+        # thin "Session ended" banner — and the earlier output is still in the
+        # buffer (the drop must not wipe the scrollback).
+        self.driver.click("terminal-disconnect-view-btn")
+        self.wait(
+            lambda: not self.driver.exists("terminal-disconnect-overlay"),
+            what="the disconnect overlay to close",
+        )
+        self.wait(
+            lambda: self.driver.exists("terminal-view-mode-banner"),
+            what="the view-mode banner",
+        )
+        assert "Session ended" in self.driver.get_text("terminal-view-mode-banner")
+        assert marker in self.driver.read_terminal(tab_id), (
+            "view mode must keep the pre-disconnect scrollback"
+        )
+
+        # MT-SSH-25: Enter in view mode offers a reconnect instead of typing into
+        # the dead session. xterm only handles keydown on its hidden input, which
+        # the terminal tags per tab for the bridge.
+        terminal_input = f"terminal-input-{tab_id}"
+        self.driver.press_key("Enter", terminal_input)
+        self.wait(
+            lambda: self.driver.exists("terminal-reconnect-prompt"),
+            what="the reconnect prompt after Enter in view mode",
+        )
+        assert "Would you like to reconnect?" in self.driver.get_text(
+            "terminal-reconnect-prompt"
+        )
+        assert self.driver.exists("terminal-reconnect-prompt-reconnect-btn")
+
+        # "Stay in View Mode" closes the prompt and leaves the tab in view mode.
+        self.driver.click("terminal-reconnect-prompt-stay-btn")
+        self.wait(
+            lambda: not self.driver.exists("terminal-reconnect-prompt"),
+            what="the reconnect prompt to close",
+        )
+        assert self.driver.exists("terminal-view-mode-banner")
+        assert marker in self.driver.read_terminal(tab_id)
+
+        # Enter again re-offers it; "Reconnect" starts a fresh session in the tab.
+        self.driver.press_key("Enter", terminal_input)
+        self.wait(
+            lambda: self.driver.exists("terminal-reconnect-prompt"),
+            what="the reconnect prompt a second time",
+        )
+        self.driver.click("terminal-reconnect-prompt-reconnect-btn")
+
+        def reconnected() -> bool:
+            # The credential may or may not be re-requested; answer it if asked.
+            if self.password_prompt_open():
+                self.handle_password_prompt()
+            return (
+                self.driver.get_state("terminalExitedTabs").get(tab_id) is not True
+                and not self.driver.exists("terminal-reconnect-prompt")
+                and not self.driver.exists("terminal-view-mode-banner")
+            )
+
+        self.wait(reconnected, what="the tab to reconnect to a fresh session")
+        self.run_command("echo TH_RECON''NECTED_OK")
+        self.wait_for_output("TH_RECONNECTED_OK", tab_id=tab_id)
+
+
+def _local_x_server_available() -> bool:
+    """Whether the host running the app has a local X server to forward to.
+
+    termiHub only injects ``DISPLAY`` into the remote shell when its X11
+    forwarder starts, which needs a local X server (an Xvfb/Xorg display on
+    Linux, XQuartz on macOS). Without one the connect degrades gracefully (no
+    ``DISPLAY``; covered headlessly by ``core/tests/ssh_x11.rs``), so the
+    DISPLAY assertion below is only meaningful where a server exists.
+    """
+    if sys.platform == "win32":
+        return False
+    if os.environ.get("DISPLAY"):
+        return True
+    x11_dir = Path("/tmp/.X11-unix")
+    return x11_dir.is_dir() and any(p.name.startswith("X") for p in x11_dir.iterdir())
+
+
+@pytest.mark.usefixtures("ssh_x11_fixtures")
+class TestSshX11Display(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SystemTest):
+    """MT-SSH-16: an X11-forwarding SSH session gets a forwarded ``$DISPLAY``.
+
+    Moved out of the guided-manual ``test_external_app.py`` X11 test: the
+    ``ssh-x11`` fixture ships ``X11Forwarding yes`` + ``xauth``, so a session
+    opened with X11 forwarding on (the SSH default) must export
+    ``DISPLAY=localhost:N.0`` in the remote shell — no operator needed. Only the
+    "an X window appears" step stays manual.
+    """
+
+    request_timeout = LIVE_CONNECT_REQUEST_TIMEOUT
+
+    def test_x11_session_sets_forwarded_display(self):
+        if not _local_x_server_available():
+            pytest.skip("no local X server to forward to (DISPLAY unset, no /tmp/.X11-unix)")
+
+        name = unique_name("x11-display")
+        # SSH connections default X11 forwarding ON (test_ssh_x11_defaults_on),
+        # so the default form is what negotiates forwarding here.
+        self.create_ssh_connection(
+            name,
+            host=HOST,
+            port=SSH_X11_PORT,
+            username=SSH_USERNAME,
+            connect=True,
+        )
+        self.handle_password_prompt()
+        self.accept_host_key_prompt()
+        tab = self.wait(lambda: self.find_tab(name), what="the X11 SSH tab")
+        self.wait(self.has_terminal, what="the X11 SSH terminal")
+
+        # A unique marker keeps the typed command line ('$DISPLAY') from matching
+        # before the echoed value does.
+        self.run_command("echo TH_X11_DISPLAY=$DISPLAY")
+        output = self.wait_for_output("TH_X11_DISPLAY=localhost:", tab_id=tab["id"])
+        assert "TH_X11_DISPLAY=localhost:" in output, (
+            "no forwarded $DISPLAY in the remote shell — X11 forwarding was not "
+            "negotiated"
+        )
 
 
 # SSH-07 (X11 forwarding) was left unimplemented in the WebdriverIO suite because

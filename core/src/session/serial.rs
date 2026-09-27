@@ -229,7 +229,44 @@ fn classify_open_error(err: &std::io::Error) -> SerialOpenError {
     }
 }
 
+/// Baud rates macOS termios can express without the `IOSSIOSPEED` ioctl
+/// (`B50`..`B230400` in `<sys/termios.h>`, whose values equal the rate).
+///
+/// Mirrors the fallback set in the vendored `serial2` fork (#3701): a device
+/// that rejects the ioctl still opens at one of these rates via `tcsetattr`.
+#[cfg(target_os = "macos")]
+const MACOS_TERMIOS_BAUD_RATES: &[u32] = &[
+    50, 75, 110, 134, 150, 200, 300, 600, 1200, 1800, 2400, 4800, 7200, 9600, 14400, 19200, 28800,
+    38400, 57600, 76800, 115200, 230400,
+];
+
+/// Whether an open error on macOS means the device refused a custom
+/// (non-standard) baud rate.
+///
+/// macOS sets serial speeds with the `IOSSIOSPEED` ioctl, which a
+/// pseudo-terminal (a `socat` pair, a serial emulator's `tty.*`) or a driver
+/// without custom-speed support rejects with `ENOTTY`/`ENOTSUP`. The vendored
+/// `serial2` fork falls back to plain termios for a standard rate, so the
+/// ioctl error only reaches us for a rate outside [`MACOS_TERMIOS_BAUD_RATES`].
+#[cfg(target_os = "macos")]
+fn is_custom_baud_rate_rejected(err: &std::io::Error, baud_rate: u32) -> bool {
+    matches!(
+        err.raw_os_error(),
+        Some(libc::ENOTTY) | Some(libc::ENOTSUP) | Some(libc::EOPNOTSUPP)
+    ) && !MACOS_TERMIOS_BAUD_RATES.contains(&baud_rate)
+}
+
 /// Open a serial port using a pre-parsed configuration.
+///
+/// The port is switched to **raw mode** before the user's framing is applied:
+/// `serial2`'s closure form of `SerialPort::open` starts from the port's
+/// *current* settings and only changes what the closure touches, so without
+/// [`serial2::Settings::set_raw`] a device left in canonical/echo mode (the
+/// default for a fresh pty, and what some drivers start in) would buffer input
+/// until a newline, echo it back to the device, translate CR/LF and turn
+/// control characters into signals (#3704). On Unix `set_raw` is
+/// `cfmakeraw` plus `VMIN = 1` / `VTIME = 0`; on Windows it enables binary mode
+/// and disables error-character and NUL stripping.
 ///
 /// Returns a [`serial2_tokio::SerialPort`] ready for async I/O.
 pub fn open_serial_port(config: &ParsedSerialConfig) -> Result<SerialPort, SessionError> {
@@ -240,6 +277,9 @@ pub fn open_serial_port(config: &ParsedSerialConfig) -> Result<SerialPort, Sessi
     let flow_control = config.flow_control;
 
     SerialPort::open(&config.port, |mut settings: serial2::Settings| {
+        // Raw first: it also resets framing to 8N1 / no flow control, which the
+        // user's settings below then override.
+        settings.set_raw();
         settings.set_baud_rate(baud_rate)?;
         settings.set_char_size(char_size);
         settings.set_stop_bits(stop_bits);
@@ -248,6 +288,20 @@ pub fn open_serial_port(config: &ParsedSerialConfig) -> Result<SerialPort, Sessi
         Ok(settings)
     })
     .map_err(|e| {
+        // A device that cannot take a custom speed (a pseudo-terminal, or a
+        // driver without IOSSIOSPEED support) only fails here for a non-standard
+        // rate — the vendored `serial2` fork falls back to termios for standard
+        // ones (#3701). Say so instead of the bare "Inappropriate ioctl" text.
+        #[cfg(target_os = "macos")]
+        if is_custom_baud_rate_rejected(&e, baud_rate) {
+            return SessionError::SpawnFailed(format!(
+                "Serial port '{}' does not support the non-standard baud rate {} (it may be a \
+                 pseudo-terminal or a driver without custom-speed support) — choose a standard \
+                 rate such as 9600 or 115200",
+                config.port, baud_rate
+            ));
+        }
+
         // Classify by locale-invariant signals (ErrorKind / raw OS code) rather
         // than the localized OS message text (I18N-007).
         let msg = match classify_open_error(&e) {
@@ -926,6 +980,30 @@ mod tests {
             classify_open_error(&Error::other("port already in use")),
             SerialOpenError::Busy
         );
+    }
+
+    /// On macOS a device that rejects `IOSSIOSPEED` (a pseudo-terminal) only
+    /// surfaces the ioctl error for a non-standard rate; standard rates fall
+    /// back to termios in the vendored `serial2` fork (#3701).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn custom_baud_rejection_only_for_non_standard_rates() {
+        use std::io::Error;
+        for code in [libc::ENOTTY, libc::ENOTSUP, libc::EOPNOTSUPP] {
+            let err = Error::from_raw_os_error(code);
+            assert!(is_custom_baud_rate_rejected(&err, 250_000));
+            assert!(is_custom_baud_rate_rejected(&err, 1_000_000));
+            assert!(!is_custom_baud_rate_rejected(&err, 9600));
+            assert!(!is_custom_baud_rate_rejected(&err, 115_200));
+        }
+        assert!(!is_custom_baud_rate_rejected(
+            &Error::from_raw_os_error(libc::EBUSY),
+            250_000
+        ));
+        assert!(!is_custom_baud_rate_rejected(
+            &Error::other("boom"),
+            250_000
+        ));
     }
 
     #[test]

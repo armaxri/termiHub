@@ -1192,4 +1192,336 @@ mod tests {
         assert!(!alive.load(Ordering::SeqCst));
         assert!(output_tx.lock().expect("lock").is_none());
     }
+
+    /// Live PTY round-trips through the backend on macOS (#3701).
+    ///
+    /// macOS sets serial speeds with the `IOSSIOSPEED` ioctl, which a
+    /// pseudo-terminal rejects with `ENOTTY`, so a `socat` pair or serial
+    /// emulator could not be opened at all. The vendored `serial2` fork falls
+    /// back to termios for standard rates; these tests open the slave end of an
+    /// `openpty()` pair exactly like a `socat pty,raw,echo=0` endpoint.
+    #[cfg(target_os = "macos")]
+    mod macos_pty {
+        use super::*;
+        use std::ffi::CStr;
+        use std::io::{Read, Write};
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        use std::time::Duration;
+
+        const IO_TIMEOUT: Duration = Duration::from_secs(5);
+
+        /// An `openpty()` pair whose slave is in raw mode (like socat's
+        /// `raw,echo=0`), plus the slave's device path.
+        struct RawPty {
+            master: std::fs::File,
+            slave: OwnedFd,
+            path: String,
+        }
+
+        fn open_raw_pty() -> RawPty {
+            let mut master: libc::c_int = -1;
+            let mut slave: libc::c_int = -1;
+            let mut name = [0 as libc::c_char; 128];
+            // SAFETY: out-pointers are valid for the call; `name` is large
+            // enough for a pty path (macOS writes at most 128 bytes);
+            // termios/winsize are optional and passed as null.
+            let rc = unsafe {
+                libc::openpty(
+                    &mut master,
+                    &mut slave,
+                    name.as_mut_ptr(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            };
+            assert_eq!(rc, 0, "openpty failed: {}", std::io::Error::last_os_error());
+            // SAFETY: openpty succeeded, so both fds are open and owned here.
+            let (master, slave) =
+                unsafe { (OwnedFd::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) };
+            // SAFETY: `termios` is plain data; the fd is a valid tty.
+            unsafe {
+                let mut termios: libc::termios = std::mem::zeroed();
+                assert_eq!(libc::tcgetattr(slave.as_raw_fd(), &mut termios), 0);
+                libc::cfmakeraw(&mut termios);
+                assert_eq!(
+                    libc::tcsetattr(slave.as_raw_fd(), libc::TCSANOW, &termios),
+                    0
+                );
+            }
+            // SAFETY: openpty NUL-terminates the name it wrote.
+            let path = unsafe { CStr::from_ptr(name.as_ptr()) }
+                .to_string_lossy()
+                .into_owned();
+            RawPty {
+                master: std::fs::File::from(master),
+                slave,
+                path,
+            }
+        }
+
+        /// The output speed currently configured on the pty (termios state is
+        /// shared by every fd of the tty, so the test's own slave fd sees what
+        /// the backend applied).
+        fn configured_speed(slave: &OwnedFd) -> libc::speed_t {
+            // SAFETY: `termios` is plain data; the fd is a valid tty.
+            unsafe {
+                let mut termios: libc::termios = std::mem::zeroed();
+                assert_eq!(libc::tcgetattr(slave.as_raw_fd(), &mut termios), 0);
+                libc::cfgetospeed(&termios)
+            }
+        }
+
+        /// Read from the pty master until `expected` has arrived.
+        async fn read_master_until(master: &std::fs::File, expected: &'static [u8]) -> Vec<u8> {
+            let mut master = master.try_clone().expect("clone master fd");
+            let read = tokio::task::spawn_blocking(move || {
+                let mut got = Vec::new();
+                let mut buf = [0u8; 256];
+                while !got.windows(expected.len()).any(|w| w == expected) {
+                    let n = master.read(&mut buf).expect("read pty master");
+                    assert!(n > 0, "pty master closed early");
+                    got.extend_from_slice(&buf[..n]);
+                }
+                got
+            });
+            tokio::time::timeout(IO_TIMEOUT, read)
+                .await
+                .expect("timed out waiting for bytes on the pty master")
+                .expect("master reader panicked")
+        }
+
+        /// Collect backend output until `expected` has arrived.
+        async fn recv_output_until(rx: &mut OutputReceiver, expected: &[u8]) -> Vec<u8> {
+            let mut got = Vec::new();
+            tokio::time::timeout(IO_TIMEOUT, async {
+                while !got.windows(expected.len()).any(|w| w == expected) {
+                    let chunk = rx.recv().await.expect("output channel closed");
+                    got.extend_from_slice(&chunk);
+                }
+            })
+            .await
+            .expect("timed out waiting for backend output");
+            got
+        }
+
+        async fn round_trip_at(baud: u32) {
+            let mut pty = open_raw_pty();
+            let mut serial = Serial::new();
+            serial
+                .connect(serde_json::json!({ "port": pty.path, "baudRate": baud }))
+                .await
+                .unwrap_or_else(|e| panic!("opening pty {} at {baud} failed: {e}", pty.path));
+            assert!(serial.is_connected());
+            assert_eq!(
+                configured_speed(&pty.slave),
+                libc::speed_t::from(baud),
+                "the termios fallback must apply the requested rate"
+            );
+
+            // Device -> backend.
+            let mut rx = serial.subscribe_output();
+            pty.master
+                .write_all(b"from-device\n")
+                .expect("write master");
+            recv_output_until(&mut rx, b"from-device\n").await;
+
+            // Backend -> device.
+            serial.write(b"from-termihub\n").expect("backend write");
+            read_master_until(&pty.master, b"from-termihub\n").await;
+
+            serial.disconnect().await.expect("disconnect");
+        }
+
+        #[tokio::test]
+        async fn pty_opens_and_echoes_at_9600() {
+            round_trip_at(9600).await;
+        }
+
+        #[tokio::test]
+        async fn pty_opens_and_echoes_at_115200() {
+            round_trip_at(115_200).await;
+        }
+
+        #[tokio::test]
+        async fn pty_rejects_non_standard_rate_with_clear_error() {
+            let pty = open_raw_pty();
+            let mut serial = Serial::new();
+            let err = serial
+                .connect(serde_json::json!({ "port": pty.path, "baudRate": 250_000 }))
+                .await
+                .expect_err("a pty cannot take a custom IOSSIOSPEED rate");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("non-standard baud rate 250000"),
+                "expected a clear custom-baud error, got: {msg}"
+            );
+            assert!(!serial.is_connected());
+        }
+    }
+
+    /// The backend must switch the port to raw mode on open (#3704).
+    ///
+    /// A fresh `openpty()` slave starts in the default *cooked* mode (canonical
+    /// input, echo, CR->NL input and NL->CRNL output translation), like a device
+    /// whose driver or a previous program left it that way. Opening it through
+    /// the backend has to undo all of that; the macOS tests above pre-set raw
+    /// mode themselves, so they cannot catch a missing `set_raw`.
+    #[cfg(unix)]
+    mod unix_raw_mode {
+        use super::*;
+        use std::ffi::CStr;
+        use std::io::{Read, Write};
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        use std::time::Duration;
+
+        const IO_TIMEOUT: Duration = Duration::from_secs(5);
+
+        /// An `openpty()` pair left in the default cooked mode.
+        struct CookedPty {
+            master: std::fs::File,
+            slave: OwnedFd,
+            path: String,
+        }
+
+        fn open_cooked_pty() -> CookedPty {
+            let mut master: libc::c_int = -1;
+            let mut slave: libc::c_int = -1;
+            let mut name = [0 as libc::c_char; 128];
+            // SAFETY: out-pointers are valid for the call; `name` is large
+            // enough for a pty path; termios/winsize are optional and passed as
+            // null, which keeps the system's default (cooked) line discipline.
+            let rc = unsafe {
+                libc::openpty(
+                    &mut master,
+                    &mut slave,
+                    name.as_mut_ptr(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            };
+            assert_eq!(rc, 0, "openpty failed: {}", std::io::Error::last_os_error());
+            // SAFETY: openpty succeeded, so both fds are open and owned here.
+            let (master, slave) =
+                unsafe { (OwnedFd::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) };
+            // SAFETY: openpty NUL-terminates the name it wrote.
+            let path = unsafe { CStr::from_ptr(name.as_ptr()) }
+                .to_string_lossy()
+                .into_owned();
+            CookedPty {
+                master: std::fs::File::from(master),
+                slave,
+                path,
+            }
+        }
+
+        /// The pty's current termios (shared by every fd of the tty, so the
+        /// test's own slave fd sees what the backend applied).
+        fn termios_of(slave: &OwnedFd) -> libc::termios {
+            // SAFETY: `termios` is plain data; the fd is a valid tty.
+            unsafe {
+                let mut termios: libc::termios = std::mem::zeroed();
+                assert_eq!(libc::tcgetattr(slave.as_raw_fd(), &mut termios), 0);
+                termios
+            }
+        }
+
+        /// Read from the pty master until it has produced `len` bytes.
+        async fn read_master_exact(master: &std::fs::File, len: usize) -> Vec<u8> {
+            let mut master = master.try_clone().expect("clone master fd");
+            let read = tokio::task::spawn_blocking(move || {
+                let mut got = Vec::new();
+                let mut buf = [0u8; 256];
+                while got.len() < len {
+                    let n = master.read(&mut buf).expect("read pty master");
+                    assert!(n > 0, "pty master closed early");
+                    got.extend_from_slice(&buf[..n]);
+                }
+                got
+            });
+            tokio::time::timeout(IO_TIMEOUT, read)
+                .await
+                .expect("timed out waiting for bytes on the pty master")
+                .expect("master reader panicked")
+        }
+
+        /// Collect backend output until at least `len` bytes have arrived.
+        async fn recv_output_exact(rx: &mut OutputReceiver, len: usize) -> Vec<u8> {
+            let mut got = Vec::new();
+            tokio::time::timeout(IO_TIMEOUT, async {
+                while got.len() < len {
+                    let chunk = rx.recv().await.expect("output channel closed");
+                    got.extend_from_slice(&chunk);
+                }
+            })
+            .await
+            .expect(
+                "timed out waiting for backend output — the port is still in canonical \
+                 (line-buffered) mode",
+            );
+            got
+        }
+
+        #[tokio::test]
+        async fn open_switches_cooked_port_to_raw_mode() {
+            let pty = open_cooked_pty();
+            let before = termios_of(&pty.slave);
+            assert_ne!(
+                before.c_lflag & libc::ICANON,
+                0,
+                "precondition: a fresh pty starts in canonical mode"
+            );
+            assert_ne!(
+                before.c_lflag & libc::ECHO,
+                0,
+                "precondition: a fresh pty starts with echo on"
+            );
+
+            let mut serial = Serial::new();
+            serial
+                .connect(serde_json::json!({ "port": pty.path, "baudRate": 9600 }))
+                .await
+                .unwrap_or_else(|e| panic!("opening pty {} failed: {e}", pty.path));
+
+            // The line discipline is raw: no line buffering, echo, signals or
+            // CR/LF translation, and reads return as soon as one byte arrives.
+            let after = termios_of(&pty.slave);
+            for (flag, name) in [
+                (libc::ICANON, "ICANON"),
+                (libc::ECHO, "ECHO"),
+                (libc::ISIG, "ISIG"),
+                (libc::IEXTEN, "IEXTEN"),
+            ] {
+                assert_eq!(after.c_lflag & flag, 0, "{name} must be cleared");
+            }
+            for (flag, name) in [
+                (libc::ICRNL, "ICRNL"),
+                (libc::INLCR, "INLCR"),
+                (libc::IGNCR, "IGNCR"),
+                (libc::IXON, "IXON"),
+            ] {
+                assert_eq!(after.c_iflag & flag, 0, "{name} must be cleared");
+            }
+            assert_eq!(after.c_oflag & libc::OPOST, 0, "OPOST must be cleared");
+            assert_eq!(after.c_cc[libc::VMIN], 1, "VMIN must be 1");
+            assert_eq!(after.c_cc[libc::VTIME], 0, "VTIME must be 0");
+
+            // Device -> backend: bytes without a trailing newline arrive at
+            // once, and a CR is delivered as CR (no ICRNL translation).
+            let mut rx = serial.subscribe_output();
+            let mut master = pty.master.try_clone().expect("clone master fd");
+            master.write_all(b"ab\rc").expect("write master");
+            let got = recv_output_exact(&mut rx, 4).await;
+            assert_eq!(got, b"ab\rc", "device bytes must arrive untranslated");
+
+            // Backend -> device: LF is not expanded to CRLF (no OPOST/ONLCR),
+            // and nothing the device sent was echoed back before it: echo
+            // would be queued on the master when the device wrote, i.e. ahead
+            // of these bytes.
+            serial.write(b"x\ny").expect("backend write");
+            let got = read_master_exact(&pty.master, 3).await;
+            assert_eq!(got, b"x\ny", "no echo and no output translation expected");
+
+            serial.disconnect().await.expect("disconnect");
+        }
+    }
 }

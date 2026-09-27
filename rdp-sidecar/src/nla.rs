@@ -18,7 +18,10 @@
 //! [`failure::is_auth_credssp_rejection`] combines it with the code.
 //!
 //! Apart from counting server replies and typing that one rejection, the loop is
-//! `ironrdp-async` 0.10's `connect_finalize` / `perform_credssp_step` verbatim.
+//! `ironrdp-async` 0.10's `connect_finalize` / `perform_credssp_step` verbatim —
+//! plus one hook: a multi-monitor session sends its Connect Initial through
+//! [`monitors::send_basic_settings`](crate::monitors::send_basic_settings), which
+//! adds the client monitor layout IronRDP's connector leaves out (#3696).
 
 use anyhow::Result;
 use ironrdp::connector::credssp::{CredsspProcessGenerator, CredsspSequence};
@@ -32,6 +35,7 @@ use ironrdp::core::WriteBuf;
 use ironrdp_tokio::{
     single_sequence_step, Framed, FramedRead, FramedWrite, NetworkClient, Upgraded,
 };
+use termihub_core::connection::MonitorLayout;
 use tracing::{debug, info, trace};
 
 use crate::failure::{self, CredsspPhase, CredsspRejected};
@@ -45,6 +49,7 @@ pub async fn connect_finalize<S, N>(
     network_client: &mut N,
     server_name: ServerName,
     server_public_key: Vec<u8>,
+    monitor_layout: Option<&MonitorLayout>,
 ) -> Result<ConnectionResult>
 where
     S: FramedRead + FramedWrite,
@@ -65,7 +70,22 @@ where
     }
 
     let result = loop {
-        single_sequence_step(framed, &mut connector, &mut buf).await?;
+        match (monitor_layout, &connector.state) {
+            (Some(layout), ClientConnectorState::BasicSettingsExchangeSendInitial { .. }) => {
+                // This step reads nothing from the server; it only sends.
+                let written =
+                    crate::monitors::send_basic_settings(&mut connector, &mut buf, layout)?;
+                debug!(
+                    monitors = layout.monitors().len(),
+                    "sending the client monitor layout (TS_UD_CS_MONITOR)"
+                );
+                framed
+                    .write_all(&buf.filled()[..written])
+                    .await
+                    .map_err(|e| ironrdp::connector::custom_err!("write all", e))?;
+            }
+            _ => single_sequence_step(framed, &mut connector, &mut buf).await?,
+        }
 
         if let ClientConnectorState::Connected { result } = connector.state {
             break result;
