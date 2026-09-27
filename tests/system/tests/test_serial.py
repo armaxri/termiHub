@@ -14,14 +14,11 @@ directly (the old in-container ``serial-echo`` fixture, whose PTYs lived in a
 Docker volume the host app could not reach, was removed in #859). Killing the
 fixture's ``socat`` then exercises the live half of the lost-port disconnect
 notification (#1824). The fixture skips cleanly where ``socat`` is unavailable
-(Windows). On macOS the class is skipped until the app can open a PTY there:
-serial2 sets the baud rate with the ``IOSSIOSPEED`` ioctl, which a PTY rejects
-with ``ENOTTY`` (#3701).
+(Windows). It runs on Linux and macOS: on macOS the vendored ``serial2`` falls
+back to termios when a PTY rejects the ``IOSSIOSPEED`` baud ioctl (#3701).
 """
 
 from __future__ import annotations
-
-import sys
 
 import pytest
 
@@ -115,11 +112,6 @@ class TestSerialCustomPort(ConnectionsUi, SystemTest):
         assert (config.get("config") or {}).get("port") == VIRTUAL_PORT
 
 
-@pytest.mark.skipif(
-    sys.platform == "darwin",
-    reason="macOS: serial2 sets the baud rate via the IOSSIOSPEED ioctl, which a "
-    "PTY rejects with ENOTTY, so the app cannot open a socat port yet (#3701)",
-)
 class TestSerialLiveEcho(TerminalUi, TabsUi, ConnectionsUi, SystemTest):
     """MT-SER-09 / MT-SER-10 live half: connect, echo, then lose the port.
 
