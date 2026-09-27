@@ -519,8 +519,10 @@ The Docker fixtures cannot run on the hosted macOS and Windows runners, so the
     [`native-sshd-fixture.ps1`](../scripts/internal/native-sshd-fixture.ps1),
     which needs an elevated shell. It uses the preinstalled Win32-OpenSSH (or
     adds the `OpenSSH.Server` capability), creates the local user `termihubssh`
-    (key auth only), and runs `sshd.exe` as its own `termihub-native-sshd`
-    service with the fixture config. The system `sshd` service is left untouched.
+    (key auth only), and runs `sshd.exe -D` as SYSTEM from its own
+    `termihub-native-sshd` scheduled task with the fixture config (no extra
+    Windows service). The system `sshd` service is left untouched. A failed
+    start prints the sshd log, `sshd -t` and the OpenSSH event log.
   - `up` proves a real `ssh` login and `sftp` subsystem, then prints
     `export TERMIHUB_NATIVE_SSHD=1 … _PORT _USER _KEY _HOST_PUBKEY _DIR` (and
     `_AGENT_BIN` with `--agent-binary`). `--github-env` also writes them to

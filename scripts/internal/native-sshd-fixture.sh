@@ -16,9 +16,9 @@
 # sshd cannot switch users), so TERMIHUB_NATIVE_SSHD_USER is the current user.
 #
 # Windows (Git Bash): parses the same options, then hands over to
-# native-sshd-fixture.ps1 under pwsh, which provisions Win32-OpenSSH as a
-# dedicated service plus a local test user (elevated shell required, as on the
-# GitHub windows runner). Its default --dir is %ProgramData%\termihub-native-sshd.
+# native-sshd-fixture.ps1 under pwsh, which runs Win32-OpenSSH as SYSTEM from a
+# dedicated scheduled task plus a local test user (elevated shell required, as
+# on the GitHub windows runner). Its default --dir is %ProgramData%\termihub-native-sshd.
 #
 # Usage:
 #   scripts/internal/native-sshd-fixture.sh up    [--dir DIR] [--port N] [--github-env]

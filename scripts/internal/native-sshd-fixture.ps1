@@ -20,17 +20,20 @@
       * writes a temporary ed25519 host key, an ed25519 client key and an
         authorized_keys (the repo's tests/fixtures/ssh-keys set + the client
         key) under -Dir with the ACLs Win32-OpenSSH's StrictModes demands;
-      * registers its own service (termihub-native-sshd) running sshd.exe on
-        127.0.0.1:<port> with that config, starts it, and proves a real
-        ssh.exe login + sftp subsystem;
+      * registers a scheduled task (termihub-native-sshd) that runs
+        `sshd.exe -D -f <config>` as SYSTEM on 127.0.0.1:<port> -- no Windows
+        service, so the SCM's service-start handshake is out of the picture --
+        starts it, and proves a real ssh.exe login + sftp subsystem;
       * prints `export NAME='value'` lines (POSIX form, for the Git Bash
         wrapper to eval) and, with -GitHubEnv, appends NAME=value to $GITHUB_ENV:
         TERMIHUB_NATIVE_SSHD=1, _PORT, _USER, _KEY, _HOST_PUBKEY, _DIR and,
         with -AgentBinary, _AGENT_BIN (a copy the test user can execute).
 
     stop / start take the listener down and bring it back (state kept); stop
-    also ends the sessions the service's sshd spawned. down removes the
-    service, the test user and its profile, and the state dir.
+    also ends the sessions the fixture's sshd spawned. down removes the
+    task, the test user and its profile, and the state dir. On any start or
+    self-test failure the sshd log, `sshd -t`, the task result and the
+    OpenSSH event log are printed so CI shows the real cause.
 
     This script cannot be exercised off Windows; it is first verified by the
     nightly native-sshd jobs (integration-fixtures.yml, system-integration.yml).
@@ -58,7 +61,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$ServiceName = 'termihub-native-sshd'
+$TaskName = 'termihub-native-sshd'
+# Earlier revisions ran a service under this name; down still removes one.
+$LegacyServiceName = 'termihub-native-sshd'
 $TestUser = 'termihubssh'
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $OpenSshDir = Join-Path $env:WINDIR 'System32\OpenSSH'
@@ -99,7 +104,7 @@ function Install-OpenSshServer {
     # Win32-OpenSSH runs its pre-auth worker as the `NT SERVICE\sshd` virtual
     # account, which exists only while the system `sshd` service is registered.
     # So require both the binary and that service (left stopped and untouched:
-    # this fixture runs its own service with its own config).
+    # this fixture runs its own sshd with its own config).
     $sshd = Join-Path $OpenSshDir 'sshd.exe'
     if ((Test-Path -LiteralPath $sshd) -and (Get-Service -Name 'sshd' -ErrorAction SilentlyContinue)) {
         Write-FixtureLog "using preinstalled $sshd"
@@ -244,47 +249,128 @@ function Write-SshdConfig([int]$TcpPort) {
     }
 }
 
-function Get-ServicePid {
-    $svc = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'"
-    if ($null -eq $svc -or $svc.ProcessId -eq 0) {
+function Get-FixtureSshdProcess {
+    # Every sshd process started with the fixture config (the master and, on
+    # Win32-OpenSSH builds that re-exec sshd.exe per connection, its children).
+    $needle = $Config.ToLowerInvariant()
+    @(Get-CimInstance -ClassName Win32_Process -Filter "Name='sshd.exe'" |
+            Where-Object { $null -ne $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains($needle) })
+}
+
+function Get-SshdMasterPid {
+    # The listener: a fixture sshd whose parent is not itself a fixture sshd.
+    $procs = Get-FixtureSshdProcess
+    $pids = @($procs | ForEach-Object { [int]$_.ProcessId })
+    $master = $procs | Where-Object { $pids -notcontains [int]$_.ParentProcessId } | Select-Object -First 1
+    if ($null -eq $master) {
         return $null
     }
-    return [int]$svc.ProcessId
+    return [int]$master.ProcessId
+}
+
+function Get-SshdDescendantPid([int]$RootPid) {
+    # sshd / sshd-session processes below $RootPid, collected by parent PID
+    # (never by name alone), so another sshd on the host is never touched.
+    $all = @(Get-CimInstance -ClassName Win32_Process | Where-Object { $_.Name -like 'sshd*' })
+    $found = [Collections.Generic.List[int]]::new()
+    $frontier = @($RootPid)
+    while ($frontier.Count -gt 0) {
+        $next = @($all | Where-Object { $frontier -contains [int]$_.ParentProcessId } |
+                ForEach-Object { [int]$_.ProcessId } | Where-Object { -not $found.Contains($_) })
+        foreach ($child in $next) {
+            $found.Add($child)
+        }
+        $frontier = $next
+    }
+    return , $found.ToArray()
+}
+
+function Show-SshdDiagnostic {
+    # Best effort: never let a diagnostics hiccup mask the original failure.
+    try {
+        Write-SshdDiagnostic
+    } catch {
+        Write-FixtureLog "diagnostics failed: $($_.Exception.Message)"
+    }
+}
+
+function Write-SshdDiagnostic {
+    Write-FixtureLog '---- diagnostics ----'
+    if (Test-Path -LiteralPath $LogFile) {
+        Write-FixtureLog "sshd log ($LogFile, last 80 lines):"
+        Get-Content -LiteralPath $LogFile -Tail 80 | ForEach-Object { Write-FixtureLog "  | $_" }
+    } else {
+        Write-FixtureLog "no sshd log at $LogFile"
+    }
+    if (Test-Path -LiteralPath $Config) {
+        Write-FixtureLog "sshd -t -f $Config (as $([Environment]::UserName)):"
+        $out = & (Join-Path $OpenSshDir 'sshd.exe') -t -f $Config 2>&1 | Out-String
+        Write-FixtureLog "  exit $LASTEXITCODE"
+        $out -split "`r?`n" | Where-Object { $_ } | ForEach-Object { Write-FixtureLog "  | $_" }
+    }
+    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($null -ne $task) {
+        $info = Get-ScheduledTaskInfo -TaskName $TaskName
+        Write-FixtureLog ("task {0}: state {1}, last result 0x{2:X8}, last run {3}" -f
+            $TaskName, $task.State, $info.LastTaskResult, $info.LastRunTime)
+    }
+    Get-FixtureSshdProcess | ForEach-Object {
+        Write-FixtureLog "  process $($_.ProcessId) (parent $($_.ParentProcessId)): $($_.CommandLine)"
+    }
+    try {
+        Get-WinEvent -LogName 'OpenSSH/Operational' -MaxEvents 40 -ErrorAction Stop |
+            Sort-Object TimeCreated | ForEach-Object {
+                Write-FixtureLog "  event $($_.TimeCreated.ToString('HH:mm:ss')) [$($_.LevelDisplayName)] $($_.Message)"
+            }
+    } catch {
+        Write-FixtureLog "  (no OpenSSH/Operational events: $($_.Exception.Message))"
+    }
+    Write-FixtureLog '---- end diagnostics ----'
+}
+
+function Register-SshdTask {
+    # A scheduled task, not a service: it runs sshd.exe in plain foreground
+    # mode (-D) as SYSTEM -- SYSTEM is what lets Win32-OpenSSH log another
+    # user on -- with no service-control handshake to fail.
+    $sshd = Join-Path $OpenSshDir 'sshd.exe'
+    $action = New-ScheduledTaskAction -Execute $sshd -Argument "-D -f `"$Config`" -E `"$LogFile`""
+    $principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew `
+        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Principal $principal -Settings $settings `
+        -Description 'termiHub native sshd test fixture' -Force | Out-Null
 }
 
 function Resume-Fixture {
-    Start-Service -Name $ServiceName
     $tcpPort = [int](Get-Content -LiteralPath $PortFile)
+    try {
+        Start-ScheduledTask -TaskName $TaskName
+    } catch {
+        Show-SshdDiagnostic
+        throw
+    }
     if (-not (Wait-Listening $tcpPort $true)) {
-        if (Test-Path -LiteralPath $LogFile) {
-            Get-Content -LiteralPath $LogFile -Tail 50 | ForEach-Object { Write-FixtureLog "  | $_" }
-        }
+        Show-SshdDiagnostic
         throw "sshd did not listen on 127.0.0.1:$tcpPort"
     }
-    Write-FixtureLog "sshd listening on 127.0.0.1:$tcpPort (service $ServiceName)"
+    Write-FixtureLog "sshd listening on 127.0.0.1:$tcpPort (pid $(Get-SshdMasterPid), task $TaskName)"
 }
 
 function Suspend-Fixture {
-    $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-    if ($null -eq $service) {
-        return
-    }
-    # The per-connection sshd processes the service's sshd spawned, collected by
-    # parent PID (never by name alone) before the master goes, so an established
-    # session is severed along with the listener.
-    $children = @()
-    $masterPid = Get-ServicePid
+    # The master and every sshd it spawned (collected before the master goes),
+    # so an established session is severed along with the listener.
+    $victims = @()
+    $masterPid = Get-SshdMasterPid
     if ($null -ne $masterPid) {
-        $children = @(Get-CimInstance -ClassName Win32_Process -Filter "ParentProcessId=$masterPid" |
-                Where-Object { $_.Name -like 'sshd*' } | ForEach-Object { [int]$_.ProcessId })
+        $victims = @(Get-SshdDescendantPid $masterPid) + @($masterPid)
     }
-    if ($service.Status -ne 'Stopped') {
-        Stop-Service -Name $ServiceName -Force
+    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+        Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     }
-    foreach ($child in $children) {
-        $proc = Get-Process -Id $child -ErrorAction SilentlyContinue
+    foreach ($victim in $victims) {
+        $proc = Get-Process -Id $victim -ErrorAction SilentlyContinue
         if ($null -ne $proc -and $proc.ProcessName -like 'sshd*') {
-            Stop-Process -Id $child -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $victim -Force -ErrorAction SilentlyContinue
         }
     }
     if (Test-Path -LiteralPath $PortFile) {
@@ -302,11 +388,13 @@ function Test-Fixture([int]$TcpPort) {
         '-o', 'ConnectTimeout=15')
     $who = (& $ssh -p $TcpPort @opts "$TestUser@127.0.0.1" whoami | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $who -notlike "*\$TestUser") {
+        Show-SshdDiagnostic
         throw "ssh login as $TestUser on 127.0.0.1:$TcpPort failed (exit $LASTEXITCODE, whoami '$who'); log: $LogFile"
     }
     $sftp = Join-Path $OpenSshDir 'sftp.exe'
     'pwd' | & $sftp -b - -P $TcpPort @opts "$TestUser@127.0.0.1" | Out-Null
     if ($LASTEXITCODE -ne 0) {
+        Show-SshdDiagnostic
         throw "sftp subsystem on 127.0.0.1:$TcpPort failed (exit $LASTEXITCODE); log: $LogFile"
     }
     Write-FixtureLog "self-test ok: ssh + sftp as $TestUser on 127.0.0.1:$TcpPort"
@@ -338,7 +426,8 @@ function Write-FixtureEnvironment([bool]$ToGitHubEnv) {
 
 function Invoke-Up([int]$ListenPort, [string]$AgentSource, [bool]$ToGitHubEnv) {
     Assert-Admin
-    if ((Test-Path -LiteralPath $Dir) -or (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
+    if ((Test-Path -LiteralPath $Dir) -or (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) -or
+        (Get-Service -Name $LegacyServiceName -ErrorAction SilentlyContinue)) {
         Write-FixtureLog 'previous fixture found; tearing it down first'
         Invoke-Down
     }
@@ -373,10 +462,7 @@ function Invoke-Up([int]$ListenPort, [string]$AgentSource, [bool]$ToGitHubEnv) {
     Set-Content -LiteralPath $PortFile -Value $ListenPort -Encoding ascii
     Write-SshdConfig $ListenPort
 
-    $sshd = Join-Path $OpenSshDir 'sshd.exe'
-    $binPath = "`"$sshd`" -f `"$Config`" -E `"$LogFile`""
-    New-Service -Name $ServiceName -BinaryPathName $binPath -StartupType Manual `
-        -DisplayName 'termiHub native sshd test fixture' | Out-Null
+    Register-SshdTask
     Resume-Fixture
     Test-Fixture $ListenPort
     Write-FixtureEnvironment $ToGitHubEnv
@@ -385,8 +471,12 @@ function Invoke-Up([int]$ListenPort, [string]$AgentSource, [bool]$ToGitHubEnv) {
 function Invoke-Down {
     Assert-Admin
     Suspend-Fixture
-    if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
-        Invoke-Native 'sc.exe' @('delete', $ServiceName) | Out-Null
+    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+    }
+    if (Get-Service -Name $LegacyServiceName -ErrorAction SilentlyContinue) {
+        Stop-Service -Name $LegacyServiceName -Force -ErrorAction SilentlyContinue
+        Invoke-Native 'sc.exe' @('delete', $LegacyServiceName) | Out-Null
     }
     Unregister-TestUser
     if (Test-Path -LiteralPath $Dir) {
