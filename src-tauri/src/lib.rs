@@ -625,6 +625,9 @@ pub fn run() -> anyhow::Result<()> {
             // Opt-in plugin update check; downloads verify, never install (PROD-051)
             commands::plugin_update::check_plugin_updates,
             commands::plugin_update::download_plugin_update,
+            commands::plugin_index::fetch_plugin_index,
+            commands::plugin_index::download_plugin_from_index,
+            commands::plugin_index::download_plugin_from_url,
             // Session commands (replaces old terminal commands)
             commands::session::create_connection,
             commands::session::test_connection,
