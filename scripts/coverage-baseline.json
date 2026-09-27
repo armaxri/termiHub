@@ -1,0 +1,19 @@
+{
+  "tolerance": 0.25,
+  "platforms": {
+    "linux": {
+      "frontend": 86.76,
+      "core": 90.48,
+      "agent": 89.07,
+      "src-tauri": 74.91,
+      "unified": 83.41
+    },
+    "darwin": {
+      "frontend": 86.77,
+      "core": 90.45,
+      "agent": 89.09,
+      "src-tauri": 74.76,
+      "unified": 83.38
+    }
+  }
+}

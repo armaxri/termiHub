@@ -180,20 +180,19 @@ fi
 
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== Unified Coverage (advisory) ==="
+echo "=== Coverage Ratchet ==="
 
-# Whole-app coverage — frontend + Rust merged into one number (TOOL-001). ADVISORY
-# for now: a low number WARNs but does not block the release, because no baseline
-# ratchet exists yet. Follow-up: once a baseline is captured, compare the unified
-# line % here and fail() on a drop so the release gate refuses to ship on a
-# coverage regression. cargo-llvm-cov may not be installed on every machine, so a
-# missing tool is a WARN, never a hard fail.
-if ! command -v cargo-llvm-cov >/dev/null 2>&1 && ! cargo llvm-cov --version >/dev/null 2>&1; then
-    warn "cargo-llvm-cov not installed — skipping unified coverage (install: cargo install cargo-llvm-cov)"
+# Whole-app coverage — frontend + Rust (TOOL-001) — graded against the committed
+# per-platform baseline in scripts/coverage-baseline.json (TOOL-011, #3740): a
+# per-component line-coverage drop beyond the tolerance FAILS the release gate,
+# the same ratchet coverage.yml enforces on develop/main. cargo-llvm-cov is
+# required: a release gate that silently skips its coverage check is not a gate.
+if ! cargo llvm-cov --version >/dev/null 2>&1; then
+    fail "cargo-llvm-cov not installed — cannot grade coverage (install: cargo install cargo-llvm-cov)"
 elif ./scripts/coverage.sh 2>&1; then
-    pass "Unified coverage report produced (advisory — see coverage-unified/summary.txt)"
+    pass "Coverage at or above the committed baseline (see coverage-unified/ratchet.md)"
 else
-    warn "Unified coverage run did not complete cleanly (advisory)"
+    fail "Coverage ratchet failed — coverage dropped below scripts/coverage-baseline.json (or the run failed)"
 fi
 
 # ---------------------------------------------------------------------------

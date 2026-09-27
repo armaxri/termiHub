@@ -1,33 +1,36 @@
-name: Coverage (unified, advisory)
+name: Coverage (unified, ratchet)
 
 # Unified whole-app coverage — the frontend (vitest/v8) and the Rust
 # backend/agent/core crates merged into ONE repo-wide number (TOOL-001/002/003).
 # See scripts/coverage.sh.
 #
-# ADVISORY FOR NOW: the whole job is `continue-on-error: true`, so it CANNOT red
-# a PR. Its only purpose in this first cycle is to publish the coverage artifact
-# and print the unified number so a baseline can be captured.
+# BLOCKING FAIL-ON-DECREASE RATCHET (#3740 — CI-011, TBE-007): scripts/coverage.sh
+# grades the per-component UNIT line coverage (frontend, core, agent, src-tauri
+# and the unified total) against the committed linux baseline in
+# scripts/coverage-baseline.json (scripts/internal/coverage-ratchet.mjs) and
+# exits non-zero when any component drops more than the baseline's tolerance
+# (0.25 pp). The nightly integration overlay is reported but not gated — its
+# availability varies run to run. When coverage improves, raise the baseline
+# with `./scripts/coverage.sh --update-baseline` (raise-only) and commit it;
+# lowering a value is a deliberate, reviewed edit of the JSON.
 #
-# FOLLOW-UP (ratchet): once a baseline exists, remove `continue-on-error: true`
-# below and add a fail-on-decrease check against the stored baseline (compare the
-# unified line % from coverage-unified/summary.txt) so a coverage drop blocks the
-# PR — the same ratchet philosophy as the vitest thresholds (#2066) and the
-# cargo-deny/audit gates. Do NOT make it blocking before a baseline exists.
-
-# POST-MERGE ONLY (#3325): being advisory, it never gated a PR, yet it cost a
-# ~21-minute Ubuntu runner on every PR push. It now runs on every push to
-# develop/main (the coverage trend lives on develop's runs) and on demand. The
-# blocking vitest coverage floors (#2066) still gate every frontend PR via the
-# Ubuntu "Run Tests" leg in code-quality.yml. When the ratchet above lands, move
-# it back onto PRs (or compare the PR against develop's stored baseline).
+# POST-MERGE LANE (#3325): this runs on every push to develop/main and on
+# demand, not per PR (a ~21-minute Ubuntu runner). A drop therefore reds the
+# develop/main run, not the PR that caused it. The blocking vitest coverage
+# floors (#2066) still gate every frontend PR via the Ubuntu "Run Tests" leg.
 on:
   push:
     branches: [ main, develop ]
   workflow_dispatch:
 
+# Now a correctness gate, so it follows the #3588 rule for post-merge gates: a
+# push to develop/main runs to completion (GitHub keeps only the newest QUEUED
+# run per group, so merges landing mid-run are graded by the next run). With
+# cancel-in-progress on push, frequent merges cancelled most runs and the gate
+# would almost never finish.
 concurrency:
   group: coverage-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Least-privilege token (CI-010). The job checks out, runs coverage, and uploads
 # the coverage artifact via the artifact API (no contents-write needed) — it does
@@ -40,11 +43,8 @@ permissions:
 
 jobs:
   coverage:
-    name: Unified Coverage (advisory)
+    name: Unified Coverage (ratchet)
     runs-on: ubuntu-latest
-    # Advisory starter: never fail the workflow / red a PR while we establish the
-    # baseline. Remove this line in the ratchet follow-up (see header).
-    continue-on-error: true
 
     steps:
       - name: Checkout code
@@ -99,7 +99,7 @@ jobs:
       # its scheduled/dispatched runs. Fetch the newest such lcov for this branch
       # plus the list of files changed since its commit (their line numbers may
       # have moved, so coverage.sh skips them). Advisory: when none is available
-      # the report is unit-only.
+      # the report is unit-only. The ratchet never grades this overlay.
       - name: Fetch nightly integration coverage
         continue-on-error: true
         env:
@@ -126,6 +126,12 @@ jobs:
             cat coverage-unified/summary.txt 2>/dev/null || echo "(no summary produced)"
             echo '```'
             echo ""
+            if [ -f coverage-unified/ratchet.md ]; then
+              echo "### Ratchet (unit coverage vs scripts/coverage-baseline.json)"
+              echo ""
+              cat coverage-unified/ratchet.md
+              echo ""
+            fi
             if [ -f coverage-unified/integration-gap.md ]; then
               cat coverage-unified/integration-gap.md
             else

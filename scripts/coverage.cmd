@@ -8,11 +8,14 @@ REM Flagship tooling: a full-coverage (frontend + backend, unified) picture.
 REM Addresses audit findings TOOL-001 (unified number), TOOL-002 (the .tsx glob
 REM fix lives in vitest.config.ts), and TOOL-003 (Rust coverage via llvm-cov).
 REM
-REM Run from the repo root: scripts\coverage.cmd  [--dry-run]
+REM Run from the repo root: scripts\coverage.cmd  [--dry-run] [--update-baseline]
 REM
-REM ADVISORY, NOT A HARD GATE (yet): reports the unified number; does not fail
-REM on a low value. Follow-up: capture a baseline, then add a fail-on-decrease
-REM ratchet (see coverage.yml). Mirrors coverage.sh.
+REM BLOCKING RATCHET (#3740): after reporting, the per-component unit line
+REM coverage is graded against the committed per-platform baseline in
+REM scripts\coverage-baseline.json (scripts\internal\coverage-ratchet.mjs); a
+REM drop beyond the tolerance fails the script. --update-baseline instead raises
+REM this platform's baseline to the measured values (never lowers). Mirrors
+REM coverage.sh.
 REM
 REM Nightly integration coverage (TOOL-005, #3656): when TERMIHUB_INTEGRATION_LCOV
 REM names an lcov from the nightly integration-fixtures lane, it is merged into
@@ -23,7 +26,20 @@ REM locally, so the report stays unit-only.
 cd /d "%~dp0\.."
 
 set DRY_RUN=0
-if "%~1"=="--dry-run" set DRY_RUN=1
+set UPDATE_BASELINE=0
+:parse_args
+if "%~1"=="" goto args_done
+if "%~1"=="--dry-run" (
+    set DRY_RUN=1
+) else if "%~1"=="--update-baseline" (
+    set UPDATE_BASELINE=1
+) else (
+    echo unknown argument: %~1 1>&2
+    exit /b 2
+)
+shift
+goto parse_args
+:args_done
 
 set OUT_DIR=coverage-unified
 set FRONTEND_LCOV=coverage\lcov.info
@@ -32,6 +48,7 @@ set UNIT_LCOV=%OUT_DIR%\unit.lcov
 set MERGED_LCOV=%OUT_DIR%\merged.lcov
 set SUMMARY_FILE=%OUT_DIR%\summary.txt
 set GAP_REPORT=%OUT_DIR%\integration-gap.md
+set RATCHET_REPORT=%OUT_DIR%\ratchet.md
 
 if not exist "%OUT_DIR%" mkdir "%OUT_DIR%"
 
@@ -45,9 +62,13 @@ if "%DRY_RUN%"=="1" (
 
 echo === Rust coverage (cargo llvm-cov -^> lcov) ===
 if "%DRY_RUN%"=="1" (
-    echo   [dry-run] skipping: cargo llvm-cov --workspace --all-features --lcov
+    echo   [dry-run] skipping: cargo llvm-cov --workspace --all-features --no-report
 ) else (
-    cargo llvm-cov --workspace --all-features --lcov --output-path "%RUST_LCOV%"
+    REM Tests and report are split so the report step survives an intermittent
+    REM truncated .profraw (see scripts\internal\llvm-cov-report.mjs).
+    cargo llvm-cov --workspace --all-features --no-report
+    if errorlevel 1 exit /b 1
+    node scripts\internal\llvm-cov-report.mjs "%RUST_LCOV%"
     if errorlevel 1 exit /b 1
 )
 
@@ -82,6 +103,7 @@ if "%UNIT_SIZE%"=="0" (
 REM The integration lcov shares files with the Rust report, so it is merged per
 REM file (hits summed, unit report owns the denominator, stale files skipped).
 if exist "%GAP_REPORT%" del "%GAP_REPORT%"
+if exist "%RATCHET_REPORT%" del "%RATCHET_REPORT%"
 set INTEGRATION_SIZE=0
 if defined TERMIHUB_INTEGRATION_LCOV if exist "%TERMIHUB_INTEGRATION_LCOV%" (
     for %%A in ("%TERMIHUB_INTEGRATION_LCOV%") do set INTEGRATION_SIZE=%%~zA
@@ -110,4 +132,15 @@ echo Merged lcov:    %MERGED_LCOV%
 echo Summary:        %SUMMARY_FILE%
 if "%INTEGRATION_PRESENT%"=="1" echo Gap report:     %GAP_REPORT%
 echo HTML reports:   coverage\ (frontend) — run 'cargo llvm-cov --html' for Rust HTML
+
+REM Ratchet: fail on a coverage decrease against the committed baseline, or
+REM (with --update-baseline) raise the baseline to the measured values.
+echo.
+echo === Coverage ratchet (scripts\coverage-baseline.json) ===
+if "%UPDATE_BASELINE%"=="1" (
+    node scripts\internal\coverage-ratchet.mjs --update
+) else (
+    node scripts\internal\coverage-ratchet.mjs --check --report "%RATCHET_REPORT%"
+)
+if errorlevel 1 exit /b 1
 endlocal

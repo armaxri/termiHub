@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Fetch the newest nightly integration-lane coverage for a branch (TOOL-005,
-// #3656). Used by the advisory Coverage workflow (coverage.yml) before it runs
+// #3656). Used by the Coverage workflow (coverage.yml) before it runs
 // scripts/coverage.sh, which then merges the lcov into the unified report.
 //
 // The integration-fixtures lane runs `core/tests` against live Docker fixtures

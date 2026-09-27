@@ -197,25 +197,25 @@ if errorlevel 1 (
     echo   PASS: Rust tests passed
 )
 
-REM === Unified Coverage (advisory) ===
+REM === Coverage Ratchet ===
 echo.
-echo === Unified Coverage (advisory) ===
+echo === Coverage Ratchet ===
 
-REM Whole-app coverage — frontend + Rust merged into one number (TOOL-001).
-REM ADVISORY: a low number WARNs but never blocks (no baseline ratchet yet).
-REM Follow-up: compare the unified line %% against a stored baseline and fail on a
-REM drop. A missing cargo-llvm-cov is a WARN, never a hard fail. Mirrors release-check.sh.
-where cargo-llvm-cov >nul 2>&1
+REM Whole-app coverage — frontend + Rust (TOOL-001) — graded against the committed
+REM per-platform baseline in scripts\coverage-baseline.json (TOOL-011, #3740): a
+REM per-component drop beyond the tolerance FAILS the release gate, the same
+REM ratchet coverage.yml enforces. cargo-llvm-cov is required. Mirrors release-check.sh.
+cargo llvm-cov --version >nul 2>&1
 if errorlevel 1 (
-    echo   WARN: cargo-llvm-cov not installed - skipping unified coverage ^(install: cargo install cargo-llvm-cov^)
-    set /a WARNINGS+=1
+    echo   FAIL: cargo-llvm-cov not installed - cannot grade coverage ^(install: cargo install cargo-llvm-cov^)
+    set FAILED=1
 ) else (
     call scripts\coverage.cmd
     if errorlevel 1 (
-        echo   WARN: Unified coverage run did not complete cleanly ^(advisory^)
-        set /a WARNINGS+=1
+        echo   FAIL: Coverage ratchet failed - coverage dropped below scripts\coverage-baseline.json ^(or the run failed^)
+        set FAILED=1
     ) else (
-        echo   PASS: Unified coverage report produced ^(advisory - see coverage-unified\summary.txt^)
+        echo   PASS: Coverage at or above the committed baseline ^(see coverage-unified\ratchet.md^)
     )
 )
 
