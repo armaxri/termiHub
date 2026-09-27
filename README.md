@@ -153,14 +153,22 @@ Prefer to build it yourself? See [Development](#development) below.
 ### Workflow Automation (experimental)
 
 - **Authored multi-step workflows** — Save named, ordered sequences of steps that run against a terminal session
-- **Step types** — `send-command` (type a command), `run-script` (stream a multi-line script), `run-macro` (replay a saved macro), `wait` (delay), and `run-local-process` (run a local program — see the security callout below)
-- **Triggers** — Run manually (command palette / sidebar), via a hotkey, or automatically on-connect when a chosen connection opens a session
+- **Step types** — `send-command` (type a command), `run-script` (stream a multi-line script), `run-macro` (replay a saved macro), `wait` (delay), `run-local-process` (run a local program — see the security callout below), plus three control-flow steps:
+  - `conditional` — compare two values (`eq`, `ne`, `gt`, `lt`, `gte`, `lte`, `contains`; numeric when both sides are numbers) and run the _then_ steps or the optional _else_ steps. Operands can use `${parameter}` references
+  - `loop` — repeat a body of steps a fixed number of times or while a condition holds; the body sees the 0-based `${iteration}`. A loop runs at most 1000 iterations: a longer count is clamped, and a while-loop that reaches the cap fails the run instead of spinning forever
+  - `wait-for-output` — pause until the terminal prints matching text (a plain substring by default, or a regular expression), matched against the ANSI-stripped output that arrives after the step starts. It times out after 30 s by default (at most 10 minutes) and a timeout fails the step
+  - Conditionals and loops nest up to 10 levels deep
+- **Triggers** — A workflow can carry three kinds of trigger in 0.1:
+  - _Manual_ — run it from the command palette or the Workflows sidebar. Every saved workflow can be run this way
+  - _Hotkey_ — a single key combination (no chords) that runs it on the active terminal. An app shortcut bound to the same keys takes precedence
+  - _On-connect_ — run it automatically, once per session, when a session for one of the chosen saved connections opens
+  - There are **no on-disconnect or on-output-match triggers** in 0.1. To react to output inside a running workflow, use a `wait-for-output` step. Time-based runs are not a workflow trigger either: they are set up separately under **Schedules** (below)
 - **Error handling** — Per step, retry a failing step (up to 10 retries, fixed or exponential back-off) and/or mark it _continue on error_ so the run carries on past an expected failure; tolerated failures are shown in the run toast and history
 - **Run on many terminals** — "Run on…" in the Workflows panel runs a workflow on a chosen set of connected terminals (or the current broadcast group) in parallel (up to 8 at a time, or one after another), with per-terminal progress, per-terminal or all-at-once Stop, and a per-terminal summary
 - **Sidebar + editor** — Manage, edit, and organize workflows from the Workflows panel; import and export workflows as portable JSON
 - **Schedules** — Run a workflow or macro every N minutes, daily, or on chosen weekdays at a local time (DST-aware) on chosen saved connections or a broadcast group, while termiHub is open. Schedules start disabled, the first enable asks you to confirm the target hosts, the status bar shows how many are active, and one switch pauses them all. A scheduled run only types into terminals that are already connected, never prompts, never overlaps its previous run, and is recorded in the run history as `scheduled`; runs missed while termiHub was closed or the computer slept are skipped (or run once, per schedule)
 
-> ⚠️ **`run-local-process` runs on your LOCAL machine.** Every other step type sends text into the terminal session (i.e. runs on the remote host when you are connected). `run-local-process` instead launches a program on the computer running termiHub. It is **off by default** and stays inert until you explicitly opt in under **Settings → Security**, and each program must be authorized via a per-program allowlist / per-run confirmation. Arguments are passed as a discrete list (no shell interpretation). This is a power-user orchestration capability — safe to ignore entirely if you don't use it. Imported workflows are **never** auto-authorized.
+> ⚠️ **`run-local-process` runs on your LOCAL machine.** Every other step type works through the terminal session: it sends text into it (i.e. runs on the remote host when you are connected), reads its output, or only controls the run. `run-local-process` instead launches a program on the computer running termiHub. It is **off by default** and stays inert until you explicitly opt in under **Settings → Security**, and each program must be authorized via a per-program allowlist / per-run confirmation. Arguments are passed as a discrete list (no shell interpretation). This is a power-user orchestration capability — safe to ignore entirely if you don't use it. Imported workflows are **never** auto-authorized.
 >
 > The Workflows panel is **experimental** and behind the experimental-features toggle — enable **Settings → General → Allow Experimental Features** to use it. Design reference: [`docs/concepts/implemented/workflow-automation.html`](docs/concepts/implemented/workflow-automation.html).
 
@@ -215,12 +223,32 @@ termiHub uses a VS Code-inspired three-column layout:
 - **Local Shell** — Opens a local terminal using an auto-detected shell (zsh, bash, sh on macOS/Linux; PowerShell, cmd, Git Bash on Windows). Select the shell in the connection editor.
 - **SSH** — Remote terminal via SSH. See [SSH Configuration](#ssh-configuration) below for authentication, jump hosts, X11 forwarding, and SFTP details.
 - **Telnet** — Remote terminal via Telnet protocol. Configure host and port (default: 23). See [Telnet](#telnet) below for window size, terminal type, and auto-login.
-- **Serial** — Connect to serial devices (USB-to-serial adapters, IoT, networking equipment). Configure port, baud rate, data/stop bits, parity, and flow control. See [Serial Port Setup](#serial-port-setup) below for platform-specific instructions.
+- **Serial** — Connect to serial devices (USB-to-serial adapters, IoT, networking equipment). Configure port, baud rate, data/stop bits, parity, and flow control. Resizing the tab does not tell the device the new size (serial has no channel for it). See [Serial Port Setup](#serial-port-setup) below for platform-specific instructions and [Terminal Size](#terminal-size).
 - **Docker** — Start a new container from an image and open a shell in it (run-new; attaching to an already-running container is not yet supported).
 - **WSL** — Open a session in a Windows Subsystem for Linux distribution (Windows only).
 - **FTP / FTPS** — File-transfer connection with a managed transfer queue.
 - **Remote Desktop (RDP / VNC)** — Graphical remote-desktop session. Experimental; enable **Settings → General → Allow Experimental Features** to use it. VNC carries no audio (RFB has no standard audio channel); use RDP if you need the remote session's sound.
-- **Remote agent** — Attach to a `termihub-agent` for persistent sessions on a headless server.
+- **Remote agent** — Attach to a `termihub-agent` for persistent sessions on a headless server. The agent hosts a subset of the connection types; see [Connection Types on a Remote Agent](#connection-types-on-a-remote-agent).
+
+### Connection Types on a Remote Agent
+
+A connection you create **on a remote agent** runs on the agent's host, not on your computer: a local shell is a shell on the server, a serial connection uses a port plugged into the server, and so on. The agent hosts fewer connection types than the desktop. The connection editor only offers the types the connected agent reports.
+
+| Connection type            | Desktop            | Remote agent              | On the agent, survives an agent restart |
+| -------------------------- | ------------------ | ------------------------- | --------------------------------------- |
+| Local shell                | Yes                | Yes (shell on the server) | Yes                                     |
+| SSH                        | Yes                | Yes (from the server)     | Yes                                     |
+| Serial                     | Yes                | Yes (server's ports)      | Yes                                     |
+| Telnet                     | Yes                | Yes (from the server)     | No                                      |
+| Docker                     | Yes                | Yes (server's Docker)     | Yes                                     |
+| WSL                        | Windows only       | Windows agents only       | Yes                                     |
+| FTP / FTPS                 | Yes                | Yes                       | No                                      |
+| Remote Desktop (RDP / VNC) | Yes (experimental) | **No**                    | —                                       |
+| Plugin connection types    | Yes                | **No**                    | —                                       |
+
+- **Why no RDP / VNC on the agent:** they are graphical sessions. The agent forwards terminal output only; it has no channel for streaming a remote-desktop picture. Open RDP / VNC connections from the desktop directly.
+- **Why no plugin types on the agent:** the agent does not load plugins.
+- **Survives an agent restart:** most agent sessions run in a separate session process on the server, so they keep running if the agent itself restarts. Telnet and FTP sessions run inside the agent and end when it restarts.
 
 ### Terminal Tabs
 
@@ -496,6 +524,12 @@ sudo usermod -a -G dialout $USER
 | Flow Control | None, Hardware (RTS/CTS), Software (XON/XOFF)             | None    | Data flow regulation              |
 
 **Common configurations:** Most embedded devices (Arduino, ESP32, STM32) use 115200/8/1/None/None. Legacy devices typically use 9600/8/1/None/None.
+
+### Terminal Size
+
+A serial line has no way to tell the device the terminal size. SSH, local shells and telnet (via NAWS, see [Telnet](#telnet)) report every resize to the other side; a serial connection cannot. When you resize a serial tab, termiHub reflows the text in its own view, but the device keeps whatever size it assumes (often 80×24). Full-screen programs on the device (vi, top, menu UIs) may then draw at the wrong size.
+
+To fix this, set the size on the device side. On a Linux or BSD console, for example, run `stty rows 40 cols 120` with your tab's actual size.
 
 ### Testing with Virtual Serial Ports
 
