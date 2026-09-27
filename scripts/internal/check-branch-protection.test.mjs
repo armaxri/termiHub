@@ -159,7 +159,10 @@ describe("diffProtection", () => {
   });
 
   it("flags relaxed toggles (force pushes, admin enforcement)", () => {
-    const api = apiResponse({ allow_force_pushes: { enabled: true }, enforce_admins: { enabled: false } });
+    const api = apiResponse({
+      allow_force_pushes: { enabled: true },
+      enforce_admins: { enabled: false },
+    });
     expect(diffProtection(expected(), normalizeLive(api))).toEqual([
       "enforce_admins: expected true, live false",
       "allow_force_pushes: expected false, live true",
@@ -217,7 +220,10 @@ describe("buildPutPayload", () => {
 
   it("omits app_id when the expectation does not pin one", () => {
     const p = expected({ required_status_checks: { strict: true, contexts: ["A"] } });
-    expect(buildPutPayload(p).required_status_checks).toEqual({ strict: true, checks: [{ context: "A" }] });
+    expect(buildPutPayload(p).required_status_checks).toEqual({
+      strict: true,
+      checks: [{ context: "A" }],
+    });
   });
 
   it("round-trips: applying the payload yields no drift", () => {
@@ -270,7 +276,9 @@ describe("fetchProtection", () => {
 
   it("throws on a missing branch and on server errors", async () => {
     await expect(
-      fetchProtection("o/r", "main", { fetchImpl: mockFetch({ main: [404, { message: "Branch not found" }] }) })
+      fetchProtection("o/r", "main", {
+        fetchImpl: mockFetch({ main: [404, { message: "Branch not found" }] }),
+      })
     ).rejects.toThrow(/does not exist/);
     await expect(
       fetchProtection("o/r", "main", { fetchImpl: mockFetch({ main: [500, { message: "boom" }] }) })
@@ -331,14 +339,18 @@ describe("run", () => {
     const fetchImpl = mockFetch({ main: [200, apiResponse()] });
     const { results } = await run({ repo: "o/r", branches, only: ["main"], fetchImpl });
     expect(results).toHaveLength(1);
-    await expect(run({ repo: "o/r", branches, only: ["nope"], fetchImpl })).rejects.toThrow(/not in/);
+    await expect(run({ repo: "o/r", branches, only: ["nope"], fetchImpl })).rejects.toThrow(
+      /not in/
+    );
   });
 });
 
 describe("resolveToken", () => {
   it("prefers BRANCH_PROTECTION_TOKEN over GH_TOKEN and GITHUB_TOKEN", () => {
     const exec = vi.fn();
-    expect(resolveToken({ BRANCH_PROTECTION_TOKEN: "a", GH_TOKEN: "b", GITHUB_TOKEN: "c" }, exec)).toBe("a");
+    expect(
+      resolveToken({ BRANCH_PROTECTION_TOKEN: "a", GH_TOKEN: "b", GITHUB_TOKEN: "c" }, exec)
+    ).toBe("a");
     expect(resolveToken({ GITHUB_TOKEN: "c" }, exec)).toBe("c");
     expect(exec).not.toHaveBeenCalled();
   });
@@ -355,7 +367,16 @@ describe("resolveToken", () => {
 
 describe("parseArgs", () => {
   it("collects repeated --branch and the other options", () => {
-    const opts = parseArgs(["--repo", "o/r", "--branch", "main", "--branch", "develop", "--summary", "s.md"]);
+    const opts = parseArgs([
+      "--repo",
+      "o/r",
+      "--branch",
+      "main",
+      "--branch",
+      "develop",
+      "--summary",
+      "s.md",
+    ]);
     expect(opts).toMatchObject({ repo: "o/r", only: ["main", "develop"], summary: "s.md" });
   });
 

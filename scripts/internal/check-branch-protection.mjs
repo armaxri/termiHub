@@ -125,7 +125,9 @@ export function normalizeLive(api) {
   }
   const reviews = api.required_pull_request_reviews;
   out.required_pull_request_reviews = reviews
-    ? Object.fromEntries(REVIEW_FIELDS.map((k) => [k, reviews[k] ?? (k.endsWith("count") ? 0 : false)]))
+    ? Object.fromEntries(
+        REVIEW_FIELDS.map((k) => [k, reviews[k] ?? (k.endsWith("count") ? 0 : false)])
+      )
     : null;
   out.restrictions = api.restrictions
     ? {
@@ -160,13 +162,20 @@ export function diffProtection(expected, live) {
     for (const c of e.contexts) lines.push(`required check missing live: "${c}"`);
   } else if (e !== null && l !== null) {
     if (e.strict !== l.strict) {
-      lines.push(`required status checks strict (up to date): expected ${e.strict}, live ${l.strict}`);
+      lines.push(
+        `required status checks strict (up to date): expected ${e.strict}, live ${l.strict}`
+      );
     }
     const want = new Set(e.contexts);
     const have = new Set(l.contexts);
     for (const c of e.contexts) if (!have.has(c)) lines.push(`required check missing live: "${c}"`);
-    for (const c of l.contexts) if (!want.has(c)) lines.push(`required check live but not expected: "${c}"`);
-    if (e.app_id !== undefined && l.contexts.length > 0 && JSON.stringify(e.app_id) !== JSON.stringify(l.app_id)) {
+    for (const c of l.contexts)
+      if (!want.has(c)) lines.push(`required check live but not expected: "${c}"`);
+    if (
+      e.app_id !== undefined &&
+      l.contexts.length > 0 &&
+      JSON.stringify(e.app_id) !== JSON.stringify(l.app_id)
+    ) {
       lines.push(`required checks app_id: expected ${show(e.app_id)}, live ${show(l.app_id)}`);
     }
   }
@@ -177,7 +186,8 @@ export function diffProtection(expected, live) {
     lines.push(`pull request required: expected ${er !== null}, live ${lr !== null}`);
   } else if (er !== null) {
     for (const k of REVIEW_FIELDS) {
-      if (er[k] !== lr[k]) lines.push(`pull request reviews ${k}: expected ${show(er[k])}, live ${show(lr[k])}`);
+      if (er[k] !== lr[k])
+        lines.push(`pull request reviews ${k}: expected ${show(er[k])}, live ${show(lr[k])}`);
     }
   }
 
@@ -197,7 +207,8 @@ export function diffProtection(expected, live) {
   }
 
   for (const key of TOGGLES) {
-    if (expected[key] !== live[key]) lines.push(`${key}: expected ${expected[key]}, live ${live[key]}`);
+    if (expected[key] !== live[key])
+      lines.push(`${key}: expected ${expected[key]}, live ${live[key]}`);
   }
   return lines;
 }
@@ -218,7 +229,9 @@ export function buildPutPayload(p) {
         : {
             strict: rsc.strict,
             checks: rsc.contexts.map((context) =>
-              rsc.app_id === undefined || rsc.app_id === null ? { context } : { context, app_id: rsc.app_id }
+              rsc.app_id === undefined || rsc.app_id === null
+                ? { context }
+                : { context, app_id: rsc.app_id }
             ),
           },
     enforce_admins: p.enforce_admins,
@@ -274,7 +287,14 @@ export async function fetchProtection(repo, branch, { token, fetchImpl = fetch }
  *
  * @returns {Promise<{ exitCode: number, report: string[], results: object[] }>}
  */
-export async function run({ repo, branches, only = [], token, fetchImpl = fetch, requireReadable = false }) {
+export async function run({
+  repo,
+  branches,
+  only = [],
+  token,
+  fetchImpl = fetch,
+  requireReadable = false,
+}) {
   const names = only.length > 0 ? only : Object.keys(branches);
   const report = [];
   const results = [];
@@ -285,7 +305,9 @@ export async function run({ repo, branches, only = [], token, fetchImpl = fetch,
     const got = await fetchProtection(repo, name, { token, fetchImpl });
     if (got.state === "unreadable" && requireReadable) {
       // A configured token that cannot read is a broken secret, not "no token".
-      throw new Error(`${name}: the configured token cannot read branch protection (${got.message})`);
+      throw new Error(
+        `${name}: the configured token cannot read branch protection (${got.message})`
+      );
     }
     if (got.state === "unreadable") {
       results.push({ branch: name, status: entry.status, outcome: "skipped" });
@@ -328,7 +350,10 @@ export function resolveToken(env = process.env, exec = execFileSync) {
   const fromEnv = env.BRANCH_PROTECTION_TOKEN || env.GH_TOKEN || env.GITHUB_TOKEN;
   if (fromEnv) return fromEnv;
   try {
-    return exec("gh", ["auth", "token"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return exec("gh", ["auth", "token"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
   } catch {
     return "";
   }
@@ -372,21 +397,30 @@ async function main() {
       token: resolveToken(),
       requireReadable: Boolean(process.env.BRANCH_PROTECTION_TOKEN),
     });
-    console.log(`Branch protection for ${opts.repo} vs ${path.relative(ROOT, opts.file) || opts.file}`);
+    console.log(
+      `Branch protection for ${opts.repo} vs ${path.relative(ROOT, opts.file) || opts.file}`
+    );
     for (const line of report) console.log(line);
     const inCi = Boolean(process.env.GITHUB_ACTIONS);
     for (const r of results) {
       if (!inCi) break;
       if (r.outcome === "skipped") {
-        console.log(`::notice title=Branch protection check skipped::${r.branch}: token lacks admin read`);
+        console.log(
+          `::notice title=Branch protection check skipped::${r.branch}: token lacks admin read`
+        );
       } else if (r.outcome === "drift") {
-        console.log(`::error title=Branch protection drift::${r.branch} differs from .github/branch-protection.json`);
+        console.log(
+          `::error title=Branch protection drift::${r.branch} differs from .github/branch-protection.json`
+        );
       } else if (r.outcome === "pending") {
         console.log(`::notice title=Proposed protection not applied::${r.branch}`);
       }
     }
     if (opts.summary) {
-      appendFileSync(opts.summary, `## Branch protection drift\n\n\`\`\`text\n${report.join("\n")}\n\`\`\`\n`);
+      appendFileSync(
+        opts.summary,
+        `## Branch protection drift\n\n\`\`\`text\n${report.join("\n")}\n\`\`\`\n`
+      );
     }
     return exitCode;
   } catch (err) {
