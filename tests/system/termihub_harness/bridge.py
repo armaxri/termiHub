@@ -24,7 +24,14 @@ from typing import Any, Optional, Sequence
 import websockets
 
 from . import deadlines, timing
-from .protocol import Command, Response, decode_response, encode_request
+from .protocol import (
+    MAIN_WINDOW,
+    Command,
+    Response,
+    decode_response,
+    encode_request,
+    window_from_request_path,
+)
 
 
 #: Named per-operation deadlines live in :mod:`.deadlines` (#3660); these aliases
@@ -54,12 +61,32 @@ class BridgeError(Exception):
         self.action = action
 
 
-class _Connection:
-    """One app WebSocket connection. Lives entirely on the bridge event loop."""
+def _request_path(ws: Any) -> str:
+    """The path (with query) a client dialled, across ``websockets`` versions.
 
-    def __init__(self, ws: Any, loop: asyncio.AbstractEventLoop) -> None:
+    The new asyncio server (``websockets`` >= 14) exposes it as
+    ``ws.request.path``; the legacy server as ``ws.path``.
+    """
+    path = getattr(getattr(ws, "request", None), "path", None)
+    if isinstance(path, str):
+        return path
+    legacy = getattr(ws, "path", None)
+    return legacy if isinstance(legacy, str) else ""
+
+
+class _Connection:
+    """One app WebSocket connection. Lives entirely on the bridge event loop.
+
+    ``window`` is the runtime label of the native window whose page opened the
+    socket (``main``, ``win-1``, …) — see :func:`.protocol.window_from_request_path`.
+    """
+
+    def __init__(
+        self, ws: Any, loop: asyncio.AbstractEventLoop, window: str = MAIN_WINDOW
+    ) -> None:
         self._ws = ws
         self._loop = loop
+        self.window = window
         self._next_id = 1
         self._pending: dict[int, asyncio.Future] = {}
         self._closed = False
@@ -131,10 +158,100 @@ class Driver:
         connection: _Connection,
         loop: asyncio.AbstractEventLoop,
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
+        bridge: Optional["Bridge"] = None,
     ) -> None:
         self._conn = connection
         self._loop = loop
         self._timeout = request_timeout
+        # The owning server, so this driver can reach the app's other windows
+        # (multi-window, #3720). ``None`` for a driver built by hand in a test.
+        self._bridge = bridge
+
+    # ── Windows (multi-window, TIN-014 / #3720) ──────────────────────────────
+    @property
+    def window_label(self) -> str:
+        """The runtime label of the native window this driver drives (``main``, …)."""
+        return self._conn.window
+
+    @property
+    def is_connected(self) -> bool:
+        """Whether this window's bridge socket is still open."""
+        return not self._conn._closed
+
+    def windows(self) -> list[str]:
+        """Labels of every app window with a live bridge connection, main first.
+
+        This is the runner's view — the windows it can address with
+        :meth:`window`. For the backend's own registry (which also sees a window
+        whose page has not connected yet) use :meth:`list_windows`.
+        """
+        if self._bridge is None:
+            return [self.window_label] if self.is_connected else []
+        return self._bridge.windows()
+
+    def window(
+        self, label: str, *, timeout: float = DEFAULT_APP_WAIT_TIMEOUT
+    ) -> "Driver":
+        """A :class:`Driver` for the window labelled ``label``.
+
+        Waits up to ``timeout`` for that window's page to connect (a window opened
+        a moment ago may still be booting). ``driver.window("main")`` returns this
+        driver itself when it already drives the live main window, so existing
+        single-window code keeps working unchanged.
+        """
+        if label == self.window_label and self.is_connected:
+            return self
+        if self._bridge is None:
+            raise BridgeError("", f"no bridge to reach window {label!r}")
+        return self._bridge.window(label, timeout=timeout, request_timeout=self._timeout)
+
+    def wait_for_window(
+        self, predicate: Any = None, *, timeout: float = DEFAULT_APP_WAIT_TIMEOUT
+    ) -> "Driver":
+        """Wait for a window **other than those already connected** and drive it.
+
+        ``predicate`` optionally filters candidate labels. The usual use is right
+        after an action that opens a window (New Window, Move to New Window)::
+
+            before = driver.windows()
+            driver.press_key("N", ctrl=True, shift=True)
+            second = driver.wait_for_window(lambda label: label not in before)
+        """
+        if self._bridge is None:
+            raise BridgeError("", "no bridge to wait for a window on")
+        return self._bridge.wait_for_window(
+            predicate, timeout=timeout, request_timeout=self._timeout
+        )
+
+    def wait_until_closed(self, *, timeout: float = DEFAULT_APP_WAIT_TIMEOUT) -> None:
+        """Block until this window's bridge socket closes (the window was destroyed).
+
+        Raises ``TimeoutError`` if it is still open after ``timeout``.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not self.is_connected:
+                return
+            time.sleep(0.1)
+        raise TimeoutError(
+            f"window {self.window_label!r} was still connected after {timeout}s"
+        )
+
+    def close_window(self) -> None:
+        """Request that this window close, exactly as its title-bar close would.
+
+        Emits the real ``close-requested`` event, so the app's close interceptor
+        (#1903) decides: an empty or all-persistent window is destroyed, one that
+        would lose a live session raises the "Close this window?" dialog. The
+        bridge never force-destroys. The close is deferred app-side until this
+        call has returned, so a window that closes at once does not swallow the
+        reply — use :meth:`wait_until_closed` to wait for it to go.
+        """
+        self._call({"action": "closeWindow"})
+
+    def list_windows(self) -> list[dict[str, Any]]:
+        """The backend window registry: ``[{"label", "tabCount"?}, …]`` (#1900)."""
+        return self._call({"action": "listWindows"})
 
     def _call(self, command: Command, *, timeout: Optional[float] = None) -> Any:
         # Drop None-valued keys so the wire form matches the in-process client:
@@ -527,6 +644,11 @@ class Bridge:
         self._ready = threading.Event()
         self._error: Optional[BaseException] = None
         self._stop_future: Optional[asyncio.Future] = None
+        # Multi-window (#3720): the live connection per window label (last one
+        # wins), and an event swapped on every change so waiters can re-check.
+        # Both are only touched on the bridge event loop.
+        self._windows: dict[str, _Connection] = {}
+        self._windows_changed: Optional[asyncio.Event] = None
 
     def start(self) -> "Bridge":
         """Start listening on a background thread; resolves once :attr:`port` is set."""
@@ -587,7 +709,88 @@ class Bridge:
                 f"no app connected to the bridge within {timeout}s"
             ) from exc
         timing.record("app-connect", time.monotonic() - started, timeout)
-        return Driver(connection, self._loop, request_timeout=request_timeout)
+        return Driver(connection, self._loop, request_timeout=request_timeout, bridge=self)
+
+    # ── Windows (multi-window, TIN-014 / #3720) ──────────────────────────────
+    def windows(self) -> list[str]:
+        """Labels of every window with a live bridge connection, main first."""
+        if self._loop is None:
+            raise RuntimeError("bridge is not started")
+        future = asyncio.run_coroutine_threadsafe(self._live_labels(), self._loop)
+        return future.result(5)
+
+    def window(
+        self,
+        label: str,
+        *,
+        timeout: float = DEFAULT_APP_WAIT_TIMEOUT,
+        request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
+    ) -> Driver:
+        """A :class:`Driver` for window ``label``, waiting up to ``timeout`` for it.
+
+        Unlike :meth:`wait_for_app` this does not consume a connection from the
+        main-window queue: it looks the window up in the live registry, so it can
+        be called any number of times, for any window (``"main"`` included).
+        """
+        return self.wait_for_window(
+            lambda candidate: candidate == label,
+            timeout=timeout,
+            request_timeout=request_timeout,
+            what=f"window {label!r}",
+        )
+
+    def wait_for_window(
+        self,
+        predicate: Any = None,
+        *,
+        timeout: float = DEFAULT_APP_WAIT_TIMEOUT,
+        request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
+        what: str = "a matching window",
+    ) -> Driver:
+        """Block until a live window whose label satisfies ``predicate`` connects.
+
+        ``predicate`` defaults to "any window other than main". Returns a
+        :class:`Driver` for the first match (in :meth:`windows` order).
+        """
+        if self._loop is None:
+            raise RuntimeError("bridge is not started")
+        accept = predicate or (lambda label: label != MAIN_WINDOW)
+        timeout = deadlines.app_connect(timeout)
+        future = asyncio.run_coroutine_threadsafe(
+            self._await_window(accept, timeout), self._loop
+        )
+        try:
+            connection = future.result(timeout + 5)
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError(f"{what} did not connect to the bridge within {timeout}s") from exc
+        return Driver(connection, self._loop, request_timeout=request_timeout, bridge=self)
+
+    async def _live_labels(self) -> list[str]:
+        labels = [label for label, conn in self._windows.items() if not conn._closed]
+        return sorted(labels, key=lambda label: (label != MAIN_WINDOW, label))
+
+    async def _await_window(self, accept: Any, timeout: float) -> "_Connection":
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        while True:
+            for label in await self._live_labels():
+                if accept(label):
+                    return self._windows[label]
+            assert self._windows_changed is not None
+            changed = self._windows_changed
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError()
+            try:
+                await asyncio.wait_for(changed.wait(), remaining)
+            except asyncio.TimeoutError:
+                continue  # re-check once more, then time out above
+
+    def _signal_windows_changed(self) -> None:
+        """Wake every window waiter (runs on the bridge loop)."""
+        if self._windows_changed is not None:
+            self._windows_changed.set()
+        self._windows_changed = asyncio.Event()
 
     async def _acquire_settled(self, timeout: float, settle: float) -> "_Connection":
         """Pop a connection, then prefer a newer/surviving one (see wait_for_app).
@@ -636,11 +839,29 @@ class Bridge:
         asyncio.set_event_loop(loop)
         self._conn_queue = asyncio.Queue()
         self._stop_future = loop.create_future()
+        self._windows_changed = asyncio.Event()
 
         async def handler(ws: Any) -> None:
-            connection = _Connection(ws, loop)
-            await self._conn_queue.put(connection)
-            await connection.reader()
+            window = window_from_request_path(_request_path(ws))
+            if window is None:
+                # A malformed window tag is refused, never mistaken for main.
+                await ws.close(1008, "invalid bridge window label")
+                return
+            connection = _Connection(ws, loop, window=window)
+            self._windows[window] = connection
+            self._signal_windows_changed()
+            # Only the main window takes part in the wait_for_app queue (the
+            # sequential/restart contract, #817). A secondary window — opened by
+            # a test, or respawned by a windowed-layout restore at boot — must
+            # never be handed out (or preferred by the settle logic) as "the app".
+            if window == MAIN_WINDOW:
+                await self._conn_queue.put(connection)
+            try:
+                await connection.reader()
+            finally:
+                if self._windows.get(window) is connection:
+                    del self._windows[window]
+                self._signal_windows_changed()
 
         async def serve() -> None:
             self._server = await websockets.serve(
