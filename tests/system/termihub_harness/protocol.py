@@ -33,6 +33,7 @@ Response = dict[str, Any]
 BRIDGE_ACTIONS: frozenset[str] = frozenset(
     {
         "click",
+        "closeWindow",
         "contextMenu",
         "doubleClick",
         "drag",
@@ -46,6 +47,7 @@ BRIDGE_ACTIONS: frozenset[str] = frozenset(
         "getTerminalViewport",
         "getText",
         "getValue",
+        "listWindows",
         "pressKey",
         "projectionDispatch",
         "projectionDropNext",

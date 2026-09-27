@@ -211,6 +211,10 @@ def dispatcher_like(
                 {"event": command["event"], "payload": command.get("payload")}
             )
             return {"ok": True, "action": "emitEvent"}
+        if action == "closeWindow":
+            return {"ok": True, "action": "closeWindow"}
+        if action == "listWindows":
+            return {"ok": True, "action": "listWindows", "value": [{"label": "main"}]}
         if action == "screenshot":
             if screenshot is None:
                 return {"ok": False, "action": "screenshot", "error": "capture unavailable"}
