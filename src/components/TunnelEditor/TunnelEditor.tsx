@@ -32,6 +32,7 @@ import { TunnelDiagram } from "./TunnelDiagram";
 import { TunnelChainPreviewDialog } from "./TunnelChainPreviewDialog";
 import { validateTunnelType, type TunnelFieldErrors } from "./tunnelValidation";
 import { newId } from "@/services/transport/ids";
+import { ambiguousConnectionIds } from "@/utils/jumpHost";
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import "./TunnelEditor.css";
 
@@ -167,8 +168,15 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   // Find existing tunnel if editing
   const existingTunnel = meta.tunnelId ? tunnels.find((t) => t.id === meta.tunnelId) : undefined;
 
-  // SSH connections only
-  const sshConnections = connections.filter((c) => c.config.type === "ssh");
+  // SSH connections only, one entry per id. An id held by more than one
+  // connection file is ambiguous: the backend refuses to host a tunnel on it
+  // (#3619, the same rule as jump-host references), so it is listed but not
+  // pickable, and never chosen as a default.
+  const ambiguousIds = ambiguousConnectionIds(connections);
+  const sshConnections = connections.filter(
+    (c, i) => c.config.type === "ssh" && connections.findIndex((o) => o.id === c.id) === i
+  );
+  const pickableSshConnections = sshConnections.filter((c) => !ambiguousIds.has(c.id));
 
   const { control, getValues, setValue, reset } = useForm<TunnelFormState>({
     defaultValues: {
@@ -177,10 +185,10 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       // (PROD-023) pre-selects that connection when it is a saved SSH one.
       sshConnectionId:
         existingTunnel?.sshConnectionId ??
-        (meta.sshConnectionId && sshConnections.some((c) => c.id === meta.sshConnectionId)
+        (meta.sshConnectionId && pickableSshConnections.some((c) => c.id === meta.sshConnectionId)
           ? meta.sshConnectionId
           : undefined) ??
-        sshConnections[0]?.id ??
+        pickableSshConnections[0]?.id ??
         "",
       tunnelType: existingTunnel?.tunnelType ?? defaultTunnelType("local"),
       // Which machine hosts this tunnel (S3, #2155). New tunnels default to This
@@ -324,7 +332,12 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     }
   };
 
-  const sshOptions = sshConnections.map((c) => ({ value: c.id, label: c.name }));
+  const sshOptions = sshConnections.map((c) =>
+    ambiguousIds.has(c.id)
+      ? { value: c.id, label: `${c.name} (in several connection files)`, disabled: true }
+      : { value: c.id, label: c.name }
+  );
+  const sshConnectionAmbiguous = ambiguousIds.has(form.sshConnectionId);
 
   // Tunnel host (run-location) selector: This computer + every remote agent.
   const hostOptions = [
@@ -358,7 +371,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   // The user's saved SSH connections as SSH-via candidates for the companion —
   // its `sshConnectionId` must resolve to a saved SSH connection (the backend has
   // no agent→connection link), so we match one whose host reaches the agent.
-  const sshViaCandidates = sshConnections.map((c) => ({
+  const sshViaCandidates = pickableSshConnections.map((c) => ({
     id: c.id,
     host: typeof c.config.config.host === "string" ? c.config.config.host : "",
   }));
@@ -460,7 +473,18 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           )}
         />
 
-        <Field label="SSH Connection" htmlFor={`tunnel-ssh-${tabId}`}>
+        <Field
+          label="SSH Connection"
+          htmlFor={`tunnel-ssh-${tabId}`}
+          error={
+            sshConnectionAmbiguous
+              ? "A connection with this id exists in more than one connection file, so the " +
+                "tunnel cannot be hosted on it. Rename or move one of them, or pick another " +
+                "SSH connection."
+              : undefined
+          }
+          data-testid="tunnel-editor-ssh-connection-field"
+        >
           <Select
             value={form.sshConnectionId || undefined}
             onChange={(v) => setValue("sshConnectionId", v)}
