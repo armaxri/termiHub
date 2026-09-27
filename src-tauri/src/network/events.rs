@@ -1,32 +1,25 @@
 //! Single source of truth for the built-in network-tool Tauri events (DUP-027).
 //!
 //! The desktop surfaces streaming network diagnostics (port scan, ping,
-//! traceroute, ping sweep) to the frontend as Tauri events. Those results reach
-//! the frontend down **two** backend paths that must be indistinguishable:
+//! traceroute, ping sweep) to the frontend as Tauri events. A tool runs from a
+//! core `ToolRegistry` on this computer or on an agent
+//! ([`crate::network::tool_runner`], #3731), and both locations map the tool's
+//! streamed events to these names and payloads through the one
+//! [`StreamTool`](crate::network::agent_stream::StreamTool) mapping, so the
+//! frontend cannot tell where a tool ran.
 //!
-//! - the **local** path — [`crate::commands::network`] runs the
-//!   [`termihub_core::network`] function directly and emits per-result events;
-//! - the **agent-proxy** path — [`crate::network::agent_tools`] proxies the tool
-//!   to a remote agent's `network.*` RPC and re-emits its batched reply as the
-//!   *same* events.
-//!
-//! Before this module each path re-declared every event name and payload shape
-//! inline, so the two copies had to be kept byte-identical by hand. The event
-//! **names** and **payload shapes** now live here once; both paths emit through
-//! these helpers, so the wire contract cannot drift between them.
-//!
-//! This shaping is Tauri-specific (it needs an [`AppHandle`]), so it lives in the
-//! desktop crate rather than in the transport-agnostic `termihub_core::network`.
-//! The payload builders are pure and unit-tested to lock the exact wire shape.
+//! This shaping is desktop-specific (the frontend's event contract), so it lives
+//! in the desktop crate rather than in the transport-agnostic
+//! `termihub_core::network`. The payload builders are pure and unit-tested to
+//! lock the exact wire shape.
 
 use serde::Serialize;
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter};
 
 use termihub_core::network::PortScanResult;
 
 /// Event names for the built-in network tools. Single-sourced so the frontend
-/// listener names and both backend emit paths cannot diverge.
+/// listener names and the backend cannot diverge.
 pub mod name {
     /// Port scan: one per probed port — `{ taskId, host, port, state, latencyMs? }`.
     pub const SCAN_RESULT: &str = "network-scan-result";
@@ -119,79 +112,6 @@ pub fn traceroute_complete_payload(task_id: &str) -> Value {
 /// event.
 pub fn error_payload(task_id: &str, error: &str) -> Value {
     json!({ "taskId": task_id, "error": error })
-}
-
-// ── Thin emit wrappers (used by both the local and agent-proxy paths) ─────────
-
-/// Emit `network-scan-result` for a single probed port.
-pub fn emit_scan_result(app: &AppHandle, task_id: &str, result: &PortScanResult) {
-    let _ = app.emit(name::SCAN_RESULT, scan_result_payload(task_id, result));
-}
-
-/// Emit `network-scan-complete` with the run summary.
-pub fn emit_scan_complete(app: &AppHandle, task_id: &str, summary: impl Serialize) {
-    let _ = app.emit(name::SCAN_COMPLETE, scan_complete_payload(task_id, summary));
-}
-
-/// Emit `network-ping-result` for a single echo.
-pub fn emit_ping_result(app: &AppHandle, task_id: &str, result: impl Serialize) {
-    let _ = app.emit(name::PING_RESULT, ping_result_payload(task_id, result));
-}
-
-/// Emit `network-ping-complete` with the aggregate stats and cancellation flag.
-pub fn emit_ping_complete(app: &AppHandle, task_id: &str, stats: impl Serialize, canceled: bool) {
-    let _ = app.emit(
-        name::PING_COMPLETE,
-        ping_complete_payload(task_id, stats, canceled),
-    );
-}
-
-/// Emit `network-sweep-result` for a single responding host.
-pub fn emit_sweep_result(
-    app: &AppHandle,
-    task_id: &str,
-    host: impl Serialize,
-    latency_ms: impl Serialize,
-    hostname: impl Serialize,
-) {
-    let _ = app.emit(
-        name::SWEEP_RESULT,
-        sweep_result_payload(task_id, host, latency_ms, hostname),
-    );
-}
-
-/// Emit `network-sweep-complete` with the run summary and cancellation flag.
-pub fn emit_sweep_complete(
-    app: &AppHandle,
-    task_id: &str,
-    summary: impl Serialize,
-    canceled: bool,
-) {
-    let _ = app.emit(
-        name::SWEEP_COMPLETE,
-        sweep_complete_payload(task_id, summary, canceled),
-    );
-}
-
-/// Emit `network-traceroute-hop` for a single hop.
-pub fn emit_traceroute_hop(app: &AppHandle, task_id: &str, hop: impl Serialize) {
-    let _ = app.emit(name::TRACEROUTE_HOP, traceroute_hop_payload(task_id, hop));
-}
-
-/// Emit `network-traceroute-complete`.
-pub fn emit_traceroute_complete(app: &AppHandle, task_id: &str) {
-    let _ = app.emit(
-        name::TRACEROUTE_COMPLETE,
-        traceroute_complete_payload(task_id),
-    );
-}
-
-/// Emit one of the network-tool `*-error` events with the shared error payload.
-///
-/// The event name is passed explicitly (from [`name`]) so a caller emits the
-/// error variant matching the tool it was running.
-pub fn emit_error(app: &AppHandle, event: &str, task_id: &str, error: &str) {
-    let _ = app.emit(event, error_payload(task_id, error));
 }
 
 #[cfg(test)]

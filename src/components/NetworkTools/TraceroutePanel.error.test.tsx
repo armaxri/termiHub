@@ -93,6 +93,26 @@ describe("TraceroutePanel — error handling", () => {
     expect(container.textContent).toContain("DNS resolution failed");
   });
 
+  it("shows the 'update the agent' message when the agent is too old (#3731)", async () => {
+    // Tauri rejects a command error as the structured IPC envelope — the panel
+    // must show its message, never "[object Object]" or nothing at all.
+    vi.mocked(networkTraceroute).mockRejectedValueOnce({
+      code: "agent_outdated",
+      message:
+        "This agent (version 0.8.1) is too old to run network tools. " +
+        "Update the agent to use network tools.",
+      details: null,
+    });
+    await act(async () => {
+      root.render(<TraceroutePanel prefillHost="example.com" />);
+    });
+    await start();
+
+    expect(container.querySelector('[data-testid="traceroute-run"]')).not.toBeNull();
+    expect(container.textContent).toContain("Update the agent to use network tools");
+    expect(container.textContent).not.toContain("[object Object]");
+  });
+
   it("ignores errors for a different task id", async () => {
     await act(async () => {
       root.render(<TraceroutePanel prefillHost="host" />);

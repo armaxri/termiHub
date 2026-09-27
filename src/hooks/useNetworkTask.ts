@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import type { DiagnosticStatus } from "@/types/network";
+import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 
 /** Context handed to {@link UseNetworkTaskOptions.subscribe}. */
@@ -103,7 +104,7 @@ export function useNetworkTask({
       await subscribe(ctx);
       taskIdRef.current = await start();
     } catch (err) {
-      setError(String(err));
+      setError(errorMessage(err));
       setStatus("error");
       teardown();
       frontendLog(logScope, `Task failed: ${err}`);

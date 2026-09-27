@@ -166,7 +166,7 @@ agent/                        # Remote agent (JSON-RPC over SSH)
     tunnel/                   # Agent-hosted SSH tunnel forwarding (local/remote/dynamic)
     service/                  # Agent-hosted embedded HTTP/FTP/TFTP servers
     monitoring/               # System monitoring (self + remote SSH, delegates to core parsers)
-    network/                  # Network diagnostic handlers (thin wrappers over core::network)
+    network/                  # Streaming tool runs (tool.start); network tools run via core ToolRegistry
     files/                    # Connection-scoped file browsing (core FileBrowser)
     update/                   # Optional agent-side GitHub self-update (off by default)
     handler/                  # JSON-RPC method dispatcher

@@ -12,9 +12,12 @@ pub mod http_monitor_storage;
 pub mod monitor_history;
 pub mod monitor_history_manager;
 pub mod monitor_history_storage;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod tool_history;
 pub mod tool_history_manager;
 pub mod tool_history_storage;
+pub mod tool_runner;
 pub mod wol_storage;
 
 use std::collections::HashMap;
@@ -38,6 +41,7 @@ use termihub_core::protocol::methods::{
     ServiceStatusResult, ServiceStopParams,
 };
 use termihub_core::service::Service;
+use termihub_core::tool::ToolRegistry;
 
 use crate::run_location::{Locality, ResolvedLocation, RunLocation, RunLocationResolver};
 use crate::terminal::agent_manager::AgentRpcClient;
@@ -129,6 +133,10 @@ pub struct NetworkManager {
     /// S-phase (#2191). An absent entry means [`RunLocation::ThisComputer`], the
     /// desktop default and today's behaviour.
     run_locations: Mutex<HashMap<String, RunLocation>>,
+    /// The built-in network tools this computer runs (#3731). A local run goes
+    /// through this registry — the same core `ToolRegistry` an agent's `tool.*`
+    /// methods dispatch to — so each tool has one code path wherever it runs.
+    tool_registry: Arc<ToolRegistry>,
     /// Saved Wake-on-LAN devices (persisted to disk).
     wol_devices: Mutex<Vec<WolDevice>>,
     /// App config directory for persistence.
@@ -148,6 +156,7 @@ impl NetworkManager {
             agent_status_poller: AgentStatusPoller::new(),
             run_location: RunLocationResolver::new(),
             run_locations: Mutex::new(HashMap::new()),
+            tool_registry: Arc::new(ToolRegistry::with_builtin_network_tools()),
             wol_devices: Mutex::new(Vec::new()),
             config_dir: PathBuf::new(),
             app_handle: Arc::new(Mutex::new(None)),
@@ -209,6 +218,11 @@ impl NetworkManager {
                 &self.requested_run_location(tool),
             )
             .map_err(|e| TerminalError::NetworkError(e.to_string()))
+    }
+
+    /// The registry of built-in network tools a local run dispatches to (#3731).
+    pub fn tool_registry(&self) -> Arc<ToolRegistry> {
+        Arc::clone(&self.tool_registry)
     }
 
     /// The agent RPC client from Tauri managed state, if available (#2190).

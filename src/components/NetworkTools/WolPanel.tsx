@@ -12,6 +12,7 @@ import type { NetworkRunStatus, NetworkToolRun, WolDevice } from "@/types/networ
 import { NetworkToolHistory } from "./NetworkToolHistory";
 import { paramNumber, paramString, recordToolRun, useRerunAfterUpdate } from "./runHistory";
 import { validatePort, validateHost, validateMac } from "@/utils/fieldValidation";
+import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 import { newId } from "@/services/transport/ids";
 
@@ -58,8 +59,8 @@ export function WolPanel() {
       setSentMessage(`Magic packet sent to ${mac}`);
       recordWol(startedAt, mac, broadcast, Number(port), "completed");
     } catch (err) {
-      setError(String(err));
-      recordWol(startedAt, mac, broadcast, Number(port), "error", String(err));
+      setError(errorMessage(err));
+      recordWol(startedAt, mac, broadcast, Number(port), "error", errorMessage(err));
       frontendLog("wol_panel", `WoL send failed: ${err}`);
       throw err; // keep the async Button in its error path (no false success flash)
     }
@@ -72,8 +73,8 @@ export function WolPanel() {
       recordWol(startedAt, device.mac, device.broadcast, device.port, "completed");
       toast.success(`Magic packet sent to ${device.name}`);
     } catch (err) {
-      setError(String(err));
-      recordWol(startedAt, device.mac, device.broadcast, device.port, "error", String(err));
+      setError(errorMessage(err));
+      recordWol(startedAt, device.mac, device.broadcast, device.port, "error", errorMessage(err));
       frontendLog("wol_panel", `WoL wake failed: ${err}`);
       toast.error(`Wake failed: ${err}`);
     }
@@ -111,7 +112,7 @@ export function WolPanel() {
       setSaveModalOpen(false);
       toast.success(`Saved device "${name}"`);
     } catch (err) {
-      setError(String(err));
+      setError(errorMessage(err));
       frontendLog("wol_panel", `WoL device save failed: ${err}`);
       toast.error(`Save failed: ${err}`);
       throw err; // keep the async Button in its error path (no success flash)
@@ -124,7 +125,7 @@ export function WolPanel() {
         await networkWolDeviceDelete(id);
         await loadDevices();
       } catch (err) {
-        setError(String(err));
+        setError(errorMessage(err));
         frontendLog("wol_panel", `WoL device delete failed: ${err}`);
         toast.error(`Delete failed: ${err}`);
       }

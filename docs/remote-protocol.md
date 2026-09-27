@@ -2,9 +2,9 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.8.0
+**Version**: 0.12.0
 **Status**: Draft
-**Issue**: #17, #360, #1349, #2185, #2192, #2607
+**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731
 
 ---
 
@@ -259,6 +259,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 - Protocol versions follow [Semantic Versioning](https://semver.org/) (`MAJOR.MINOR.PATCH`)
 - **Major** version changes indicate breaking changes — the agent MUST reject incompatible major versions
 - **Minor** version changes add new methods or optional fields — backwards compatible
+- **Pre-1.0 exception:** while the major version is `0`, a minor version may also **remove** methods (0.2.0 removed `session.*`; 0.12.0 removed `network.*`). The removal is documented below, and the desktop gates the affected feature on a capability so an older peer gets a clear message instead of a missing-method failure
 - **Patch** version changes are bug fixes — no protocol impact
 - The agent selects the highest compatible version it supports (matching major, up to its minor)
 
@@ -280,41 +281,48 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 > [`-32601` Method not found](#standard-json-rpc-errors) and the desktop falls back to the
 > pre-feature behaviour (see the per-version notes below, which describe exactly these `-32601`
 > fallbacks). Anyone implementing a third-party client should not rely on the desktop rejecting an
-> incompatible agent by version.
+> incompatible agent by version. Network tools are gated up front instead: the desktop requires the
+> `toolStreaming` capability (see [Agent-run network tools](#agent-run-network-tools-tool)).
 
 ### Compatibility Matrix
 
-| Desktop Version | Agent Version | Compatible?                                                                                                                   |
-| --------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| 0.11.0          | 0.11.0        | Yes                                                                                                                           |
-| 0.11.0          | 0.10.0        | Yes (no `embeddedServerActivity` — an agent-hosted server's panel says the access log is not supported by this agent version) |
-| 0.10.0          | 0.11.0        | Yes (new methods / capability ignored)                                                                                        |
-| 0.10.0          | 0.10.0        | Yes                                                                                                                           |
-| 0.10.0          | 0.9.0         | Yes (`clientCapabilities` ignored — agent-authenticated SSH keeps auto-answer-only keyboard-interactive)                      |
-| 0.9.0           | 0.10.0        | Yes (no `clientCapabilities` — the agent never relays prompts to this desktop)                                                |
-| 0.9.0           | 0.9.0         | Yes                                                                                                                           |
-| 0.9.0           | 0.8.0         | Yes (no `toolStreaming` — agent-run network tools fall back to collect-and-return `network.*` / `tool.run`)                   |
-| 0.8.0           | 0.9.0         | Yes (new methods / notifications / capability ignored)                                                                        |
-| 0.8.0           | 0.8.0         | Yes                                                                                                                           |
-| 0.8.0           | 0.7.0         | Yes (`service.pause/resume` absent — agent-hosted monitor pause falls back to stop-and-relist)                                |
-| 0.7.0           | 0.8.0         | Yes (new methods ignored)                                                                                                     |
-| 0.7.0           | 0.7.0         | Yes                                                                                                                           |
-| 0.7.0           | 0.6.0         | Yes (`service.*` absent — agent-hosted embedded servers fall back to hosting on desktop)                                      |
-| 0.6.0           | 0.7.0         | Yes (new methods ignored)                                                                                                     |
-| 0.6.0           | 0.6.0         | Yes                                                                                                                           |
-| 0.6.0           | 0.5.0         | Yes (`tunnel.*` absent — agent-hosted tunnels fall back to the "not supported" path)                                          |
-| 0.5.0           | 0.6.0         | Yes (new methods ignored)                                                                                                     |
-| 0.5.0           | 0.5.0         | Yes                                                                                                                           |
-| 0.5.0           | 0.4.0         | Yes (`agent.forward.*` absent — relay is a no-op)                                                                             |
-| 0.4.0           | 0.5.0         | Yes (new methods / notifications ignored)                                                                                     |
-| 0.4.0           | 0.4.0         | Yes                                                                                                                           |
-| 0.4.0           | 0.3.0         | Yes (`agent.request_update` absent — see below)                                                                               |
-| 0.3.0           | 0.4.0         | Yes (new method / notification ignored)                                                                                       |
-| 0.3.0           | 0.2.0         | Yes (`agent.list_connections` / `client_id` absent)                                                                           |
-| 0.2.0           | 0.3.0         | Yes (new method / field ignored)                                                                                              |
-| 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                    |
-| 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                          |
-| 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                           |
+| Desktop Version | Agent Version | Compatible?                                                                                                                          |
+| --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.12.0          | 0.12.0        | Yes                                                                                                                                  |
+| 0.12.0          | 0.9.0–0.11.0  | Yes (network tools run through `tool.*`, which these agents already offer)                                                           |
+| 0.12.0          | < 0.9.0       | Partly (no `toolStreaming` — network tools refuse with "update the agent to use network tools"; everything else works)               |
+| 0.11.0          | 0.12.0        | Partly (agent-run DNS / Wake-on-LAN / open ports fail with `-32601` — they still call the removed `network.*`; streaming tools work) |
+| 0.11.0          | 0.11.0        | Yes                                                                                                                                  |
+| 0.11.0          | 0.10.0        | Yes (no `embeddedServerActivity` — an agent-hosted server's panel says the access log is not supported by this agent version)        |
+| 0.10.0          | 0.11.0        | Yes (new methods / capability ignored)                                                                                               |
+| 0.10.0          | 0.10.0        | Yes                                                                                                                                  |
+| 0.10.0          | 0.9.0         | Yes (`clientCapabilities` ignored — agent-authenticated SSH keeps auto-answer-only keyboard-interactive)                             |
+| 0.9.0           | 0.10.0        | Yes (no `clientCapabilities` — the agent never relays prompts to this desktop)                                                       |
+| 0.9.0           | 0.9.0         | Yes                                                                                                                                  |
+| 0.9.0           | 0.8.0         | Yes (no `toolStreaming` — agent-run network tools fall back to collect-and-return `network.*` / `tool.run`)                          |
+| 0.8.0           | 0.9.0         | Yes (new methods / notifications / capability ignored)                                                                               |
+| 0.8.0           | 0.8.0         | Yes                                                                                                                                  |
+| 0.8.0           | 0.7.0         | Yes (`service.pause/resume` absent — agent-hosted monitor pause falls back to stop-and-relist)                                       |
+| 0.7.0           | 0.8.0         | Yes (new methods ignored)                                                                                                            |
+| 0.7.0           | 0.7.0         | Yes                                                                                                                                  |
+| 0.7.0           | 0.6.0         | Yes (`service.*` absent — agent-hosted embedded servers fall back to hosting on desktop)                                             |
+| 0.6.0           | 0.7.0         | Yes (new methods ignored)                                                                                                            |
+| 0.6.0           | 0.6.0         | Yes                                                                                                                                  |
+| 0.6.0           | 0.5.0         | Yes (`tunnel.*` absent — agent-hosted tunnels fall back to the "not supported" path)                                                 |
+| 0.5.0           | 0.6.0         | Yes (new methods ignored)                                                                                                            |
+| 0.5.0           | 0.5.0         | Yes                                                                                                                                  |
+| 0.5.0           | 0.4.0         | Yes (`agent.forward.*` absent — relay is a no-op)                                                                                    |
+| 0.4.0           | 0.5.0         | Yes (new methods / notifications ignored)                                                                                            |
+| 0.4.0           | 0.4.0         | Yes                                                                                                                                  |
+| 0.4.0           | 0.3.0         | Yes (`agent.request_update` absent — see below)                                                                                      |
+| 0.3.0           | 0.4.0         | Yes (new method / notification ignored)                                                                                              |
+| 0.3.0           | 0.2.0         | Yes (`agent.list_connections` / `client_id` absent)                                                                                  |
+| 0.2.0           | 0.3.0         | Yes (new method / field ignored)                                                                                                     |
+| 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                           |
+| 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                 |
+| 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                  |
+
+**0.12.0 (removal, minor — pre-1.0)** — removes the dedicated `network.port_scan` / `network.ping` / `network.dns_lookup` / `network.open_ports` / `network.traceroute` / `network.wol` methods (#3731, audit DUP-027). They duplicated the core `ToolRegistry` path the agent already exposed as [`tool.run`](#agent-run-network-tools-tool) / [`tool.start`](#toolstart), so every network tool now has exactly one code path, locally and on the agent. An agent answers the removed methods with `-32601`. The desktop sets a **minimum agent version for network tools**: it requires `capabilities.toolStreaming` (0.9.0+) and, for an older agent, shows "update the agent to use network tools" (error code `agent_outdated`) before sending anything; the rest of an older agent keeps working. A 0.9.0–0.11.0 desktop talking to a 0.12.0 agent still streams the streaming tools, but its DNS / Wake-on-LAN / open-ports calls hit the removed methods — update the desktop too.
 
 **0.11.0 (additive, minor)** — adds the access log of agent-hosted embedded servers (#3453): the [`embedded_server.activity`](#embedded_serveractivity) / [`embedded_server.clear_activity`](#embedded_serverclear_activity) methods and the `capabilities.embeddedServerActivity` flag in the `initialize` result. Negotiation is by **capability**: the desktop calls the methods only when the hosting agent advertises `embeddedServerActivity: true`. Backwards compatible in both directions: a pre-0.11.0 agent never advertises the flag, so the desktop reads no log for its hosted servers (`get_embedded_server_activity` returns `null`) and the UI says the access log is not supported by this agent version; a `-32601` reply is treated the same way. A pre-0.11.0 desktop never calls the methods.
 
@@ -2179,23 +2187,23 @@ Report whether an agent-hosted tunnel is currently forwarding, with live traffic
 
 ---
 
-### Agent-run network tools (`network.*`, `tool.run`)
+### Agent-run network tools (`tool.*`)
 
-A network diagnostic whose "Run on" location is an agent runs **from the agent's network vantage**. The desktop proxies it (`src-tauri/src/network/agent_tools.rs`) and re-emits the reply as the same Tauri events or return value as the local path, so the UI cannot tell where it ran.
+A network diagnostic whose "Run on" location is an agent runs **from the agent's network vantage**. Every network tool — locally and on an agent — runs a core `ToolRegistry` tool (`src-tauri/src/network/tool_runner.rs`), and the desktop re-emits the tool's events as the same Tauri events or return value either way, so the UI cannot tell where it ran. The dedicated `network.*` methods were **removed in 0.12.0** (#3731); an agent answers them with [`-32601` Method not found](#standard-json-rpc-errors).
 
-When the agent advertises `capabilities.toolStreaming` (0.9.0+), the streaming tools — ping, traceroute, port scan and ping sweep — run as [streaming tool runs](#streaming-tool-runs-toolstart-toolcancel) instead (`src-tauri/src/network/agent_stream.rs`): results arrive live, there is no request timeout, and Stop cancels the run on the agent. Otherwise, and always for the one-shot tools, the methods below are **collect-and-return**: the agent gathers the whole run before replying, bounded by the desktop's 60 s agent-request timeout.
+| Tool        | Agent method               | `toolId`     | Params                                                | Result (aggregate)                               |
+| ----------- | -------------------------- | ------------ | ----------------------------------------------------- | ------------------------------------------------ |
+| Ping        | [`tool.start`](#toolstart) | `ping`       | `{host, intervalMs, count}`                           | `PingStats`                                      |
+| Traceroute  | [`tool.start`](#toolstart) | `traceroute` | `{host, maxHops}`                                     | `{}`                                             |
+| Port scan   | [`tool.start`](#toolstart) | `port_scan`  | `{host, targets, ports, timeoutMs, concurrency}`      | `PortScanSummary`                                |
+| Ping sweep  | [`tool.start`](#toolstart) | `ping_sweep` | `{targets, timeoutMs, concurrency, resolveHostnames}` | `{total, up, down, elapsedMs}`                   |
+| DNS lookup  | `tool.run`                 | `dns`        | `{hostname, recordType, server}`                      | `DnsResult`                                      |
+| Wake-on-LAN | `tool.run`                 | `wol`        | `{mac, broadcast, port}`                              | `{}`                                             |
+| Open ports  | `tool.run`                 | `open_ports` | `{}`                                                  | `{ports: [{protocol, localAddr, pid, process}]}` |
 
-| Tool        | Agent method                           | Params                                                | Result                                                   |
-| ----------- | -------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------- |
-| Ping        | `network.ping`                         | `{host, count, interval_ms}`                          | `{results, stats}`                                       |
-| Traceroute  | `network.traceroute`                   | `{host, max_hops}`                                    | `{hops}`                                                 |
-| Port scan   | `network.port_scan`                    | `{host, ports, timeout_ms, concurrency}`              | `{results, summary}`                                     |
-| DNS lookup  | `network.dns_lookup`                   | `{hostname, record_type, server}`                     | `DnsResult`                                              |
-| Wake-on-LAN | `network.wol`                          | `{mac, broadcast, port}`                              | `{}`                                                     |
-| Open ports  | `network.open_ports`                   | `{}`                                                  | `{ports: [{protocol, localAddr, pid, process}]}`         |
-| Ping sweep  | `tool.run` with `toolId: "ping_sweep"` | `{targets, timeoutMs, concurrency, resolveHostnames}` | `{events: [{kind: "result", payload}], result: summary}` |
+Tool params are camelCase. The streaming tools always run as [streaming tool runs](#streaming-tool-runs-toolstart-toolcancel): results arrive live, there is no request timeout, and Stop cancels the run on the agent. The one-shot tools use `tool.run`, which wraps the params as `{toolId, params}` and replies `{events, result}` once the run ends (bounded by the desktop's 60 s agent-request timeout). The desktop expands a scan's or sweep's target spec (CIDR, ranges) itself and sends the concrete address list.
 
-`network.*` params are snake_case. `tool.run` wraps camelCase tool params as `{toolId, params}` and runs the agent's core `ToolRegistry`. Each `result` event payload of a ping sweep is `{host, latencyMs, hostname}`, and `result` is the summary `{total, up, down, elapsedMs}`. The desktop expands the sweep's target spec (CIDR, ranges) itself and sends the concrete address list. An agent without `tool.run` returns [`-32601` Method not found](#standard-json-rpc-errors), which the desktop surfaces as a sweep error.
+**Minimum agent version.** Network tools need an agent that advertises `capabilities.toolStreaming` — protocol **0.9.0** or newer. The desktop checks the capability before it sends anything: an older agent is refused with an `agent_outdated` error telling the user to update the agent to use network tools (the agent-update flow is the remedy). It never fails silently or on a missing method.
 
 The HTTP monitor is not on this path: a monitor is agent-hosted per monitor through [`service.*`](#agent-hosted-embedded-servers-service).
 
