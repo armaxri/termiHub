@@ -338,12 +338,8 @@ impl AgentRpcClient for FakeAgent {
     fn cancel_connect(&self, _agent_id: &str) -> bool {
         false
     }
-    fn retain_agent_config(
-        &self,
-        _agent_id: &str,
-        _config: &RemoteAgentConfig,
-        _agent_settings: Option<&AgentSettings>,
-    ) {
+    fn retain_agent_config(&self, _agent_id: &str) -> bool {
+        true
     }
 }
 

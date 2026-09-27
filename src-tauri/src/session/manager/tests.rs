@@ -1380,18 +1380,43 @@ async fn create_connection_retains_request_for_resilient_direct_session() {
 /// manager without a live SSH transport.
 struct RetainAgent {
     cleared: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    /// Every `retain_agent_config` call (#3661).
+    retained: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    /// Registered output senders, held so a session's output channel stays open
+    /// (dropping the sender would EOF the reader and look like a genuine drop,
+    /// removing the tab binding before a deliberate close can observe it).
+    outputs: std::sync::Mutex<Vec<OutputSender>>,
 }
 
+type Recorded = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+
 impl RetainAgent {
-    fn new() -> (Self, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
-        let cleared = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    fn new() -> (Self, Recorded) {
+        let (agent, _retained, cleared) = Self::recording();
+        (agent, cleared)
+    }
+
+    /// Like [`Self::new`], also returning the recorded retains: `(agent,
+    /// retained, cleared)`.
+    fn recording() -> (Self, Recorded, Recorded) {
+        let cleared = Recorded::default();
+        let retained = Recorded::default();
         (
             Self {
                 cleared: cleared.clone(),
+                retained: retained.clone(),
+                outputs: std::sync::Mutex::new(Vec::new()),
             },
+            retained,
             cleared,
         )
     }
+}
+
+fn recorded(list: &Recorded) -> Vec<String> {
+    list.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
 }
 
 impl AgentRpcClient for RetainAgent {
@@ -1414,6 +1439,13 @@ impl AgentRpcClient for RetainAgent {
     }
     fn get_capabilities(&self, _: &str) -> Option<AgentCapabilities> {
         None
+    }
+    fn retain_agent_config(&self, agent_id: &str) -> bool {
+        self.retained
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(agent_id.to_string());
+        true
     }
     fn clear_retained_agent_config(&self, agent_id: &str) {
         self.cleared
@@ -1500,8 +1532,12 @@ impl AgentRpcClient for RetainAgent {
         &self,
         _: &str,
         _: &str,
-        _: OutputSender,
+        tx: OutputSender,
     ) -> Result<(), TerminalError> {
+        self.outputs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(tx);
         Ok(())
     }
     fn unregister_session_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
@@ -1544,6 +1580,106 @@ fn make_test_manager_with_retain_agent() -> (
     );
     let (agent, cleared) = RetainAgent::new();
     (SessionManager::new(registry, Arc::new(agent)), cleared)
+}
+
+/// Build a manager whose agent client is a recording [`RetainAgent`], returning
+/// `(manager, retained, cleared)` (#3661).
+fn make_test_manager_recording_agent_config() -> (SessionManager, Recorded, Recorded) {
+    let mut registry = termihub_core::connection::ConnectionTypeRegistry::new();
+    registry.register(
+        "mock",
+        "Mock",
+        "mock",
+        Box::new(|| Box::new(MockConnection::default())),
+    );
+    let (agent, retained, cleared) = RetainAgent::recording();
+    (
+        SessionManager::new(registry, Arc::new(agent)),
+        retained,
+        cleared,
+    )
+}
+
+async fn open_agent_tab(manager: &SessionManager, connect_id: &str, resilient: bool) -> String {
+    manager
+        .create_connection(
+            "mock",
+            serde_json::json!({ "password": "secret" }),
+            Some("agent-1"),
+            Some(connect_id),
+            false,
+            resilient,
+            MockEventEmitter::new(),
+        )
+        .await
+        .expect("agent session should open")
+}
+
+#[tokio::test]
+async fn resilient_agent_tab_connect_retains_the_agent_config() {
+    // #3661: a resilient agent tab opts its agent's transport config into the
+    // reap-surviving reattach store, so `reconnect_retained_agent` can find it.
+    let (manager, retained, _cleared) = make_test_manager_recording_agent_config();
+    open_agent_tab(&manager, "tab-r:0", true).await;
+    assert_eq!(recorded(&retained), vec!["agent-1".to_string()]);
+}
+
+#[tokio::test]
+async fn non_resilient_agent_tab_or_direct_tab_never_retains_an_agent_config() {
+    // The gate: a non-resilient tab never reconnects, so it must not extend the
+    // agent secret's lifetime past a reap; a direct tab has no agent at all.
+    let (manager, retained, _cleared) = make_test_manager_recording_agent_config();
+    open_agent_tab(&manager, "tab-n:0", false).await;
+    manager
+        .create_connection(
+            "mock",
+            serde_json::json!({ "password": "secret" }),
+            None,
+            Some("tab-d:0"),
+            false,
+            true,
+            MockEventEmitter::new(),
+        )
+        .await
+        .expect("direct session should open");
+    assert!(recorded(&retained).is_empty());
+}
+
+#[tokio::test]
+async fn closing_the_last_resilient_agent_tab_scrubs_the_agent_config() {
+    // #3661: tab close was a per-tab-only clear, so closing the last resilient
+    // tab on an agent left its retained password alive until disconnect/prune.
+    // It now refcount-scrubs like the lifecycle routes.
+    let (manager, _retained, cleared) = make_test_manager_recording_agent_config();
+    let first = open_agent_tab(&manager, "tab-1:0", true).await;
+    let second = open_agent_tab(&manager, "tab-2:0", true).await;
+
+    manager.close_session(&first).await.expect("close first");
+    assert!(
+        recorded(&cleared).is_empty(),
+        "a sibling resilient tab still holds agent-1's config"
+    );
+
+    manager.close_session(&second).await.expect("close second");
+    assert_eq!(
+        recorded(&cleared),
+        vec!["agent-1".to_string()],
+        "closing the last resilient tab on agent-1 scrubs its config once"
+    );
+}
+
+#[tokio::test]
+async fn releasing_the_last_evicted_agent_tab_scrubs_the_agent_config() {
+    // Releasing an evicted (single-attach) session view is a tab-gone point too.
+    let (manager, _retained, cleared) = make_test_manager_recording_agent_config();
+    let sid = open_agent_tab(&manager, "tab-e:0", true).await;
+
+    manager
+        .release_evicted_session(&sid)
+        .await
+        .expect("release evicted session");
+    assert!(!manager.has_retained_request("tab-e"));
+    assert_eq!(recorded(&cleared), vec!["agent-1".to_string()]);
 }
 
 #[tokio::test]

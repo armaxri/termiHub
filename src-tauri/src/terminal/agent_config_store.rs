@@ -30,13 +30,18 @@
 //! point, in the redrive). Zeroizing uses the same [`zeroize`] crate the
 //! credential store uses.
 //!
-//! # Currently inert (byte-identical to `develop`)
+//! # When it is populated (#3661)
 //!
-//! Nothing populates this store today: the frontend agent-tab backend-redrive
-//! wiring (#2473) is not yet present, so `connect_agent` does not retain an agent
-//! config. The store is never written, so no agent config survives a reap —
-//! byte-identical to `develop`, and no new secret lifetime is introduced. #2473
-//! re-wires the retention.
+//! Only a **resilient** agent tab opts in: when
+//! [`crate::session::manager::SessionManager::create_connection`] retains a
+//! resilient agent session's request, it also promotes the live agent
+//! connection's config into this store via
+//! [`crate::terminal::agent_manager::AgentConnectionManager::retain_agent_config`].
+//! A non-resilient tab never reconnects, so an agent carrying only such tabs
+//! retains nothing past a reap. The retained config is then scrubbed when the last
+//! resilient tab on that agent releases it (tab close, eviction, drop, give-up),
+//! and unconditionally on user disconnect / shutdown / prune, agent deletion and
+//! app quit.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -91,13 +96,6 @@ impl AgentConfigStore {
     /// Retain (replacing any prior) the transport config for `agent_id`. A
     /// re-connect overwrites the previous config; the replaced value is zeroized
     /// as it drops.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "only caller is the unwired `retain_agent_config` seam (#3661)"
-        )
-    )]
     pub(crate) fn retain(
         &self,
         agent_id: &str,
@@ -117,6 +115,38 @@ impl AgentConfigStore {
     pub(crate) fn clear(&self, agent_id: &str) {
         // `remove` returns the value; dropping it runs the zeroizing `Drop`.
         drop(self.lock().remove(agent_id));
+    }
+
+    /// Replace the retained config for `agent_id` **only if one is already
+    /// retained**, returning whether it was. A fresh connect (e.g. the user
+    /// re-connecting a reaped agent with a changed password) refreshes an opted-in
+    /// agent's reattach config so a later redrive does not re-establish with a
+    /// stale secret, without opting in an agent no resilient tab asked for. The
+    /// replaced value is zeroized as it drops.
+    pub(crate) fn refresh_if_retained(
+        &self,
+        agent_id: &str,
+        config: RemoteAgentConfig,
+        settings: AgentSettings,
+    ) -> bool {
+        let mut guard = self.lock();
+        match guard.get_mut(agent_id) {
+            Some(slot) => {
+                // Assigning drops (and so zeroizes) the previous value.
+                *slot = RetainedAgentConfig { config, settings };
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Drop and zeroize **every** retained config — the app-quit scrub point, so
+    /// no retained agent secret outlives the process's orderly teardown.
+    pub(crate) fn clear_all(&self) {
+        // Take the map out under the lock, then drop it (zeroizing each value)
+        // after the guard is released.
+        let drained = std::mem::take(&mut *self.lock());
+        drop(drained);
     }
 
     /// A clone of the retained config for `agent_id`, for the redrive to
@@ -259,6 +289,51 @@ mod tests {
             password.zeroize();
         }
         assert_eq!(retained.config.password.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn refresh_if_retained_replaces_only_an_opted_in_agent() {
+        let store = AgentConfigStore::new();
+        // Not opted in: a fresh connect must not start retaining a secret.
+        assert!(!store.refresh_if_retained(
+            "agent-1",
+            config_with_password(Some("fresh")),
+            AgentSettings::default(),
+        ));
+        assert!(!store.contains("agent-1"));
+
+        // Opted in: the fresh connect's config replaces the stale one.
+        store.retain(
+            "agent-1",
+            config_with_password(Some("stale")),
+            AgentSettings::default(),
+        );
+        assert!(store.refresh_if_retained(
+            "agent-1",
+            config_with_password(Some("fresh")),
+            AgentSettings::default(),
+        ));
+        assert_eq!(
+            store.get("agent-1").unwrap().config.password.as_deref(),
+            Some("fresh")
+        );
+    }
+
+    #[test]
+    fn clear_all_scrubs_every_agent() {
+        let store = AgentConfigStore::new();
+        for id in ["agent-1", "agent-2"] {
+            store.retain(
+                id,
+                config_with_password(Some("secret")),
+                AgentSettings::default(),
+            );
+        }
+        store.clear_all();
+        assert!(!store.contains("agent-1"));
+        assert!(!store.contains("agent-2"));
+        // Idempotent on an empty store.
+        store.clear_all();
     }
 
     #[test]

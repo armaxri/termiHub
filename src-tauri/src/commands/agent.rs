@@ -151,12 +151,13 @@ fn to_store_session(info: &AgentSessionInfo) -> StoreAgentSession {
 /// network operations that must not run on the main thread (which would
 /// freeze the WebView).
 ///
-/// The agent-tab backend-driven reconnect redrive (#2472) is not yet wired to
-/// the frontend (that arrives with the agent-tab routing, #2473), so this connect
-/// does not retain the agent's SSH transport config — no agent secret survives a
-/// reap, matching `develop`. When #2473 lands it re-introduces a
-/// [`AgentConnectionManager::retain_agent_config`] call, gated on the tab being
-/// resilient.
+/// `${env:…}` / `~` placeholders in the host, username and key path are
+/// expanded by the manager's connect (#3661). This connect does not itself retain
+/// the agent's SSH transport config past a reap: that opt-in happens when a
+/// **resilient** agent tab connects
+/// ([`crate::session::manager::SessionManager::create_connection`] →
+/// [`crate::terminal::agent_manager::AgentConnectionManager::retain_agent_config`]),
+/// so an agent with no resilient tab never extends its secret's lifetime.
 #[tauri::command]
 pub async fn connect_agent(
     agent_id: String,
