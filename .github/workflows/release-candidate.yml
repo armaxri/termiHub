@@ -1,0 +1,48 @@
+name: "Release Candidate: Full Integration"
+
+# The release gate's integration run (#3652, WA-CI-004, WA-CI-024).
+#
+# Per-PR CI is the slim lane (#3325/#3326): it never runs the bridge integration
+# lane, runs the Docker fixture lane only on a path filter, and leaves the agent
+# Docker/live suites to the nightly and post-merge lanes. A release must not be cut
+# on that alone. This workflow runs EVERY integration lane, with no path filter, on
+# one exact commit — the commit it is dispatched on (`github.sha`):
+#
+#   * system-integration.yml  — bridge integration lane (Linux/macOS/Windows), the
+#                                display-critical grades, the agent Docker suites
+#   * integration-fixtures.yml — core/tests against the live Docker fixtures and the
+#                                polkit D-Bus verifier
+#
+# The Release workflow's first gate (scripts/internal/release-integration-gate.mjs)
+# refuses to publish unless the newest run of THIS workflow on the tag's commit is
+# green (plus the post-merge Code Quality push run, which carries the Windows agent
+# live tests). Dispatch it on the release ref before (or after) pushing the tag:
+#
+#   gh workflow run release-candidate.yml --ref main       # or --ref vX.Y.Z
+#
+# See docs/contributing.md -> "Release integration gate".
+
+on:
+  workflow_dispatch:
+
+# One candidate run per ref; a re-dispatch on the same ref waits rather than
+# cancelling a run the release gate may already be counting on.
+concurrency:
+  group: release-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+# Least-privilege token (CI-010). The called lanes only check out, build, test and
+# upload artifacts; a called workflow can never get more than this.
+permissions:
+  contents: read
+
+jobs:
+  system-integration:
+    name: System integration
+    uses: ./.github/workflows/system-integration.yml
+    with:
+      ref: ${{ github.sha }}
+
+  integration-fixtures:
+    name: Integration fixtures
+    uses: ./.github/workflows/integration-fixtures.yml
