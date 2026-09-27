@@ -1815,6 +1815,37 @@ impl SessionManager {
             .await
     }
 
+    /// Re-key the persistent registry after saved connections' ids changed
+    /// (#3595); see `persistent_controller::rekey_persistent_registry`.
+    ///
+    /// Synchronous because the connection manager reports id changes from a
+    /// plain callback, and it must complete **before** the frontend is told
+    /// about the change, so no attach/stop can use a key the backend no longer
+    /// has. Returns the state events to emit for the moved records.
+    pub fn follow_connection_id_changes(
+        &self,
+        remap: &crate::connection::id_changes::ConnectionIdRemap,
+    ) -> Vec<PersistentSessionStateEvent> {
+        if remap.is_empty() {
+            return Vec::new();
+        }
+        let registry = &self.persistent_sessions;
+        let rekey = || {
+            let mut ps = registry.blocking_lock();
+            super::persistent_controller::rekey_persistent_registry(&mut ps, remap)
+        };
+        // `blocking_lock` panics inside an async runtime context; the lock is
+        // only ever held briefly, so wait for it from a scoped helper thread.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            std::thread::scope(|s| s.spawn(rekey).join()).unwrap_or_else(|_| {
+                warn!("Re-keying persistent sessions after a connection id change panicked");
+                Vec::new()
+            })
+        } else {
+            rekey()
+        }
+    }
+
     /// List all registered persistent sessions and their current state.
     pub async fn list_persistent_sessions(&self) -> Vec<PersistentSessionSummary> {
         self.persistent().list_persistent_sessions().await

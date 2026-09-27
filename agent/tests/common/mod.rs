@@ -177,6 +177,7 @@ pub fn wait_for_listen_addr(
 }
 
 pub mod daemon_reaper;
+pub mod parent_death;
 
 /// Idle window (seconds) the suites give registry daemons their agents spawn,
 /// via the inherited `TERMIHUB_REGISTRY_IDLE_TIMEOUT_SECS` (#3636). Short, so a

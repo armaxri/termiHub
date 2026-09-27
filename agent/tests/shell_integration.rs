@@ -17,6 +17,10 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 
+mod common;
+
+use common::parent_death::GuardedSpawn;
+
 // ── Inlined frame protocol ─────────────────────────────────────────
 //
 // The agent is a binary crate (no lib.rs), so we cannot import its
@@ -206,7 +210,7 @@ fn spawn_daemon_with_env(
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
-        .spawn()
+        .spawn_guarded()
         .expect("Failed to spawn daemon process");
 
     // The daemon reads its connection settings from stdin (AGT-021), not an env

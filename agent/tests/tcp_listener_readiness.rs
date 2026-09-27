@@ -28,6 +28,8 @@ use termihub_core::monitoring::BackoffSchedule;
 
 mod common;
 
+use common::parent_death::GuardedSpawn;
+
 fn agent_binary() -> &'static str {
     env!("CARGO_BIN_EXE_termihub-agent")
 }
@@ -162,7 +164,7 @@ fn live_agent_tcp_listening_log_is_a_true_readiness_signal() {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_guarded()
         .expect("spawn agent");
 
     let stderr = child.stderr.take().expect("piped stderr");

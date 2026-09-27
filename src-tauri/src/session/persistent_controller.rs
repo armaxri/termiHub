@@ -26,13 +26,14 @@
 //! `SessionManager::persistent`, and the persistent registry (`persistent_sessions`)
 //! remains a field on the manager.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use termihub_core::connection::ConnectionType;
 
+use crate::connection::id_changes::ConnectionIdRemap;
 use crate::utils::errors::TerminalError;
 
 use super::line_ending::LineEnding;
@@ -509,4 +510,68 @@ impl<'a> PersistentController<'a> {
             .decode(b64)
             .map_err(|e| TerminalError::RemoteError(format!("base64 decode error: {e}")))
     }
+}
+
+/// Re-key the persistent registry after saved connections' ids changed (#3595).
+///
+/// A saved connection's id is its tree path, so a rename or move changes it;
+/// the registry (keyed by connection id) and each record's `connection_id`
+/// follow, so attach/stop/start from the renamed connection reach its running
+/// session. The batch applies simultaneously: a chain `a→b, b→c` moves `a` to
+/// `b` and `b` to `c`, and a swap `a→b, b→a` exchanges the two records.
+///
+/// A record whose new key is taken by a record that does not move away (a
+/// stale entry — the tree cannot hold two connections with one id) keeps its
+/// old key and is logged: the running session is never dropped from the
+/// registry. Returns a `persistent-session-state-changed` event for every
+/// moved record, carrying its new connection id and its current state.
+pub(super) fn rekey_persistent_registry(
+    registry: &mut HashMap<String, PersistentRecord>,
+    remap: &ConnectionIdRemap,
+) -> Vec<PersistentSessionStateEvent> {
+    let moving: Vec<(String, String)> = registry
+        .keys()
+        .filter_map(|old| remap.new_id(old).map(|new| (old.clone(), new.to_string())))
+        .collect();
+    if moving.is_empty() {
+        return Vec::new();
+    }
+    let vacated: HashSet<&str> = moving.iter().map(|(old, _)| old.as_str()).collect();
+    let mut taken: HashSet<String> = registry
+        .keys()
+        .filter(|k| !vacated.contains(k.as_str()))
+        .cloned()
+        .collect();
+    let (movable, blocked): (Vec<_>, Vec<_>) = moving
+        .into_iter()
+        .partition(|(_, new)| taken.insert(new.clone()));
+    for (old, new) in &blocked {
+        tracing::warn!(
+            old_id = %old,
+            new_id = %new,
+            "Persistent session keeps its old connection id: the new id is already registered"
+        );
+    }
+    // Take every moving record out first, then re-insert under the new keys, so
+    // a swap or chain never overwrites a record that has yet to move.
+    let records: Vec<(String, PersistentRecord)> = movable
+        .into_iter()
+        .filter_map(|(old, new)| registry.remove(&old).map(|record| (new, record)))
+        .collect();
+    let mut events = Vec::with_capacity(records.len());
+    for (new, mut record) in records {
+        record.connection_id = new.clone();
+        let count = record.attached_tabs.len() as u32;
+        events.push(PersistentSessionStateEvent {
+            connection_id: new.clone(),
+            session_id: Some(record.session_id.clone()),
+            state: if count > 0 { "attached" } else { "running" }.to_string(),
+            attached_tab_count: count,
+            error_message: None,
+        });
+        info!(connection_id = %new, session_id = %record.session_id, "Persistent session follows its connection's new id");
+        registry.insert(new, record);
+    }
+    events.sort_by(|a, b| a.connection_id.cmp(&b.connection_id));
+    events
 }

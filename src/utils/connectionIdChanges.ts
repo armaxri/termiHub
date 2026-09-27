@@ -20,8 +20,10 @@
  *   rename / move / delete once the tree confirms the old folder is gone — see
  *   {@link inferFolderFollow} and the connection editor.
  * - **`persistentSessions`** — keyed by the id the *backend* persistent-session
- *   registry uses. Re-keying only the frontend map would desync it from the
- *   backend, so it is left as is until the registry follows too (#3595).
+ *   registry uses. The backend re-keys its registry before it sends the event,
+ *   so each window re-keys its map in the same step ({@link remapPersistentSessions},
+ *   #3595) and attach / stop keep reaching the running session; the backend then
+ *   reports each moved session's state under its new id.
  * - **Saved workspaces (and the stored last session), broadcast groups,
  *   shell-integration entries, schedules, workflow triggers, tunnels, jump-host
  *   references** — persisted, backend-owned records; the backend re-points them
@@ -37,7 +39,7 @@
  * - **Session history** — a historical record of what was opened; not remapped.
  */
 
-import type { ConnectionIdChange } from "@/types/connection";
+import type { ConnectionIdChange, PersistentSessionEntry } from "@/types/connection";
 import type { TabContent } from "@/types/terminal";
 import type { WorkspaceLayoutNode, WorkspaceTabGroupDef } from "@/types/workspace";
 import type { WorkflowTrigger } from "@/types/workflow";
@@ -256,4 +258,36 @@ export function remapJumpHostRefs<T extends Record<string, unknown>>(
     }
   }
   return (next ?? settings) as T;
+}
+
+/**
+ * Re-key the persistent-session map (and each entry's `connectionId`) after a
+ * batch of id changes (#3595), mirroring the backend registry's re-key: the
+ * batch applies simultaneously (a swap exchanges the two entries), and an entry
+ * whose new id is held by an entry that does not move away keeps its old id —
+ * the backend keeps it there too. Returns `null` when no entry moved.
+ */
+export function remapPersistentSessions(
+  sessions: Readonly<Record<string, PersistentSessionEntry>>,
+  changes: readonly ConnectionIdChange[]
+): Record<string, PersistentSessionEntry> | null {
+  const remap = connectionIdRemapper(changes);
+  const moving = Object.keys(sessions).filter((id) => remap(id) !== id);
+  if (moving.length === 0) return null;
+  const vacated = new Set(moving);
+  const taken = new Set(Object.keys(sessions).filter((id) => !vacated.has(id)));
+  const movable = moving.filter((id) => {
+    const to = remap(id);
+    if (taken.has(to)) return false;
+    taken.add(to);
+    return true;
+  });
+  if (movable.length === 0) return null;
+  const next: Record<string, PersistentSessionEntry> = { ...sessions };
+  for (const id of movable) delete next[id];
+  for (const id of movable) {
+    const to = remap(id);
+    next[to] = { ...sessions[id], connectionId: to };
+  }
+  return next;
 }

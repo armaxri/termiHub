@@ -413,6 +413,9 @@ impl LocalAgentSshd {
         // never touches shared ADR-11 registry state (#2489), and bounds how
         // long the registry and any session daemon the agent spawns (both
         // inherit it) outlive the test if `Drop` never runs (#3636).
+        // `TERMIHUB_TEST_PARENT_PID` arms the agent's test-only parent-death
+        // watchdog on this test process, so a killed test run takes the agent
+        // and its daemons down with it instead of leaking them (#3641).
         let config_body = [
             format!("Port {}", 0), // placeholder, rewritten per start
             "ListenAddress 127.0.0.1".to_string(),
@@ -426,9 +429,11 @@ impl LocalAgentSshd {
             format!(
                 "SetEnv TERMIHUB_REGISTRY_ENDPOINT={} XDG_CONFIG_HOME={} \
                  TERMIHUB_REGISTRY_IDLE_TIMEOUT_SECS=15 \
-                 TERMIHUB_DAEMON_DETACHED_TIMEOUT_SECS=120",
+                 TERMIHUB_DAEMON_DETACHED_TIMEOUT_SECS=120 \
+                 TERMIHUB_TEST_PARENT_PID={}",
                 registry_endpoint.display(),
-                xdg.display()
+                xdg.display(),
+                std::process::id()
             ),
             String::new(),
         ]

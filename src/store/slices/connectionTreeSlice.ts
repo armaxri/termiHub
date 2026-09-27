@@ -22,7 +22,7 @@ import { SavedConnection, ConnectionFolder, ConnectionIdChange } from "@/types/c
 import { TabContent } from "@/types/terminal";
 import { frontendLog } from "@/utils/frontendLog";
 import { connectionBookmarkScope } from "@/utils/fileBookmarkScope";
-import { remapTabContentConnectionIds } from "@/utils/connectionIdChanges";
+import { remapPersistentSessions, remapTabContentConnectionIds } from "@/utils/connectionIdChanges";
 import { useFileBookmarksStore } from "@/store/fileBookmarksStore";
 import { readConfigBoolean, readConfigString } from "@/utils/connectionConfigFields";
 
@@ -223,9 +223,16 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
     followConnectionIdChanges: (changes) => {
       // Content-only mutation (#2562), like the delete sweep above: the tabs keep
       // running; they just point at the connection's new id.
+      // Persistent sessions move with them (#3595): the backend re-keyed its
+      // registry before announcing the change, so attach / stop by the new id
+      // reach the running session. Both maps move in one update.
       set((state) => {
-        const next = remapTabContentConnectionIds(state.tabContent, changes);
-        return next ? { tabContent: next } : {};
+        const tabContent = remapTabContentConnectionIds(state.tabContent, changes);
+        const persistentSessions = remapPersistentSessions(state.persistentSessions, changes);
+        return {
+          ...(tabContent ? { tabContent } : {}),
+          ...(persistentSessions ? { persistentSessions } : {}),
+        };
       });
       // The backend re-pointed the saved records before announcing the change
       // (#3596). Workflows have no change event of their own, so re-read them
