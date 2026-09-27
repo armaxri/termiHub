@@ -209,7 +209,12 @@ pub fn folder_paste_begin(
     destination: FolderPasteEndpoint,
     app_handle: tauri::AppHandle,
 ) -> String {
-    debug!(?operation, src = source.path, dest = destination.path, "folder paste begin");
+    debug!(
+        ?operation,
+        src = source.path,
+        dest = destination.path,
+        "folder paste begin"
+    );
     match app_handle.try_state::<TransferPersistenceManager>() {
         Some(pm) => pm.begin_folder_paste(operation, source, destination),
         None => uuid::Uuid::new_v4().to_string(),

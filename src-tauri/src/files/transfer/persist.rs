@@ -577,7 +577,11 @@ mod tests {
         }
 
         assert_eq!(store.remove_local_paths_under(root), 1);
-        let ids: Vec<&str> = store.transfers.iter().map(|t| t.transfer_id.as_str()).collect();
+        let ids: Vec<&str> = store
+            .transfers
+            .iter()
+            .map(|t| t.transfer_id.as_str())
+            .collect();
         assert_eq!(ids, ["sibling", "r2r", "plain"]);
     }
 
