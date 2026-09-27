@@ -310,6 +310,13 @@ pub fn delete_remote_agent(
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), TerminalError> {
     manager.delete_agent(&id).map_err(config_error)?;
+    // Deleting an agent is a terminal point for its retained reattach secret
+    // (#3661). The frontend only disconnects an agent it still sees as
+    // connected, so a *reaped* agent's retained config would otherwise linger.
+    if let Some(agents) = app.try_state::<Arc<dyn crate::terminal::agent_manager::AgentRpcClient>>()
+    {
+        agents.clear_retained_agent_config(&id);
+    }
     // Drop the bookmarks of the agent's sessions, every session type (#3562).
     if let Some(bookmarks) = app.try_state::<FileBookmarkManager>() {
         bookmarks.prune_deleted_agent(&id);

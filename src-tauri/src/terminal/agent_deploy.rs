@@ -61,7 +61,9 @@ pub fn probe_remote_agent(
     config: &RemoteAgentConfig,
     expected_version: &str,
 ) -> Result<AgentProbeResult, TerminalError> {
-    let ssh_config = config.to_ssh_config();
+    // Expand `${env:…}` / `~` in host / username / key path like the agent
+    // connect path does (#3661); the password stays verbatim.
+    let ssh_config = config.clone().expand().to_ssh_config();
     let session = connect_and_authenticate(&ssh_config)?;
 
     let (remote_os, remote_arch) = detect_remote_info(&session)?;
@@ -280,7 +282,9 @@ pub fn deploy_agent(
         "Connecting to host…",
         -1.0,
     );
-    let ssh_config = config.to_ssh_config();
+    // Expand `${env:…}` / `~` in host / username / key path like the agent
+    // connect path does (#3661); the password stays verbatim.
+    let ssh_config = config.clone().expand().to_ssh_config();
     let session = connect_and_authenticate(&ssh_config)?;
 
     // 2. Detect remote arch
@@ -561,7 +565,9 @@ pub fn stage_agent_binary(
         "Connecting to host…",
         -1.0,
     );
-    let ssh_config = config.to_ssh_config();
+    // Expand `${env:…}` / `~` in host / username / key path like the agent
+    // connect path does (#3661); the password stays verbatim.
+    let ssh_config = config.clone().expand().to_ssh_config();
     let session = connect_and_authenticate(&ssh_config)?;
 
     // 2. Detect remote OS/arch

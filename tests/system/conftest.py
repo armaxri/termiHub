@@ -5,6 +5,7 @@ import sys
 
 import pytest
 
+from termihub_harness import timing
 from termihub_harness.artifacts import (
     ARTIFACT_ROOT,
     sanitize_nodeid,
@@ -125,9 +126,39 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.skip(reason=reason))
 
 
+# ── Per-operation timing summary (#3660) ─────────────────────────────────────
+_TIMING_KEY = "termihub_timing"
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node, error):
+    """xdist controller: fold a finished worker's timing samples into this process."""
+    samples = getattr(node, "workeroutput", {}).get(_TIMING_KEY)
+    if samples:
+        timing.merge(samples)
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """Print one ``[termihub-test-timing]`` line per operation (CI, or opted in).
+
+    ``scripts/system-test-timing.py`` aggregates these across runs to size the
+    per-operation deadlines in ``termihub_harness/deadlines.py``.
+    """
+    if hasattr(config, "workerinput") or not timing.enabled():
+        return
+    lines = timing.format_lines(timing.summarize(timing.os_name()))
+    if not lines:
+        return
+    terminalreporter.section("termihub per-operation timing")
+    for line in lines:
+        terminalreporter.write_line(line)
+
+
 def pytest_sessionfinish(session, exitstatus):
-    """Flush the guided-manual report to ``tests/reports/`` if any prompt ran."""
+    """Hand timing samples to the xdist controller; flush the guided-manual report."""
     config = session.config
+    if hasattr(config, "workeroutput"):
+        config.workeroutput[_TIMING_KEY] = timing.snapshot()
     collector = getattr(config, "_manual_session", None)
     if collector is None or not collector.records:
         return

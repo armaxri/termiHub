@@ -36,13 +36,14 @@ from typing import Callable, ClassVar, Optional, TypeVar
 import pytest
 
 from .artifacts import ARTIFACT_ROOT, sanitize_nodeid
-from .bridge import DEFAULT_REQUEST_TIMEOUT, Bridge, BridgeError, Driver, scale_timeout
+from . import deadlines, timing
+from .bridge import DEFAULT_REQUEST_TIMEOUT, Bridge, BridgeError, Driver
 from .display import ensure_local_display
 from .orchestrator import AppInstance, require_test_bridge_build
 
 T = TypeVar("T")
 
-DEFAULT_WAIT_TIMEOUT = 20.0
+DEFAULT_WAIT_TIMEOUT = deadlines.UI_WAIT
 DEFAULT_WAIT_INTERVAL = 0.25
 
 
@@ -226,20 +227,25 @@ class SystemTest:
         a read right after an action usually needs polling. A ``BridgeError``
         (e.g. "no active terminal" before one exists) counts as "not ready yet".
 
-        ``timeout`` is scaled by ``TERMIHUB_WAIT_SCALE`` so this one primitive —
-        which nearly every UI helper polls through — gets contention headroom on
-        the parallel CI lanes without any per-call change (issue #2690).
+        ``timeout`` is the op's serial budget; ``deadlines.ui_budget`` applies the
+        contended-webview slow category on parallel macOS/Windows workers only
+        (#3660). Each wait is recorded as a ``wait:<what>`` timing sample.
         """
-        deadline = time.monotonic() + scale_timeout(timeout)
+        budget = deadlines.ui_budget(timeout)
+        op = timing.wait_label(what)
+        started = time.monotonic()
+        deadline = started + budget
         last_error: Optional[BridgeError] = None
         while time.monotonic() < deadline:
             try:
                 result = predicate()
                 if result:
+                    timing.record(op, time.monotonic() - started, budget)
                     return result
             except BridgeError as exc:
                 last_error = exc
             time.sleep(interval)
+        timing.record(op, time.monotonic() - started, budget, timed_out=True)
         raise AssertionError(f"timed out waiting for {what} (last error: {last_error})")
 
     # ── Watch-along ──────────────────────────────────────────────────────────

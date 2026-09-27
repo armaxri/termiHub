@@ -162,6 +162,20 @@ afterEach(() => {
 
 const flush = () => act(async () => await Promise.resolve());
 
+/**
+ * Dispatch a `workflow.*` intent inside `act` (#3672). The fake transport fans the
+ * region frame out synchronously from `dispatch`, so the hook's `setView` fires
+ * right there. Outside `act` that update goes to React's real Scheduler (a
+ * macrotask) and merely races the single `setImmediate` a later async `act`
+ * waits on — under CPU load the scheduler loses and the assertion reads the
+ * stale (null) view. Inside `act` the update lands in the act queue, which is
+ * flushed before `act` resolves, so the render is deterministic.
+ */
+const dispatchInAct = (...args: Parameters<typeof dispatchWorkflowIntent>) =>
+  act(async () => {
+    await dispatchWorkflowIntent(...args);
+  });
+
 describe("useProjectedWorkflowRun", () => {
   it("renders nothing when the region is empty", async () => {
     const hook = renderHook();
@@ -173,7 +187,7 @@ describe("useProjectedWorkflowRun", () => {
   it("renders run progress from the projected region after runStarted", async () => {
     const hook = renderHook();
     await flush();
-    await dispatchWorkflowIntent("workflow.runStarted", {
+    await dispatchInAct("workflow.runStarted", {
       workflowId: "w1",
       workflowName: "Deploy",
       tabId: "tab-1",
@@ -194,7 +208,7 @@ describe("useProjectedWorkflowRun", () => {
   it("merges the projected output status with the frontend-owned streamed content", async () => {
     const hook = renderHook();
     await flush();
-    await dispatchWorkflowIntent("workflow.outputOpened", {
+    await dispatchInAct("workflow.outputOpened", {
       workflowId: "w1",
       workflowName: "Deploy",
       program: "echo",
@@ -223,7 +237,7 @@ describe("useProjectedWorkflowRun", () => {
   it("shows an empty stream until the content buffer opens (panel gated on projection)", async () => {
     const hook = renderHook();
     await flush();
-    await dispatchWorkflowIntent("workflow.outputOpened", {
+    await dispatchInAct("workflow.outputOpened", {
       workflowId: "w1",
       workflowName: "Deploy",
       program: "echo",
@@ -242,7 +256,7 @@ describe("useProjectedWorkflowRun", () => {
   it("ignores streamed content whose workflow id does not match the projected panel", async () => {
     const hook = renderHook();
     await flush();
-    await dispatchWorkflowIntent("workflow.outputOpened", {
+    await dispatchInAct("workflow.outputOpened", {
       workflowId: "w1",
       workflowName: "Deploy",
       program: "echo",

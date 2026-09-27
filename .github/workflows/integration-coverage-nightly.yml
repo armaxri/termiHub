@@ -1,0 +1,36 @@
+name: Integration coverage (nightly develop dispatch)
+
+# The integration-fixtures lane's own `schedule:` trigger only ever runs on the
+# DEFAULT branch (main), which trails develop by many commits — so on its own
+# it would never measure develop, where the unified coverage report
+# (coverage.yml) is tracked. This workflow dispatches that lane on develop once
+# a day. A dispatched run is instrumented with cargo-llvm-cov and uploads the
+# `integration-coverage` artifact that coverage.yml merges into the unified
+# report (TOOL-005, #3656). main keeps its own scheduled run.
+#
+# A GITHUB_TOKEN-created workflow_dispatch is one of the events allowed to start
+# a new workflow run, so no PAT is needed.
+
+on:
+  schedule:
+    # 03:47 UTC daily — after the main fixtures nightly (03:17) has claimed its
+    # runner, well before develop's system-integration nightly (05:05).
+    - cron: "47 3 * * *"
+  workflow_dispatch:
+
+# Least-privilege token (CI-010): dispatching a workflow needs actions: write;
+# nothing is checked out or pushed.
+permissions:
+  actions: write
+
+jobs:
+  dispatch:
+    name: Dispatch integration-fixtures on develop
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch the fixtures lane (instrumented) on develop
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run integration-fixtures.yml --ref develop
