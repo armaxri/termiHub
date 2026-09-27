@@ -115,17 +115,21 @@ impl Drop for RegistryProcess {
 /// assertion. Binding `:0` in the agent itself closes the window completely:
 /// the port cannot be taken because it is never free.
 fn spawn_agent(registry_endpoint: &str) -> AgentProcess {
-    spawn_agent_inner(registry_endpoint, false)
+    spawn_agent_inner(registry_endpoint, false, common::TEST_REGISTRY_IDLE_SECS)
 }
 
 /// Like [`spawn_agent`] but with `TERMIHUB_AGENT_SKIP_REGISTRY_DAEMON=1`, the
 /// single-client opt-out the system-test harness sets (#2480). The agent must
 /// still serve `initialize`/RPC, but must never spawn a registry daemon.
 fn spawn_agent_skipping_registry(registry_endpoint: &str) -> AgentProcess {
-    spawn_agent_inner(registry_endpoint, true)
+    spawn_agent_inner(registry_endpoint, true, common::TEST_REGISTRY_IDLE_SECS)
 }
 
-fn spawn_agent_inner(registry_endpoint: &str, skip_registry_daemon: bool) -> AgentProcess {
+fn spawn_agent_inner(
+    registry_endpoint: &str,
+    skip_registry_daemon: bool,
+    registry_idle_secs: &str,
+) -> AgentProcess {
     // Per-agent config isolation: without this the agent writes its state and
     // per-instance auth token into the developer's real `~/.config/termihub-agent`
     // (and several agents in one test would share it). A throwaway
@@ -136,7 +140,10 @@ fn spawn_agent_inner(registry_endpoint: &str, skip_registry_daemon: bool) -> Age
         .arg("--listen")
         .arg("127.0.0.1:0")
         .env("XDG_CONFIG_HOME", config_dir.path())
-        .env("TERMIHUB_REGISTRY_ENDPOINT", registry_endpoint);
+        .env("TERMIHUB_REGISTRY_ENDPOINT", registry_endpoint)
+        // A registry these agents auto-spawn exits seconds after its last
+        // worker rather than a minute (#3636); it inherits this env.
+        .env("TERMIHUB_REGISTRY_IDLE_TIMEOUT_SECS", registry_idle_secs);
     if skip_registry_daemon {
         command.env("TERMIHUB_AGENT_SKIP_REGISTRY_DAEMON", "1");
     }
@@ -644,6 +651,49 @@ fn a_killed_worker_is_garbage_collected_by_the_registry() {
         wait_for_connections(&mut desktop_a, &["desktop-a"]),
         vec!["desktop-a"],
         "a killed worker's record must be reaped when its socket closes"
+    );
+}
+
+/// A registry must not outlive its workers (#3636). When the only worker is
+/// killed outright — SIGKILL on unix, `TerminateProcess` on windows, so it never
+/// says goodbye — the registry it auto-spawned must see the connection end and
+/// exit on its own within its idle window. Before the fix, orphaned registries
+/// were found running for hours on developer machines and on the Windows CI
+/// runner (where one held the job's stdout pipe open).
+///
+/// The registry's PID is read off the endpoint itself (the peer of a connection
+/// to it), and a [`DaemonGuard`](common::daemon_reaper::DaemonGuard) reaps it by
+/// that exact PID if this test fails, so a failure never leaks the process.
+#[test]
+fn an_auto_spawned_registry_exits_after_its_only_worker_is_killed() {
+    let dir = TempDir::new().expect("temp dir");
+    let endpoint = unique_endpoint(&dir, "orphan");
+    // A short window keeps the test quick; the property does not depend on it.
+    let idle: u64 = 2;
+
+    let agent = spawn_agent_inner(&endpoint, false, &idle.to_string());
+    let mut desktop = agent.client();
+    desktop.initialize("desktop-a");
+    assert!(
+        wait_for_endpoint(&endpoint),
+        "the worker never spawned its registry"
+    );
+    let registry = common::daemon_reaper::DaemonGuard::discover(&endpoint)
+        .expect("could not read the registry daemon's PID off its endpoint");
+
+    // Kill the worker abruptly: its connection to the registry simply ends.
+    let killed_at = Instant::now();
+    drop(desktop);
+    drop(agent);
+
+    // Idle window + one sweep + generous slack for a loaded runner.
+    let budget = Duration::from_secs(idle + 15);
+    assert!(
+        registry.wait_for_exit(budget),
+        "registry daemon (pid {}) still running {:?} after its only worker was \
+         killed — idle window is {idle}s",
+        registry.pid(),
+        killed_at.elapsed()
     );
 }
 

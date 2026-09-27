@@ -50,6 +50,25 @@ use crate::registry_daemon::protocol::{
 /// automatic, so erring low costs only a process start.
 pub const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Env var overriding [`IDLE_TIMEOUT`], in whole seconds (#3636).
+///
+/// Test harnesses shorten it so a registry their agents spawned does not
+/// linger a full minute after every test. It reaches the registry through the
+/// spawning worker's inherited environment, like
+/// [`REGISTRY_ENDPOINT_ENV`](crate::daemon::transport::REGISTRY_ENDPOINT_ENV).
+/// An unparsable or zero value is ignored.
+pub const IDLE_TIMEOUT_ENV: &str = "TERMIHUB_REGISTRY_IDLE_TIMEOUT_SECS";
+
+/// Upper bound on how often the idle sweep looks at the connection count.
+const IDLE_SWEEP_MAX_INTERVAL: Duration = Duration::from_secs(1);
+
+/// How often the idle sweep runs for a given idle window: a quarter of the
+/// window, capped at [`IDLE_SWEEP_MAX_INTERVAL`], so the exit lands within a
+/// small fraction of the window after the last worker leaves.
+fn idle_sweep_interval(idle_timeout: Duration) -> Duration {
+    (idle_timeout / 4).clamp(Duration::from_millis(10), IDLE_SWEEP_MAX_INTERVAL)
+}
+
 /// Bound on a single worker's outbound queue.
 ///
 /// The registry's outbound traffic is tiny and bursty: an `MSG_ACK`, the
@@ -184,7 +203,10 @@ impl RegistryState {
 /// error: the winner is serving, which is exactly what the loser's spawner
 /// wanted. Any other bind error is real and propagates.
 pub async fn run_registry_daemon() -> anyhow::Result<()> {
-    run_registry_daemon_at(&registry_endpoint(), IDLE_TIMEOUT).await
+    let idle_timeout =
+        crate::daemon::process::positive_secs(std::env::var(IDLE_TIMEOUT_ENV).ok().as_deref())
+            .unwrap_or(IDLE_TIMEOUT);
+    run_registry_daemon_at(&registry_endpoint(), idle_timeout).await
 }
 
 /// [`run_registry_daemon`] with the endpoint and idle timeout supplied.
@@ -212,20 +234,37 @@ pub async fn run_registry_daemon_at(endpoint: &str, idle_timeout: Duration) -> a
     let state = Arc::new(RegistryState::default());
     let next_conn_id = AtomicU64::new(0);
 
+    // Idle is measured as "no worker connection for a continuous
+    // `idle_timeout`", sampled by a periodic sweep — not as "no `accept()` for
+    // `idle_timeout`" (#3636). The old accept-timeout form reset its clock on
+    // every accept and only looked at the connection count once a whole window
+    // passed with no accept, so short-lived connections (a liveness probe, a
+    // reconnecting worker) arriving more often than once per window postponed
+    // the exit indefinitely, even with nobody connected in between. A
+    // connection that comes and goes between two sweeps now never resets the
+    // clock at all.
+    let mut idle = IdleClock::default();
+    let mut sweep = tokio::time::interval(idle_sweep_interval(idle_timeout));
+    sweep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
     loop {
-        match tokio::time::timeout(idle_timeout, listener.accept()).await {
-            Ok(Ok((reader, writer))) => {
-                let conn_id = next_conn_id.fetch_add(1, Ordering::Relaxed);
-                tokio::spawn(serve_worker(state.clone(), conn_id, reader, writer));
-            }
-            Ok(Err(e)) => {
-                // As in the TCP accept loop: a transient accept error must not
-                // tear the registry down and disconnect every other worker.
-                warn!("Registry accept() failed, continuing to listen: {e}");
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-            Err(_elapsed) => {
-                if state.connection_count() == 0 {
+        tokio::select! {
+            accepted = listener.accept() => match accepted {
+                Ok((reader, writer)) => {
+                    let conn_id = next_conn_id.fetch_add(1, Ordering::Relaxed);
+                    tokio::spawn(serve_worker(state.clone(), conn_id, reader, writer));
+                }
+                Err(e) => {
+                    // As in the TCP accept loop: a transient accept error must
+                    // not tear the registry down and disconnect every other
+                    // worker.
+                    warn!("Registry accept() failed, continuing to listen: {e}");
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            },
+            _ = sweep.tick() => {
+                let now = tokio::time::Instant::now();
+                if idle.observe(state.connection_count(), now, idle_timeout) {
                     info!("Registry daemon idle for {idle_timeout:?}, exiting");
                     break;
                 }
@@ -235,6 +274,33 @@ pub async fn run_registry_daemon_at(endpoint: &str, idle_timeout: Duration) -> a
 
     listener.cleanup();
     Ok(())
+}
+
+/// Tracks how long the registry has been continuously empty.
+#[derive(Debug, Default)]
+struct IdleClock {
+    /// When the current empty stretch was first observed; `None` while any
+    /// worker is connected.
+    empty_since: Option<tokio::time::Instant>,
+}
+
+impl IdleClock {
+    /// Record one sweep's observation of `connections` at `now`. Returns `true`
+    /// once the registry has been observed empty continuously for at least
+    /// `idle_timeout`.
+    fn observe(
+        &mut self,
+        connections: usize,
+        now: tokio::time::Instant,
+        idle_timeout: Duration,
+    ) -> bool {
+        if connections > 0 {
+            self.empty_since = None;
+            return false;
+        }
+        let since = *self.empty_since.get_or_insert(now);
+        now.duration_since(since) >= idle_timeout
+    }
 }
 
 /// Serve one worker connection for its whole life.
@@ -391,6 +457,150 @@ mod tests {
 
     fn frame(msg_type: u8, payload: Vec<u8>) -> crate::daemon::protocol::Frame {
         crate::daemon::protocol::Frame { msg_type, payload }
+    }
+
+    // ── idle exit (#3636) ─────────────────────────────────────────────
+
+    #[tokio::test(start_paused = true)]
+    async fn idle_clock_fires_only_after_a_continuous_empty_window() {
+        let idle = Duration::from_secs(60);
+        let mut clock = IdleClock::default();
+        let t0 = tokio::time::Instant::now();
+
+        assert!(
+            !clock.observe(0, t0, idle),
+            "first empty sample starts the clock"
+        );
+        assert!(!clock.observe(0, t0 + Duration::from_secs(59), idle));
+        assert!(
+            clock.observe(0, t0 + idle, idle),
+            "a full empty window exits"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn idle_clock_restarts_when_a_worker_is_connected() {
+        let idle = Duration::from_secs(60);
+        let mut clock = IdleClock::default();
+        let t0 = tokio::time::Instant::now();
+
+        assert!(!clock.observe(0, t0, idle));
+        // A connected worker at 50s voids the stretch so far …
+        assert!(!clock.observe(1, t0 + Duration::from_secs(50), idle));
+        // … so 60s after t0 is not enough: the window restarts when it leaves.
+        assert!(!clock.observe(0, t0 + Duration::from_secs(60), idle));
+        assert!(!clock.observe(0, t0 + Duration::from_secs(119), idle));
+        assert!(clock.observe(0, t0 + Duration::from_secs(120), idle));
+    }
+
+    #[test]
+    fn idle_sweep_interval_is_a_fraction_of_the_window_capped_at_one_second() {
+        assert_eq!(
+            idle_sweep_interval(Duration::from_secs(60)),
+            IDLE_SWEEP_MAX_INTERVAL
+        );
+        assert_eq!(
+            idle_sweep_interval(Duration::from_secs(2)),
+            Duration::from_millis(500)
+        );
+        assert_eq!(
+            idle_sweep_interval(Duration::from_millis(1)),
+            Duration::from_millis(10)
+        );
+    }
+
+    /// End to end over the real transport (#3636): a worker whose connection
+    /// ends without any goodbye frame — exactly what the peer sees when the
+    /// worker process is killed — is dropped from the count, and the registry
+    /// then exits within its idle window (plus one sweep).
+    #[tokio::test]
+    async fn registry_exits_within_the_idle_window_after_its_last_worker_vanishes() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let endpoint = test_endpoint(&dir, "idle-exit");
+        let idle = Duration::from_millis(600);
+
+        let registry = tokio::spawn({
+            let endpoint = endpoint.clone();
+            async move { run_registry_daemon_at(&endpoint, idle).await }
+        });
+
+        let (reader, writer) = connect_when_up(&endpoint).await;
+        // Hold the connection for most of one window, then vanish abruptly.
+        tokio::time::sleep(idle * 3 / 4).await;
+        let vanished = tokio::time::Instant::now();
+        drop((reader, writer));
+
+        let exited = tokio::time::timeout(idle * 3, registry)
+            .await
+            .expect("registry must exit after its last worker vanished")
+            .expect("registry task panicked");
+        exited.expect("registry returned an error");
+        let lived = vanished.elapsed();
+        assert!(
+            lived < idle * 2,
+            "registry lingered {lived:?} after its last worker vanished (idle window {idle:?})"
+        );
+    }
+
+    /// Short-lived connections arriving more often than once per window — a
+    /// liveness probe, a worker retrying — must not keep an otherwise empty
+    /// registry alive forever (#3636). With the old accept-timeout loop every
+    /// accept restarted the idle clock, so this registry never exited.
+    #[tokio::test]
+    async fn short_lived_probes_do_not_keep_an_empty_registry_alive() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let endpoint = test_endpoint(&dir, "probe");
+        let idle = Duration::from_millis(800);
+
+        let mut registry = tokio::spawn({
+            let endpoint = endpoint.clone();
+            async move { run_registry_daemon_at(&endpoint, idle).await }
+        });
+        drop(connect_when_up(&endpoint).await);
+
+        let deadline = tokio::time::Instant::now() + idle * 4;
+        loop {
+            // Probe well inside every window: connect, then drop at once.
+            if let Ok(halves) = crate::daemon::transport::connect(&endpoint).await {
+                drop(halves);
+            }
+            tokio::select! {
+                done = &mut registry => {
+                    done.expect("registry task panicked").expect("registry error");
+                    return;
+                }
+                _ = tokio::time::sleep(idle / 4) => {}
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "an empty registry kept alive by short-lived probes never exited"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    fn test_endpoint(dir: &tempfile::TempDir, tag: &str) -> String {
+        dir.path()
+            .join(format!("registry-{tag}.sock"))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[cfg(windows)]
+    fn test_endpoint(_dir: &tempfile::TempDir, tag: &str) -> String {
+        use std::sync::atomic::AtomicU32;
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        format!(
+            r"\\.\pipe\termihub-registry-unit-{}-{}-{tag}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        )
+    }
+
+    async fn connect_when_up(endpoint: &str) -> (BoxedReader, BoxedWriter) {
+        crate::daemon::transport::connect(endpoint)
+            .await
+            .expect("registry endpoint never came up")
     }
 
     #[test]

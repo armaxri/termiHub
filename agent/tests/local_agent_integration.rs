@@ -572,6 +572,17 @@ fn spawn_listener_process(
         // probe entirely — neither changes what these tests assert.
         .env("TERMIHUB_AGENT_WORKER_THREADS", "2")
         .env("TERMIHUB_AGENT_SKIP_DOCKER_PROBE", "1")
+        // Bound the lifetime of the registry and of any session daemon this
+        // agent spawns (both inherit the env), so a test binary killed before
+        // its drop guards run cannot leak them for hours (#3636).
+        .env(
+            "TERMIHUB_REGISTRY_IDLE_TIMEOUT_SECS",
+            common::TEST_REGISTRY_IDLE_SECS,
+        )
+        .env(
+            "TERMIHUB_DAEMON_DETACHED_TIMEOUT_SECS",
+            common::TEST_DAEMON_DETACHED_SECS,
+        )
         .stdout(Stdio::null())
         .stderr(Stdio::from(stderr_handle));
     if let Some(log) = rust_log {
@@ -1806,7 +1817,7 @@ fn fresh_agent_after_reconnect_creates_session_over_surviving_registry() {
     let registry_endpoint = registry_endpoint_in(registry_dir.path(), "shared");
 
     // ── Agent A: connect, create a live session (this spawns the registry) ────
-    {
+    let agent_a_sid = {
         let agent_a = LocalAgent::spawn_with_registry(&registry_endpoint);
         let mut client = agent_a.client();
         client.initialize();
@@ -1833,7 +1844,19 @@ fn fresh_agent_after_reconnect_creates_session_over_surviving_registry() {
         // `agent_a` drops here: the listener process is killed, modelling the
         // transport drop that takes the remote agent with it. The detached
         // registry daemon is designed to outlive it.
-    }
+        sid
+    };
+
+    // Agent A's shell is a persistent (daemon-backed) session, so its detached
+    // session daemon outlives agent A by design — and agent B, with its own
+    // config dir, never recovers it. Reap it by the exact PID serving its
+    // endpoint when the test ends, or every run leaks one orphaned `--daemon`
+    // process (#3636). Looked up only now that agent A is gone, so the lookup's
+    // connection cannot evict a live writer.
+    let _agent_a_session_daemon = common::daemon_reaper::DaemonGuard::discover(
+        &common::daemon_reaper::session_endpoint(&agent_a_sid),
+    )
+    .expect("could not find agent A's session daemon to reap");
 
     // The registry must have survived the agent that spawned it — otherwise this
     // would not exercise the "fresh agent meets a *pre-existing* registry" case
@@ -1843,6 +1866,10 @@ fn fresh_agent_after_reconnect_creates_session_over_surviving_registry() {
         "registry daemon did not survive the agent process that spawned it — \
          cannot exercise the surviving-registry handshake"
     );
+    // The surviving registry is this test's to clean up (#3636): reap it by the
+    // exact PID serving our unique endpoint once the test is done, instead of
+    // leaving it to idle out after the run.
+    let _registry_reaper = common::daemon_reaper::DaemonGuard::discover(&registry_endpoint);
 
     // ── Agent B: the fresh agent the reconnect stands up over the re-established
     // transport. `initialize` + `connection.create` must complete even though a
@@ -1976,6 +2003,11 @@ fn spawn_daemon_for_local_shell(session_id: &str, socket_path: &Path) -> (Child,
         .env("TERMIHUB_SOCKET_PATH", socket_path)
         .env("TERMIHUB_BUFFER_SIZE", "65536")
         .env("RUST_LOG", "warn")
+        // Safety net if the drop guard never runs (#3636).
+        .env(
+            "TERMIHUB_DAEMON_DETACHED_TIMEOUT_SECS",
+            common::TEST_DAEMON_DETACHED_SECS,
+        )
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::from(stderr_handle))
