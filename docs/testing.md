@@ -1345,17 +1345,40 @@ Manual test procedures for verifying user-facing features before releases and af
 
 All 169 legacy YAML items in [`tests/manual/`](../tests/manual/) were triaged in #3681. (The previous version of this section claimed 100 items; the files actually held 169, including a duplicate `MT-SER-06`.)
 
-| Decision                                           | Items   | What happened                                                                                                                                                             |
-| -------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Already automated (vitest / Rust / bridge harness) | 62      | Deleted from the YAML; the pointer is in the triage table below                                                                                                           |
-| Automated in #3681                                 | 9       | Deleted; new vitest / harness tests (see the table)                                                                                                                       |
-| Walked by a guided-manual pytest                   | 41      | Deleted from the YAML; the guided suite is on the release checklist                                                                                                       |
-| Automated by a follow-up issue (#3687)             | 5       | Deleted; new Rust / vitest / harness tests (see the table)                                                                                                                |
-| Automatable, tracked by a follow-up issue          | 27      | Kept in the YAML with `automation_issue: <N>`; run via the legacy runner until the issue lands                                                                            |
-| Automated since by its follow-up issue             | 14      | Deleted; MT-SER-09 (#3682), MT-CRED-04 (#3690), MT-FB-08/09/10 (#3694), MT-TAB-11/12/16 + MT-UI-10/11/12/14/15/37 (#3693) → vitest / harness tests (see the triage table) |
-| Genuinely manual                                   | 11      | Kept in the YAML with `release_gate: true` + `manual_reason`; on the release checklist                                                                                    |
-| **Total before → after**                           | **169** | **38 YAML items remain (11 release-gating + 27 pending automation)**                                                                                                      |
-| Added since: macOS-only multi-window items (#3720) | +2      | **40 YAML items (13 release-gating + 27 pending automation)** — see below                                                                                                 |
+| Decision                                           | Items   | What happened                                                                                      |
+| -------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------- |
+| Already automated (vitest / Rust / bridge harness) | 62      | Deleted from the YAML; the pointer is in the triage table below                                    |
+| Automated in #3681                                 | 9       | Deleted; new vitest / harness tests (see the table)                                                |
+| Walked by a guided-manual pytest                   | 41      | Deleted from the YAML; the guided suite is on the release checklist                                |
+| Automatable, tracked by a follow-up issue          | 46      | Kept in the YAML with `automation_issue: <N>`; deleted once its issue lands (see the triage table) |
+| Genuinely manual                                   | 11      | Kept in the YAML with `release_gate: true` + `manual_reason`; on the release checklist             |
+| **Total triaged**                                  | **169** | Snapshot of the #3681 triage; the current corpus is the generated inventory below, not this table  |
+
+The current corpus, per category, is generated from the YAMLs — never hand-edit
+the block between the markers. After adding or deleting a YAML item, run
+`python3 scripts/manual-inventory.py --write`; on a merge conflict in the block,
+take either side and re-run the same command. CI (`--check`) fails if it is stale.
+
+<!-- manual-inventory:start -->
+
+<!-- Generated from tests/manual/*.yaml by scripts/manual-inventory.py; do not edit by hand.
+     On a merge conflict here, take either side and run: python3 scripts/manual-inventory.py --write -->
+
+| Category (`--category`)   | Display name          | Platforms      | Release-gating | Pending automation |  Total |
+| ------------------------- | --------------------- | -------------- | -------------: | -----------------: | -----: |
+| `connection-management`   | Connection Management | all            |              0 |                  4 |      4 |
+| `credential-store`        | Credential Store      | all            |              3 |                  0 |      3 |
+| `local-shell`             | Local Shell           | macos, windows |              2 |                  0 |      2 |
+| `multi-window`            | Multi-Window          | macos          |              2 |                  0 |      2 |
+| `network-tools`           | network-tools         | all            |              2 |                  2 |      4 |
+| `portable-mode`           | Portable Mode         | all            |              0 |                  2 |      2 |
+| `remote-agent`            | Remote Agent          | all            |              0 |                 15 |     15 |
+| `serial`                  | Serial                | all            |              1 |                  3 |      4 |
+| `ssh`                     | SSH                   | all            |              1 |                  1 |      2 |
+| `ui-layout`               | UI / Layout           | all            |              2 |                  0 |      2 |
+| **Total (10 categories)** |                       |                |         **13** |             **27** | **40** |
+
+<!-- manual-inventory:end -->
 
 `tests/system/tests/test_manual_corpus.py` (normal, non-integration lane) enforces this: every remaining YAML item must carry exactly one of `release_gate: true` + `manual_reason`, or `automation_issue: <N>`, and ids must be unique. Follow-up issues: #3682 (serial socat echo fixture — #859 was closed by removing the unreachable container fixture, not by adding one), #3683 (serial prefixes), #3684 (Windows agent host fixture), #3685 (Windows agent CI), #3686 (agent wake/park UI), #3687 (SSH small items — done), #3688 (jump-host reconnect fixture), #3689 (connection management), #3690 (credential auto-lock seam — landed: MT-CRED-04 is now covered by fake-clock unit tests in `src-tauri/src/credential/auto_lock.rs`), #3691 (portable launch), #3692 (network tools fixtures), #3693 (layout / restore — done: MT-TAB-11/12/16 and MT-UI-10/11/12/14/15/37 are covered by `App.openSavedFile.test.tsx`, `test_split_views.py`, `test_settings.py` and `test_session_restore_ui.py`, emptying the `tab-management` category), #3694 (file-browser CWD follow — done: MT-FB-08/09/10 are covered in `FileBrowser.test.tsx`, emptying the `file-browser` category). The per-feature prose walkthroughs further down this section are PR-verification notes, not part of the release gate; triaging them the same way is tracked in #3695. The other two follow-ups the audit named were already done: #1230 (monitoring auto-reconnect) is covered by fault-injection tests over a scripted `MonitoringTransport` in `core/src/backends/ssh/monitoring.rs` (`collect_loop_emits_stale_reconnecting_then_live_on_recovery`, `collect_loop_emits_offline_when_reconnect_exhausted`), and #1336 (FTP transfer queue) by the live `core/tests/ftp_transfer.rs` / `ftp_reconnect.rs` integration tests.
 
