@@ -10,7 +10,8 @@ evidence:
   - src/store/appStore.ts:775
   - docs/testing.md:2426
   - docs/testing.md:1021
-status: open
+status: fixed
+resolution: "#3723 — bridge multi-window aware (per-window labels, windows()/window(label), closeWindow/listWindows); nightly multi-window journeys; only 2 macOS OS-native items stay manual release-gating"
 ---
 
 ## What
