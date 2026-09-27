@@ -9,9 +9,14 @@ import { fileURLToPath } from "node:url";
  * The CSP is declared as a directive map in `src-tauri/tauri.conf.json`. Tauri
  * then applies, in order, an RFC 7396 JSON merge patch from the
  * platform-specific file (`tauri.windows.conf.json` / `tauri.macos.conf.json` /
- * `tauri.linux.conf.json`, when present) and any `--config` overlay (the
- * system-test build passes `tauri.test.conf.json`). Because the policy is a map,
- * an overlay can replace one directive without restating the rest.
+ * `tauri.linux.conf.json`, when present). Because the policy is a map, an overlay
+ * can replace one directive without restating the rest.
+ *
+ * The system-test build has no config overlay (#3628): it ships the platform's
+ * production policy and the test bridge widens `connect-src` at startup
+ * (`relax_csp_policy` in `src-tauri/src/utils/test_bridge.rs`). `effectiveCsp`
+ * with `testBuild` models that widening, reading the bridge sources straight
+ * from the Rust constant so the two cannot drift.
  */
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -68,23 +73,38 @@ export function toCspMap(csp: Json): CspMap {
   return out;
 }
 
-/** The merged `app.security` block for a platform, optionally with the test overlay. */
-export function effectiveSecurity(
-  platform: CspPlatform,
-  opts: { testBuild?: boolean } = {}
-): Record<string, Json> {
+/** The merged production `app.security` block for a platform. */
+export function effectiveSecurity(platform: CspPlatform): Record<string, Json> {
   let conf: Json = readTauriConfig("tauri.conf.json");
   const platformPatch = readTauriConfig(`tauri.${platform}.conf.json`);
   if (platformPatch) conf = mergePatch(conf, platformPatch);
-  if (opts.testBuild) {
-    const testPatch = readTauriConfig("tauri.test.conf.json");
-    if (testPatch) conf = mergePatch(conf, testPatch);
-  }
   const app = (conf as Record<string, Json>).app as Record<string, Json> | undefined;
   return (app?.security ?? {}) as Record<string, Json>;
 }
 
-/** The effective CSP for a platform (production build unless `testBuild`). */
+/**
+ * The `connect-src` sources the test bridge appends at runtime, parsed from
+ * `TEST_BRIDGE_CSP_CONNECT_SRC` in `src-tauri/src/utils/test_bridge.rs`.
+ */
+export function testBridgeConnectSources(): string[] {
+  const source = readFileSync(join(SRC_TAURI, "src", "utils", "test_bridge.rs"), "utf8");
+  const match = /pub const TEST_BRIDGE_CSP_CONNECT_SRC: &str = "([^"]*)";/.exec(source);
+  if (!match) throw new Error("TEST_BRIDGE_CSP_CONNECT_SRC not found in test_bridge.rs");
+  return match[1].split(/\s+/).filter(Boolean);
+}
+
+/**
+ * The effective CSP for a platform: the production build, or with `testBuild`
+ * the test-bridge build after its runtime `connect-src` widening (mirrors
+ * `relax_csp_policy`: append missing sources in order, or add
+ * `connect-src 'self' <sources>` when the directive is absent).
+ */
 export function effectiveCsp(platform: CspPlatform, opts: { testBuild?: boolean } = {}): CspMap {
-  return toCspMap(effectiveSecurity(platform, opts).csp ?? null);
+  const csp = toCspMap(effectiveSecurity(platform).csp ?? null);
+  if (!opts.testBuild) return csp;
+  const connect = csp["connect-src"] ? [...csp["connect-src"]] : ["'self'"];
+  for (const source of testBridgeConnectSources()) {
+    if (!connect.includes(source)) connect.push(source);
+  }
+  return { ...csp, "connect-src": connect };
 }

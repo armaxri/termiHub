@@ -3,7 +3,8 @@
   "app": {
     "security": {
       "csp": {
-        "script-src": ["'self'", "http://plugin.localhost", "'wasm-unsafe-eval'"]
+        "script-src": ["'self'", "http://plugin.localhost", "'wasm-unsafe-eval'"],
+        "connect-src": ["'self'", "http://ipc.localhost"]
       }
     }
   }

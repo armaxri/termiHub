@@ -54,7 +54,6 @@ describe("classify", () => {
     for (const conf of [
       "src-tauri/tauri.conf.json",
       "src-tauri/tauri.windows.conf.json",
-      "src-tauri/tauri.test.conf.json",
     ]) {
       expect(on(classify([conf]))).toEqual(["rust", "frontend"]);
     }
