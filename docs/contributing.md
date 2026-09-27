@@ -1478,6 +1478,12 @@ flowchart LR
 - **Debug builds** (`cargo test`, `scripts/dev.sh`) accept a _missing_ signature with a loud
   warning so the dev loop can push locally built agents; a present-but-invalid signature is
   still refused. Release builds, including the `test-hooks` system-test build, never skip.
+- **Beyond the signature** (#3213 part 2): the update RPCs also require the agent
+  instance's update auth token, and an older binary is applied only as a _matched
+  downgrade_ (pinned to the desktop's own version). The version is read from a
+  build-version record every agent binary embeds (`agent/src/update/build_version.rs`), so
+  the signature is what makes it trustworthy. See
+  [remote-protocol → Update authorization and downgrade policy](remote-protocol.md#update-authorization-and-downgrade-policy).
 
 **One-time setup (maintainer):**
 

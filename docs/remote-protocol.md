@@ -2,9 +2,9 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.12.0
+**Version**: 0.13.0
 **Status**: Draft
-**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731
+**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213
 
 ---
 
@@ -288,6 +288,9 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                          |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.13.0          | 0.13.0        | Yes                                                                                                                                  |
+| 0.13.0          | 0.9.0–0.12.0  | Yes (no `update_auth_token_path` — the desktop sends no `authToken`, which a pre-0.13.0 agent does not require)                      |
+| 0.12.0          | 0.13.0        | Partly (everything except agent updates: the update RPCs are refused with `-32026` because no `authToken` is sent)                   |
 | 0.12.0          | 0.12.0        | Yes                                                                                                                                  |
 | 0.12.0          | 0.9.0–0.11.0  | Yes (network tools run through `tool.*`, which these agents already offer)                                                           |
 | 0.12.0          | < 0.9.0       | Partly (no `toolStreaming` — network tools refuse with "update the agent to use network tools"; everything else works)               |
@@ -321,6 +324,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                           |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                 |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                  |
+
+**0.13.0 (minor, update RPCs only)** — hardens agent updates (#3213, AGT-003 / SEC-006). [`agent.request_update`](#agentrequest_update) and [`agent.request_deferred_update`](#agentrequest_deferred_update) now **require** the agent instance's per-instance update auth token in a new `authToken` param, in addition to the release signature; the `initialize` result advertises the owner-only file holding it as `update_auth_token_path`. Both methods also take an optional `pinnedVersion` for a **matched downgrade** (see [Update authorization and downgrade policy](#update-authorization-and-downgrade-policy)). New error codes `-32026` (unauthorized) and `-32027` (downgrade refused). A 0.13.0 desktop against an older agent sends no token (none is advertised) and the older agent ignores the unknown params. An older desktop against a 0.13.0 agent can do everything except update it.
 
 **0.12.0 (removal, minor — pre-1.0)** — removes the dedicated `network.port_scan` / `network.ping` / `network.dns_lookup` / `network.open_ports` / `network.traceroute` / `network.wol` methods (#3731, audit DUP-027). They duplicated the core `ToolRegistry` path the agent already exposed as [`tool.run`](#agent-run-network-tools-tool) / [`tool.start`](#toolstart), so every network tool now has exactly one code path, locally and on the agent. An agent answers the removed methods with `-32601`. The desktop sets a **minimum agent version for network tools**: it requires `capabilities.toolStreaming` (0.9.0+) and, for an older agent, shows "update the agent to use network tools" (error code `agent_outdated`) before sending anything; the rest of an older agent keeps working. A 0.9.0–0.11.0 desktop talking to a 0.12.0 agent still streams the streaming tools, but its DNS / Wake-on-LAN / open-ports calls hit the removed methods — update the desktop too.
 
@@ -410,20 +415,21 @@ Handshake that establishes the protocol version and exchanges capabilities.
 
 On a successful `initialize`, the agent records the client (`client`, `client_version`, an agent-assigned `client_id`, and a `connected_since` timestamp) in its per-process `ConnectionRegistry` and clears it when the connection drops (see [Connection Topology & Client Tracking](#connection-topology--client-tracking)). Because each `--stdio` process serves one client, the registry holds exactly one entry in the SSH-tunnelled deployment.
 
-| Result Field                              | Type                   | Description                                                                                                                                        |
-| ----------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `protocol_version`                        | `string`               | Negotiated protocol version                                                                                                                        |
-| `agent_version`                           | `string`               | Agent binary version                                                                                                                               |
-| `client_id`                               | `string`               | Agent-assigned id for this client (0.3.0+)                                                                                                         |
-| `capabilities.connectionTypes`            | `ConnectionTypeInfo[]` | Available connection types with schemas/caps                                                                                                       |
-| `capabilities.maxSessions`                | `integer`              | Maximum concurrent sessions                                                                                                                        |
-| `capabilities.availableShells`            | `string[]`             | Available shell paths                                                                                                                              |
-| `capabilities.availableSerialPorts`       | `string[]`             | Available serial port paths                                                                                                                        |
-| `capabilities.dockerAvailable`            | `boolean`              | Whether Docker is available                                                                                                                        |
-| `capabilities.availableDockerImages`      | `string[]`             | Available Docker image names                                                                                                                       |
-| `capabilities.toolStreaming`              | `boolean`              | Streaming tool runs supported — [`tool.start`](#toolstart) (0.9.0+; absent = `false`)                                                              |
-| `capabilities.keyboardInteractivePrompts` | `boolean`              | The agent relays SSH keyboard-interactive prompts to a desktop that advertised them (0.10.0+; absent = `false`)                                    |
-| `capabilities.embeddedServerActivity`     | `boolean`              | The agent serves an agent-hosted embedded server's access log — [`embedded_server.activity`](#embedded_serveractivity) (0.11.0+; absent = `false`) |
+| Result Field                              | Type                   | Description                                                                                                                                                                              |
+| ----------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `protocol_version`                        | `string`               | Negotiated protocol version                                                                                                                                                              |
+| `agent_version`                           | `string`               | Agent binary version                                                                                                                                                                     |
+| `client_id`                               | `string`               | Agent-assigned id for this client (0.3.0+)                                                                                                                                               |
+| `update_auth_token_path`                  | `string`               | Owner-only file (on the agent host) holding this instance's update auth token — see [Update authorization](#update-authorization-and-downgrade-policy) (0.13.0+; absent on older agents) |
+| `capabilities.connectionTypes`            | `ConnectionTypeInfo[]` | Available connection types with schemas/caps                                                                                                                                             |
+| `capabilities.maxSessions`                | `integer`              | Maximum concurrent sessions                                                                                                                                                              |
+| `capabilities.availableShells`            | `string[]`             | Available shell paths                                                                                                                                                                    |
+| `capabilities.availableSerialPorts`       | `string[]`             | Available serial port paths                                                                                                                                                              |
+| `capabilities.dockerAvailable`            | `boolean`              | Whether Docker is available                                                                                                                                                              |
+| `capabilities.availableDockerImages`      | `string[]`             | Available Docker image names                                                                                                                                                             |
+| `capabilities.toolStreaming`              | `boolean`              | Streaming tool runs supported — [`tool.start`](#toolstart) (0.9.0+; absent = `false`)                                                                                                    |
+| `capabilities.keyboardInteractivePrompts` | `boolean`              | The agent relays SSH keyboard-interactive prompts to a desktop that advertised them (0.10.0+; absent = `false`)                                                                          |
+| `capabilities.embeddedServerActivity`     | `boolean`              | The agent serves an agent-hosted embedded server's access log — [`embedded_server.activity`](#embedded_serveractivity) (0.11.0+; absent = `false`)                                       |
 
 > **Field-casing note.** The `initialize` **params** are serialized in `camelCase`
 > (`protocolVersion`, `clientVersion`), matching the agent's `InitializeParams` — a field sent in
@@ -1207,7 +1213,8 @@ Coordination is best-effort and never blocks the update. If the host-wide regist
   "method": "agent.request_update",
   "params": {
     "binaryPath": "/opt/updates/termihub-agent",
-    "version": "0.4.0"
+    "version": "0.4.0",
+    "authToken": "<contents of update_auth_token_path>"
   },
   "id": 12
 }
@@ -1219,6 +1226,8 @@ Coordination is best-effort and never blocks the update. If the host-wide regist
 | `version`        | `string`  | No       | Target version label (bookkeeping only)                                                                                                                   |
 | `expectedSha256` | `string`  | No       | Lowercase-hex SHA-256 of the binary at `binaryPath`; re-verified immediately before the swap (AGT-004). Required with `binaryPath`.                       |
 | `signature`      | `string`  | No       | Base64 Ed25519 signature (the published `<binary>.sig`) over the SHA-256 — see [Update signatures](#update-signatures). Required by release-built agents. |
+| `authToken`      | `string`  | Yes      | This agent instance's update auth token (0.13.0+) — see [Update authorization](#update-authorization-and-downgrade-policy). Missing or wrong → `-32026`.  |
+| `pinnedVersion`  | `string`  | No       | Matched-downgrade pin (0.13.0+): must equal the desktop's own `clientVersion` and the binary's embedded version. Honoured only with `binaryPath`.         |
 | `ackTimeoutSecs` | `integer` | No       | How long other hosts get to disconnect. Defaults to `10`.                                                                                                 |
 
 **Response:**
@@ -1252,6 +1261,8 @@ Coordination is best-effort and never blocks the update. If the host-wide regist
 | `-32602` | `binaryPath` does not exist, or no update is staged to apply               |
 | `-32016` | The update failed to apply (binary swap / re-exec, or non-Unix)            |
 | `-32021` | The update's signature is missing, malformed, or does not verify (AGT-005) |
+| `-32026` | `authToken` is missing or wrong, or the agent has no token (AGT-003)       |
+| `-32027` | Refused by the downgrade policy (SEC-006)                                  |
 
 #### Update signatures
 
@@ -1273,6 +1284,45 @@ and, while built from the placeholder key file, every update. A **debug** agent 
 _missing_ signature with a loud warning (dev loop only). See
 [contributing → Agent Update Signing Key](contributing.md#agent-update-signing-key).
 
+#### Update authorization and downgrade policy
+
+**Per-instance token (AGT-003, #3213).** Being `initialize`d is not enough to stage or apply an
+agent binary. Both update methods also require the agent **instance's** update auth token in
+`authToken`, checked in constant time before anything is staged (and, for
+`agent.request_update`, before other hosts are notified). It is the same per-instance token
+as the [`--listen` handshake](#--listen-tcp-transport-per-instance-token-handshake-agt-002--sec-004):
+
+- `--listen` reuses that instance's `listen-auth.token`.
+- `--stdio` (one agent process per desktop) writes a fresh per-process token to
+  `<config>/instance-auth/<pid>.token` (directory `0700`, file `0600`) and removes it on exit.
+
+The agent advertises the file's **path** — never the token — as `update_auth_token_path` in
+the `initialize` result. The desktop reads the file out of band over its own SSH session
+(SFTP) immediately before it sends an update request. A caller that can reach the RPC surface
+but cannot read the agent owner's files cannot update the agent. A missing or wrong token, or
+an agent instance without one, fails with `-32026`; the request line is never logged.
+
+**Downgrade policy (SEC-006, #3213).** The `version` param is a caller-supplied label, so the
+agent reads the binary's version from the build-version record every agent binary embeds
+(`\0TERMIHUB-AGENT-BUILD-VERSION=<version>\0`). This check runs only after the signature has
+verified, so the embedded version is authentic:
+
+| Binary version vs. running agent | `pinnedVersion`                 | Result                 |
+| -------------------------------- | ------------------------------- | ---------------------- |
+| Newer or the same                | absent                          | Accepted               |
+| Older                            | absent                          | Refused (`-32027`)     |
+| Any                              | ≠ the desktop's `clientVersion` | Refused (`-32027`)     |
+| Any                              | ≠ the binary's version          | Refused (`-32027`)     |
+| Any (including older)            | = desktop version = binary's    | Accepted (matched pin) |
+
+So the only downgrade accepted is a **matched** one: a desktop may put back the agent that
+matches its own version. The desktop's coordinated push always pins its bundled agent to its
+own version. A pin sent without `binaryPath` is ignored. It never re-authorizes an update that
+is already staged. The pin is persisted with a staged update and re-checked, with the
+signature, immediately before the swap. A release-built agent refuses a binary with no (or an
+ambiguous) build-version record. A debug agent tolerates an _unknown_ version with a warning
+(dev loop only), but still refuses a known, unpinned downgrade.
+
 ---
 
 ### `agent.request_deferred_update`
@@ -1289,7 +1339,8 @@ Applying swaps the on-disk agent binary with the staged one and re-execs it (Uni
   "method": "agent.request_deferred_update",
   "params": {
     "binaryPath": "/opt/updates/termihub-agent",
-    "version": "0.3.0"
+    "version": "0.3.0",
+    "authToken": "<contents of update_auth_token_path>"
   },
   "id": 11
 }
@@ -1301,6 +1352,8 @@ Applying swaps the on-disk agent binary with the staged one and re-execs it (Uni
 | `version`        | `string` | No       | Target version label (bookkeeping only)                                                                                             |
 | `expectedSha256` | `string` | No       | Lowercase-hex SHA-256 of the binary at `binaryPath`; re-verified immediately before the swap (AGT-004). Required with `binaryPath`. |
 | `signature`      | `string` | No       | Base64 Ed25519 signature over the SHA-256 — see [Update signatures](#update-signatures). Required by release-built agents.          |
+| `authToken`      | `string` | Yes      | This agent instance's update auth token (0.13.0+) — see [Update authorization](#update-authorization-and-downgrade-policy).         |
+| `pinnedVersion`  | `string` | No       | Matched-downgrade pin (0.13.0+) — see [Update authorization](#update-authorization-and-downgrade-policy).                           |
 
 **Response:**
 
@@ -1328,6 +1381,8 @@ Applying swaps the on-disk agent binary with the staged one and re-execs it (Uni
 | `-32602` | `binaryPath` does not exist, or no update is staged to apply               |
 | `-32016` | The update failed to apply (binary swap / re-exec, or non-Unix)            |
 | `-32021` | The update's signature is missing, malformed, or does not verify (AGT-005) |
+| `-32026` | `authToken` is missing or wrong, or the agent has no token (AGT-003)       |
+| `-32027` | Refused by the downgrade policy (SEC-006)                                  |
 
 ---
 
@@ -3115,6 +3170,8 @@ For serial sessions:
 | `-32023` | Session held by other       | A plain `connection.attach` was refused because another desktop holds the session; only `takeover: true` may evict it       |
 | `-32024` | Auth cancelled              | The user cancelled an agent-relayed SSH keyboard-interactive prompt; the desktop treats it as a quiet cancel                |
 | `-32025` | Second factor failed        | An agent-authenticated SSH connection's one-time code was rejected after an earlier factor was accepted — keep the password |
+| `-32026` | Update unauthorized         | An agent update RPC lacked the instance's update auth token (missing or wrong), or the agent has none (AGT-003)             |
+| `-32027` | Update downgrade refused    | An agent update was refused by the downgrade policy: an unpinned downgrade, a mismatched pin, or an unknown version         |
 
 ---
 
@@ -3205,7 +3262,7 @@ at the protocol level.
 
 - **Encryption**: All messages are encrypted by the SSH channel
 - **Authentication**: SSH key-based or password authentication (same as existing SSH connections in termiHub)
-- **Authorization**: The agent trusts any client that successfully authenticates over SSH — no additional authorization model
+- **Authorization**: The agent trusts any client that successfully authenticates over SSH, with one exception: the agent-update RPCs additionally require the instance's update auth token (see [Update authorization and downgrade policy](#update-authorization-and-downgrade-policy), AGT-003)
 
 #### `--listen` TCP transport: per-instance token handshake (AGT-002 / SEC-004)
 

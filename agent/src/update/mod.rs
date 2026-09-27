@@ -48,6 +48,7 @@
 //! never touches the environment.
 
 mod apply;
+mod build_version;
 mod checksum;
 mod coordinate;
 mod download;
@@ -77,6 +78,9 @@ pub use apply::{
     cleanup_stale_update_backup, confine_to_staging, prune_applied_pending_update,
     should_apply_deferred_update, StagingConfinementError, SystemUpdateApplier, UpdateApplier,
 };
+pub use build_version::{check_pin_matches_desktop, VersionPolicyError};
+#[cfg(test)]
+pub use build_version::{VersionPolicy, MARKER_PREFIX as BUILD_VERSION_MARKER_PREFIX};
 pub use coordinate::{coordinate_update, CoordinationOutcome, ACK_TIMEOUT};
 pub use github::{current_asset_suffix, DEFAULT_REPO};
 pub use signature::UpdateSignatureError;
@@ -464,6 +468,8 @@ async fn run_check_once(
                     Some(available_version.clone()),
                     Some(verified.sha256),
                     verified.signature,
+                    // Self-update only ever stages a newer release: no pin.
+                    None,
                 )
                 .await
             {
