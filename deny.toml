@@ -27,7 +27,7 @@ yanked = "deny"
 # Unmaintained-crate advisories are NOT gated here. The tree carries a large,
 # tauri-bound set of them (gtk3 bindings, async-std, proc-macro-error, unic-*,
 # rustls-pemfile, serial, ...) that no local change can clear — they are tracked
-# for upstream resolution in #1037. cargo-audit (the other tool in the Security
+# for upstream resolution in #3054. cargo-audit (the other tool in the Security
 # Audit job) likewise does not fail on unmaintained advisories, so the two stay
 # in agreement. This keeps cargo-deny focused on yanked crates + real
 # vulnerabilities rather than churn we cannot act on.
@@ -132,9 +132,15 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 #     ed25519-dalek 3.0.0-pre
 # These RC/pre crates are a deliberate, accepted risk for this release: russh has
 # not yet cut a stable release on the final RustCrypto 0.7/0.10 line. Upgrading to
-# a russh release built on stable RustCrypto is tracked in #1037. Until then the
+# a russh release built on stable RustCrypto is tracked in #3734. Until then the
 # yanked gate above guards against the versions silently regressing to a yanked
 # release, which is the concrete failure mode we care about.
+#
+# The exact pre-release set is also pinned as a reviewed allowlist in
+# .github/prerelease-allowlist.json (SUP-002): scripts/internal/
+# check-prerelease-crates.mjs fails a PR that locks any pre-release version not
+# listed there (root Cargo.lock and rdp-sidecar/Cargo.lock), or leaves a stale
+# entry behind.
 #
 # Multiple versions of a crate are common in a large tree (Cargo allows one
 # version per major) and are not a supply-chain signal on their own, so they do
