@@ -1,6 +1,10 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import viteConfig from "../../vite.config";
+import type { UserConfig } from "vite";
+
+type ViteConfigExport =
+  | UserConfig
+  | ((env: { command: string; mode: string }) => UserConfig | Promise<UserConfig>);
 
 /**
  * The shipped CSP's `script-src` has no `data:`, so the production build must
@@ -10,6 +14,12 @@ import viteConfig from "../../vite.config";
  */
 describe("vite build never inlines scripts as data: URLs (#3632)", () => {
   it("excludes script modules from assetsInlineLimit", async () => {
+    // vite.config.ts belongs to tsconfig.node.json, not the src project, so it is
+    // loaded untyped rather than through a static import.
+    const configPath = "../../vite.config";
+    const { default: viteConfig } = (await import(/* @vite-ignore */ configPath)) as {
+      default: ViteConfigExport;
+    };
     const resolved = await (typeof viteConfig === "function"
       ? viteConfig({ command: "build", mode: "production" })
       : viteConfig);

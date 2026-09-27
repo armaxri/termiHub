@@ -58,7 +58,10 @@ describe("MonacoEnvironment (#3632)", () => {
     ["javascript", "ts"],
     ["some-future-label", "editor"],
   ])("serves label %s from the bundled %s worker", (label, kind) => {
-    const worker = (monacoEnvironment as unknown as Required<Env>).getWorker("workerMain.js", label);
+    const worker = (monacoEnvironment as unknown as Required<Env>).getWorker(
+      "workerMain.js",
+      label
+    );
     expect(worker.kind).toBe(kind);
     expect(worker.options?.name).toBe(label);
   });

@@ -9,8 +9,8 @@ export default defineConfig({
       // Vite app build; jsdom has no Worker, so tests get a stub constructor.
       // The query keeps each worker a distinct module id, so a test can mock one.
       {
-        find: /^monaco-editor\/(.*)\?worker$/,
-        replacement: `${fileURLToPath(new URL("./src/test/workerStub.ts", import.meta.url))}?worker=$1`,
+        find: /^monaco-editor\/.*\/(\w+)\.worker\?worker$/,
+        replacement: `${fileURLToPath(new URL("./src/test/workerStub.ts", import.meta.url))}?stub=$1`,
       },
     ],
   },
