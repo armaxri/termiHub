@@ -14,7 +14,8 @@ use tracing::{info, warn};
 use zeroize::Zeroizing;
 
 use crate::commands::credential::{
-    auto_lock_permits_unlock, emit_status_changed, EVENT_STORE_UNLOCKED,
+    auto_lock_permits_unlock, emit_status_changed, sync_connection_credential_scopes,
+    EVENT_STORE_UNLOCKED,
 };
 use crate::credential::biometric_unlock::{BiometricUnlockError, BiometricUnlockStatus};
 use crate::credential::os_auth::{OsAuthCapability, OsAuthPurpose};
@@ -86,6 +87,7 @@ pub async fn unlock_credential_store_biometric(
 ) -> Result<(), BiometricUnlockError> {
     info!("Unlocking credential store with biometrics");
     guarded_biometric_unlock(&manager)?;
+    sync_connection_credential_scopes(&app_handle);
     if let Err(e) = app_handle.emit(EVENT_STORE_UNLOCKED, ()) {
         warn!("Failed to emit {}: {}", EVENT_STORE_UNLOCKED, e);
     }

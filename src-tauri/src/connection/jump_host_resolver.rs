@@ -12,12 +12,13 @@
 //! gateway you traverse to reach the referenced gateway). A visited-set along the
 //! resolution path rejects circular references (`A → B → A`).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 
 use super::config::SavedConnection;
+use super::credential_scope::owner_id;
 use super::id_changes::ConnectionIdRemap;
 use crate::credential::named;
 use crate::credential::{CredentialKey, CredentialStore, CredentialType};
@@ -57,6 +58,8 @@ const MAX_RESOLVE_DEPTH: usize = 16;
 pub(crate) struct JumpHostScope<'a> {
     connections: &'a [SavedConnection],
     unavailable: Vec<UnavailableFile>,
+    /// External file path → credential scope (#3591).
+    credential_scopes: HashMap<String, String>,
 }
 
 /// An external connection file whose connections are not in the scope.
@@ -75,6 +78,26 @@ impl<'a> JumpHostScope<'a> {
         Self {
             connections,
             unavailable: Vec::new(),
+            credential_scopes: HashMap::new(),
+        }
+    }
+
+    /// The credential scope of each external file in the scope (#3591), so a
+    /// referenced connection's secret is read from its own file's keys.
+    pub(crate) fn with_credential_scopes(mut self, scopes: HashMap<String, String>) -> Self {
+        self.credential_scopes = scopes;
+        self
+    }
+
+    /// The credential owner id of `conn`; `None` for an external connection
+    /// whose file scope is unknown, which then has no saved secret.
+    fn credential_owner(&self, conn: &SavedConnection) -> Option<String> {
+        match conn.source_file.as_deref() {
+            None => Some(conn.id.clone()),
+            Some(path) => self
+                .credential_scopes
+                .get(path)
+                .map(|scope| owner_id(&conn.id, Some(scope))),
         }
     }
 
@@ -284,7 +307,14 @@ fn resolve_hops(
                 let inner = referenced_chain(conn);
                 let mut inner_resolved = resolve_hops(&inner, scope, creds, visited, depth + 1)?;
                 resolved.append(&mut inner_resolved);
-                resolved.push(build_inline_hop(conn, ref_id, hop, creds)?);
+                let owner = scope.credential_owner(conn);
+                resolved.push(build_inline_hop(
+                    conn,
+                    ref_id,
+                    owner.as_deref(),
+                    hop,
+                    creds,
+                )?);
                 visited.remove(ref_id);
             }
             None => resolved.push(hop.clone()),
@@ -344,6 +374,7 @@ fn referenced_chain(conn: &SavedConnection) -> Vec<Value> {
 fn build_inline_hop(
     conn: &SavedConnection,
     ref_id: &str,
+    owner: Option<&str>,
     site_hop: &Value,
     creds: &dyn CredentialStore,
 ) -> Result<Value> {
@@ -388,7 +419,7 @@ fn build_inline_hop(
 
     // Resolve the saved credential. Core reads `password` as the SSH password
     // (password auth) or the private-key passphrase (key auth).
-    if let Some(secret) = resolve_credential(ref_id, s, auth_method, creds)? {
+    if let Some(secret) = resolve_credential(ref_id, owner, s, auth_method, creds)? {
         obj.insert("password".into(), json!(secret));
     } else if auth_method == "password" {
         bail!(
@@ -413,6 +444,7 @@ fn build_inline_hop(
 /// other kind has no secret under this type, so it resolves to nothing.
 fn resolve_credential(
     ref_id: &str,
+    owner: Option<&str>,
     settings: &Value,
     auth_method: &str,
     creds: &dyn CredentialStore,
@@ -422,9 +454,10 @@ fn resolve_credential(
         "key" => CredentialType::KeyPassphrase,
         _ => return Ok(None),
     };
-    let owner = match named::settings_ref(settings) {
-        Some(named_id) => named::owner_id(named_id),
-        None => ref_id.to_string(),
+    let owner = match (named::settings_ref(settings), owner) {
+        (Some(named_id), _) => named::owner_id(named_id),
+        (None, Some(owner)) => owner.to_string(),
+        (None, None) => return Ok(None),
     };
     creds
         .get(&CredentialKey::new(&owner, cred_type))

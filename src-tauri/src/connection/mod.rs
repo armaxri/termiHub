@@ -1,5 +1,6 @@
 pub mod config;
 pub(crate) mod credential_migration;
+pub mod credential_scope;
 pub mod id_changes;
 pub mod jump_host_resolver;
 pub mod manager;

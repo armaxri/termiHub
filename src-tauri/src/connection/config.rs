@@ -261,6 +261,12 @@ fn migrate_auto_reconnect_nodes(nodes: &mut serde_json::Value) {
 pub struct ExternalConnectionStore {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Stable identity of this file, scoping the credentials of its
+    /// connections (#3591). Written by termiHub the first time it sees the
+    /// file and carried along when the file is renamed or moved; see
+    /// [`credential_scope`](super::credential_scope).
+    #[serde(rename = "fileId", default, skip_serializing_if = "Option::is_none")]
+    pub file_id: Option<String>,
     pub version: String,
     pub children: Vec<ConnectionTreeNode>,
 }
