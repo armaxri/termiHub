@@ -152,6 +152,43 @@ export interface GetComputedStyleCommand {
   property: string;
 }
 
+/** A canvas pixel coordinate (backing-store pixels, not CSS pixels). */
+export interface CanvasPoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * Sample RGBA pixels from a `<canvas>` carrying the given `data-testid`.
+ *
+ * Graphical remote-desktop sessions (VNC/RDP) render into a canvas, so no DOM
+ * verb can see whether the remote framebuffer actually painted, and the
+ * {@link ScreenshotCommand} DOM rasterizer does not capture canvas content
+ * reliably. This reads `getImageData` at each requested point of the canvas's
+ * **backing store** (its `width` × `height`, which for the remote-desktop canvas
+ * in Fit/Match mode equals its CSS box). Returns
+ * `{ width, height, pixels }`, where `pixels[i]` is `[r, g, b, a]` for
+ * `points[i]`; pass no points to read just the size. Fails when the element is
+ * missing, is not a canvas, has no 2D context, or a point is not an in-bounds
+ * integer coordinate. Read-only and DOM-local, like the other query verbs.
+ */
+export interface SampleCanvasCommand {
+  action: "sampleCanvas";
+  testId: string;
+  /** Integer backing-store coordinates to sample; omit to read only the size. */
+  points?: CanvasPoint[];
+}
+
+/** The result of {@link SampleCanvasCommand}. */
+export interface CanvasSample {
+  /** Canvas backing-store width in pixels. */
+  width: number;
+  /** Canvas backing-store height in pixels. */
+  height: number;
+  /** One `[r, g, b, a]` tuple per requested point, in request order. */
+  pixels: [number, number, number, number][];
+}
+
 /**
  * Drag an element by a pixel delta via synthetic mouse events.
  *
@@ -463,6 +500,7 @@ export type BridgeCommand =
   | GetAttributeCommand
   | GetValueCommand
   | GetComputedStyleCommand
+  | SampleCanvasCommand
   | DragCommand
   | DragToCommand
   | ReadTerminalCommand

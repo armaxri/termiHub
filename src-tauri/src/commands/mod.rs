@@ -17,6 +17,8 @@ pub mod named_credential;
 pub mod network;
 pub mod os_auth;
 pub mod plugin;
+pub mod plugin_fetch;
+pub mod plugin_index;
 pub mod plugin_update;
 pub mod portable;
 pub mod projection;
@@ -35,6 +37,8 @@ pub mod shell_integration;
 pub mod spawn;
 pub mod ssh_config_import;
 pub mod ssh_host_key;
+#[cfg(test)]
+mod test_http_server;
 pub mod transfer;
 pub mod tunnel;
 pub mod update;

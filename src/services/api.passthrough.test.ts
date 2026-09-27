@@ -130,6 +130,9 @@ import {
   uninstallPlugin,
   checkPluginUpdates,
   downloadPluginUpdate,
+  downloadPluginFromIndex,
+  downloadPluginFromUrl,
+  fetchPluginIndex,
   enablePlugin,
   disablePlugin,
   // misc
@@ -1375,6 +1378,33 @@ describe("api pass-through wrappers (#2975)", () => {
         "/cache/plugin-updates/p1-1.1.0.termihub-plugin"
       );
       expect(mockedInvoke).toHaveBeenCalledWith("download_plugin_update", { pluginId: "p1" });
+    });
+
+    it("fetchPluginIndex invokes the backend index fetch with no arguments (PROD-048)", async () => {
+      const result = { url: "https://e.com/i.json", isDefault: false, entries: [] };
+      mockedInvoke.mockResolvedValue(result);
+
+      await expect(fetchPluginIndex()).resolves.toEqual(result);
+      expect(mockedInvoke).toHaveBeenCalledWith("fetch_plugin_index");
+    });
+
+    it("downloadPluginFromIndex forwards the plugin id and returns the package path", async () => {
+      mockedInvoke.mockResolvedValue("/cache/plugin-downloads/p1-1.0.0.termihub-plugin");
+
+      await expect(downloadPluginFromIndex("p1")).resolves.toBe(
+        "/cache/plugin-downloads/p1-1.0.0.termihub-plugin"
+      );
+      expect(mockedInvoke).toHaveBeenCalledWith("download_plugin_from_index", { pluginId: "p1" });
+    });
+
+    it("downloadPluginFromUrl forwards the URL and the expected checksum", async () => {
+      mockedInvoke.mockResolvedValue("/cache/plugin-downloads/url-abc.termihub-plugin");
+
+      await downloadPluginFromUrl("https://e.com/p.termihub-plugin", "ab".repeat(32));
+      expect(mockedInvoke).toHaveBeenCalledWith("download_plugin_from_url", {
+        url: "https://e.com/p.termihub-plugin",
+        sha256: "ab".repeat(32),
+      });
     });
   });
 
