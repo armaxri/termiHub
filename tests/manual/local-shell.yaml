@@ -5,6 +5,8 @@ tests:
   # --- No initial output flash for WSL/SSH terminals (PR #175) ---
 
   - id: MT-LOCAL-03
+    release_gate: true
+    manual_reason: "WSL welcome-banner paint timing on real Windows + WSL"
     name: "WSL connection — no welcome banner flash"
     pr: 175
     platforms: [windows]
@@ -25,57 +27,9 @@ tests:
       - "A clean prompt appears directly"
     verification: manual
 
-  - id: MT-LOCAL-05
-    name: "SSH connection — no setup command flash"
-    pr: 175
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    setup:
-      - create_connection:
-          name: "SSH Flash Test"
-          type: ssh
-          config:
-            host: "127.0.0.1"
-            port: 2201
-            username: "testuser"
-            authMethod: password
-      - connect: "SSH Flash Test"
-    instructions:
-      - "Watch the terminal carefully as it opens"
-      - "Enter password 'testpass' when prompted"
-      - "Look for any flash of setup commands before the prompt"
-    expected:
-      - "No setup command flash before the prompt appears"
-    verification: manual
-
-  # --- macOS key repeat fix (PR #48) ---
-
-  # --- Enter key submits commands / line-ending default (PR #827) ---
-
-  - id: MT-LOCAL-09
-    name: "Enter key submits commands (default CR line ending)"
-    pr: 827
-    platforms: [all]
-    prerequisites:
-      - app: true
-    setup:
-      - create_connection:
-          name: "Enter Submit Test"
-          type: local
-      - connect: "Enter Submit Test"
-    instructions:
-      - "Ensure Settings → Terminal → Line Ending is at its default (CR) — do not change it"
-      - "Switch to the 'Enter Submit Test' tab"
-      - "Type 'echo hello' and press Enter"
-    expected:
-      - "The command runs and 'hello' is printed on the next line"
-      - "Enter does NOT merely move to a new line without executing"
-      - "Verified on both macOS and Windows (regression #827 was visible on both)"
-    verification: manual
-
   - id: MT-LOCAL-08
+    release_gate: true
+    manual_reason: "real macOS key repeat / press-and-hold accent picker"
     name: "macOS key repeat works"
     pr: 48
     platforms: [macos]

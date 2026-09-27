@@ -2,34 +2,8 @@ category: file-browser
 display_name: "File Browser"
 
 tests:
-  - id: MT-FB-04
-    name: "Open in VS Code from file browser"
-    pr: 51
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Right-click a file > 'Open in VS Code' (VS Code must be installed)"
-    expected:
-      - "File opens in VS Code"
-    verification: manual
-
-  # --- File browser follows tab switch from WSL to PowerShell (PR #167) ---
-
-  - id: MT-FB-07
-    name: "WSL tab — file browser shows WSL path"
-    pr: 167
-    platforms: [windows]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Open a WSL tab"
-      - "Check the file browser path"
-    expected:
-      - "File browser shows //wsl$/<distro>/home/<user>"
-    verification: manual
-
   - id: MT-FB-08
+    automation_issue: 3694
     name: "PowerShell tab — file browser shows Windows home"
     pr: 167
     platforms: [windows]
@@ -43,6 +17,7 @@ tests:
     verification: manual
 
   - id: MT-FB-09
+    automation_issue: 3694
     name: "Switch back to WSL — file browser returns"
     pr: 167
     platforms: [windows]
@@ -56,6 +31,7 @@ tests:
     verification: manual
 
   - id: MT-FB-10
+    automation_issue: 3694
     name: "Bash tab — file browser shows home directory"
     pr: 167
     platforms: [all]
@@ -66,123 +42,4 @@ tests:
       - "Check the file browser path"
     expected:
       - "File browser shows home directory, not previous tab's path"
-    verification: manual
-
-  # --- New File button (PR #58) ---
-
-  - id: MT-FB-12
-    name: "New File button in SFTP mode"
-    pr: 58
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "In SFTP file browser mode, click 'New File'"
-    expected:
-      - "New file creation works in SFTP mode"
-    verification: manual
-
-  # --- Open in VS Code (PR #51) ---
-
-  - id: MT-FB-14
-    name: "Open in VS Code — local mode"
-    pr: 51
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "In local file browser, right-click a file"
-      - "Click 'Open in VS Code'"
-    expected:
-      - "File opens in VS Code"
-    verification: manual
-
-  - id: MT-FB-15
-    name: "Open in VS Code — SFTP edit and re-upload"
-    pr: 51
-    regression_pr: 828
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "In SFTP file browser, right-click a file"
-      - "Click 'Open in VS Code'"
-      - "Edit the file in VS Code and close the tab"
-    expected:
-      - "App stays running when the file is downloaded (no crash; regression #828)"
-      - "File re-uploaded (verify content changed on remote)"
-      - "App stays running through the background re-upload (no crash; regression #828)"
-    verification: manual
-
-  - id: MT-FB-16
-    name: "VS Code not installed — menu item hidden"
-    pr: 51
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "On a system without VS Code installed"
-      - "Right-click a file in file browser"
-    expected:
-      - "'Open in VS Code' menu item does not appear"
-    verification: manual
-
-  # --- Local folder OS integration (#2656) ---
-
-  - id: MT-FB-21
-    name: "Open OS file manager at the current local folder"
-    issue: 2656
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "On a local terminal, open the Files sidebar"
-      - "Click the file-manager toolbar action (Reveal in Finder / Show in File Explorer / Open in File Manager)"
-    expected:
-      - "The OS-native file manager opens at the currently-browsed folder"
-      - "The action is absent for a remote-session file browser"
-    verification: manual
-
-  - id: MT-FB-22
-    name: "Open the current local folder as a VS Code workspace"
-    issue: 2656
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "With the VS Code CLI (code) available, open the Files sidebar on a local terminal"
-      - "Click the 'Open Folder in VS Code' toolbar action"
-    expected:
-      - "VS Code opens the folder as a workspace"
-      - "The action is absent for a remote-session file browser"
-    verification: manual
-
-  - id: MT-FB-23
-    name: "Open-folder-in-VS-Code action tracks availability"
-    issue: 2656
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "On a system without VS Code installed, open the Files sidebar on a local terminal"
-    expected:
-      - "The 'Open Folder in VS Code' action does not appear"
-      - "The file-manager action is still present"
-    verification: manual
-
-  # --- Editor: Built-in file editor with Monaco (PR #54) ---
-
-  - id: MT-FB-20
-    name: "Editor tab drag-and-drop between panels"
-    pr: 54
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Open an editor tab"
-      - "Drag it between panels in split view"
-    expected:
-      - "Drag-and-drop works correctly"
     verification: manual

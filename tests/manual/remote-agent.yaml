@@ -2,90 +2,8 @@ category: remote-agent
 display_name: "Remote Agent"
 
 tests:
-  # --- Agent setup wizard (PR #137) ---
-
-  - id: MT-AGENT-04
-    name: "Setup commands injected into terminal"
-    pr: 137
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "Select a valid agent binary"
-      - "Proceed with setup"
-      - "Observe the terminal"
-    expected:
-      - "Setup commands are injected (mv, chmod, --version)"
-    verification: manual
-
-  - id: MT-AGENT-07
-    name: "Connect after setup"
-    pr: 137
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "After agent setup, right-click agent > 'Connect'"
-    expected:
-      - "Agent connects successfully"
-    verification: manual
-
-  # --- Agent disconnect overlay: reconnecting spinner + error feedback (feature/terminal-disconnect-overlay) ---
-
-  - id: MT-AGENT-08
-    name: "Agent reconnect: spinner overlay shown while auto-reconnecting"
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "Open one or more sessions via a remote agent"
-      - "Simulate a temporary network disruption (e.g. pause the Docker container briefly)"
-      - "Observe the terminal tabs while the agent is reconnecting"
-    expected:
-      - "Each affected tab shows a 'Reconnecting…' spinner overlay (blurred background, animated icon)"
-      - "No user action is needed — the overlay disappears automatically when the agent reconnects"
-      - "After reconnect, terminal output resumes in the same tab (scrollback preserved)"
-    verification: manual
-
-  - id: MT-AGENT-09
-    name: "Agent reconnect failure: error message in overlay"
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "Open one or more sessions via a remote agent"
-      - "Permanently disconnect the agent (stop the SSH server) so reconnect retries all fail"
-      - "Wait for the auto-reconnect loop to exhaust all 10 attempts (may take a few minutes)"
-    expected:
-      - "The 'Reconnect failed' overlay appears on each affected tab"
-      - "The overlay shows a red 'Reconnect failed' heading and an error box with the reason"
-      - "A 'Try Again' button is present (triggers a new manual reconnect attempt)"
-      - "A 'View Scrollback' button is present (enters view mode so history can be read)"
-    verification: manual
-
-  # --- Agent-session connecting overlay: auto-retry + waiting-for-agent (feature/terminal-connect-overlay) ---
-
-  - id: MT-AGENT-10
-    name: "Agent session auto-retries with spinner while agent is unavailable"
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "Stop a remote agent (or make it unreachable)"
-      - "Open a new session tab that routes through that agent"
-      - "Observe the overlay while the session fails to connect"
-    expected:
-      - "The overlay cycles through 'Connecting…' → short delay → 'Connecting… (attempt N)' indefinitely"
-      - "No error overlay or Retry button appears — the loop is fully automatic"
-      - "A 'Cancel' button is always visible to abort"
-    verification: manual
-
   - id: MT-AGENT-11
+    automation_issue: 3686
     name: "Waiting-for-agent state: session auto-starts when agent connects"
     platforms: [all]
     prerequisites:
@@ -101,25 +19,10 @@ tests:
       - "The overlay disappears and normal terminal output appears without any user action"
     verification: manual
 
-  # --- Agent setup SSH timeout fix (bugfix/agent-setup-ssh-timeout-hang) ---
-
-  - id: MT-AGENT-12
-    name: "Agent update dialog does not hang when SSH is unresponsive"
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Configure an agent whose SSH host is reachable at TCP level but unresponsive (e.g. firewall drops packets after connect, or the SSH daemon is frozen)"
-      - "Open the Setup Agent dialog for that agent (Settings wheel → Setup Agent)"
-      - "Observe the 'Connecting and detecting architecture…' phase"
-    expected:
-      - "The dialog does not hang indefinitely — after ~30 seconds it displays an error message (SSH timeout or similar)"
-      - "The UI remains responsive; no restart of the app is required"
-    verification: manual
-
   # --- Persistent shell double-click on stopped state (bugfix/agent-persistent-shell-doubleclick-icon) ---
 
   - id: MT-AGENT-13
+    automation_issue: 3686
     name: "Double-clicking a stopped persistent agent shell turns the state dot green"
     platforms: [all]
     prerequisites:
@@ -136,31 +39,10 @@ tests:
       - "Closing the tab leaves the background session running and the dot stays green"
     verification: manual
 
-  # --- Active Sessions reattach preserves scrollback (bugfix/agent-persistent-reattach-buffer-loss) ---
-
-  - id: MT-AGENT-14
-    name: "Reattaching via Active Sessions preserves scrollback buffer"
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "Connect to a remote agent that has a persistent shell definition"
-      - "Double-click the persistent shell to open a tab"
-      - "Run several commands so there is visible scrollback (e.g. `ls -la /etc`, `seq 1 50`)"
-      - "Close the tab (the background session must stay running — verify the state dot is still green)"
-      - "Expand the agent in the sidebar and locate the running session under the 'Active Sessions' section"
-      - "Double-click the session under 'Active Sessions' to reattach"
-    expected:
-      - "A new tab opens with a 'Restoring session…' overlay during the buffer fetch"
-      - "The previous scrollback (the `ls -la /etc` output and the `seq` numbers) appears in the new tab"
-      - "Subsequent input continues in the same shell (e.g. `pwd` reports the same cwd as before)"
-      - "The state dot stays green throughout — no duplicate session is created on the agent"
-    verification: manual
-
   # --- Windows agent binary build (#761) ---
 
   - id: MT-AGENT-15
+    automation_issue: 3685
     name: "Build the Windows agent binary natively (MSVC)"
     pr: 761
     platforms: [windows]
@@ -177,25 +59,8 @@ tests:
       - "ARM64 is best effort — if the ARM64 MSVC tools are missing, `.cmd --native` prints a WARNING and skips it without failing the run"
     verification: manual
 
-  # --- Reconnect restarts the connection instead of looping (bugfix/agent-reconnect-endless-loop) ---
-
-  - id: MT-AGENT-16
-    name: "Reconnecting a destroyed persistent session restarts it (no endless loop)"
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "Connect to a remote agent and open a persistent shell session in a tab"
-      - "Open the Open Connections panel (Settings wheel → Open Connections) and kill that persistent session, OR stop it from the sidebar"
-      - "On the tab's disconnect overlay, click 'Reconnect'"
-    expected:
-      - "The tab does NOT get stuck retrying forever (no endless 'Connecting… / Connection failed' cycling)"
-      - "A brand-new persistent session is started and the tab attaches to it (fresh prompt)"
-      - "The sidebar state dot for the persistent shell returns to green (running/attached)"
-    verification: manual
-
   - id: MT-AGENT-17
+    automation_issue: 3686
     name: "Reconnecting after the agent connection is destroyed re-establishes the agent"
     platforms: [all]
     prerequisites:
@@ -215,6 +80,7 @@ tests:
   # --- Windows agent deploy + install over SSH (#763) ---
 
   - id: MT-AGENT-18
+    automation_issue: 3684
     name: "Deploy + install agent to a Windows host (cmd.exe default shell)"
     pr: 763
     platforms: [all]
@@ -233,6 +99,7 @@ tests:
     verification: manual
 
   - id: MT-AGENT-19
+    automation_issue: 3684
     name: "Deploy + install agent to a Windows host (PowerShell default shell)"
     pr: 763
     platforms: [all]
@@ -248,6 +115,7 @@ tests:
     verification: manual
 
   - id: MT-AGENT-20
+    automation_issue: 3684
     name: "Connect (--stdio) to a freshly installed Windows agent"
     pr: 763
     platforms: [all]
@@ -261,25 +129,10 @@ tests:
       - "A shell session can be opened through the agent and echoes input/output normally"
     verification: manual
 
-  - id: MT-AGENT-21
-    name: "Windows agent binary ships with releases"
-    pr: 769
-    platforms: [all]
-    prerequisites:
-      - app: false
-    instructions:
-      - "After a tagged release completes, open the GitHub Releases page for the new version"
-      - "Locate the agent binary assets next to the desktop installers"
-      - "Download `termihub-agent-windows-x64.exe` onto a Windows host"
-      - "From a terminal on that host, run `termihub-agent-windows-x64.exe --version`"
-    expected:
-      - "`termihub-agent-windows-x64.exe` is attached to the release alongside the Linux and macOS agent binaries"
-      - "Running the binary with `--version` prints the agent version and exits cleanly"
-    verification: manual
-
   # --- Windows ConPTY shell sessions through the agent (#765) ---
 
   - id: MT-AGENT-22
+    automation_issue: 3685
     name: "PowerShell session through the Windows agent (ConPTY spawn / resize / teardown)"
     pr: 765
     platforms: [all]
@@ -298,28 +151,10 @@ tests:
       - "Closing the tab terminates the ConPTY child on the Windows host (no orphaned `powershell.exe` in Task Manager)"
     verification: manual
 
-  - id: MT-AGENT-23
-    name: "cmd.exe session through the Windows agent (ConPTY spawn / resize / teardown)"
-    pr: 765
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Connect to a Windows host that already has the agent installed"
-      - "Open a new Local Shell session through the agent and choose `cmd` as the shell"
-      - "Run `echo HELLO_AGENT_CMD` and confirm the line appears in the output"
-      - "Resize the terminal pane a few times"
-      - "Close the tab"
-    expected:
-      - "`cmd.exe` launches via the agent without error"
-      - "Echoed input and command output both appear normally"
-      - "Resize does not crash the session"
-      - "Closing the tab terminates the `cmd.exe` child on the Windows host (no orphaned process in Task Manager)"
-    verification: manual
-
   # --- Windows agent persistent session reconnect (named-pipe daemon) (#770) ---
 
   - id: MT-AGENT-24
+    automation_issue: 3684
     name: "Persistent session on a Windows agent survives disconnect/reconnect (named-pipe daemon)"
     pr: 770
     platforms: [all]
@@ -341,6 +176,7 @@ tests:
   # --- File browsing + jump connections from a Windows agent (#770, #768) ---
 
   - id: MT-AGENT-25
+    automation_issue: 3685
     name: "File browser through a Windows agent (local filesystem, forward-slash paths)"
     pr: 768
     platforms: [all]
@@ -360,6 +196,7 @@ tests:
     verification: manual
 
   - id: MT-AGENT-26
+    automation_issue: 3684
     name: "SSH / Docker jump session originating from a Windows agent"
     pr: 770
     platforms: [all]
@@ -379,6 +216,7 @@ tests:
   # --- Windows agent secondary backends: SSH key auth + Docker named pipe (#768) ---
 
   - id: MT-AGENT-27
+    automation_issue: 3684
     name: "SSH jump-host backend from a Windows-hosted agent (default key / agent auth)"
     pr: 768
     platforms: [all]
@@ -395,6 +233,7 @@ tests:
     verification: manual
 
   - id: MT-AGENT-28
+    automation_issue: 3684
     name: "Docker backend via named pipe from a Windows-hosted agent"
     pr: 768
     platforms: [all]
@@ -411,6 +250,7 @@ tests:
     verification: manual
 
   - id: MT-AGENT-29
+    automation_issue: 3686
     name: "Cancel an in-progress agent setup aborts the upload and rolls back"
     pr: 1242
     platforms: [all]
@@ -429,6 +269,7 @@ tests:
     verification: manual
 
   - id: MT-AGENT-30
+    automation_issue: 3686
     name: "Agent tab that drops while still spawning shows waiting/reconnecting feedback"
     pr: 1242
     platforms: [all]
