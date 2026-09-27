@@ -141,6 +141,31 @@
         "osv_ecosystem": "crates.io"
       },
       "acknowledged_advisories": []
+    },
+    {
+      "path": "vendor/serial2",
+      "crate": "serial2",
+      "consumed_by": "Cargo.toml [patch.crates-io] (excluded from the workspace)",
+      "parses": "serial-port configuration (termios) and raw byte I/O with attached serial devices",
+      "upstream_repo": "https://github.com/de-vri-es/serial2-rs",
+      "upstream_branch": "main",
+      "upstream_path": "",
+      "base_version": "0.2.38",
+      "base_commit": "448a20ece5e6e37236d247ed957042420672029b",
+      "base_commit_note": "upstream tag v0.2.38",
+      "reviewed_version": "0.2.38",
+      "reviewed_commit": "448a20ece5e6e37236d247ed957042420672029b",
+      "deltas": [
+        {
+          "summary": "macOS/iOS: fall back to a termios speed when the IOSSIOSPEED ioctl is rejected (ENOTTY/ENOTSUP/EOPNOTSUPP) for a standard rate, so pseudo-terminals and drivers without custom-speed support can be opened",
+          "refs": ["https://github.com/armaxri/termiHub/issues/3701"]
+        }
+      ],
+      "watch": {
+        "crates_io": "serial2",
+        "osv_ecosystem": "crates.io"
+      },
+      "acknowledged_advisories": []
     }
   ]
 }
