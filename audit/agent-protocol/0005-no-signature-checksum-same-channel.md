@@ -10,8 +10,8 @@ evidence:
   - agent/src/update/github.rs:39
   - agent/src/update/download.rs:60
   - src-tauri/src/terminal/agent_binary.rs:269
-status: partial
-resolution: "#3331 — ed25519 signature verification on both update paths; real key pending maintainer setup; per-RPC update auth remains (#3213)"
+status: fixed
+resolution: "#3331, #3756 — agent verifies ed25519 sig (#3331); desktop verifies .sig on every resolution (cache/bundle/download) and again over uploaded bytes on immediate + coordinated deploy, release fails closed incl. placeholder key; shared core::agent_update_signature (#3756)"
 ---
 
 ## What
