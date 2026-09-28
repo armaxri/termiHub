@@ -1,0 +1,10 @@
+{
+  "$comment": "TODO/FIXME/HACK markers allowed to ship (TOOL-011, #3750). scripts/internal/release-marker-scan.mjs blocks the release on every comment marker in shipped source that is not listed here. Each entry: path (repo-relative, forward slashes), contains (a substring of the marker line), reason (why it stays). An entry that matches no marker fails the scan, so delete entries when their marker goes. See docs/contributing.md -> Pre-Release Checklist.",
+  "entries": [
+    {
+      "path": "core/src/backends/ssh/legacy_pem.rs",
+      "contains": "presumably pkcs5 could contain non-RSA keys",
+      "reason": "Module docs quote a comment in russh's decode_pkcs5 verbatim to explain the gap this module fills; it is not a termiHub follow-up."
+    }
+  ]
+}

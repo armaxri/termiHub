@@ -42,11 +42,12 @@ pub mod codes {
 /// `#[error("[thub-code:auth_failed] {0}")]` attribute. The frontend strips the
 /// marker before display, so it never leaks into user-visible text.
 pub fn with_code(code: &str, message: impl std::fmt::Display) -> String {
-    format!("[thub-code:{code}] {message}")
+    termihub_core::errors::with_code(code, message)
 }
 
 /// The literal that opens a `[thub-code:<slug>] ` machine marker in a message.
-const MARKER_OPEN: &str = "[thub-code:";
+/// The wire format is defined once in core and shared with the agent.
+const MARKER_OPEN: &str = termihub_core::errors::CODE_MARKER_OPEN;
 
 /// Extract the machine-code slug from the first `[thub-code:<slug>]` marker in
 /// `s`, if present. Used to route the constructor-tagged connect/agent codes
@@ -135,8 +136,20 @@ pub enum IpcErrorCode {
     SessionHeldByPeer,
     /// A bounded remote operation (an SSH exec or SFTP transfer on an
     /// established session) hit its deadline because the server stopped
-    /// responding (#3698).
+    /// responding (#3698). Also the code of a connect/handshake that timed out
+    /// (a core `ConnectFailureKind::Timeout`, I18N-009).
     Timeout,
+    /// SSH authentication through the SSH agent failed — the agent is not
+    /// running/reachable or could not complete the signature exchange
+    /// (I18N-009). Distinct from `auth_failed`: no credential was rejected, so
+    /// nothing stored may be discarded.
+    AgentAuthFailed,
+    /// The OS denied access to the connect target (e.g. a serial port), from a
+    /// core `ConnectFailureKind::PermissionDenied` (I18N-009).
+    PermissionDenied,
+    /// The connect target exists but is held by another application (e.g. a
+    /// serial port in use), from a core `ConnectFailureKind::Busy` (I18N-009).
+    Busy,
 }
 
 impl IpcErrorCode {
@@ -150,6 +163,30 @@ impl IpcErrorCode {
             codes::AGENT_OUTDATED => Some(Self::AgentOutdated),
             codes::ALREADY_CONNECTED => Some(Self::AlreadyConnected),
             _ => None,
+        }
+        .or_else(|| Self::from_connect_failure_slug(slug))
+    }
+
+    /// Map a core `ConnectFailureKind` slug (I18N-009) to its code, so a typed
+    /// connect failure tagged into a message keeps its kind across the IPC
+    /// boundary.
+    fn from_connect_failure_slug(slug: &str) -> Option<Self> {
+        termihub_core::errors::ConnectFailureKind::ALL
+            .into_iter()
+            .find(|kind| kind.code() == slug)
+            .map(Self::from_connect_failure_kind)
+    }
+
+    /// The code for a typed core connect-failure kind (I18N-009). Exhaustive,
+    /// so a new core kind is a compile error here until it is given a code.
+    pub fn from_connect_failure_kind(kind: termihub_core::errors::ConnectFailureKind) -> Self {
+        use termihub_core::errors::ConnectFailureKind as K;
+        match kind {
+            K::Timeout => Self::Timeout,
+            K::AgentAuthFailed => Self::AgentAuthFailed,
+            K::NotFound => Self::NotFound,
+            K::PermissionDenied => Self::PermissionDenied,
+            K::Busy => Self::Busy,
         }
     }
 }
@@ -317,7 +354,11 @@ impl TerminalError {
         use IpcErrorCode as C;
         match self {
             TerminalError::SessionNotFound(_) => C::SessionNotFound,
-            TerminalError::SpawnFailed(_) => C::SpawnFailed,
+            // A typed connect-failure kind (I18N-009) rides in the message
+            // marker, set by `from_session_spawn` / `from_session_ssh`.
+            TerminalError::SpawnFailed(msg) => marker_slug(msg)
+                .and_then(C::from_slug)
+                .unwrap_or(C::SpawnFailed),
             TerminalError::AuthFailed(_) => C::AuthFailed,
             TerminalError::SecondFactorFailed => C::SecondFactorFailed,
             TerminalError::SessionHeldByPeer(_) => C::SessionHeldByPeer,
@@ -326,7 +367,9 @@ impl TerminalError {
             TerminalError::ConnectionFailed(msg) => marker_slug(msg)
                 .and_then(C::from_slug)
                 .unwrap_or(C::ConnectionFailed),
-            TerminalError::SshError(_) => C::SshError,
+            TerminalError::SshError(msg) => marker_slug(msg)
+                .and_then(C::from_slug)
+                .unwrap_or(C::SshError),
             TerminalError::SftpError(_) => C::SftpError,
             TerminalError::EditorError(_) => C::EditorError,
             TerminalError::RemoteError(msg) => marker_slug(msg)
@@ -374,7 +417,13 @@ impl TerminalError {
             // credential rejection — no stored-credential discard (#3376).
             SessionError::SecondFactorFailed => TerminalError::SecondFactorFailed,
             SessionError::ConnectionFailed(msg) => TerminalError::unreachable(msg),
-            other => TerminalError::SpawnFailed(other.to_string()),
+            // Keep the typed connect-failure kind as the envelope `code`
+            // (I18N-009); the message text is unchanged once the marker is
+            // stripped for display.
+            other => match other.connect_failure_kind() {
+                Some(kind) => TerminalError::SpawnFailed(with_code(kind.code(), other)),
+                None => TerminalError::SpawnFailed(other.to_string()),
+            },
         }
     }
 
@@ -387,7 +436,10 @@ impl TerminalError {
             SessionError::AuthCancelled => TerminalError::Cancelled,
             SessionError::SecondFactorFailed => TerminalError::SecondFactorFailed,
             SessionError::ConnectionFailed(msg) => TerminalError::unreachable(msg),
-            other => TerminalError::SshError(other.to_string()),
+            other => match other.connect_failure_kind() {
+                Some(kind) => TerminalError::SshError(with_code(kind.code(), other)),
+                None => TerminalError::SshError(other.to_string()),
+            },
         }
     }
 }
@@ -462,6 +514,59 @@ mod tests {
     fn ssh_error_renders_with_ssh_prefix() {
         let err = TerminalError::SshError("exec channel failed".to_string());
         assert_eq!(err.to_string(), "SSH error: exec channel failed");
+    }
+
+    /// Every typed core connect-failure kind survives both connect chokepoints
+    /// as the envelope `code`, with the human message unchanged and free of the
+    /// machine marker (I18N-009).
+    #[test]
+    fn connect_failure_kind_maps_to_envelope_code_on_both_chokepoints() {
+        use termihub_core::errors::ConnectFailureKind as K;
+        let cases = [
+            (K::Timeout, IpcErrorCode::Timeout, "timeout"),
+            (
+                K::AgentAuthFailed,
+                IpcErrorCode::AgentAuthFailed,
+                "agent_auth_failed",
+            ),
+            (K::NotFound, IpcErrorCode::NotFound, "not_found"),
+            (
+                K::PermissionDenied,
+                IpcErrorCode::PermissionDenied,
+                "permission_denied",
+            ),
+            (K::Busy, IpcErrorCode::Busy, "busy"),
+        ];
+        for (kind, code, slug) in cases {
+            let spawn = TerminalError::from_session_spawn(SessionError::classified(kind, "boom"));
+            assert!(matches!(spawn, TerminalError::SpawnFailed(_)));
+            assert_eq!(spawn.code(), code);
+            let json = serde_json::to_value(&spawn).expect("serialize");
+            assert_eq!(json["code"], slug);
+            assert_eq!(
+                json["message"],
+                "Failed to spawn terminal: Spawn failed: boom"
+            );
+
+            let ssh = TerminalError::from_session_ssh(SessionError::classified(kind, "boom"));
+            assert!(matches!(ssh, TerminalError::SshError(_)));
+            assert_eq!(ssh.code(), code);
+            let json = serde_json::to_value(&ssh).expect("serialize");
+            assert_eq!(json["code"], slug);
+            assert_eq!(json["message"], "SSH error: Spawn failed: boom");
+        }
+    }
+
+    /// A kind tagged into an agent-relayed message (text-only) still resolves
+    /// to its code, and an untagged spawn failure keeps `spawn_failed`.
+    #[test]
+    fn connect_failure_marker_is_routed_from_relayed_text() {
+        let relayed = TerminalError::RemoteError(with_code("busy", "port held"));
+        assert_eq!(relayed.code(), IpcErrorCode::Busy);
+        assert_eq!(
+            TerminalError::SpawnFailed("plain".into()).code(),
+            IpcErrorCode::SpawnFailed
+        );
     }
 
     /// A dismissed keyboard-interactive prompt maps to `Cancelled` on both
