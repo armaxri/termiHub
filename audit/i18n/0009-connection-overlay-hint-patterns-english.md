@@ -10,8 +10,8 @@ evidence:
   - src/components/Terminal/TerminalConnectionOverlay.tsx:28
   - src/components/Terminal/TerminalConnectionOverlay.tsx:201
   - src/components/Terminal/TerminalConnectionOverlay.tsx:221
-status: partial
-resolution: "develop — overlay hint routing partly hardened: structured per-backend table connectionErrorHints.ts (BackendFamily/ConnectionErrorKind, #2088), timeout hint sourced structurally (TerminalConnectionOverlay.tsx:206). Remaining: hint SELECTION still English-substring match (:28,:201 error.includes) + em-dash split (:223); only timeout has structured kind, auth/not-found/permission/busy still keyed off localized text"
+status: fixed
+resolution: "#3752 — overlay hints selected from (backendFamily, ConnectFailureKind) via thub-code markers; no English substring matching or em-dash split; hint copy via src/i18n/catalog.ts. Agent-hosted sessions follow-up #3751"
 ---
 
 ## What
