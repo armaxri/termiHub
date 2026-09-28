@@ -259,9 +259,12 @@ export function formatLcov(files) {
 }
 
 /** Markdown gap report: what the integration lane added, and what it could not. */
-export function formatReport(stats, { top = 25 } = {}) {
+export function formatReport(
+  stats,
+  { top = 25, title = "Integration coverage (nightly fixtures lane)" } = {}
+) {
   const lines = [
-    "## Integration coverage (nightly fixtures lane)",
+    `## ${title}`,
     "",
     `Lines covered ONLY by the integration lane: **${stats.newlyCoveredLines}**`,
   ];
