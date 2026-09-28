@@ -1,7 +1,11 @@
-import { Zap, Play, Keyboard } from "lucide-react";
-import { Input, Checkbox, Field, EmptyState } from "@/components/ui";
+import { Zap, Play, Keyboard, Unplug, ScanText } from "lucide-react";
+import { Input, Field } from "@/components/ui";
+import { t } from "@/i18n/catalog";
 import type { WorkflowTrigger, WorkflowTriggerKind } from "@/types/workflow";
 import type { SavedConnection } from "@/types/connection";
+import { TriggerConnectionPicker } from "./TriggerConnectionPicker";
+import { OnDisconnectTriggerDetail } from "./OnDisconnectTriggerDetail";
+import { OnOutputMatchTriggerDetail } from "./OnOutputMatchTriggerDetail";
 
 interface WorkflowTriggersEditorProps {
   triggers: WorkflowTrigger[];
@@ -29,9 +33,10 @@ function replace(
 
 /**
  * The Triggers section of the workflow editor: chips bind how the workflow
- * launches — `manual` (default), `on-connect` (pick connections), or `hotkey`
- * (a keybinding string). This edits the stored trigger *data* only; the actual
- * trigger dispatch (on-connect firing, hotkey capture) lands in #1855.
+ * launches — `manual` (default), `on-connect` (pick connections), `hotkey`
+ * (a keybinding string), `on-disconnect` and `on-output-match` (#3791). This
+ * edits the stored trigger *data* only; dispatch lives in the workflowTriggers /
+ * workflowOutputTriggers services.
  */
 export function WorkflowTriggersEditor({
   triggers,
@@ -41,6 +46,8 @@ export function WorkflowTriggersEditor({
   const manual = find(triggers, "manual");
   const onConnect = find(triggers, "on-connect");
   const hotkey = find(triggers, "hotkey");
+  const onDisconnect = find(triggers, "on-disconnect");
+  const onOutputMatch = find(triggers, "on-output-match");
 
   const toggleManual = () =>
     onChange(replace(triggers, "manual", manual ? undefined : { kind: "manual" }));
@@ -57,11 +64,23 @@ export function WorkflowTriggersEditor({
   const toggleHotkey = () =>
     onChange(replace(triggers, "hotkey", hotkey ? undefined : { kind: "hotkey", binding: "" }));
 
-  const toggleConnection = (connectionId: string, checked: boolean) => {
-    const current = onConnect?.connectionIds ?? [];
-    const ids = checked ? [...current, connectionId] : current.filter((id) => id !== connectionId);
-    onChange(replace(triggers, "on-connect", { kind: "on-connect", connectionIds: ids }));
-  };
+  const toggleOnDisconnect = () =>
+    onChange(
+      replace(
+        triggers,
+        "on-disconnect",
+        onDisconnect ? undefined : { kind: "on-disconnect", connectionIds: [] }
+      )
+    );
+
+  const toggleOnOutputMatch = () =>
+    onChange(
+      replace(
+        triggers,
+        "on-output-match",
+        onOutputMatch ? undefined : { kind: "on-output-match", connectionIds: [], pattern: "" }
+      )
+    );
 
   return (
     <div className="workflow-triggers" data-testid="workflow-editor-triggers">
@@ -93,31 +112,37 @@ export function WorkflowTriggersEditor({
         >
           <Keyboard size={11} aria-hidden="true" /> Hotkey
         </button>
+        <button
+          type="button"
+          className={`workflow-chip${onDisconnect ? " workflow-chip--active" : ""}`}
+          aria-pressed={onDisconnect !== undefined}
+          onClick={toggleOnDisconnect}
+          data-testid="workflow-trigger-on-disconnect"
+        >
+          <Unplug size={11} aria-hidden="true" /> {t("workflow.trigger.onDisconnect.label")}
+        </button>
+        <button
+          type="button"
+          className={`workflow-chip${onOutputMatch ? " workflow-chip--active" : ""}`}
+          aria-pressed={onOutputMatch !== undefined}
+          onClick={toggleOnOutputMatch}
+          data-testid="workflow-trigger-on-output-match"
+        >
+          <ScanText size={11} aria-hidden="true" /> {t("workflow.trigger.onOutputMatch.label")}
+        </button>
       </div>
 
       {onConnect ? (
         <div className="workflow-triggers__detail" data-testid="workflow-trigger-on-connect-detail">
-          <span className="workflow-triggers__detail-label">Fire when connecting to:</span>
-          {connections.length === 0 ? (
-            <EmptyState title="No saved connections." />
-          ) : (
-            <div className="workflow-triggers__connections">
-              {connections.map((conn) => {
-                const checked = onConnect.connectionIds.includes(conn.id);
-                return (
-                  <label className="workflow-triggers__connection" key={conn.id}>
-                    <Checkbox
-                      checked={checked}
-                      onCheckedChange={(v) => toggleConnection(conn.id, v)}
-                      aria-label={conn.name}
-                      data-testid={`workflow-trigger-connection-${conn.id}`}
-                    />
-                    <span>{conn.name}</span>
-                  </label>
-                );
-              })}
-            </div>
-          )}
+          <TriggerConnectionPicker
+            label="Fire when connecting to:"
+            connections={connections}
+            selected={onConnect.connectionIds}
+            onChange={(connectionIds) =>
+              onChange(replace(triggers, "on-connect", { kind: "on-connect", connectionIds }))
+            }
+            testIdPrefix="workflow-trigger-connection"
+          />
         </div>
       ) : null}
 
@@ -135,6 +160,22 @@ export function WorkflowTriggersEditor({
             />
           </Field>
         </div>
+      ) : null}
+
+      {onDisconnect ? (
+        <OnDisconnectTriggerDetail
+          trigger={onDisconnect}
+          connections={connections}
+          onChange={(next) => onChange(replace(triggers, "on-disconnect", next))}
+        />
+      ) : null}
+
+      {onOutputMatch ? (
+        <OnOutputMatchTriggerDetail
+          trigger={onOutputMatch}
+          connections={connections}
+          onChange={(next) => onChange(replace(triggers, "on-output-match", next))}
+        />
       ) : null}
     </div>
   );

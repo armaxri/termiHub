@@ -334,3 +334,33 @@ export class OutputTriggerEngine {
     state.tail = matchedAny ? "" : text.slice(-OUTPUT_TRIGGER_LIMITS.tailChars);
   }
 }
+
+/** Whether an authored cooldown is in range (absent → default, valid). */
+export function cooldownInRange(value: number | undefined): boolean {
+  if (value === undefined) return true;
+  const { minCooldownMs, maxCooldownMs } = OUTPUT_TRIGGER_LIMITS;
+  return Number.isFinite(value) && value >= minCooldownMs && value <= maxCooldownMs;
+}
+
+/** Whether an authored max-fires-per-session is in range (absent → default, valid). */
+export function maxFiresInRange(value: number | undefined): boolean {
+  if (value === undefined) return true;
+  return (
+    Number.isInteger(value) && value >= 1 && value <= OUTPUT_TRIGGER_LIMITS.maxMaxFiresPerSession
+  );
+}
+
+/**
+ * Whether every trigger can be saved: each on-output-match trigger needs a
+ * valid, bounded pattern and in-range limits. Other kinds are always valid.
+ * The workflow editor gates Save on this.
+ */
+export function workflowTriggersValid(triggers: readonly WorkflowTrigger[]): boolean {
+  return triggers.every(
+    (t) =>
+      t.kind !== "on-output-match" ||
+      (validateOutputPattern(t.pattern, t.isRegex) === null &&
+        cooldownInRange(t.cooldownMs) &&
+        maxFiresInRange(t.maxFiresPerSession))
+  );
+}

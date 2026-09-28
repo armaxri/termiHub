@@ -30,6 +30,7 @@ import { newId } from "@/services/transport/ids";
 import { parseTags } from "@/utils/parseTags";
 import { useFollowConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import { remapWorkflowTriggers } from "@/utils/connectionIdChanges";
+import { workflowTriggersValid } from "@/services/workflowOutputTriggers";
 import "./WorkflowEditorDialog.css";
 
 /** The editable fields the dialog collects before saving a workflow. */
@@ -173,7 +174,10 @@ export function WorkflowEditorDialog({
     () => workflowStepsPolicyValid(entries.map((e) => e.step)),
     [entries]
   );
-  const canSave = formValid && entries.length > 0 && policiesValid;
+  // Every on-output-match trigger needs a valid, bounded pattern and in-range
+  // limits (#3791); the trigger editor shows the reason inline.
+  const triggersValid = useMemo(() => workflowTriggersValid(triggers), [triggers]);
+  const canSave = formValid && entries.length > 0 && policiesValid && triggersValid;
 
   const updateStep = (uid: string, step: WorkflowStep) => {
     setEntries((prev) => prev.map((e) => (e.uid === uid ? { ...e, step } : e)));

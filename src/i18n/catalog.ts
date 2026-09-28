@@ -44,6 +44,35 @@ const en = {
   "connection.hint.permission.serial.macos":
     "You may not have permission to access this port, or another application may be using it. Close any program using the port and try again.",
   "connection.hint.busy.serial": "The serial port is already in use by another application.",
+
+  // ── Workflow triggers (WorkflowTriggersEditor, #3791) ───────────────────
+  "workflow.trigger.connections.empty": "No saved connections.",
+  "workflow.trigger.onDisconnect.label": "On disconnect",
+  "workflow.trigger.onDisconnect.connections": "Fire when a session ends for:",
+  "workflow.trigger.onDisconnect.when": "Fire on",
+  "workflow.trigger.onDisconnect.when.drop": "Unexpected drops only",
+  "workflow.trigger.onDisconnect.when.userClose": "User closes only",
+  "workflow.trigger.onDisconnect.when.any": "Any disconnect",
+  "workflow.trigger.onDisconnect.hint":
+    "Runs after the session has ended, so there is no terminal to type into: steps that send to the session fail. Use run-local-process and wait steps.",
+  "workflow.trigger.onOutputMatch.label": "On output match",
+  "workflow.trigger.onOutputMatch.connections": "Watch the output of:",
+  "workflow.trigger.onOutputMatch.pattern": "Pattern",
+  "workflow.trigger.onOutputMatch.patternPlaceholder": "e.g. Connection refused",
+  "workflow.trigger.onOutputMatch.isRegex": "Regular expression",
+  "workflow.trigger.onOutputMatch.cooldown": "Cooldown (seconds)",
+  "workflow.trigger.onOutputMatch.cooldownHint": "Default 10. Allowed: 1 to 86400.",
+  "workflow.trigger.onOutputMatch.cooldownError": "Enter a cooldown from 1 to 86400 seconds.",
+  "workflow.trigger.onOutputMatch.maxFires": "Max runs per session",
+  "workflow.trigger.onOutputMatch.maxFiresHint": "Default 5. Allowed: 1 to 100.",
+  "workflow.trigger.onOutputMatch.maxFiresError": "Enter a whole number from 1 to 100.",
+  "workflow.trigger.onOutputMatch.hint":
+    "Matches the visible text (colors and other escape codes removed). Runs in the matching terminal, never while another workflow is running.",
+  "workflow.trigger.pattern.error.empty": "Enter the text to match.",
+  "workflow.trigger.pattern.error.tooLong": "A pattern can be at most 256 characters long.",
+  "workflow.trigger.pattern.error.invalidRegex": "This is not a valid regular expression.",
+  "workflow.trigger.pattern.error.unsafeRegex":
+    "Nested quantifiers such as (a+)+ and backreferences are not allowed, because they can make matching very slow.",
 } as const;
 
 /** A stable id naming one catalog message. */
