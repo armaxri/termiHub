@@ -380,8 +380,11 @@ mod graphical {
     use crate::session::rdp_trust_store::RdpTrustStore;
     use termihub_core::connection::GraphicalState;
 
+    /// Every emitted state with its message, in order.
+    type StateLog = Arc<Mutex<Vec<(GraphicalState, Option<String>)>>>;
+
     #[derive(Clone, Default)]
-    struct StateSink(Arc<Mutex<Vec<(GraphicalState, Option<String>)>>>);
+    struct StateSink(StateLog);
 
     impl GraphicalEventSink for StateSink {
         fn emit_frame(&self, _: &RemoteDesktopFrameEvent) {}
