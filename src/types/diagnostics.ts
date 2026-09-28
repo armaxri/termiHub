@@ -60,14 +60,7 @@ export interface AgentCrashReportRef {
 
 /**
  * A remote agent that crashed since it was last connected (#3593): its newest
- * new crash report. Mirrors `AgentCrashNotice` in
- * `src-tauri/src/utils/agent_crash_notice.rs`.
+ * new crash report. Generated from `AgentCrashNotice` in
+ * `src-tauri/src/utils/agent_crash_notice.rs` via ts-rs (#3088).
  */
-export interface AgentCrashNotice {
-  /** The agent's id. */
-  agentId: string;
-  /** Newest new report on the agent, passed to `readAgentCrashReport`. */
-  name: string;
-  /** How many reports are new since the last acknowledgement. */
-  newCount: number;
-}
+export type { AgentCrashNotice } from "./generated/AgentCrashNotice";

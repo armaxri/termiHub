@@ -23,7 +23,7 @@ export type SavedContainerRuntime = ContainerRuntime | "auto";
  * `"auto"` means "not explicitly stated": resolve by falling back to
  * presence-based inference.
  */
-export type SpawnKind = "container" | "local" | "wsl" | "ssh" | "auto";
+export type { SpawnKind } from "./generated/SpawnKind";
 
 /**
  * The target a user picked, as a discriminated union on `kind`. The `kind`

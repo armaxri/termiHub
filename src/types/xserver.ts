@@ -4,73 +4,14 @@
  * either zero or one server.
  */
 
-/**
- * Lifecycle state of the shared X server.
- *
- * - `absent` — no X server is running or known.
- * - `adopted` — an external X server (not started by termiHub) is in use.
- * - `running` — a termiHub-managed X server is running.
- * - `failed` — the managed X server failed to start or crashed.
- */
-export type XServerState = "absent" | "adopted" | "running" | "failed";
-
-/** Platform the X server report was produced on. */
-export type XServerPlatform = "windows" | "macOs" | "linux";
-
-/**
- * Snapshot of the shared X server status as reported by the backend
- * (`x_server_status`). Optional fields are omitted when the backend has no
- * value (serialized from `Option::None`).
- */
-export interface XServerStatusReport {
-  /** Current lifecycle state of the server. */
-  state: XServerState;
-  /** Platform the report was produced on. */
-  platform: XServerPlatform;
-  /** X display number the server listens on (e.g. `0` for `:0`). */
-  displayNumber?: number;
-  /** Whether termiHub started and manages this server. */
-  managed: boolean;
-  /** Whether the platform dependency (e.g. VcXsrv) is installed. */
-  dependencyAvailable?: boolean;
-  /**
-   * Number of live X11-forwarding sessions currently depending on this server.
-   * Drives the Open Connections "· N sessions" detail; `0` when idle or absent.
-   */
-  sessionCount: number;
-  /** Human-readable status detail, if any. */
-  message?: string;
-}
-
-/**
- * Progress update emitted while the managed X server is being provisioned or
- * started (the `x-server-progress` event, fired during `x_server_ensure`).
- */
-export interface XServerProgress {
-  /** Machine-readable identifier for the current step. */
-  step: string;
-  /** Human-readable description of the current step. */
-  message: string;
-  /**
-   * Completion fraction in the range `0`–`1`, or `-1` for an indeterminate
-   * step (render a looping/indeterminate progress bar).
-   */
-  progress: number;
-}
-
-/**
- * A connect-time X server download-consent prompt (`x-server-consent-needed`
- * event, #1116). Emitted when opening an X11-forwarding SSH connection would
- * need to download the X dependency and the user has not consented yet. The
- * connect pauses until the frontend replies via `xServerConnectConsentReply`
- * with this `id`.
- */
-export interface XServerConsentRequest {
-  /** Opaque id correlating the prompt with the reply that resolves it. */
-  id: string;
-  /** Platform the connect is running on (tailors the consent copy). */
-  platform: XServerPlatform;
-}
+// The X server status/progress/consent DTOs are generated from their Rust source
+// of truth (`src-tauri/src/terminal/xserver/types.rs`) via ts-rs (audit DUP-030,
+// ts-rs rollout #3088).
+export type { XServerState } from "./generated/XServerState";
+export type { XServerPlatform } from "./generated/XServerPlatform";
+export type { XServerStatusReport } from "./generated/XServerStatusReport";
+export type { XServerProgress } from "./generated/XServerProgress";
+export type { XServerConsentRequest } from "./generated/XServerConsentRequest";
 
 /**
  * The user's reply to a connect-time consent prompt: `enable` downloads and

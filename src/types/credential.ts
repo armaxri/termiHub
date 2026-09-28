@@ -1,14 +1,14 @@
+// Full status information about the credential store, generated from the Rust
+// `CredentialStoreStatusInfo` via ts-rs (audit DUP-030, ts-rs rollout #3088).
+import type { CredentialStoreStatusInfo } from "./generated/CredentialStoreStatusInfo";
+
+export type { CredentialStoreStatusInfo };
+
 /** Credential storage backend mode. */
-export type CredentialStorageMode = "master_password" | "os_keychain" | "none";
+export type CredentialStorageMode = CredentialStoreStatusInfo["mode"];
 
 /** Runtime status of the credential store. */
-export type CredentialStoreStatus = "unlocked" | "locked" | "unavailable";
-
-/** Full status information about the credential store. */
-export interface CredentialStoreStatusInfo {
-  mode: CredentialStorageMode;
-  status: CredentialStoreStatus;
-}
+export type CredentialStoreStatus = CredentialStoreStatusInfo["status"];
 
 /**
  * Structured outcome of the credential migration performed by a store switch,
