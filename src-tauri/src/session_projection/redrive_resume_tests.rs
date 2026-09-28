@@ -1596,3 +1596,146 @@ fn held_by_peer_fold_creates_the_entry_for_a_persistent_tab() {
     fold_agent_session_held_by_peer(&handle, "tab-ghost", None, false);
     assert!(store.get("tab-ghost").is_none());
 }
+
+/// #3794 pin: the post-reap region-fold ORDER `agent_io_task` runs on a transient
+/// agent-transport break — enter fold (`fold_agent_hosted_reconnecting`) BEFORE the
+/// reconnect, then, once the transport is back, the SM-003 eviction fold from the
+/// buffered pre-`initialize` notifications BEFORE the post-reconnect resolve
+/// (`resolve_hosted_sessions_after_reconnect`). Unlike the Connected-then-evicted pin
+/// above, the eviction here arrives while the tab is already `Reconnecting`: the fold
+/// must still land it `Evicted`, and the subsequent resolve — whether the list
+/// answered (`Some`) or not (`None`) — must leave it `Evicted`, keep its desktop
+/// session and arm no redrive, while the non-evicted siblings resolve `Connected`
+/// (listed) / `SessionLost` (unlisted or unconfirmed).
+#[test]
+fn io_task_reconnect_fold_order_evicts_before_resolving() {
+    use crate::terminal::agent_manager::{
+        evicted_session_ids, fold_agent_hosted_reconnecting, fold_evicted_hosted_sessions,
+        resolve_hosted_sessions_after_reconnect,
+    };
+
+    for list_answered in [true, false] {
+        let app = tauri::test::mock_app();
+        let handle = app.handle().clone();
+
+        let agent = Arc::new(FakeAgent::new());
+        let manager = SessionManager::new(
+            ConnectionTypeRegistry::new(),
+            agent.clone() as Arc<dyn AgentRpcClient>,
+        );
+        handle.manage(manager);
+
+        let store = Arc::new(SessionLifecycleStore::new());
+        store.set_rand_for_test(Box::new(|| 0.0));
+        handle.manage(store.clone());
+
+        let projection = ProjectionState::new();
+        projection
+            .projector
+            .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+        let projector = projection.projector.clone();
+        let store_for_publish = store.clone();
+        handle.manage(projection);
+
+        let scheduler = Arc::new(ManualScheduler::default());
+        let driver = Arc::new(ReconnectTimerDriver::new(
+            store.clone(),
+            scheduler.clone(),
+            Arc::new(move || {
+                publish_sessions(&projector, &store_for_publish);
+            }),
+        ));
+        handle.manage(driver);
+
+        let manager_ref = handle.state::<SessionManager>();
+        let settings = serde_json::json!({ "config": {} });
+        for (tab, connect) in [
+            ("tab-1", "tab-1:0"),
+            ("tab-2", "tab-2:0"),
+            ("tab-3", "tab-3:0"),
+        ] {
+            tauri::async_runtime::block_on(manager_ref.create_connection(
+                "shell",
+                settings.clone(),
+                Some("agent-1"),
+                Some(connect),
+                false,
+                true,
+                handle.clone(),
+            ))
+            .expect("initial connect succeeds");
+            store.connect(tab);
+            store.connected(tab);
+        }
+
+        // 1. The transient break: every hosted tab folds Reconnecting, loop Idle.
+        tauri::async_runtime::block_on(fold_agent_hosted_reconnecting(
+            &handle,
+            "agent-1",
+            Some("connection reset"),
+        ));
+        for tab in ["tab-1", "tab-2", "tab-3"] {
+            assert_eq!(
+                store.status(tab),
+                Some(SessionStatus::Reconnecting),
+                "{tab}"
+            );
+            assert!(
+                !scheduler.armed(tab),
+                "{tab}: the in-task loop owns the break"
+            );
+        }
+
+        // 2. Transport back: the hosted set is fetched, then the buffered
+        //    `connection.evicted` for remote-0 (tab-1) folds BEFORE the resolve.
+        let hosted = tauri::async_runtime::block_on(manager_ref.agent_hosted_sessions("agent-1"));
+        let notifications = vec![(
+            "connection.evicted".to_string(),
+            serde_json::json!({ "session_id": "remote-0", "reason": "takeover" }),
+        )];
+        fold_evicted_hosted_sessions(&handle, &hosted, &evicted_session_ids(&notifications));
+        assert_eq!(store.status("tab-1"), Some(SessionStatus::Evicted));
+        assert_eq!(store.status("tab-2"), Some(SessionStatus::Reconnecting));
+        assert_eq!(store.status("tab-3"), Some(SessionStatus::Reconnecting));
+
+        // 3. The resolve: the agent lists remote-0 (held elsewhere) and remote-1.
+        let live_ids: std::collections::HashSet<String> =
+            ["remote-0".to_string(), "remote-1".to_string()]
+                .into_iter()
+                .collect();
+        tauri::async_runtime::block_on(resolve_hosted_sessions_after_reconnect(
+            &handle,
+            &hosted,
+            list_answered.then_some(&live_ids),
+        ));
+
+        assert_eq!(
+            store.status("tab-1"),
+            Some(SessionStatus::Evicted),
+            "list_answered={list_answered}: the resolve never re-claims or relabels an evicted tab"
+        );
+        assert!(
+            tauri::async_runtime::block_on(manager_ref.agent_session_for_tab("tab-1")).is_some(),
+            "list_answered={list_answered}: the evicted tab's session is not torn down"
+        );
+        let (tab2, tab3) = if list_answered {
+            (SessionStatus::Connected, SessionStatus::SessionLost)
+        } else {
+            (SessionStatus::SessionLost, SessionStatus::SessionLost)
+        };
+        assert_eq!(
+            store.status("tab-2"),
+            Some(tab2),
+            "list_answered={list_answered}"
+        );
+        assert_eq!(
+            store.status("tab-3"),
+            Some(tab3),
+            "list_answered={list_answered}"
+        );
+        for tab in ["tab-1", "tab-2", "tab-3"] {
+            assert!(!scheduler.armed(tab), "{tab}: no redrive armed");
+        }
+        assert_eq!(agent.reclaim_count.load(Ordering::SeqCst), 0);
+    }
+}
