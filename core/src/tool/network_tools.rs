@@ -312,9 +312,20 @@ impl Tool for OpenPortsTool {
         &self,
         _params: Value,
         _host: Arc<dyn ToolHost>,
-        _cancel: CancellationToken,
+        cancel: CancellationToken,
     ) -> Result<Value, ToolError> {
-        let ports = open_ports::list_open_ports()?;
+        // The listing is blocking (Win32 table reads / `lsof`), so it runs on
+        // the blocking pool rather than stalling a tokio worker (#3814). A
+        // cancel returns immediately; the detached listing finishes on its own.
+        let listing = tokio::task::spawn_blocking(open_ports::list_open_ports);
+        let ports = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                return Err(ToolError::Cancelled(self.tool_id().to_string()));
+            }
+            joined = listing => joined
+                .map_err(|e| ToolError::Execution(format!("open ports listing failed: {e}")))??,
+        };
         aggregate(json!({ "ports": ports }))
     }
 }
@@ -446,6 +457,19 @@ mod tests {
         assert!(result["ports"].is_array());
         // One-shot tools stream nothing.
         assert!(host.take().is_empty());
+    }
+
+    #[tokio::test]
+    async fn open_ports_honours_a_cancelled_token() {
+        // The blocking listing runs off the reactor; a cancel must win the race
+        // and report `Cancelled` rather than waiting for the listing (#3814).
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let err = OpenPortsTool
+            .run(json!({}), CollectingHost::new(), cancel)
+            .await
+            .expect_err("a cancelled run must not succeed");
+        assert!(matches!(err, ToolError::Cancelled(id) if id == "open_ports"));
     }
 
     /// Run the port-scan tool and return the set of hosts its results name.
