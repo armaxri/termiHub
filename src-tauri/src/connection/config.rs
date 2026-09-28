@@ -75,6 +75,36 @@ impl Default for AgentSettings {
     }
 }
 
+/// Convert the persisted desktop settings into the shared `initialize` wire
+/// DTO (DUP-001, #3226). The desktop type stays separate because it carries
+/// the frontend binding (ts-rs) and desktop defaults (`startingDirectory: "~"`);
+/// both serialize to the same camelCase object. The exhaustive destructure makes
+/// adding a desktop field without mapping it a compile error.
+impl From<&AgentSettings> for termihub_core::protocol::methods::AgentSettings {
+    fn from(settings: &AgentSettings) -> Self {
+        let AgentSettings {
+            enable_monitoring,
+            enable_file_browser,
+            enable_docker,
+            default_shell,
+            starting_directory,
+            log_level,
+            verbose_tracing,
+            persistent_scrollback_buffer_size_mb,
+        } = settings;
+        Self {
+            enable_monitoring: *enable_monitoring,
+            enable_file_browser: *enable_file_browser,
+            enable_docker: *enable_docker,
+            default_shell: default_shell.clone(),
+            starting_directory: starting_directory.clone(),
+            log_level: log_level.clone(),
+            verbose_tracing: *verbose_tracing,
+            persistent_scrollback_buffer_size_mb: *persistent_scrollback_buffer_size_mb,
+        }
+    }
+}
+
 /// Per-connection terminal display options.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
