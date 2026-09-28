@@ -70,6 +70,27 @@ other shell integrations (starship, VS Code's scripts, …) emit them natively.
 - Marks live in the terminal buffer: a prompt that scrolls out of the scrollback
   (or is cleared) is forgotten, and marks are not restored after a reconnect.
 
+## Paste, and right-click in apps that use the mouse
+
+| Action                              | macOS               | Windows / Linux     |
+| ----------------------------------- | ------------------- | ------------------- |
+| Paste                               | `Cmd+V`             | `Ctrl+Shift+V`      |
+| Paste (quick action) / context menu | Right-click         | Right-click         |
+| Same, while the app uses the mouse  | `Shift`+right-click | `Shift`+right-click |
+
+Some terminal programs turn on **mouse reporting** — full-screen TUIs such as
+Claude Code, `htop`, `vim` with `mouse=a`, or `tmux` with `mouse on`. While a
+program has mouse reporting on, a plain right-click is sent **to that program**
+and termiHub does not paste or open its menu. Otherwise the click would be
+handled twice: Claude Code, for example, pastes on right-click itself, so
+termiHub pasting as well inserted the text twice (#3801).
+
+Hold `Shift` while right-clicking to get termiHub's own behavior (quick
+copy/paste or the context menu) in such a program. That click is not sent to
+the program. This is the same convention Windows Terminal, GNOME Terminal and
+iTerm2 use. When the program has mouse reporting off (a normal shell prompt),
+right-click behaves as before, with or without `Shift`.
+
 ## Terminal-focus pass-through
 
 Even with safer defaults, a user can still **rebind** an action to a

@@ -119,6 +119,29 @@ describe("getTerminalSelection", () => {
   });
 });
 
+describe("isMouseReportingActive (#3801)", () => {
+  function registerWithMode(mouseTrackingMode: string) {
+    const xterm = { ...createMockXterm(), modes: { mouseTrackingMode } } as unknown as XTerm;
+    act(() => {
+      registryActions.register("tab-1", document.createElement("div"), xterm, createMockFitAddon());
+    });
+  }
+
+  it("is false when no terminal is registered for the tabId", () => {
+    expect(registryActions.isMouseReportingActive("nonexistent")).toBe(false);
+  });
+
+  it("is false while the app has not enabled mouse reporting", () => {
+    registerWithMode("none");
+    expect(registryActions.isMouseReportingActive("tab-1")).toBe(false);
+  });
+
+  it.each(["x10", "vt200", "drag", "any"])("is true in %s tracking mode", (mode) => {
+    registerWithMode(mode);
+    expect(registryActions.isMouseReportingActive("tab-1")).toBe(true);
+  });
+});
+
 describe("copySelectionToClipboard", () => {
   beforeEach(() => {
     mockWriteClipboard.mockClear();

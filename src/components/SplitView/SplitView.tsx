@@ -73,6 +73,7 @@ import { toast, Spinner } from "@/components/ui";
 import { PanelDropZone } from "./PanelDropZone";
 import { EmptyWindowState } from "./EmptyWindowState";
 import { PanelErrorBoundary } from "./PanelErrorBoundary";
+import { useTerminalRightClickRouting } from "./terminalRightClick";
 import "./SplitView.css";
 
 /**
@@ -854,7 +855,12 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
     clearTerminalSelection,
     copySelectionToClipboard,
     pasteToTerminal,
+    isMouseReportingActive,
   } = useTerminalRegistry();
+
+  // With app mouse reporting on, a plain right-click belongs to the app and
+  // Shift+right-click to termiHub (#3801) — see terminalRightClick.ts.
+  const rightClickRouting = useTerminalRightClickRouting(isMouseReportingActive);
 
   const [colorPickerTabId, setColorPickerTabId] = useState<string | null>(null);
   const [renameTabId, setRenameTabId] = useState<string | null>(null);
@@ -893,6 +899,10 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
       e.preventDefault();
       const selection = preRightClickSelectionRef.current;
       preRightClickSelectionRef.current = null;
+      // The app enabled mouse reporting and xterm already forwarded this
+      // right-click to it: acting on it too double-handles it — Claude Code
+      // pastes on right-click itself, so the clipboard landed twice (#3801).
+      if (!rightClickRouting.claimRightClick(e, tabId)) return;
       if (selection) {
         void copyTerminalSelection(selection, {
           writeClipboard,
@@ -910,7 +920,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
         });
       }
     },
-    [clearTerminalSelection, pasteToTerminal]
+    [clearTerminalSelection, pasteToTerminal, rightClickRouting]
   );
 
   const renameTabData = renameTabId ? panel.tabs.find((t) => t.id === renameTabId) : null;
@@ -1054,6 +1064,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
                   : "terminal-context-trigger terminal-context-trigger--hidden"
               }
               onPointerDownCapture={(e) => captureSelectionBeforeRightClick(e, tab.id)}
+              onMouseDownCapture={(e) => rightClickRouting.onMouseDownCapture(e, tab.id)}
               onContextMenu={(e) => handleQuickAction(e, tab.id)}
             >
               <TerminalSearchBar tabId={tab.id} />
@@ -1072,9 +1083,15 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
                 }
               }}
             >
-              <ContextMenu.Trigger asChild>
+              <ContextMenu.Trigger
+                asChild
+                // Preventing default before Radix's own handler keeps the menu
+                // closed when the right-click belongs to the app (#3801).
+                onContextMenu={(e) => rightClickRouting.claimRightClick(e, tab.id)}
+              >
                 <div
                   data-testid={`terminal-context-trigger-${tab.id}`}
+                  onMouseDownCapture={(e) => rightClickRouting.onMouseDownCapture(e, tab.id)}
                   className={
                     tab.id === panel.activeTabId
                       ? "terminal-context-trigger"
