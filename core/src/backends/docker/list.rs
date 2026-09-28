@@ -343,7 +343,10 @@ mod tests {
         assert_eq!(web.compose_project.as_deref(), Some("shop"));
         assert_eq!(web.compose_service.as_deref(), Some("web"));
         let plain = out.iter().find(|c| c.id == "p1").unwrap();
-        assert_eq!((plain.compose_project.clone(), plain.compose_service.clone()), (None, None));
+        assert_eq!(
+            (plain.compose_project.clone(), plain.compose_service.clone()),
+            (None, None)
+        );
     }
 
     #[test]
