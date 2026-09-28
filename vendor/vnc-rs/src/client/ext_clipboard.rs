@@ -314,8 +314,7 @@ pub(crate) fn encode(msg: &ExtMsg) -> Result<Vec<u8>, VncError> {
             let mut formats = 0;
             let mut plain = Vec::new();
             for (format, data) in items {
-                if !format.is_power_of_two() || format & FORMAT_MASK == 0 || formats & format != 0
-                {
+                if !format.is_power_of_two() || format & FORMAT_MASK == 0 || formats & format != 0 {
                     return Err(VncError::General(format!(
                         "invalid clipboard format {format:#x} in provide"
                     )));
@@ -446,12 +445,12 @@ impl ExtClipboardState {
         };
         match msg {
             ExtMsg::Caps(caps) => {
-                reaction.events.push(VncEvent::ClipboardCapabilities(
-                    ClipboardCapabilities {
+                reaction
+                    .events
+                    .push(VncEvent::ClipboardCapabilities(ClipboardCapabilities {
                         text: caps.formats & FORMAT_TEXT != 0,
                         images: caps.formats & wanted & FORMAT_DIB != 0,
-                    },
-                ));
+                    }));
                 self.server = Some(caps);
                 reaction
                     .replies

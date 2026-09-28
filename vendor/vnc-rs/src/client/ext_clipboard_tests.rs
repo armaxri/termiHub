@@ -104,7 +104,10 @@ fn every_action_round_trips() {
         ACTION_CAPS | ACTION_REQUEST | ACTION_PROVIDE,
         &[(FORMAT_TEXT, 7), (FORMAT_HTML, 8), (FORMAT_DIB, 9)],
     );
-    assert_eq!(round_trip(&ExtMsg::Caps(c.clone()), TEXT_ONLY), ExtMsg::Caps(c));
+    assert_eq!(
+        round_trip(&ExtMsg::Caps(c.clone()), TEXT_ONLY),
+        ExtMsg::Caps(c)
+    );
     for msg in [
         ExtMsg::Request(FORMAT_TEXT | FORMAT_DIB),
         ExtMsg::Peek,
@@ -144,7 +147,10 @@ fn provide_items_are_encoded_in_bit_order_whatever_the_input_order() {
     let ExtMsg::Provide(p) = round_trip(&msg, TEXT_AND_DIB) else {
         panic!("expected provide");
     };
-    assert_eq!(p.items, vec![(FORMAT_TEXT, b"a\0".to_vec()), (FORMAT_DIB, vec![9])]);
+    assert_eq!(
+        p.items,
+        vec![(FORMAT_TEXT, b"a\0".to_vec()), (FORMAT_DIB, vec![9])]
+    );
 }
 
 #[test]
@@ -213,7 +219,10 @@ fn an_over_cap_text_is_dropped_without_buffering_and_later_formats_survive() {
             (1, Part::Bytes(vec![42])),
         ],
     );
-    assert!(payload.len() < 1024 * 1024, "the bomb must be small on the wire");
+    assert!(
+        payload.len() < 1024 * 1024,
+        "the bomb must be small on the wire"
+    );
     let ExtMsg::Provide(p) = parse(&payload, TEXT_AND_DIB).unwrap() else {
         panic!("expected provide");
     };
@@ -239,7 +248,10 @@ fn the_total_decompression_budget_stops_a_bomb_across_formats() {
     let rtf = 40 * 1024 * 1024;
     let payload = provide_payload(
         FORMAT_RTF | FORMAT_DIB,
-        &[(rtf, Part::Zeros(u64::from(rtf))), (30 * 1024 * 1024, Part::Zeros(0))],
+        &[
+            (rtf, Part::Zeros(u64::from(rtf))),
+            (30 * 1024 * 1024, Part::Zeros(0)),
+        ],
     );
     let ExtMsg::Provide(p) = parse(&payload, TEXT_AND_DIB).unwrap() else {
         panic!("expected provide");
@@ -264,11 +276,19 @@ fn a_huge_announced_size_is_refused_before_allocating() {
 #[test]
 fn short_payloads_are_truncated() {
     assert_eq!(parse(&[], TEXT_ONLY), Err(ExtClipboardError::Truncated));
-    assert_eq!(parse(&[0x10, 0, 0], TEXT_ONLY), Err(ExtClipboardError::Truncated));
+    assert_eq!(
+        parse(&[0x10, 0, 0], TEXT_ONLY),
+        Err(ExtClipboardError::Truncated)
+    );
     // Caps for text + dib with only one size.
-    let mut payload = (ACTION_CAPS | FORMAT_TEXT | FORMAT_DIB).to_be_bytes().to_vec();
+    let mut payload = (ACTION_CAPS | FORMAT_TEXT | FORMAT_DIB)
+        .to_be_bytes()
+        .to_vec();
     payload.extend_from_slice(&5u32.to_be_bytes());
-    assert_eq!(parse(&payload, TEXT_ONLY), Err(ExtClipboardError::Truncated));
+    assert_eq!(
+        parse(&payload, TEXT_ONLY),
+        Err(ExtClipboardError::Truncated)
+    );
 }
 
 #[test]
@@ -290,13 +310,22 @@ fn unknown_or_combined_actions_are_rejected() {
 fn a_provide_whose_data_ends_early_is_truncated() {
     // Announces 100 bytes of text, carries 3.
     let payload = provide_payload(FORMAT_TEXT, &[(100, Part::Bytes(b"abc".to_vec()))]);
-    assert_eq!(parse(&payload, TEXT_ONLY), Err(ExtClipboardError::Truncated));
+    assert_eq!(
+        parse(&payload, TEXT_ONLY),
+        Err(ExtClipboardError::Truncated)
+    );
     // The same for a skipped format.
     let payload = provide_payload(FORMAT_RTF, &[(100, Part::Bytes(b"abc".to_vec()))]);
-    assert_eq!(parse(&payload, TEXT_ONLY), Err(ExtClipboardError::Truncated));
+    assert_eq!(
+        parse(&payload, TEXT_ONLY),
+        Err(ExtClipboardError::Truncated)
+    );
     // A missing size field.
     let payload = provide_payload(FORMAT_TEXT | FORMAT_DIB, &[(1, Part::Bytes(b"a".to_vec()))]);
-    assert_eq!(parse(&payload, TEXT_AND_DIB), Err(ExtClipboardError::Truncated));
+    assert_eq!(
+        parse(&payload, TEXT_AND_DIB),
+        Err(ExtClipboardError::Truncated)
+    );
     // No zlib body at all.
     assert_eq!(
         parse(&(ACTION_PROVIDE | FORMAT_TEXT).to_be_bytes(), TEXT_ONLY),
@@ -334,7 +363,10 @@ fn text_is_crlf_and_nul_terminated_on_the_wire() {
 fn text_decodes_to_lf_and_stops_at_the_nul() {
     assert_eq!(decode_text(b"a\r\nb\0junk".to_vec()), "a\nb");
     assert_eq!(decode_text(b"no nul".to_vec()), "no nul");
-    assert_eq!(decode_text(["日本 🎉".as_bytes(), b"\0"].concat()), "日本 🎉");
+    assert_eq!(
+        decode_text(["日本 🎉".as_bytes(), b"\0"].concat()),
+        "日本 🎉"
+    );
     // A non-conforming Latin-1 payload still decodes, as on the legacy path.
     assert_eq!(decode_text(vec![b'c', b'a', b'f', 0xE9, 0]), "café");
 }
@@ -414,7 +446,10 @@ fn local_text_uses_the_legacy_path_until_the_server_announces_caps() {
     // As does one that can neither be provided to nor notified.
     let mut state = negotiated(TEXT_ONLY, caps(FORMAT_TEXT, ACTION_REQUEST, &[]));
     assert_eq!(state.on_local_text("x"), None);
-    assert_eq!(state.on_server(ExtMsg::Request(FORMAT_TEXT)).replies, vec![]);
+    assert_eq!(
+        state.on_server(ExtMsg::Request(FORMAT_TEXT)).replies,
+        vec![]
+    );
 }
 
 #[test]
@@ -436,7 +471,10 @@ fn large_local_text_is_notified_then_provided_on_request() {
             &[(FORMAT_TEXT, 4)],
         ),
     );
-    assert_eq!(state.on_local_text("too long"), Some(ExtMsg::Notify(FORMAT_TEXT)));
+    assert_eq!(
+        state.on_local_text("too long"),
+        Some(ExtMsg::Notify(FORMAT_TEXT))
+    );
     assert_eq!(
         state.on_server(ExtMsg::Peek).replies,
         vec![ExtMsg::Notify(FORMAT_TEXT)]
@@ -461,7 +499,10 @@ fn a_server_notify_requests_the_wanted_formats_and_supersedes_local_data() {
     state.on_local_text("mine");
     let reaction = state.on_server(ExtMsg::Notify(FORMAT_TEXT | FORMAT_RTF | FORMAT_DIB));
     assert_eq!(reaction.replies, vec![ExtMsg::Request(FORMAT_TEXT)]);
-    assert_eq!(state.on_server(ExtMsg::Peek).replies, vec![ExtMsg::Notify(0)]);
+    assert_eq!(
+        state.on_server(ExtMsg::Peek).replies,
+        vec![ExtMsg::Notify(0)]
+    );
     // Nothing wanted: no request.
     assert_eq!(state.on_server(ExtMsg::Notify(FORMAT_RTF)).replies, vec![]);
     // A server without `request` is not asked.
@@ -542,10 +583,14 @@ async fn a_negative_length_is_the_extended_form_only_when_advertised() {
     let mut bytes = server_ext(&encode_payload(&ExtMsg::Caps(tigervnc_caps())));
     bytes.push(BELL);
     let mut reader = bytes.as_slice();
-    let msg = ServerMsg::read_with(&mut reader, Some(TEXT_ONLY)).await.unwrap();
+    let msg = ServerMsg::read_with(&mut reader, Some(TEXT_ONLY))
+        .await
+        .unwrap();
     assert!(matches!(msg, ServerMsg::ExtendedClipboard(ExtMsg::Caps(_))));
     assert!(matches!(
-        ServerMsg::read_with(&mut reader, Some(TEXT_ONLY)).await.unwrap(),
+        ServerMsg::read_with(&mut reader, Some(TEXT_ONLY))
+            .await
+            .unwrap(),
         ServerMsg::Bell
     ));
     // Without the extension the length is an (oversize) u32 and is skipped;
@@ -583,7 +628,9 @@ async fn an_over_cap_wire_payload_is_skipped_and_the_stream_stays_in_sync() {
         ServerMsg::ExtendedClipboardDropped(ExtClipboardError::TooLarge(n)) if n == len
     ));
     assert!(matches!(
-        ServerMsg::read_with(&mut reader, Some(TEXT_ONLY)).await.unwrap(),
+        ServerMsg::read_with(&mut reader, Some(TEXT_ONLY))
+            .await
+            .unwrap(),
         ServerMsg::Bell
     ));
 }
@@ -617,12 +664,16 @@ async fn a_malformed_extended_message_is_dropped_and_the_stream_stays_in_sync() 
     let mut reader = bytes.as_slice();
     for _ in 0..2 {
         assert!(matches!(
-            ServerMsg::read_with(&mut reader, Some(TEXT_ONLY)).await.unwrap(),
+            ServerMsg::read_with(&mut reader, Some(TEXT_ONLY))
+                .await
+                .unwrap(),
             ServerMsg::ExtendedClipboardDropped(_)
         ));
     }
     assert!(matches!(
-        ServerMsg::read_with(&mut reader, Some(TEXT_ONLY)).await.unwrap(),
+        ServerMsg::read_with(&mut reader, Some(TEXT_ONLY))
+            .await
+            .unwrap(),
         ServerMsg::Bell
     ));
 }
@@ -680,7 +731,10 @@ async fn the_decoder_answers_caps_and_requests_notified_text() {
         FORMAT_TEXT,
         &[(7, Part::Bytes("日本\0".as_bytes().to_vec()))],
     )));
-    let encodings = [VncEncoding::Raw, VncEncoding::ExtendedClipboardPseudo { images: false }];
+    let encodings = [
+        VncEncoding::Raw,
+        VncEncoding::ExtendedClipboardPseudo { images: false },
+    ];
     let (events, replies) = run_loop(&bytes, &encodings).await;
     assert!(matches!(
         events.as_slice(),
@@ -798,7 +852,13 @@ async fn a_client_negotiates_the_extension_and_sends_utf8_losslessly() {
     loop {
         match next_event(&client).await {
             VncEvent::ClipboardCapabilities(c) => {
-                assert_eq!(c, ClipboardCapabilities { text: true, images: true });
+                assert_eq!(
+                    c,
+                    ClipboardCapabilities {
+                        text: true,
+                        images: true
+                    }
+                );
                 break;
             }
             VncEvent::SetResolution(_) => {}
@@ -819,7 +879,10 @@ async fn a_client_negotiates_the_extension_and_sends_utf8_losslessly() {
     assert_eq!(decode_text(p.items[0].1.clone()), "日本 🎉\nzwei");
 
     // And an image as a dib.
-    client.input(X11Event::CopyDib(vec![40, 0, 0, 0])).await.unwrap();
+    client
+        .input(X11Event::CopyDib(vec![40, 0, 0, 0]))
+        .await
+        .unwrap();
     assert_eq!(
         read_client_ext(&mut server).await,
         provide(vec![(FORMAT_DIB, vec![40, 0, 0, 0])])
@@ -846,7 +909,10 @@ async fn a_client_on_a_server_without_the_extension_stays_on_the_legacy_path() {
     .await;
     assert!(sent.contains(&ENCODING_EXTENDED_CLIPBOARD));
     // No caps from the server: text goes out as a legacy ClientCutText.
-    client.input(X11Event::CopyText("café".to_string())).await.unwrap();
+    client
+        .input(X11Event::CopyText("café".to_string()))
+        .await
+        .unwrap();
     let mut msg = [0; 12];
     server.read_exact(&mut msg).await.unwrap();
     assert_eq!(msg, [6, 0, 0, 0, 0, 0, 0, 4, b'c', b'a', b'f', 0xE9]);
@@ -859,7 +925,10 @@ async fn a_client_on_a_server_without_the_extension_stays_on_the_legacy_path() {
 async fn a_client_that_does_not_opt_in_never_advertises_the_extension() {
     let (client, mut server, sent) = connect(vec![VncEncoding::Raw]).await;
     assert!(!sent.contains(&ENCODING_EXTENDED_CLIPBOARD));
-    client.input(X11Event::CopyText("日本".to_string())).await.unwrap();
+    client
+        .input(X11Event::CopyText("日本".to_string()))
+        .await
+        .unwrap();
     let mut header = [0; 8];
     server.read_exact(&mut header).await.unwrap();
     assert_eq!(&header[..4], &[6, 0, 0, 0]);

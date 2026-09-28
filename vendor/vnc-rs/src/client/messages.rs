@@ -218,7 +218,10 @@ where
         ));
     }
     let mut payload = Vec::new();
-    reader.take(u64::from(len)).read_to_end(&mut payload).await?;
+    reader
+        .take(u64::from(len))
+        .read_to_end(&mut payload)
+        .await?;
     if payload.len() < len as usize {
         return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into());
     }

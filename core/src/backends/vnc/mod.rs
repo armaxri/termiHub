@@ -41,16 +41,16 @@ use vnc::{
 
 use crate::connection::clipboard_dib::image_to_dib;
 use crate::connection::{
-    AuthKind, Capabilities, ClipboardImage, ConnectionType, CursorReceiver, CursorShape, CursorUpdate, DirtyRect,
-    FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities, InputEvent, MonitorLayout,
-    MonitorRect, MultiMonitorCapability, OutputReceiver, SettingsSchema,
+    AuthKind, Capabilities, ClipboardImage, ConnectionType, CursorReceiver, CursorShape,
+    CursorUpdate, DirtyRect, FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities,
+    InputEvent, MonitorLayout, MonitorRect, MultiMonitorCapability, OutputReceiver, SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
 
-use clipboard::VncClipboard;
 use budget::{ByteBudgetSender, MAX_QUEUED_CURSOR_BYTES, MAX_QUEUED_FRAME_BYTES};
+use clipboard::VncClipboard;
 use config::VncConfig;
 use desktop_size::{DesktopSize, ResizeOutcome};
 use frame::FrameShadow;

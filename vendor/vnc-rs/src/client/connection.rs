@@ -829,7 +829,11 @@ where
                 for reply in reaction.replies {
                     let Some(link) = clipboard else { break };
                     match ext_clipboard::encode(&reply) {
-                        Ok(bytes) => link.replies.send(ClientMsg::ExtendedClipboard(bytes)).await?,
+                        Ok(bytes) => {
+                            link.replies
+                                .send(ClientMsg::ExtendedClipboard(bytes))
+                                .await?
+                        }
                         Err(e) => warn!("could not encode an extended clipboard reply: {e}"),
                     }
                 }
