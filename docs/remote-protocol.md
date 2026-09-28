@@ -2,9 +2,9 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.13.0
+**Version**: 0.14.0
 **Status**: Draft
-**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213
+**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424
 
 ---
 
@@ -288,6 +288,9 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                          |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.14.0          | 0.14.0        | Yes                                                                                                                                  |
+| 0.14.0          | 0.9.0–0.13.0  | Yes (no `docker.list_containers` — the Docker container picker of an agent-hosted connection keeps a typed name/ID)                  |
+| 0.13.0          | 0.14.0        | Yes (new method ignored)                                                                                                             |
 | 0.13.0          | 0.13.0        | Yes                                                                                                                                  |
 | 0.13.0          | 0.9.0–0.12.0  | Yes (no `update_auth_token_path` — the desktop sends no `authToken`, which a pre-0.13.0 agent does not require)                      |
 | 0.12.0          | 0.13.0        | Partly (everything except agent updates: the update RPCs are refused with `-32026` because no `authToken` is sent)                   |
@@ -324,6 +327,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                           |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                 |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                  |
+
+**0.14.0 (additive, minor)** — adds [`docker.list_containers`](#dockerlist_containers) (#3424, PROD-017): a `docker ps -a`-style listing of the agent host's container runtime, so the Docker connection editor can offer its container picker for an **agent-hosted** Docker connection instead of a typed container name/ID. Negotiation is by **method-not-found fallback**: a pre-0.14.0 agent answers `-32601` and the desktop keeps the typed name/ID field with an "update the agent" hint. A pre-0.14.0 desktop never calls the method.
 
 **0.13.0 (minor, update RPCs only)** — hardens agent updates (#3213, AGT-003 / SEC-006). [`agent.request_update`](#agentrequest_update) and [`agent.request_deferred_update`](#agentrequest_deferred_update) now **require** the agent instance's per-instance update auth token in a new `authToken` param, in addition to the release signature; the `initialize` result advertises the owner-only file holding it as `update_auth_token_path`. Both methods also take an optional `pinnedVersion` for a **matched downgrade** (see [Update authorization and downgrade policy](#update-authorization-and-downgrade-policy)). New error codes `-32026` (unauthorized) and `-32027` (downgrade refused). A 0.13.0 desktop against an older agent sends no token (none is advertised) and the older agent ignores the unknown params. An older desktop against a 0.13.0 agent can do everything except update it.
 
@@ -2719,6 +2724,63 @@ Clear an agent-hosted embedded server's access log and its request / error / top
 | Result Field | Type      | Description                                                        |
 | ------------ | --------- | ------------------------------------------------------------------ |
 | `cleared`    | `boolean` | Whether a hosted server with that id was found and its log cleared |
+
+### `docker.list_containers`
+
+List every container (running and stopped) of the **agent host's** container runtime (#3424, PROD-017, protocol 0.14.0). Backs the container picker of the Docker connection editor when the connection is agent-hosted: the desktop's own runtime is not the agent's, so the desktop asks the agent. The runtime is reached exactly as an agent-hosted Docker session reaches it (`DOCKER_HOST`, the active Docker CLI context, the platform default socket, or the Podman socket). Read-only.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "docker.list_containers",
+  "params": { "runtime": "docker" },
+  "id": 56
+}
+```
+
+| Param     | Type     | Required | Description                                                                                      |
+| --------- | -------- | -------- | ------------------------------------------------------------------------------------------------ |
+| `runtime` | `string` | No       | The connection's `runtime` setting: `auto` (default — Docker, then Podman), `docker` or `podman` |
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "containers": [
+      {
+        "id": "4f9c2d1e8a7b…",
+        "name": "web",
+        "image": "nginx:latest",
+        "state": "running",
+        "status": "Up 3 hours",
+        "running": true
+      }
+    ]
+  },
+  "id": 56
+}
+```
+
+| Result Field | Type    | Description                                                                           |
+| ------------ | ------- | ------------------------------------------------------------------------------------- |
+| `containers` | `array` | The containers, running first, then by name (case-insensitive), then by ID; see below |
+
+Each container:
+
+| Field     | Type      | Description                                                                   |
+| --------- | --------- | ----------------------------------------------------------------------------- |
+| `id`      | `string`  | Full container ID                                                             |
+| `name`    | `string`  | Primary name without the leading `/` (the 12-character short ID when unnamed) |
+| `image`   | `string`  | Image the container was created from (empty when unknown)                     |
+| `state`   | `string`  | Machine-readable state (`running`, `exited`, `paused`, …; empty when unknown) |
+| `status`  | `string`  | Human-readable status (e.g. `Up 3 hours`, `Exited (0) 2 days ago`)            |
+| `running` | `boolean` | Whether the container is running (only running ones accept a shell)           |
+
+**Errors:** `-32007` before `initialize`; `-32602` for an unknown `runtime`; `-32603` when the runtime is unreachable, with the runtime's own explanation as the message (the desktop shows it and keeps the typed name/ID field). A pre-0.14.0 agent answers `-32601`, which the desktop treats as "this agent cannot list containers".
 
 ---
 
