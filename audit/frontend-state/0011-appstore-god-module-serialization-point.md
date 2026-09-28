@@ -10,7 +10,7 @@ evidence:
   - src/store/appStore.ts:1
   - src/store/appStore.ts:1604
 status: in-progress
-resolution: "#2880 — see ARCH-001 — appStore god-module split in progress, first slice (file-browser) extracted; remaining domains → #2881"
+resolution: "#2881 — appStore split ongoing: 7163 -> 6467 lines this session via settings (#3777), ui-chrome/layout-config (#3783), agents (#3790) slices on top of earlier file-browser/transfers/workspaces/workflows/credential/portable slices. Remaining: tabs/panel layout, persistent sessions, per-tab state, broadcast, last-session restore, loadFromBackend orchestration"
 ---
 
 ## What

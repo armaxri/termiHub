@@ -11,7 +11,7 @@ evidence:
   - src/store/appStore.ts:469
   - src/store/projectionCache.ts:9
 status: partial
-resolution: "#2881 — appStore split ongoing (~6768 lines, down from 8156): workspaces/workflows/credential-store/update-checker (#2920/2923/2938/2952) + editor-integration (#3260) slices MERGED; prior monitoring/transfers/connectionTree/fileBrowsers/settings done. REMAINING is now mostly the DEFERRED core (tab/panel-tree/session-map, #2881) + layout-entangled state (gated on #2562) — peripheral self-contained slices are essentially exhausted; further reduction needs the core-extraction decision"
+resolution: "#2881 — appStore split ongoing: 7163 -> 6467 lines this session via settings (#3777), ui-chrome/layout-config (#3783), agents (#3790) slices on top of earlier file-browser/transfers/workspaces/workflows/credential/portable slices. Remaining: tabs/panel layout, persistent sessions, per-tab state, broadcast, last-session restore, loadFromBackend orchestration"
 ---
 
 ## What
