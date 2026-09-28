@@ -1607,6 +1607,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
               : undefined
           }
           localContainerListing={!isAgentDefinitionMode}
+          containerListingAgentId={isAgentDefinitionMode ? existingAgent?.id : undefined}
         />
       )}
 

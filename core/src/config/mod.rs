@@ -339,26 +339,45 @@ impl Default for DockerConfig {
 /// connection (referenced by `connection_id`) is resolved to these inline values
 /// by the desktop layer *before* the config reaches core (Phase 4) — `connection_id`
 /// is carried only so the stored config round-trips.
+///
+/// The TypeScript DTO is generated from this struct via ts-rs (audit DUP-030).
+/// The `skip_serializing_if` fields are absent (not `null`) on the wire, so they
+/// are emitted as optional `field?: T`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct JumpHostConfig {
     /// Reference to a saved SSH connection ID (resolved to the inline fields by
     /// the desktop layer; unused by core).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub connection_id: Option<String>,
     pub host: String,
+    /// SSH port. The generated type widens it to `number | ""`: the frontend
+    /// shares this shape with the jump-host editor, where a cleared field is the
+    /// `""` blank-value convention (#1444) that `validateProxyJump` rejects
+    /// before save. A persisted hop always holds a number.
     #[serde(default = "default_ssh_port")]
+    #[cfg_attr(test, ts(type = "number | \"\""))]
     pub port: u16,
     pub username: String,
+    /// `"key"` | `"password"` | `"agent"`.
     pub auth_method: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub password: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub key_path: Option<String>,
     /// Per-hop connect/handshake timeout (seconds). `None` falls back to
     /// [`DEFAULT_SSH_CONNECT_TIMEOUT_SECS`], mirroring [`SshConfig`], so a slow
     /// bastion can be given a longer budget than a fast one (#951).
+    ///
+    /// ts-rs maps `u64` to `bigint`, but serde emits a JSON number, so the
+    /// generated type is overridden to `number`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "number"))]
     pub connect_timeout_secs: Option<u64>,
 }
 

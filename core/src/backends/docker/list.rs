@@ -43,6 +43,35 @@ pub struct ContainerInfo {
     pub running: bool,
 }
 
+/// Wire form for the agent's `docker.list_containers` result (#3424).
+impl From<ContainerInfo> for crate::protocol::methods::DockerContainerEntry {
+    fn from(c: ContainerInfo) -> Self {
+        Self {
+            id: c.id,
+            name: c.name,
+            image: c.image,
+            state: c.state,
+            status: c.status,
+            running: c.running,
+        }
+    }
+}
+
+/// Back from the wire: the desktop shows an agent's containers exactly like
+/// local ones (#3424).
+impl From<crate::protocol::methods::DockerContainerEntry> for ContainerInfo {
+    fn from(c: crate::protocol::methods::DockerContainerEntry) -> Self {
+        Self {
+            id: c.id,
+            name: c.name,
+            image: c.image,
+            state: c.state,
+            status: c.status,
+            running: c.running,
+        }
+    }
+}
+
 /// Length of the conventional short container ID (`docker ps` column).
 const SHORT_ID_LEN: usize = 12;
 
@@ -193,5 +222,26 @@ mod tests {
                 "state": "running", "status": "Up", "running": true
             })
         );
+    }
+
+    /// The agent wire DTO (#3424) round-trips losslessly and has the same JSON
+    /// shape as the local picker entry, so both paths feed the same UI.
+    #[test]
+    fn wire_entry_round_trips_with_identical_json() {
+        use crate::protocol::methods::DockerContainerEntry;
+        let info = ContainerInfo {
+            id: "abc".into(),
+            name: "web".into(),
+            image: "nginx".into(),
+            state: "exited".into(),
+            status: "Exited (0)".into(),
+            running: false,
+        };
+        let wire = DockerContainerEntry::from(info.clone());
+        assert_eq!(
+            serde_json::to_value(&wire).unwrap(),
+            serde_json::to_value(&info).unwrap()
+        );
+        assert_eq!(ContainerInfo::from(wire), info);
     }
 }

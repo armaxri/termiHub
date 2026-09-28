@@ -72,6 +72,7 @@ import {
   checkDockerAvailable,
   listDockerImages,
   listDockerContainers,
+  listAgentDockerContainers,
   checkPodmanAvailable,
   listPodmanImages,
   detectAgentArch,
@@ -854,6 +855,30 @@ describe("api service", () => {
       await listDockerContainers();
 
       expect(mockedInvoke).toHaveBeenCalledWith("list_docker_containers", { runtime: null });
+    });
+
+    it("listAgentDockerContainers forwards the agent id and runtime (#3424)", async () => {
+      const reply = { supported: true, containers: [] };
+      mockedInvoke.mockResolvedValue(reply);
+
+      const result = await listAgentDockerContainers("agent-1", "docker");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("list_agent_docker_containers", {
+        agentId: "agent-1",
+        runtime: "docker",
+      });
+      expect(result).toEqual(reply);
+    });
+
+    it("listAgentDockerContainers sends a null runtime when unset (#3424)", async () => {
+      mockedInvoke.mockResolvedValue({ supported: false, containers: [] });
+
+      await listAgentDockerContainers("agent-1");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("list_agent_docker_containers", {
+        agentId: "agent-1",
+        runtime: null,
+      });
     });
 
     it("listDockerImages returns empty array when none available", async () => {

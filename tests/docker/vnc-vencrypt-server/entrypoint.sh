@@ -44,4 +44,21 @@ for _ in 1 2 3; do
 done
 
 # Keep the container alive on the X server.
+# Own a known non-Latin-1 X selection so Xvnc offers it through the RFB
+# Extended Clipboard (UTF-8) — the lossless path asserted by VNC-13 (#3472). This
+# string MUST match VNC_UTF8_CLIPBOARD in core/tests/vnc.rs. It alternates with
+# a priming value so every cycle is a genuine change a newly attached client is
+# notified of (same approach as the x11vnc fixture).
+CLIPBOARD_TEXT="termiHub 日本語 🎉 4711"
+PRIMING_TEXT="termiHub vencrypt priming selection"
+set_selection() {
+    printf '%s' "$1" | xclip -display :0 -selection clipboard -t UTF8_STRING >/dev/null 2>&1 || true
+}
+while true; do
+    set_selection "$PRIMING_TEXT"
+    sleep 2
+    set_selection "$CLIPBOARD_TEXT"
+    sleep 2
+done &
+
 wait "$xvnc_pid"

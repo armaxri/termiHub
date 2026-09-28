@@ -28,8 +28,8 @@ function formatDimensions(info: ClipboardImageInfo): string {
  * Shows whether the remote copied an image (with its dimensions) and offers
  * "Copy image" (remote → local OS clipboard) and "Send local image" (local OS
  * clipboard → remote). The pixels never enter the webview — the backend moves
- * them and enforces the size caps. Hidden entirely when the protocol has no
- * image clipboard (VNC's standard clipboard is text only).
+ * them and enforces the size caps. Hidden entirely when the session has no
+ * image clipboard (a VNC server without Extended Clipboard `dib`).
  */
 export function RemoteDesktopClipboardImage({
   sessionId,

@@ -602,7 +602,8 @@ pub struct GraphicalCapabilities {
     /// Whether the backend syncs text clipboard both ways.
     pub supports_clipboard: bool,
     /// Whether the backend bridges clipboard **images** (PROD-021): RDP yes
-    /// (CLIPRDR `CF_DIB`), VNC no (the RFB clipboard is Latin-1 text only).
+    /// (CLIPRDR `CF_DIB`); VNC once the server announces the RFB Extended
+    /// Clipboard's `dib` format (#3472) — so it can change after connect.
     /// Defaults to `false` when absent.
     #[serde(default)]
     pub supports_clipboard_image: bool,
@@ -944,8 +945,8 @@ pub trait GraphicalBackend: Send + Sync {
 
     /// Push a local clipboard image to the remote (PROD-021). The caller has
     /// validated it against the clipboard-image caps. View-only sessions drop it
-    /// (`Ok(())`). Backends without an image clipboard (VNC: the RFB clipboard is
-    /// Latin-1 text only) return [`SessionError::NotRunning`]. Defaults to
+    /// (`Ok(())`). Backends without an image clipboard (a VNC server without
+    /// Extended Clipboard `dib`) return [`SessionError::NotRunning`]. Defaults to
     /// unsupported.
     async fn set_clipboard_image(&self, image: super::ClipboardImage) -> Result<(), SessionError> {
         let _ = image;

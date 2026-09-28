@@ -14,6 +14,7 @@
 //! [`ConnectionTypeRegistry`] at startup.
 
 pub mod auto_reconnect;
+pub mod clipboard_dib;
 pub mod clipboard_image;
 pub mod graphical;
 pub mod graphical_monitors;

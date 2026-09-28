@@ -1390,6 +1390,14 @@ exact commands to run: dispatch the candidate on the tag
 release's failed jobs (`gh run rerun <run-id> --failed`). A red candidate lane is a release
 blocker: fix it on a branch and re-tag. There is no bypass.
 
+**Release coverage (advisory).** The Release Candidate run and the Release run each have
+an advisory coverage job. Its job summary shows the unified coverage (unit +
+integration) and the integration coverage gap for the release commit, and it uploads
+a `release-coverage` artifact. It uses the release commit's Coverage push run for the
+unit numbers, so when that run is missing the summary says so and prints the
+`gh workflow run coverage.yml` command. It never blocks the release. See
+[Release coverage summary](testing.md#release-coverage-summary-advisory).
+
 **Integration-fixtures PR path filter.** Beyond `tests/docker/**`, `core/tests/**`,
 `core/src/backends/**` and the RDP/polkit sources, the fixture lane also runs on PRs that
 touch the core plumbing its suites drive directly — `core/src/connection/**`,

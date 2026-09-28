@@ -213,6 +213,7 @@ pub mod config;
 pub mod error;
 pub mod event;
 
+pub use client::ext_clipboard::MAX_CLIPBOARD_DIB_BYTES;
 pub use client::VncClient;
 pub use client::VncConnector;
 #[cfg(feature = "vencrypt")]

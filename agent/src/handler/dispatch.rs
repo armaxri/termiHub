@@ -54,6 +54,7 @@ use crate::protocol::methods::{
     TunnelStatusResult, TunnelStopParams, TunnelStopResult, UpdateAuthToken,
     UpdatePendingNotification, AGENT_UPDATE_PENDING,
 };
+use termihub_core::protocol::methods::{DockerListContainersParams, DockerListContainersResult};
 use termihub_core::protocol::methods::{KbdInteractiveRespondParams, KbdInteractiveRespondResult};
 // Shared method-name constants (DUP-002); referenced as `pm::CONNECTION_CREATE`
 // in the `register_async_method` calls so agent and desktop cannot drift.
@@ -106,7 +107,10 @@ use termihub_core::monitoring::{LocalProcessManager, ProcessError, ProcessManage
 /// `authToken` (AGT-003) and honour a matched-downgrade `pinnedVersion`
 /// (SEC-006), and `initialize` advertises `update_auth_token_path` (#3213). An
 /// older desktop that does not send the token can no longer update this agent.
-const AGENT_PROTOCOL_VERSION: &str = "0.13.0";
+/// Bumped to 0.14.0 for the additive `docker.list_containers` method (#3424):
+/// the desktop's container picker for agent-hosted Docker connections. An older
+/// agent answers "method not found" and the desktop keeps the typed name/ID.
+const AGENT_PROTOCOL_VERSION: &str = "0.14.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -689,6 +693,7 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_agent_request_update(module)?;
     register_agent_list_connections(module)?;
     register_agent_crash_reports(module)?;
+    register_docker_list_containers(module)?;
     Ok(())
 }
 
@@ -2663,6 +2668,52 @@ fn register_agent_crash_reports(module: &mut RpcModule<Mutex<HandlerState>>) -> 
     Ok(())
 }
 
+// ── docker.list_containers (PROD-017, #3424) ─────────────────────────
+
+/// `docker.list_containers` — list the containers of **this host's** container
+/// runtime for the desktop's Docker connection-editor picker, so an
+/// agent-hosted Docker connection can pick its existing container instead of
+/// typing it. The runtime is reached exactly as an agent-hosted Docker session
+/// reaches it (`termihub_core::backends::docker::list_containers`). Read-only.
+fn register_docker_list_containers(
+    module: &mut RpcModule<Mutex<HandlerState>>,
+) -> anyhow::Result<()> {
+    module.register_async_method(pm::DOCKER_LIST_CONTAINERS, |params, ctx, _ext| async move {
+        if !ctx.lock().await.initialized {
+            return Err(not_initialized());
+        }
+        // No params (or `null`) means "auto-detect the runtime".
+        let p: DockerListContainersParams = params
+            .parse::<Option<DockerListContainersParams>>()
+            .map_err(|e| invalid_params(pm::DOCKER_LIST_CONTAINERS, e))?
+            .unwrap_or_default();
+        let runtime = p.runtime.unwrap_or_default();
+        docker_list_reply(termihub_core::backends::docker::list_containers(&runtime).await)
+    })?;
+    Ok(())
+}
+
+/// Map a container listing onto the `docker.list_containers` reply. An
+/// unreachable runtime is an `INTERNAL_ERROR` carrying the runtime's own
+/// explanation (the core's `SpawnFailed` text), which the desktop shows next
+/// to the typed-name fallback.
+fn docker_list_reply(
+    listing: Result<
+        Vec<termihub_core::backends::docker::ContainerInfo>,
+        termihub_core::errors::SessionError,
+    >,
+) -> Result<Value, ErrorObjectOwned> {
+    match listing {
+        Ok(containers) => to_result_value(&DockerListContainersResult {
+            containers: containers.into_iter().map(Into::into).collect(),
+        }),
+        Err(termihub_core::errors::SessionError::SpawnFailed(msg)) => {
+            Err(rpc_err(errors::INTERNAL_ERROR, msg))
+        }
+        Err(other) => Err(rpc_err(errors::INTERNAL_ERROR, other.to_string())),
+    }
+}
+
 // ── Capability detection ───────────────────────────────────────────
 
 /// Well-known shell paths to probe on a Unix host (unused on Windows outside tests).
@@ -3374,10 +3425,12 @@ mod tests {
     /// `service.*` agent-hosted embedded servers, the `service.pause/resume`
     /// in-place monitor pause, the streaming `tool.start/cancel` runs, the
     /// SSH keyboard-interactive prompt relay, and the embedded-server access
-    /// log RPC) may now arrive — and, from 0.12.0, that `network.*` is gone.
+    /// log RPC) may now arrive — and, from 0.12.0, that `network.*` is gone;
+    /// 0.13.0 made the update RPCs require the auth token, and 0.14.0 adds
+    /// `docker.list_containers`.
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.13.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.14.0");
     }
 
     // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────
@@ -6113,6 +6166,9 @@ mod tests {
 
     /// `agent.crash_reports.*` — listing, reading, caps, invalid names (#3574).
     mod crash_reports_tests;
+
+    /// `docker.list_containers` — init gate, params, reply mapping (#3424).
+    mod docker_list_tests;
 
     /// Update-RPC auth token + matched-downgrade pin (AGT-003 / SEC-006, #3213).
     mod update_auth_tests;

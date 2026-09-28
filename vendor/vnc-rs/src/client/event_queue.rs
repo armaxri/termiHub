@@ -41,7 +41,8 @@ pub(crate) fn event_cost(event: &VncEvent) -> usize {
     match event {
         VncEvent::RawImage(_, data)
         | VncEvent::JpegImage(_, data)
-        | VncEvent::SetCursor(_, data) => data.len(),
+        | VncEvent::SetCursor(_, data)
+        | VncEvent::ClipboardDib(data) => data.len(),
         VncEvent::Text(text) => text.len(),
         _ => 0,
     }

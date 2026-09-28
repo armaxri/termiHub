@@ -7,6 +7,7 @@ mod desktop_size_tests;
 #[cfg(test)]
 mod event_budget_tests;
 mod event_queue;
+pub(crate) mod ext_clipboard;
 #[cfg(test)]
 mod hostile_server_tests;
 mod messages;

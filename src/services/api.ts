@@ -767,7 +767,8 @@ export async function remoteDesktopGetClipboard(sessionId: SessionId): Promise<s
 }
 
 /**
- * Whether the session supports an image clipboard (PROD-021: RDP yes, VNC no)
+ * Whether the session supports an image clipboard (PROD-021: RDP yes; VNC when
+ * the server offers the Extended Clipboard `dib` format, #3472)
  * and the dimensions of the image the remote most recently copied, if any.
  * Ownership-gated in the backend: a non-owning window never sees the image.
  */
@@ -794,7 +795,8 @@ export async function remoteDesktopCopyClipboardImage(
 /**
  * Send the image on the local OS clipboard to the remote (PROD-021). Resolves to
  * its dimensions, or null when the local clipboard holds no image. Rejects when
- * the image exceeds the size caps or the protocol has no image clipboard (VNC).
+ * the image exceeds the size caps or the session has no image clipboard (a VNC
+ * server without Extended Clipboard `dib`).
  */
 export async function remoteDesktopSendClipboardImage(
   sessionId: SessionId
@@ -1174,6 +1176,30 @@ export interface DockerContainerInfo {
  */
 export async function listDockerContainers(runtime?: string): Promise<DockerContainerInfo[]> {
   return await invoke<DockerContainerInfo[]>("list_docker_containers", {
+    runtime: runtime ?? null,
+  });
+}
+
+/** Result of {@link listAgentDockerContainers}. */
+export interface AgentDockerContainersResult {
+  /** `false` when the agent predates container listing (update the agent to use it). */
+  supported: boolean;
+  /** The agent host's containers, running first (empty when unsupported). */
+  containers: DockerContainerInfo[];
+}
+
+/**
+ * List the containers of a connected agent host's container runtime, for the
+ * picker of an agent-hosted Docker connection (#3424). Resolves with
+ * `supported: false` for an agent too old to list containers; rejects with the
+ * agent's error when its runtime is unreachable.
+ */
+export async function listAgentDockerContainers(
+  agentId: string,
+  runtime?: string
+): Promise<AgentDockerContainersResult> {
+  return await invoke<AgentDockerContainersResult>("list_agent_docker_containers", {
+    agentId,
     runtime: runtime ?? null,
   });
 }

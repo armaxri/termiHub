@@ -1,5 +1,5 @@
 #![cfg(feature = "vnc")]
-//! VNC (RFB) Integration Tests (VNC-01 through VNC-12).
+//! VNC (RFB) Integration Tests (VNC-01 through VNC-13).
 //!
 //! Exercises termiHub's `vnc` graphical backend against a real VNC server — the
 //! live negotiate -> authenticate -> decode path (#1681/#1715) that only exists
@@ -17,7 +17,8 @@
 //!   type 19, X509Vnc sub-type): a TLS handshake then the VNC-password stage.
 //!   Covers VNC-06 (`tlsVerify=insecure`) and VNC-07 (`tlsVerify=ca`), the
 //!   VeNCrypt/TLS path added in #1714, and VNC-09 (fixed and dynamic remote
-//!   resolution through RFB ExtendedDesktopSize / SetDesktopSize, #3463).
+//!   resolution through RFB ExtendedDesktopSize / SetDesktopSize, #3463), and
+//!   VNC-13 (lossless UTF-8 through the RFB Extended Clipboard, #3472).
 //!
 //! Both serve the same static four-quadrant test pattern (TL red, TR green,
 //! BL blue, BR white) at 1024x768, so a decoded framebuffer asserts exactly.
@@ -44,6 +45,11 @@ const FB_HEIGHT: u32 = 768;
 /// as an RFB `ServerCutText`. MUST match `CLIPBOARD_TEXT` in
 /// `tests/docker/vnc-server/entrypoint.sh`.
 const VNC_SERVER_CLIPBOARD: &str = "termiHub vnc server clipboard 4711";
+
+/// The non-Latin-1 X selection the VeNCrypt (TigerVNC) fixture owns, which Xvnc
+/// offers through the RFB Extended Clipboard (#3472). MUST match
+/// `CLIPBOARD_TEXT` in `tests/docker/vnc-vencrypt-server/entrypoint.sh`.
+const VNC_UTF8_CLIPBOARD: &str = "termiHub 日本語 🎉 4711";
 
 /// Serializes the tests that depend on the VeNCrypt fixture's desktop size:
 /// VNC-09 resizes the (shared, long-lived) Xvnc desktop and restores it, while
@@ -370,6 +376,54 @@ async fn vnc_05_server_clipboard_echo() {
     );
 
     vnc.disconnect().await.expect("disconnect should succeed");
+}
+
+// ── VNC-13: Lossless UTF-8 through the Extended Clipboard (TigerVNC) ─
+
+/// TigerVNC's Xvnc implements the RFB Extended Clipboard: the client advertises
+/// it, answers the server's caps, requests the notified text and decodes the
+/// zlib `provide`. Non-Latin-1 text must arrive intact — the legacy
+/// `ServerCutText` could only carry Latin-1, so TigerVNC would replace these
+/// characters (#3472). TigerVNC announces text only, so no image clipboard.
+#[tokio::test]
+async fn vnc_13_extended_clipboard_utf8_from_tigervnc() {
+    require_docker!(port_vnc_vencrypt());
+
+    let mut vnc = Vnc::new();
+    vnc.connect(vencrypt_settings(port_vnc_vencrypt(), "insecure", None))
+        .await
+        .expect("VNC-13: connect should succeed");
+    let graphical = vnc.graphical().expect("VNC-13: graphical backend present");
+    // Keep the frame stream drained: the driver handles clipboard events in
+    // order with frames, so an undrained (full) frame queue would stall it.
+    let mut frames = graphical.subscribe_frames();
+    let drain = tokio::spawn(async move { while frames.recv().await.is_some() {} });
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
+    let mut received = None;
+    while tokio::time::Instant::now() < deadline {
+        received = graphical.get_clipboard().await;
+        if received.as_deref() == Some(VNC_UTF8_CLIPBOARD) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    assert_eq!(
+        received.as_deref(),
+        Some(VNC_UTF8_CLIPBOARD),
+        "VNC-13: expected the fixture's UTF-8 selection intact, got {received:?}"
+    );
+    assert!(
+        !graphical.graphical_capabilities().supports_clipboard_image,
+        "VNC-13: TigerVNC announces no dib, so no image clipboard"
+    );
+    graphical
+        .set_clipboard("zurück 日本 🎉".to_string())
+        .await
+        .expect("VNC-13: UTF-8 client->server clipboard should be sent");
+
+    vnc.disconnect().await.expect("disconnect should succeed");
+    drain.abort();
 }
 
 // ── VNC-04: Wrong password is rejected ──────────────────────────────

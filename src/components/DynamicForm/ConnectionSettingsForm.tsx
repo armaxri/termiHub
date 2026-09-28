@@ -34,6 +34,14 @@ interface ConnectionSettingsFormProps {
    */
   localContainerListing?: boolean;
   /**
+   * When set, `dockerContainer` fields list the containers of this connected
+   * agent's host instead (#3424) — pass the agent's id when editing an
+   * agent-hosted Docker connection. An agent too old to list containers
+   * degrades to the typed name/ID field. Takes precedence over
+   * `localContainerListing`.
+   */
+  containerListingAgentId?: string;
+  /**
    * Reports overall client-side validity plus a per-field error map (keyed by
    * field key) whenever validation state changes. Only currently-visible fields
    * are considered, so a required field hidden by `visibleWhen` never blocks.
@@ -67,6 +75,7 @@ export function ConnectionSettingsForm({
   credentialSavedHint,
   availablePorts,
   localContainerListing = true,
+  containerListingAgentId,
   onValidityChange,
   hiddenFieldKeys,
   afterField,
@@ -329,7 +338,9 @@ export function ConnectionSettingsForm({
                             field.fieldType.type === "dockerContainer"
                               ? {
                                   runtime: visibilityValues.runtime as string | undefined,
-                                  listingEnabled: localContainerListing,
+                                  listingEnabled:
+                                    containerListingAgentId !== undefined || localContainerListing,
+                                  agentId: containerListingAgentId,
                                 }
                               : undefined
                           }

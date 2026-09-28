@@ -4554,3 +4554,105 @@ async fn a_renamed_connections_persistent_session_is_reached_by_its_new_id() {
     assert_eq!(last.connection_id, "Job/x");
     assert_eq!(last.state, "stopped");
 }
+
+// ── In-flight create reservations (CONC-004, DUP-010 Slice C) ─────
+
+fn pending_creates_len(manager: &SessionManager) -> usize {
+    manager.pending_creates.lock().unwrap().len()
+}
+
+#[tokio::test]
+async fn in_flight_creates_count_toward_the_session_cap() {
+    let manager = make_test_manager();
+    // Simulate MAX_SESSIONS connects still in flight: none is registered yet,
+    // so the old `sessions.len()` check alone would have let another through.
+    {
+        let sessions = manager.sessions.lock().await;
+        let mut pending = manager.pending_creates.lock().unwrap();
+        for i in 0..MAX_SESSIONS {
+            sessions
+                .try_reserve(&mut pending, format!("inflight-{i}"), MAX_SESSIONS)
+                .unwrap();
+        }
+    }
+    let err = manager
+        .create_connection(
+            "mock",
+            serde_json::json!({}),
+            None,
+            None,
+            false,
+            false,
+            MockEventEmitter::new(),
+        )
+        .await
+        .expect_err("cap must count in-flight creates");
+    assert!(err.to_string().contains("Maximum number of sessions"));
+    assert!(manager.sessions.lock().await.is_empty());
+    assert_eq!(pending_creates_len(&manager), MAX_SESSIONS);
+
+    // Freeing one in-flight slot lets the next create through.
+    manager
+        .pending_creates
+        .lock()
+        .unwrap()
+        .release("inflight-0");
+    manager
+        .create_connection(
+            "mock",
+            serde_json::json!({}),
+            None,
+            None,
+            false,
+            false,
+            MockEventEmitter::new(),
+        )
+        .await
+        .expect("a freed slot admits the create");
+}
+
+#[tokio::test]
+async fn successful_create_promotes_its_reservation() {
+    let manager = make_test_manager();
+    let session_id = manager
+        .create_connection(
+            "mock",
+            serde_json::json!({}),
+            None,
+            Some("tab-r:0"),
+            false,
+            false,
+            MockEventEmitter::new(),
+        )
+        .await
+        .expect("session should open");
+    assert!(manager.sessions.lock().await.contains_key(&session_id));
+    assert_eq!(
+        pending_creates_len(&manager),
+        0,
+        "a registered session holds no reservation"
+    );
+}
+
+#[tokio::test]
+async fn failed_create_releases_its_reservation() {
+    let manager = make_test_manager();
+    manager
+        .create_connection(
+            "no-such-type",
+            serde_json::json!({}),
+            None,
+            Some("tab-f:0"),
+            false,
+            false,
+            MockEventEmitter::new(),
+        )
+        .await
+        .expect_err("unknown type must fail");
+    assert!(manager.sessions.lock().await.is_empty());
+    assert_eq!(
+        pending_creates_len(&manager),
+        0,
+        "a failed create must not leak a slot"
+    );
+}
