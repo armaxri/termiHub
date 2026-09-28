@@ -105,6 +105,14 @@ pub struct PendingUpdate {
     /// files loadable as `None`.
     #[serde(default)]
     pub signature: Option<String>,
+    /// The desktop's matched-downgrade pin (SEC-006, #3213), carried from
+    /// `agent.request_update` / `agent.request_deferred_update` after the RPC
+    /// layer bound it to the requesting desktop's version. The apply path
+    /// accepts a binary older than the running agent only when its embedded
+    /// version equals this pin. `None` for self-downloaded updates and for
+    /// `state.json` files written before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_version: Option<String>,
 }
 
 /// Minimal session info stored for recovery.
@@ -764,6 +772,7 @@ mod tests {
             staged_at: "2026-07-10T12:00:01Z".to_string(),
             expected_sha256: Some("a".repeat(64)),
             signature: Some("c2ln".to_string()),
+            pinned_version: None,
         });
         state.save_to(&path);
 
@@ -796,6 +805,7 @@ mod tests {
             staged_at: "2026-07-14T09:00:00Z".to_string(),
             expected_sha256: None,
             signature: None,
+            pinned_version: None,
         });
         state.save_to(&path);
 

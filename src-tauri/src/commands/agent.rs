@@ -24,7 +24,7 @@ use crate::utils::errors::TerminalError;
 use termihub_core::protocol::methods::{
     AgentRequestDeferredUpdateParams, AgentRequestDeferredUpdateResult, AgentRequestUpdateParams,
     AgentRequestUpdateResult, ConnectionCreateParams, ConnectionUpdateParams, FolderUpdateParams,
-    CONNECTIONS_CREATE, CONNECTIONS_FOLDERS_UPDATE, CONNECTIONS_UPDATE,
+    UpdateAuthToken, CONNECTIONS_CREATE, CONNECTIONS_FOLDERS_UPDATE, CONNECTIONS_UPDATE,
 };
 
 // ── Structured IPC error envelope (ARCH-006 / TAURI-008 / ERR-008 Phase 2) ────
@@ -359,6 +359,11 @@ pub async fn request_agent_deferred_update(
             expected_sha256: None,
             // Likewise the agent re-verifies the signature it staged (AGT-005).
             signature: None,
+            // AGT-003 (#3213): the agent instance's update auth token, read out
+            // of band over this desktop's SSH session.
+            auth_token: manager.update_auth_token(&agent_id),
+            // No binary is pushed here, so there is nothing to pin (SEC-006).
+            pinned_version: None,
         })
         .map_err(|e| {
             TerminalError::RemoteError(format!(
@@ -439,6 +444,10 @@ pub async fn request_agent_update(
             // digest — the agent verifies against the digest it staged with.
             expected_sha256: None,
             signature: None,
+            // AGT-003 (#3213): the agent instance's update auth token.
+            auth_token: manager.update_auth_token(&agent_id),
+            // No binary is pushed here, so there is nothing to pin (SEC-006).
+            pinned_version: None,
             ack_timeout_secs: None,
         })
         .map_err(|e| {
@@ -1111,13 +1120,13 @@ async fn run_coordinated_update(
     let expected_sha256 = staged.expected_sha256;
     let signature = staged.signature;
     let rpc_result = tauri::async_runtime::spawn_blocking(move || {
-        let params = serde_json::to_value(AgentRequestUpdateParams {
-            binary_path: Some(binary_path),
-            version: Some(version),
-            expected_sha256: Some(expected_sha256),
+        let params = serde_json::to_value(coordinated_push_params(
+            binary_path,
+            version,
+            expected_sha256,
             signature,
-            ack_timeout_secs: None,
-        })
+            rpc_manager.update_auth_token(&rpc_agent),
+        ))
         .map_err(|e| {
             TerminalError::RemoteError(format!("Failed to build agent.request_update params: {e}"))
         })?;
@@ -1155,6 +1164,31 @@ async fn run_coordinated_update(
                 Err(e)
             }
         }
+    }
+}
+
+/// The `agent.request_update` params of a coordinated desktop push (#1616).
+///
+/// The pushed binary is the agent that ships with this desktop, so it is pinned
+/// to the desktop's own `version` (SEC-006, #3213): the agent then accepts it even
+/// when it is older than the running agent (a matched downgrade) — and refuses it
+/// if the binary's embedded version differs. `auth_token` is the agent instance's
+/// update auth token (AGT-003), read out of band over this desktop's SSH session.
+fn coordinated_push_params(
+    binary_path: String,
+    version: String,
+    expected_sha256: String,
+    signature: Option<String>,
+    auth_token: Option<UpdateAuthToken>,
+) -> AgentRequestUpdateParams {
+    AgentRequestUpdateParams {
+        binary_path: Some(binary_path),
+        pinned_version: Some(version.clone()),
+        version: Some(version),
+        expected_sha256: Some(expected_sha256),
+        signature,
+        auth_token,
+        ack_timeout_secs: None,
     }
 }
 
@@ -1237,6 +1271,43 @@ fn is_expected_apply_disconnect(message: &str) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // ── coordinated push params (AGT-003 / SEC-006, #3213) ───────────────
+
+    #[test]
+    fn coordinated_push_pins_the_desktop_version_and_carries_the_token() {
+        let params = coordinated_push_params(
+            "/tmp/termihub-agent-upload".to_string(),
+            "0.4.0".to_string(),
+            "a".repeat(64),
+            Some("c2ln".to_string()),
+            Some(UpdateAuthToken("tok".to_string())),
+        );
+        let wire = serde_json::to_value(&params).unwrap();
+        assert_eq!(
+            wire["pinnedVersion"], "0.4.0",
+            "pinned to the desktop version"
+        );
+        assert_eq!(wire["version"], "0.4.0");
+        assert_eq!(wire["authToken"], "tok");
+        assert_eq!(wire["binaryPath"], "/tmp/termihub-agent-upload");
+        assert!(wire.get("ackTimeoutSecs").is_none());
+    }
+
+    #[test]
+    fn coordinated_push_without_a_token_omits_it() {
+        // An older agent advertises no token file: the request goes out without
+        // one (and a 0.13.0+ agent would refuse it — fail closed there).
+        let params = coordinated_push_params(
+            "/tmp/x".to_string(),
+            "0.4.0".to_string(),
+            "a".repeat(64),
+            None,
+            None,
+        );
+        let wire = serde_json::to_value(&params).unwrap();
+        assert!(wire.get("authToken").is_none());
+    }
 
     // ── decode_agent_params (AGT-028) ───────────────────────────────────────
 

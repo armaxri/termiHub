@@ -160,6 +160,9 @@ struct LoopIo {
 fn log_received(line: &str) {
     if is_secret_bearing_request(line) {
         debug!("Received: <redacted {}>", SSH_KEYBOARD_INTERACTIVE_RESPOND);
+    } else if crate::io::update_auth::carries_update_auth_token(line) {
+        // Carries the update auth token (AGT-003, #3213): never log the body.
+        debug!("Received: <redacted update request>");
     } else {
         debug!("Received: {}", line);
     }

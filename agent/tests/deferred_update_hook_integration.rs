@@ -244,6 +244,9 @@ struct Client {
     /// `agent.update_available` races the `initialize` reply, so it must be
     /// buffered rather than dropped on the floor.
     notifications: Vec<Value>,
+    /// The agent's per-instance token, which the update RPCs require on top of
+    /// `initialize` (AGT-003, #3213).
+    auth_token: String,
 }
 
 impl Client {
@@ -273,6 +276,7 @@ impl Client {
                     writer,
                     next_id: 1,
                     notifications: Vec::new(),
+                    auth_token: token.clone(),
                 };
                 // Auth gate first (AGT-002/SEC-004), before initialize. The gate
                 // answers before any notification is emitted, so the first line
@@ -402,7 +406,11 @@ impl Client {
     /// Ask the agent to apply the update it is holding — the banner's
     /// "Apply Now".
     fn request_deferred_update(&mut self) -> Value {
-        self.rpc("agent.request_deferred_update", json!({}))
+        let token = self.auth_token.clone();
+        self.rpc(
+            "agent.request_deferred_update",
+            json!({ "authToken": token }),
+        )
     }
 }
 
@@ -584,4 +592,21 @@ fn falsy_gate_leaves_the_agent_unarmed() {
         "a falsy gate must leave the hook disarmed"
     );
     assert!(agent.state()["update"]["pending_update"].is_null());
+}
+
+// ── Update-RPC authorization (AGT-003 / SEC-006, #3213) ─────────────────────
+
+/// The shipped binary really carries its build-version record (SEC-006): the
+/// downgrade policy reads it from a staged binary, so it must survive linking.
+#[test]
+fn the_agent_binary_embeds_its_build_version_record() {
+    let bytes = std::fs::read(agent_binary()).expect("read agent binary");
+    let record = format!(
+        "\0TERMIHUB-AGENT-BUILD-VERSION={}\0",
+        env!("CARGO_PKG_VERSION")
+    );
+    assert!(
+        bytes.windows(record.len()).any(|w| w == record.as_bytes()),
+        "the agent binary must embed {record:?}"
+    );
 }
