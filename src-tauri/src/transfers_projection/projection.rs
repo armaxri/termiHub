@@ -54,8 +54,8 @@ use tauri::{AppHandle, Manager};
 
 use crate::commands::projection::ProjectionState;
 use crate::projection::{
-    compute_ops, required_bool, required_str, DiffOp, HandlerRegistry, Intent, ProducedRegion,
-    Projector,
+    compute_ops, perf006_divergence, report_perf006_divergence, required_bool, required_str,
+    DiffOp, HandlerRegistry, Intent, ProducedRegion, Projector,
 };
 use crate::transfers_projection::store::{
     RegionDelta, TransferEntry, TransferProgress, TransferSeed, TransferSnapshot, TransferStore,
@@ -126,7 +126,7 @@ pub fn publish_transfers(projector: &Projector, store: &TransferStore) -> Vec<Pr
     // Reported only after `publish_delta` returned: the (resynced) frame has
     // already been fanned out and the region lock released.
     if let Some(reason) = divergence {
-        report_perf006_divergence(&reason);
+        report_perf006_divergence(TRANSFERS_REGION, &reason);
     }
     match published {
         Some(version) => vec![ProducedRegion {
@@ -135,21 +135,6 @@ pub fn publish_transfers(projector: &Projector, store: &TransferStore) -> Vec<Pr
         }],
         None => Vec::new(),
     }
-}
-
-/// Surface a PERF-006 cross-check failure: a real dirty-tracking or ordering bug
-/// in the incremental publish, already healed by a resync. Logged loudly and
-/// never a panic mid-publish (#3788, as #3780: a panic there dropped the frame
-/// after the view was spliced, and once aborted the whole debug app). Unit tests
-/// still fail hard on it — after the fan-out, so the region stays consistent.
-fn report_perf006_divergence(reason: &str) {
-    tracing::error!(
-        region = TRANSFERS_REGION,
-        "PERF-006: incremental transfer publish diverged from the store; \
-         resynced to the whole-region diff: {reason}"
-    );
-    #[cfg(test)]
-    panic!("PERF-006: incremental transfer publish diverged: {reason}");
 }
 
 /// Compute the RFC-6902 ops for a drained [`RegionDelta`] and splice its new
@@ -224,27 +209,6 @@ fn apply_transfer_delta(
     }
 
     (ops, None)
-}
-
-/// The PERF-006 cross-check: `None` when the incremental `ops` equal the
-/// whole-region diff `old_full → truth` and the spliced `view` equals `truth`;
-/// otherwise a description of the mismatch.
-fn perf006_divergence(
-    ops: &[DiffOp],
-    old_full: &Value,
-    view: &Value,
-    truth: &Value,
-) -> Option<String> {
-    let expected = compute_ops(old_full, truth);
-    if ops != expected.as_slice() {
-        return Some(format!(
-            "incremental ops {ops:?} != whole-region ops {expected:?}"
-        ));
-    }
-    if view != truth {
-        return Some(format!("spliced view {view} != store snapshot {truth}"));
-    }
-    None
 }
 
 /// Collect the touched keys that are present in `src` into a fresh object — the
