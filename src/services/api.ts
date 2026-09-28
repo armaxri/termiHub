@@ -1178,6 +1178,30 @@ export async function listDockerContainers(runtime?: string): Promise<DockerCont
   });
 }
 
+/** Result of {@link listAgentDockerContainers}. */
+export interface AgentDockerContainersResult {
+  /** `false` when the agent predates container listing (update the agent to use it). */
+  supported: boolean;
+  /** The agent host's containers, running first (empty when unsupported). */
+  containers: DockerContainerInfo[];
+}
+
+/**
+ * List the containers of a connected agent host's container runtime, for the
+ * picker of an agent-hosted Docker connection (#3424). Resolves with
+ * `supported: false` for an agent too old to list containers; rejects with the
+ * agent's error when its runtime is unreachable.
+ */
+export async function listAgentDockerContainers(
+  agentId: string,
+  runtime?: string
+): Promise<AgentDockerContainersResult> {
+  return await invoke<AgentDockerContainersResult>("list_agent_docker_containers", {
+    agentId,
+    runtime: runtime ?? null,
+  });
+}
+
 /** Check if Podman is available on the local system. */
 export async function checkPodmanAvailable(): Promise<boolean> {
   return await invoke<boolean>("check_podman_available");
