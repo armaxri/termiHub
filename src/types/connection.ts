@@ -111,9 +111,11 @@ export type { SshConfigImportConnection } from "./generated/SshConfigImportConne
  */
 export type { InventoryHost } from "./generated/InventoryHost";
 
-export type ConnectionTreeItem =
-  | { type: "folder"; folder: ConnectionFolder }
-  | { type: "connection"; connection: SavedConnection };
+// DUP-008: the connection tree's source of truth is the Rust on-disk
+// `ConnectionTreeNode` (`src-tauri/src/connection/config.rs`). It never crosses
+// IPC: storage flattens it into the generated `ConnectionFolder` /
+// `SavedConnection` above, which are what the frontend consumes. The former
+// hand-written `ConnectionTreeItem` mirror had no consumers and was removed.
 
 // Generated from the Rust `ExternalFileConfig` (src-tauri/src/connection/settings.rs)
 // via ts-rs (audit DUP-030). Imported at the top of this module; re-exported here.
