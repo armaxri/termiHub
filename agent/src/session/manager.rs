@@ -30,6 +30,7 @@ use crate::transport::JsonRpcOutputSink;
 use termihub_core::buffer::DEFAULT_BUFFER_CAPACITY;
 use termihub_core::connection::{ConnectionTypeRegistry, OutputReceiver};
 use termihub_core::session::pump::{run_output_pump, PumpEnd, PumpOptions};
+use termihub_core::session::registry::{Reservations, Sessions};
 use termihub_core::session::traits::OutputSink;
 
 use crate::daemon::client::{
@@ -575,10 +576,10 @@ fn default_state_path() -> PathBuf {
 
 /// In-memory session manager.
 ///
-/// Tracks sessions in a `HashMap` protected by a `tokio::sync::Mutex`
+/// Tracks sessions in a [`Sessions`] container protected by a `tokio::sync::Mutex`
 /// so it can be shared across async tasks.
 pub struct SessionManager {
-    sessions: Mutex<HashMap<String, SessionInfo>>,
+    sessions: Mutex<Sessions<SessionInfo>>,
     /// IDs of in-flight [`create`](SessionManager::create) calls that have
     /// reserved a slot but not yet finished their (possibly slow) backend
     /// bring-up.
@@ -589,7 +590,7 @@ pub struct SessionManager {
     /// flight, each create reserves its id here (checked against `sessions.len()`
     /// under the `sessions` lock) and removes it once the session is registered
     /// or the create fails. Lock order is always `sessions → pending_creates`.
-    pending_creates: Mutex<HashSet<String>>,
+    pending_creates: Mutex<Reservations>,
     /// Orphaned daemon sessions start-up recovery found running with no holder
     /// and deliberately left **unattached** (#3369): nobody owns them until a
     /// desktop explicitly opens or takes one over. They are not in `sessions`,
@@ -721,8 +722,8 @@ impl SessionManager {
         }
         let agent_forward = AgentForwardRelay::new(notification_tx.clone());
         Self {
-            sessions: Mutex::new(HashMap::new()),
-            pending_creates: Mutex::new(HashSet::new()),
+            sessions: Mutex::new(Sessions::new()),
+            pending_creates: Mutex::new(Reservations::new()),
             unattached: Mutex::new(HashSet::new()),
             notification_tx,
             registry,
@@ -784,10 +785,9 @@ impl SessionManager {
         {
             let sessions = self.sessions.lock().await;
             let mut pending = self.pending_creates.lock().await;
-            if sessions.len() + pending.len() >= MAX_SESSIONS as usize {
-                return Err(SessionCreateError::LimitReached);
-            }
-            pending.insert(id.clone());
+            sessions
+                .try_reserve(&mut pending, id.clone(), MAX_SESSIONS as usize)
+                .map_err(|_| SessionCreateError::LimitReached)?;
         }
 
         // Run the (possibly multi-second) daemon spawn + connect / SSH handshake
@@ -2031,12 +2031,13 @@ fn spawn_output_forwarder(
 /// read paths that report it, so a dead session no longer lingers as `Running`
 /// (#2369). Exited sessions are kept in the map (not dropped) so the desktop can
 /// still see and explicitly close them.
-fn settle_exited(sessions: &mut HashMap<String, SessionInfo>) {
-    for info in sessions.values_mut() {
-        if info.status == SessionStatus::Running && !info.backend.is_alive() {
-            info.status = SessionStatus::Exited;
-        }
-    }
+fn settle_exited(sessions: &mut Sessions<SessionInfo>) {
+    // Agent settle policy: RETAIN the entry, flipping it to `Exited` (the desktop
+    // instead removes it). Only the traversal is shared via `reconcile` (#3095).
+    sessions.reconcile(
+        |_, info| info.status == SessionStatus::Running && !info.backend.is_alive(),
+        |_, info| info.status = SessionStatus::Exited,
+    );
 }
 
 // ── SessionManagerApi impl ─────────────────────────────────────────
