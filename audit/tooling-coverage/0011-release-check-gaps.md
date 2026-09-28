@@ -8,8 +8,8 @@ is_workaround: false
 subsystem: scripts / release
 evidence:
   - scripts/release-check.sh:1
-status: partial
-resolution: "#3741 — coverage part done: release-check.sh/.cmd now fails on coverage drop (#3741). Still missing: system/integration tests + real bundle build/smoke-test in release-check; TODO/FIXME scan warn-only"
+status: fixed
+resolution: "#3741, #3754 — release-check.sh/.cmd now blocks on coverage ratchet (#3741), green release-candidate/Code Quality/Dev Build runs for HEAD sha via release-integration-gate.mjs, real build.sh bundle + smoke-test, and a blocking TODO/FIXME/HACK scan with reasoned allowlist (#3754). Windows .cmd run pending #3753"
 ---
 
 ## What
