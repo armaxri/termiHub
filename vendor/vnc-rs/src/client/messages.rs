@@ -1,3 +1,4 @@
+use super::ext_clipboard::{self, ExtClipboardError, ExtMsg, MAX_EXT_CLIPBOARD_WIRE_BYTES};
 use crate::{DesktopSizeRequest, PixelFormat, Rect, VncEncoding, VncError};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -42,6 +43,10 @@ pub(super) enum ClientMsg {
     ClientCutText(String),
     /// termiHub fork (#3463): validated by `VncInner::input_message`.
     SetDesktopSize(DesktopSizeRequest),
+    /// termiHub fork (#3472): a complete, pre-encoded extended `ClientCutText`
+    /// (see `ext_clipboard::encode`), so an encoding error reaches the caller
+    /// instead of the connection task.
+    ExtendedClipboard(Vec<u8>),
 }
 
 impl ClientMsg {
@@ -155,6 +160,10 @@ impl ClientMsg {
                 writer.write_all(&payload).await?;
                 Ok(())
             }
+            ClientMsg::ExtendedClipboard(bytes) => {
+                writer.write_all(&bytes).await?;
+                Ok(())
+            }
         }
     }
 }
@@ -172,10 +181,71 @@ pub(super) enum ServerMsg {
     /// A `ServerCutText` over [`MAX_SERVER_CUT_TEXT_BYTES`] was discarded
     /// (termiHub fork, PROD-021); carries the announced length.
     ServerCutTextDropped(u32),
+    /// An extended `ServerCutText` (termiHub fork, #3472).
+    ExtendedClipboard(ExtMsg),
+    /// An extended `ServerCutText` that was consumed but dropped: malformed or
+    /// over a cap (termiHub fork, #3472).
+    ExtendedClipboardDropped(ExtClipboardError),
+}
+
+/// Consume exactly `len` bytes without buffering them; EOF before that is an
+/// error.
+async fn skip_exact<S>(reader: &mut S, len: u64) -> Result<(), VncError>
+where
+    S: AsyncRead + Unpin,
+{
+    let skipped = tokio::io::copy(&mut reader.take(len), &mut tokio::io::sink()).await?;
+    if skipped < len {
+        return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into());
+    }
+    Ok(())
+}
+
+/// Read the `len`-byte payload of an extended `ServerCutText` (termiHub fork,
+/// #3472): capped before buffering, and grown only with bytes that arrived.
+async fn read_extended_cut_text<S>(
+    reader: &mut S,
+    len: u32,
+    wanted: u32,
+) -> Result<ServerMsg, VncError>
+where
+    S: AsyncRead + Unpin,
+{
+    if len > MAX_EXT_CLIPBOARD_WIRE_BYTES {
+        skip_exact(reader, u64::from(len)).await?;
+        return Ok(ServerMsg::ExtendedClipboardDropped(
+            ExtClipboardError::TooLarge(len),
+        ));
+    }
+    let mut payload = Vec::new();
+    reader.take(u64::from(len)).read_to_end(&mut payload).await?;
+    if payload.len() < len as usize {
+        return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into());
+    }
+    Ok(match ext_clipboard::parse(&payload, wanted) {
+        Ok(msg) => ServerMsg::ExtendedClipboard(msg),
+        Err(e) => ServerMsg::ExtendedClipboardDropped(e),
+    })
 }
 
 impl ServerMsg {
+    /// [`Self::read_with`] without the Extended Clipboard.
+    #[cfg(test)]
     pub(super) async fn read<S>(reader: &mut S) -> Result<Self, VncError>
+    where
+        S: AsyncRead + Unpin,
+    {
+        Self::read_with(reader, None).await
+    }
+
+    /// Read one server message. `ext_clipboard` is the format set the client
+    /// handles when it advertised the Extended Clipboard pseudo-encoding
+    /// (termiHub fork, #3472); only then is a negative `ServerCutText` length
+    /// read as the extended form.
+    pub(super) async fn read_with<S>(
+        reader: &mut S,
+        ext_clipboard: Option<u32>,
+    ) -> Result<Self, VncError>
     where
         S: AsyncRead + Unpin,
     {
@@ -244,17 +314,18 @@ impl ServerMsg {
                 let mut padding = [0; 3];
                 reader.read_exact(&mut padding).await?;
                 let len = reader.read_u32().await?;
+                if let Some(wanted) = ext_clipboard {
+                    // termiHub fork (#3472): a negative S32 length is the
+                    // Extended Clipboard form; |length| bytes follow.
+                    let signed = len as i32;
+                    if signed < 0 {
+                        return read_extended_cut_text(reader, signed.unsigned_abs(), wanted).await;
+                    }
+                }
                 if len > MAX_SERVER_CUT_TEXT_BYTES {
                     // Skip the payload without buffering it, so the stream stays
                     // aligned on the next message.
-                    let skipped = tokio::io::copy(
-                        &mut (&mut *reader).take(u64::from(len)),
-                        &mut tokio::io::sink(),
-                    )
-                    .await?;
-                    if skipped < u64::from(len) {
-                        return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into());
-                    }
+                    skip_exact(reader, u64::from(len)).await?;
                     return Ok(Self::ServerCutTextDropped(len));
                 }
                 let mut buffer_str = vec![0; len as usize];
