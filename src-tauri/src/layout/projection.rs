@@ -94,7 +94,7 @@ pub fn publish_layout(
     // multi-group view `{ groups, activeGroupId }` so the frontend renders every
     // tab group (composing the active one). Was the back-compat active-group
     // `{ root, activePanelId }` through slice A/B.
-    match projector.publish(&region, store.snapshot_full(client_id)) {
+    match projector.publish_with(&region, || store.snapshot_full(client_id)) {
         Some(version) => vec![ProducedRegion { region, version }],
         None => Vec::new(),
     }

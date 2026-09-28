@@ -53,8 +53,8 @@ use termihub_core::monitoring::{MonitorStatus, MonitorStatusReason, SystemStats}
 
 use crate::commands::projection::ProjectionState;
 use crate::projection::{
-    compute_ops, optional_str, required_bool, required_str, DiffOp, HandlerRegistry, Intent,
-    ProducedRegion, Projector,
+    compute_ops, optional_str, perf006_divergence, report_perf006_divergence, required_bool,
+    required_str, DiffOp, HandlerRegistry, Intent, ProducedRegion, Projector,
 };
 use crate::system_monitor_projection::store::{MonitorEntry, RegionDelta, SystemMonitorStore};
 
@@ -77,11 +77,45 @@ pub const SYSTEM_MONITORS_REGION: &str = "system-monitors";
 ///
 /// The emitted diff is **byte-identical** to the whole-region diff — see
 /// [`apply_monitor_delta`] for why — so no subscriber can tell the two apart.
+///
+/// # Ordering under concurrent folds (#3788, the #3780 pattern)
+///
+/// Folds and publishes run on several threads at once: the intent dispatcher
+/// (`monitor.*` routes), each session's monitoring collector task
+/// ([`fold_monitor_transition`] from `monitoring_controller`), and the Tauri
+/// monitoring commands (connect / disconnect / pause / interval).
+/// The delta is therefore drained **inside** the region lock, in the same
+/// critical section as the splice and the fan-out. Draining it before taking the
+/// region lock let a racing fold-and-publish splice a *newer* value first, after
+/// which this publish spliced its older, already-drained value over it — leaving
+/// every subscriber stale with nothing left dirty to heal it. Under the region
+/// lock, drains are applied in the order they are taken, so the region always
+/// equals the store as of the latest drain; a fold landing after our drain stays
+/// dirty and is carried by the next publish (its own folder always publishes
+/// after it).
 pub fn publish_monitors(projector: &Projector, store: &SystemMonitorStore) -> Vec<ProducedRegion> {
-    let delta = store.drain_delta();
+    let mut divergence = None;
     let published = projector.publish_delta(SYSTEM_MONITORS_REGION, |view| {
-        apply_monitor_delta(view, &delta, store)
+        // Debug builds also take the whole-region snapshot atomically with the
+        // drain, as the ground truth for the PERF-006 cross-check.
+        let (delta, truth) = if cfg!(debug_assertions) {
+            let (delta, truth) = store.drain_delta_with_snapshot();
+            (delta, Some(truth))
+        } else {
+            (store.drain_delta(), None)
+        };
+        #[cfg(test)]
+        crate::projection::publish_hook::fire_after_drain();
+        let (ops, diverged) =
+            apply_monitor_delta(view, &delta, truth.as_ref(), || store.snapshot());
+        divergence = diverged;
+        ops
     });
+    // Reported only after `publish_delta` returned: the (resynced) frame has
+    // already been fanned out and the region lock released.
+    if let Some(reason) = divergence {
+        report_perf006_divergence(SYSTEM_MONITORS_REGION, &reason);
+    }
     match published {
         Some(version) => vec![ProducedRegion {
             region: SYSTEM_MONITORS_REGION.to_string(),
@@ -93,7 +127,8 @@ pub fn publish_monitors(projector: &Projector, store: &SystemMonitorStore) -> Ve
 
 /// Compute the RFC-6902 ops for a drained [`RegionDelta`] and splice its new
 /// subtrees into the held region `view` in place — the incremental core of
-/// [`publish_monitors`] (PERF-006).
+/// [`publish_monitors`] (PERF-006). Returns the ops to fan out and, if the
+/// cross-check failed, why.
 ///
 /// ## Why the reduced diff is byte-identical to the whole-region diff
 ///
@@ -108,28 +143,36 @@ pub fn publish_monitors(projector: &Projector, store: &SystemMonitorStore) -> Ve
 /// sides so their own ordering (and absence of spurious top-level ops) matches
 /// too.
 ///
-/// Under `debug_assertions` this is cross-checked against a fresh whole-region
-/// diff, so any dirty-tracking miss or ordering drift fails loudly in tests
-/// rather than silently corrupting a subscriber's cache.
+/// ## The cross-check
+///
+/// When `truth` is given (debug builds: the whole-region snapshot taken under
+/// the same store lock as the drain, so it is exactly the state this delta
+/// brings the region to), the incremental result is cross-checked against it:
+/// the ops must equal the whole-region diff and the spliced view must equal
+/// `truth`. Any mismatch is a dirty-tracking / ordering bug. It is reported, and
+/// the publish **resyncs** — the view is replaced by `truth` and the emitted ops
+/// become the whole-region diff — so subscribers stay correct and no frame is
+/// dropped. `snapshot` is only called for the unseeded-view fallback when no
+/// `truth` is at hand.
 fn apply_monitor_delta(
     view: &mut Value,
     delta: &RegionDelta,
-    store: &SystemMonitorStore,
-) -> Vec<DiffOp> {
+    truth: Option<&Value>,
+    snapshot: impl FnOnce() -> Value,
+) -> (Vec<DiffOp>, Option<String>) {
     // Fallback: an unseeded / unexpected view shape (e.g. the region was never
     // seeded with the empty-store baseline) → the original whole-region path,
     // byte-for-byte. Production always seeds the region in `lib.rs::setup()`.
     if !view.get("monitors").is_some_and(Value::is_object)
         || !view.get("statsCache").is_some_and(Value::is_object)
     {
-        let full = store.snapshot();
+        let full = truth.cloned().unwrap_or_else(snapshot);
         let ops = compute_ops(view, &full);
         *view = full;
-        return ops;
+        return (ops, None);
     }
 
-    #[cfg(debug_assertions)]
-    let old_full = view.clone();
+    let old_full = truth.map(|_| view.clone());
 
     let reduced_old = reduced_from_view(view, delta);
     let reduced_new = reduced_from_delta(delta);
@@ -138,24 +181,14 @@ fn apply_monitor_delta(
     splice_subtrees(view, "monitors", &delta.monitors);
     splice_subtrees(view, "statsCache", &delta.stats_cache);
 
-    #[cfg(debug_assertions)]
-    {
-        // Ground truth: the whole-region diff and a fresh full snapshot. The
-        // incremental ops must equal the former, and the spliced view the latter
-        // — either mismatch is a dirty-tracking / ordering bug, not a perf tweak.
-        let fresh = store.snapshot();
-        debug_assert_eq!(
-            ops,
-            compute_ops(&old_full, &fresh),
-            "PERF-006: incremental monitor delta diverged from the whole-region diff"
-        );
-        debug_assert_eq!(
-            *view, fresh,
-            "PERF-006: spliced monitor view diverged from the store snapshot"
-        );
+    if let (Some(truth), Some(old_full)) = (truth, old_full) {
+        if let Some(reason) = perf006_divergence(&ops, &old_full, view, truth) {
+            *view = truth.clone();
+            return (compute_ops(&old_full, truth), Some(reason));
+        }
     }
 
-    ops
+    (ops, None)
 }
 
 /// Build the reduced *old* view: the held `view`'s subtrees for exactly the
@@ -434,3 +467,7 @@ fn optional_reason(intent: &Intent) -> Result<Option<MonitorStatusReason>, (Stri
 #[cfg(test)]
 #[path = "projection_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "projection_race_tests.rs"]
+mod race_tests;

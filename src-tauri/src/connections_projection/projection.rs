@@ -70,7 +70,7 @@ pub const CONNECTIONS_REGION: &str = "connections";
 /// subscriber and returning the advanced region for the intent ack (empty when
 /// the view did not change).
 pub fn publish_connections(projector: &Projector, store: &ConnectionsStore) -> Vec<ProducedRegion> {
-    match projector.publish(CONNECTIONS_REGION, store.snapshot()) {
+    match projector.publish_with(CONNECTIONS_REGION, || store.snapshot()) {
         Some(version) => vec![ProducedRegion {
             region: CONNECTIONS_REGION.to_string(),
             version,
