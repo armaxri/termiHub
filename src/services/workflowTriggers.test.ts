@@ -5,6 +5,13 @@ import {
   dispatchOnConnectTriggers,
   forgetOnConnectSession,
   resetOnConnectDispatchState,
+  armSessionEnd,
+  disconnectCauseMatches,
+  dispatchOnDisconnectTriggers,
+  isSessionEndHandled,
+  matchOnDisconnectWorkflows,
+  resetOnDisconnectDispatchState,
+  sessionEndCauseFromExit,
 } from "@/services/workflowTriggers";
 import type { Workflow, WorkflowTrigger } from "@/types/workflow";
 
@@ -174,5 +181,74 @@ describe("dispatchOnConnectTriggers", () => {
     forgetOnConnectSession("sess-1");
     dispatchOnConnectTriggers(args);
     expect(run).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("on-disconnect triggers (#3791)", () => {
+  beforeEach(() => {
+    resetOnDisconnectDispatchState();
+  });
+
+  const onDisconnect = (
+    connectionIds: string[],
+    when?: "drop" | "user-close" | "any"
+  ): WorkflowTrigger => ({ kind: "on-disconnect", connectionIds, ...(when ? { when } : {}) });
+
+  it("classifies a dropped exit as a drop and a kill or clean exit as a user close", () => {
+    expect(sessionEndCauseFromExit("dropped")).toBe("drop");
+    expect(sessionEndCauseFromExit("killed")).toBe("user-close");
+    expect(sessionEndCauseFromExit("clean")).toBe("user-close");
+  });
+
+  it("defaults to drops only and honours user-close and any", () => {
+    expect(disconnectCauseMatches(undefined, "drop")).toBe(true);
+    expect(disconnectCauseMatches(undefined, "user-close")).toBe(false);
+    expect(disconnectCauseMatches("user-close", "user-close")).toBe(true);
+    expect(disconnectCauseMatches("user-close", "drop")).toBe(false);
+    expect(disconnectCauseMatches("any", "drop")).toBe(true);
+    expect(disconnectCauseMatches("any", "user-close")).toBe(true);
+  });
+
+  it("matches only workflows bound to the connection that accept the cause", () => {
+    const workflows = [
+      makeWorkflow("drops", [onDisconnect(["c1"])]),
+      makeWorkflow("closes", [onDisconnect(["c1"], "user-close")]),
+      makeWorkflow("other", [onDisconnect(["c2"], "any")]),
+      makeWorkflow("connect", [{ kind: "on-connect", connectionIds: ["c1"] }]),
+    ];
+    expect(matchOnDisconnectWorkflows("c1", "drop", workflows).map((w) => w.id)).toEqual(["drops"]);
+    expect(matchOnDisconnectWorkflows("c1", "user-close", workflows).map((w) => w.id)).toEqual([
+      "closes",
+    ]);
+  });
+
+  it("fires once per session end until the tab's next session arms it again", () => {
+    const run = vi.fn();
+    const workflows = [makeWorkflow("a", [onDisconnect(["c1"], "any")])];
+    const dispatch = (cause: "drop" | "user-close") =>
+      dispatchOnDisconnectTriggers({ tabId: "t1", connectionId: "c1", cause, workflows, run });
+
+    expect(dispatch("drop")).toBe(true);
+    expect(isSessionEndHandled("t1")).toBe(true);
+    // Closing the dead tab afterwards is the same end: no second run.
+    expect(dispatch("user-close")).toBe(false);
+    expect(run).toHaveBeenCalledTimes(1);
+
+    armSessionEnd("t1");
+    dispatch("user-close");
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("marks the end handled even when no workflow matches", () => {
+    const run = vi.fn();
+    dispatchOnDisconnectTriggers({
+      tabId: "t2",
+      connectionId: "c1",
+      cause: "user-close",
+      workflows: [makeWorkflow("a", [onDisconnect(["c1"])])],
+      run,
+    });
+    expect(run).not.toHaveBeenCalled();
+    expect(isSessionEndHandled("t2")).toBe(true);
   });
 });

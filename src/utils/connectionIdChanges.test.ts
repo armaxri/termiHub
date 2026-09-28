@@ -136,14 +136,18 @@ describe("draft remappers (#3603)", () => {
     expect(remapWorkspaceTabGroups(groups, none)).toBe(groups);
   });
 
-  it("remapWorkflowTriggers re-points on-connect triggers only", () => {
+  it("remapWorkflowTriggers re-points every connection-bound trigger", () => {
     const triggers: WorkflowTrigger[] = [
       { kind: "manual" },
       { kind: "on-connect", connectionIds: ["a", "c"] },
+      { kind: "on-disconnect", connectionIds: ["a"], when: "any" },
+      { kind: "on-output-match", connectionIds: ["a"], pattern: "x" },
     ];
     expect(remapWorkflowTriggers(triggers, remap)).toEqual([
       { kind: "manual" },
       { kind: "on-connect", connectionIds: ["b", "c"] },
+      { kind: "on-disconnect", connectionIds: ["b"], when: "any" },
+      { kind: "on-output-match", connectionIds: ["b"], pattern: "x" },
     ]);
     expect(remapWorkflowTriggers(triggers, none)).toBe(triggers);
   });
