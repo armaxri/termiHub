@@ -76,6 +76,22 @@ const NEWER_VERSION: &str = "9.9.9";
 /// and the staged update is kept (`run_check_once` in `agent/src/update/mod.rs`).
 const FAILED_APPLY_LOG: &str = "keeping it staged for retry";
 
+/// How long to wait for the self-update pipeline to reach a stage, apply or
+/// failed-apply outcome after the agent starts.
+///
+/// The pipeline downloads the ~100 MB debug agent, hashes it, scans it for its
+/// build version, and on apply re-hashes, re-scans and copies it twice. That is
+/// all CPU- and IO-bound work in an unoptimised build, so its wall time scales
+/// with host load. From the first poll to `staged` alone, measured on macOS
+/// with this suite's agents running in parallel: about 6 s at a load average
+/// near 40, and 25–28 s at a load average near 250. That was most of the old
+/// 30 s budget, so the swap never landed inside it (#3811). This is not a
+/// queue that a longer timeout only postpones, like the first-exec check (see
+/// [`prewarm_first_exec`]). The work is finite and just runs slower, so the
+/// budget has to cover it. A passing run still returns as soon as the outcome
+/// is observed.
+const UPDATE_PIPELINE_TIMEOUT: Duration = Duration::from_secs(120);
+
 // ── Binary + hashing helpers ────────────────────────────────────────────────
 
 /// Path to the freshly built agent binary under test.
@@ -595,12 +611,12 @@ async fn deferred_strategy_auto_applies_on_idle_and_comes_back() {
 
     // The self-apply atomically renames a fresh file over the running binary, so
     // its inode changes — the structural proof the swap happened.
-    let swapped = wait_until(Duration::from_secs(30), || {
+    let swapped = wait_until(UPDATE_PIPELINE_TIMEOUT, || {
         inode(&agent.bin_path).is_some_and(|i| i != bin_inode_before)
     });
     assert!(
         swapped,
-        "agent did not swap its binary on idle within 30s.\n--- agent stderr ---\n{}",
+        "agent did not swap its binary on idle within {UPDATE_PIPELINE_TIMEOUT:?}.\n--- agent stderr ---\n{}",
         agent.stderr()
     );
 
@@ -663,12 +679,12 @@ async fn applied_update_does_not_re_exec_on_the_next_idle() {
     let bin_inode_before = inode(&agent.bin_path).expect("binary present before apply");
 
     // Let the self-apply happen (inode changes on the atomic replace).
-    let swapped = wait_until(Duration::from_secs(30), || {
+    let swapped = wait_until(UPDATE_PIPELINE_TIMEOUT, || {
         inode(&agent.bin_path).is_some_and(|i| i != bin_inode_before)
     });
     assert!(
         swapped,
-        "agent did not swap its binary on idle within 30s.\n--- agent stderr ---\n{}",
+        "agent did not swap its binary on idle within {UPDATE_PIPELINE_TIMEOUT:?}.\n--- agent stderr ---\n{}",
         agent.stderr()
     );
 
@@ -730,7 +746,7 @@ async fn coordinated_strategy_stages_without_applying() {
     let bin_inode_before = inode(&agent.bin_path).expect("binary present");
 
     // Wait until the poll has staged the update into persisted state.
-    let staged = wait_until(Duration::from_secs(30), || {
+    let staged = wait_until(UPDATE_PIPELINE_TIMEOUT, || {
         !agent.state()["update"]["pending_update"].is_null()
     });
     assert!(
@@ -788,7 +804,7 @@ async fn failed_apply_keeps_pending_update() {
     // it touches the install dir. Restoring perms on `pending_update` alone
     // raced that window — a slow (coverage-instrumented) agent reached the swap
     // after the restore, applied for real and re-execed onto a new port.
-    let apply_failed = wait_until(Duration::from_secs(30), || {
+    let apply_failed = wait_until(UPDATE_PIPELINE_TIMEOUT, || {
         agent.stderr().contains(FAILED_APPLY_LOG)
     });
     // Restore write perms so the TempDir can be cleaned up on drop.
