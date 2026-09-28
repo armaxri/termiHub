@@ -9,6 +9,9 @@ import type { JumpHostConfig } from "./generated/JumpHostConfig";
 import type { ExternalFileConfig } from "./generated/ExternalFileConfig";
 import type { ConnectionTypeInfo } from "./generated/ConnectionTypeInfo";
 import type { LayoutConfig } from "./generated/LayoutConfig";
+import type { SerialPortScanPrefix } from "./generated/SerialPortScanPrefix";
+import type { CustomLanguageGrammar } from "./generated/CustomLanguageGrammar";
+import type { UpdateSettings } from "./generated/UpdateSettings";
 import { KeybindingOverrideEntry } from "./keybindings";
 import type { SavedContainerRuntime, SpawnKind } from "./spawn";
 import type { SyntaxHighlightingConfig } from "./syntaxHighlighting";
@@ -224,6 +227,11 @@ export interface PersistentSessionEntry {
 // (`src-tauri/src/connection/settings.rs`) via ts-rs (audit DUP-030, #3088).
 export type { LayoutConfig };
 
+// Settings sub-DTOs generated from `src-tauri/src/connection/settings.rs` via
+// ts-rs (audit DUP-030, #3088). `AppSettings` itself stays hand-written (see
+// the note on it below).
+export type { SerialPortScanPrefix, CustomLanguageGrammar, UpdateSettings };
+
 /** Where the activity bar sits. */
 export type ActivityBarPosition = LayoutConfig["activityBarPosition"];
 /** Which side the sidebar sits on. */
@@ -260,14 +268,6 @@ export const LAYOUT_PRESETS: Record<string, LayoutConfig> = {
     hiddenActivityBarViews: [],
   },
 };
-
-/** A Linux `/dev` prefix entry for the serial port scanner. */
-export interface SerialPortScanPrefix {
-  prefix: string;
-  enabled: boolean;
-  /** `true` = shipped with termiHub; `false` = user-added. */
-  builtIn: boolean;
-}
 
 /** Windows context-menu visibility for a shell-integration entry. */
 export type ShellEntryVisibility = "always" | "extended";
@@ -393,6 +393,10 @@ export interface ShellIntegrationStatus {
   detectedFileManagers: DetectedFileManager[];
 }
 
+// `AppSettings` stays hand-written (DUP-030, #3088): the Rust struct keeps
+// `broadcastGroups`, `terminalCommandDecorations` and `terminalInlineImages` in a
+// flattened catch-all map, types several unions as plain `String`, and makes the
+// default-`true` flags required, so it is not a structural mirror of this type.
 export interface AppSettings {
   version: string;
   externalConnectionFiles: ExternalFileConfig[];
@@ -646,26 +650,6 @@ export interface AppSettings {
    * step is unauthorized until the user confirms it interactively.
    */
   workflowLocalProcessAllowlist?: string[];
-}
-
-/**
- * A user-imported TextMate grammar definition.
- * The `grammar` field is the parsed `.tmLanguage.json` content stored verbatim.
- */
-export interface CustomLanguageGrammar {
-  /** Monaco / Shiki language ID used in file-type mappings (e.g. `"my-lang"`). */
-  id: string;
-  /** Human-readable display name shown in the language picker. */
-  name: string;
-  /** The raw TextMate grammar object (contents of the `.tmLanguage.json` file). */
-  grammar: Record<string, unknown>;
-}
-
-/** Persisted update-checker configuration returned from the backend. */
-export interface UpdateSettings {
-  autoCheck: boolean;
-  lastCheckTime?: string;
-  skippedVersion?: string;
 }
 
 /** Result of an update check returned from the backend. */

@@ -30,6 +30,8 @@ pub struct ExternalFileConfig {
 /// Built-in entries (`built_in: true`) can be toggled but not deleted.
 /// User-added entries (`built_in: false`) can also be deleted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct SerialPortScanPrefix {
     pub prefix: String,
@@ -52,6 +54,8 @@ pub fn default_serial_port_scan_prefixes() -> Vec<SerialPortScanPrefix> {
 
 /// A user-customized keybinding override entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct KeybindingOverrideEntry {
     pub action: String,
     pub key: String,
@@ -59,6 +63,8 @@ pub struct KeybindingOverrideEntry {
 
 /// A user-imported custom TextMate grammar for Monaco syntax highlighting.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct CustomLanguageGrammar {
     /// Monaco language ID (e.g. "my-lang").
@@ -66,6 +72,7 @@ pub struct CustomLanguageGrammar {
     /// Display name shown in the language picker.
     pub name: String,
     /// Full TextMate grammar JSON (stored inline so the original file is not needed).
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
     pub grammar: serde_json::Value,
 }
 
@@ -115,6 +122,8 @@ pub struct LayoutConfig {
 
 /// Persisted state for the update checker.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(default, rename_all = "camelCase")]
 pub struct UpdateSettings {
     /// Whether to automatically check for updates on startup and every 24 hours.
@@ -122,10 +131,12 @@ pub struct UpdateSettings {
     pub auto_check: bool,
     /// ISO 8601 timestamp of the last completed update check.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub last_check_time: Option<String>,
     /// Version string the user chose to skip (e.g. `"0.2.0"`). Cleared when a
     /// newer version is released or the user manually clears it.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub skipped_version: Option<String>,
 }
 
