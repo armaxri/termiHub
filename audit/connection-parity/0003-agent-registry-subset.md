@@ -10,8 +10,8 @@ evidence:
   - agent/src/registry.rs:14
   - src-tauri/src/session/registry.rs:14
   - src-tauri/src/session/remote_proxy.rs:70
-status: partial
-resolution: "#3243, #3749 — FTP on agent (#3243); desktop-vs-agent per-type support matrix documented in README (#3749). Remaining: graphical (VNC/RDP) over agent #3241; plugin types not loaded by agent"
+status: fixed
+resolution: "#3243, #3749, #3805 — FTP on agent (#3243); per-type matrix documented (#3749); VNC/RDP on agent-hosted connections via tunnel through the agent (agent.forward.connect, desktop runs the graphical backend over a loopback forward; maintainer decision) live-verified (#3805). Plugin connection types remain desktop-only (agent loads no plugins), documented"
 ---
 
 ## What

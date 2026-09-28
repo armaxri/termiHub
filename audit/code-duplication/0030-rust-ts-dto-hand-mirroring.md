@@ -12,7 +12,7 @@ evidence:
   - src/types/embeddedServer.ts:2
   - src/services/api.ts:1197
 status: partial
-resolution: "#3087, #3775 — ts-rs codegen adopted; clusters merged #3087/#3096/#3104/#3110/#3259/#3261 + TerminalOptions/SavedConnection, JumpHost + ssh-config import, connection leaf DTOs, hand-rolled drift guard removed (#3775). Remaining clusters listed in #3088/#3775 (tree-node design decision, protocol DTOs, graphical/event payloads)"
+resolution: "#3087, #3775, #3798, #3804 — ts-rs codegen across connection/config/import/tunnel/network/scheduler/events/clipboard/transfers/embedded-servers/workflows/monitoring/plugins/schema/layout clusters; DUP-008 tree-node resolved. Remaining: AppSettings (#3802), AgentCapabilities, network.ts DTOs; intentional exceptions documented"
 ---
 
 ## What
