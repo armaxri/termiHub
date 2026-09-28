@@ -20,6 +20,13 @@ name: "Release Candidate: Full Integration"
 #
 #   gh workflow run release-candidate.yml --ref main       # or --ref vX.Y.Z
 #
+# ADVISORY coverage summary (#3658, TOOL-005): the fixtures lane runs instrumented
+# here (measure_coverage), and the "Release coverage summary" job merges its lcov
+# with the unit lcov of the Coverage run on the same commit. The job summary then
+# shows the unified coverage and the integration gap for the exact commit. That
+# job is continue-on-error and nothing needs it, so it can never red this run or
+# the release gate.
+#
 # See docs/contributing.md -> "Release integration gate".
 
 on:
@@ -46,3 +53,55 @@ jobs:
   integration-fixtures:
     name: Integration fixtures
     uses: ./.github/workflows/integration-fixtures.yml
+    with:
+      measure_coverage: true
+
+  # Advisory (#3658): never blocks. Runs after the fixtures lane whatever its
+  # result (a failed suite still measured what ran), and job-level
+  # continue-on-error keeps any failure here out of the run's conclusion, which
+  # the release gate reads.
+  coverage-summary:
+    name: Release coverage summary (advisory)
+    needs: [integration-fixtures]
+    if: ${{ !cancelled() }}
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Reads the Coverage run's artifact for this commit via the Actions API.
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Download this run's integration coverage
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: integration-coverage
+          path: coverage-integration
+
+      # node is preinstalled on the runner. Always exits 0 (see the script).
+      - name: Summarize unified + integration coverage
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node scripts/internal/release-coverage-summary.mjs
+          --repo "${{ github.repository }}"
+          --sha "${{ github.sha }}"
+          --ref "${{ github.ref_name }}"
+          --integration-lcov coverage-integration/integration.lcov
+          --out-dir coverage-release
+
+      - name: Upload release coverage artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-coverage
+          path: |
+            coverage-release/release-coverage.md
+            coverage-release/integration-gap.md
+            coverage-release/merged.lcov
+          if-no-files-found: warn
