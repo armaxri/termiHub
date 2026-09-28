@@ -42,6 +42,7 @@ import {
   attachPersistentTab as apiAttachPersistentTab,
   adoptPersistentSession as apiAdoptPersistentSession,
   closeTerminal as apiCloseTerminal,
+  reclaimSession as apiReclaimSession,
   detachPersistentTab as apiDetachPersistentTab,
   listSerialPorts,
   openWindow,
@@ -869,7 +870,18 @@ export interface AppState
   // Per-tab terminal connect state (spawn errors + kinds, retry counters, connect
   // deadlines, auto-retry, waiting-for-agent) and the session-disconnect / reconnect
   // actions provided by TerminalSessionStateSlice (ARCH-001/FES-011, extracted under
-  // #2077 via #2881). The restore-cohort actions below stay here.
+  // #2077 via #2881). The restore-cohort actions and `reclaimSession` (pinned here by
+  // the takeover audit, #3395) stay below.
+
+  /**
+   * Explicitly **reclaim** a tab whose session another desktop/window took over
+   * (SM-003, single-attach): the one user action that leaves the sticky `evicted`
+   * state. Performs a takeover attach (evicting the other side); the backend folds
+   * the region `evicted → connected`. On failure the tab stays evicted and an
+   * error toast explains why — nothing retries automatically. Resolves `true` on
+   * success.
+   */
+  reclaimSession: (tabId: string) => Promise<boolean>;
 
   /**
    * Register the cohort of tabs placed by a restore/launch (#1146, audit G4).
@@ -4763,7 +4775,19 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     // Per-tab terminal connect state and the session-disconnect / reconnect actions
     // provided by createTerminalSessionStateSlice (ARCH-001/FES-011, extracted under
-    // #2077 via #2881).
+    // #2077 via #2881). `reclaimSession` stays here: the takeover audit (#3395) pins
+    // the only takeover-attach call site to this file.
+
+    reclaimSession: async (tabId) => {
+      try {
+        await apiReclaimSession(tabId);
+        return true;
+      } catch (err) {
+        frontendLog("app_store", `Failed to reclaim session for ${tabId}: ${errorMessage(err)}`);
+        toast.error(`Could not reclaim the session: ${errorMessage(err)}`);
+        return false;
+      }
+    },
 
     // Aggregate partial-restore feedback (#1146, audit G4) + bulk retry (#1227,
     // M2). Region-authoritative (#2206): the `restore-cohort@<clientId>` store

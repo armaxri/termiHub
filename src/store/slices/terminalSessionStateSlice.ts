@@ -12,7 +12,6 @@ import {
 import type { TerminalExitInfo } from "@/types/terminal";
 import {
   closeTerminal as apiCloseTerminal,
-  reclaimSession as apiReclaimSession,
   detachPersistentTab as apiDetachPersistentTab,
 } from "@/services/api";
 import { notifyWorkflowSessionExited } from "../workflowSessionTriggers";
@@ -23,14 +22,12 @@ import {
 } from "@/utils/connectTimeout";
 import type { ConnectionErrorKind } from "@/utils/connectionErrorHints";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
-import { toast } from "@/components/ui";
 import {
   currentSessionView,
   mirrorSessionExited,
   mirrorSessionIntent,
 } from "@/store/sessionBridge";
 import { currentMonitorsView } from "@/store/systemMonitorBridge";
-import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * A per-tab wall-clock deadline for a timed pre-connect state. Stored so the
@@ -62,7 +59,7 @@ function armConnectDeadline(
  * their typed kinds (I18N-009 / #3752), retry counters, connect deadlines (#1263),
  * auto-retry counts and waiting-for-agent parking — plus the session-disconnect /
  * reconnect actions (exit folding, intentional kills, view mode, reattach,
- * reconnect prompt, give-up / session-lost settling, reclaim, fresh shell). The
+ * reconnect prompt, give-up / session-lost settling, fresh shell). The
  * exited / exit-info / disconnect-error view-state itself lives in the shared
  * `session-lifecycle` region (#2625); these actions mirror `session.*` intents.
  *
@@ -72,7 +69,9 @@ function armConnectDeadline(
  * unchanged. The tab-open seeding and close-tab cleanup of these maps stay in the
  * root store (tabs/layout domain), as do the restore-cohort actions
  * (`beginRestoreCohort` / `settleRestoreTab` / `reconnectFailedRestoreTabs`), which
- * these actions call through `get()`.
+ * these actions call through `get()`. `reclaimSession` also stays in the root store:
+ * the takeover audit (#3395) pins the only takeover-attach call site to
+ * `appStore.ts`.
  */
 export interface TerminalSessionStateSlice {
   // Per-tab terminal spawn errors (runtime-only, cleared on retry or tab close)
@@ -174,16 +173,6 @@ export interface TerminalSessionStateSlice {
    * does NOT re-mirror any `session.*` intent (the backend already folded it).
    */
   settleSessionLost: (tabId: string) => void;
-
-  /**
-   * Explicitly **reclaim** a tab whose session another desktop/window took over
-   * (SM-003, single-attach): the one user action that leaves the sticky `evicted`
-   * state. Performs a takeover attach (evicting the other side); the backend folds
-   * the region `evicted → connected`. On failure the tab stays evicted and an
-   * error toast explains why — nothing retries automatically. Resolves `true` on
-   * success.
-   */
-  reclaimSession: (tabId: string) => Promise<boolean>;
 
   /**
    * Start a fresh shell for a tab from the session-lost notice (#2512): arm the
@@ -464,17 +453,6 @@ export const createTerminalSessionStateSlice: StateCreator<
     const deadKey = monitorKeyForTab(collectLiveTabs(get()).find((t) => t.id === tabId));
     if (deadKey && currentMonitorsView().monitors[deadKey]) {
       get().disconnectMonitoring(deadKey);
-    }
-  },
-
-  reclaimSession: async (tabId) => {
-    try {
-      await apiReclaimSession(tabId);
-      return true;
-    } catch (err) {
-      frontendLog("app_store", `Failed to reclaim session for ${tabId}: ${errorMessage(err)}`);
-      toast.error(`Could not reclaim the session: ${errorMessage(err)}`);
-      return false;
     }
   },
 
