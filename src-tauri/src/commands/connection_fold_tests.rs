@@ -120,7 +120,7 @@ fn harness() -> Harness {
         projection.projector.register_region(region, snapshot);
         projection
             .projector
-            .subscribe(region, &format!("sub-{region}"), "C", sink.clone());
+            .subscribe(region, format!("sub-{region}"), "C", sink.clone());
     }
     app.manage(projection);
 
