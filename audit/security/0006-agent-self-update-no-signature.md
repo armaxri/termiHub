@@ -10,8 +10,8 @@ evidence:
   - agent/src/update/download.rs:1
   - agent/src/update/download.rs:47
   - agent/src/update/download.rs:75
-status: partial
-resolution: "#3331 — signature check done; matched-downgrade + update-RPC token auth decided 2026-09-26, tracked #3213 part 2"
+status: fixed
+resolution: "#3331, #3746 — signature verification (#3331); matched-downgrade only (pinnedVersion == desktop version == embedded binary version, else -32027) + instance token on update RPCs (#3746)"
 ---
 
 ## What
