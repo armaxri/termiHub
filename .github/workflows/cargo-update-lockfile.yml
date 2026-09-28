@@ -19,6 +19,14 @@ name: Cargo Update Lockfile
 # fast manual fix path for anything that still slips through is documented in
 # docs/ci-yanked-crate-runbook.md.
 #
+# Gate before merge (#3755, CI-012): the refreshed lockfile is run through the
+# same cargo-deny gate Security Audit uses (advisories incl. yanked, bans,
+# licenses, sources). If it FAILS, the PR is still opened/updated so the change
+# and its failure are visible in one place, but as a DRAFT with the cargo-deny
+# output in its body, with auto-merge off — and the job itself then fails, so
+# the scheduled run goes red instead of silently proposing a lockfile that reds
+# the gate. When a later run passes, the PR is marked ready again.
+#
 # Daily (not weekly) because an advisory or yank is published upstream at an
 # arbitrary time: a weekly cadence left every open PR's Security Audit red for
 # up to a week before the refresh landed. Daily shrinks that window to ~a day.
@@ -62,9 +70,9 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       # Prebuilt binary download (~seconds) instead of compiling from source,
-      # matching the Security Audit job. Used only for the advisory sanity
-      # check below, so the opened PR is unlikely to red the very gate this
-      # chore exists to keep green.
+      # matching the Security Audit job. Used for the pre-PR gate below, so the
+      # opened PR never silently reds the very gate this chore exists to keep
+      # green.
       - name: Install cargo-deny
         uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
         with:
@@ -93,17 +101,33 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # Non-blocking sanity check: confirm the refreshed lockfile still passes
-      # the yanked/advisory gate. Advisory only — a failure here is surfaced in
-      # the log/summary but never blocks opening the PR (the lockfile change is
-      # still worth landing, and per-PR CI is the authoritative gate).
-      - name: Sanity-check advisories (non-blocking)
+      # Pre-PR gate: the refreshed lockfile must pass the same cargo-deny check
+      # Security Audit runs. No continue-on-error — the outcome is captured as an
+      # output instead, so the next step can open the PR as a draft carrying the
+      # failure, and the final step fails the job (#3755, CI-012).
+      - name: Check refreshed lockfile against the cargo-deny gate
+        id: gate
         if: steps.diff.outputs.changed == 'true'
-        continue-on-error: true
-        run: cargo deny check advisories
+        run: |
+          set +e
+          cargo deny --color never check advisories bans licenses sources \
+            > "$RUNNER_TEMP/cargo-deny.log" 2>&1
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/cargo-deny.log"
+          if [ "$rc" -eq 0 ]; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+            echo "::error::The refreshed Cargo.lock fails cargo deny (exit $rc); PR opened as draft."
+          fi
 
       - name: Open or update pull request
         if: steps.diff.outputs.changed == 'true'
+        env:
+          GATE_PASSED: ${{ steps.gate.outputs.passed }}
+          GATE_LOG: ${{ runner.temp }}/cargo-deny.log
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -143,15 +167,50 @@ jobs:
           EOF
           )
 
+          # Gate failed: say so at the top of the body, with the cargo-deny
+          # output (last 80 lines; the body limit is 65k chars), so a reviewer
+          # sees why the PR is a draft without opening the run.
+          if [ "$GATE_PASSED" != "true" ]; then
+            BODY="$(
+              printf '%s\n' '> [!WARNING]'
+              printf '%s\n' '> **This lockfile fails the cargo-deny gate** (yanked crate, advisory,'
+              printf '%s\n\n' '> ban, license or source), so this PR is a draft with auto-merge off.'
+              printf '%s\n\n' 'Run: '"$RUN_URL"
+              printf '%s\n' '<details><summary>cargo deny output (last 80 lines)</summary>'
+              printf '\n%s\n' '```'
+              tail -n 80 "$GATE_LOG" 2>/dev/null || echo "(no cargo-deny log captured)"
+              printf '%s\n\n%s\n\n' '```' '</details>'
+              printf '%s\n' "$BODY"
+            )"
+          fi
+
           if gh pr view "$UPDATE_BRANCH" --json state --jq '.state' 2>/dev/null | grep -q OPEN; then
             echo "PR already open for $UPDATE_BRANCH; branch updated in place."
+            gh pr edit "$UPDATE_BRANCH" --body "$BODY"
+            if [ "$GATE_PASSED" = "true" ]; then
+              gh pr ready "$UPDATE_BRANCH" 2>/dev/null || true
+            else
+              gh pr ready "$UPDATE_BRANCH" --undo 2>/dev/null || true
+            fi
           else
+            DRAFT_FLAG=()
+            if [ "$GATE_PASSED" != "true" ]; then DRAFT_FLAG=(--draft); fi
             gh pr create \
               --base develop \
               --head "$UPDATE_BRANCH" \
               --title "chore(deps): update cargo lockfile" \
               --label automation \
+              ${DRAFT_FLAG[@]+"${DRAFT_FLAG[@]}"} \
               --body "$BODY"
+          fi
+
+          # Never queue a gate-failing lockfile for auto-merge; drop any auto-merge
+          # a previous passing run enabled.
+          if [ "$GATE_PASSED" != "true" ]; then
+            gh pr merge "$UPDATE_BRANCH" --disable-auto 2>/dev/null || true
+            echo "Draft PR: the refreshed lockfile fails cargo deny; auto-merge left off." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
 
           # Best-effort hands-off merge: enable auto-merge so the PR lands by
@@ -170,3 +229,12 @@ jobs:
               "The PR is labelled \`automation\` and waits for a human merge." \
               >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      # Visible failure: the PR above is a draft, but the run must go red too so
+      # the failed scheduled run is noticed (#3755, CI-012).
+      - name: Fail when the refreshed lockfile fails the gate
+        if: steps.diff.outputs.changed == 'true' && steps.gate.outputs.passed != 'true'
+        run: |
+          echo "::error::The refreshed Cargo.lock fails cargo deny; see the draft PR and the gate step."
+          echo "Fix path: docs/ci-yanked-crate-runbook.md"
+          exit 1
