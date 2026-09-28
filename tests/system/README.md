@@ -159,9 +159,22 @@ The **"Features with no coverage"** section flags entries in the generator's
 curated `FEATURE_AREAS` map that have **no** automated and **no** manual test —
 that map is the source of truth for _"what features do we track"_, so add a row
 there when you add a feature. A **"Categories not mapped to a feature area"**
-section guards against the map drifting behind new suites. The report also runs
-as an advisory, **non-blocking** CI step (it never fails the build on a gap).
-Grouping/gap logic is unit-tested in `tests/test_test_inventory.py`.
+section guards against the map drifting behind new suites.
+
+CI runs the report on every harness change and **ratchets** it (#3755): the
+committed [`test-inventory-baseline.json`](test-inventory-baseline.json) lists
+today's gaps (areas the per-PR gate does not exercise, and areas with no test at
+all), and the step fails when a **new** area joins either list. Existing gaps are
+grandfathered, so only a regression fails:
+
+```sh
+python scripts/build-test-inventory.py --check-baseline    # the CI gate
+python scripts/build-test-inventory.py --update-baseline   # drop gaps you closed
+```
+
+`--update-baseline` only removes gaps; it never adds one. If a new gap is
+deliberate, add it to the baseline by hand in the same PR so the reviewer sees
+it. Grouping/gap/ratchet logic is unit-tested in `tests/test_test_inventory.py`.
 
 ## Setup (manual, if you prefer)
 

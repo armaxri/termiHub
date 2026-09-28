@@ -415,6 +415,8 @@ jobs:
       # unused-file/-export findings are a separate future cleanup effort, not
       # this step's job; the step only surfaces them in the run log.
       - name: Unused-code report (knip, advisory)
+        # advisory: unused-code findings are not defects, and #3158 says keep it
+        # non-blocking. Forcing function: the #3158 cleanup tracker.
         continue-on-error: true
         run: pnpm knip || true
 
@@ -434,6 +436,8 @@ jobs:
     name: Bundle Size (advisory)
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request'
+    # advisory: a size trend, not a correctness gate. Forcing function: none yet;
+    # #3757 tracks making an over-budget bundle red the post-merge run.
     continue-on-error: true
 
     steps:
@@ -450,14 +454,17 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
+        # advisory: install failures are gated by the real build/test lanes.
         continue-on-error: true
         run: pnpm install --frozen-lockfile
 
       - name: Build frontend
+        # advisory: build failures are gated by the real build/test lanes.
         continue-on-error: true
         run: pnpm build
 
       - name: Report bundle size (advisory)
+        # advisory: see the job comment; #3757 adds the forcing function.
         continue-on-error: true
         run: pnpm size >> "$GITHUB_STEP_SUMMARY"
 
@@ -829,15 +836,17 @@ jobs:
       - name: Run machinery suite
         run: ./tests/system/pytest.sh -m "not integration" -q
 
-      # Optional, non-blocking test-inventory + coverage-gap report (#1950). It
-      # statically introspects the harness (stdlib-only, no app build) and lists
-      # feature areas with zero automated/manual coverage. `continue-on-error`
-      # keeps it advisory: a coverage gap is surfaced in the step summary, never
-      # a failed build.
-      - name: Test inventory + coverage-gap report (advisory)
-        continue-on-error: true
+      # Test inventory + coverage-gap report (#1950) and its ratchet (#3755,
+      # CI-012). It statically introspects the harness (stdlib-only, no app build)
+      # and writes the report to the step summary, then fails when a feature area
+      # becomes a NEW gap (no per-PR test, or no test at all) that the committed
+      # tests/system/test-inventory-baseline.json does not already list. Blocking:
+      # existing gaps are grandfathered by the baseline, so only a regression reds.
+      # Lock in a closed gap: python3 scripts/build-test-inventory.py --update-baseline
+      - name: Test inventory + coverage-gap ratchet
         run: |
           python3 scripts/build-test-inventory.py --stdout >> "$GITHUB_STEP_SUMMARY"
+          python3 scripts/build-test-inventory.py --check-baseline
 
   # Static data-testid drift guard (TIN-012). The Python bridge harness
   # (tests/system/) drives the app by data-testid selectors; when a component's
