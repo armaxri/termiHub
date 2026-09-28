@@ -151,6 +151,24 @@ describe("formatReport", () => {
     expect(text).toContain("gh workflow run release-candidate.yml --repo o/r --ref v1.2.3");
     expect(text).toContain("gh run rerun 99 --repo o/r --failed");
   });
+
+  it("in local mode (release-check), prints FAIL lines and a local re-run step", () => {
+    const verdict = evaluateGate({
+      sha: SHA,
+      runsByWorkflow: { ...GREEN, "release-candidate.yml": [] },
+    });
+    const text = formatReport(verdict, {
+      sha: SHA,
+      repo: "o/r",
+      refName: "main",
+      local: true,
+    }).join("\n");
+    expect(text).not.toContain("::error::");
+    expect(text).toMatch(/FAIL: Release Candidate.*no workflow_dispatch run on this commit/);
+    expect(text).toContain("gh workflow run release-candidate.yml --repo o/r --ref main");
+    expect(text).toContain("re-run scripts/release-check");
+    expect(text).not.toContain("this release's failed jobs");
+  });
 });
 
 /** A fake `fetch` answering per-workflow from a table, recording the URLs. */
@@ -260,5 +278,15 @@ describe("runGate", () => {
     expect(text).toContain("### Release integration gate");
     expect(text).toContain("FAIL: Code Quality");
     expect(text).not.toContain("::error::");
+  });
+
+  it("switches to local output with RELEASE_GATE_LOCAL=1", async () => {
+    const { code, log } = await gate(
+      { ...baseEnv, RELEASE_GATE_LOCAL: "1" },
+      { ...GREEN, "dev-build.yml": [] }
+    );
+    expect(code).toBe(1);
+    expect(log).toMatch(/FAIL: Dev Build/);
+    expect(log).not.toContain("::error::");
   });
 });

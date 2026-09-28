@@ -555,6 +555,10 @@ Run the release checklist script (from Phase 0):
 ./scripts/release-check.sh
 ```
 
+It also requires green CI integration lanes for the release commit, blocks on
+un-allowlisted TODO/FIXME/HACK markers, and builds and smoke-tests the real bundle (#3750).
+See [What release-check gates on](contributing.md#what-release-check-gates-on).
+
 Or manually verify:
 
 - [ ] All automated tests pass on Mac, Linux, Windows

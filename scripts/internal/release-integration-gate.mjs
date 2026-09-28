@@ -15,6 +15,10 @@
 // Release Candidate workflow (dispatched on the release ref, grading github.sha)
 // and the post-merge Code Quality / Dev Build push runs are keyed to the exact commit.
 //
+// scripts/release-check.sh / .cmd run the same gate from a workstation before the
+// tag is pushed (RELEASE_GATE_LOCAL=1, token from `gh auth token`, #3750), so the
+// maintainer learns about a missing or red lane before tagging, not after.
+//
 // The logic lives here (not inline in release.yml) so it can be unit-tested — see
 // release-integration-gate.test.mjs.
 
@@ -105,10 +109,15 @@ export function evaluateGate({ sha, runsByWorkflow, required = REQUIRED_WORKFLOW
  * unmet requirement) plus remediation instructions.
  *
  * @param {ReturnType<typeof evaluateGate>} verdict
- * @param {{ sha: string, repo: string, refName?: string, runUrl?: string, runId?: string }} ctx
+ * `local` is the workstation mode scripts/release-check.sh / .cmd use (#3750): plain
+ * `FAIL:` lines instead of GitHub annotations, and "re-run release-check" instead of
+ * "re-run this release's failed jobs".
+ *
+ * @param {{ sha: string, repo: string, refName?: string, runUrl?: string, runId?: string,
+ *   local?: boolean }} ctx
  * @returns {string[]}
  */
-export function formatReport(verdict, { sha, repo, refName, runUrl, runId }) {
+export function formatReport(verdict, { sha, repo, refName, runUrl, runId, local = false }) {
   const lines = [`Release integration gate for ${refName ? `${refName} @ ` : ""}${sha}`];
   for (const { requirement, state, run } of verdict.results) {
     const where = run?.html_url ? ` — ${run.html_url}` : "";
@@ -121,7 +130,7 @@ export function formatReport(verdict, { sha, repo, refName, runUrl, runId }) {
             ? `newest run is still ${run?.status ?? "running"}`
             : `newest run concluded ${run?.conclusion ?? "unknown"}`;
     const line = `${requirement.name} (${requirement.file}): ${detail}${where}`;
-    lines.push(state === "ok" ? `  ok: ${line}` : `::error::${line}`);
+    lines.push(state === "ok" ? `  ok: ${line}` : `${local ? "FAIL: " : "::error::"}${line}`);
   }
   if (verdict.ok) {
     lines.push("All required integration lanes are green on the release commit.");
@@ -141,9 +150,11 @@ export function formatReport(verdict, { sha, repo, refName, runUrl, runId }) {
     `       gh run rerun <dev-build run id> --repo ${repo}`,
     "     a failed one is a broken full build: fix it and re-tag)",
     "  2. Wait for it to finish green; fix and re-tag on a red lane (do not bypass).",
-    runId
-      ? `  3. Re-run this release's failed jobs: gh run rerun ${runId} --repo ${repo} --failed`
-      : "  3. Re-run this release's failed jobs from the Actions tab."
+    local
+      ? "  3. Then re-run scripts/release-check.sh (or scripts\\release-check.cmd)."
+      : runId
+        ? `  3. Re-run this release's failed jobs: gh run rerun ${runId} --repo ${repo} --failed`
+        : "  3. Re-run this release's failed jobs from the Actions tab."
   );
   if (runUrl) {
     lines.push(`     (${runUrl})`);
@@ -226,7 +237,15 @@ export async function runGate({ env, fetchImpl = fetch, log = console.log }) {
   const runId = env.GITHUB_RUN_ID;
   const runUrl =
     runId && env.GITHUB_SERVER_URL ? `${env.GITHUB_SERVER_URL}/${repo}/actions/runs/${runId}` : "";
-  const lines = formatReport(verdict, { sha, repo, refName: env.RELEASE_REF_NAME, runUrl, runId });
+  const local = env.RELEASE_GATE_LOCAL === "1";
+  const lines = formatReport(verdict, {
+    sha,
+    repo,
+    refName: env.RELEASE_REF_NAME,
+    runUrl,
+    runId,
+    local,
+  });
   for (const line of lines) {
     log(line);
   }

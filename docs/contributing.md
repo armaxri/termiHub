@@ -1196,6 +1196,9 @@ Before creating a release, run the quality scripts and verify:
 ```
 
 - [ ] All scripts pass without errors
+- [ ] `./scripts/release-check.sh` (Windows: `scripts\release-check.cmd`) reports
+      **READY** on the exact commit you will tag, on `main` or `release/*` (see
+      [What release-check gates on](#what-release-check-gates-on))
 - [ ] **Right after opening the release PR into `main`** (before it has to go green), a
       repository admin applies `main`'s pending required checks, if
       `.github/branch-protection.json` still has a `branches.main.pending` block:
@@ -1215,6 +1218,31 @@ Before creating a release, run the quality scripts and verify:
 - [ ] No open `supply-chain` issue from the [vendored-fork drift job](supply-chain.md#vendored-forks):
       upstream fixes and advisories for `vnc-rs` and `ironrdp-rdpsnd` were ported or acknowledged
       (run the **Vendored Forks** workflow manually first for a fresh result)
+
+#### What release-check gates on
+
+A full run (no flags) of `release-check.sh` / `release-check.cmd` is slow: it runs the
+unit tests, coverage and a production build. Every check below is blocking unless marked as
+a warning:
+
+| Check                         | What it requires                                                                                                                                                                                                                                                                                                               |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Versions                      | All five version files agree and the Tauri npm packages match their Rust crates (`--versions-only` runs just this)                                                                                                                                                                                                             |
+| Changelog                     | A dated `## [X.Y.Z] - YYYY-MM-DD` section; stale `[Unreleased]` items and leftover `docs/changes/` fragments are warnings                                                                                                                                                                                                      |
+| Unit tests, coverage, quality | `pnpm test`, `cargo test --workspace`, the [coverage ratchet](testing.md#coverage-ratchet) and `scripts/check.sh`                                                                                                                                                                                                              |
+| Git state                     | A clean tree on `main` or `release/*`                                                                                                                                                                                                                                                                                          |
+| Integration / system tests    | The [release integration gate](#release-integration-gate), run locally: green Release Candidate, Code Quality and Dev Build runs on `HEAD`. Needs `gh`, logged in, and `HEAD` pushed. On failure it prints the exact `gh workflow run release-candidate.yml --ref …` command                                                   |
+| TODO/FIXME/HACK markers       | No comment marker in shipped source (`src`, `src-tauri/src`, `core/src`, `agent/src`, `plugin-api/src`, `rdp-sidecar/src`) unless it is listed, with a reason, in [`scripts/release-marker-allowlist.json`](../scripts/release-marker-allowlist.json). An allowlist entry that no longer matches any marker also fails         |
+| Bundle build + smoke test     | `scripts/build.sh` (`build.cmd`) builds the real installer, which must exist, and `scripts/smoke-test.sh` (`smoke-test.cmd`) launches the built app from it. Needs a desktop session (headless Linux uses `xvfb-run` if installed), and no other termiHub instance may be running, because the smoke test refuses to share one |
+
+**Why integration tests are checked in CI, not run locally.** The integration lanes need
+the Docker fixtures, a real display and a quiet machine. On macOS the container VMs pin the
+CPU and stall the WKWebView, so a local run is flaky and would make the release gate flaky
+too. The Release Candidate run covers all three platforms on one exact commit, and the
+Release workflow enforces the same gate at tag time. release-check reuses
+[`release-integration-gate.mjs`](../scripts/internal/release-integration-gate.mjs), so the
+two cannot disagree. Running release-check first means you learn about a missing or red
+lane before you tag, not after.
 
 ### Version Bump
 
@@ -1352,6 +1380,9 @@ exists), dispatch the candidate run on it and wait for it to go green:
 gh workflow run release-candidate.yml --ref main
 gh run watch "$(gh run list --workflow=release-candidate.yml --limit 1 --json databaseId -q '.[0].databaseId')"
 ```
+
+`./scripts/release-check.sh` runs this same gate against your checkout's `HEAD`
+(`RELEASE_GATE_LOCAL=1`) and prints the dispatch command when a run is missing.
 
 If you pushed the tag first, the release fails at **Verify Integration Lanes** with the
 exact commands to run: dispatch the candidate on the tag
