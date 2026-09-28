@@ -9,8 +9,8 @@ subsystem: src-tauri/src/macros
 evidence:
   - src-tauri/src/macros/config.rs:22
   - src-tauri/src/workflows/config.rs:74
-status: partial
-resolution: "#3181, #3749 — manual/on-connect/hotkey triggers + Schedules feature; 0.1 trigger scope documented in README (#3749). Remaining: on-disconnect / on-output-match triggers not built"
+status: fixed
+resolution: "#3181, #3749, #3793 — workflow triggers: manual/on-connect/hotkey (#3181) + on-disconnect (drop/user-close/any) and on-output-match (bounded batched matcher off the render path, validated regex, cooldown + max fires) (#3793); Schedules for timed runs; README documents scope"
 ---
 
 ## What
