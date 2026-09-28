@@ -2021,3 +2021,66 @@ fn handle_notification_routes_connection_output_via_the_dto() {
     }
     assert!(rx.try_recv().is_err());
 }
+
+/// ARCH-002 slice 9 (#3772) ordering pin: `connection.output` chunks routed
+/// through [`dispatch_agent_notification`] — the entry point the live I/O loop
+/// and the pre-init replay share — reach each session's output channel in
+/// exactly the order the agent sent them, even when interleaved with another
+/// session's output and with agent-level notices (`agent.update_available`,
+/// `connection.monitoring.data`) that take a different dispatch branch.
+#[test]
+fn dispatch_agent_notification_preserves_connection_output_order() {
+    use termihub_core::protocol::methods::{
+        AGENT_UPDATE_AVAILABLE, CONNECTION_MONITORING_DATA, CONNECTION_OUTPUT,
+    };
+    let app = tauri::test::mock_app();
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let (tx1, rx1) = std::sync::mpsc::sync_channel::<Vec<u8>>(64);
+    let (tx2, rx2) = std::sync::mpsc::sync_channel::<Vec<u8>>(64);
+    let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
+    session_outputs.insert("sess-1".to_string(), tx1);
+    session_outputs.insert("sess-2".to_string(), tx2);
+    let monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
+
+    let output = |sid: &str, chunk: &str| {
+        (
+            CONNECTION_OUTPUT.to_string(),
+            json!({ "session_id": sid, "data": b64.encode(chunk.as_bytes()) }),
+        )
+    };
+    let stream = vec![
+        output("sess-1", "a1"),
+        output("sess-2", "b1"),
+        (
+            AGENT_UPDATE_AVAILABLE.to_string(),
+            json!({ "currentVersion": "1.0.0", "availableVersion": "1.1.0", "staged": false }),
+        ),
+        output("sess-1", "a2"),
+        (
+            CONNECTION_MONITORING_DATA.to_string(),
+            json!({ "host": "unregistered", "stats": {} }),
+        ),
+        output("sess-2", "b2"),
+        output("sess-1", "a3"),
+        output("sess-2", "b3"),
+    ];
+    for (method, params) in &stream {
+        dispatch_agent_notification(
+            app.handle(),
+            "agent-1",
+            method,
+            params,
+            &session_outputs,
+            &monitoring_outputs,
+            &b64,
+        );
+    }
+
+    let drain = |rx: &std::sync::mpsc::Receiver<Vec<u8>>| {
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .map(|b| String::from_utf8(b).unwrap())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(drain(&rx1), ["a1", "a2", "a3"]);
+    assert_eq!(drain(&rx2), ["b1", "b2", "b3"]);
+}
