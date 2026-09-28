@@ -2099,3 +2099,101 @@ fn dispatch_agent_notification_preserves_connection_output_order() {
     assert_eq!(drain(&rx1), ["a1", "a2", "a3"]);
     assert_eq!(drain(&rx2), ["b1", "b2", "b3"]);
 }
+
+// ── Reconnect state-emit ordering pin (ARCH-002 / TAURI-009, #3794) ──
+
+/// Records every `agents` region diff into a shared, ordered event log.
+struct AgentsRegionLog(Arc<Mutex<Vec<String>>>);
+
+impl crate::projection::ProjectionSink for AgentsRegionLog {
+    fn deliver(
+        &self,
+        frame: &crate::projection::ProjectionFrame,
+    ) -> Result<(), crate::projection::ProjectionError> {
+        if let crate::projection::ProjectionFrame::Diff(_) = frame {
+            self.0.lock().unwrap().push("region-diff".to_string());
+        }
+        Ok(())
+    }
+}
+
+/// #3794 pin: the `agent-state-change` emit path the I/O task's reconnect cycle
+/// runs through. For every transition the server-side `AgentsStore` fold (and
+/// its `agents` region diff) lands **before** the Tauri event fires, so a
+/// listener reacting to the event always reads the already-folded store; the
+/// event carries the state and the optional error verbatim; `lastError` follows
+/// the store's record-on-disconnected / clear-on-connecting|connected rules; and
+/// an unrecognised state string still emits the event but never folds. Walks the
+/// exact emission sequence of `agent_io_task` (connecting → connected →
+/// reconnecting(err) → connected, then reconnecting(err) → disconnected(err)).
+#[test]
+fn agent_state_emits_fold_the_store_before_the_event_in_reconnect_order() {
+    use crate::agents_projection::projection::AGENTS_REGION;
+    use crate::agents_projection::store::{AgentConnectionState, AgentsStore};
+    use crate::commands::projection::ProjectionState;
+    use tauri::Listener;
+
+    let app = tauri::test::mock_app();
+    let handle = app.handle().clone();
+    let store = Arc::new(AgentsStore::new());
+    store.add("agent-1", "Agent", json!({}), json!({}));
+    handle.manage(store.clone());
+    let log: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(AGENTS_REGION, store.snapshot());
+    projection.projector.subscribe(
+        AGENTS_REGION,
+        "sub",
+        "C",
+        Arc::new(AgentsRegionLog(log.clone())),
+    );
+    handle.manage(projection);
+
+    let (log_l, store_l) = (log.clone(), store.clone());
+    handle.listen_any("agent-state-change", move |event| {
+        let payload: Value = serde_json::from_str(event.payload()).unwrap();
+        let entry = store_l.get("agent-1").unwrap();
+        log_l.lock().unwrap().push(format!(
+            "event:{}:{}:{} store={:?}/{:?}",
+            payload["session_id"].as_str().unwrap(),
+            payload["state"].as_str().unwrap(),
+            payload.get("error").and_then(Value::as_str).unwrap_or("-"),
+            entry.connection_state,
+            entry.last_error,
+        ));
+    });
+
+    emit_agent_state(&handle, "agent-1", "connecting");
+    emit_agent_state(&handle, "agent-1", "connected");
+    emit_agent_state_with_error(&handle, "agent-1", "reconnecting", Some("reset"));
+    emit_agent_state(&handle, "agent-1", "connected");
+    emit_agent_state_with_error(&handle, "agent-1", "reconnecting", Some("reset"));
+    emit_agent_state_with_error(&handle, "agent-1", "disconnected", Some("gave up"));
+    emit_agent_state(&handle, "agent-1", "bogus");
+
+    assert_eq!(
+        *log.lock().unwrap(),
+        vec![
+            "region-diff",
+            "event:agent-1:connecting:- store=Connecting/None",
+            "region-diff",
+            "event:agent-1:connected:- store=Connected/None",
+            "region-diff",
+            "event:agent-1:reconnecting:reset store=Reconnecting/None",
+            "region-diff",
+            "event:agent-1:connected:- store=Connected/None",
+            "region-diff",
+            "event:agent-1:reconnecting:reset store=Reconnecting/None",
+            "region-diff",
+            "event:agent-1:disconnected:gave up store=Disconnected/Some(\"gave up\")",
+            "event:agent-1:bogus:- store=Disconnected/Some(\"gave up\")",
+        ]
+    );
+    assert_eq!(
+        parse_agent_connection_state("reconnecting"),
+        Some(AgentConnectionState::Reconnecting)
+    );
+    assert_eq!(parse_agent_connection_state("bogus"), None);
+}
