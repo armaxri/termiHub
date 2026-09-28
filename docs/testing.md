@@ -1672,6 +1672,71 @@ take either side and re-run the same command. CI (`--check`) fails if it is stal
 
 </details>
 
+### Native input the bridge cannot drive (TIN-017, #3764)
+
+The bridge injects synthetic DOM events inside the webview, so three things
+never go through it. OS pointer drag-and-drop: Tauri takes OS file drops in the
+native window and reports physical screen coordinates. IME composition: the OS
+input method owns the preedit and the candidate window. Real window focus: only
+the OS can move focus to another app and back. The drop zones have stable
+testids and component tests, but the native half of these paths is covered only
+by hand. Two places gate it for a release:
+
+- **`test_input_routing.py`** (guided-manual) walks the plain drags on every OS:
+  tab to a panel edge, tab across groups, connection into a folder, editor tab
+  between panels, and a single-file OS drop onto a terminal pane.
+- **[`tests/manual/native-input.yaml`](../tests/manual/native-input.yaml)**
+  (`--category native-input`, all release-gating) covers the rest.
+
+| Area          | Items          | What it checks                                                                                                                                                                                                                 |
+| ------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Drag-and-drop | MT-NIN-01 … 07 | Multi-file drop quoting (POSIX single quotes vs Windows double quotes), pane hit-testing on scaled and mixed-DPI displays, Wayland vs X11 (Linux), drop onto the file browser, native drag-out, a tab drag released off-window |
+| IME           | MT-NIN-10 … 16 | Per-platform terminal composition (IMK / TSF / IBus-Fcitx5 under Wayland and X11), editor and form-field composition (the committing Enter must not submit, Escape must not close), dead keys, the OS emoji picker             |
+| Focus         | MT-NIN-20 … 24 | Focus survives an app switch, returns after a native Save dialog, first click into an inactive window (macOS differs), per-window keyboard routing, remote-desktop key release on blur                                         |
+
+#### Would reviving `tauri-driver` on Linux/Windows cover this?
+
+**Why it was retired.** The WebdriverIO + `tauri-driver` suite (Feb 2026) was
+replaced by the bridge harness under epic #799. The runner went in #804 and the
+scaffold in #1027. `tauri-driver` has no macOS WKWebView driver
+([tauri-apps/tauri#7068](https://github.com/tauri-apps/tauri/issues/7068)), so
+the suite had to run the Linux build in Docker + Xvfb and never tested the
+native macOS app (ADR-5 in [architecture.md](architecture.md)). The epic also set
+an invariant: no mixed driver systems. The history matters here. **Even while the
+suite was live, it never covered drag-and-drop.** When the tab and connection
+tests moved to WebdriverIO in #458 and #459, the drags stayed manual because
+"WebDriver drag-and-drop is unreliable".
+
+**What it could reach, per area:**
+
+- **In-app drags (dnd-kit tabs and panels): partly.** W3C Actions produce
+  engine-level pointer events. msedgedriver sends them through CDP
+  `Input.dispatchMouseEvent`, and WebKitWebDriver through WebKit's automation
+  session, so a dnd-kit drag can work. It still never touches the OS pointer,
+  and it is the path the project already found flaky.
+- **OS file drop and drag-out: no.** WebDriver cannot start a drag outside the
+  page. Tauri receives the drop in the native window (`IDropTarget` on Windows,
+  a GTK drag destination on Linux) before the webview sees it, so
+  `onDragDropEvent` is out of reach.
+- **IME: no.** The W3C spec has no composition commands; the legacy JSON-wire
+  IME endpoints were never carried over. Send Keys types characters that are
+  already committed.
+- **Focus: no.** A session cannot move OS focus to another app and back, and
+  drivers generally keep the page focused. Native file dialogs are outside the
+  webview.
+- **macOS: nothing.** The IMK and WKWebView focus quirks this matrix most needs
+  to catch are exactly where there is no driver.
+
+**Recommendation: do not revive it.** It would bring back a second driver stack,
+pinned per-OS driver versions and a CI dependency, against #799's invariant. In
+return it would automate only the in-app drags, which the guided suite already
+walks, and none of OS drop, IME or focus. The native-input manual matrix plus
+`test_input_routing.py` stays the release gate. Only OS-level input injection
+would automate the native pipeline: `xdotool`/`ydotool` on Linux, `SendInput`
+on Windows, `CGEvent` on macOS. That is a separate project, not a `tauri-driver`
+revival, and it still cannot drive a real IME candidate window. No follow-up is
+filed for either.
+
 ### Release-gating manual checklist
 
 This is the **single** manual gate for a release. Run it on each target OS (macOS, Linux, Windows); items scoped to one OS are marked.
@@ -1698,6 +1763,10 @@ This is the **single** manual gate for a release. Run it on each target OS (macO
 - [ ] MT-UI-13 — a single panel's border blends with the sidebar
 - [ ] MT-WIN-01 (macOS) — closing the last window keeps the app in the Dock; a Dock click reopens a window
 - [ ] MT-WIN-02 (macOS) — Cmd+Q quits the app with several windows open
+- [ ] MT-NIN-01 … MT-NIN-07 — native drag-and-drop: multi-file drop quoting, scaled and mixed-DPI pane hit-testing, file-browser drop, drag-out, off-window tab release; MT-NIN-04 (Linux) under Wayland and X11
+- [ ] MT-NIN-10 (macOS), MT-NIN-11 (Windows), MT-NIN-12 (Linux) — IME composition in the terminal
+- [ ] MT-NIN-13 … MT-NIN-16 — IME in the editor and in form fields, dead keys, the OS emoji picker
+- [ ] MT-NIN-20 … MT-NIN-24 — native focus: app switch, native Save dialog, inactive-window click, two windows, remote-desktop key release
 
 **3. Pending automation (interim)** — until its issue lands, each `automation_issue` item in the YAML is still walked by `scripts/test-manual.py` for a release. The issue removes it from the YAML when it automates it.
 
