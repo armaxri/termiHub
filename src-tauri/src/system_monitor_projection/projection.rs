@@ -503,3 +503,7 @@ fn optional_reason(intent: &Intent) -> Result<Option<MonitorStatusReason>, (Stri
 #[cfg(test)]
 #[path = "projection_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "projection_race_tests.rs"]
+mod race_tests;

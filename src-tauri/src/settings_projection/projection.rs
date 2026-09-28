@@ -179,3 +179,7 @@ fn required_object(intent: &Intent, key: &str) -> Result<Map<String, Value>, (St
 #[cfg(test)]
 #[path = "projection_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "projection_race_tests.rs"]
+mod race_tests;

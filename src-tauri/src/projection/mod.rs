@@ -342,6 +342,8 @@ impl Projector {
         let mut state = Self::lock_region(&handle);
 
         let new_view = snapshot();
+        #[cfg(test)]
+        publish_hook::fire_after_drain();
         let ops = compute_ops(&state.view, &new_view);
         if ops.is_empty() {
             return None;
@@ -585,11 +587,12 @@ impl IntentHandler for HandlerRegistry {
     }
 }
 
-/// A test-only hook fired inside an incremental publish, between the store
-/// drain and the splice into the region view — the exact window of the
+/// A test-only hook fired inside a publish, under the region lock, between the
+/// store read (an incremental publish's drain, or [`Projector::publish_with`]'s
+/// snapshot) and the splice into the region view — the exact window of the
 /// stale-publish race (#3780 / #3788) — so a test can land a racing fold or
 /// publish there deterministically. Thread-local and one-shot: only the thread
-/// that set it fires it, on its next incremental publish.
+/// that set it fires it, on its next such publish.
 #[cfg(test)]
 pub(crate) mod publish_hook {
     use std::cell::RefCell;

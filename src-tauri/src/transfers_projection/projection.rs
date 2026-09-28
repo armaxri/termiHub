@@ -452,3 +452,7 @@ fn parse_replace(
 #[cfg(test)]
 #[path = "projection_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "projection_race_tests.rs"]
+mod race_tests;
