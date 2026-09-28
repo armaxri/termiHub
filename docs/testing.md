@@ -426,7 +426,11 @@ the app-launching suites still run on a cadence:
 > the per-PR merge gate does not exercise"** — areas covered only by integration
 > or manual tests, where a regression can merge green. Do not read a `0` in that
 > section as "fully tested"; it means the per-PR gate touches every area, not
-> that every path is exercised.
+> that every path is exercised. The section is **ratcheted** (#3755): CI fails
+> when an area joins it that the committed
+> [`tests/system/test-inventory-baseline.json`](../tests/system/test-inventory-baseline.json)
+> does not list, so the gap count can only shrink
+> (`python3 scripts/build-test-inventory.py --update-baseline` locks in a closed gap).
 
 The lane runs the app natively on each OS; only the **Docker fixtures** are
 Linux-only:

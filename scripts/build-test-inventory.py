@@ -824,6 +824,7 @@ def run_ratchet(records: "list[dict]", update: bool, path: Path = BASELINE_PATH)
             print(f"Shrank {rel}: removed the gaps that are now covered.")
         else:
             print(f"{rel} is already minimal; nothing to remove.")
+        baseline = updated
 
     failed = False
     for key in RATCHET_KEYS:
