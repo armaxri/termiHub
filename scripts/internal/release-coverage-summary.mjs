@@ -241,9 +241,7 @@ export function formatMarkdown({
   }
 
   if (result.stats) {
-    lines.push(
-      formatReport(result.stats, { title: GAP_TITLE }).replace(/^## /, "### ")
-    );
+    lines.push(formatReport(result.stats, { title: GAP_TITLE }).replace(/^## /, "### "));
   }
 
   lines.push("### Sources", "");
@@ -299,7 +297,10 @@ function readIfPresent(file) {
  * Resolve both inputs, compute, and write the summary. Always returns 0 once
  * the arguments parse (advisory); `exec` and `env` are injectable for tests.
  */
-export function runSummary(opts, { exec = defaultExec, env = process.env, log = console.log } = {}) {
+export function runSummary(
+  opts,
+  { exec = defaultExec, env = process.env, log = console.log } = {}
+) {
   const { repo, sha, outDir } = opts;
   const root = opts.root ?? env.GITHUB_WORKSPACE ?? process.cwd();
   const notes = [];
