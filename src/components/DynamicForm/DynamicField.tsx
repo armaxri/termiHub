@@ -5,6 +5,7 @@ import type { SettingsField, FieldType } from "@/types/schema";
 import { KeyPathInput } from "@/components/Settings/KeyPathInput";
 import { listAgentDockerContainers, listDockerContainers, listSerialPorts } from "@/services/api";
 import type { DockerContainerInfo } from "@/services/api";
+import { groupContainersByComposeProject } from "./dockerContainerGroups";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Button, Input, Modal, NumberInput, Select, Toggle } from "@/components/ui";
 import { fieldPlatformLimitation } from "@/utils/platformFieldSupport";
@@ -675,6 +676,8 @@ function containerMatches(c: DockerContainerInfo, query: string): boolean {
   return (
     c.name.toLowerCase().includes(q) ||
     c.image.toLowerCase().includes(q) ||
+    (c.composeProject?.toLowerCase().includes(q) ?? false) ||
+    (c.composeService?.toLowerCase().includes(q) ?? false) ||
     c.id.toLowerCase().startsWith(q)
   );
 }
@@ -688,7 +691,8 @@ function containerMatches(c: DockerContainerInfo, query: string): boolean {
  * refresh button re-queries; an unreachable runtime shows its error and leaves
  * the typed fallback working. For an agent-hosted connection the list comes
  * from the agent's host (#3424); an agent too old for that keeps the typed
- * field only.
+ * field only. Containers started by Docker Compose are grouped under their
+ * project and show their service name (#3425).
  */
 function DockerContainerField({
   field,
@@ -767,6 +771,44 @@ function DockerContainerField({
   // they can switch, rather than filtering it down to the single match.
   const exact = containers.some((c) => c.name === currentValue || c.id === currentValue);
   const shown = exact ? containers : containers.filter((c) => containerMatches(c, currentValue));
+  const groups = groupContainersByComposeProject(shown);
+
+  const renderOption = (c: DockerContainerInfo) => {
+    const selected = c.name === currentValue || c.id === currentValue;
+    return (
+      <li key={c.id}>
+        <button
+          type="button"
+          className={
+            "settings-form__container-option" +
+            (selected ? " settings-form__container-option--selected" : "") +
+            (c.running ? "" : " settings-form__container-option--stopped")
+          }
+          aria-pressed={selected}
+          onClick={() => onChange(c.name)}
+          title={c.id}
+          data-testid={`${testIdBase}-option-${c.name}`}
+        >
+          <span className="settings-form__container-name">
+            {c.name}
+            {c.composeService && (
+              <span
+                className="settings-form__container-service"
+                data-testid={`${testIdBase}-service-${c.name}`}
+              >
+                service: {c.composeService}
+              </span>
+            )}
+          </span>
+          <span className="settings-form__container-meta">
+            {c.image}
+            {c.image && " · "}
+            {c.running ? c.status || "running" : `not running (${c.status || c.state})`}
+          </span>
+        </button>
+      </li>
+    );
+  };
 
   return (
     <>
@@ -814,32 +856,29 @@ function DockerContainerField({
           aria-label="Containers"
           data-testid={`${testIdBase}-list`}
         >
-          {shown.map((c) => {
-            const selected = c.name === currentValue || c.id === currentValue;
-            return (
-              <li key={c.id}>
-                <button
-                  type="button"
-                  className={
-                    "settings-form__container-option" +
-                    (selected ? " settings-form__container-option--selected" : "") +
-                    (c.running ? "" : " settings-form__container-option--stopped")
-                  }
-                  aria-pressed={selected}
-                  onClick={() => onChange(c.name)}
-                  title={c.id}
-                  data-testid={`${testIdBase}-option-${c.name}`}
-                >
-                  <span className="settings-form__container-name">{c.name}</span>
-                  <span className="settings-form__container-meta">
-                    {c.image}
-                    {c.image && " · "}
-                    {c.running ? c.status || "running" : `not running (${c.status || c.state})`}
-                  </span>
-                </button>
-              </li>
-            );
-          })}
+          {groups.length === 1 && groups[0].project === null
+            ? groups[0].containers.map(renderOption)
+            : groups.map((g) => {
+                const label = g.project ?? "Other containers";
+                const groupId = g.project === null ? "other" : `project-${g.project}`;
+                return (
+                  <li key={groupId} className="settings-form__container-group">
+                    <div
+                      className="settings-form__container-group-label"
+                      id={`${a11y.id}-${groupId}`}
+                      data-testid={`${testIdBase}-group-${groupId}`}
+                    >
+                      {g.project === null ? label : `Compose project: ${label}`}
+                    </div>
+                    <ul
+                      className="settings-form__container-group-list"
+                      aria-labelledby={`${a11y.id}-${groupId}`}
+                    >
+                      {g.containers.map(renderOption)}
+                    </ul>
+                  </li>
+                );
+              })}
         </ul>
       )}
     </>

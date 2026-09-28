@@ -28,9 +28,7 @@ import {
   RemoteAgentDefinition,
   AgentCapabilities,
   AgentSettings,
-  LayoutConfig,
   DEFAULT_LAYOUT,
-  LAYOUT_PRESETS,
   PersistentRunState,
   PersistentSessionEntry,
 } from "@/types/connection";
@@ -40,7 +38,6 @@ import {
   removeAgent,
   reorderAgents as persistAgentOrder,
   getSettings,
-  saveSettings as persistSettings,
   getRecoveryWarnings,
 } from "@/services/storage";
 import { deriveTabStatus, type TabStatusMaps } from "@/utils/tabStatus";
@@ -137,6 +134,7 @@ import { createUpdateCheckerSlice, UpdateCheckerSlice } from "./slices/updateChe
 import { createPortableModeSlice, PortableModeSlice } from "./slices/portableModeSlice";
 import { createEditorSlice, EditorSlice } from "./slices/editorSlice";
 import { createSettingsSlice, SettingsSlice } from "./slices/settingsSlice";
+import { createUiChromeSlice, UiChromeSlice } from "./slices/uiChromeSlice";
 
 export type { MacroPlaybackState, PlayMacroOptions } from "./slices/macrosSlice";
 export type {
@@ -415,20 +413,17 @@ export interface AppState
     UpdateCheckerSlice,
     PortableModeSlice,
     EditorSlice,
-    SettingsSlice {
+    SettingsSlice,
+    UiChromeSlice {
   // Connection type registry (loaded from backend at startup)
   connectionTypes: ConnectionTypeInfo[];
 
   // Platform default shell (detected from backend at startup)
   defaultShell: ShellType;
 
-  // Sidebar
-  sidebarView: SidebarView;
-  sidebarCollapsed: boolean;
-  sidebarWidth: number;
-  setSidebarView: (view: SidebarView) => void;
-  toggleSidebar: () => void;
-  setSidebarWidth: (width: number) => void;
+  // Sidebar — sidebarView / sidebarCollapsed / sidebarWidth + setSidebarView /
+  // toggleSidebar / setSidebarWidth are provided by UiChromeSlice
+  // (ARCH-001/FES-011, extracted under #2077 via #2881).
 
   // Password prompt — the promise-based interactive host/SSH password prompt
   // (open flag, host/username, pending resolver, "Save password" choice) plus
@@ -865,13 +860,9 @@ export interface AppState
   // command wrappers that dispatch the optimistic `settings.*` intent and persist,
   // relying on the server-side fold (#2386 / #2407).
 
-  // Layout
-  layoutConfig: LayoutConfig;
-  layoutDialogOpen: boolean;
-  setLayoutDialogOpen: (open: boolean) => void;
-  updateLayoutConfig: (partial: Partial<LayoutConfig>) => void;
-  applyLayoutPreset: (preset: "default" | "focus" | "zen") => void;
-  toggleActivityBarView: (view: SidebarView) => void;
+  // Layout config — layoutConfig / layoutDialogOpen + setLayoutDialogOpen /
+  // updateLayoutConfig / applyLayoutPreset / toggleActivityBarView are provided
+  // by UiChromeSlice (ARCH-001/FES-011, extracted under #2077 via #2881).
 
   // Shortcuts overlay + command palette + standalone overlay views (updates,
   // about) — runtime-only open/close flags provided by CommandPaletteSlice
@@ -1394,7 +1385,6 @@ export interface AppState
   // extracted under #2077 via #2881).
 }
 
-let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
 /** Debounce timer for auto-saving the last session on layout changes. */
 let lastSessionPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -2624,6 +2614,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     ...createUpdateCheckerSlice(set, get, store),
     ...createPortableModeSlice(set, get, store),
     ...createSettingsSlice(set, get, store),
+    ...createUiChromeSlice(set, get, store),
 
     // Connection type registry — updated by loadFromBackend()
     connectionTypes: [],
@@ -2634,24 +2625,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
     // Network monitors (httpMonitors + setHttpMonitors) provided by
     // createHttpMonitorsSlice (extracted under #2077 via #2300).
 
-    // Sidebar
-    sidebarView: "connections",
-    sidebarCollapsed: false,
-    sidebarWidth: 260,
-    setSidebarView: (view) => {
-      set((state) => ({
-        sidebarView: view,
-        sidebarCollapsed: state.sidebarView === view && !state.sidebarCollapsed ? true : false,
-      }));
-      const { sidebarCollapsed, updateLayoutConfig } = get();
-      updateLayoutConfig({ sidebarView: view, sidebarCollapsed });
-    },
-    toggleSidebar: () => {
-      set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed }));
-      const { sidebarView, sidebarCollapsed, updateLayoutConfig } = get();
-      updateLayoutConfig({ sidebarView, sidebarCollapsed });
-    },
-    setSidebarWidth: (width) => set({ sidebarWidth: width }),
+    // Sidebar (sidebarView / sidebarCollapsed / sidebarWidth + setters) provided
+    // by createUiChromeSlice (ARCH-001/FES-011, extracted under #2077 via #2881).
 
     // Password prompt — the promise-based interactive host/SSH password prompt
     // is provided by createPasswordPromptSlice (extracted under #2077 via #2300).
@@ -4838,11 +4813,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
     // `appStore` slice. See the `settings` projection region (read via
     // `useProjectedSettings()` / `currentSettingsView()`).
 
-    // Layout
-    layoutConfig: DEFAULT_LAYOUT,
-    layoutDialogOpen: false,
-
-    setLayoutDialogOpen: (open) => set({ layoutDialogOpen: open }),
+    // Layout config (layoutConfig / layoutDialogOpen + setLayoutDialogOpen /
+    // updateLayoutConfig / applyLayoutPreset / toggleActivityBarView) provided by
+    // createUiChromeSlice (ARCH-001/FES-011, extracted under #2077 via #2881).
 
     // Shortcuts overlay + command palette + standalone overlay views provided
     // by createCommandPaletteSlice (extracted under #2077 via #2300).
@@ -4886,50 +4859,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
     // Dialogs — large-paste / open-saved-file / export-import / recovery-warning
     // open/close flags provided by createDialogsSlice (extracted under #2077 via
     // #2300).
-
-    updateLayoutConfig: (partial) => {
-      const updated = { ...get().layoutConfig, ...partial };
-      set({ layoutConfig: updated });
-      if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
-      layoutPersistTimer = setTimeout(() => {
-        persistSettings({ ...currentSettingsView(), layout: updated }).catch((err) =>
-          frontendLog("app_store", `Failed to persist layout config: ${errorMessage(err)}`)
-        );
-      }, 300);
-    },
-
-    applyLayoutPreset: (preset) => {
-      const config = LAYOUT_PRESETS[preset];
-      if (!config) return;
-      set({ layoutConfig: config });
-      if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
-      layoutPersistTimer = setTimeout(() => {
-        persistSettings({ ...currentSettingsView(), layout: config }).catch((err) =>
-          frontendLog("app_store", `Failed to persist layout preset: ${errorMessage(err)}`)
-        );
-      }, 300);
-    },
-
-    toggleActivityBarView: (view) => {
-      const REQUIRED_VIEWS: SidebarView[] = ["connections"];
-      if (REQUIRED_VIEWS.includes(view)) return;
-      const { layoutConfig, sidebarView, sidebarCollapsed } = get();
-      const hidden = layoutConfig.hiddenActivityBarViews ?? [];
-      const isCurrentlyHidden = hidden.includes(view);
-      const updatedHidden = isCurrentlyHidden
-        ? hidden.filter((v) => v !== view)
-        : [...hidden, view];
-      const updated = { ...layoutConfig, hiddenActivityBarViews: updatedHidden };
-      // If hiding the currently active view, collapse the sidebar
-      const shouldCollapse = !isCurrentlyHidden && sidebarView === view && !sidebarCollapsed;
-      set({ layoutConfig: updated, ...(shouldCollapse ? { sidebarCollapsed: true } : {}) });
-      if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
-      layoutPersistTimer = setTimeout(() => {
-        persistSettings({ ...currentSettingsView(), layout: updated }).catch((err) =>
-          frontendLog("app_store", `Failed to persist layout config: ${errorMessage(err)}`)
-        );
-      }, 300);
-    },
 
     loadFromBackend: async () => {
       try {

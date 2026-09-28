@@ -1713,6 +1713,14 @@ pub struct DockerContainerEntry {
     /// Whether the container is running (only running ones accept a shell).
     #[serde(default)]
     pub running: bool,
+    /// Docker Compose project (`com.docker.compose.project` label), protocol
+    /// 0.15.0+ (#3425). Omitted when absent; an older agent never sends it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose_project: Option<String>,
+    /// Docker Compose service (`com.docker.compose.service` label), protocol
+    /// 0.15.0+ (#3425). Omitted when absent; an older agent never sends it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose_service: Option<String>,
 }
 
 /// Result of `docker.list_containers`: running containers first, then by name.

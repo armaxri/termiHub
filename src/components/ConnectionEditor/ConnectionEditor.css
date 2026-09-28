@@ -286,6 +286,31 @@
   color: var(--text-secondary);
 }
 
+/* Compose awareness (#3425): containers grouped under their Compose project,
+   with the service name shown next to the container name. */
+.settings-form__container-group-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.settings-form__container-group-label {
+  position: sticky;
+  top: 0;
+  padding: var(--spacing-xxs) var(--spacing-sm);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.settings-form__container-service {
+  margin-left: var(--spacing-xs);
+  font-family: var(--font-family);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
 /* === Jump Host (SSH ProxyJump) section === */
 .jump-host__toggle-label {
   display: inline-flex;
