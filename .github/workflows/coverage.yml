@@ -101,6 +101,8 @@ jobs:
       # have moved, so coverage.sh skips them). Advisory: when none is available
       # the report is unit-only. The ratchet never grades this overlay.
       - name: Fetch nightly integration coverage
+        # advisory: an optional overlay; without it the report is unit-only.
+        # Forcing function: the unit-coverage ratchet (coverage-baseline.json).
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}

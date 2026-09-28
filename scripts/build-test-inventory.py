@@ -48,6 +48,17 @@ Usage::
     python scripts/build-test-inventory.py             # (re)write .md + .json
     python scripts/build-test-inventory.py --stdout     # print markdown, no write
     python scripts/build-test-inventory.py --json       # print json, no write
+    python scripts/build-test-inventory.py --check-baseline   # ratchet gate
+    python scripts/build-test-inventory.py --update-baseline  # shrink-only update
+
+**Ratchet (#3755, CI-012).** ``tests/system/test-inventory-baseline.json`` is a
+committed list of today's gaps: the feature areas the per-PR merge gate does not
+exercise (``per_pr_gaps``) and the areas with no test at all
+(``coverage_gaps``). ``--check-baseline`` fails (exit 1) when either list gains
+an area that the baseline does not already name, so a new zero-coverage area
+cannot land silently. ``--update-baseline`` only ever *removes* areas that are
+now covered; it never adds one. Accepting a new gap on purpose means editing the
+baseline by hand in the same PR, where a reviewer sees it.
 
 The reports live at ``tests/system/test-inventory.{md,json}`` and are **local,
 regenerated artifacts** — git-ignored, not committed, for the same reason as the
@@ -77,6 +88,10 @@ SYSTEM_DIR = REPO_ROOT / "tests" / "system"
 TESTS_DIR = SYSTEM_DIR / "tests"
 MD_PATH = SYSTEM_DIR / "test-inventory.md"
 JSON_PATH = SYSTEM_DIR / "test-inventory.json"
+# Committed ratchet baseline (#3755, CI-012): the gap lists CI may not grow past.
+BASELINE_PATH = SYSTEM_DIR / "test-inventory-baseline.json"
+# The gap lists the ratchet grades, each keyed as in :func:`build_report`.
+RATCHET_KEYS = ("per_pr_gaps", "coverage_gaps")
 
 ALL_PLATFORMS = ("linux", "macos", "windows")
 
@@ -739,6 +754,104 @@ def render_markdown(records: "list[dict]") -> str:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Ratchet against the committed baseline (#3755, CI-012)
+# ---------------------------------------------------------------------------
+
+
+def load_baseline(path: Path = BASELINE_PATH) -> dict:
+    """Read the committed gap baseline; each ratchet key maps to a list of areas."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for key in RATCHET_KEYS:
+        if not isinstance(data.get(key), list):
+            raise ValueError(f"{path.name}: '{key}' must be a list of feature areas")
+    return data
+
+
+def compare_to_baseline(report: dict, baseline: dict) -> "dict[str, dict[str, list[str]]]":
+    """Per ratchet key: areas that are new gaps and areas that have been closed.
+
+    ``new`` is what fails the gate (a gap the baseline does not name); ``closed``
+    is a baseline entry that is no longer a gap, which ``--update-baseline`` drops.
+    """
+    result = {}
+    for key in RATCHET_KEYS:
+        current = set(report[key])
+        allowed = set(baseline[key])
+        result[key] = {
+            "new": sorted(current - allowed),
+            "closed": sorted(allowed - current),
+        }
+    return result
+
+
+def shrink_baseline(baseline: dict, report: dict) -> dict:
+    """The baseline with every closed gap removed. Never adds an area."""
+    updated = dict(baseline)
+    for key in RATCHET_KEYS:
+        current = set(report[key])
+        updated[key] = sorted(area for area in baseline[key] if area in current)
+    return updated
+
+
+def write_baseline(baseline: dict, path: Path = BASELINE_PATH) -> None:
+    # LF newlines, as for the reports below, so Windows does not rewrite it.
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        json.dump(baseline, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+
+
+RATCHET_LABELS = {
+    "per_pr_gaps": "feature areas the per-PR merge gate does not exercise",
+    "coverage_gaps": "feature areas with no test at all",
+}
+
+
+def run_ratchet(records: "list[dict]", update: bool, path: Path = BASELINE_PATH) -> int:
+    """Grade the gaps against the baseline (or shrink it). Returns the exit code."""
+    report = build_report(records)
+    baseline = load_baseline(path)
+    diff = compare_to_baseline(report, baseline)
+    try:
+        rel = path.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        rel = str(path)
+
+    if update:
+        updated = shrink_baseline(baseline, report)
+        if updated != baseline:
+            write_baseline(updated, path)
+            print(f"Shrank {rel}: removed the gaps that are now covered.")
+        else:
+            print(f"{rel} is already minimal; nothing to remove.")
+        baseline = updated
+
+    failed = False
+    for key in RATCHET_KEYS:
+        new, closed = diff[key]["new"], diff[key]["closed"]
+        print(
+            f"{RATCHET_LABELS[key]}: {len(report[key])} now, "
+            f"{len(baseline[key])} allowed by the baseline"
+        )
+        for area in new:
+            failed = True
+            print(f"::error::new gap in {key}: '{area}' ({RATCHET_LABELS[key]})")
+        if closed and not update:
+            print(
+                f"  closed since the baseline: {', '.join(closed)} "
+                "(lock it in: python3 scripts/build-test-inventory.py --update-baseline)"
+            )
+    if failed:
+        print(
+            "Test-inventory ratchet FAILED: add a per-PR (non-integration) test for the "
+            f"area, or, if the gap is deliberate, add it to {rel} by hand in this PR "
+            "so a reviewer sees it. --update-baseline never adds a gap."
+        )
+        return 1
+    print("Test-inventory ratchet passed: no new coverage gap.")
+    return 0
+
+
 def main(argv: "list[str] | None" = None) -> int:
     parser = argparse.ArgumentParser(
         description="Generate the harness test-inventory + coverage-gap report."
@@ -754,9 +867,22 @@ def main(argv: "list[str] | None" = None) -> int:
         action="store_true",
         help="print the JSON report to stdout instead of writing files.",
     )
+    group.add_argument(
+        "--check-baseline",
+        action="store_true",
+        help="fail when a coverage gap is not in tests/system/test-inventory-baseline.json.",
+    )
+    group.add_argument(
+        "--update-baseline",
+        action="store_true",
+        help="remove now-covered gaps from the baseline (never adds one).",
+    )
     args = parser.parse_args(argv)
 
     records = collect()
+
+    if args.check_baseline or args.update_baseline:
+        return run_ratchet(records, update=args.update_baseline)
 
     if args.json:
         json.dump(build_report(records), sys.stdout, indent=2, sort_keys=True)

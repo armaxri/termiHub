@@ -311,3 +311,52 @@ def test_live_markdown_has_required_sections():
     assert "## Feature areas with no test at all" in markdown
     assert "## Inventory by feature" in markdown
     assert "| test id | feature | lane | platforms |" in markdown
+
+
+# ── ratchet against the committed baseline (#3755, CI-012) ─────────────────
+
+
+def _report(per_pr, total):
+    return {"per_pr_gaps": list(per_pr), "coverage_gaps": list(total)}
+
+
+def test_compare_flags_new_gaps_and_closed_ones():
+    diff = mod.compare_to_baseline(
+        _report(["telnet", "sftp"], ["sftp"]), _report(["telnet", "tabs"], [])
+    )
+    assert diff["per_pr_gaps"] == {"new": ["sftp"], "closed": ["tabs"]}
+    assert diff["coverage_gaps"] == {"new": ["sftp"], "closed": []}
+
+
+def test_shrink_only_removes_closed_gaps_and_never_adds():
+    baseline = {"_comment": "kept", **_report(["tabs", "telnet"], ["tabs"])}
+    updated = mod.shrink_baseline(baseline, _report(["telnet", "sftp"], []))
+    assert updated == {"_comment": "kept", **_report(["telnet"], [])}
+
+
+def test_run_ratchet_fails_on_a_new_gap_and_passes_on_a_closed_one(tmp_path, monkeypatch):
+    path = tmp_path / "baseline.json"
+    monkeypatch.setattr(mod, "build_report", lambda _records: _report(["telnet"], []))
+
+    mod.write_baseline(_report([], []), path)
+    assert mod.run_ratchet([], update=False, path=path) == 1
+
+    mod.write_baseline(_report(["telnet", "tabs"], []), path)
+    assert mod.run_ratchet([], update=False, path=path) == 0
+    assert mod.load_baseline(path)["per_pr_gaps"] == ["telnet", "tabs"]  # check never writes
+
+    assert mod.run_ratchet([], update=True, path=path) == 0
+    assert mod.load_baseline(path)["per_pr_gaps"] == ["telnet"]
+
+
+def test_update_does_not_accept_a_new_gap(tmp_path, monkeypatch):
+    path = tmp_path / "baseline.json"
+    monkeypatch.setattr(mod, "build_report", lambda _records: _report(["telnet"], []))
+    mod.write_baseline(_report([], []), path)
+    assert mod.run_ratchet([], update=True, path=path) == 1
+    assert mod.load_baseline(path)["per_pr_gaps"] == []
+
+
+def test_committed_baseline_matches_the_live_tree():
+    """The live harness must pass its own ratchet (what the CI step runs)."""
+    assert mod.run_ratchet(mod.collect(), update=False) == 0
