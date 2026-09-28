@@ -21,6 +21,10 @@ const DEFAULT_MONITORING_INTERVAL_MS: u64 = 2000;
 const MONITORING_CHANNEL_CAPACITY: usize = 16;
 const MONITORING_STATUS_CHANNEL_CAPACITY: usize = 8;
 
+/// Key of the remote connect settings carrying the desktop `session_id` that
+/// [`RemoteProxy`] forwards as `connection.create`'s `correlation_id` (#3085).
+pub(crate) const CORRELATION_ID_KEY: &str = "correlationId";
+
 /// Grace added on top of the collection interval before a *missing* agent
 /// sample counts as one failed collect (SM-012).
 ///
@@ -487,6 +491,15 @@ impl RemoteProxy {
             .and_then(|v| v.as_str())
             .map(String::from);
 
+        // The desktop session id this connect runs for (#3085, OBS-004): sent
+        // as `connection.create`'s `correlation_id` so the agent logs the
+        // session under the same id as `termihub.log`. Set by
+        // `SessionManager::create_connection`; absent for other callers.
+        let correlation_id = settings
+            .get(CORRELATION_ID_KEY)
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
         // Store the remote type for metadata.
         if let Ok(mut t) = self.remote_type_id.lock() {
             *t = session_type.clone();
@@ -505,6 +518,7 @@ impl RemoteProxy {
         let title_owned = title.clone();
         let config_owned = config.clone();
         let definition_id_owned = definition_id.clone();
+        let correlation_id_owned = correlation_id.clone();
         // The desktop connect this create runs for (#3437): an OTP round the
         // agent relays while it runs belongs to that connect's tab.
         let owner = current_prompt_owner();
@@ -517,6 +531,7 @@ impl RemoteProxy {
                 title_owned.as_deref(),
                 definition_id_owned.as_deref(),
                 owner.as_deref(),
+                correlation_id_owned.as_deref(),
             )?;
             // Publish the created session ID so a concurrent cancellation can
             // tear it down (no orphan) even though we have not finished
@@ -2478,6 +2493,8 @@ mod tests {
         create_gate: std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>,
         /// The prompt owner each `create_session_owned` ran for.
         create_owners: std::sync::Mutex<Vec<Option<String>>>,
+        /// The `correlation_id` each `create_session_owned` sent (#3085).
+        create_correlation_ids: std::sync::Mutex<Vec<Option<String>>>,
     }
 
     impl HangingAttachMockAgentRpcClient {
@@ -2487,6 +2504,7 @@ mod tests {
                 closed_sessions: std::sync::Mutex::new(Vec::new()),
                 create_gate: std::sync::Mutex::new(None),
                 create_owners: std::sync::Mutex::new(Vec::new()),
+                create_correlation_ids: std::sync::Mutex::new(Vec::new()),
             }
         }
     }
@@ -2552,11 +2570,16 @@ mod tests {
             title: Option<&str>,
             definition_id: Option<&str>,
             owner: Option<&str>,
+            correlation_id: Option<&str>,
         ) -> Result<AgentSessionInfo, TerminalError> {
             self.create_owners
                 .lock()
                 .unwrap()
                 .push(owner.map(str::to_string));
+            self.create_correlation_ids
+                .lock()
+                .unwrap()
+                .push(correlation_id.map(str::to_string));
             let gate = self.create_gate.lock().unwrap().take();
             if let Some(gate) = gate {
                 let _ = gate.recv();
@@ -2784,6 +2807,8 @@ mod tests {
             *mock.create_owners.lock().unwrap(),
             vec![Some("tab-a:0".to_string())]
         );
+        // No `correlationId` in the settings: the create sends none (#3085).
+        assert_eq!(*mock.create_correlation_ids.lock().unwrap(), vec![None]);
         assert!(
             mock.closed_sessions.lock().unwrap().is_empty(),
             "the create has not completed yet"

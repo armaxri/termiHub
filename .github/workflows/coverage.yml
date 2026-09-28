@@ -100,6 +100,8 @@ jobs:
       # plus the list of files changed since its commit (their line numbers may
       # have moved, so coverage.sh skips them). Advisory: when none is available
       # the report is unit-only. The ratchet never grades this overlay.
+      # It also fetches the bridge harness lane's lcov (system-integration.yml,
+      # `harness-coverage-<branch>`, #3657) into coverage-integration/harness/.
       - name: Fetch nightly integration coverage
         # advisory: an optional overlay; without it the report is unit-only.
         # Forcing function: the unit-coverage ratchet (coverage-baseline.json).
@@ -116,6 +118,8 @@ jobs:
         env:
           TERMIHUB_INTEGRATION_LCOV: coverage-integration/integration.lcov
           TERMIHUB_INTEGRATION_STALE: coverage-integration/stale-files.txt
+          TERMIHUB_HARNESS_LCOV: coverage-integration/harness/harness.lcov
+          TERMIHUB_HARNESS_STALE: coverage-integration/harness/stale-files.txt
         run: ./scripts/coverage.sh
 
       - name: Publish unified number to job summary

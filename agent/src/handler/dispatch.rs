@@ -17,7 +17,7 @@ use jsonrpsee::types::ErrorObjectOwned;
 use semver::Version as SemverVersion;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, Instrument};
 
 use termihub_core::tool::{CollectingHost, ToolRegistry};
 use tokio_util::sync::CancellationToken;
@@ -113,7 +113,10 @@ use termihub_core::monitoring::{LocalProcessManager, ProcessError, ProcessManage
 /// Bumped to 0.15.0 for the additive, optional `composeProject` /
 /// `composeService` fields of `docker.list_containers` entries (#3425): the
 /// picker groups by Compose project. An older agent omits them and still parses.
-const AGENT_PROTOCOL_VERSION: &str = "0.15.0";
+/// Bumped to 0.16.0 for the additive optional `correlation_id` member of
+/// `connection.create` params (#3085, OBS-004): the agent logs the session under
+/// the desktop's id. An older agent ignores it; an older desktop omits it.
+const AGENT_PROTOCOL_VERSION: &str = "0.16.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -878,8 +881,13 @@ fn register_connection_create(module: &mut RpcModule<Mutex<HandlerState>>) -> an
 
         let title = p.title.unwrap_or_else(|| format!("{type_id} session"));
 
+        // Scope this session's agent-side logs under the desktop's correlation
+        // id (#3085, OBS-004) so they join the desktop's `termihub.log` lines.
+        let span = session_create_span(type_id, p.correlation_id.as_deref());
+
         let snapshot = session_manager
             .create(type_id, title, p.config, p.definition_id)
+            .instrument(span.clone())
             .await
             .map_err(|e| match e {
                 SessionCreateError::LimitReached => rpc_err(
@@ -898,6 +906,11 @@ fn register_connection_create(module: &mut RpcModule<Mutex<HandlerState>>) -> an
                 }
             })?;
 
+        // The join line: pairs the desktop's correlation id with the agent's
+        // own session id, which later agent log lines are keyed by.
+        span.record("session_id", snapshot.id.as_str());
+        span.in_scope(|| info!("agent session created"));
+
         to_result_value(&SessionCreateResult {
             session_id: snapshot.id,
             title: snapshot.title,
@@ -908,6 +921,30 @@ fn register_connection_create(module: &mut RpcModule<Mutex<HandlerState>>) -> an
         })
     })?;
     Ok(())
+}
+
+/// The `tracing` span a `connection.create` runs under (#3085, OBS-004).
+///
+/// Carries the desktop's `correlation_id` (its own session id) when it sent a
+/// well-formed one, the connection `type_id`, and — recorded once the create
+/// succeeds — the agent's `session_id`. Every event of the create (daemon spawn,
+/// SSH handshake, relayed prompts) and of an in-process session's output
+/// forwarder inherits these fields. A malformed id is dropped rather than
+/// logged, so an untrusted value cannot inject into the log.
+fn session_create_span(type_id: &str, correlation_id: Option<&str>) -> tracing::Span {
+    let correlation_id = correlation_id.filter(|id| {
+        let ok = termihub_core::protocol::methods::is_valid_correlation_id(id);
+        if !ok {
+            debug!("ignoring malformed connection.create correlation_id");
+        }
+        ok
+    });
+    tracing::info_span!(
+        "agent_session",
+        correlation_id,
+        type_id,
+        session_id = tracing::field::Empty,
+    )
 }
 
 fn register_connection_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
@@ -3430,10 +3467,11 @@ mod tests {
     /// SSH keyboard-interactive prompt relay, and the embedded-server access
     /// log RPC) may now arrive — and, from 0.12.0, that `network.*` is gone;
     /// 0.13.0 made the update RPCs require the auth token, 0.14.0 adds
-    /// `docker.list_containers`, and 0.15.0 adds its Compose fields.
+    /// `docker.list_containers`, 0.15.0 adds its Compose fields, and 0.16.0
+    /// the `connection.create` `correlation_id`.
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.15.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.16.0");
     }
 
     // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────
@@ -6175,4 +6213,7 @@ mod tests {
 
     /// Update-RPC auth token + matched-downgrade pin (AGT-003 / SEC-006, #3213).
     mod update_auth_tests;
+
+    /// `connection.create` correlation id on the session's log span (#3085).
+    mod correlation_tests;
 }

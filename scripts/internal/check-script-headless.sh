@@ -41,6 +41,7 @@ SCRIPTS=(
   "scripts/internal/apply-branch-protection.sh"
   "scripts/internal/build-system-test-app.sh"
   "scripts/internal/ci-rust-tests.sh"
+  "scripts/internal/harness-coverage.sh"
   "scripts/internal/native-sshd-fixture.sh"
   "scripts/internal/run-native-sshd-suites.sh"
   "scripts/internal/setup-agent-signing-key.sh"

@@ -863,6 +863,10 @@ pub fn run() -> anyhow::Result<()> {
             commands::window::take_pending_handoffs,
             commands::window::send_handoff_to_window,
             commands::window::replay_session_scrollback,
+            // Test-bridge-only (SEC-005, #3657): a normal quit so an
+            // LLVM-instrumented test build writes its coverage profile.
+            #[cfg(feature = "test-bridge")]
+            commands::window::test_exit_app,
             // Macros
             commands::macros::list_macros,
             commands::macros::get_macro,

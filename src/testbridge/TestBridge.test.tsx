@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TerminalPortalProvider } from "@/components/Terminal/TerminalRegistry";
 import { TestBridge } from "./TestBridge";
@@ -122,6 +123,41 @@ describe("TestBridge", () => {
         expect(close).toHaveBeenCalledTimes(1);
       } finally {
         vi.useRealTimers();
+      }
+    });
+
+    it("defers the requested app exit until after the reply (#3657)", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(invoke).mockClear();
+        vi.mocked(invoke).mockResolvedValue(undefined);
+        mount();
+
+        const res = await window.__termihubTestBridge!.dispatch({ action: "exitApp" });
+
+        expect(res).toEqual({ ok: true, action: "exitApp" });
+        expect(invoke).not.toHaveBeenCalledWith("test_exit_app");
+        vi.advanceTimersByTime(100);
+        expect(invoke).toHaveBeenCalledWith("test_exit_app");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("reads window.__coverage__ through readCoverage (#3657)", async () => {
+      const win = window as Window & { __coverage__?: unknown };
+      mount();
+      try {
+        const none = await window.__termihubTestBridge!.dispatch({ action: "readCoverage" });
+        expect(none).toEqual({ ok: true, action: "readCoverage", value: null });
+
+        win.__coverage__ = { "src/a.ts": { s: { "0": 1 } } };
+        const res = await window.__termihubTestBridge!.dispatch({ action: "readCoverage" });
+        expect(res.ok).toBe(true);
+        const chunk = res.value as { total: number; chunk: string };
+        expect(JSON.parse(chunk.chunk)).toEqual(win.__coverage__);
+      } finally {
+        delete win.__coverage__;
       }
     });
 

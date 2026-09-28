@@ -281,6 +281,12 @@ describe("parseArgs / readSkipList", () => {
     });
   });
 
+  it("takes --title and a value-less --append", () => {
+    expect(
+      parseArgs(["--base", "a", "--append", "--overlay", "b", "--out", "c", "--title", "T"])
+    ).toEqual({ base: "a", overlay: "b", out: "c", title: "T", append: true });
+  });
+
   it("reads one path per line, ignoring blanks", () => {
     expect(readSkipList("a.rs\r\n\n core\\b.rs \n")).toEqual(new Set(["a.rs", "core/b.rs"]));
   });
@@ -317,5 +323,39 @@ describe("CLI", () => {
     expect(stdout).toContain("**2**");
     expect(readFileSync(path.join(dir, "gap.md"), "utf8")).toBe(stdout);
     expect(totals(readFileSync(path.join(dir, "merged.lcov"), "utf8")).LH).toBe(5);
+  });
+
+  it("chains a second overlay onto the merged output and appends its titled report", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "lcov-merge-"));
+    const f = (n, body) => {
+      const p = path.join(dir, n);
+      writeFileSync(p, body);
+      return p;
+    };
+    const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "lcov-merge.mjs");
+    const merged = path.join(dir, "merged.lcov");
+    const gap = path.join(dir, "gap.md");
+    const run = (base, overlay, extra = []) =>
+      execFileSync(
+        process.execPath,
+        [script, "--base", base, "--overlay", overlay, "--root", ROOT, "--out", merged]
+          .concat(["--report", gap])
+          .concat(extra),
+        { encoding: "utf8" }
+      );
+    run(f("unit.lcov", UNIT), f("int.lcov", INTEGRATION));
+    const afterFirst = totals(readFileSync(merged, "utf8")).LH;
+    // The same overlay again adds nothing new: the merged base already has it.
+    const second = run(merged, f("int2.lcov", INTEGRATION), [
+      "--title",
+      "Integration coverage (nightly bridge harness lane)",
+      "--append",
+    ]);
+    expect(totals(readFileSync(merged, "utf8")).LH).toBe(afterFirst);
+    expect(second).toContain("## Integration coverage (nightly bridge harness lane)");
+    expect(second).toContain("**0**");
+    const report = readFileSync(gap, "utf8");
+    expect(report).toContain("## Integration coverage (nightly fixtures lane)");
+    expect(report.endsWith(second)).toBe(true);
   });
 });
