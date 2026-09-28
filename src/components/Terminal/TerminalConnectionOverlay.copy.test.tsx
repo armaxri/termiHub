@@ -47,6 +47,7 @@ let root: Root;
 function resetStore() {
   useAppStore.setState({
     terminalSpawnErrors: {},
+    terminalSpawnErrorKinds: {},
     terminalAutoRetryCount: {},
     terminalWaitingForAgent: {},
     terminalRetryCounters: {},
@@ -57,6 +58,7 @@ function resetStore() {
 function renderSerialPermissionFailure() {
   useAppStore.setState({
     terminalSpawnErrors: { [TAB_ID]: "Permission denied on '/dev/ttyUSB0'" },
+    terminalSpawnErrorKinds: { [TAB_ID]: "permission" },
   });
   act(() => {
     root.render(

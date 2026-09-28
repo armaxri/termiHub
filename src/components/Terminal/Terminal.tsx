@@ -41,7 +41,8 @@ import {
   isShellReservedKey,
 } from "@/services/keybindings";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
-import { backendErrorMessage } from "@/utils/backendErrorCode";
+import { backendErrorMessage, parseBackendError } from "@/utils/backendErrorCode";
+import { connectionErrorKindFromCode } from "@/utils/connectionErrorHints";
 import {
   sandboxHasParsers,
   sandboxSessionPending,
@@ -111,6 +112,18 @@ const INITIAL_COMMAND_FALLBACK_MS = 200;
  * toast can name the connection. Falls back to a generic label if the tab has
  * been removed by the time the connect resolves.
  */
+/**
+ * Record a failed spawn on the tab: the human message (machine marker stripped)
+ * plus its typed failure kind from the backend's locale-independent error code,
+ * so the connection overlay selects its hint structurally (I18N-009).
+ */
+function setClassifiedSpawnError(tabId: string, err: unknown): void {
+  const parsed = parseBackendError(err);
+  useAppStore
+    .getState()
+    .setTerminalSpawnError(tabId, parsed.message, connectionErrorKindFromCode(parsed.code));
+}
+
 function resolveTabTitle(tabId: string): string {
   const tab = getAllTabsAcrossGroupTrees().find((t) => t.id === tabId);
   return tab?.title?.trim() || "Session";
@@ -830,7 +843,7 @@ export function Terminal({
                 // counter first so the failure state is not hidden by the
                 // "Connecting… (attempt N)" overlay (which has higher priority).
                 useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
-                useAppStore.getState().setTerminalSpawnError(tabId, backendErrorMessage(err));
+                setClassifiedSpawnError(tabId, err);
 
                 // 3 s visible failure display (cancellable via isCanceled or user retry).
                 const failDeadline = Date.now() + 3000;
@@ -853,8 +866,9 @@ export function Terminal({
               } else {
                 // Direct connection (SSH, Telnet, serial, local) — show error.
                 // Strip any backend code marker so a machine token
-                // (e.g. an auth-failure signal) never leaks into the overlay.
-                useAppStore.getState().setTerminalSpawnError(tabId, backendErrorMessage(err));
+                // (e.g. an auth-failure signal) never leaks into the overlay,
+                // and keep the code as the typed failure kind (I18N-009).
+                setClassifiedSpawnError(tabId, err);
                 return;
               }
             }

@@ -24,6 +24,7 @@ function resetStore() {
   useAppStore.setState({
     terminalConnectDeadline: {},
     terminalSpawnErrors: {},
+    terminalSpawnErrorKinds: {},
     terminalAutoRetryCount: {},
     terminalWaitingForAgent: {},
     terminalRetryCounters: {},
@@ -80,6 +81,9 @@ describe("TerminalConnectionOverlay — timeouts", () => {
     expect(useAppStore.getState().terminalSpawnErrors[TAB_ID]).toBe(
       connectTimeoutMessage("waiting-for-agent")
     );
+    // Waiting on the parent agent is not the tab's own backend timing out, so
+    // it carries no typed timeout kind (I18N-009).
+    expect(useAppStore.getState().terminalSpawnErrorKinds[TAB_ID]).toBeUndefined();
   });
 
   it("does not fire the timeout if the agent connects before it elapses", () => {
@@ -108,6 +112,25 @@ describe("TerminalConnectionOverlay — timeouts", () => {
     expect(useAppStore.getState().terminalSpawnErrors[TAB_ID]).toBe(
       connectTimeoutMessage("connecting")
     );
+    // The client-side connect timeout is typed, so the overlay shows the
+    // backend-appropriate timeout hint without matching the message (I18N-009).
+    expect(useAppStore.getState().terminalSpawnErrorKinds[TAB_ID]).toBe("timeout");
+    expect(container.textContent).toContain("Check that the host is reachable");
+  });
+
+  it("keeps the typed kind with its error and clears it with the error", () => {
+    const store = useAppStore.getState();
+    store.setTerminalSpawnError(TAB_ID, "Serial port 'COM3' is busy", "busy");
+    expect(useAppStore.getState().terminalSpawnErrorKinds[TAB_ID]).toBe("busy");
+    // A later unclassified error must not inherit the stale kind.
+    store.setTerminalSpawnError(TAB_ID, "something else");
+    expect(useAppStore.getState().terminalSpawnErrorKinds[TAB_ID]).toBeUndefined();
+    store.setTerminalSpawnError(TAB_ID, "Permission denied", "permission");
+    store.retryTerminalSpawn(TAB_ID);
+    expect(useAppStore.getState().terminalSpawnErrorKinds[TAB_ID]).toBeUndefined();
+    store.setTerminalSpawnError(TAB_ID, "Permission denied", "permission");
+    store.abortTerminalConnect(TAB_ID);
+    expect(useAppStore.getState().terminalSpawnErrorKinds[TAB_ID]).toBeUndefined();
   });
 
   // Regression for #1263: the timeout is anchored to a store-held wall-clock

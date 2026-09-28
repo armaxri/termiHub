@@ -40,6 +40,70 @@ pub enum CoreError {
     Other(String),
 }
 
+/// Opening literal of the locale-independent machine marker
+/// `[thub-code:<slug>] ` that rides inside an error message across a text-only
+/// boundary (the agent JSON-RPC relay, the legacy flat IPC string).
+///
+/// This is the single wire-format definition shared by the desktop
+/// (`src-tauri/src/utils/errors.rs`, which parses it back into an
+/// `IpcErrorCode`) and the agent (which tags relayed connect failures with it).
+pub const CODE_MARKER_OPEN: &str = "[thub-code:";
+
+/// Prefix `message` with the `[thub-code:<code>] ` machine marker.
+///
+/// The desktop and the frontend strip the marker before display, so it never
+/// reaches user-visible text; it only carries the stable code.
+pub fn with_code(code: &str, message: impl std::fmt::Display) -> String {
+    format!("{CODE_MARKER_OPEN}{code}] {message}")
+}
+
+/// Typed, locale-independent category of a connect/spawn failure (I18N-009).
+///
+/// Chosen where the failure is detected — from `io::ErrorKind`, a raw OS error
+/// code, or the control flow that raised it (a timeout future elapsing, the
+/// SSH agent socket refusing) — so consumers never have to recover it by
+/// matching English or OS-localized message text. The frontend's connection
+/// overlay picks its per-backend hint from `(backend family, kind)` alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectFailureKind {
+    /// The connect/handshake did not finish within its deadline.
+    Timeout,
+    /// SSH authentication via the SSH agent failed (agent not running or not
+    /// reachable, or it could not complete the signature exchange).
+    AgentAuthFailed,
+    /// The target does not exist (e.g. an unplugged / misnamed serial port).
+    NotFound,
+    /// The OS denied access to the target (e.g. a serial port without the
+    /// required group membership).
+    PermissionDenied,
+    /// The target exists but is held by another application.
+    Busy,
+}
+
+impl ConnectFailureKind {
+    /// Every kind, for consumers that map a wire slug back to its kind.
+    pub const ALL: [Self; 5] = [
+        Self::Timeout,
+        Self::AgentAuthFailed,
+        Self::NotFound,
+        Self::PermissionDenied,
+        Self::Busy,
+    ];
+
+    /// The stable machine slug for this kind, as carried in the
+    /// `[thub-code:<slug>]` marker and the IPC envelope `code` field. Must stay
+    /// in sync with the desktop's `IpcErrorCode` serde names.
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::AgentAuthFailed => "agent_auth_failed",
+            Self::NotFound => "not_found",
+            Self::PermissionDenied => "permission_denied",
+            Self::Busy => "busy",
+        }
+    }
+}
+
 /// Errors related to terminal session lifecycle and operations.
 #[derive(Error, Debug)]
 pub enum SessionError {
@@ -110,6 +174,21 @@ pub enum SessionError {
     #[error("{0}")]
     ProtocolError(String),
 
+    /// A connect/spawn failure carrying a typed [`ConnectFailureKind`]
+    /// (I18N-009).
+    ///
+    /// Renders exactly like [`SpawnFailed`](Self::SpawnFailed) (`"Spawn failed:
+    /// …"`), so every message consumer sees the same text as before; the kind is
+    /// the machine-stable signal consumers classify by instead of the text.
+    #[error("Spawn failed: {message}")]
+    Classified {
+        /// The typed failure category.
+        kind: ConnectFailureKind,
+        /// The human-readable description (no remediation — the UI supplies
+        /// localized guidance from the kind).
+        message: String,
+    },
+
     /// The session configuration is invalid.
     #[error("Invalid config: {0}")]
     InvalidConfig(String),
@@ -125,6 +204,24 @@ pub enum SessionError {
     /// A low-level I/O error during session operations.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+impl SessionError {
+    /// Shorthand for a [`SessionError::Classified`] failure.
+    pub fn classified(kind: ConnectFailureKind, message: impl Into<String>) -> Self {
+        Self::Classified {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    /// The typed connect-failure kind, when this error carries one.
+    pub fn connect_failure_kind(&self) -> Option<ConnectFailureKind> {
+        match self {
+            Self::Classified { kind, .. } => Some(*kind),
+            _ => None,
+        }
+    }
 }
 
 /// Errors related to file browsing and file operations.
@@ -161,6 +258,39 @@ pub enum FileError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A classified failure renders like `SpawnFailed` (so message consumers
+    /// are unaffected) while exposing its typed kind (I18N-009).
+    #[test]
+    fn classified_failure_keeps_spawn_failed_text_and_exposes_kind() {
+        let err = SessionError::classified(ConnectFailureKind::Timeout, "Connection timed out");
+        assert_eq!(err.to_string(), "Spawn failed: Connection timed out");
+        assert_eq!(
+            err.connect_failure_kind(),
+            Some(ConnectFailureKind::Timeout)
+        );
+        assert_eq!(
+            SessionError::SpawnFailed("x".into()).connect_failure_kind(),
+            None
+        );
+    }
+
+    /// The kind slugs are the stable wire codes the desktop parses back.
+    #[test]
+    fn connect_failure_kind_codes_are_stable() {
+        assert_eq!(ConnectFailureKind::Timeout.code(), "timeout");
+        assert_eq!(
+            ConnectFailureKind::AgentAuthFailed.code(),
+            "agent_auth_failed"
+        );
+        assert_eq!(ConnectFailureKind::NotFound.code(), "not_found");
+        assert_eq!(
+            ConnectFailureKind::PermissionDenied.code(),
+            "permission_denied"
+        );
+        assert_eq!(ConnectFailureKind::Busy.code(), "busy");
+        assert_eq!(with_code("busy", "held"), "[thub-code:busy] held");
+    }
 
     #[test]
     fn session_error_display() {

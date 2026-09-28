@@ -43,6 +43,7 @@ let root: Root;
 function renderSerialPermissionFailure(port: string) {
   useAppStore.setState({
     terminalSpawnErrors: { [TAB_ID]: `Permission denied on '${port}'` },
+    terminalSpawnErrorKinds: { [TAB_ID]: "permission" },
     terminalAutoRetryCount: {},
     terminalWaitingForAgent: {},
     terminalRetryCounters: {},
@@ -125,6 +126,7 @@ describe("TerminalConnectionOverlay — platform-aware SSH-agent hint (#2088)", 
   function renderAgentAuthFailure() {
     useAppStore.setState({
       terminalSpawnErrors: { [TAB_ID]: "Agent auth failed" },
+      terminalSpawnErrorKinds: { [TAB_ID]: "agent-auth" },
       terminalAutoRetryCount: {},
       terminalWaitingForAgent: {},
       terminalRetryCounters: {},

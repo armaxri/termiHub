@@ -16,7 +16,19 @@
  * hint is visibly tied to the backend family and situation that raises it, so a
  * hint can no longer be silently attached to the wrong backend. New backends or
  * situations extend the table rather than adding another inline string.
+ *
+ * ## Structured selection (I18N-009)
+ *
+ * The hint is chosen from `(backend family, error kind)` only. The kind comes
+ * from the backend's locale-independent error code — never from matching the
+ * human message, which is English today and OS-localized for serial errors —
+ * and the copy is resolved through the i18n catalog (`@/i18n/catalog`).
  */
+
+import { t, type MessageId } from "@/i18n/catalog";
+import type { IpcErrorCode } from "@/types/generated/IpcErrorCode";
+import type { Platform } from "@/utils/platform";
+import { sshAgentStartCommand } from "@/utils/sshAgentSetup";
 
 /**
  * Backend families we tailor connection-failure guidance for. Derived from a
@@ -27,8 +39,42 @@
  */
 export type BackendFamily = "ssh" | "telnet" | "serial" | "docker" | "local" | "unknown";
 
-/** The connection-failure situations that carry a curated, backend-aware hint. */
-export type ConnectionErrorKind = "timeout";
+/**
+ * The typed category of a connection failure, derived **only** from the
+ * backend's locale-independent error code (I18N-009) — never from the human
+ * message text, which is English today and OS-localized for serial errors.
+ * `other` is every failure without a curated category.
+ */
+export type ConnectionErrorKind =
+  | "auth"
+  | "agent-auth"
+  | "timeout"
+  | "not-found"
+  | "permission"
+  | "busy"
+  | "other";
+
+/**
+ * Backend error codes (the ts-rs-generated {@link IpcErrorCode} slugs carried
+ * on the IPC envelope) that name a connection-failure kind.
+ */
+const CODE_TO_KIND: Partial<Record<IpcErrorCode, Exclude<ConnectionErrorKind, "other">>> = {
+  auth_failed: "auth",
+  agent_auth_failed: "agent-auth",
+  timeout: "timeout",
+  not_found: "not-found",
+  permission_denied: "permission",
+  busy: "busy",
+};
+
+/**
+ * Map a backend error code (as returned by `parseBackendError(err).code`) to
+ * its {@link ConnectionErrorKind}. An absent or unrecognised code is `other`.
+ */
+export function connectionErrorKindFromCode(code: string | undefined): ConnectionErrorKind {
+  if (!code) return "other";
+  return CODE_TO_KIND[code as IpcErrorCode] ?? "other";
+}
 
 /**
  * Map a tab's effective `sessionType` string to a {@link BackendFamily}.
@@ -59,31 +105,80 @@ export function backendFamilyFromSessionType(sessionType: string): BackendFamily
  * agent binary — a timeout means the transport never connected, so the agent
  * binary cannot be the cause (#2088).
  */
-const TIMEOUT_HINTS: Record<BackendFamily, string> = {
-  ssh: "The connection timed out before the SSH session was established. Check that the host is reachable, the address and port are correct, and that no firewall is blocking the connection.",
-  telnet:
-    "The connection timed out. Check that the host is reachable, the address and port are correct, and that no firewall is blocking the connection.",
-  serial:
-    "The serial port did not respond in time. Check that the device is connected and that the baud rate matches the device.",
-  docker:
-    "The connection timed out. Check that Docker is running and that the container is reachable.",
-  local:
-    "Starting the local shell timed out. Check that the configured shell exists and is executable.",
-  unknown:
-    "The connection timed out. Check that the host is reachable, the address and port are correct, and that no firewall is blocking the connection.",
+const TIMEOUT_HINTS: Record<BackendFamily, MessageId> = {
+  ssh: "connection.hint.timeout.ssh",
+  telnet: "connection.hint.timeout.telnet",
+  serial: "connection.hint.timeout.serial",
+  docker: "connection.hint.timeout.docker",
+  local: "connection.hint.timeout.local",
+  unknown: "connection.hint.timeout.unknown",
 };
 
-const HINTS: Record<ConnectionErrorKind, Record<BackendFamily, string>> = {
-  timeout: TIMEOUT_HINTS,
-};
+/** The Linux fix for a serial permission error: join the dialout group. */
+const SERIAL_DIALOUT_COMMAND = "sudo usermod -aG dialout $USER";
+
+/** A resolved, user-facing hint for a connection failure. */
+export interface ConnectionErrorHint {
+  /** Optional heading for a hint rendered as a panel. */
+  title?: string;
+  /** The guidance text. */
+  text: string;
+  /** Optional fix command, rendered with a copy affordance (#1829). */
+  command?: string;
+}
 
 /**
- * Resolve the user-facing hint for a connection-failure situation on a given
- * backend family. Returns `null` when no curated hint applies.
+ * Resolve the hint for a failure `kind` on a backend `family`, or `null` when
+ * no curated hint applies. The selection is a pure function of
+ * `(family, kind)` (plus the host platform for remediation commands that only
+ * exist on one OS); all copy comes from the i18n catalog.
  */
 export function connectionErrorHint(
   family: BackendFamily,
-  kind: ConnectionErrorKind
-): string | null {
-  return HINTS[kind]?.[family] ?? null;
+  kind: ConnectionErrorKind,
+  platform: Platform = "linux"
+): ConnectionErrorHint | null {
+  switch (kind) {
+    case "timeout":
+      return { text: t(TIMEOUT_HINTS[family]) };
+    case "auth":
+      // Credentials only exist on the remote-login backends.
+      return family === "ssh" || family === "telnet" || family === "unknown"
+        ? { text: t("connection.hint.auth.remote") }
+        : null;
+    case "agent-auth":
+      // The ssh-agent remedy is SSH-specific; never leak it onto telnet/serial
+      // (#2088).
+      return family === "ssh"
+        ? {
+            title: t("connection.hint.agentAuth.title"),
+            text: t("connection.hint.agentAuth.ssh"),
+            command: sshAgentStartCommand(platform),
+          }
+        : null;
+    case "not-found":
+      return family === "serial" ? { text: t("connection.hint.notFound.serial") } : null;
+    case "permission":
+      if (family !== "serial") return null;
+      // Only Linux has the dialout group, so only Linux gets the usermod fix
+      // (#1831).
+      return platform === "linux"
+        ? {
+            title: t("connection.hint.permission.title"),
+            text: t("connection.hint.permission.serial.linux"),
+            command: SERIAL_DIALOUT_COMMAND,
+          }
+        : {
+            title: t("connection.hint.permission.title"),
+            text: t(
+              platform === "windows"
+                ? "connection.hint.permission.serial.windows"
+                : "connection.hint.permission.serial.macos"
+            ),
+          };
+    case "busy":
+      return family === "serial" ? { text: t("connection.hint.busy.serial") } : null;
+    case "other":
+      return null;
+  }
 }
