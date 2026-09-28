@@ -380,6 +380,10 @@ pub fn deploy_agent(
     );
     let binary_bytes = std::fs::read(&binary_path)
         .map_err(|e| TerminalError::RemoteError(format!("Failed to read binary: {e}")))?;
+    // AGT-005 (#3330): re-verify the release signature over exactly the bytes we
+    // upload (resolution already verified the file; this closes the swap window).
+    agent_binary::verify_deploy_bytes(&binary_path, &binary_bytes, version)
+        .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
     upload_bytes_via_sftp(&session, &binary_bytes, &plan.upload_path)?;
     info!(
         "Uploaded {} bytes to {}",
@@ -684,8 +688,16 @@ pub fn stage_agent_binary(
     // AGT-004: compute the SHA-256 of exactly the bytes we upload, so the agent
     // can re-verify the staged binary against it immediately before the swap.
     let expected_sha256 = agent_binary::sha256_hex_of_bytes(&binary_bytes);
-    // AGT-005: forward the published signature of these bytes, if any; the
-    // agent verifies it against its compiled-in release key before the swap.
+    // AGT-005: verify the release signature over exactly these bytes before
+    // staging them (#3330 — a release desktop never pushes an unsigned or
+    // tampered binary), then forward it; the agent re-verifies it against its
+    // compiled-in release key before the swap.
+    agent_binary::verify_signature_for_digest(
+        &binary_path,
+        &expected_sha256,
+        &agent_binary::deploy_signature_policy(version),
+    )
+    .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
     let signature = agent_binary::read_signature_sidecar(&binary_path);
     upload_bytes_via_sftp(&session, &binary_bytes, &plan.upload_path)?;
     if let Err(e) = bail_if_cancelled(cancel) {

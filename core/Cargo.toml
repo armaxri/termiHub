@@ -276,6 +276,21 @@ default = []
 # (the desktop) can opt in, while `cargo test -p termihub-core` (default) compiles
 # them out and stays tracing-free.
 tracing = ["dep:tracing"]
+# Ed25519 verification of agent update binaries (AGT-005, #3213 / #3330): the
+# trusted release key(s) compiled in from `agent/keys/update-signing.pub.pem`,
+# the domain-separated signed message, and the release/dev signature policy.
+# Shared by the agent (self-update apply gate) and the desktop (verify before
+# every deploy path) so the two can never drift apart.
+agent-update-signing = [
+    "dep:ed25519-dalek",
+    "dep:base64",
+    "dep:hex",
+    "dep:tracing",
+]
+# Deterministic test signing helpers (`agent_update_signature::test_support`)
+# for the agent's and desktop's own tests. Enabled only from `[dev-dependencies]`
+# — never in a shipping build.
+agent-update-signing-test-support = ["agent-update-signing"]
 # Embedded HTTP/FTP/TFTP file servers (#2192). Pulls the web-server stack
 # (`axum`/`tower-http` for HTTP, `libunftp`/`unftp-sbe-fs` for FTP) plus `chrono`
 # for status timestamps and `tracing` for lifecycle logs. Enabled by the desktop

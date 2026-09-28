@@ -1484,8 +1484,11 @@ cargo cyclonedx --manifest-path rdp-sidecar/Cargo.toml --format json --spec-vers
 
 A release-built agent only applies a self-update (GitHub-fetched or desktop-pushed via
 `agent.request_update`) whose binary carries a valid Ed25519 signature from the termiHub
-release key (AGT-005, [#3213](https://github.com/armaxri/termiHub/issues/3213)). The public
-half is compiled into the agent from
+release key (AGT-005, [#3213](https://github.com/armaxri/termiHub/issues/3213)), and a
+release desktop deploys an agent binary on **any** path — immediate install over SSH, the
+Windows fallback, and the coordinated push — only when that signature verifies
+([#3330](https://github.com/armaxri/termiHub/issues/3330)). The public half is compiled into
+the agent and the desktop (via `termihub-core`) from
 [`agent/keys/update-signing.pub.pem`](../agent/keys/update-signing.pub.pem); the private
 half exists **only** as the `AGENT_UPDATE_SIGNING_KEY` GitHub Actions secret.
 
@@ -1493,17 +1496,27 @@ half exists **only** as the `AGENT_UPDATE_SIGNING_KEY` GitHub Actions secret.
 flowchart LR
     K["setup-agent-signing-key.sh<br/>(maintainer, once)"] -->|public key| P[agent/keys/update-signing.pub.pem]
     K -->|private key, stdin| S[(secret AGENT_UPDATE_SIGNING_KEY)]
-    P -->|include_str!| A[agent binary]
+    P -->|include_str! via termihub-core| A[agent binary]
+    P -->|include_str! via termihub-core| D[desktop]
     S --> R[release.yml sign-agent-binaries]
     R -->|"&lt;asset&gt;.sig"| G[GitHub Release]
+    G -->|binary + .sha256 + .sig| D2[desktop verifies before deploy]
     G -->|binary + .sha256 + .sig| A2[running agent verifies before apply]
 ```
 
 - **What is signed:** `Ed25519(b"termihub-agent-update-v1\0" || SHA-256(binary))`. The
   `<asset>.sig` sidecar holds the 64-byte signature, base64, one line. See
-  `agent/src/update/signature.rs` and `scripts/internal/agent-update-signing.sh`.
+  `core/src/agent_update_signature.rs` (shared by the agent and the desktop, feature
+  `agent-update-signing`) and `scripts/internal/agent-update-signing.sh`.
+- **Desktop side:** every agent-binary resolution (cache, bundle, download) is checked for the
+  `.sha256` checksum and then the `.sig` signature before it is deployed; the coordinated
+  and immediate paths re-check the signature over the exact bytes they upload
+  (`src-tauri/src/terminal/agent_binary.rs`). A release desktop fails closed, like the
+  AGT-007 checksum rule. Dev/branch desktop builds (debug, CI dev build, or a `-dev`
+  version) tolerate a _missing_ signature, but a present one must verify.
 - **Placeholder:** until the key is generated, the committed file is a marked
-  **placeholder**. Release-built agents then refuse every update (fail closed), and
+  **placeholder**. Release-built agents then refuse every update, a release desktop refuses
+  to deploy any agent binary (both fail closed), and
   `release.yml` fails in its first job. `dev-build.yml` publishes unsigned agents with a
   warning.
 - **Debug builds** (`cargo test`, `scripts/dev.sh`) accept a _missing_ signature with a loud
@@ -1539,7 +1552,8 @@ rather than re-running the script.
 
 **Compromise:** replace the secret and the public key immediately (`--force`). Agents that
 still embed only the leaked key can no longer be updated automatically — redeploy them from
-the desktop (the immediate-deploy path installs over SSH, independent of this check).
+a desktop built with the new key (the immediate-deploy path installs over SSH and does not
+depend on the old agent's check; the desktop verifies against its own compiled-in key).
 
 ### Hotfix Process
 
