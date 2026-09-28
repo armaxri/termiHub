@@ -105,6 +105,13 @@ import { createEditorSlice, EditorSlice } from "./slices/editorSlice";
 import { createSettingsSlice, SettingsSlice } from "./slices/settingsSlice";
 import { createUiChromeSlice, UiChromeSlice } from "./slices/uiChromeSlice";
 import { createAgentsSlice, AgentsSlice } from "./slices/agentsSlice";
+import { createBroadcastSlice, BroadcastSlice } from "./slices/broadcastSlice";
+import { createPanelZoomSlice, PanelZoomSlice } from "./slices/panelZoomSlice";
+import { createChordPendingSlice, ChordPendingSlice } from "./slices/chordPendingSlice";
+import {
+  createSessionHighlightingSlice,
+  SessionHighlightingSlice,
+} from "./slices/sessionHighlightingSlice";
 
 export type { MacroPlaybackState, PlayMacroOptions } from "./slices/macrosSlice";
 export type {
@@ -213,7 +220,7 @@ import { currentMonitorsView } from "@/store/systemMonitorBridge";
 import { currentAgentsView, ensureAgentsSubscribed } from "@/store/agentsBridge";
 import { currentConnectionsView, ensureConnectionsSubscribed } from "@/store/connectionsBridge";
 import { currentSettingsView, ensureSettingsSubscribed } from "@/store/settingsBridge";
-import { currentBroadcastView, dispatchBroadcastIntentBestEffort } from "@/store/broadcastBridge";
+import { currentBroadcastView } from "@/store/broadcastBridge";
 import {
   currentRestoreCohortView,
   mirrorRestoreBegin,
@@ -373,7 +380,11 @@ export interface AppState
     EditorSlice,
     SettingsSlice,
     UiChromeSlice,
-    AgentsSlice {
+    AgentsSlice,
+    BroadcastSlice,
+    PanelZoomSlice,
+    ChordPendingSlice,
+    SessionHighlightingSlice {
   // Connection type registry (loaded from backend at startup)
   connectionTypes: ConnectionTypeInfo[];
 
@@ -827,15 +838,10 @@ export interface AppState
   // about) — runtime-only open/close flags provided by CommandPaletteSlice
   // (extracted under #2077 via #2300).
 
-  // Panel zoom overlay (runtime-only) — temporarily expand the active terminal tab to full view
-  zoomedTabId: string | null;
-  setZoomedTabId: (tabId: string | null) => void;
-  /** Toggle zoom for the active terminal tab. Zooms in if nothing is zoomed; dismisses otherwise. */
-  toggleZoomActiveTab: () => void;
-
-  // Chord pending indicator
-  chordPending: string | null;
-  setChordPending: (pending: string | null) => void;
+  // Panel zoom overlay (`zoomedTabId` / `setZoomedTabId` / `toggleZoomActiveTab`)
+  // provided by PanelZoomSlice; chord pending indicator (`chordPending` /
+  // `setChordPending`) provided by ChordPendingSlice (ARCH-001/FES-011, extracted
+  // under #2077 via #2881).
 
   // Zoom (runtime-only) — scale factor + in/out/reset provided by ZoomSlice
   // (extracted under #2077 via #2300).
@@ -843,16 +849,9 @@ export interface AppState
   // Terminal search (runtime-only) — per-tab search-bar visibility + set/toggle
   // provided by TerminalSearchSlice (extracted under #2077 via #2300).
 
-  /**
-   * Per-session temporary syntax-highlighting toggle (runtime-only, never
-   * persisted). Keyed by session id. Set by the status-bar quick toggle
-   * (epic #1696, child #1704) to override the resolved config for a single
-   * live session without touching saved settings. A missing entry means
-   * "follow the resolved config"; `setSessionHighlighting(id, undefined)`
-   * clears the override back to that state.
-   */
-  sessionHighlighting: Record<string, boolean>;
-  setSessionHighlighting: (sessionId: string, enabled: boolean | undefined) => void;
+  // Per-session syntax-highlighting override (`sessionHighlighting` /
+  // `setSessionHighlighting`) provided by SessionHighlightingSlice
+  // (ARCH-001/FES-011, extracted under #2077 via #2881).
 
   // Dialogs — large-paste / open-saved-file / export-import / recovery-warning
   // open/close flags provided by DialogsSlice (extracted under #2077 via #2300).
@@ -1136,52 +1135,10 @@ export interface AppState
 
   // Macro recording (#1674) + playback (#1675) — provided by MacrosSlice (#2114).
 
-  // Broadcast input (#1955) — mirror typed input from a source terminal to many.
-  // The membership state (`active` / `sourceTabId` / `scope` / `targetTabIds` /
-  // `lastScope`) lives in the authoritative `broadcast@<clientId>` projection
-  // region (#2206), read via `useProjectedBroadcast` / `currentBroadcastView`; the
-  // actions below dispatch `broadcast.*` intents. `appStore` holds no broadcast
-  // state — these methods only orchestrate against the live tab tree.
-  /** Enter broadcast mode with the given scope, source tab, and target tabs. */
-  startBroadcast: (scope: BroadcastScope, sourceTabId: string, targetTabIds: string[]) => void;
-  /** Leave broadcast mode and clear the source/target selection. */
-  stopBroadcast: () => void;
-  /**
-   * Toggle broadcast from the keyboard shortcut (#1958). When broadcast is
-   * active it stops; otherwise it starts against the active terminal tab using
-   * the remembered last scope — skipping the scope dropdown. A remembered
-   * `"custom"` scope cannot be reconstructed without the picker, so the shortcut
-   * falls back to `"all"`. Emits a hint toast when no terminal tab is focused
-   * (nothing to broadcast from).
-   */
-  toggleBroadcast: () => void;
-  /** Add a tab to the broadcast target set (no-op when inactive). */
-  addBroadcastTarget: (tabId: string) => void;
-  /** Remove a tab from the broadcast target set. */
-  removeBroadcastTarget: (tabId: string) => void;
-  /** Whether the given tab is currently a broadcast target. */
-  isBroadcastTarget: (tabId: string) => boolean;
-  /**
-   * The subset of the broadcast target set that are *connected* terminal tabs —
-   * the tabs the `onData` fan-out should mirror input to. Disconnected,
-   * connecting, and non-terminal tabs are filtered out silently. Returns `[]`
-   * when broadcast is inactive. Resolution of each tab id to a live session id
-   * is done by the terminal registry at the dispatch seam.
-   */
-  getBroadcastTargetTabIds: () => string[];
-  /**
-   * Recompute the broadcast target set for the active scope so membership tracks
-   * tabs opening during an active broadcast (#1956). No-op when inactive.
-   *
-   * - `"all"` / `"panel"` — re-derive members from the scope, so a terminal
-   *   opened in range is auto-added and one no longer in range drops out.
-   * - `"custom"` — never auto-adds; the explicit selection is authoritative
-   *   (closed tabs are pruned at the tab-close seam). No-op here.
-   *
-   * Closing a target is handled at the tab-close seam for every scope, so this
-   * only needs to run on tab open.
-   */
-  refreshBroadcastMembership: () => void;
+  // Broadcast input (#1955) — start / stop / toggle / target-membership actions
+  // provided by BroadcastSlice (ARCH-001/FES-011, extracted under #2077 via #2881).
+  // The membership state lives in the authoritative `broadcast@<clientId>` region
+  // (#2206); `appStore` holds no broadcast state.
 
   // Workflows (#1852) — the stored-workflow library plus run/local-process
   // orchestration (loadWorkflows / save / delete / import / runWorkflow /
@@ -2514,6 +2471,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
     ...createSettingsSlice(set, get, store),
     ...createUiChromeSlice(set, get, store),
     ...createAgentsSlice(set, get, store),
+    ...createBroadcastSlice(set, get, store),
+    ...createPanelZoomSlice(set, get, store),
+    ...createChordPendingSlice(set, get, store),
+    ...createSessionHighlightingSlice(set, get, store),
 
     // Connection type registry — updated by loadFromBackend()
     connectionTypes: [],
@@ -4719,26 +4680,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
     // Shortcuts overlay + command palette + standalone overlay views provided
     // by createCommandPaletteSlice (extracted under #2077 via #2300).
 
-    // Panel zoom overlay
-    zoomedTabId: null,
-    setZoomedTabId: (tabId) => set({ zoomedTabId: tabId }),
-    toggleZoomActiveTab: () => {
-      const { zoomedTabId } = get();
-      const { activePanelId, rootPanel } = curLayout();
-      if (zoomedTabId !== null) {
-        set({ zoomedTabId: null });
-        return;
-      }
-      const leaves = getAllLeaves(rootPanel);
-      const panel = leaves.find((p) => p.id === activePanelId) ?? leaves[0];
-      if (panel?.activeTabId) {
-        set({ zoomedTabId: panel.activeTabId });
-      }
-    },
-
-    // Chord pending indicator
-    chordPending: null,
-    setChordPending: (pending) => set({ chordPending: pending }),
+    // Panel zoom overlay provided by createPanelZoomSlice; chord pending indicator
+    // provided by createChordPendingSlice (ARCH-001/FES-011, extracted under #2077
+    // via #2881).
 
     // Zoom (runtime-only) — scale factor + in/out/reset provided by
     // createZoomSlice (extracted under #2077 via #2300).
@@ -4746,14 +4690,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
     // Terminal search (runtime-only) — per-tab search-bar visibility + set/toggle
     // provided by createTerminalSearchSlice (extracted under #2077 via #2300).
 
-    // Per-session syntax-highlighting toggle (runtime-only, never persisted)
-    sessionHighlighting: {},
-    setSessionHighlighting: (sessionId, enabled) =>
-      set((s) =>
-        enabled === undefined
-          ? { sessionHighlighting: omitKey(s.sessionHighlighting, sessionId) }
-          : { sessionHighlighting: { ...s.sessionHighlighting, [sessionId]: enabled } }
-      ),
+    // Per-session syntax-highlighting override provided by
+    // createSessionHighlightingSlice (ARCH-001/FES-011, extracted under #2077 via
+    // #2881).
 
     // Dialogs — large-paste / open-saved-file / export-import / recovery-warning
     // open/close flags provided by createDialogsSlice (extracted under #2077 via
@@ -5649,91 +5588,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     // Macro recording (#1674) + playback (#1675) provided by createMacrosSlice (#2114).
 
-    // Broadcast input (#1955) — the membership state lives in the authoritative
-    // `broadcast@<clientId>` region (#2206); these actions dispatch `broadcast.*`
-    // intents and read `currentBroadcastView()`. `appStore` holds no broadcast
-    // state (reducer removal, #2206). Broadcast has no server data source, so the
-    // dispatched intents are the only path that mutates the machine.
-
-    startBroadcast: (scope, sourceTabId, targetTabIds) => {
-      // The store reproduces `{source} ∪ targets` from the same args, so pass the
-      // raw resolved targets (not a source-prefixed set).
-      dispatchBroadcastIntentBestEffort("broadcast.start", { scope, sourceTabId, targetTabIds });
-    },
-
-    stopBroadcast: () => {
-      // The store retains scope/lastScope across the stop for the keyboard toggle.
-      dispatchBroadcastIntentBestEffort("broadcast.stop", {});
-    },
-
-    toggleBroadcast: () => {
-      // Second press (or any press while active) turns broadcast off, regardless
-      // of which tab is focused — mirrors the toolbar toggle and the status-bar
-      // Stop pill.
-      if (currentBroadcastView().active) {
-        get().stopBroadcast();
-        return;
-      }
-      const state = get();
-      const source = getActiveTab(state);
-      if (!source || source.contentType !== "terminal") {
-        toast.info("Focus a terminal to start broadcasting input");
-        return;
-      }
-      // Reuse the last scope, skipping the dropdown. A remembered "custom"
-      // selection lives only in the picker and cannot be rebuilt here, so it
-      // degrades to "all terminals" (#1958).
-      const lastScope = currentBroadcastView().lastScope;
-      const scope: BroadcastScope = lastScope === "custom" ? "all" : lastScope;
-      const targets = resolveBroadcastTargetTabIds(withComposedLayout(state), scope, source.id);
-      get().startBroadcast(scope, source.id, targets);
-    },
-
-    addBroadcastTarget: (tabId) => {
-      // Read-then-dispatch so the intent fires only on a real change (a no-op add
-      // must not dispatch a redundant intent), matching the store's pure set-insert.
-      if (currentBroadcastView().targetTabIds.includes(tabId)) return;
-      dispatchBroadcastIntentBestEffort("broadcast.addTarget", { tabId });
-    },
-
-    removeBroadcastTarget: (tabId) => {
-      if (!currentBroadcastView().targetTabIds.includes(tabId)) return;
-      dispatchBroadcastIntentBestEffort("broadcast.removeTarget", { tabId });
-    },
-
-    isBroadcastTarget: (tabId) => currentBroadcastView().targetTabIds.includes(tabId),
-
-    getBroadcastTargetTabIds: () => {
-      const view = currentBroadcastView();
-      if (!view.active) return [];
-      return filterConnectedTerminalTabIds(get(), view.targetTabIds);
-    },
-
-    refreshBroadcastMembership: () => {
-      const view = currentBroadcastView();
-      if (!view.active) return;
-      const source = view.sourceTabId;
-      if (!source) return;
-      // Custom selection is frozen at pick time — never auto-add. Removal of
-      // closed targets is handled at the tab-close seam.
-      if (view.scope === "custom") return;
-      const state = withComposedLayout(get());
-      const resolved = resolveBroadcastTargetTabIds(state, view.scope, source);
-      const next = new Set<string>([source, ...resolved]);
-      const prev = new Set(view.targetTabIds);
-      // Skip the work (and its intents) when membership is unchanged.
-      if (next.size === prev.size && [...next].every((id) => prev.has(id))) return;
-      // The store owns no bulk-set intent, so reconcile the region to the
-      // recomputed membership via granular add/remove intents for the delta
-      // (mirroring the connected-terminal refresh at the fan-out seam).
-      for (const id of next) {
-        if (!prev.has(id)) dispatchBroadcastIntentBestEffort("broadcast.addTarget", { tabId: id });
-      }
-      for (const id of prev) {
-        if (!next.has(id))
-          dispatchBroadcastIntentBestEffort("broadcast.removeTarget", { tabId: id });
-      }
-    },
+    // Broadcast input (#1955) — start / stop / toggle / target-membership actions
+    // provided by createBroadcastSlice (ARCH-001/FES-011, extracted under #2077 via
+    // #2881).
 
     // Workspaces — `workspaces` / `activeWorkspaceName` state and the
     // `loadWorkspaces` / `saveWorkspaceToBackend` / `deleteWorkspaceFromBackend`

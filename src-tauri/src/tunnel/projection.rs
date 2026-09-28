@@ -90,6 +90,12 @@ pub fn build_tunnel_view(manager: &TunnelManager) -> Value {
 /// [`build_tunnel_view`] re-locks the manager's mutexes, and every caller (the
 /// status-emit choke point, the stats emitter, the intent handlers) invokes this
 /// outside any held manager lock.
+///
+/// The view is built **under the region lock** ([`Projector::publish_with`],
+/// #3788): those callers run on different threads, and a view built before the
+/// lock could be published over a newer one a racing caller had already landed,
+/// leaving the region stale. Lock order is region lock → manager mutexes; the
+/// manager never touches the projector while holding one of its mutexes.
 pub fn publish_tunnels<R: tauri::Runtime>(app_handle: &AppHandle<R>) {
     let (Some(projection), Some(manager)) = (
         app_handle.try_state::<ProjectionState>(),
@@ -97,8 +103,9 @@ pub fn publish_tunnels<R: tauri::Runtime>(app_handle: &AppHandle<R>) {
     ) else {
         return;
     };
-    let view = build_tunnel_view(&manager);
-    projection.projector.publish(TUNNELS_REGION, view);
+    projection
+        .projector
+        .publish_with(TUNNELS_REGION, || build_tunnel_view(&manager));
 }
 
 /// Register the SSH-tunnels domain intents on a handler registry.
@@ -234,7 +241,7 @@ fn parse_config(intent: &Intent) -> Result<TunnelConfig, (String, String)> {
 /// Publish the region from a manager to the given projector, returning the
 /// advanced region for the intent ack (empty when the view did not change).
 fn publish_region(manager: &TunnelManager, projector: &Projector) -> Vec<ProducedRegion> {
-    match projector.publish(TUNNELS_REGION, build_tunnel_view(manager)) {
+    match projector.publish_with(TUNNELS_REGION, || build_tunnel_view(manager)) {
         Some(version) => vec![ProducedRegion {
             region: TUNNELS_REGION.to_string(),
             version,

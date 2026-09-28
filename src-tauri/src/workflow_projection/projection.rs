@@ -90,7 +90,7 @@ pub fn publish_workflow_run(
     client_id: &str,
 ) -> Vec<ProducedRegion> {
     let region = workflow_run_region(client_id);
-    match projector.publish(&region, store.snapshot(client_id)) {
+    match projector.publish_with(&region, || store.snapshot(client_id)) {
         Some(version) => vec![ProducedRegion { region, version }],
         None => Vec::new(),
     }

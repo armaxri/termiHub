@@ -524,14 +524,7 @@ impl TransferStore {
     /// Pure with respect to queue state (never mutates), so the projector can
     /// safely diff two consecutive snapshots.
     pub fn snapshot(&self) -> Value {
-        let inner = self.lock();
-        let mut queue = Map::with_capacity(inner.queue.len());
-        for (id, entry) in &inner.queue {
-            if let Ok(value) = serde_json::to_value(entry) {
-                queue.insert(id.clone(), value);
-            }
-        }
-        json!({ "queue": Value::Object(queue), "minimized": inner.minimized })
+        snapshot_of(&self.lock())
     }
 
     /// `transfer.seed` — enqueue a `queued` row from a registration snapshot
@@ -645,20 +638,20 @@ impl TransferStore {
     /// which likewise omits an entry it cannot serialize), so the region converges
     /// on the same result either way.
     pub fn drain_delta(&self) -> RegionDelta {
+        drain_delta_of(&mut self.lock())
+    }
+
+    /// [`Self::drain_delta`] plus a whole-region [`Self::snapshot`], both taken
+    /// under **one** store lock so no fold can land between them (#3788, the
+    /// #3780 pattern). The snapshot is therefore exactly the state the drained
+    /// delta brings the region to — the ground truth for the debug PERF-006
+    /// cross-check in [`crate::transfers_projection::projection`]. A fresh
+    /// `snapshot()` taken after the drain would also contain any fold that raced
+    /// in afterwards (still dirty, published next), failing the check spuriously.
+    pub fn drain_delta_with_snapshot(&self) -> (RegionDelta, Value) {
         let mut inner = self.lock();
-        let keys: Vec<String> = inner.dirty_queue.drain().collect();
-        let minimized = inner.minimized;
-        let queue = keys
-            .into_iter()
-            .map(|id| {
-                let value = inner
-                    .queue
-                    .get(&id)
-                    .and_then(|entry| serde_json::to_value(entry).ok());
-                (id, value)
-            })
-            .collect();
-        RegionDelta { queue, minimized }
+        let delta = drain_delta_of(&mut inner);
+        (delta, snapshot_of(&inner))
     }
 
     /// Read one queue row (test / diagnostics helper).
@@ -678,6 +671,36 @@ impl TransferStore {
         // panicked mid-mutation (a bug) — recover rather than cascade.
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
+}
+
+/// The whole-region view model of the locked store (see
+/// [`TransferStore::snapshot`]).
+fn snapshot_of(inner: &Inner) -> Value {
+    let mut queue = Map::with_capacity(inner.queue.len());
+    for (id, entry) in &inner.queue {
+        if let Ok(value) = serde_json::to_value(entry) {
+            queue.insert(id.clone(), value);
+        }
+    }
+    json!({ "queue": Value::Object(queue), "minimized": inner.minimized })
+}
+
+/// Drain the locked store's dirty set into a [`RegionDelta`] (see
+/// [`TransferStore::drain_delta`]).
+fn drain_delta_of(inner: &mut Inner) -> RegionDelta {
+    let keys: Vec<String> = inner.dirty_queue.drain().collect();
+    let minimized = inner.minimized;
+    let queue = keys
+        .into_iter()
+        .map(|id| {
+            let value = inner
+                .queue
+                .get(&id)
+                .and_then(|entry| serde_json::to_value(entry).ok());
+            (id, value)
+        })
+        .collect();
+    RegionDelta { queue, minimized }
 }
 
 #[cfg(test)]
