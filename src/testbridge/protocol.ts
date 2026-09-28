@@ -481,6 +481,48 @@ export interface ListWindowsCommand {
   action: "listWindows";
 }
 
+/**
+ * Read one chunk of the frontend's Istanbul coverage (`window.__coverage__`) for
+ * the harness's coverage collection (#3657).
+ *
+ * Only a build made with `TERMIHUB_FRONTEND_COVERAGE=1` has that global (see
+ * `scripts/internal/vite-coverage-plugin.mjs`); otherwise the value is `null`.
+ * The serialized coverage can be many MiB, larger than is sensible for one
+ * bridge frame, so it is read in chunks: `offset: 0` (or no offset) takes a
+ * fresh JSON snapshot and returns its first chunk, later offsets page through
+ * that same snapshot. The value is a {@link CoverageChunk}.
+ */
+export interface ReadCoverageCommand {
+  action: "readCoverage";
+  /** Character offset into the snapshot; 0 or absent starts a new snapshot. */
+  offset?: number;
+}
+
+/** One page of a serialized coverage snapshot, returned by `readCoverage`. */
+export interface CoverageChunk {
+  /** Total length of the serialized snapshot, in characters. */
+  total: number;
+  /** Offset of `chunk` within the snapshot. */
+  offset: number;
+  /** The snapshot's characters from `offset` (at most the chunk size). */
+  chunk: string;
+}
+
+/**
+ * Quit the app through `AppHandle::exit(0)` (#3657), so the process exits
+ * normally and an LLVM-instrumented build writes its `.profraw` file. A killed
+ * process writes nothing, which is why the harness asks for this before it
+ * stops an instrumented app.
+ *
+ * Deferred until after the response is sent, like `closeWindow`. Resolves
+ * against an injected `exitApp` dep, which calls the test-bridge-only
+ * `test_exit_app` command; outside the harness the verb fails with "not
+ * available".
+ */
+export interface ExitAppCommand {
+  action: "exitApp";
+}
+
 /** Read a subscription's current recorded frames + cache state by id. */
 export interface ProjectionStateCommand {
   action: "projectionState";
@@ -546,6 +588,8 @@ export type BridgeCommand =
   | SeverAgentTransportCommand
   | CloseWindowCommand
   | ListWindowsCommand
+  | ReadCoverageCommand
+  | ExitAppCommand
   | ProjectionSubscribeCommand
   | ProjectionDispatchCommand
   | ProjectionStateCommand

@@ -23,7 +23,7 @@ from typing import Any, Optional, Sequence
 
 import websockets
 
-from . import deadlines, timing
+from . import coverage, deadlines, timing
 from .protocol import (
     MAIN_WINDOW,
     Command,
@@ -248,6 +248,28 @@ class Driver:
         reply — use :meth:`wait_until_closed` to wait for it to go.
         """
         self._call({"action": "closeWindow"})
+
+    def read_coverage_chunk(
+        self, offset: int = 0, *, timeout: Optional[float] = None
+    ) -> Optional[dict[str, Any]]:
+        """One chunk of this window's Istanbul coverage (``window.__coverage__``).
+
+        Returns ``{"total", "offset", "chunk"}`` or ``None`` for a build without
+        frontend instrumentation (#3657). ``offset=0`` takes a fresh snapshot;
+        later offsets page through it. Use
+        :func:`termihub_harness.coverage.read_frontend_coverage` for the whole
+        object.
+        """
+        return self._call({"action": "readCoverage", "offset": offset}, timeout=timeout)
+
+    def exit_app(self) -> None:
+        """Quit the whole app normally via ``AppHandle::exit(0)`` (#3657).
+
+        A normal exit lets an LLVM-instrumented build write its coverage profile;
+        killing the process loses it. The exit is deferred app-side until this
+        call has returned; wait for the process to go away afterwards.
+        """
+        self._call({"action": "exitApp"})
 
     def list_windows(self) -> list[dict[str, Any]]:
         """The backend window registry: ``[{"label", "tabCount"?}, …]`` (#1900)."""
@@ -656,6 +678,8 @@ class Bridge:
         self._thread.start()
         if not self._ready.wait(10) or self._error is not None:
             raise RuntimeError(f"bridge failed to start: {self._error}")
+        # Opt-in coverage collection (#3657); a no-op unless enabled.
+        coverage.register_bridge(self)
         return self
 
     @property
@@ -823,6 +847,10 @@ class Bridge:
         loop, stop = self._loop, self._stop_future
         if loop is None or stop is None:
             return
+        # Opt-in coverage (#3657): read an app still running on this bridge
+        # before its connection goes away. A no-op unless enabled.
+        coverage.before_bridge_close(self)
+        coverage.unregister_bridge(self)
         loop.call_soon_threadsafe(lambda: stop.done() or stop.set_result(None))
         if self._thread is not None:
             self._thread.join(timeout=5)

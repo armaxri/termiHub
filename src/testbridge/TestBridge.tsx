@@ -144,6 +144,21 @@ export function TestBridge() {
             );
         }, CLOSE_WINDOW_DEFER_MS);
       },
+      // Istanbul coverage of an instrumented test build (#3657); undefined in
+      // any other build, so the verb then answers null.
+      getCoverage: () => (window as Window & { __coverage__?: unknown }).__coverage__,
+      // Quit via AppHandle::exit(0) so an LLVM-instrumented backend writes its
+      // coverage profile on the way out (#3657). Deferred like closeWindow, so
+      // the response reaches the runner before the process goes away. The
+      // Tauri command also refuses unless the test bridge is enabled.
+      exitApp: async () => {
+        if (!isTestBridgeEnabled()) throw new Error("test bridge is not enabled");
+        setTimeout(() => {
+          invoke("test_exit_app").catch((err: unknown) =>
+            frontendLog("test_bridge", `exitApp failed: ${String(err)}`)
+          );
+        }, CLOSE_WINDOW_DEFER_MS);
+      },
       // The backend window registry (#1900): the authoritative set of native
       // windows, independent of which ones have a bridge socket open.
       listWindows: () => listWindows(),

@@ -112,6 +112,8 @@ def dispatcher_like(
     values: dict | None = None,
     viewport: dict | None = None,
     screenshot: str | None = None,
+    coverage: str | None = None,
+    coverage_chunk: int = 4 * 1024 * 1024,
 ) -> Handler:
     """A handler that mimics the real dispatcher for the common command set.
 
@@ -120,6 +122,9 @@ def dispatcher_like(
     ``values`` is keyed by ``testId`` → live control value for ``getValue``.
     ``viewport`` is the ``{viewportY, baseY}`` returned by ``getTerminalViewport``.
     ``screenshot`` is the data URL returned by the ``screenshot`` command.
+    ``coverage`` is the serialized ``window.__coverage__`` that ``readCoverage``
+    pages through in ``coverage_chunk``-character chunks (``None`` = an
+    uninstrumented build, answered with ``null``).
     """
     state = state or {}
     computed_styles = computed_styles or {}
@@ -137,6 +142,7 @@ def dispatcher_like(
         "dragTos": [],
         "scrolls": [],
         "events": [],
+        "exits": [],
     }
 
     def handle(command: dict[str, Any]) -> dict[str, Any]:
@@ -215,6 +221,22 @@ def dispatcher_like(
             return {"ok": True, "action": "closeWindow"}
         if action == "listWindows":
             return {"ok": True, "action": "listWindows", "value": [{"label": "main"}]}
+        if action == "readCoverage":
+            if coverage is None:
+                return {"ok": True, "action": "readCoverage", "value": None}
+            offset = command.get("offset") or 0
+            return {
+                "ok": True,
+                "action": "readCoverage",
+                "value": {
+                    "total": len(coverage),
+                    "offset": offset,
+                    "chunk": coverage[offset : offset + coverage_chunk],
+                },
+            }
+        if action == "exitApp":
+            recorded["exits"].append(True)
+            return {"ok": True, "action": "exitApp"}
         if action == "screenshot":
             if screenshot is None:
                 return {"ok": False, "action": "screenshot", "error": "capture unavailable"}
