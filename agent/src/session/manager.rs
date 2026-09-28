@@ -1997,35 +1997,33 @@ fn spawn_output_forwarder(
     // session's `agent_session` span carrying the desktop correlation id
     // (#3085), so the forwarder's logs over the session's life stay joinable.
     let span = tracing::Span::current();
-    tokio::spawn(tracing::Instrument::instrument(
-        async move {
-            match run_output_pump(&session_id, &mut output_rx, &sink, None, &opts).await {
-                // The output channel closed: the backend process exited / hit EOF on
-                // its own. Mark the backend dead so the manager settles the session
-                // to `Exited` (#2369), then notify the desktop.
-                PumpEnd::Eof => {
-                    alive.store(false, Ordering::SeqCst);
-                    let _ = sink.send_exit(&session_id, Some(0));
-                    // Natural-exit deferred-update hook (#2378): if this was the
-                    // last active session, apply any staged self-update now,
-                    // matching the explicit-close path. The `Weak` is empty when
-                    // the manager was not built through `into_arc`; then this is
-                    // skipped and the read-path reconciliation still settles the
-                    // session.
-                    if let Some(manager) = manager.upgrade() {
-                        manager.apply_deferred_update_if_idle().await;
-                    }
+    let forward = async move {
+        match run_output_pump(&session_id, &mut output_rx, &sink, None, &opts).await {
+            // The output channel closed: the backend process exited / hit EOF on
+            // its own. Mark the backend dead so the manager settles the session
+            // to `Exited` (#2369), then notify the desktop.
+            PumpEnd::Eof => {
+                alive.store(false, Ordering::SeqCst);
+                let _ = sink.send_exit(&session_id, Some(0));
+                // Natural-exit deferred-update hook (#2378): if this was the
+                // last active session, apply any staged self-update now,
+                // matching the explicit-close path. The `Weak` is empty when
+                // the manager was not built through `into_arc`; then this is
+                // skipped and the read-path reconciliation still settles the
+                // session.
+                if let Some(manager) = manager.upgrade() {
+                    manager.apply_deferred_update_if_idle().await;
                 }
-                // A JSON-RPC sink error means the transport loop was dropped; the
-                // old loop simply returned on a send failure — no `alive` flip, no
-                // exit event, no deferred-update hook. `Cancelled`/`ClearFlushSinkClosed`
-                // are unreachable with `cancel: None`/`wait_for_clear: false`, but
-                // share that no-settle semantics, so they fall through identically.
-                PumpEnd::StreamSinkClosed | PumpEnd::Cancelled | PumpEnd::ClearFlushSinkClosed => {}
             }
-        },
-        span,
-    ))
+            // A JSON-RPC sink error means the transport loop was dropped; the
+            // old loop simply returned on a send failure — no `alive` flip, no
+            // exit event, no deferred-update hook. `Cancelled`/`ClearFlushSinkClosed`
+            // are unreachable with `cancel: None`/`wait_for_clear: false`, but
+            // share that no-settle semantics, so they fall through identically.
+            PumpEnd::StreamSinkClosed | PumpEnd::Cancelled | PumpEnd::ClearFlushSinkClosed => {}
+        }
+    };
+    tokio::spawn(tracing::Instrument::instrument(forward, span))
 }
 
 /// Settle any session whose backend has exited on its own to
