@@ -48,7 +48,8 @@ impl WorkflowManager {
         }
     }
 
-    /// Re-point every on-connect trigger's connections along `remap` (#3596).
+    /// Re-point every connection-bound trigger's connections along `remap` (#3596):
+    /// on-connect, on-disconnect and on-output-match (#3791).
     /// A rename or move keeps the connection, so `updatedAt` is left alone. The
     /// store is persisted (atomically) only when a trigger changed, and memory
     /// is updated only after the write succeeded. Returns whether it changed.
@@ -65,10 +66,7 @@ impl WorkflowManager {
             .workflows
             .iter_mut()
             .flat_map(|w| w.triggers.iter_mut())
-            .filter_map(|t| match t {
-                WorkflowTrigger::OnConnect { connection_ids } => Some(connection_ids.iter_mut()),
-                _ => None,
-            })
+            .filter_map(|t| t.connection_ids_mut().map(|ids| ids.iter_mut()))
             .flatten();
         if !remap.apply_all(ids) {
             return Ok(false);
