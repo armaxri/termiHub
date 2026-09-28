@@ -9,8 +9,8 @@ subsystem: core/backends/vnc, core/backends/rdp_sidecar
 evidence:
   - core/src/backends/vnc/mod.rs:704
   - core/src/backends/rdp_sidecar/mod.rs:690
-status: partial
-resolution: "#3474 — RDP image clipboard both directions (CF_DIB, capped 8192px/32MiB, owner-gated); VNC text UTF-8 fix + cap; VNC Extended Clipboard #3472"
+status: fixed
+resolution: "#3474, #3773 — RDP image clipboard both ways (#3474); VNC RFB Extended Clipboard (UTF-8 text lossless, dib images -> capped ClipboardImage, all payloads capped pre-alloc, zlib-bomb safe), live-verified vs TigerVNC (#3773). files format: no interoperable server impl -> Concept #3770"
 ---
 
 ## What
