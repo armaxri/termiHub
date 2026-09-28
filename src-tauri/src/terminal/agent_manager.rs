@@ -77,6 +77,10 @@ use crate::utils::ssh_auth::connect_and_authenticate_cancellable;
 /// than minutes.
 const AGENT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// Wait bound for `agent.forward.connect` (#3241): the agent's own target
+/// connect gives up after 10 s, so this only adds headroom for the round trip.
+const FORWARD_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// Pure data types and wire-format parse helpers (ARCH-002 / TAURI-009).
 ///
 /// Carved into a sibling module and re-exported below so every existing
@@ -194,6 +198,15 @@ pub(crate) enum AgentIoCommand {
     /// Tell the agent a forwarded ssh-agent stream has closed
     /// (`agent.forward.close`, #1727).
     AgentForwardClose { stream_id: String },
+    /// Route the agent's `agent.forward.data` / `close` for a desktop
+    /// port-forward stream (#3241) into `sink`. Registered *before*
+    /// `agent.forward.connect` is sent so no early byte is missed.
+    RegisterForwardStream {
+        stream_id: String,
+        sink: UnboundedSender<Vec<u8>>,
+    },
+    /// Stop routing a desktop port-forward stream (#3241).
+    UnregisterForwardStream { stream_id: String },
     /// Answer (or cancel, `responses: None`) an agent-relayed SSH
     /// keyboard-interactive round (`ssh.keyboard_interactive.respond`, #3375).
     /// Fire-and-forget; the answers stay in zeroizing storage up to the wire and
@@ -410,6 +423,40 @@ pub trait AgentRpcClient: Send + Sync + 'static {
 
     /// Stop routing a streaming tool run's notifications (#3353). Default no-op.
     fn unregister_tool_run(&self, _agent_id: &str, _run_id: &str) {}
+
+    /// Open a desktop port-forward stream through the agent (#3241): route the
+    /// agent's bytes for `stream_id` into `sink`, then ask the agent to connect
+    /// to `host:port` from its host (`agent.forward.connect`). On failure nothing
+    /// stays registered. Call from a blocking context. Default errors so mock
+    /// clients need not model forwarding.
+    fn open_forward_stream(
+        &self,
+        agent_id: &str,
+        _stream_id: &str,
+        _host: &str,
+        _port: u16,
+        _sink: UnboundedSender<Vec<u8>>,
+    ) -> Result<(), TerminalError> {
+        Err(TerminalError::AgentUnsupported(format!(
+            "Agent {agent_id} does not support port forwarding"
+        )))
+    }
+
+    /// Send desktop→target bytes on a port-forward stream (#3241). Non-blocking.
+    fn send_forward_data(
+        &self,
+        agent_id: &str,
+        _stream_id: &str,
+        _data: Vec<u8>,
+    ) -> Result<(), TerminalError> {
+        Err(TerminalError::RemoteError(format!(
+            "Agent {agent_id} not connected"
+        )))
+    }
+
+    /// Close a port-forward stream from the desktop end (#3241). Best effort,
+    /// non-blocking. Default no-op.
+    fn close_forward_stream(&self, _agent_id: &str, _stream_id: &str) {}
 
     /// Create a session on the agent.
     ///
@@ -2096,6 +2143,97 @@ impl<R: Runtime> AgentConnectionManager<R> {
         );
     }
 
+    /// Open a desktop port-forward stream through the agent (#3241). See
+    /// [`AgentRpcClient::open_forward_stream`]. An agent mid-reconnect fails at
+    /// once rather than parking the caller for the request timeout.
+    pub fn open_forward_stream(
+        &self,
+        agent_id: &str,
+        stream_id: &str,
+        host: &str,
+        port: u16,
+        sink: UnboundedSender<Vec<u8>>,
+    ) -> Result<(), TerminalError> {
+        {
+            let agents = self
+                .agents
+                .lock()
+                .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
+            let conn = agents.get(agent_id).ok_or_else(|| {
+                TerminalError::RemoteError(format!("Agent {} not connected", agent_id))
+            })?;
+            if conn.reconnecting.load(Ordering::SeqCst) {
+                return Err(TerminalError::RemoteError(format!(
+                    "Agent {} is reconnecting",
+                    agent_id
+                )));
+            }
+        }
+        self.send_io_command(
+            agent_id,
+            AgentIoCommand::RegisterForwardStream {
+                stream_id: stream_id.to_string(),
+                sink,
+            },
+        )?;
+        let params = serde_json::to_value(
+            termihub_core::protocol::methods::AgentForwardConnectParams {
+                stream_id: stream_id.to_string(),
+                host: host.to_string(),
+                port,
+            },
+        )
+        .map_err(|e| TerminalError::InternalError(e.to_string()))?;
+        let result = self.send_request_with_timeout(
+            agent_id,
+            termihub_core::protocol::methods::AGENT_FORWARD_CONNECT,
+            params,
+            FORWARD_CONNECT_TIMEOUT,
+        );
+        if result.is_err() {
+            let _ = self.send_io_command(
+                agent_id,
+                AgentIoCommand::UnregisterForwardStream {
+                    stream_id: stream_id.to_string(),
+                },
+            );
+        }
+        result.map(|_| ())
+    }
+
+    /// Send desktop→target bytes on a port-forward stream (#3241).
+    pub fn send_forward_data(
+        &self,
+        agent_id: &str,
+        stream_id: &str,
+        data: Vec<u8>,
+    ) -> Result<(), TerminalError> {
+        self.send_io_command(
+            agent_id,
+            AgentIoCommand::AgentForwardData {
+                stream_id: stream_id.to_string(),
+                data,
+            },
+        )
+    }
+
+    /// Close a port-forward stream from the desktop end (#3241): stop routing
+    /// it locally and tell the agent to drop its target connection.
+    pub fn close_forward_stream(&self, agent_id: &str, stream_id: &str) {
+        let _ = self.send_io_command(
+            agent_id,
+            AgentIoCommand::UnregisterForwardStream {
+                stream_id: stream_id.to_string(),
+            },
+        );
+        let _ = self.send_io_command(
+            agent_id,
+            AgentIoCommand::AgentForwardClose {
+                stream_id: stream_id.to_string(),
+            },
+        );
+    }
+
     /// Queue a command for an agent's I/O task.
     fn send_io_command(&self, agent_id: &str, cmd: AgentIoCommand) -> Result<(), TerminalError> {
         let agents = self
@@ -2455,6 +2593,30 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
 
     fn unregister_tool_run(&self, agent_id: &str, run_id: &str) {
         AgentConnectionManager::unregister_tool_run(self, agent_id, run_id)
+    }
+
+    fn open_forward_stream(
+        &self,
+        agent_id: &str,
+        stream_id: &str,
+        host: &str,
+        port: u16,
+        sink: UnboundedSender<Vec<u8>>,
+    ) -> Result<(), TerminalError> {
+        AgentConnectionManager::open_forward_stream(self, agent_id, stream_id, host, port, sink)
+    }
+
+    fn send_forward_data(
+        &self,
+        agent_id: &str,
+        stream_id: &str,
+        data: Vec<u8>,
+    ) -> Result<(), TerminalError> {
+        AgentConnectionManager::send_forward_data(self, agent_id, stream_id, data)
+    }
+
+    fn close_forward_stream(&self, agent_id: &str, stream_id: &str) {
+        AgentConnectionManager::close_forward_stream(self, agent_id, stream_id)
     }
 
     fn send_session_input(
@@ -3034,6 +3196,12 @@ async fn agent_io_task<R: Runtime>(
                         AgentIoCommand::UnregisterMonitoring { session_id } => {
                             monitoring_outputs.remove(&session_id);
                         }
+                        AgentIoCommand::RegisterForwardStream { stream_id, sink } => {
+                            agent_forward.register_stream(stream_id, sink);
+                        }
+                        AgentIoCommand::UnregisterForwardStream { stream_id } => {
+                            agent_forward.on_close(&stream_id);
+                        }
                         AgentIoCommand::RegisterToolRun { run_id, tx } => {
                             tool_runs.insert(run_id, tx);
                         }
@@ -3156,6 +3324,10 @@ async fn agent_io_task<R: Runtime>(
         // (#3353), so none survives into the reconnected session. Drop every
         // route: each run's receiver sees its channel close and fails the run.
         tool_runs.clear();
+        // Likewise every relayed stream (#3241): the agent's end died with the
+        // transport, so each desktop port forward sees its stream end and its
+        // graphical session re-dials through a fresh one once the agent is back.
+        agent_forward.clear();
 
         // CONC-014: the transport is down and this task will not drain `command_rx`
         // again until the reconnect resolves. Flag it so `send_session_input` drops
