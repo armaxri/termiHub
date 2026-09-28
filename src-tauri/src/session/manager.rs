@@ -21,7 +21,7 @@ use termihub_core::connection::{
 };
 use termihub_core::output::session_log::{SessionLogConfig, SessionLogger};
 use termihub_core::session::pump::{run_output_pump, PumpEnd, PumpOptions};
-use termihub_core::session::registry::Sessions;
+use termihub_core::session::registry::{Reservations, Sessions};
 use tracing::{info, warn};
 
 use crate::terminal::agent_manager::AgentRpcClient;
@@ -522,6 +522,14 @@ pub struct SessionManager {
     /// by the caller-supplied `connect_id`. Lets a Stop/close while connecting
     /// abort the handshake promptly instead of waiting out the timeout (#952).
     connecting: Arc<StdMutex<HashMap<String, CancellationToken>>>,
+    /// Capacity reservations for in-flight creates, keyed by the new session id
+    /// (CONC-004, DUP-010 Slice C). A connect runs without holding the
+    /// `sessions` lock, so without a reservation N concurrent connects could all
+    /// pass the `MAX_SESSIONS` check and overshoot it. Reserved via
+    /// [`Sessions::try_reserve`] under the `sessions` lock and released by
+    /// [`PendingCreateGuard`] (or on registration). Lock order is always
+    /// `sessions → pending_creates`; this lock is never held across an `await`.
+    pending_creates: Arc<StdMutex<Reservations>>,
     /// Per-session 1 MiB scrollback capture (#1900), keyed by `session_id`.
     ///
     /// Every session's emitted output is mirrored into a [`RingBuffer`] so that a
@@ -564,6 +572,25 @@ impl Drop for ConnectingGuard {
         if let Ok(mut map) = self.map.lock() {
             map.remove(&self.id);
         }
+    }
+}
+
+/// Releases an in-flight create's capacity reservation from
+/// [`SessionManager::pending_creates`] when the create finishes — RAII so a
+/// failed or cancelled connect (an early `?` return) never leaks a slot. On
+/// success the reservation is released while the entry is registered, so this
+/// drop is then a no-op.
+struct PendingCreateGuard {
+    reservations: Arc<StdMutex<Reservations>>,
+    id: String,
+}
+
+impl Drop for PendingCreateGuard {
+    fn drop(&mut self) {
+        self.reservations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .release(&self.id);
     }
 }
 
@@ -626,6 +653,7 @@ impl SessionManager {
             monitoring_overrides: Arc::new(Mutex::new(HashMap::new())),
             persistent_sessions: Arc::new(Mutex::new(HashMap::new())),
             connecting: Arc::new(StdMutex::new(HashMap::new())),
+            pending_creates: Arc::new(StdMutex::new(Reservations::new())),
             output_buffers: Arc::new(StdMutex::new(HashMap::new())),
             session_loggers: Arc::new(StdMutex::new(HashMap::new())),
             session_tab_ids: Arc::new(StdMutex::new(HashMap::new())),
@@ -950,15 +978,31 @@ impl SessionManager {
         resilient_reconnect: bool,
         emitter: E,
     ) -> Result<String, TerminalError> {
-        // Enforce session limit.
+        let session_id = uuid::Uuid::new_v4().to_string();
+
+        // Enforce the session limit across live sessions **and** in-flight
+        // creates (CONC-004): reserve a slot now, before the (possibly slow)
+        // connect runs without the `sessions` lock. The guard releases the
+        // reservation if this create fails or is cancelled.
         {
             let sessions = self.sessions.lock().await;
-            if sessions.len() >= MAX_SESSIONS {
+            let mut pending = self
+                .pending_creates
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if sessions
+                .try_reserve(&mut pending, session_id.clone(), MAX_SESSIONS)
+                .is_err()
+            {
                 return Err(TerminalError::SpawnFailed(format!(
                     "Maximum number of sessions ({MAX_SESSIONS}) reached"
                 )));
             }
         }
+        let _pending_create_guard = PendingCreateGuard {
+            reservations: self.pending_creates.clone(),
+            id: session_id.clone(),
+        };
 
         // Register a cancellation token so a Stop/close while connecting can abort
         // the in-flight handshake (#952). Both local (core-backend) and remote
@@ -981,7 +1025,6 @@ impl SessionManager {
             None => (None, None),
         };
 
-        let session_id = uuid::Uuid::new_v4().to_string();
         // Attach the freshly-minted id to the connect span so every nested event
         // (proxy handshake, local connect, initial command) groups under it (OBS-004).
         tracing::Span::current().record("session_id", session_id.as_str());
@@ -1084,7 +1127,8 @@ impl SessionManager {
         // clone is moved into the reader.
         let reader_cancel = CancellationToken::new();
 
-        // Store session.
+        // Store session, promoting its capacity reservation to a live entry
+        // under the same `sessions` lock so the occupied-slot count never dips.
         {
             let mut sessions = self.sessions.lock().await;
             sessions.insert(
@@ -1097,6 +1141,10 @@ impl SessionManager {
                     reader_cancel: reader_cancel.clone(),
                 },
             );
+            self.pending_creates
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .release(&session_id);
         }
 
         // Record the backend `session_id` → frontend `tab_id` identity bridge
