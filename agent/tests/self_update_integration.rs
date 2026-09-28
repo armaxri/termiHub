@@ -160,6 +160,47 @@ async fn mount_release(server: &MockServer, agent_bytes: &[u8]) {
 
 // ── Live agent process ──────────────────────────────────────────────────────
 
+/// Execute a freshly written agent copy once with `--version`, so the OS's
+/// first-exec check is paid here, before any test deadline starts (#3811).
+///
+/// **Why.** On macOS the first exec of a newly written executable is held while
+/// the system assesses it. For the ~100 MB debug agent that takes about 2 s, and
+/// the assessments run one at a time host-wide. Every [`LiveAgent`] runs its own
+/// copy, so with the suite's agents starting in parallel the n-th one used to
+/// reach `main` only after about 2n s, all of it inside its startup budget.
+/// Under load, or with other checkouts' suites in the same queue, that pushed
+/// agents past the budget. The sibling suite hit exactly this (#3796).
+///
+/// **Why not one shared, pre-warmed copy, as `deferred_update_hook_integration`
+/// does.** These agents really swap their binary, and the tests assert on the
+/// copy's inode and make its directory read-only, so each agent needs its own
+/// file. Copying from an already-warmed copy does not help either: the check is
+/// per file, not per content. Measured on macOS, three trials each: a fresh
+/// `cp` of the build artifact took 1.96–2.24 s on first exec, a `cp` of an
+/// already-warmed copy 2.24–2.34 s, a hard link to a warmed copy 0.77–0.80 s,
+/// and a rename of a warmed copy 0.03 s, the same as a warm exec. So each copy
+/// is warmed itself.
+///
+/// The swapped-in binary that the agent writes and re-execs is a new file too,
+/// and pays the check once more. That cost is part of the self-update the tests
+/// exercise and stays inside their budgets.
+fn prewarm_first_exec(bin_path: &Path) {
+    // `spawn` forks, so it takes the fork lock (#1597). The wait does not: the
+    // check can take seconds, and siblings must be free to fork meanwhile.
+    let mut child = {
+        let _fork_guard = common::fork_guard();
+        Command::new(bin_path)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("run agent copy --version")
+    };
+    let status = child.wait().expect("wait for agent copy --version");
+    assert!(status.success(), "agent copy --version failed: {status}");
+}
+
 /// A running `termihub-agent --listen` child, pointed at the mock GitHub server,
 /// running from a throwaway copy of the binary so its self-replace is contained.
 struct LiveAgent {
@@ -191,14 +232,21 @@ impl LiveAgent {
         let stderr_path = stderr_file.path().to_path_buf();
         let (stderr_handle, _keep) = stderr_file.keep().expect("persist stderr file");
 
-        // Everything from the copy to the spawn runs under the fork lock: a
-        // sibling thread forking mid-copy inherits our write fd and makes our
-        // own execve fail with ETXTBSY (#1597). See `common::fork_guard`.
-        let fork_guard = common::fork_guard();
-        std::fs::copy(agent_binary(), &bin_path).expect("copy agent binary");
-        std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o755))
-            .expect("chmod agent copy");
+        // The copy runs under the fork lock: a sibling thread forking mid-copy
+        // inherits our write fd and makes a later execve of this file fail
+        // with ETXTBSY (#1597). See `common::fork_guard`. Once the copy is
+        // done the fd is closed, so the lock can be dropped until the next
+        // fork.
+        {
+            let _fork_guard = common::fork_guard();
+            std::fs::copy(agent_binary(), &bin_path).expect("copy agent binary");
+            std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod agent copy");
+        }
+        prewarm_first_exec(&bin_path);
 
+        // The spawn is a fork site, so it takes the fork lock (#1597).
+        let fork_guard = common::fork_guard();
         let child = Command::new(&bin_path)
             .arg("--listen")
             // Port 0: the agent binds an OS-assigned port and announces it; the
