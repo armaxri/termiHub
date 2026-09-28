@@ -119,6 +119,13 @@ pub const UPDATE_UNAUTHORIZED: i64 = -32026;
 /// or the binary's version cannot be determined.
 pub const UPDATE_DOWNGRADE_REFUSED: i64 = -32027;
 
+/// The `--listen` TCP transport's pre-RPC auth handshake was refused: the
+/// first line was not an `auth` request carrying this agent instance's token
+/// (missing, malformed, or wrong). The agent closes the connection right after
+/// sending it (AGT-002, #3745). `-32028` is left to `agent.forward.connect`
+/// (#3241).
+pub const LISTEN_AUTH_REJECTED: i64 = -32029;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,6 +165,7 @@ mod tests {
             SECOND_FACTOR_FAILED,
             UPDATE_UNAUTHORIZED,
             UPDATE_DOWNGRADE_REFUSED,
+            LISTEN_AUTH_REJECTED,
         ];
         for code in codes {
             assert!(code < 0, "Error code {code} should be negative");
@@ -250,6 +258,7 @@ mod tests {
             SECOND_FACTOR_FAILED,
             UPDATE_UNAUTHORIZED,
             UPDATE_DOWNGRADE_REFUSED,
+            LISTEN_AUTH_REJECTED,
         ];
         for code in app_codes {
             assert!(
