@@ -9,7 +9,7 @@ subsystem: core/backends/docker
 evidence:
   - core/src/backends/docker/mod.rs:365
 status: partial
-resolution: "#3426 — docker container picker (list_containers, same daemon resolution as sessions); agent-hosted picker #3424, compose awareness #3425"
+resolution: "#3426, #3765 — docker container picker local (#3426) + agent-hosted via docker.list_containers RPC, old agents fall back to typed field (#3765, protocol 0.14.0). Remaining: compose project/service awareness #3425"
 ---
 
 ## What
