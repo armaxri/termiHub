@@ -384,12 +384,12 @@ use a **new method in the same class** to keep running in the existing instance.
 
 ### What `SystemTest` (the base) gives you
 
-| Member                                     | Purpose                                            |
-| ------------------------------------------ | -------------------------------------------------- |
-| `self.driver` / `self.app` / `self.bridge` | the suite's live `Driver` / app / bridge           |
-| `self.wait(predicate, *, timeout, what)`   | poll until truthy (retries on `BridgeError`)       |
-| `self.restart_app()`                       | kill + relaunch, re-acquiring `self.driver`        |
-| `self.delay4user(seconds, reason)`         | watch-along sleep — only runs under `--delay4user` |
+| Member                                     | Purpose                                                                                                                                                          |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `self.driver` / `self.app` / `self.bridge` | the suite's live `Driver` / app / bridge                                                                                                                         |
+| `self.wait(predicate, *, timeout, what)`   | poll until truthy (retries on `BridgeError`)                                                                                                                     |
+| `self.restart_app(between, args=[...])`    | kill + relaunch, re-acquiring `self.driver`; `between` runs while the app is down, `args` are extra CLI args for that launch only (e.g. `["--workspace", name]`) |
+| `self.delay4user(seconds, reason)`         | watch-along sleep — only runs under `--delay4user`                                                                                                               |
 
 ### UI-helper mixins (opt in per suite)
 
