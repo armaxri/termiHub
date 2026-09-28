@@ -204,6 +204,15 @@ describe("ConnectionEditor — VNC/RDP under an agent (#3241)", () => {
     const updateAgentDef = vi.fn(() => Promise.resolve());
     const addTab = vi.fn();
     useAppStore.setState({ updateAgentDef, addTab });
+    // The password lives in this computer's credential store (#3803).
+    mockedInvoke.mockImplementation((cmd: string, args?: unknown) =>
+      Promise.resolve(
+        cmd === "resolve_credential" &&
+          (args as { connectionId?: string }).connectionId === `agent-graphical:${AGENT_ID}:def-vnc`
+          ? "stored-pw"
+          : false
+      )
+    );
 
     render("def-vnc");
     await flush();
@@ -224,8 +233,35 @@ describe("ConnectionEditor — VNC/RDP under an agent (#3241)", () => {
     expect(title).toBe("Lab desktop");
     expect(connectionType).toBe("vnc");
     expect(config.type).toBe("vnc");
-    expect(config.config).toMatchObject({ host: "10.0.0.5", port: 5901, agentId: AGENT_ID });
+    expect(config.config).toMatchObject({
+      host: "10.0.0.5",
+      port: 5901,
+      password: "stored-pw",
+      agentId: AGENT_ID,
+    });
     expect(options.contentType).toBe("remote-desktop");
+  });
+
+  it("Save & Connect prompts when no password is stored, and opens nothing on cancel", async () => {
+    const updateAgentDef = vi.fn(() => Promise.resolve());
+    const addTab = vi.fn();
+    const requestPassword = vi.fn(() => Promise.resolve(null));
+    useAppStore.setState({ updateAgentDef, addTab, requestPassword });
+    mockedInvoke.mockImplementation((cmd: string) =>
+      Promise.resolve(cmd === "resolve_credential" ? null : false)
+    );
+
+    render("def-vnc");
+    await flush();
+    const btn = byTestId("connection-editor-save-connect") as HTMLButtonElement;
+    await act(async () => {
+      btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    expect(updateAgentDef).toHaveBeenCalledTimes(1);
+    expect(requestPassword).toHaveBeenCalledWith("10.0.0.5", "", "", "password");
+    expect(addTab).not.toHaveBeenCalled();
   });
 
   it("does not show the tunnel hint for an agent-native type", async () => {
