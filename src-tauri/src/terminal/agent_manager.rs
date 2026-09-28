@@ -2783,7 +2783,7 @@ fn filter_reconnect_backlog(drained: Vec<AgentIoCommand>) -> Vec<AgentIoCommand>
 /// Build `connection.create` params from the shared DTO. `correlation_id` is
 /// the desktop's session id (#3085, OBS-004): the agent logs the session under
 /// it so both sides' log lines join on one id. Omitted from the wire when
-/// `None`, and an agent older than protocol 0.15.0 ignores it.
+/// `None`, and an agent older than protocol 0.16.0 ignores it.
 fn session_create_params(
     session_type: &str,
     config: Value,

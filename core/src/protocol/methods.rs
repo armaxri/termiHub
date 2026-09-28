@@ -505,7 +505,7 @@ pub struct SessionCreateParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub definition_id: Option<String>,
     /// Desktop-side correlation id of the logical session this create is for
-    /// (#3085, OBS-004; protocol 0.15.0). The desktop sends its own
+    /// (#3085, OBS-004; protocol 0.16.0). The desktop sends its own
     /// `session_id`; the agent attaches it as a `correlation_id` field on the
     /// `tracing` span of this session, so desktop and agent log lines for one
     /// session can be joined on a single id. Diagnostics only — it never
@@ -1743,6 +1743,14 @@ pub struct DockerContainerEntry {
     /// Whether the container is running (only running ones accept a shell).
     #[serde(default)]
     pub running: bool,
+    /// Docker Compose project (`com.docker.compose.project` label), protocol
+    /// 0.15.0+ (#3425). Omitted when absent; an older agent never sends it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose_project: Option<String>,
+    /// Docker Compose service (`com.docker.compose.service` label), protocol
+    /// 0.15.0+ (#3425). Omitted when absent; an older agent never sends it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose_service: Option<String>,
 }
 
 /// Result of `docker.list_containers`: running containers first, then by name.
@@ -2438,7 +2446,7 @@ mod tests {
     #[test]
     fn session_create_params_without_correlation_id_keeps_legacy_wire_shape() {
         // An older desktop never sends the member; a new desktop with no id
-        // must serialize byte-identically to the pre-0.15.0 shape.
+        // must serialize byte-identically to the pre-0.16.0 shape.
         let params = SessionCreateParams {
             session_type: "local".to_string(),
             config: json!({"shell": "/bin/bash"}),

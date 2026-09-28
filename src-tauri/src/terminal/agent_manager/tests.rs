@@ -2023,7 +2023,7 @@ fn handle_notification_routes_connection_output_via_the_dto() {
 }
 
 /// #3085 (OBS-004): `connection.create` carries the desktop's correlation id
-/// when given one, and keeps the pre-0.15.0 wire shape when not.
+/// when given one, and keeps the pre-0.16.0 wire shape when not.
 #[test]
 fn session_create_params_carry_the_correlation_id_only_when_set() {
     let with = session_create_params("ssh", json!({}), None, None, Some("desk-sid")).unwrap();

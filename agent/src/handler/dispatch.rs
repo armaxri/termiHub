@@ -110,10 +110,13 @@ use termihub_core::monitoring::{LocalProcessManager, ProcessError, ProcessManage
 /// Bumped to 0.14.0 for the additive `docker.list_containers` method (#3424):
 /// the desktop's container picker for agent-hosted Docker connections. An older
 /// agent answers "method not found" and the desktop keeps the typed name/ID.
-/// Bumped to 0.15.0 for the additive optional `correlation_id` member of
+/// Bumped to 0.15.0 for the additive, optional `composeProject` /
+/// `composeService` fields of `docker.list_containers` entries (#3425): the
+/// picker groups by Compose project. An older agent omits them and still parses.
+/// Bumped to 0.16.0 for the additive optional `correlation_id` member of
 /// `connection.create` params (#3085, OBS-004): the agent logs the session under
 /// the desktop's id. An older agent ignores it; an older desktop omits it.
-const AGENT_PROTOCOL_VERSION: &str = "0.15.0";
+const AGENT_PROTOCOL_VERSION: &str = "0.16.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -3464,11 +3467,11 @@ mod tests {
     /// SSH keyboard-interactive prompt relay, and the embedded-server access
     /// log RPC) may now arrive — and, from 0.12.0, that `network.*` is gone;
     /// 0.13.0 made the update RPCs require the auth token, 0.14.0 adds
-    /// `docker.list_containers`, and 0.15.0 the `connection.create`
-    /// `correlation_id`.
+    /// `docker.list_containers`, 0.15.0 adds its Compose fields, and 0.16.0
+    /// the `connection.create` `correlation_id`.
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.15.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.16.0");
     }
 
     // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────

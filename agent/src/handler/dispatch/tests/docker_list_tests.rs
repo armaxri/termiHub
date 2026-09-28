@@ -16,6 +16,8 @@ fn container(id: &str, name: &str, running: bool) -> ContainerInfo {
         state: if running { "running" } else { "exited" }.into(),
         status: if running { "Up 1 hour" } else { "Exited (0)" }.into(),
         running,
+        compose_project: None,
+        compose_service: None,
     }
 }
 
@@ -100,4 +102,18 @@ fn docker_list_reply_unwraps_the_runtime_error_message() {
     .expect_err("error reply");
     assert_eq!(err.code() as i64, errors::INTERNAL_ERROR);
     assert_eq!(err.message(), "Cannot connect to the Docker daemon");
+}
+
+/// Compose project/service (#3425) reach the wire; a plain container omits them.
+#[test]
+fn docker_list_reply_carries_compose_labels_only_when_present() {
+    let mut web = container("a1", "shop-web-1", true);
+    web.compose_project = Some("shop".into());
+    web.compose_service = Some("web".into());
+    let value = docker_list_reply(Ok(vec![web, container("b2", "plain", true)])).expect("ok");
+    assert_eq!(value["containers"][0]["composeProject"], "shop");
+    assert_eq!(value["containers"][0]["composeService"], "web");
+    let plain = value["containers"][1].as_object().unwrap();
+    assert!(!plain.contains_key("composeProject"));
+    assert!(!plain.contains_key("composeService"));
 }
