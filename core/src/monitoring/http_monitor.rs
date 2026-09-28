@@ -31,6 +31,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 use tracing::debug;
 use uuid::Uuid;
 
@@ -179,6 +180,17 @@ pub struct HttpMonitorService {
     last_result: Arc<Mutex<Option<HttpCheckResult>>>,
     /// Core event channel the poll loop emits `check` events through.
     events: EventChannel,
+    /// Optional host lifetime owner (see [`set_owner`](Self::set_owner)).
+    owner: Option<LoopOwner>,
+}
+
+/// A host's lifetime scope for the poll loop: each run's cancellation token is
+/// a child of `parent`, and the loop's thread holds a `tracker` token while it
+/// runs, so cancelling `parent` stops every run and `tracker.wait()` awaits them.
+#[derive(Clone)]
+struct LoopOwner {
+    parent: CancellationToken,
+    tracker: TaskTracker,
 }
 
 impl HttpMonitorService {
@@ -191,7 +203,21 @@ impl HttpMonitorService {
             paused: Arc::new(AtomicBool::new(false)),
             last_result: Arc::new(Mutex::new(None)),
             events: EventChannel::new(),
+            owner: None,
         }
+    }
+
+    /// Scope every future run of the poll loop to a host's lifetime.
+    ///
+    /// Each (re)start then derives its cancellation token as a child of
+    /// `parent` — so cancelling `parent` stops the loop exactly like
+    /// [`shutdown`](Self::shutdown) — and the loop's dedicated thread holds a
+    /// [`TaskTracker::token`] on `tracker` until its runtime is torn down, so
+    /// the host's `tracker.wait()` awaits it. The desktop passes its app-wide
+    /// shutdown token and tracker (ARCH-007); hosts that call nothing keep the
+    /// standalone behaviour. Applies from the next start/resume onwards.
+    pub fn set_owner(&mut self, parent: CancellationToken, tracker: TaskTracker) {
+        self.owner = Some(LoopOwner { parent, tracker });
     }
 
     /// The settings schema for the HTTP monitor form (keys match
@@ -268,8 +294,16 @@ impl HttpMonitorService {
     /// and [`state`](Self::state) can see it.
     fn spawn_loop(&mut self, config: HttpMonitorConfig) {
         // A fresh token so a previous stop's cancellation does not immediately
-        // kill the new loop.
-        self.cancel = CancellationToken::new();
+        // kill the new loop — a child of the host owner's token when scoped, so
+        // host shutdown stops it too.
+        self.cancel = match &self.owner {
+            Some(owner) => owner.parent.child_token(),
+            None => CancellationToken::new(),
+        };
+        // Registered with the owner's tracker before the thread starts, released
+        // only after the loop's runtime is dropped (declared first in the thread
+        // closure → dropped last).
+        let tracker_token = self.owner.as_ref().map(|owner| owner.tracker.token());
         self.paused.store(false, Ordering::SeqCst);
         self.status = ServiceStatus::Running;
         self.config = Some(config.clone());
@@ -288,6 +322,7 @@ impl HttpMonitorService {
         // service is fully host-agnostic (#2592). The runtime is dropped when the
         // loop returns on cancellation, so nothing lingers past a stop.
         std::thread::spawn(move || {
+            let _tracker_token = tracker_token;
             let runtime = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
