@@ -1819,3 +1819,205 @@ fn reconnect_retained_agent_reports_no_config_once_scrubbed() {
     manager.clear_retained_agent_config("agent-1");
     assert!(manager.reconnect_retained_agent("agent-1").is_err());
 }
+
+// ── DUP-001 (#3226): agent JSON-RPC via the shared core DTOs ─────────
+
+/// The `initialize` params the desktop built by hand before DUP-001, kept
+/// verbatim so the DTO-built params can be proven wire-identical.
+fn legacy_initialize_params(settings: &AgentSettings, external_files: &[&str]) -> Value {
+    json!({
+        "protocolVersion": "0.3.0",
+        "client": "termihub-desktop",
+        "clientVersion": env!("CARGO_PKG_VERSION"),
+        "agentSettings": settings,
+        "externalConnectionFiles": external_files,
+        "clientCapabilities": ClientCapabilities {
+            keyboard_interactive_prompts: true,
+        },
+    })
+}
+
+#[test]
+fn initialize_params_are_wire_identical_to_the_hand_built_json() {
+    let custom = AgentSettings {
+        enable_monitoring: false,
+        enable_file_browser: true,
+        enable_docker: false,
+        default_shell: Some("/bin/zsh".to_string()),
+        starting_directory: "/srv".to_string(),
+        log_level: "trace".to_string(),
+        verbose_tracing: true,
+        persistent_scrollback_buffer_size_mb: 16,
+    };
+    for (settings, files) in [
+        (AgentSettings::default(), vec![]),
+        (custom, vec!["/home/pi/a.json", "/opt/b.json"]),
+    ] {
+        let built = build_initialize_params(&settings, &files);
+        let legacy = legacy_initialize_params(&settings, &files);
+        assert_eq!(built, legacy);
+        // Byte-for-byte on the wire, including the JSON-RPC envelope.
+        assert_eq!(
+            serialize_request(1, "initialize", built).unwrap(),
+            serialize_request(1, "initialize", legacy).unwrap()
+        );
+    }
+}
+
+#[test]
+fn desktop_agent_settings_convert_to_the_identical_core_wire_object() {
+    let settings = AgentSettings {
+        default_shell: Some("/bin/fish".to_string()),
+        ..AgentSettings::default()
+    };
+    let core: termihub_core::protocol::methods::AgentSettings = (&settings).into();
+    assert_eq!(
+        serde_json::to_value(&core).unwrap(),
+        serde_json::to_value(&settings).unwrap()
+    );
+}
+
+#[test]
+fn empty_params_are_an_empty_object() {
+    assert_eq!(empty_params(), json!({}));
+}
+
+#[test]
+fn initialize_result_parses_into_the_shared_dto() {
+    let r = parse_initialize_result(json!({
+        "protocol_version": "0.13.0",
+        "agent_version": "1.4.2",
+        "client_id": "client-7",
+        "update_auth_token_path": "/home/u/.config/termihub-agent/t",
+        "capabilities": {
+            "connectionTypes": [{ "typeId": "local", "displayName": "Local" }],
+            "maxSessions": 20,
+            "toolStreaming": true,
+        },
+    }))
+    .unwrap();
+    assert_eq!(r.protocol_version, "0.13.0");
+    assert_eq!(r.agent_version, "1.4.2");
+    assert_eq!(r.client_id, "client-7");
+    assert_eq!(
+        crate::terminal::agent_update_auth::token_path_from_initialize(&r).as_deref(),
+        Some("/home/u/.config/termihub-agent/t")
+    );
+    // connectionTypes stay pass-through JSON for the frontend.
+    assert_eq!(
+        r.capabilities.connection_types[0],
+        json!({ "typeId": "local", "displayName": "Local" })
+    );
+    assert_eq!(r.capabilities.max_sessions, 20);
+    assert!(r.capabilities.tool_streaming);
+}
+
+#[test]
+fn initialize_result_from_an_older_agent_keeps_the_legacy_defaults() {
+    let r = parse_initialize_result(json!({
+        "capabilities": { "connectionTypes": [], "maxSessions": 5 },
+    }))
+    .unwrap();
+    assert_eq!(r.agent_version, "unknown");
+    assert_eq!(r.protocol_version, "unknown");
+    assert_eq!(r.client_id, "");
+    assert_eq!(
+        crate::terminal::agent_update_auth::token_path_from_initialize(&r),
+        None
+    );
+}
+
+#[test]
+fn initialize_result_without_capabilities_is_rejected() {
+    let err = parse_initialize_result(json!({ "agent_version": "1.0.0" })).unwrap_err();
+    assert!(err.contains("capabilities"), "got: {err}");
+}
+
+#[test]
+fn update_available_event_keeps_the_legacy_frontend_shape() {
+    let params = json!({
+        "currentVersion": "1.0.0",
+        "availableVersion": "1.1.0",
+        "downloadUrl": "https://example.invalid/agent",
+        "staged": true,
+    });
+    let event = agent_update_available_event("agent-1", &params).expect("parses");
+    let legacy = json!({
+        "agent_id": "agent-1",
+        "currentVersion": "1.0.0",
+        "availableVersion": "1.1.0",
+        "staged": true,
+    });
+    assert_eq!(event, legacy);
+    assert_eq!(event.to_string(), legacy.to_string());
+    // A payload that is not the shared DTO is dropped.
+    assert!(agent_update_available_event("agent-1", &json!({ "staged": true })).is_none());
+}
+
+#[test]
+fn update_pending_event_keeps_the_legacy_frontend_shape() {
+    let params = json!({ "requestedByVersion": "2.0.0", "estimatedRestartSecs": 12 });
+    let event = remote_agent_update_pending_event("agent-1", &params).expect("parses");
+    let legacy = json!({
+        "agent_id": "agent-1",
+        "requestedByVersion": "2.0.0",
+        "estimatedRestartSecs": 12,
+    });
+    assert_eq!(event, legacy);
+    assert_eq!(event.to_string(), legacy.to_string());
+    assert!(remote_agent_update_pending_event("agent-1", &json!({})).is_none());
+}
+
+#[test]
+fn evicted_session_ids_parse_the_shared_dto() {
+    let notifications = vec![
+        (
+            termihub_core::protocol::methods::CONNECTION_EVICTED.to_string(),
+            json!({ "session_id": "s-1", "reason": "takeover" }),
+        ),
+        (
+            termihub_core::protocol::methods::CONNECTION_EVICTED.to_string(),
+            json!({ "reason": "takeover" }),
+        ),
+        (
+            "connection.output".to_string(),
+            json!({ "session_id": "s-2", "data": "" }),
+        ),
+    ];
+    let ids = evicted_session_ids(&notifications);
+    assert_eq!(ids.len(), 1);
+    assert!(ids.contains("s-1"));
+}
+
+#[test]
+fn handle_notification_routes_connection_output_via_the_dto() {
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let (tx, rx) = std::sync::mpsc::sync_channel(4);
+    let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
+    session_outputs.insert("sess-1".to_string(), tx);
+    let monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
+
+    handle_notification(
+        termihub_core::protocol::methods::CONNECTION_OUTPUT,
+        &json!({ "session_id": "sess-1", "data": b64.encode(b"hello") }),
+        &session_outputs,
+        &monitoring_outputs,
+        &b64,
+    );
+    assert_eq!(rx.try_recv().expect("output routed"), b"hello".to_vec());
+
+    // Malformed payloads (missing data, bad base64) are dropped.
+    for params in [
+        json!({ "session_id": "sess-1" }),
+        json!({ "session_id": "sess-1", "data": "!!not-base64!!" }),
+    ] {
+        handle_notification(
+            termihub_core::protocol::methods::CONNECTION_OUTPUT,
+            &params,
+            &session_outputs,
+            &monitoring_outputs,
+            &b64,
+        );
+    }
+    assert!(rx.try_recv().is_err());
+}

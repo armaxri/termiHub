@@ -110,11 +110,13 @@ mod tests {
             None
         );
         // A non-string path is a malformed result, not a path.
-        assert!(serde_json::from_value::<InitializeResult<serde::de::IgnoredAny>>(json!({
-            "capabilities": {},
-            "update_auth_token_path": 7,
-        }))
-        .is_err());
+        assert!(
+            serde_json::from_value::<InitializeResult<serde::de::IgnoredAny>>(json!({
+                "capabilities": {},
+                "update_auth_token_path": 7,
+            }))
+            .is_err()
+        );
     }
 
     #[test]

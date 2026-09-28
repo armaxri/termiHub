@@ -3764,4 +3764,153 @@ mod tests {
             json!({ "name": "Prod", "parent_id": "root" }),
         );
     }
+
+    // ── DUP-001 (#3226): desktop-side DTOs keep the historical wire shape ──
+
+    #[test]
+    fn initialize_params_serialize_to_the_legacy_desktop_shape() {
+        let params = InitializeParams {
+            protocol_version: "0.3.0".to_string(),
+            client: "termihub-desktop".to_string(),
+            client_version: "1.2.3".to_string(),
+            external_connection_files: vec!["/a.json".to_string()],
+            agent_settings: AgentSettings {
+                enable_monitoring: true,
+                enable_file_browser: false,
+                enable_docker: true,
+                default_shell: None,
+                starting_directory: "~".to_string(),
+                log_level: "debug".to_string(),
+                verbose_tracing: true,
+                persistent_scrollback_buffer_size_mb: 4,
+            },
+            client_capabilities: ClientCapabilities {
+                keyboard_interactive_prompts: true,
+            },
+        };
+        let expected = json!({
+            "protocolVersion": "0.3.0",
+            "client": "termihub-desktop",
+            "clientVersion": "1.2.3",
+            "externalConnectionFiles": ["/a.json"],
+            "agentSettings": {
+                "enableMonitoring": true,
+                "enableFileBrowser": false,
+                "enableDocker": true,
+                "startingDirectory": "~",
+                "logLevel": "debug",
+                "verboseTracing": true,
+                "persistentScrollbackBufferSizeMb": 4,
+            },
+            "clientCapabilities": { "keyboardInteractivePrompts": true },
+        });
+        let v = serde_json::to_value(&params).unwrap();
+        assert_eq!(v, expected);
+        assert_eq!(v.to_string(), expected.to_string());
+        // And the agent reads it back unchanged.
+        let back: InitializeParams = serde_json::from_value(v).unwrap();
+        assert_eq!(back, params);
+    }
+
+    #[test]
+    fn agent_settings_serialize_a_set_default_shell() {
+        let settings = AgentSettings {
+            default_shell: Some("/bin/zsh".to_string()),
+            ..AgentSettings::default()
+        };
+        let v = serde_json::to_value(&settings).unwrap();
+        assert_eq!(v["defaultShell"], "/bin/zsh");
+    }
+
+    #[test]
+    fn initialize_result_deserializes_with_a_custom_capabilities_type() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        #[serde(rename_all = "camelCase")]
+        struct PassThrough {
+            connection_types: Vec<Value>,
+        }
+        let wire = json!({
+            "protocol_version": "0.13.0",
+            "agent_version": "1.4.2",
+            "client_id": "c-1",
+            "capabilities": { "connectionTypes": [{ "typeId": "local" }] },
+            "update_auth_token_path": "/t",
+        });
+        let r: InitializeResult<PassThrough> = serde_json::from_value(wire).unwrap();
+        assert_eq!(r.protocol_version, "0.13.0");
+        assert_eq!(r.agent_version, "1.4.2");
+        assert_eq!(r.client_id, "c-1");
+        assert_eq!(r.capabilities.connection_types[0]["typeId"], "local");
+        assert_eq!(r.update_auth_token_path.as_deref(), Some("/t"));
+    }
+
+    #[test]
+    fn initialize_result_tolerates_an_older_agent() {
+        let r: InitializeResult<serde::de::IgnoredAny> =
+            serde_json::from_value(json!({ "capabilities": {} })).unwrap();
+        assert_eq!(r.protocol_version, "unknown");
+        assert_eq!(r.agent_version, "unknown");
+        assert_eq!(r.client_id, "");
+        assert_eq!(r.update_auth_token_path, None);
+        // Capabilities stay mandatory.
+        assert!(
+            serde_json::from_value::<InitializeResult<serde::de::IgnoredAny>>(json!({
+                "agent_version": "1.0.0",
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn empty_params_serialize_to_an_empty_object() {
+        let v = serde_json::to_value(EmptyParams {}).unwrap();
+        assert_eq!(v, json!({}));
+        assert_eq!(v.to_string(), "{}");
+    }
+
+    #[test]
+    fn notification_dtos_match_the_agent_wire_shapes() {
+        // Shapes the agent builds by hand (agent/src/transport.rs,
+        // agent/src/daemon/client.rs, agent/src/session/agent_forward.rs).
+        let output = json!({ "session_id": "s-1", "data": "aGk=" });
+        let n: ConnectionOutputNotification = serde_json::from_value(output.clone()).unwrap();
+        assert_eq!(n.session_id, "s-1");
+        assert_eq!(serde_json::to_value(&n).unwrap(), output);
+
+        let evicted = json!({ "session_id": "s-1", "reason": "takeover" });
+        let n: ConnectionEvictedNotification = serde_json::from_value(evicted.clone()).unwrap();
+        assert_eq!(n.reason, "takeover");
+        assert_eq!(serde_json::to_value(&n).unwrap(), evicted);
+        let n: ConnectionEvictedNotification =
+            serde_json::from_value(json!({ "session_id": "s-2" })).unwrap();
+        assert_eq!(n.session_id, "s-2");
+
+        let open = json!({ "stream_id": "st-1" });
+        let n: AgentForwardOpenParams = serde_json::from_value(open.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&n).unwrap(), open);
+    }
+
+    #[test]
+    fn monitoring_data_round_trips_its_flat_shape() {
+        let wire = json!({
+            "host": "self",
+            "hostname": "myhost",
+            "uptimeSeconds": 1234.5,
+            "loadAverage": [0.1, 0.2, 0.3],
+            "cpuUsagePercent": 50.0,
+            "memoryTotalKb": 8000000,
+            "memoryAvailableKb": 4000000,
+            "memoryUsedPercent": 50.0,
+            "diskTotalKb": 100000000,
+            "diskUsedKb": 50000000,
+            "diskUsedPercent": 50.0,
+            "osInfo": "Linux 6.1",
+        });
+        let d: MonitoringData = serde_json::from_value(wire).unwrap();
+        assert_eq!(d.host, "self");
+        assert_eq!(d.stats.hostname, "myhost");
+        let v = serde_json::to_value(&d).unwrap();
+        assert_eq!(v["host"], "self");
+        assert_eq!(v["hostname"], "myhost");
+    }
 }
