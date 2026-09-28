@@ -181,7 +181,9 @@ mod tests {
             ))
         })
         .expect_err("error");
-        assert!(err.to_string().contains("Cannot connect to the Docker daemon"));
+        assert!(err
+            .to_string()
+            .contains("Cannot connect to the Docker daemon"));
     }
 
     #[test]

@@ -54,8 +54,8 @@ use crate::protocol::methods::{
     TunnelStatusResult, TunnelStopParams, TunnelStopResult, UpdateAuthToken,
     UpdatePendingNotification, AGENT_UPDATE_PENDING,
 };
-use termihub_core::protocol::methods::{KbdInteractiveRespondParams, KbdInteractiveRespondResult};
 use termihub_core::protocol::methods::{DockerListContainersParams, DockerListContainersResult};
+use termihub_core::protocol::methods::{KbdInteractiveRespondParams, KbdInteractiveRespondResult};
 // Shared method-name constants (DUP-002); referenced as `pm::CONNECTION_CREATE`
 // in the `register_async_method` calls so agent and desktop cannot drift.
 use crate::protocol::methods as pm;
@@ -2678,21 +2678,18 @@ fn register_agent_crash_reports(module: &mut RpcModule<Mutex<HandlerState>>) -> 
 fn register_docker_list_containers(
     module: &mut RpcModule<Mutex<HandlerState>>,
 ) -> anyhow::Result<()> {
-    module.register_async_method(
-        pm::DOCKER_LIST_CONTAINERS,
-        |params, ctx, _ext| async move {
-            if !ctx.lock().await.initialized {
-                return Err(not_initialized());
-            }
-            // No params (or `null`) means "auto-detect the runtime".
-            let p: DockerListContainersParams = params
-                .parse::<Option<DockerListContainersParams>>()
-                .map_err(|e| invalid_params(pm::DOCKER_LIST_CONTAINERS, e))?
-                .unwrap_or_default();
-            let runtime = p.runtime.unwrap_or_default();
-            docker_list_reply(termihub_core::backends::docker::list_containers(&runtime).await)
-        },
-    )?;
+    module.register_async_method(pm::DOCKER_LIST_CONTAINERS, |params, ctx, _ext| async move {
+        if !ctx.lock().await.initialized {
+            return Err(not_initialized());
+        }
+        // No params (or `null`) means "auto-detect the runtime".
+        let p: DockerListContainersParams = params
+            .parse::<Option<DockerListContainersParams>>()
+            .map_err(|e| invalid_params(pm::DOCKER_LIST_CONTAINERS, e))?
+            .unwrap_or_default();
+        let runtime = p.runtime.unwrap_or_default();
+        docker_list_reply(termihub_core::backends::docker::list_containers(&runtime).await)
+    })?;
     Ok(())
 }
 
