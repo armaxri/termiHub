@@ -21,6 +21,7 @@ use tracing::*;
 
 use super::desktop_size::{read_extended_desktop_size, validate_request};
 use super::event_queue::{event_queue, EventReceiver, EventSender, MAX_QUEUED_EVENT_BYTES};
+use super::ext_clipboard::{self, ExtClipboardState};
 use crate::{
     codec, DesktopSizeStatus, PixelFormat, Rect, VncEncoding, VncError, VncEvent, X11Event,
 };
@@ -129,9 +130,29 @@ where
     }
 }
 
+/// The decoder's side of the Extended Clipboard (termiHub fork, #3472): the
+/// state shared with the input side, and the queue its replies (caps, provide,
+/// request, notify) are written through.
+pub(super) struct ClipboardLink {
+    pub(super) state: Arc<std::sync::Mutex<ExtClipboardState>>,
+    pub(super) replies: Sender<ClientMsg>,
+}
+
+/// Lock the clipboard state; a poisoned lock (a panic mid-update) still holds
+/// consistent-enough data for a clipboard, so it is recovered, not propagated.
+fn lock_clipboard(
+    state: &std::sync::Mutex<ExtClipboardState>,
+) -> std::sync::MutexGuard<'_, ExtClipboardState> {
+    state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 struct VncInner {
     name: String,
     screen: Arc<ScreenCell>,
+    /// Extended Clipboard state shared with the decoder (termiHub fork, #3472).
+    clipboard: Arc<std::sync::Mutex<ExtClipboardState>>,
     input_ch: Sender<ClientMsg>,
     output_ch: EventReceiver,
     decoding_stop: Option<oneshot::Sender<()>>,
@@ -171,6 +192,13 @@ impl VncInner {
 
         let screen = Arc::new(ScreenCell::new((width, height)));
         let decoder_screen = screen.clone();
+        let clipboard = Arc::new(std::sync::Mutex::new(ExtClipboardState::new(
+            ext_clipboard::advertised_formats(&encodings),
+        )));
+        let clipboard_link = ClipboardLink {
+            state: clipboard.clone(),
+            replies: input_ch_tx.clone(),
+        };
 
         trace!("client encodings: {:?}", encodings);
         send_client_encoding(&mut stream, encodings.clone()).await?;
@@ -209,15 +237,19 @@ impl VncInner {
                 let pf = pixel_format.unwrap_or_default();
                 let pf = &pf;
                 let mut decoding_stop_rx = decoding_stop_rx;
-                let result = asycn_vnc_read_loop(
+                let result = asycn_vnc_read_loop_with(
                     &mut conn_ch_rx,
                     pf,
                     &output_func,
                     &mut decoding_stop_rx,
                     &encodings,
                     &decoder_screen,
+                    Some(&clipboard_link),
                 )
                 .await;
+                // Release the reply sender, so the connection task's input queue
+                // can close once the client handle is gone too.
+                drop(clipboard_link);
                 // termiHub fork (#3499, upstream 6acf3da): release the network
                 // bridge before waiting for output capacity, so the connection
                 // task is never kept alive by a decoder parked on a full queue.
@@ -251,6 +283,7 @@ impl VncInner {
         Ok(Self {
             name,
             screen,
+            clipboard,
             input_ch: input_ch_tx,
             output_ch: output_ch_rx,
             decoding_stop: Some(decoding_stop_tx),
@@ -279,7 +312,18 @@ impl VncInner {
                 X11Event::PointerEvent(mouse) => {
                     ClientMsg::PointerEvent(mouse.position_x, mouse.position_y, mouse.bottons)
                 }
-                X11Event::CopyText(text) => ClientMsg::ClientCutText(text),
+                // termiHub fork (#3472): through the Extended Clipboard once the
+                // server announced it, else the legacy (#3469) message.
+                X11Event::CopyText(text) => {
+                    match lock_clipboard(&self.clipboard).on_local_text(&text) {
+                        Some(msg) => ClientMsg::ExtendedClipboard(ext_clipboard::encode(&msg)?),
+                        None => ClientMsg::ClientCutText(text),
+                    }
+                }
+                X11Event::CopyDib(dib) => {
+                    let msg = lock_clipboard(&self.clipboard).on_local_dib(dib)?;
+                    ClientMsg::ExtendedClipboard(ext_clipboard::encode(&msg)?)
+                }
                 // termiHub fork (#3463): an invalid layout is refused here, so
                 // it is reported to the caller instead of reaching the socket.
                 X11Event::SetDesktopSize(req) => {
@@ -560,6 +604,7 @@ async fn report_decoder_error(
 /// `encodings` is the list the client sent in `SetEncodings`; `screen` holds the
 /// framebuffer size from `ServerInit`, updated through `DesktopSize` /
 /// `ExtendedDesktopSize` changes (#3463).
+#[cfg(test)]
 pub(super) async fn asycn_vnc_read_loop<S, F, Fut>(
     stream: &mut S,
     pf: &PixelFormat,
@@ -573,10 +618,30 @@ where
     F: Fn(VncEvent) -> Fut,
     Fut: Future<Output = Result<(), VncError>>,
 {
+    asycn_vnc_read_loop_with(stream, pf, output_func, stop_ch, encodings, screen, None).await
+}
+
+/// [`asycn_vnc_read_loop`] with the Extended Clipboard link (termiHub fork,
+/// #3472). Without a link an advertised extension is still parsed and its
+/// events emitted, but replies to the server are dropped.
+pub(super) async fn asycn_vnc_read_loop_with<S, F, Fut>(
+    stream: &mut S,
+    pf: &PixelFormat,
+    output_func: &F,
+    stop_ch: &mut oneshot::Receiver<()>,
+    encodings: &[VncEncoding],
+    screen: &ScreenCell,
+    clipboard: Option<&ClipboardLink>,
+) -> Result<(), VncError>
+where
+    S: AsyncRead + Unpin,
+    F: Fn(VncEvent) -> Fut,
+    Fut: Future<Output = Result<(), VncError>>,
+{
     tokio::select! {
         biased;
         _ = stop_ch => Ok(()),
-        result = read_vnc_messages(stream, pf, output_func, encodings, screen) => result,
+        result = read_vnc_messages(stream, pf, output_func, encodings, screen, clipboard) => result,
     }
 }
 
@@ -586,6 +651,7 @@ async fn read_vnc_messages<S, F, Fut>(
     output_func: &F,
     encodings: &[VncEncoding],
     screen_cell: &ScreenCell,
+    clipboard: Option<&ClipboardLink>,
 ) -> Result<(), VncError>
 where
     S: AsyncRead + Unpin,
@@ -604,10 +670,20 @@ where
     let layout_advertised = encodings.contains(&VncEncoding::ExtendedDesktopSizePseudo);
     let mut layout_seen = false;
     let mut first_update_done = false;
+    // termiHub fork (#3472): the Extended Clipboard, when advertised.
+    let ext_formats = ext_clipboard::advertised_formats(encodings);
+    let unlinked_state;
+    let clipboard_state = match clipboard {
+        Some(link) => &*link.state,
+        None => {
+            unlinked_state = std::sync::Mutex::new(ExtClipboardState::new(ext_formats));
+            &unlinked_state
+        }
+    };
 
     // main decoding loop
     loop {
-        let server_msg = ServerMsg::read(stream).await?;
+        let server_msg = ServerMsg::read_with(stream, ext_formats).await?;
         trace!("Server message got: {:?}", server_msg);
         match server_msg {
             ServerMsg::FramebufferUpdate(rect_num) => {
@@ -706,7 +782,9 @@ where
                         }
                         // termiHub fork (#3464): client-only hints; `from_wire`
                         // never yields them, so a rectangle cannot carry one.
-                        VncEncoding::TightJpegQuality(_) | VncEncoding::TightCompressLevel(_) => {
+                        VncEncoding::TightJpegQuality(_)
+                        | VncEncoding::TightCompressLevel(_)
+                        | VncEncoding::ExtendedClipboardPseudo { .. } => {
                             return Err(VncError::Protocol(format!(
                                 "server used client-only pseudo-encoding {:?}",
                                 rect.encoding
@@ -739,6 +817,32 @@ where
                     len,
                     "discarded an oversize ServerCutText (termiHub PROD-021 cap)"
                 );
+            }
+            ServerMsg::ExtendedClipboard(msg) => {
+                let reaction = lock_clipboard(clipboard_state).on_server(msg);
+                if reaction.dropped != 0 {
+                    warn!(
+                        formats = reaction.dropped,
+                        "dropped over-cap extended clipboard data (termiHub PROD-021 cap)"
+                    );
+                }
+                for reply in reaction.replies {
+                    let Some(link) = clipboard else { break };
+                    match ext_clipboard::encode(&reply) {
+                        Ok(bytes) => {
+                            link.replies
+                                .send(ClientMsg::ExtendedClipboard(bytes))
+                                .await?
+                        }
+                        Err(e) => warn!("could not encode an extended clipboard reply: {e}"),
+                    }
+                }
+                for event in reaction.events {
+                    output_func(event).await?;
+                }
+            }
+            ServerMsg::ExtendedClipboardDropped(reason) => {
+                warn!("dropped an extended clipboard message: {reason}");
             }
         }
     }

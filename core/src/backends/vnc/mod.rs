@@ -5,7 +5,9 @@
 //! the backend negotiates the connection, decodes framebuffer updates into the
 //! shared [`FrameUpdate`] / [`CursorUpdate`] stream, translates the shared
 //! [`InputEvent`]s into RFB `KeyEvent` / `PointerEvent`, and bridges the
-//! clipboard via RFB `ServerCutText` / `ClientCutText`. Everything the user
+//! clipboard via RFB `ServerCutText` / `ClientCutText` — or, when the server
+//! supports it, the Extended Clipboard (UTF-8 text and `dib` images, #3472;
+//! see [`clipboard`]). Everything the user
 //! touches — canvas, toolbar, overlays, input, clipboard, scaling — belongs to
 //! the shared layer and is untouched here; this module is the wire adapter only.
 //!
@@ -14,6 +16,7 @@
 //! registry `register(...)` call — no shared match arm, no editor switch.
 
 mod budget;
+mod clipboard;
 mod config;
 mod desktop_size;
 mod frame;
@@ -28,7 +31,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use tokio::sync::mpsc;
-use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
@@ -37,16 +39,18 @@ use vnc::{
     VncError, VncEvent, VncVersion, X11Event,
 };
 
+use crate::connection::clipboard_dib::image_to_dib;
 use crate::connection::{
-    AuthKind, Capabilities, ConnectionType, CursorReceiver, CursorShape, CursorUpdate, DirtyRect,
-    FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities, InputEvent, MonitorLayout,
-    MonitorRect, MultiMonitorCapability, OutputReceiver, SettingsSchema,
+    AuthKind, Capabilities, ClipboardImage, ConnectionType, CursorReceiver, CursorShape,
+    CursorUpdate, DirtyRect, FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities,
+    InputEvent, MonitorLayout, MonitorRect, MultiMonitorCapability, OutputReceiver, SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
 
 use budget::{ByteBudgetSender, MAX_QUEUED_CURSOR_BYTES, MAX_QUEUED_FRAME_BYTES};
+use clipboard::VncClipboard;
 use config::VncConfig;
 use desktop_size::{DesktopSize, ResizeOutcome};
 use frame::FrameShadow;
@@ -61,8 +65,9 @@ const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(30);
 /// Shared, interior-mutable state touched by both the driver task and the
 /// `GraphicalBackend` command methods.
 struct VncShared {
-    /// Latest remote clipboard text (RFB `ServerCutText`), surfaced via `get_clipboard`.
-    clipboard: Mutex<String>,
+    /// The mirrored remote clipboard (text and, via the Extended Clipboard,
+    /// images — #3472), surfaced via `get_clipboard` / `get_clipboard_image`.
+    clipboard: VncClipboard,
     /// Last pointer X/Y (framebuffer pixels), so a server cursor-shape update can
     /// be positioned even though RFB carries no server cursor *position*.
     ptr_x: AtomicU32,
@@ -240,6 +245,9 @@ fn encodings_for(cfg: &VncConfig) -> Vec<VncEncoding> {
     if cfg.desktop_size().negotiates_layout() {
         encs.push(VncEncoding::ExtendedDesktopSizePseudo);
     }
+    // UTF-8 text and `dib` images through the Extended Clipboard (#3472); a
+    // server without it ignores the number and the legacy clipboard stays.
+    encs.push(VncEncoding::ExtendedClipboardPseudo { images: true });
     encs
 }
 
@@ -670,9 +678,8 @@ async fn handle_event(
                 })
                 .await
         }
-        VncEvent::Text(text) => {
-            *shared.clipboard.lock().await = text;
-            true
+        VncEvent::Text(_) | VncEvent::ClipboardCapabilities(_) | VncEvent::ClipboardDib(_) => {
+            shared.clipboard.on_event(&event).await
         }
         VncEvent::Error(err) => {
             match protocol_failure_reason(&err) {
@@ -762,7 +769,7 @@ impl ConnectionType for Vnc {
             .map_err(map_vnc_err)?;
 
         let shared = Arc::new(VncShared {
-            clipboard: Mutex::new(String::new()),
+            clipboard: VncClipboard::default(),
             ptr_x: AtomicU32::new(0),
             ptr_y: AtomicU32::new(0),
             view_only: cfg.view_only,
@@ -880,9 +887,12 @@ impl GraphicalBackend for Vnc {
                 .as_ref()
                 .is_some_and(|rt| rt.shared.supports_dynamic_resize()),
             supports_clipboard: true,
-            // The standard RFB clipboard (ServerCutText / ClientCutText) is
-            // Latin-1 text only; vnc-rs has no Extended Clipboard support.
-            supports_clipboard_image: false,
+            // Images need the RFB Extended Clipboard with `dib`, which only
+            // some servers announce (#3472); the standard clipboard is text.
+            supports_clipboard_image: self
+                .runtime
+                .as_ref()
+                .is_some_and(|rt| rt.shared.clipboard.images_supported()),
             view_only_capable: true,
             // A multi-screen SetDesktopSize (RFB ExtendedDesktopSize), honored
             // only by servers that support it (#3696).
@@ -964,13 +974,31 @@ impl GraphicalBackend for Vnc {
     }
 
     async fn get_clipboard(&self) -> Option<String> {
-        let rt = self.runtime.as_ref()?;
-        let text = rt.shared.clipboard.lock().await.clone();
-        if text.is_empty() {
-            None
-        } else {
-            Some(text)
+        self.runtime.as_ref()?.shared.clipboard.text().await
+    }
+
+    async fn get_clipboard_image(&self) -> Option<ClipboardImage> {
+        self.runtime.as_ref()?.shared.clipboard.image().await
+    }
+
+    /// Push an image through the Extended Clipboard's `dib` format (#3472).
+    /// A server that did not announce `dib` has no image clipboard.
+    async fn set_clipboard_image(&self, image: ClipboardImage) -> Result<(), SessionError> {
+        let Some(rt) = &self.runtime else {
+            return Err(SessionError::NotRunning("vnc not connected".to_string()));
+        };
+        if rt.shared.view_only {
+            return Ok(());
         }
+        if !rt.shared.clipboard.images_supported() {
+            return Err(SessionError::NotRunning(
+                "the VNC server does not support clipboard images".to_string(),
+            ));
+        }
+        rt.client
+            .input(X11Event::CopyDib(image_to_dib(&image)))
+            .await
+            .map_err(map_vnc_err)
     }
 
     async fn set_clipboard(&self, text: String) -> Result<(), SessionError> {
@@ -1130,7 +1158,7 @@ mod tests {
 
     fn test_shared_with(format: PixelFormat) -> Arc<VncShared> {
         Arc::new(VncShared {
-            clipboard: Mutex::new(String::new()),
+            clipboard: VncClipboard::default(),
             ptr_x: AtomicU32::new(0),
             ptr_y: AtomicU32::new(0),
             view_only: false,
@@ -1498,6 +1526,23 @@ mod tests {
             .is_err());
         assert!(v.get_clipboard().await.is_none());
         assert!(v.set_clipboard("x".to_string()).await.is_err());
+        assert!(v.get_clipboard_image().await.is_none());
+        let image = ClipboardImage::new(1, 1, vec![0; 4]).unwrap();
+        assert!(v.set_clipboard_image(image).await.is_err());
+    }
+
+    #[test]
+    fn encodings_always_offer_the_extended_clipboard_with_images() {
+        // #3472: opt in to UTF-8 text and `dib` images in every mode; a server
+        // without the extension ignores the number.
+        for raw in [false, true] {
+            let cfg = VncConfig {
+                preferred_encoding: if raw { "raw" } else { "zrle" }.to_string(),
+                ..VncConfig::default()
+            };
+            assert!(encodings_for(&cfg)
+                .contains(&VncEncoding::ExtendedClipboardPseudo { images: true }));
+        }
     }
 
     #[test]
@@ -1508,6 +1553,7 @@ mod tests {
         // VeNCrypt Plain (#1714) surfaces as username+password.
         assert!(caps.auth_kinds.contains(&AuthKind::UsernamePassword));
         assert!(caps.supports_clipboard);
+        // Images need a connected server that announced Extended Clipboard `dib`.
         assert!(!caps.supports_clipboard_image);
         assert_eq!(caps.multi_monitor, MultiMonitorCapability::supported());
         assert!(Vnc::new().monitor_layout().is_empty());

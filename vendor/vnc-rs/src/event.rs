@@ -118,6 +118,18 @@ pub struct ExtendedDesktopSize {
     pub screens: Vec<DesktopScreen>,
 }
 
+/// What the server's Extended Clipboard announcement enables (termiHub fork,
+/// #3472): reported once the server has sent its capabilities, which only a
+/// server implementing the extension does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClipboardCapabilities {
+    /// UTF-8 text travels through the extension (lossless beyond Latin-1).
+    pub text: bool,
+    /// The server offers `dib` images and the client opted into them
+    /// ([crate::VncEncoding::ExtendedClipboardPseudo] with `images`).
+    pub images: bool,
+}
+
 /// A client `SetDesktopSize` request (RFB message 251, termiHub fork, #3463).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopSizeRequest {
@@ -179,7 +191,9 @@ pub enum VncEvent {
     Bell,
     /// Will be generated everytime the vncserver's clipboarded get updated
     ///
-    /// Note that only Latin-1 character set is allowed
+    /// termiHub fork (#3469 / #3472): lossless UTF-8 when the Extended
+    /// Clipboard is negotiated; otherwise UTF-8 if the bytes are valid UTF-8,
+    /// else Latin-1.
     ///
     /// According to [RFC6143](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.6.4)
     ///
@@ -196,6 +210,15 @@ pub enum VncEvent {
     /// support it and `SetDesktopSize` must not be sent (termiHub fork, #3463).
     /// Emitted at most once.
     DesktopLayoutUnsupported,
+    /// The server supports the Extended Clipboard pseudo-encoding (termiHub
+    /// fork, #3472); emitted when it announces its capabilities, only when
+    /// [crate::VncEncoding::ExtendedClipboardPseudo] was negotiated.
+    ClipboardCapabilities(ClipboardCapabilities),
+    /// The server's clipboard holds an image: a Microsoft device-independent
+    /// bitmap (`BITMAPINFO` header + pixels, no file header), at most
+    /// [crate::MAX_CLIPBOARD_DIB_BYTES] bytes and otherwise unvalidated
+    /// (termiHub fork, #3472).
+    ClipboardDib(ImageData),
     /// If any unexpected error happens in the async process routines
     /// This event will propagate the error to the current context
     ///
@@ -266,9 +289,15 @@ pub enum X11Event {
     PointerEvent(ClientMouseEvent),
     /// Send data to the server's clipboard
     ///
-    /// Only Latin-1 character set is allowed
+    /// termiHub fork (#3469 / #3472): UTF-8 through the Extended Clipboard when
+    /// the server announced it, else a legacy `ClientCutText` (Latin-1 when
+    /// representable, UTF-8 otherwise).
     ///
     CopyText(String),
+    /// Put an image on the server's clipboard (termiHub fork, #3472): a
+    /// Microsoft device-independent bitmap. Only valid once the server
+    /// announced `dib` ([VncEvent::ClipboardCapabilities] with `images`).
+    CopyDib(Vec<u8>),
     /// Ask the server to resize the desktop (RFB `SetDesktopSize`, termiHub
     /// fork, #3463). Only valid once the server has sent a
     /// [VncEvent::DesktopLayout]; the reply arrives as another one with

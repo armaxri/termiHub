@@ -29,6 +29,13 @@ pub enum VncEncoding {
     /// `0..=9`, 9 = smallest output). Levels above 9 are clamped to 9 (termiHub
     /// fork, #3464).
     TightCompressLevel(u8),
+    /// Extended Clipboard pseudo-encoding (`0xC0A1E5CE`, termiHub fork, #3472):
+    /// UTF-8 clipboard text and, with `images`, `dib` clipboard images. See
+    /// `client::ext_clipboard`.
+    ExtendedClipboardPseudo {
+        /// Also exchange `dib` images when the server offers them.
+        images: bool,
+    },
 }
 
 impl VncEncoding {
@@ -46,6 +53,9 @@ impl VncEncoding {
             VncEncoding::ExtendedDesktopSizePseudo => -308,
             VncEncoding::TightJpegQuality(level) => -32 + i32::from(level.min(9)),
             VncEncoding::TightCompressLevel(level) => -256 + i32::from(level.min(9)),
+            VncEncoding::ExtendedClipboardPseudo { .. } => {
+                crate::client::ext_clipboard::ENCODING_EXTENDED_CLIPBOARD
+            }
         }
     }
 }
@@ -410,6 +420,17 @@ mod encoding_tests {
         // The server never sends rectangles in these pseudo-encodings.
         assert_eq!(VncEncoding::from_wire(-23i32 as u32), None);
         assert_eq!(VncEncoding::from_wire(-256i32 as u32), None);
+    }
+
+    #[test]
+    fn extended_clipboard_has_its_pseudo_encoding_number() {
+        for images in [false, true] {
+            let encoding = VncEncoding::ExtendedClipboardPseudo { images };
+            assert_eq!(encoding.wire_value(), -1063131698);
+            assert_eq!(u32::from(encoding), 0xC0A1_E5CE);
+            // Never a rectangle encoding.
+            assert_eq!(VncEncoding::from_wire(0xC0A1_E5CE), None);
+        }
     }
 }
 
