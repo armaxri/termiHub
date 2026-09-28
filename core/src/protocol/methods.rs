@@ -129,6 +129,13 @@ pub const SERVICE_STATUS: &str = "service.status";
 pub const EMBEDDED_SERVER_ACTIVITY: &str = "embedded_server.activity";
 /// Clear an agent-hosted embedded server's access log + counters (#3453).
 pub const EMBEDDED_SERVER_CLEAR_ACTIVITY: &str = "embedded_server.clear_activity";
+/// List the containers of the **agent host's** container runtime, for the
+/// Docker connection editor's picker on agent-hosted Docker connections
+/// (PROD-017, #3424). Params: [`DockerListContainersParams`]; result:
+/// [`DockerListContainersResult`]. Added append-only in protocol 0.14.0: an
+/// older agent answers "method not found" and the desktop falls back to a typed
+/// container name/ID.
+pub const DOCKER_LIST_CONTAINERS: &str = "docker.list_containers";
 pub const TOOL_LIST: &str = "tool.list";
 pub const TOOL_RUN: &str = "tool.run";
 /// Start a streaming tool run (#3353): returns at once; results arrive as
@@ -1607,6 +1614,53 @@ pub struct EmbeddedServerClearActivityParams {
 pub struct EmbeddedServerClearActivityResult {
     /// Whether a hosted server with that id was found and its log cleared.
     pub cleared: bool,
+}
+
+// ── docker.list_containers (PROD-017, #3424) ────────────────────────
+//
+// A `docker ps -a`-style listing of the agent host's container runtime, so the
+// connection editor can offer a picker for an agent-hosted Docker connection's
+// existing container instead of a typed name/ID. The agent reaches the runtime
+// exactly as an agent-hosted Docker session would.
+
+/// Params for `docker.list_containers`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DockerListContainersParams {
+    /// The connection's `runtime` setting; `auto` (detect Docker, then Podman)
+    /// when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<crate::config::ContainerRuntime>,
+}
+
+/// One container in a `docker.list_containers` result. Field-for-field the
+/// core `backends::docker::ContainerInfo` the desktop's local picker shows.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DockerContainerEntry {
+    /// Full container ID.
+    pub id: String,
+    /// Primary container name without the leading `/` (short ID when unnamed).
+    pub name: String,
+    /// Image the container was created from (empty when unknown).
+    #[serde(default)]
+    pub image: String,
+    /// Machine-readable state (`running`, `exited`, …; empty when unknown).
+    #[serde(default)]
+    pub state: String,
+    /// Human-readable status (e.g. `Up 3 hours`).
+    #[serde(default)]
+    pub status: String,
+    /// Whether the container is running (only running ones accept a shell).
+    #[serde(default)]
+    pub running: bool,
+}
+
+/// Result of `docker.list_containers`: running containers first, then by name.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DockerListContainersResult {
+    pub containers: Vec<DockerContainerEntry>,
 }
 
 #[cfg(test)]
@@ -3243,6 +3297,7 @@ mod tests {
             EMBEDDED_SERVER_CLEAR_ACTIVITY,
             "embedded_server.clear_activity"
         );
+        assert_eq!(DOCKER_LIST_CONTAINERS, "docker.list_containers");
         assert_eq!(TOOL_LIST, "tool.list");
         assert_eq!(TOOL_RUN, "tool.run");
         assert_eq!(TOOL_START, "tool.start");
@@ -3704,5 +3759,38 @@ mod tests {
             .unwrap(),
             json!({ "name": "Prod", "parent_id": "root" }),
         );
+    }
+
+    /// `docker.list_containers` (#3424): absent runtime is omitted and read back
+    /// as `None`; entries use the camelCase wire shape and tolerate missing
+    /// optional fields from a future/older peer.
+    #[test]
+    fn docker_list_containers_wire_shape() {
+        assert_eq!(
+            serde_json::to_value(DockerListContainersParams::default()).unwrap(),
+            json!({})
+        );
+        assert_eq!(
+            serde_json::to_value(DockerListContainersParams {
+                runtime: Some(crate::config::ContainerRuntime::Podman),
+            })
+            .unwrap(),
+            json!({ "runtime": "podman" })
+        );
+        let p: DockerListContainersParams = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(p.runtime, None);
+
+        let r: DockerListContainersResult = serde_json::from_value(json!({
+            "containers": [
+                { "id": "abc", "name": "web", "image": "nginx", "state": "running",
+                  "status": "Up 1 hour", "running": true },
+                { "id": "def", "name": "old" }
+            ]
+        }))
+        .unwrap();
+        assert_eq!(r.containers.len(), 2);
+        assert!(r.containers[0].running);
+        assert_eq!(r.containers[1].image, "");
+        assert!(!r.containers[1].running);
     }
 }
