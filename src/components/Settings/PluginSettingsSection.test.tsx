@@ -37,7 +37,7 @@ function plugin(
   id: string,
   settings: Record<string, PluginSettingSchema> | undefined
 ): InstalledPlugin {
-  return { manifest: manifest(id, settings), state: "active", installedAt: "2026-01-01T00:00:00Z" };
+  return { manifest: manifest(id, settings), state: "active", installedAt: 1767225600000 };
 }
 
 let container: HTMLDivElement;

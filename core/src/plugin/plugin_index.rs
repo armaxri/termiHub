@@ -100,6 +100,8 @@ pub struct PluginIndex {
 
 /// One listed plugin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PluginIndexEntry {
     /// The plugin id; must match the package's manifest id.
@@ -115,6 +117,7 @@ pub struct PluginIndexEntry {
     pub version: String,
     /// Optional HTTPS project page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub homepage: Option<String>,
     /// The plugin ABI (`"major.minor"`) the listed version needs from the host.
     pub min_host_abi: String,
@@ -123,6 +126,7 @@ pub struct PluginIndexEntry {
     pub native: bool,
     /// The build-toolchain record of the native library (ABI 1.1, PLG-013).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub toolchain: Option<IndexToolchain>,
     /// Downloadable packages, each covering one or more platforms.
     pub packages: Vec<PluginIndexPackage>,
@@ -130,6 +134,15 @@ pub struct PluginIndexEntry {
 
 /// The toolchain record as listed in the index.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(
+    test,
+    ts(
+        export,
+        export_to = "../../src/types/generated/",
+        rename = "PluginIndexToolchain"
+    )
+)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IndexToolchain {
     /// `"<release> (<commit-hash>)"`, exactly as the plugin API records it.
@@ -153,6 +166,8 @@ impl IndexToolchain {
 
 /// One downloadable package of a listed plugin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PluginIndexPackage {
     /// Target triples this package supports, or `["any"]`.
@@ -360,6 +375,15 @@ impl PluginIndexEntry {
 
 /// How the listed toolchain compares with this host's (native plugins only).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(
+    test,
+    ts(
+        export,
+        export_to = "../../src/types/generated/",
+        rename = "PluginToolchainStatus"
+    )
+)]
 #[serde(rename_all = "camelCase")]
 pub enum ToolchainStatus {
     /// Not a native plugin — no toolchain involved.
@@ -375,6 +399,15 @@ pub enum ToolchainStatus {
 
 /// How a listed plugin relates to what is installed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(
+    test,
+    ts(
+        export,
+        export_to = "../../src/types/generated/",
+        rename = "PluginIndexInstallStatus"
+    )
+)]
 #[serde(rename_all = "camelCase")]
 pub enum InstallStatus {
     /// Not installed.
@@ -390,6 +423,8 @@ pub enum InstallStatus {
 /// One index entry as the Browse view shows it: the listing plus this host's
 /// compatibility verdict.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct PluginIndexEntryView {
     /// The listing.
@@ -406,6 +441,7 @@ pub struct PluginIndexEntryView {
     pub toolchain: ToolchainStatus,
     /// The installed version, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub installed_version: Option<String>,
     /// Relation to the installed version.
     pub install_status: InstallStatus,
@@ -413,6 +449,7 @@ pub struct PluginIndexEntryView {
     pub installable: bool,
     /// When not installable (or already current), a short user-facing reason.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub blocked_reason: Option<String>,
 }
 

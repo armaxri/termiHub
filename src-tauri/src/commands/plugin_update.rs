@@ -42,15 +42,25 @@ const UPDATE_CACHE_DIR: &str = "plugin-updates";
 /// The result of checking one plugin: an evaluated outcome, or why the check
 /// failed. Exactly one of `outcome` / `error` is set.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct PluginUpdateCheckResult {
     /// The plugin checked.
     pub plugin_id: String,
     /// The evaluated check, when it succeeded.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        test,
+        ts(
+            optional,
+            type = "import(\"./PluginUpdateCheckOutcome\").PluginUpdateCheckOutcome"
+        )
+    )]
     pub outcome: Option<UpdateCheckOutcome>,
     /// A user-facing reason the check failed.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub error: Option<String>,
 }
 

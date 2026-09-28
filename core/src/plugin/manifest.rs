@@ -34,6 +34,8 @@ const MAX_PLUGIN_ID_LEN: usize = 64;
 /// deserialization rather than being silently ignored, which is what lets the
 /// install-time permission prompt be exhaustive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum PluginPermission {
     /// Creating and managing terminal sessions.
@@ -50,6 +52,15 @@ pub enum PluginPermission {
 
 /// A desktop platform a plugin declares support for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(
+    test,
+    ts(
+        export,
+        export_to = "../../src/types/generated/",
+        rename = "PluginPlatform"
+    )
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Platform {
     /// Microsoft Windows.
@@ -70,15 +81,19 @@ pub enum Platform {
 /// legitimately fans out to many endpoints, or one deliberately restricted to a
 /// single slow dial-out.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ConnectionPolicyManifest {
     /// Maximum number of concurrent mediated connections a session may hold open.
     /// `None` keeps the host default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "number"))]
     pub max_connections: Option<usize>,
     /// Connect timeout, in milliseconds, applied to each mediated dial-out.
     /// `None` keeps the host default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "number"))]
     pub connect_timeout_ms: Option<u64>,
 }
 
@@ -89,19 +104,25 @@ pub struct ConnectionPolicyManifest {
 /// presence — wiring them into the terminal manager, theme engine, etc. is the
 /// job of later plugin-system issues.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PluginExtensions {
     /// A new connection type with full terminal I/O (Rust dynamic library).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub terminal_backend: Option<TerminalBackendExtension>,
     /// An output filter that transforms or annotates terminal output (JS).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub protocol_parser: Option<ProtocolParserExtension>,
     /// One or more custom color themes (JSON data).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub theme: Option<ThemeExtension>,
     /// A widget rendered into the status bar (JS).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub status_bar_widget: Option<StatusBarWidgetExtension>,
 }
 
@@ -117,6 +138,8 @@ impl PluginExtensions {
 
 /// A terminal-backend extension point.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TerminalBackendExtension {
     /// The connection type this backend registers.
@@ -125,6 +148,7 @@ pub struct TerminalBackendExtension {
     pub display_name: String,
     /// JSON Schema describing the backend's connection config. Opaque to this
     /// crate — later issues drive the schema-based config form.
+    #[cfg_attr(test, ts(type = "import(\"../plugin\").JsonSchema"))]
     pub config_schema: serde_json::Value,
     /// Multi-platform native libraries (PLG-011): Rust target triple → the
     /// library's `/`-separated path inside the package (under `backend/`,
@@ -134,11 +158,14 @@ pub struct TerminalBackendExtension {
     /// Empty (the key absent) for a **legacy single-platform** package whose
     /// library sits flat in `backend/` and is picked by file extension.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[cfg_attr(test, ts(as = "Option<BTreeMap<String, String>>", optional))]
     pub libraries: BTreeMap<String, String>,
 }
 
 /// A protocol-parser extension point.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProtocolParserExtension {
     /// Parser identifier.
@@ -151,6 +178,8 @@ pub struct ProtocolParserExtension {
 
 /// A theme extension point: one or more theme definitions bundled in the package.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ThemeExtension {
     /// The themes provided by this plugin.
@@ -159,6 +188,8 @@ pub struct ThemeExtension {
 
 /// A single theme provided by a [`ThemeExtension`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ThemeEntry {
     /// Theme identifier (unique within the plugin).
@@ -171,6 +202,8 @@ pub struct ThemeEntry {
 
 /// Which side of the status bar a widget renders on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum WidgetPosition {
     /// Left-hand side of the status bar.
@@ -181,6 +214,8 @@ pub enum WidgetPosition {
 
 /// A status-bar-widget extension point.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StatusBarWidgetExtension {
     /// Path to the JS entry point within the package.
@@ -191,6 +226,15 @@ pub struct StatusBarWidgetExtension {
 
 /// The primitive type of a plugin setting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(
+    test,
+    ts(
+        export,
+        export_to = "../../src/types/generated/",
+        rename = "PluginSettingType"
+    )
+)]
 #[serde(rename_all = "lowercase")]
 pub enum SettingType {
     /// A text value.
@@ -203,17 +247,21 @@ pub enum SettingType {
 
 /// The schema for a single plugin setting (`settings.<key>`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PluginSettingSchema {
     /// The setting's primitive type.
     #[serde(rename = "type")]
     pub setting_type: SettingType,
     /// Default value applied when the user has not set one.
+    #[cfg_attr(test, ts(type = "import(\"../plugin\").JsonValue"))]
     pub default: serde_json::Value,
     /// Human-readable description shown in the settings UI.
     pub description: String,
     /// Optional closed set of allowed string values.
     #[serde(rename = "enum", default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub allowed_values: Option<Vec<String>>,
 }
 
@@ -223,6 +271,8 @@ pub struct PluginSettingSchema {
 /// Field names mirror the concept's manifest (impl §2/§6); JSON keys are
 /// `camelCase`. Unknown keys are rejected.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PluginManifest {
     /// Stable, filesystem-safe identifier (used as the install directory name).
@@ -259,6 +309,7 @@ pub struct PluginManifest {
     /// declare which paths they need"). Absent/empty for plugins that request no
     /// filesystem access.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
     pub filesystem_paths: Vec<String>,
     /// The extension points the plugin provides.
     pub extensions: PluginExtensions,
@@ -266,15 +317,18 @@ pub struct PluginManifest {
     /// ceiling and connect timeout for the capability bridge (#2028). Absent
     /// leaves the host defaults in force.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub connection_policy: Option<ConnectionPolicyManifest>,
     /// Optional user-configurable settings, keyed by setting name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub settings: Option<BTreeMap<String, PluginSettingSchema>>,
     /// Optional HTTPS URL of the plugin's update document (PROD-051), used by
     /// the opt-in "Check for updates" — see [`super::update_check`]. Absent
     /// means the plugin never reports updates. Never triggers an install by
     /// itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub update_url: Option<String>,
 }
 
