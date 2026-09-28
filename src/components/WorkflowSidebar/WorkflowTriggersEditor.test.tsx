@@ -79,7 +79,7 @@ afterEach(() => {
 });
 
 const last = (spy: ReturnType<typeof vi.fn>) =>
-  spy.mock.calls.at(-1)?.[0] as WorkflowTrigger[] | undefined;
+  spy.mock.calls[spy.mock.calls.length - 1]?.[0] as WorkflowTrigger[] | undefined;
 
 describe("WorkflowTriggersEditor — on-disconnect / on-output-match (#3791)", () => {
   it("adds an on-disconnect trigger bound to the chosen connections", () => {

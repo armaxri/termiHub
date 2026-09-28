@@ -207,7 +207,7 @@ describe("appStore — session-driven workflow triggers (#3791)", () => {
         workflow("wf-m", [{ kind: "send-command", command: "uptime" }], triggers)
       );
       await useAppStore.getState().loadWorkflows();
-      const tap = setTap.mock.calls.at(-1)?.[0] ?? null;
+      const tap = setTap.mock.calls[setTap.mock.calls.length - 1]?.[0] ?? null;
       return tap;
     }
 
