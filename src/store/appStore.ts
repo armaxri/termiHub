@@ -25,7 +25,6 @@ import {
 import {
   FileEntry,
   TransferState,
-  AppSettings,
   RemoteAgentDefinition,
   AgentCapabilities,
   AgentSettings,
@@ -34,8 +33,6 @@ import {
   LAYOUT_PRESETS,
   PersistentRunState,
   PersistentSessionEntry,
-  ShellIntegrationSettings,
-  ShellIntegrationStatus,
 } from "@/types/connection";
 import {
   loadConnections,
@@ -73,7 +70,6 @@ import {
   closeTerminal as apiCloseTerminal,
   reclaimSession as apiReclaimSession,
   detachPersistentTab as apiDetachPersistentTab,
-  saveShellIntegrationSettings,
   listSerialPorts,
   openWindow,
   sendHandoffToWindow,
@@ -140,6 +136,7 @@ import { createCredentialStoreSlice, CredentialStoreSlice } from "./slices/crede
 import { createUpdateCheckerSlice, UpdateCheckerSlice } from "./slices/updateCheckerSlice";
 import { createPortableModeSlice, PortableModeSlice } from "./slices/portableModeSlice";
 import { createEditorSlice, EditorSlice } from "./slices/editorSlice";
+import { createSettingsSlice, SettingsSlice } from "./slices/settingsSlice";
 
 export type { MacroPlaybackState, PlayMacroOptions } from "./slices/macrosSlice";
 export type {
@@ -248,11 +245,7 @@ import {
 import { currentMonitorsView } from "@/store/systemMonitorBridge";
 import { currentAgentsView, ensureAgentsSubscribed, mirrorAgentIntent } from "@/store/agentsBridge";
 import { currentConnectionsView, ensureConnectionsSubscribed } from "@/store/connectionsBridge";
-import {
-  currentSettingsView,
-  ensureSettingsSubscribed,
-  mirrorSettingsIntent,
-} from "@/store/settingsBridge";
+import { currentSettingsView, ensureSettingsSubscribed } from "@/store/settingsBridge";
 import { currentBroadcastView, dispatchBroadcastIntentBestEffort } from "@/store/broadcastBridge";
 import {
   currentRestoreCohortView,
@@ -421,7 +414,8 @@ export interface AppState
     CredentialStoreSlice,
     UpdateCheckerSlice,
     PortableModeSlice,
-    EditorSlice {
+    EditorSlice,
+    SettingsSlice {
   // Connection type registry (loaded from backend at startup)
   connectionTypes: ConnectionTypeInfo[];
 
@@ -924,17 +918,8 @@ export interface AppState
    * restart. A backend failure leaves the current registry untouched.
    */
   refreshConnectionTypes: () => Promise<void>;
-  updateSettings: (settings: AppSettings) => Promise<void>;
-  /**
-   * Persist edited shell-integration settings through the dedicated
-   * `save_shell_integration_settings` command. Optimistically patches `nextSi`
-   * into the authoritative `settings` region (a `settings.patch`), then on backend
-   * failure rolls the region back to the previously-projected shell-integration
-   * value and re-throws so the caller can surface the error. Resolves with the
-   * refreshed {@link ShellIntegrationStatus} reporting the recomputed
-   * registration / staleness state.
-   */
-  updateShellIntegration: (nextSi: ShellIntegrationSettings) => Promise<ShellIntegrationStatus>;
+  // Settings setters — updateSettings / updateShellIntegration are provided by
+  // SettingsSlice (ARCH-001/FES-011, extracted under #2077 via #2881).
   // Connection tree — reloadExternalConnections / reloadConnectionsFromBackend /
   // toggleFolder / add/bulkAdd/update/delete/bulkDelete connections /
   // add/deleteFolder / duplicate / move(ToFolder|ToFile) / bulkMove / reorder are
@@ -2638,6 +2623,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     ...createCredentialStoreSlice(set, get, store),
     ...createUpdateCheckerSlice(set, get, store),
     ...createPortableModeSlice(set, get, store),
+    ...createSettingsSlice(set, get, store),
 
     // Connection type registry — updated by loadFromBackend()
     connectionTypes: [],
@@ -5142,80 +5128,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
       });
     },
 
-    updateSettings: async (newSettings) => {
-      try {
-        // The settings document is region-authoritative (#2404): read the
-        // previous document from the projection to drive the side-effect diffs.
-        const oldSettings = currentSettingsView();
-        await persistSettings(newSettings);
-        // Optimistic whole-document write into the authoritative region. The
-        // persist above folds `save_settings` into the region server-side (#2386);
-        // this dispatch reflects it client-side instantly, and `useProjectedSettings`
-        // renders it back. There is no `appStore` slice to set any more.
-        mirrorSettingsIntent("settings.replace", { settings: newSettings });
-
-        // Re-apply when the selection changes or when the active custom theme's
-        // colors were edited (the customThemes array reference changes on save).
-        if (
-          oldSettings.theme !== newSettings.theme ||
-          oldSettings.customThemes !== newSettings.customThemes
-        ) {
-          applyEffectiveTheme(newSettings);
-        }
-
-        // Side-effects when global defaults are toggled off.
-        // Only disconnect if the active tab doesn't have an explicit override.
-        if (oldSettings.powerMonitoringEnabled && !newSettings.powerMonitoringEnabled) {
-          const activeTab = getActiveTab(get());
-          const hasOverride = readConfigBoolean(activeTab?.config, "enableMonitoring") === true;
-          if (!hasOverride) {
-            get().disconnectMonitoring();
-          }
-        }
-        if (oldSettings.fileBrowserEnabled && !newSettings.fileBrowserEnabled) {
-          const activeTab = getActiveTab(get());
-          const hasOverride = readConfigBoolean(activeTab?.config, "enableFileBrowser") === true;
-          if (!hasOverride) {
-            if (get().sidebarView === "files") {
-              set({ sidebarView: "connections" });
-            }
-          }
-        }
-        // Toggling the experimental frontend-plugin gate (#2048) reconciles the
-        // injected plugin scripts: enabling loads active frontend plugins,
-        // disabling tears them down. Pass the known-new gate value straight into
-        // loadPlugins rather than let it read the eventually-consistent region
-        // (#2630): the `settings.replace` above is fire-and-forget, so a re-read
-        // of `currentSettingsView()` can still return the stale pre-toggle value
-        // and skip the teardown, leaving the widget mounted after a live disable.
-        const nextGate = newSettings.frontendPluginsEnabled ?? false;
-        if ((oldSettings.frontendPluginsEnabled ?? false) !== nextGate) {
-          void get().loadPlugins(nextGate);
-        }
-      } catch (err) {
-        frontendLog("app_store", `Failed to save settings: ${errorMessage(err)}`);
-        toast.error(`Failed to save settings: ${errorMessage(err)}`, { id: "save-settings-error" });
-      }
-    },
-
-    updateShellIntegration: async (nextSi) => {
-      // Capture the previously-projected value for rollback. The shell-integration
-      // write is a targeted field patch, so dispatch it as a `settings.patch`
-      // (shallow-merge) rather than a whole-document replace — keeping a concurrent
-      // general-settings edit intact. The backend `settings.patch` route reads the
-      // partial from a `{ patch }` envelope (settings_projection/projection.rs), so
-      // wrap the field there. This is the optimistic write into the authoritative
-      // region (#2404); the persist below also folds server-side (#2407).
-      const prevSi = currentSettingsView().shellIntegration;
-      mirrorSettingsIntent("settings.patch", { patch: { shellIntegration: nextSi } });
-      try {
-        return await saveShellIntegrationSettings(nextSi);
-      } catch (err) {
-        // Roll the region back to the previously-projected shell-integration value.
-        mirrorSettingsIntent("settings.patch", { patch: { shellIntegration: prevSi } });
-        throw err;
-      }
-    },
+    // Settings setters (updateSettings / updateShellIntegration) provided by
+    // createSettingsSlice (ARCH-001/FES-011, extracted under #2077 via #2881).
 
     // Connection tree (region-authoritative, #2401) — reloadExternalConnections /
     // reloadConnectionsFromBackend / toggleFolder / add|bulkAdd|update|delete|
