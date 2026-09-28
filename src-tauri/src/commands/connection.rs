@@ -837,3 +837,7 @@ mod tests {
         assert!(value["details"].is_null());
     }
 }
+
+#[cfg(test)]
+#[path = "connection_fold_tests.rs"]
+mod fold_tests;
