@@ -130,6 +130,12 @@ interface TerminalRegistryContextType {
   getTerminalSelection: (tabId: string) => string | undefined;
   /** Clear the current text selection in a terminal. */
   clearTerminalSelection: (tabId: string) => void;
+  /**
+   * Whether the app running in a terminal has enabled xterm mouse reporting
+   * (`mouseTrackingMode !== "none"`). While it has, a plain right-click belongs
+   * to the app, not to termiHub's quick action / context menu (#3801).
+   */
+  isMouseReportingActive: (tabId: string) => boolean;
   /** Select the entire terminal buffer (no-op if the tab has no terminal). */
   selectAllInTerminal: (tabId: string) => void;
   /** Copy the current text selection to the clipboard (no-op if nothing selected). */
@@ -411,6 +417,11 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     if (xterm) xterm.clearSelection();
   }, []);
 
+  const isMouseReportingActive = useCallback((tabId: string): boolean => {
+    const xterm = xtermRegistryRef.current.get(tabId);
+    return xterm !== undefined && xterm.modes.mouseTrackingMode !== "none";
+  }, []);
+
   const selectAllInTerminal = useCallback((tabId: string) => {
     const xterm = xtermRegistryRef.current.get(tabId);
     if (xterm) xterm.selectAll();
@@ -605,6 +616,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       openTerminalInEditor,
       getTerminalSelection,
       clearTerminalSelection,
+      isMouseReportingActive,
       selectAllInTerminal,
       copySelectionToClipboard,
       getSessionId,
@@ -634,6 +646,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       openTerminalInEditor,
       getTerminalSelection,
       clearTerminalSelection,
+      isMouseReportingActive,
       selectAllInTerminal,
       copySelectionToClipboard,
       getSessionId,
