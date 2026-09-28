@@ -11,8 +11,8 @@ evidence:
   - agent/src/session/manager.rs:344
   - agent/src/session/manager.rs:1197
   - core/src/session/mod.rs
-status: partial
-resolution: "#3761 — re-scoped (#3095): core::session::registry::Sessions<E> + Reservations capacity guard adopted on the agent SessionManager (slice A, #3761). Remaining: slice B desktop adoption"
+status: fixed
+resolution: "#3761, #3779 — re-scoped (#3095): core::session::registry::Sessions<E> + Reservations adopted on agent (#3761) and desktop SessionManager incl. in-flight create reservations counting toward MAX_SESSIONS (#3779); FSM unification rejected with rationale (settle semantics are opposite by design)"
 ---
 
 ## What
