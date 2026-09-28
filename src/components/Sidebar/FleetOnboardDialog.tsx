@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Server } from "lucide-react";
 import { Button, Checkbox, Modal, Select } from "@/components/ui";
 import { toast } from "@/components/ui";
@@ -10,7 +10,7 @@ import {
   resolveImportFolderId,
   ROOT_FOLDER_VALUE,
 } from "@/services/sshConfigImport";
-import { buildTemplatedConnections } from "@/services/fleetOnboard";
+import { buildTemplatedConnections, isHostTemplate } from "@/services/fleetOnboard";
 import { compareNames } from "@/utils/locale";
 import "./BulkSshImportDialog.css";
 import "./FleetOnboardDialog.css";
@@ -34,14 +34,15 @@ function overrideSummary(row: InventoryHost): string {
 
 /**
  * Fleet-onboard dialog (#1961): create many saved connections from one existing
- * connection used as a **template**, sourcing the hosts from a CSV inventory or
- * from the network scanner. The user picks the template connection, a target
+ * connection used as a **template**, sourcing the hosts from a CSV inventory.
+ * The user picks the template connection (only host-based types are offered, and
+ * nothing is pre-selected), a target
  * folder, and whether to skip hosts that already exist; each row becomes a saved
  * connection reusing the template's type and settings with its host (and any
  * per-row port/username) stamped in.
  *
- * Self-contained on the store (templates, folders, bulk-add) so both the
- * connection list and the scanner panels can open it with just a `rows` array.
+ * Self-contained on the store (templates, folders, bulk-add) so the connection
+ * list can open it with just a `rows` array.
  */
 export function FleetOnboardDialog({
   open,
@@ -51,31 +52,42 @@ export function FleetOnboardDialog({
 }: FleetOnboardDialogProps) {
   const { connections, folders } = useProjectedConnections();
   const bulkAddConnections = useAppStore((s) => s.bulkAddConnections);
+  const connectionTypes = useAppStore((s) => s.connectionTypes);
 
   const [templateId, setTemplateId] = useState<string>("");
   const [folderId, setFolderId] = useState<string>(ROOT_FOLDER_VALUE);
   const [dedupe, setDedupe] = useState(true);
 
+  const templateCandidates = useMemo(
+    () => connections.filter((c) => isHostTemplate(c, connectionTypes)),
+    [connections, connectionTypes]
+  );
   const templateOptions = useMemo(
     () =>
-      connections
+      templateCandidates
         .map((c) => ({ value: c.id, label: `${c.name} (${c.config.type})` }))
         .sort((a, b) => compareNames(a.label, b.label)),
-    [connections]
+    [templateCandidates]
   );
   const folderOptions = useMemo(() => importFolderOptions(folders), [folders]);
 
+  // Reset the form only on the closed -> open transition. Depending on the
+  // connections projection here would wipe the user's picked template whenever
+  // the projection re-emits while the dialog is open (#3813).
+  const wasOpen = useRef(false);
   useEffect(() => {
-    if (!open) return;
-    setFolderId(ROOT_FOLDER_VALUE);
-    setDedupe(true);
-    // Default the template to the first connection so the primary action is
-    // reachable in one click when a template obviously exists.
-    setTemplateId(connections[0]?.id ?? "");
-  }, [open, connections]);
+    if (open && !wasOpen.current) {
+      setFolderId(ROOT_FOLDER_VALUE);
+      setDedupe(true);
+      // No default: the user must pick the template explicitly, so hosts are
+      // never silently stamped from whichever connection happens to be first.
+      setTemplateId("");
+    }
+    wasOpen.current = open;
+  }, [open]);
 
-  const template: SavedConnection | undefined = connections.find((c) => c.id === templateId);
-  const noTemplates = connections.length === 0;
+  const template: SavedConnection | undefined = templateCandidates.find((c) => c.id === templateId);
+  const noTemplates = templateCandidates.length === 0;
   const canImport = !!template && rows.length > 0;
 
   const handleImport = () => {
@@ -138,7 +150,10 @@ export function FleetOnboardDialog({
       {noTemplates ? (
         <div className="ssh-config-import__empty" data-testid="fleet-onboard-no-templates">
           <Server size={20} aria-hidden />
-          <p>Create a connection first, then use it as a template to onboard hosts in bulk.</p>
+          <p>
+            Create a host-based connection (e.g. SSH or Telnet) first, then use it as a template to
+            onboard hosts in bulk.
+          </p>
         </div>
       ) : rows.length === 0 ? (
         <div className="ssh-config-import__empty" data-testid="fleet-onboard-empty">

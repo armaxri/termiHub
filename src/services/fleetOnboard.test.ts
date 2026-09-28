@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildTemplatedConnections,
-  pingSweepResultsToRows,
-  portScanResultsToRows,
-} from "./fleetOnboard";
-import type { InventoryHost, SavedConnection } from "@/types/connection";
-import type { PingSweepResult, PortScanResult } from "@/types/network";
+import { buildTemplatedConnections, isHostTemplate } from "./fleetOnboard";
+import type { ConnectionTypeInfo, InventoryHost, SavedConnection } from "@/types/connection";
 
 /** A minimal SSH connection usable as a template. */
 function sshTemplate(overrides: Partial<SavedConnection> = {}): SavedConnection {
@@ -206,41 +201,53 @@ describe("buildTemplatedConnections", () => {
   });
 });
 
-describe("pingSweepResultsToRows", () => {
-  it("uses reverse-DNS hostname as the label when present", () => {
-    const results: PingSweepResult[] = [
-      { host: "10.0.0.1", hostname: "gateway.lan" },
-      { host: "10.0.0.2" },
-    ];
-    const out = pingSweepResultsToRows(results);
-    expect(out).toEqual([
-      { host: "10.0.0.1", label: "gateway.lan" },
-      { host: "10.0.0.2", label: "10.0.0.2" },
-    ]);
-  });
-});
+describe("isHostTemplate", () => {
+  function typeInfo(typeId: string, fieldKeys: string[]): ConnectionTypeInfo {
+    return {
+      typeId,
+      displayName: typeId,
+      icon: typeId,
+      schema: {
+        groups: [
+          {
+            key: "main",
+            label: "Main",
+            fields: fieldKeys.map((key) => ({
+              key,
+              label: key,
+              fieldType: { type: "text" },
+              required: false,
+            })),
+          },
+        ],
+      },
+      capabilities: {} as ConnectionTypeInfo["capabilities"],
+    } as ConnectionTypeInfo;
+  }
 
-describe("portScanResultsToRows", () => {
-  it("collapses open ports to one row per host, carrying a sole open port", () => {
-    const results: PortScanResult[] = [
-      { host: "10.0.0.1", port: 22, state: "open" },
-      { host: "10.0.0.1", port: 80, state: "open" },
-      { host: "10.0.0.2", port: 22, state: "open" },
-      { host: "10.0.0.3", port: 22, state: "closed" },
-    ];
-    const out = portScanResultsToRows(results);
-    expect(out).toEqual([
-      // Two open ports → no single-port override.
-      { host: "10.0.0.1", label: "10.0.0.1" },
-      // Exactly one open port → carried as an override.
-      { host: "10.0.0.2", label: "10.0.0.2", port: 22 },
-    ]);
-    // Host with no open port is excluded.
-    expect(out.find((r) => r.host === "10.0.0.3")).toBeUndefined();
+  function conn(type: string, config: Record<string, unknown>): SavedConnection {
+    return { id: `c-${type}`, name: type, folderId: null, config: { type, config } };
+  }
+
+  const registry = [
+    typeInfo("ssh", ["host", "port", "username"]),
+    typeInfo("telnet", ["host", "port"]),
+    typeInfo("serial", ["port", "baudRate"]),
+    typeInfo("local", ["shell"]),
+  ];
+
+  it("accepts types whose registry schema has a host field", () => {
+    expect(isHostTemplate(conn("ssh", {}), registry)).toBe(true);
+    expect(isHostTemplate(conn("telnet", {}), registry)).toBe(true);
   });
 
-  it("returns no rows when nothing is open", () => {
-    const results: PortScanResult[] = [{ host: "h", port: 22, state: "filtered" }];
-    expect(portScanResultsToRows(results)).toEqual([]);
+  it("rejects types whose registry schema has no host field", () => {
+    expect(isHostTemplate(conn("serial", { port: "/dev/ttyUSB0" }), registry)).toBe(false);
+    expect(isHostTemplate(conn("local", { shell: "zsh" }), registry)).toBe(false);
+  });
+
+  it("falls back to the saved settings when the type is not in the registry", () => {
+    expect(isHostTemplate(conn("plugin-x", { host: "a" }), [])).toBe(true);
+    expect(isHostTemplate(conn("plugin-y", { shell: "zsh" }), [])).toBe(false);
   });
 });
