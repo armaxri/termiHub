@@ -7,7 +7,8 @@ import type { AgentSettings } from "./generated/AgentSettings";
 import type { SavedConnection } from "./generated/SavedConnection";
 import type { JumpHostConfig } from "./generated/JumpHostConfig";
 import type { ExternalFileConfig } from "./generated/ExternalFileConfig";
-import { SettingsSchema, Capabilities } from "./schema";
+import type { ConnectionTypeInfo } from "./generated/ConnectionTypeInfo";
+import type { LayoutConfig } from "./generated/LayoutConfig";
 import { KeybindingOverrideEntry } from "./keybindings";
 import type { SavedContainerRuntime, SpawnKind } from "./spawn";
 import type { SyntaxHighlightingConfig } from "./syntaxHighlighting";
@@ -124,14 +125,11 @@ export type { ExternalFileError } from "./generated/ExternalFileError";
 /** A warning generated during file recovery at startup (generated via ts-rs). */
 export type { RecoveryWarning } from "./generated/RecoveryWarning";
 
-/** Info about a connection type from the backend registry. */
-export interface ConnectionTypeInfo {
-  typeId: string;
-  displayName: string;
-  icon: string;
-  schema: SettingsSchema;
-  capabilities: Capabilities;
-}
+/**
+ * Info about a connection type from the backend registry. Generated from core's
+ * `ConnectionTypeInfo` (`core/src/connection/registry.rs`) via ts-rs (#3088).
+ */
+export type { ConnectionTypeInfo };
 
 // Runtime behaviour preferences for a connected remote agent.
 // Generated from the Rust `AgentSettings` (src-tauri/src/connection/config.rs)
@@ -220,26 +218,14 @@ export interface PersistentSessionEntry {
 
 // ── Layout / activity bar ─────────────────────────────────────────────────
 
-export type ActivityBarPosition = "left" | "right" | "top" | "hidden";
-export type SidebarPosition = "left" | "right";
+// The persisted layout is generated from the Rust `LayoutConfig`
+// (`src-tauri/src/connection/settings.rs`) via ts-rs (audit DUP-030, #3088).
+export type { LayoutConfig };
 
-export interface LayoutConfig {
-  activityBarPosition: ActivityBarPosition;
-  sidebarPosition: SidebarPosition;
-  sidebarVisible: boolean;
-  statusBarVisible: boolean;
-  hiddenActivityBarViews: string[];
-  /** The currently active sidebar panel. Persisted across restarts. */
-  sidebarView?: string;
-  /** Whether the sidebar is currently collapsed. Persisted across restarts. */
-  sidebarCollapsed?: boolean;
-  /**
-   * Whether the file browser shows hidden (dot-prefixed) entries. Persisted
-   * across restarts; absent/false hides them, matching the standard
-   * file-explorer default.
-   */
-  showHiddenFiles?: boolean;
-}
+/** Where the activity bar sits. */
+export type ActivityBarPosition = LayoutConfig["activityBarPosition"];
+/** Which side the sidebar sits on. */
+export type SidebarPosition = LayoutConfig["sidebarPosition"];
 
 export const DEFAULT_LAYOUT: LayoutConfig = {
   activityBarPosition: "left",

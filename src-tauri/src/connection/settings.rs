@@ -81,9 +81,15 @@ fn default_session_history_limit() -> u32 {
 
 /// Layout configuration for UI section positioning and visibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct LayoutConfig {
+    /// Where the activity bar sits (`left` / `right` / `top` / `hidden`).
+    #[cfg_attr(test, ts(type = "\"left\" | \"right\" | \"top\" | \"hidden\""))]
     pub activity_bar_position: String,
+    /// Which side the sidebar sits on (`left` / `right`).
+    #[cfg_attr(test, ts(type = "\"left\" | \"right\""))]
     pub sidebar_position: String,
     pub sidebar_visible: bool,
     pub status_bar_visible: bool,
@@ -92,10 +98,19 @@ pub struct LayoutConfig {
     pub hidden_activity_bar_views: Vec<String>,
     /// The currently active sidebar panel (e.g. "connections", "files").
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub sidebar_view: Option<String>,
     /// Whether the sidebar is currently collapsed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub sidebar_collapsed: Option<bool>,
+    /// Whether the file browser shows hidden (dot-prefixed) entries. Absent /
+    /// `false` hides them, matching the standard file-explorer default. Before
+    /// this field existed the frontend sent it but the settings round-trip
+    /// dropped it, so the toggle never survived a restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub show_hidden_files: Option<bool>,
 }
 
 /// Persisted state for the update checker.
@@ -918,6 +933,30 @@ mod tests {
         );
         assert_eq!(layout2.sidebar_view.as_deref(), Some("files"));
         assert_eq!(layout2.sidebar_collapsed, Some(true));
+    }
+
+    #[test]
+    fn layout_config_round_trips_show_hidden_files() {
+        let json = r#"{
+            "version": "1",
+            "externalConnectionFiles": [],
+            "layout": {
+                "activityBarPosition": "left",
+                "sidebarPosition": "left",
+                "sidebarVisible": true,
+                "statusBarVisible": true,
+                "showHiddenFiles": true
+            }
+        }"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        let value = serde_json::to_value(&settings).unwrap();
+        assert_eq!(value["layout"]["showHiddenFiles"], serde_json::json!(true));
+
+        // Absent stays absent, so older settings files serialize unchanged.
+        let mut settings = settings;
+        settings.layout.as_mut().unwrap().show_hidden_files = None;
+        let value = serde_json::to_value(&settings).unwrap();
+        assert!(value["layout"].get("showHiddenFiles").is_none());
     }
 
     #[test]

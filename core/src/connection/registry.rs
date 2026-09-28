@@ -29,6 +29,8 @@ pub type ConnectionFactory = Box<dyn Fn() -> Box<dyn ConnectionType> + Send + Sy
 /// Serializable so it can be sent to the frontend via JSON-RPC
 /// or Tauri commands.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionTypeInfo {
     /// Machine-readable identifier (e.g., `"ssh"`).
