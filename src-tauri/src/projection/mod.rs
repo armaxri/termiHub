@@ -19,11 +19,13 @@
 //! events (strangler migration); the terminal `terminal-output` byte stream is
 //! a separate, untouched channel.
 
+mod delta_check;
 mod frame;
 mod helpers;
 mod identity;
 mod region;
 
+pub(crate) use delta_check::{perf006_divergence, report_perf006_divergence};
 pub use frame::{
     DiffFrame, DiffKind, DiffOp, Intent, IntentAck, IntentErrorInfo, IntentStatus, ProducedRegion,
     ProjectionFrame, SnapshotFrame, SnapshotKind,
@@ -311,10 +313,39 @@ impl Projector {
     /// Because the diff is computed against the *last emitted* view, many
     /// mutations collapsed into one `publish` call produce one diff — the
     /// concept's burst-coalescing, for free.
+    ///
+    /// **Publishing a store snapshot?** Use [`Self::publish_with`] instead. A view
+    /// computed *before* the call is not ordered with the region lock, so a
+    /// racing publisher can land a newer view first, which this call then
+    /// overwrites with its older one (#3788).
     pub fn publish(&self, region: &str, new_view: Value) -> Option<u64> {
+        self.publish_with(region, || new_view)
+    }
+
+    /// Like [`Self::publish`], but the new view is produced by `snapshot`, which
+    /// runs **under the region lock** (#3788).
+    ///
+    /// This is the race-free way to publish a store's whole-region snapshot from
+    /// threads that fold and publish concurrently. Were the snapshot taken
+    /// before the region lock (`publish(region, store.snapshot())`), thread A
+    /// could snapshot `v1`, thread B fold `v2`, snapshot and publish it, and A
+    /// then publish its older `v1` over it — leaving every subscriber stale
+    /// until some later, unrelated publish of the region. Taking the snapshot
+    /// inside the lock orders snapshots exactly as they are applied, so the
+    /// region always equals the store as of the latest publish, and a fold that
+    /// lands after our snapshot is carried by its own folder's publish.
+    ///
+    /// `snapshot` must not call back into this [`Projector`] (it would deadlock
+    /// on the region lock). It may take the domain store's own lock: store locks
+    /// are leaves — no store calls the projector while holding its lock — so the
+    /// order is always region lock → store lock.
+    pub fn publish_with(&self, region: &str, snapshot: impl FnOnce() -> Value) -> Option<u64> {
         let handle = self.region_handle(region, || Value::Null);
         let mut state = Self::lock_region(&handle);
 
+        let new_view = snapshot();
+        #[cfg(test)]
+        publish_hook::fire_after_drain();
         let ops = compute_ops(&state.view, &new_view);
         if ops.is_empty() {
             return None;
@@ -336,8 +367,9 @@ impl Projector {
     }
 
     /// Publish the current snapshot of a [`ProjectedStore`].
+    /// The snapshot is taken under the region lock (see [`Self::publish_with`]).
     pub fn publish_store(&self, store: &dyn ProjectedStore) -> Option<u64> {
-        self.publish(store.region_id(), store.snapshot())
+        self.publish_with(store.region_id(), || store.snapshot())
     }
 
     /// Publish a region **incrementally** via a caller-computed delta (PERF-006).
@@ -553,6 +585,35 @@ impl IntentHandler for HandlerRegistry {
                 "unknown_intent".to_string(),
                 format!("no handler registered for intent kind '{}'", intent.kind),
             )),
+        }
+    }
+}
+
+/// A test-only hook fired inside a publish, under the region lock, between the
+/// store read (an incremental publish's drain, or [`Projector::publish_with`]'s
+/// snapshot) and the splice into the region view — the exact window of the
+/// stale-publish race (#3780 / #3788) — so a test can land a racing fold or
+/// publish there deterministically. Thread-local and one-shot: only the thread
+/// that set it fires it, on its next such publish.
+#[cfg(test)]
+pub(crate) mod publish_hook {
+    use std::cell::RefCell;
+
+    type Hook = Box<dyn FnOnce()>;
+
+    thread_local! {
+        static AFTER_DRAIN: RefCell<Option<Hook>> = const { RefCell::new(None) };
+    }
+
+    /// Arm the hook for this thread's next incremental publish.
+    pub(crate) fn set_after_drain(hook: impl FnOnce() + 'static) {
+        AFTER_DRAIN.with(|h| *h.borrow_mut() = Some(Box::new(hook)));
+    }
+
+    /// Fire (and disarm) this thread's hook, if armed.
+    pub(crate) fn fire_after_drain() {
+        if let Some(hook) = AFTER_DRAIN.with(|h| h.borrow_mut().take()) {
+            hook();
         }
     }
 }

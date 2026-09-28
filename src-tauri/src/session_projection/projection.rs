@@ -64,8 +64,8 @@ use termihub_core::reconnect_backoff::ReconnectPhase;
 
 use crate::commands::projection::ProjectionState;
 use crate::projection::{
-    compute_ops, optional_str, required_str, DiffOp, HandlerRegistry, Intent, ProducedRegion,
-    Projector,
+    compute_ops, optional_str, perf006_divergence, report_perf006_divergence, required_str, DiffOp,
+    HandlerRegistry, Intent, ProducedRegion, Projector,
 };
 use crate::session::manager::SessionManager;
 use crate::session_projection::store::{
@@ -130,7 +130,7 @@ pub fn publish_sessions(
     // Reported only after `publish_delta` returned: the (resynced) frame has
     // already been fanned out and the region lock released.
     if let Some(reason) = divergence {
-        report_perf006_divergence(&reason);
+        report_perf006_divergence(SESSION_LIFECYCLE_REGION, &reason);
     }
     match published {
         Some(version) => vec![ProducedRegion {
@@ -139,21 +139,6 @@ pub fn publish_sessions(
         }],
         None => Vec::new(),
     }
-}
-
-/// Surface a PERF-006 cross-check failure: a real dirty-tracking or ordering bug
-/// in the incremental publish, already healed by a resync. Logged loudly and
-/// never a panic mid-publish (#3780: a panic there dropped the frame after the
-/// view was spliced, and once aborted the whole debug app). Unit tests still
-/// fail hard on it — after the fan-out, so the region stays consistent.
-fn report_perf006_divergence(reason: &str) {
-    tracing::error!(
-        region = SESSION_LIFECYCLE_REGION,
-        "PERF-006: incremental session publish diverged from the store; \
-         resynced to the whole-region diff: {reason}"
-    );
-    #[cfg(test)]
-    panic!("PERF-006: incremental session publish diverged: {reason}");
 }
 
 /// Compute the RFC-6902 ops for a drained [`RegionDelta`] and splice its new
@@ -216,27 +201,6 @@ fn apply_session_delta(
     }
 
     (ops, None)
-}
-
-/// The PERF-006 cross-check: `None` when the incremental `ops` equal the
-/// whole-region diff `old_full → truth` and the spliced `view` equals `truth`;
-/// otherwise a description of the mismatch.
-fn perf006_divergence(
-    ops: &[DiffOp],
-    old_full: &Value,
-    view: &Value,
-    truth: &Value,
-) -> Option<String> {
-    let expected = compute_ops(old_full, truth);
-    if ops != expected.as_slice() {
-        return Some(format!(
-            "incremental ops {ops:?} != whole-region ops {expected:?}"
-        ));
-    }
-    if view != truth {
-        return Some(format!("spliced view {view} != store snapshot {truth}"));
-    }
-    None
 }
 
 /// Collect the touched keys that are present in `src` into a fresh object — the
@@ -741,26 +705,11 @@ fn required_exit(intent: &Intent) -> Result<TerminalExit, (String, String)> {
 #[path = "projection_tests.rs"]
 mod tests;
 
+/// The shared between-drain-and-splice test hook (#3788 moved it to
+/// [`crate::projection::publish_hook`] for every region), re-exported under its
+/// #3780 path.
 #[cfg(test)]
-pub(crate) mod publish_hook {
-    use std::cell::RefCell;
-
-    type Hook = Box<dyn FnOnce()>;
-
-    thread_local! {
-        static AFTER_DRAIN: RefCell<Option<Hook>> = const { RefCell::new(None) };
-    }
-
-    pub(crate) fn set_after_drain(hook: impl FnOnce() + 'static) {
-        AFTER_DRAIN.with(|h| *h.borrow_mut() = Some(Box::new(hook)));
-    }
-
-    pub(super) fn fire_after_drain() {
-        if let Some(hook) = AFTER_DRAIN.with(|h| h.borrow_mut().take()) {
-            hook();
-        }
-    }
-}
+pub(crate) use crate::projection::publish_hook;
 
 #[cfg(test)]
 #[path = "projection_race_tests.rs"]
