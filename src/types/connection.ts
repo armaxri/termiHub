@@ -1,15 +1,12 @@
-import {
-  BroadcastGroup,
-  ConnectionConfig,
-  RemoteAgentConfig,
-  TerminalOptions,
-  LineEnding,
-} from "./terminal";
+import { BroadcastGroup, RemoteAgentConfig, LineEnding } from "./terminal";
 // DTOs generated from their Rust source of truth via ts-rs (audit DUP-030 /
 // MOCK-005). Imported here so this module can both re-export them (below) and
 // reference them locally (e.g. the tree-node union, DEFAULT_AGENT_SETTINGS).
 import type { ConnectionFolder } from "./generated/ConnectionFolder";
 import type { AgentSettings } from "./generated/AgentSettings";
+import type { SavedConnection } from "./generated/SavedConnection";
+import type { JumpHostConfig } from "./generated/JumpHostConfig";
+import type { ExternalFileConfig } from "./generated/ExternalFileConfig";
 import { SettingsSchema, Capabilities } from "./schema";
 import { KeybindingOverrideEntry } from "./keybindings";
 import type { SavedContainerRuntime, SpawnKind } from "./spawn";
@@ -45,16 +42,11 @@ export interface TransferState {
   maxAttempts?: number;
 }
 
-export interface SavedConnection {
-  id: string;
-  name: string;
-  config: ConnectionConfig;
-  folderId: string | null;
-  terminalOptions?: TerminalOptions;
-  icon?: string;
-  /** Which external file this connection was loaded from. null = main connections.json. */
-  sourceFile?: string | null;
-}
+// In-memory representation of a saved connection (with a generated path-based
+// ID). Generated from the Rust `SavedConnection`
+// (src-tauri/src/connection/config.rs) via ts-rs (audit DUP-030 / FEC-008); the
+// CI staleness gate replaces the former hand-rolled Rust drift guard.
+export type { SavedConnection };
 
 // In-memory representation of a folder (with a generated path-based ID).
 // Generated from the Rust `ConnectionFolder` (src-tauri/src/connection/config.rs)
@@ -64,36 +56,14 @@ export type { ConnectionFolder };
 /**
  * A single jump host (bastion) hop in an SSH `ProxyJump` chain.
  *
- * Mirrors the Rust `JumpHostConfig` (`core/src/config/mod.rs`). Stored inline on
- * an SSH connection's `proxyJump` array. A hop either carries the inline
- * connection fields or references a saved SSH connection by `connectionId`,
- * which the backend expands to inline fields at connect time (#940).
+ * Generated from the Rust `JumpHostConfig` (`core/src/config/mod.rs`) via ts-rs
+ * (audit DUP-030). Stored inline on an SSH connection's `proxyJump` array. A hop
+ * either carries the inline connection fields or references a saved SSH
+ * connection by `connectionId`, which the backend expands to inline fields at
+ * connect time (#940). `port` is `number | ""` because the jump-host editor
+ * shares this shape and uses `""` for a cleared field (#1444).
  */
-export interface JumpHostConfig {
-  /**
-   * Reference to a saved SSH connection in the main store or any enabled
-   * external connection file. An id held by more than one file is refused as
-   * ambiguous (#3602).
-   */
-  connectionId?: string;
-  host: string;
-  /**
-   * SSH port. While editing, a cleared field is `""` (the shared `number | ""`
-   * blank-value convention, #1444) which `validateProxyJump` flags as required
-   * rather than coercing to a default; a persisted hop always holds a number.
-   */
-  port: number | "";
-  username: string;
-  /** "key" | "password" | "agent". */
-  authMethod: string;
-  password?: string;
-  keyPath?: string;
-  /**
-   * Per-hop connect/handshake timeout (seconds). Unset falls back to the default
-   * SSH connect timeout, mirroring the target's `connectTimeoutSecs` (#951).
-   */
-  connectTimeoutSecs?: number;
-}
+export type { JumpHostConfig };
 
 /**
  * SSH-connection settings the connection editor manages directly (as opposed to
@@ -117,74 +87,42 @@ export interface SshEditorSettings {
 /**
  * A host from the user's `~/.ssh/config` that declares a `ProxyJump`, offered
  * for one-shot import into the first-class jump-host editor (#1702).
- *
- * `name` is the OpenSSH `Host` alias; `proxyJump` is the resolved hop chain
- * (outermost → innermost), reusing the same {@link JumpHostConfig} shape the
- * editor stores so it drops straight into a connection's `proxyJump` array.
+ * Generated from the Rust `ImportableHost` (`commands/ssh_config_import.rs`)
+ * via ts-rs (audit DUP-030).
  */
-export interface SshConfigImportHost {
-  name: string;
-  proxyJump: JumpHostConfig[];
-}
+export type { SshConfigImportHost } from "./generated/SshConfigImportHost";
 
 /**
  * A whole SSH connection resolved from a `~/.ssh/config` `Host` stanza (#1722),
  * offered to the connection editor to pre-populate a new SSH connection.
- *
- * Unlike {@link SshConfigImportHost} (jump-host chain only), this is the target
- * connection itself: `name` is the OpenSSH `Host` alias, `host`/`port`/`username`
- * are the resolved `Hostname`/`Port`/`User`, and `authMethod`/`keyPath` mirror
- * the jump-host import's mapping (`IdentityFile` → `"key"`, else `"agent"`).
- * `proxyJump` is the target's own resolved hop chain, empty for a direct host.
+ * Generated from the Rust `ImportableConnection`
+ * (`commands/ssh_config_import.rs`) via ts-rs (audit DUP-030).
  */
-export interface SshConfigImportConnection {
-  name: string;
-  host: string;
-  port: number;
-  username: string;
-  authMethod: string;
-  keyPath?: string;
-  proxyJump: JumpHostConfig[];
-}
+export type { SshConfigImportConnection } from "./generated/SshConfigImportConnection";
 
 /**
  * One host parsed from a CSV / simple inventory file (#1961), offered to the
- * fleet-onboard flow to stamp onto a chosen connection template.
- *
- * Mirrors the Rust `InventoryHost` (`commands/inventory_import.rs`). `label` is
- * the created connection's display name (defaults to `host` when the file gives
- * none); `port`/`username` are optional per-host overrides — `undefined` means
- * "inherit the template's value". The same shape also carries scan-result hosts
- * into the flow, so ping-sweep / port-scanner rows reuse one code path.
+ * fleet-onboard flow to stamp onto a chosen connection template. `port` /
+ * `username` are optional per-host overrides — absent means "inherit the
+ * template's value". The same shape also carries scan-result hosts into the
+ * flow. Generated from the Rust `InventoryHost` (`commands/inventory_import.rs`)
+ * via ts-rs (audit DUP-030).
  */
-export interface InventoryHost {
-  label: string;
-  host: string;
-  port?: number;
-  username?: string;
-}
+export type { InventoryHost } from "./generated/InventoryHost";
 
 export type ConnectionTreeItem =
   | { type: "folder"; folder: ConnectionFolder }
   | { type: "connection"; connection: SavedConnection };
 
-export interface ExternalFileConfig {
-  path: string;
-  enabled: boolean;
-}
+// Generated from the Rust `ExternalFileConfig` (src-tauri/src/connection/settings.rs)
+// via ts-rs (audit DUP-030). Imported at the top of this module; re-exported here.
+export type { ExternalFileConfig };
 
-/** Error encountered when loading an external connection file. */
-export interface ExternalFileError {
-  filePath: string;
-  error: string;
-}
+/** Error encountered when loading an external connection file (generated via ts-rs). */
+export type { ExternalFileError } from "./generated/ExternalFileError";
 
-/** A warning generated during file recovery at startup. */
-export interface RecoveryWarning {
-  fileName: string;
-  message: string;
-  details: string | null;
-}
+/** A warning generated during file recovery at startup (generated via ts-rs). */
+export type { RecoveryWarning } from "./generated/RecoveryWarning";
 
 /** Info about a connection type from the backend registry. */
 export interface ConnectionTypeInfo {
@@ -265,12 +203,10 @@ export type PersistentRunState =
 /**
  * A saved connection's id changed from `oldId` to `newId` — a rename or move of
  * the connection or of a folder above it (#3569). Payload item of the backend
- * `connection-ids-changed` event (#3579).
+ * `connection-ids-changed` event (#3579). Generated from the Rust
+ * `ConnectionIdChange` (`src-tauri/src/connection/id_changes.rs`) via ts-rs.
  */
-export interface ConnectionIdChange {
-  oldId: string;
-  newId: string;
-}
+export type { ConnectionIdChange } from "./generated/ConnectionIdChange";
 
 /** Frontend state entry for one persistent connection. */
 export interface PersistentSessionEntry {

@@ -106,7 +106,15 @@ impl From<&AgentSettings> for termihub_core::protocol::methods::AgentSettings {
 }
 
 /// Per-connection terminal display options.
+///
+/// Every modelled field is omitted from the wire when unset, so the generated
+/// TypeScript marks them all optional (`field?: T`) via `optional_fields`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(
+    test,
+    ts(export, export_to = "../../src/types/generated/", optional_fields)
+)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -119,12 +127,20 @@ pub struct TerminalOptions {
     pub font_size: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scrollback_buffer: Option<u32>,
+    /// Cursor shape. Stored as a free string (the backend never interprets it),
+    /// but the frontend only ever writes one of the xterm.js cursor styles, so
+    /// the generated type narrows it to that union.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(type = "\"block\" | \"underline\" | \"bar\""))]
     pub cursor_style: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor_blink: Option<bool>,
     /// Per-connection line-ending override ("cr", "lf", or "crlf").
+    ///
+    /// Narrowed in the generated type to the frontend `LineEnding` union
+    /// (`src/types/terminal.ts`), which falls back to the global default.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(type = "\"cr\" | \"lf\" | \"crlf\""))]
     pub line_ending: Option<String>,
     /// Per-connection terminal line-height multiplier (may be fractional).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -141,7 +157,15 @@ pub struct TerminalOptions {
     /// Stored opaquely as JSON — the backend never introspects it, so it
     /// follows the [`crate::terminal::backend::ConnectionConfig::settings`]
     /// precedent rather than duplicating the frontend's nested schema in Rust.
+    /// The generated type therefore points at the frontend-owned
+    /// `ConnectionHighlightingConfig` (`src/types/syntaxHighlighting.ts`)
+    /// through an inline `import()` type, since ts-rs cannot import a
+    /// non-generated module itself.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        test,
+        ts(type = "import(\"../syntaxHighlighting\").ConnectionHighlightingConfig")
+    )]
     pub syntax_highlighting: Option<serde_json::Value>,
     /// Forward-compatibility catch-all (#2311).
     ///
@@ -152,7 +176,13 @@ pub struct TerminalOptions {
     /// next restart — the exact defect class behind #2261, #2309 and this
     /// hardening. Unknown keys round-trip verbatim instead. Empty by default, so
     /// a flattened empty map contributes nothing to the serialized output.
+    ///
+    /// Skipped in the generated type: the frontend never reads or writes these
+    /// keys by name (they are, by definition, fields this struct does not know),
+    /// and flattening an open map would widen every `TerminalOptions` to an
+    /// index signature, erasing the typed fields above.
     #[serde(flatten)]
+    #[cfg_attr(test, ts(skip))]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
@@ -348,13 +378,19 @@ pub struct ImportResult {
 /// The `id` is not stored on disk — it is derived from the connection's
 /// position in the tree (e.g., `"Work/Dev/My SSH"`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct SavedConnection {
     pub id: String,
     pub name: String,
     pub config: ConnectionConfig,
     pub folder_id: Option<String>,
+    // `skip_serializing_if` fields below are absent (not `null`) on the wire, so
+    // they are emitted as optional `field?: T` rather than ts-rs's default
+    // required `field: T | null`.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub terminal_options: Option<TerminalOptions>,
     /// Optional per-connection icon identifier chosen in the UI.
     ///
@@ -362,10 +398,15 @@ pub struct SavedConnection {
     /// Without this field the user's icon choice was silently dropped on
     /// `save_connection` and lost on the next restart (#2316).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub icon: Option<String>,
     /// Runtime-only: which external file this connection was loaded from.
     /// `None` = main connections.json, `Some(path)` = external file.
+    ///
+    /// The frontend also writes an explicit `null` here, so the generated type
+    /// keeps the hand-written `sourceFile?: string | null` shape.
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub source_file: Option<String>,
 }
 
@@ -738,117 +779,6 @@ mod tests {
         assert_eq!(obj.get("cursorStyle").unwrap(), "block");
     }
 
-    // ---- Frontend/backend drift guard (approach (b), for the non-flatten
-    // ---- container structs `SavedConnection` and `ConnectionConfig`) --------
-
-    /// Extract the top-level field names of a TypeScript `export interface`.
-    ///
-    /// Only depth-1 members are returned; JSDoc/`//` comments, blank lines and
-    /// nested object types are skipped. Trailing `?` (optional) is stripped.
-    fn extract_ts_interface_fields(
-        src: &str,
-        interface: &str,
-    ) -> std::collections::BTreeSet<String> {
-        let header = format!("export interface {interface} {{");
-        let mut lines = src.lines();
-        let mut found = false;
-        for line in lines.by_ref() {
-            if line.contains(&header) {
-                found = true;
-                break;
-            }
-        }
-        assert!(found, "interface `{interface}` not found in source");
-
-        let mut fields = std::collections::BTreeSet::new();
-        let mut depth = 1i32; // the opening brace was on the header line
-        for line in lines {
-            let trimmed = line.trim();
-            let is_comment = trimmed.is_empty()
-                || trimmed.starts_with("//")
-                || trimmed.starts_with("/*")
-                || trimmed.starts_with('*');
-            if depth == 1 && !is_comment {
-                if let Some(name) = parse_ts_field_name(trimmed) {
-                    fields.insert(name);
-                }
-            }
-            depth += line.matches('{').count() as i32;
-            depth -= line.matches('}').count() as i32;
-            if depth <= 0 {
-                break;
-            }
-        }
-        fields
-    }
-
-    /// Parse a leading `name:` / `name?:` identifier from a TS member line.
-    fn parse_ts_field_name(line: &str) -> Option<String> {
-        let end = line
-            .char_indices()
-            .find(|(_, c)| !(c.is_ascii_alphanumeric() || *c == '_' || *c == '$'))
-            .map(|(i, _)| i)
-            .unwrap_or(line.len());
-        if end == 0 {
-            return None;
-        }
-        let rest = line[end..].trim_start();
-        if rest.starts_with('?') || rest.starts_with(':') {
-            Some(line[..end].to_string())
-        } else {
-            None
-        }
-    }
-
-    /// Fail when the frontend interface carries a field the backend neither
-    /// models nor knowingly excludes — the silent-drop defect (#2311).
-    fn assert_no_silent_drop(ts_src: &str, interface: &str, modelled: &[&str], known_gap: &[&str]) {
-        let ts = extract_ts_interface_fields(ts_src, interface);
-        assert!(!ts.is_empty(), "no fields parsed for `{interface}`");
-        let modelled: std::collections::BTreeSet<String> =
-            modelled.iter().map(|s| s.to_string()).collect();
-        let known_gap: std::collections::BTreeSet<String> =
-            known_gap.iter().map(|s| s.to_string()).collect();
-        let dropped: Vec<&String> = ts
-            .iter()
-            .filter(|f| !modelled.contains(*f) && !known_gap.contains(*f))
-            .collect();
-        assert!(
-            dropped.is_empty(),
-            "frontend `{interface}` has field(s) the backend silently drops: {dropped:?}. \
-             Add a matching backend field (or `#[serde(flatten)] extra` catch-all), or record \
-             it in the known-gap list with a tracking issue.",
-        );
-    }
-
-    // These const lists mirror the serialized (camelCase) keys of the Rust
-    // structs. Update them when a field is added/removed so the drift test
-    // stays a faithful mirror.
-    //
-    // NOTE: `ConnectionConfig` no longer needs a hand-rolled drift guard — its
-    // frontend interface is now GENERATED from this Rust struct via ts-rs
-    // (`src/types/generated/ConnectionConfig.ts`, audit DUP-030), so the CI
-    // staleness gate enforces parity mechanically. The remaining guard below
-    // still covers `SavedConnection`, which is not yet ts-rs-generated (deferred
-    // to the ts-rs rollout follow-up).
-    const SAVED_CONNECTION_BACKEND_FIELDS: &[&str] = &[
-        "id",
-        "name",
-        "config",
-        "folderId",
-        "terminalOptions",
-        "icon",
-        "sourceFile",
-    ];
-
-    #[test]
-    fn saved_connection_no_silent_frontend_field_drop() {
-        let ts = include_str!("../../../src/types/connection.ts");
-        // No known gaps: every frontend `SavedConnection` field is now modelled
-        // by the backend (the `icon` gap tracked by #2311 was closed in #2316).
-        assert_no_silent_drop(ts, "SavedConnection", SAVED_CONNECTION_BACKEND_FIELDS, &[]);
-    }
-
     #[test]
     fn saved_connection_icon_round_trips_through_serde() {
         // Regression for #2316: the frontend `SavedConnection.icon`
@@ -907,32 +837,5 @@ mod tests {
             }
             _ => panic!("Expected Connection"),
         }
-    }
-
-    #[test]
-    fn drift_guard_flags_an_unmodelled_field() {
-        // Proves the guard's red path: a synthetic interface with a field the
-        // backend does not model is reported.
-        let ts = "export interface Sample {\n  known: string;\n  brandNew?: number;\n}\n";
-        // The catch-all is expected to panic; silence its backtrace so the test
-        // log stays clean, then restore the previous hook.
-        let prev = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let result = std::panic::catch_unwind(|| {
-            assert_no_silent_drop(ts, "Sample", &["known"], &[]);
-        });
-        std::panic::set_hook(prev);
-        assert!(
-            result.is_err(),
-            "drift guard failed to flag the unmodelled `brandNew` field",
-        );
-    }
-
-    #[test]
-    fn ts_field_extractor_ignores_comments_and_nested_blocks() {
-        let ts = "export interface Sample {\n  /** doc */\n  a: string;\n  // note\n  b?: { x: number };\n  c: string;\n}\n";
-        let fields = extract_ts_interface_fields(ts, "Sample");
-        let got: Vec<&str> = fields.iter().map(String::as_str).collect();
-        assert_eq!(got, vec!["a", "b", "c"]);
     }
 }

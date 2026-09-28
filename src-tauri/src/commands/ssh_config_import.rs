@@ -31,10 +31,28 @@ use crate::utils::errors::TerminalError;
 /// `name` is the `Host` alias (what the user typed as the SSH connection name);
 /// `proxy_jump` is the ordered, resolved hop chain (outermost → innermost,
 /// matching the shipped chain order).
+///
+/// Generated to TypeScript as `SshConfigImportHost` via ts-rs (audit DUP-030).
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(
+    test,
+    ts(
+        export,
+        export_to = "../../src/types/generated/",
+        rename = "SshConfigImportHost"
+    )
+)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportableHost {
     pub name: String,
+    // `JumpHostConfig` lives in `termihub-core`, whose ts-rs derive is only
+    // compiled under core's own tests, so it does not implement `TS` here.
+    // Reference core's generated binding through an inline `import()` type.
+    #[cfg_attr(
+        test,
+        ts(type = "Array<import(\"./JumpHostConfig\").JumpHostConfig>")
+    )]
     pub proxy_jump: Vec<JumpHostConfig>,
 }
 
@@ -47,7 +65,19 @@ pub struct ImportableHost {
 /// resolved `ProxyJump` chain (empty for a direct connection). The frontend
 /// drops these straight into the editor's SSH fields, which the user reviews and
 /// edits before saving.
+///
+/// Generated to TypeScript as `SshConfigImportConnection` via ts-rs (audit
+/// DUP-030).
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(
+    test,
+    ts(
+        export,
+        export_to = "../../src/types/generated/",
+        rename = "SshConfigImportConnection"
+    )
+)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportableConnection {
     pub name: String,
@@ -57,7 +87,16 @@ pub struct ImportableConnection {
     /// `"key"` when an `IdentityFile` is configured, otherwise `"agent"`
     /// (mirrors the jump-host import's auth mapping).
     pub auth_method: String,
+    /// Omitted from the wire when no `IdentityFile` is configured, matching the
+    /// frontend's optional `keyPath?: string`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub key_path: Option<String>,
+    /// See [`ImportableHost::proxy_jump`] for the `import()` type override.
+    #[cfg_attr(
+        test,
+        ts(type = "Array<import(\"./JumpHostConfig\").JumpHostConfig>")
+    )]
     pub proxy_jump: Vec<JumpHostConfig>,
 }
 
