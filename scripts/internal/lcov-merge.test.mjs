@@ -261,6 +261,12 @@ describe("formatReport", () => {
     expect(md).not.toContain("`f0.rs`");
     expect(md).toContain("… 3 more");
   });
+
+  it("keeps the nightly heading by default and accepts a custom title", () => {
+    const stats = { newlyCoveredLines: 0, perFile: new Map(), staleSkipped: [], notInBase: 0 };
+    expect(formatReport(stats)).toMatch(/^## Integration coverage \(nightly fixtures lane\)\n/);
+    expect(formatReport(stats, { title: "Release gap" })).toMatch(/^## Release gap\n/);
+  });
 });
 
 describe("parseArgs / readSkipList", () => {
