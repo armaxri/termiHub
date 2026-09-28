@@ -327,14 +327,14 @@ fn text_is_crlf_and_nul_terminated_on_the_wire() {
     assert_eq!(encode_text("a\nb\r\nc\rd"), b"a\r\nb\r\nc\r\nd\0".to_vec());
     assert_eq!(encode_text(""), b"\0".to_vec());
     assert_eq!(encode_text("x\0y"), b"xy\0".to_vec());
-    assert_eq!(encode_text("日本"), [&"日本".as_bytes()[..], b"\0"].concat());
+    assert_eq!(encode_text("日本"), ["日本".as_bytes(), b"\0"].concat());
 }
 
 #[test]
 fn text_decodes_to_lf_and_stops_at_the_nul() {
     assert_eq!(decode_text(b"a\r\nb\0junk".to_vec()), "a\nb");
     assert_eq!(decode_text(b"no nul".to_vec()), "no nul");
-    assert_eq!(decode_text([&"日本 🎉".as_bytes()[..], b"\0"].concat()), "日本 🎉");
+    assert_eq!(decode_text(["日本 🎉".as_bytes(), b"\0"].concat()), "日本 🎉");
     // A non-conforming Latin-1 payload still decodes, as on the legacy path.
     assert_eq!(decode_text(vec![b'c', b'a', b'f', 0xE9, 0]), "café");
 }

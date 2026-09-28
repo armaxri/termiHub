@@ -478,7 +478,7 @@ impl ExtClipboardState {
                 let can_request = self
                     .server
                     .as_ref()
-                    .map_or(true, |caps| caps.actions & ACTION_REQUEST != 0);
+                    .is_none_or(|caps| caps.actions & ACTION_REQUEST != 0);
                 if want != 0 && can_request {
                     reaction.replies.push(ExtMsg::Request(want));
                 }
