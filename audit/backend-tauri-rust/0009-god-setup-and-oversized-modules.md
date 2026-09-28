@@ -13,7 +13,7 @@ evidence:
   - src-tauri/src/spawn/registry.rs:1
   - src-tauri/src/tunnel/tunnel_manager.rs:1
 status: partial
-resolution: "#3179 — = ARCH-002. Slices 1-8 merged (test relocations + file-ops/monitoring/DTO carves); S9 + reconnect-machinery carve remain (gated/deferred)"
+resolution: "#3179, #3774 — slices 1-9 merged incl. S9 agent notification dispatch carved to terminal/agent_manager/notifications.rs (pure move + output-order test, #3774); agent_manager.rs 4267->3999. Remaining: reconnect-machinery carve (agent_io_task etc.) - own reviewed slice"
 ---
 
 ## What

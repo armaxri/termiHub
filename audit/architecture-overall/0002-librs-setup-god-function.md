@@ -11,7 +11,7 @@ evidence:
   - src-tauri/src/lib.rs:774
   - src-tauri/src/lib.rs:1322
 status: partial
-resolution: "#3179 — = TAURI-009. Slices 1-8 DONE: setup()->boot (#3131), lib.rs decomposition logging/builder (#3142), agent_manager test-mod relocation (#3159), session/manager test-mod relocation (#3156), session file-ops carve (#3176), session monitoring carve (#3179), agent_manager DTO carve (#3174). REMAINING: S9 (agent events/notification carve — GATED verify-or-defer, brushes live output path) + the DEFERRED reconnect-machinery carve (agent_io_task etc., ventilator-grade — own reviewed slice, russh gate)"
+resolution: "#3179, #3774 — slices 1-9 merged incl. S9 agent notification dispatch carved to terminal/agent_manager/notifications.rs (pure move + output-order test, #3774); agent_manager.rs 4267->3999. Remaining: reconnect-machinery carve (agent_io_task etc.) - own reviewed slice"
 ---
 
 ## What
