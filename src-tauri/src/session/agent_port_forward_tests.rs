@@ -508,3 +508,212 @@ mod graphical {
         assert_eq!(mgr.session_count().await, 0);
     }
 }
+
+// ── live: a real agent binary + a real VNC server (env-gated) ──────
+
+/// End to end through a **real** `termihub-agent --stdio` and a real VNC server
+/// (#3241): the desktop VNC backend dials the loopback forward, each dial is an
+/// `agent.forward.connect` stream the agent binary opens to the server, and
+/// frames arrive. Ignored by default; run with the Docker VNC fixture up:
+///
+/// ```text
+/// TERMIHUB_LIVE_AGENT_BIN=$PWD/target/debug/termihub-agent \
+/// TERMIHUB_LIVE_VNC_PORT=25901 TERMIHUB_LIVE_VNC_PASSWORD=testpass \
+///   cargo test -p termihub --lib live_vnc -- --ignored
+/// ```
+#[cfg(feature = "vnc")]
+mod live {
+    use super::*;
+    use base64::Engine;
+    use std::io::{BufRead, BufReader, Write};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use crate::session::graphical_manager::{
+        GraphicalEventSink, GraphicalSessionManager, RemoteDesktopCertPromptEvent,
+        RemoteDesktopClipboardEvent, RemoteDesktopCursorEvent, RemoteDesktopFrameEvent,
+        RemoteDesktopStateEvent,
+    };
+    use crate::session::rdp_trust_store::RdpTrustStore;
+
+    type Pending = Arc<Mutex<HashMap<u64, std::sync::mpsc::Sender<Value>>>>;
+    type Sinks = Arc<Mutex<HashMap<String, UnboundedSender<Vec<u8>>>>>;
+
+    /// A [`ForwardTransport`] speaking JSON-RPC to an agent child process.
+    struct StdioAgent {
+        child: Mutex<std::process::Child>,
+        stdin: Mutex<std::process::ChildStdin>,
+        next_id: AtomicU64,
+        pending: Pending,
+        sinks: Sinks,
+    }
+
+    impl StdioAgent {
+        fn spawn(bin: &str) -> Arc<Self> {
+            let mut child = std::process::Command::new(bin)
+                .arg("--stdio")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("spawn the agent binary");
+            let stdin = child.stdin.take().unwrap();
+            let stdout = child.stdout.take().unwrap();
+            let pending: Pending = Arc::default();
+            let sinks: Sinks = Arc::default();
+            let (p, s) = (pending.clone(), sinks.clone());
+            std::thread::spawn(move || {
+                let b64 = base64::engine::general_purpose::STANDARD;
+                for line in BufReader::new(stdout).lines() {
+                    let Ok(line) = line else { break };
+                    let Ok(msg) = serde_json::from_str::<Value>(&line) else {
+                        continue;
+                    };
+                    if let Some(id) = msg.get("id").and_then(Value::as_u64) {
+                        if let Some(tx) = p.lock().unwrap().remove(&id) {
+                            let _ = tx.send(msg);
+                        }
+                        continue;
+                    }
+                    let params = &msg["params"];
+                    let sid = params["stream_id"].as_str().unwrap_or_default();
+                    match msg["method"].as_str() {
+                        Some("agent.forward.data") => {
+                            let data = b64.decode(params["data"].as_str().unwrap_or("")).unwrap();
+                            if let Some(tx) = s.lock().unwrap().get(sid) {
+                                let _ = tx.send(data);
+                            }
+                        }
+                        Some("agent.forward.close") => {
+                            s.lock().unwrap().remove(sid);
+                        }
+                        _ => {}
+                    }
+                }
+            });
+            Arc::new(Self {
+                child: Mutex::new(child),
+                stdin: Mutex::new(stdin),
+                next_id: AtomicU64::new(1),
+                pending,
+                sinks,
+            })
+        }
+
+        fn write_with_id(&self, id: u64, method: &str, params: Value) {
+            let line = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
+            let mut stdin = self.stdin.lock().unwrap();
+            writeln!(stdin, "{line}").unwrap();
+            stdin.flush().unwrap();
+        }
+
+        fn write(&self, method: &str, params: Value) {
+            let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+            self.write_with_id(id, method, params);
+        }
+
+        fn call(&self, method: &str, params: Value) -> Value {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+            self.pending.lock().unwrap().insert(id, tx);
+            self.write_with_id(id, method, params);
+            rx.recv_timeout(Duration::from_secs(20))
+                .expect("agent reply")
+        }
+    }
+
+    impl Drop for StdioAgent {
+        fn drop(&mut self) {
+            let _ = self.child.lock().unwrap().kill();
+        }
+    }
+
+    impl ForwardTransport for StdioAgent {
+        fn open(
+            &self,
+            stream_id: &str,
+            host: &str,
+            port: u16,
+            sink: UnboundedSender<Vec<u8>>,
+        ) -> Result<(), String> {
+            self.sinks
+                .lock()
+                .unwrap()
+                .insert(stream_id.to_string(), sink);
+            let reply = self.call(
+                "agent.forward.connect",
+                json!({ "stream_id": stream_id, "host": host, "port": port }),
+            );
+            if let Some(err) = reply.get("error") {
+                self.sinks.lock().unwrap().remove(stream_id);
+                return Err(err["message"].as_str().unwrap_or("error").to_string());
+            }
+            Ok(())
+        }
+
+        fn send(&self, stream_id: &str, data: Vec<u8>) -> Result<(), String> {
+            let b64 = base64::engine::general_purpose::STANDARD;
+            self.write(
+                "agent.forward.data",
+                json!({ "stream_id": stream_id, "data": b64.encode(data) }),
+            );
+            Ok(())
+        }
+
+        fn close(&self, stream_id: &str) {
+            self.sinks.lock().unwrap().remove(stream_id);
+            self.write("agent.forward.close", json!({ "stream_id": stream_id }));
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct FrameSink(Arc<Mutex<usize>>);
+
+    impl GraphicalEventSink for FrameSink {
+        fn emit_frame(&self, _: &RemoteDesktopFrameEvent) {
+            *self.0.lock().unwrap() += 1;
+        }
+        fn emit_cursor(&self, _: &RemoteDesktopCursorEvent) {}
+        fn emit_clipboard(&self, _: &RemoteDesktopClipboardEvent) {}
+        fn emit_state(&self, _: &RemoteDesktopStateEvent) {}
+        fn emit_cert_prompt(&self, _: &RemoteDesktopCertPromptEvent) {}
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "needs a real agent binary and VNC server (TERMIHUB_LIVE_* env)"]
+    async fn live_vnc_through_a_real_agent_binary() {
+        let bin = std::env::var("TERMIHUB_LIVE_AGENT_BIN").expect("TERMIHUB_LIVE_AGENT_BIN");
+        let port: u16 = std::env::var("TERMIHUB_LIVE_VNC_PORT")
+            .expect("TERMIHUB_LIVE_VNC_PORT")
+            .parse()
+            .unwrap();
+        let password = std::env::var("TERMIHUB_LIVE_VNC_PASSWORD").unwrap_or_default();
+
+        let agent = StdioAgent::spawn(&bin);
+        let init = tokio::task::block_in_place(|| {
+            agent.call(
+                "initialize",
+                json!({ "protocolVersion": "0.17.0", "client": "live-test", "clientVersion": "0" }),
+            )
+        });
+        assert!(init.get("result").is_some(), "{init}");
+
+        let registry = Arc::new(crate::session::registry::build_desktop_registry());
+        let mgr = GraphicalSessionManager::new(registry, Arc::new(RdpTrustStore::in_memory()));
+        let sink = FrameSink::default();
+        let settings = json!({
+            "agentId": "live", "host": "127.0.0.1", "port": port, "password": password
+        });
+        let route = agent_route("vnc", &settings).unwrap().unwrap();
+        let sid = tokio::time::timeout(
+            Duration::from_secs(30),
+            mgr.connect_forwarded("vnc", settings, route, agent.clone(), sink.clone()),
+        )
+        .await
+        .expect("connect in time")
+        .expect("VNC connect through the real agent");
+
+        wait_until(|| *sink.0.lock().unwrap() > 0).await;
+        mgr.disconnect(&sid, sink.clone()).await.unwrap();
+        wait_until(|| agent.sinks.lock().unwrap().is_empty()).await;
+    }
+}
