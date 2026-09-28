@@ -717,7 +717,7 @@ mod tests {
 
     #[test]
     fn connection_ids_mut_covers_every_connection_bound_kind() {
-        let mut triggers = vec![
+        let mut triggers = [
             WorkflowTrigger::Manual,
             WorkflowTrigger::Hotkey {
                 binding: "Ctrl+H".to_string(),

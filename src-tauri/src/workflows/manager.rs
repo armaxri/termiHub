@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use anyhow::{Context, Result};
 use tauri::AppHandle;
 
-use super::config::{Workflow, WorkflowStore, WorkflowTrigger};
+use super::config::{Workflow, WorkflowStore};
 use super::storage::WorkflowStorage;
 use crate::connection::id_changes::ConnectionIdRemap;
 use crate::connection::recovery::RecoveryWarning;
