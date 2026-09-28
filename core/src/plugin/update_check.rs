@@ -165,6 +165,15 @@ impl UpdateDocument {
 
 /// The result of comparing an update document against the installed plugin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(
+    test,
+    ts(
+        export,
+        export_to = "../../src/types/generated/",
+        rename = "PluginUpdateStatus"
+    )
+)]
 #[serde(rename_all = "camelCase")]
 pub enum UpdateStatus {
     /// The published version is not newer than the installed one.
@@ -178,6 +187,15 @@ pub enum UpdateStatus {
 
 /// An evaluated update check for one plugin, as shown by the Plugins view.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(
+    test,
+    ts(
+        export,
+        export_to = "../../src/types/generated/",
+        rename = "PluginUpdateCheckOutcome"
+    )
+)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateCheckOutcome {
     /// The plugin id checked.
@@ -196,6 +214,7 @@ pub struct UpdateCheckOutcome {
     pub min_host_abi: String,
     /// Optional release-notes link.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub changelog_url: Option<String>,
 }
 

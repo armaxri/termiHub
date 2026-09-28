@@ -24,6 +24,8 @@ use crate::reconnect_backoff::{
 /// Serialised in `camelCase` (e.g. `"live"`, `"stale"`) to match the
 /// frontend's event payload convention.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub enum MonitorStatus {
     /// Establishing the transport before the first collect.
@@ -52,6 +54,8 @@ pub enum MonitorStatus {
 /// can tell a dead transport apart from a remote that answers with unreadable
 /// output. Serialised in `camelCase` (`"transport"`, `"parse"`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub enum MonitorStatusReason {
     /// The transport failed: a collect timed out or errored, or a re-dial

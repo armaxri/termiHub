@@ -59,23 +59,29 @@ pub const MAX_FIELD_CHARS: usize = 256;
 
 /// One recorded request / command / transfer.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct AccessLogEntry {
     /// Monotonic sequence number (starts at 1, survives [`ServerActivity::clear`]).
+    #[cfg_attr(test, ts(type = "number"))]
     pub seq: u64,
     /// RFC 3339 timestamp at which the request completed.
     pub timestamp: String,
     /// Client IP address, when known.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub client: Option<String>,
     /// Authenticated / attempted username (FTP login, HTTP Basic). Never a
     /// password.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub user: Option<String>,
     /// HTTP method, FTP command (`LOGIN`, `RETR`, `STOR`, …) or TFTP `RRQ`/`WRQ`.
     pub method: String,
     /// Requested path, when the request names one.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub path: Option<String>,
     /// Result: the HTTP status code, or `ok` / `denied` / `error` / `aborted` /
     /// `timeout` / `busy` for FTP and TFTP.
@@ -83,12 +89,15 @@ pub struct AccessLogEntry {
     /// Whether the request succeeded (drives the error counter).
     pub success: bool,
     /// Payload bytes transferred (sent or received).
+    #[cfg_attr(test, ts(type = "number"))]
     pub bytes: u64,
     /// Wall-clock duration of the request, when measured.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "number"))]
     pub duration_ms: Option<u64>,
     /// Short human-readable detail for a failure (no secrets).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub detail: Option<String>,
 }
 
@@ -164,24 +173,33 @@ impl AccessRecord {
 
 /// A `key → hits` pair in a "top" list.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct TopEntry {
     pub key: String,
+    #[cfg_attr(test, ts(type = "number"))]
     pub count: u64,
 }
 
 /// A transfer currently in flight.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct TransferInfo {
+    #[cfg_attr(test, ts(type = "number"))]
     pub id: u64,
     /// Method / command that started the transfer (`GET`, `RETR`, `WRQ`, …).
     pub method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub client: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub path: Option<String>,
     /// Bytes moved so far.
+    #[cfg_attr(test, ts(type = "number"))]
     pub bytes: u64,
     /// RFC 3339 start time.
     pub started_at: String,
@@ -189,16 +207,31 @@ pub struct TransferInfo {
 
 /// Detailed per-server statistics (PROD-036).
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(
+    test,
+    ts(
+        export,
+        export_to = "../../src/types/generated/",
+        rename = "DetailedServerStats"
+    )
+)]
 #[serde(rename_all = "camelCase")]
 pub struct DetailedStats {
     /// Live connection/byte counters of the current run (zero when stopped).
+    #[cfg_attr(test, ts(type = "number"))]
     pub active_connections: u64,
+    #[cfg_attr(test, ts(type = "number"))]
     pub total_connections: u64,
+    #[cfg_attr(test, ts(type = "number"))]
     pub bytes_sent: u64,
+    #[cfg_attr(test, ts(type = "number"))]
     pub bytes_received: u64,
     /// Requests recorded since the log was last cleared.
+    #[cfg_attr(test, ts(type = "number"))]
     pub total_requests: u64,
     /// Failed requests recorded since the log was last cleared.
+    #[cfg_attr(test, ts(type = "number"))]
     pub errors: u64,
     /// Most-requested paths since the log was last cleared.
     pub top_paths: Vec<TopEntry>,
@@ -210,18 +243,31 @@ pub struct DetailedStats {
 
 /// Incremental activity read returned to the UI.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(
+    test,
+    ts(
+        export,
+        export_to = "../../src/types/generated/",
+        rename = "ServerActivity"
+    )
+)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivitySnapshot {
     /// Entries with `seq` greater than the requested cursor, oldest first.
     pub entries: Vec<AccessLogEntry>,
     /// Highest `seq` assigned so far (the cursor for the next read).
+    #[cfg_attr(test, ts(type = "number"))]
     pub latest_seq: u64,
     /// Bumped on every clear; a reader holding a different epoch must discard
     /// its buffered entries.
+    #[cfg_attr(test, ts(type = "number"))]
     pub epoch: u64,
     /// Entries evicted from the ring since the last clear.
+    #[cfg_attr(test, ts(type = "number"))]
     pub dropped: u64,
     /// Ring capacity ([`ACCESS_LOG_CAPACITY`]).
+    #[cfg_attr(test, ts(type = "number"))]
     pub capacity: usize,
     pub stats: DetailedStats,
 }

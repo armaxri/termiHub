@@ -1,117 +1,18 @@
 /**
- * TypeScript equivalents of the Rust connection schema types
- * defined in `core/src/connection/schema.rs`.
+ * The connection settings-schema types, generated from their Rust source of
+ * truth (`core/src/connection/schema.rs`, and `Capabilities` from
+ * `core/src/connection/mod.rs`) via ts-rs (audit DUP-030, ts-rs rollout #3088).
  *
- * The backend serializes these as camelCase JSON; the interfaces
- * here mirror that serialization exactly.
+ * `Capabilities.terminal` / `graphical` / `tunneling` stay optional to match the
+ * wire reality: an agent or config predating them omits them. Decide with
+ * `terminal === false`, `graphical === true` and `tunneling === true`.
  */
-
-/** Top-level settings schema containing grouped fields. */
-export interface SettingsSchema {
-  groups: SettingsGroup[];
-}
-
-/** A named group of related settings fields. */
-export interface SettingsGroup {
-  key: string;
-  label: string;
-  fields: SettingsField[];
-  /**
-   * Progressive-disclosure hint (UX-008): when `true` the form renders this
-   * group collapsed by default behind an "Advanced"-style expander, so a basic
-   * connection surfaces only the essential groups. Absent/`false` means the
-   * group is expanded (the backend omits the field entirely when false), so
-   * groups that don't opt in are unaffected. Collapsing only hides the group
-   * visually — its fields stay registered and their values/validation persist.
-   */
-  collapsed?: boolean;
-}
-
-/** A single settings field with metadata for UI rendering and validation. */
-export interface SettingsField {
-  key: string;
-  label: string;
-  description?: string;
-  /** Extended help text shown in a dialog when the user clicks the ? icon. */
-  helpText?: string;
-  fieldType: FieldType;
-  required: boolean;
-  default?: unknown;
-  placeholder?: string;
-  supportsEnvExpansion?: boolean;
-  supportsTildeExpansion?: boolean;
-  visibleWhen?: Condition;
-}
-
-/** Conditional visibility rule: field is shown when the referenced field equals a value. */
-export interface Condition {
-  field: string;
-  equals: unknown;
-}
-
-/** Kind of path accepted by a FilePath field. */
-export type FilePathKind = "file" | "directory" | "any";
-
-/** An option in a Select dropdown. */
-export interface SelectOption {
-  value: string;
-  label: string;
-}
-
-/**
- * Tagged union for field types.
- * Serialized from Rust as `{ "type": "text" }`, `{ "type": "number", "min": 0 }`, etc.
- */
-export type FieldType =
-  | { type: "text" }
-  | { type: "password" }
-  | { type: "number"; min?: number; max?: number }
-  | { type: "boolean" }
-  | { type: "select"; options: SelectOption[] }
-  | { type: "port" }
-  | { type: "serialPort" }
-  | { type: "dockerContainer" }
-  | { type: "filePath"; kind: FilePathKind }
-  | { type: "keyValueList" }
-  | { type: "objectList"; fields: SettingsField[] }
-  | { type: "notice"; severity: NoticeSeverity };
-
-/** Visual severity of a display-only {@link FieldType} `notice` callout. */
-export type NoticeSeverity = "info" | "warning";
-
-/** Capabilities declared by a connection type backend. */
-export interface Capabilities {
-  monitoring: boolean;
-  fileBrowser: boolean;
-  resize: boolean;
-  persistent: boolean;
-  /**
-   * Whether this connection type has an interactive terminal.
-   *
-   * Optional to match the wire reality: an agent or config predating this field
-   * omits it, and an absent value means terminal-capable (the Rust
-   * `#[serde(default = "true")]`). Only an explicit `false` marks a terminal-less
-   * type (FTP), which opens directly into a browser-only tab (`"file-browser"`
-   * content type) with no terminal session — the file browser lives in the
-   * sidebar, driven by the tab's session id. Decide with `terminal === false`,
-   * never `!terminal` (#1335).
-   */
-  terminal?: boolean;
-  /**
-   * Whether this connection type is a graphical remote-desktop session
-   * (VNC/RDP). Optional to match the wire reality (`#[serde(default)]` → absent
-   * means non-graphical). When `true` the type also reports `terminal === false`
-   * and the desktop opens it into a `"remote-desktop"` canvas tab routed through
-   * the GraphicalSessionManager, the way `terminal === false` opens FTP into a
-   * browser-only tab. Decide with `graphical === true` (#1680).
-   */
-  graphical?: boolean;
-  /**
-   * Whether this connection type can host SSH-style port forwards (tunnels).
-   * Optional to match the wire reality (`#[serde(default)]` → absent means not
-   * tunnel-capable). Only SSH advertises it today; the tunnel manager gates
-   * tunnel hosting on this capability rather than a hardcoded type id
-   * (PARITY-001). Decide with `tunneling === true`.
-   */
-  tunneling?: boolean;
-}
+export type { SettingsSchema } from "./generated/SettingsSchema";
+export type { SettingsGroup } from "./generated/SettingsGroup";
+export type { SettingsField } from "./generated/SettingsField";
+export type { Condition } from "./generated/Condition";
+export type { FilePathKind } from "./generated/FilePathKind";
+export type { SelectOption } from "./generated/SelectOption";
+export type { FieldType } from "./generated/FieldType";
+export type { NoticeSeverity } from "./generated/NoticeSeverity";
+export type { Capabilities } from "./generated/Capabilities";
