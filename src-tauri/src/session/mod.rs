@@ -1,3 +1,4 @@
+pub mod agent_port_forward;
 mod file_ops;
 pub mod frame_guard;
 pub mod graphical_held_input;

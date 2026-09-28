@@ -167,6 +167,16 @@ pub trait SessionManagerApi: Send + Sync + 'static {
 
     /// Close a forwarded ssh-agent stream the desktop reports as ended (#1727).
     async fn agent_forward_close(&self, stream_id: &str);
+
+    /// Open a desktop-initiated TCP stream from this host to `host:port`
+    /// (`agent.forward.connect`, #3241), relayed over the agent-forward stream
+    /// protocol. The error text says why the target could not be reached.
+    async fn agent_forward_connect(
+        &self,
+        stream_id: &str,
+        host: &str,
+        port: u16,
+    ) -> Result<(), String>;
 }
 
 /// Errors that can occur during session creation.
@@ -2295,6 +2305,15 @@ impl SessionManagerApi for SessionManager {
 
     async fn agent_forward_close(&self, stream_id: &str) {
         self.agent_forward.close_stream(stream_id).await;
+    }
+
+    async fn agent_forward_connect(
+        &self,
+        stream_id: &str,
+        host: &str,
+        port: u16,
+    ) -> Result<(), String> {
+        self.agent_forward.connect_tcp(stream_id, host, port).await
     }
 }
 

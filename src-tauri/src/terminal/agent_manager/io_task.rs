@@ -350,6 +350,12 @@ pub(super) async fn agent_io_task<R: Runtime>(
                         AgentIoCommand::UnregisterMonitoring { session_id } => {
                             monitoring_outputs.remove(&session_id);
                         }
+                        AgentIoCommand::RegisterForwardStream { stream_id, sink } => {
+                            agent_forward.register_stream(stream_id, sink);
+                        }
+                        AgentIoCommand::UnregisterForwardStream { stream_id } => {
+                            agent_forward.on_close(&stream_id);
+                        }
                         AgentIoCommand::RegisterToolRun { run_id, tx } => {
                             tool_runs.insert(run_id, tx);
                         }
@@ -472,6 +478,10 @@ pub(super) async fn agent_io_task<R: Runtime>(
         // (#3353), so none survives into the reconnected session. Drop every
         // route: each run's receiver sees its channel close and fails the run.
         tool_runs.clear();
+        // Likewise every relayed stream (#3241): the agent's end died with the
+        // transport, so each desktop port forward sees its stream end and its
+        // graphical session re-dials through a fresh one once the agent is back.
+        agent_forward.clear();
 
         // CONC-014: the transport is down and this task will not drain `command_rx`
         // again until the reconnect resolves. Flag it so `send_session_input` drops
