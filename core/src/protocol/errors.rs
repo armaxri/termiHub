@@ -164,6 +164,46 @@ mod tests {
         }
     }
 
+    /// No two distinct errors may share a code (#3745: the `--listen`
+    /// handshake rejection used to reuse `UPDATE_SIGNATURE_REJECTED`'s).
+    #[test]
+    fn application_codes_are_unique() {
+        let mut codes = vec![
+            SESSION_NOT_FOUND,
+            VERSION_NOT_SUPPORTED,
+            SESSION_CREATION_FAILED,
+            SESSION_LIMIT_REACHED,
+            INVALID_CONFIGURATION,
+            SESSION_NOT_RUNNING,
+            NOT_INITIALIZED,
+            CONNECTION_NOT_FOUND,
+            FOLDER_NOT_FOUND,
+            FILE_NOT_FOUND,
+            PERMISSION_DENIED,
+            FILE_OPERATION_FAILED,
+            FILE_BROWSING_NOT_SUPPORTED,
+            MONITORING_ERROR,
+            SHUTDOWN_ERROR,
+            DEFERRED_UPDATE_FAILED,
+            TUNNEL_START_FAILED,
+            SERVICE_START_FAILED,
+            PROCESS_OPERATION_FAILED,
+            PROCESS_NOT_SUPPORTED,
+            UPDATE_SIGNATURE_REJECTED,
+            TOOL_RUN_REJECTED,
+            SESSION_HELD_BY_OTHER,
+            AUTH_CANCELLED,
+            SECOND_FACTOR_FAILED,
+            UPDATE_UNAUTHORIZED,
+            UPDATE_DOWNGRADE_REFUSED,
+            LISTEN_AUTH_REJECTED,
+        ];
+        let n = codes.len();
+        codes.sort_unstable();
+        codes.dedup();
+        assert_eq!(codes.len(), n, "application error codes must be unique");
+    }
+
     #[test]
     fn standard_codes_in_json_rpc_range() {
         // Standard JSON-RPC codes are in -32768..-32000

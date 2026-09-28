@@ -442,6 +442,16 @@ mod tests {
         assert_eq!(response["error"]["code"], UNAUTHORIZED_CODE);
     }
 
+    /// The handshake rejection has its own code (#3745): a client must be able
+    /// to tell "wrong listen token" from "update signature rejected".
+    #[test]
+    fn handshake_rejection_code_is_distinct_from_the_signature_code() {
+        use crate::protocol::errors;
+        assert_eq!(UNAUTHORIZED_CODE, errors::LISTEN_AUTH_REJECTED);
+        assert_ne!(UNAUTHORIZED_CODE, errors::UPDATE_SIGNATURE_REJECTED);
+        assert_ne!(UNAUTHORIZED_CODE, errors::UPDATE_UNAUTHORIZED);
+    }
+
     #[tokio::test]
     async fn missing_token_is_rejected() {
         let token = ListenAuthToken::from_plaintext("t");
