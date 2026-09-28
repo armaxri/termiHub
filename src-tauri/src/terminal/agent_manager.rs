@@ -35,10 +35,10 @@ use termihub_core::protocol::methods::{
 };
 use zeroize::Zeroizing;
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use crate::agents_projection::store::AgentConnectionState;
 use crate::connection::config::AgentSettings;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use crate::session::manager::SessionManager;
 use crate::terminal::agent_config_store::{
     decide_reattach, AgentConfigStore, ReattachDecision, RetainedAgentConfig,
