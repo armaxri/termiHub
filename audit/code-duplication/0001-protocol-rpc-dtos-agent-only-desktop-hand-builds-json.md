@@ -13,8 +13,8 @@ evidence:
   - src-tauri/src/session/remote_proxy.rs:457
   - src-tauri/src/session/remote_proxy.rs:542
   - src-tauri/Cargo.toml:87
-status: partial
-resolution: "#2944 — foundation done (#2944: DTOs in core::protocol::methods, agent re-exports, wire bytes locked). Desktop call-site families now migrating off hand-built json!/Value onto the shared DTOs, one family per PR under umbrella #2945: tunnel (#3219), network-tools (#3220), agent_manager connection/folder parsers (#3221) DONE — each with byte/shape-equality round-trip tests. BULK DONE via #3227: agent_manager session.* (create/attach/detach/close/list + io-task write/resize/forward/close) + list_connections/shutdown parsers + definition/folder builders, remote_proxy ALL ops (11 files.*, processes.list/kill, monitoring.subscribe/unsubscribe, types probe), embedded servers service.*, http-monitor service.*, agent update params/results. ONLY REMAINING (#3226): the initialize connect-result parser+builder (AgentCapabilities/AgentSettings diverge from core), incoming notification parsers (agent.forward.*/connection.output/monitoring.data — some lack DTOs), update_available/pending re-emit — each needs a small design decision"
+status: fixed
+resolution: "#3222, #3760 — desktop agent_manager initialize/notifications/forward/update notices now use core::protocol::methods DTOs (generic InitializeResult<C>, EmptyParams), wire JSON proven byte-identical (#3760). Agent-side emitters -> #3759"
 ---
 
 ## What
