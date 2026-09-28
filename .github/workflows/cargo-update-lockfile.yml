@@ -168,17 +168,26 @@ jobs:
           )
 
           # Gate failed: say so at the top of the body, with the cargo-deny
-          # output (last 80 lines; the body limit is 65k chars), so a reviewer
-          # sees why the PR is a draft without opening the run.
+          # output, so a reviewer sees why the PR is a draft without opening the
+          # run. cargo-deny prints errors first and its verdict last; keep the
+          # first 100 lines plus the verdict (the PR body limit is 65k chars).
           if [ "$GATE_PASSED" != "true" ]; then
             BODY="$(
               printf '%s\n' '> [!WARNING]'
               printf '%s\n' '> **This lockfile fails the cargo-deny gate** (yanked crate, advisory,'
               printf '%s\n\n' '> ban, license or source), so this PR is a draft with auto-merge off.'
               printf '%s\n\n' 'Run: '"$RUN_URL"
-              printf '%s\n' '<details><summary>cargo deny output (last 80 lines)</summary>'
+              printf '%s\n' '<details><summary>cargo deny output</summary>'
               printf '\n%s\n' '```'
-              tail -n 80 "$GATE_LOG" 2>/dev/null || echo "(no cargo-deny log captured)"
+              if [ -s "$GATE_LOG" ]; then
+                head -n 100 "$GATE_LOG"
+                if [ "$(wc -l < "$GATE_LOG")" -gt 100 ]; then
+                  printf '%s\n' '[... truncated; full output in the run ...]'
+                  tail -n 1 "$GATE_LOG"
+                fi
+              else
+                echo "(no cargo-deny log captured)"
+              fi
               printf '%s\n\n%s\n\n' '```' '</details>'
               printf '%s\n' "$BODY"
             )"
