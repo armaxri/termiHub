@@ -17,6 +17,8 @@ pub const MAX_NAME_CHARS: usize = 120;
 /// The payload of the `schedule-fire` event: run `action` on `targets`, then
 /// report back with `token`.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ScheduleFire {
     /// Correlates the windows' reports with this run.
@@ -35,26 +37,33 @@ pub struct ScheduleFire {
 
 /// One window's report of a fired run.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct WindowRunReport {
     /// How the run ended in that window (`skipped` = nothing ran there).
     pub outcome: ScheduleRunOutcome,
     /// Detail: the skip reason or the failure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub message: Option<String>,
     /// Terminals the run was started on in that window.
     #[serde(default)]
     pub targets_run: u32,
     /// Workflow run-history record ids the run produced in that window.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
     pub workflow_run_ids: Vec<String>,
     /// Macro run-history record ids the run produced in that window (#3543).
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
     pub macro_run_ids: Vec<String>,
 }
 
 /// A schedule plus its live scheduling state, as the UI shows it.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ScheduleView {
     /// The stored schedule.
@@ -62,6 +71,7 @@ pub struct ScheduleView {
     pub schedule: Schedule,
     /// RFC 3339 time of the next run (enabled schedules only).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub next_run_at: Option<String>,
     /// Whether a fired run is still in flight.
     pub running: bool,
@@ -69,6 +79,8 @@ pub struct ScheduleView {
 
 /// The whole scheduler state, as the UI shows it.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct SchedulerState {
     /// The global pause switch.
@@ -79,6 +91,8 @@ pub struct SchedulerState {
 
 /// The user-editable part of a schedule, sent by the editor.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ScheduleInput {
     /// Existing id to update, or a fresh id for a new schedule (empty → one

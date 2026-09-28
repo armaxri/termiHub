@@ -629,6 +629,8 @@ pub struct GraphicalCapabilities {
 /// absolute paths, drive letters, `:`/NUL, or reserved device names), but the
 /// host re-validates them before they reach any local path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteClipboardFile {
     /// Sanitized basename (no path separators).
@@ -637,6 +639,7 @@ pub struct RemoteClipboardFile {
     /// `None` for a top-level entry — lets the host rebuild a copied tree.
     pub relative_path: Option<String>,
     /// File size when the remote advertised it; `None` means "resolve on fetch".
+    #[cfg_attr(test, ts(type = "number | null"))]
     pub size: Option<u64>,
     /// Whether this entry is a directory (no bytes to fetch, offered only so the
     /// host can recreate the folder).

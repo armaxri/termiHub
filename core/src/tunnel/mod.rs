@@ -57,6 +57,8 @@ pub(crate) const MAX_CONCURRENT_FORWARDED_CONNECTIONS: usize = 256;
 /// socket lives on the server's network, not the agent's. The desktop surfaces
 /// this as the "reachability" warning + badge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub enum ReachableFrom {
     /// Loopback bind on the agent — only processes on the agent can connect.

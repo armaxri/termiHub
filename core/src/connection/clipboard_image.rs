@@ -51,6 +51,8 @@ pub struct ClipboardImage {
 /// the pixels — the desktop moves them between the session and the OS
 /// clipboard itself).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ClipboardImageInfo {
     /// Width in pixels.

@@ -1,12 +1,16 @@
 //! Persisted model of scheduled runs (PROD-043): `schedules.json`.
 //!
-//! Every struct is camelCase over the wire and mirrors the TypeScript types in
-//! `src/types/schedule.ts` byte-for-byte.
+//! Every struct is camelCase over the wire. The TypeScript DTOs in
+//! `src/types/schedule.ts` are generated from these types via ts-rs (audit
+//! DUP-030, #3088); `skip_serializing_if` fields are absent (not `null`) on the
+//! wire, so they are emitted as optional `field?: T`.
 
 use serde::{Deserialize, Serialize};
 
 /// A weekday, serialised as a lowercase three-letter string (`mon` … `sun`).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum ScheduleWeekday {
     /// Monday.
@@ -43,6 +47,8 @@ impl ScheduleWeekday {
 /// When a schedule fires. Times are **local wall-clock** `HH:MM` (24h) in the
 /// machine's time zone; see [`crate::schedules::timing`] for the DST rules.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum ScheduleRule {
     /// Every `every_minutes` minutes (absolute time, unaffected by DST),
@@ -70,6 +76,8 @@ pub enum ScheduleRule {
 
 /// What a schedule runs.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum ScheduleAction {
     /// A stored workflow (the preferred target).
@@ -90,6 +98,8 @@ pub enum ScheduleAction {
 /// to the open, connected terminals of these saved connections — never to
 /// "whatever tab is active".
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum ScheduleTargets {
     /// These saved connections.
@@ -109,6 +119,8 @@ pub enum ScheduleTargets {
 /// What to do about a run that was due while the app was closed or the
 /// machine was asleep.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "kebab-case")]
 pub enum MissedRunPolicy {
     /// Skip it (logged). The default.
@@ -120,6 +132,8 @@ pub enum MissedRunPolicy {
 
 /// How a scheduled run ended.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "kebab-case")]
 pub enum ScheduleRunOutcome {
     /// Ran on every connected target.
@@ -137,6 +151,8 @@ pub enum ScheduleRunOutcome {
 /// skipped due slot. The most recent is `Schedule::last_result`; the last
 /// [`crate::schedules::history::MAX_ATTEMPTS`] are kept in `Schedule::history`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ScheduleRunResult {
     /// RFC 3339 time the attempt settled.
@@ -144,25 +160,31 @@ pub struct ScheduleRunResult {
     /// RFC 3339 time the run fired. Absent for a skipped due slot (nothing
     /// started) and for results recorded before schema v2.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub started_at: Option<String>,
     /// Milliseconds from firing to settling (fired runs only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "number"))]
     pub duration_ms: Option<u64>,
     /// Ids of the workflow run-history records this attempt produced (one per
     /// terminal a workflow ran on). Empty for macros and skips.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
     pub workflow_run_ids: Vec<String>,
     /// Ids of the macro run-history records this attempt produced (one per
     /// window a macro played in, #3543). Empty for workflows and skips.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
     pub macro_run_ids: Vec<String>,
     /// How it ended.
     pub outcome: ScheduleRunOutcome,
     /// Human-readable detail (the skip reason, the failure, the target count).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub message: Option<String>,
     /// `true` when this was a catch-up run for a missed slot.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub catch_up: bool,
 }
 
@@ -174,6 +196,8 @@ pub struct ScheduleRunResult {
 /// first enable must carry the user's confirmation of the targets), and loses
 /// its enabled state + confirmation whenever its action or targets change.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct Schedule {
     /// Unique schedule id.
@@ -195,19 +219,24 @@ pub struct Schedule {
     /// RFC 3339 time the user confirmed the targets on first enable; `None`
     /// until then (and again after the action/targets change).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub confirmed_at: Option<String>,
     /// RFC 3339 time the schedule was last enabled — the interval anchor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub enabled_at: Option<String>,
     /// RFC 3339 time the schedule last fired (the missed-run anchor).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub last_run_at: Option<String>,
     /// The most recent run attempt's result (also `history[0]`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub last_result: Option<ScheduleRunResult>,
     /// The recent run attempts, newest first, capped at
     /// [`crate::schedules::history::MAX_ATTEMPTS`] (schema v2).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(as = "Option<Vec<ScheduleRunResult>>", optional))]
     pub history: Vec<ScheduleRunResult>,
     /// RFC 3339 creation time.
     #[serde(default)]

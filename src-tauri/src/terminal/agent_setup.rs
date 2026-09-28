@@ -128,6 +128,8 @@ pub fn detect_agent_arch_info(config: &RemoteAgentConfig) -> Result<RemoteArchIn
 
 /// Progress event emitted during agent setup.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSetupProgress {
     pub agent_id: String,

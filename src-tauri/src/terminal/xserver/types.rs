@@ -28,6 +28,8 @@ pub(crate) const WINGET_INSTALL_VCXSRV_COMMAND: &str =
 /// Each platform has a different strategy: Windows provisions VcXsrv, macOS
 /// guides an XQuartz install, Linux detects-and-guides only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub enum XServerPlatform {
     Windows,
@@ -58,6 +60,8 @@ impl XServerPlatform {
 /// Maps from [`super::manager::XServerStatus`] plus cross-platform detection of
 /// an adopted (user-run) server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub enum XServerState {
     /// No server present or detected.
@@ -73,6 +77,8 @@ pub enum XServerState {
 /// A coherent snapshot of the local X server situation, returned by
 /// `x_server_status` / `x_server_ensure`.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct XServerStatusReport {
     /// Current lifecycle state.
@@ -81,11 +87,13 @@ pub struct XServerStatusReport {
     pub platform: XServerPlatform,
     /// Display number (`:N`) of the active server, when one is running/adopted.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub display_number: Option<u32>,
     /// Whether the active server was started by termiHub (vs. adopted external).
     pub managed: bool,
     /// Whether the platform's X dependency is installed (XQuartz / Xorg / VcXsrv).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub dependency_available: Option<bool>,
     /// Number of live X11 sessions currently depending on this server (#1107).
     ///
@@ -94,6 +102,7 @@ pub struct XServerStatusReport {
     pub session_count: usize,
     /// Human-readable detail (adoption source, or why the server is absent).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub message: Option<String>,
 }
 
@@ -383,6 +392,8 @@ impl XServerError {
 /// Deliberately mirrors [`AgentDeployProgress`](crate::terminal::agent_deploy::AgentDeployProgress)
 /// so the frontend can reuse the same progress-rendering shape.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct XServerProgress {
     /// Short machine-readable step id (e.g. `detect`, `download`, `launch`).
@@ -402,6 +413,8 @@ pub const X_SERVER_PROGRESS_EVENT: &str = "x-server-progress";
 /// The connect pauses after this event until the frontend replies via the
 /// `x_server_connect_consent_reply` command with the matching [`id`](Self::id).
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct XServerConsentRequest {
     /// Opaque id correlating this prompt with the reply command that resolves it.

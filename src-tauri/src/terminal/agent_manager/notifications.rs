@@ -37,6 +37,8 @@ use crate::terminal::backend::OutputSender;
 /// [`UpdateAvailableNotification`] tagged with the desktop's `agent_id`.
 /// `downloadUrl` is deliberately not forwarded (the frontend never had it).
 #[derive(Debug, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 struct AgentUpdateAvailableEvent<'a> {
     agent_id: &'a str,
     #[serde(rename = "currentVersion")]
@@ -49,11 +51,14 @@ struct AgentUpdateAvailableEvent<'a> {
 /// Payload of the `remote-agent-update-pending` Tauri event: the agent's
 /// [`UpdatePendingNotification`] tagged with the desktop's `agent_id`.
 #[derive(Debug, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 struct RemoteAgentUpdatePendingEvent<'a> {
     agent_id: &'a str,
     #[serde(rename = "requestedByVersion")]
     requested_by_version: &'a str,
     #[serde(rename = "estimatedRestartSecs")]
+    #[cfg_attr(test, ts(type = "number"))]
     estimated_restart_secs: u64,
 }
 

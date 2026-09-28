@@ -33,6 +33,9 @@ use crate::utils::errors::TerminalError;
 /// `index`/`total` map the update onto the rendered chain (gateway hops first,
 /// the target last); `status` is one of `connecting`, `connected`, `failed`.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "HopStatusPayload"))]
 #[serde(rename_all = "camelCase")]
 struct HopStatusEvent {
     probe_id: String,
@@ -40,6 +43,7 @@ struct HopStatusEvent {
     total: usize,
     host: String,
     port: u16,
+    #[cfg_attr(test, ts(type = "\"connecting\" | \"connected\" | \"failed\""))]
     status: String,
     /// Failure reason for a `failed` status; empty otherwise.
     message: String,
@@ -48,6 +52,9 @@ struct HopStatusEvent {
 /// Event emitted once when a probe finishes (whether it fully succeeded or
 /// stopped at a failed hop).
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "ProbeCompletePayload"))]
 #[serde(rename_all = "camelCase")]
 struct ProbeCompleteEvent {
     probe_id: String,
