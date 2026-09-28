@@ -63,7 +63,7 @@ pub const SETTINGS_REGION: &str = "settings";
 /// subscriber and returning the advanced region for the intent ack (empty when
 /// the view did not change).
 pub fn publish_settings(projector: &Projector, store: &SettingsStore) -> Vec<ProducedRegion> {
-    match projector.publish(SETTINGS_REGION, store.snapshot()) {
+    match projector.publish_with(SETTINGS_REGION, || store.snapshot()) {
         Some(version) => vec![ProducedRegion {
             region: SETTINGS_REGION.to_string(),
             version,

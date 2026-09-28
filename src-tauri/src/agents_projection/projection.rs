@@ -80,7 +80,7 @@ pub const AGENTS_REGION: &str = "agents";
 /// subscriber and returning the advanced region for the intent ack (empty when
 /// the view did not change).
 pub fn publish_agents(projector: &Projector, store: &AgentsStore) -> Vec<ProducedRegion> {
-    match projector.publish(AGENTS_REGION, store.snapshot()) {
+    match projector.publish_with(AGENTS_REGION, || store.snapshot()) {
         Some(version) => vec![ProducedRegion {
             region: AGENTS_REGION.to_string(),
             version,

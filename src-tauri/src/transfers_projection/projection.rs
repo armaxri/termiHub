@@ -89,11 +89,45 @@ fn now_ms() -> u64 {
 ///
 /// The emitted diff is **byte-identical** to the whole-region diff — see
 /// [`apply_transfer_delta`] for why — so no subscriber can tell the two apart.
+///
+/// # Ordering under concurrent folds (#3788, the #3780 pattern)
+///
+/// Folds and publishes run on several threads at once: the intent dispatcher
+/// (`transfer.*` routes), and every running transfer's progress sink
+/// ([`fold_transfer_progress`], from the SFTP copy loops / FTP executor and the
+/// relaunch path), one per concurrent transfer.
+/// The delta is therefore drained **inside** the region lock, in the same
+/// critical section as the splice and the fan-out. Draining it before taking the
+/// region lock let a racing fold-and-publish splice a *newer* value first, after
+/// which this publish spliced its older, already-drained value over it — leaving
+/// every subscriber stale with nothing left dirty to heal it. Under the region
+/// lock, drains are applied in the order they are taken, so the region always
+/// equals the store as of the latest drain; a fold landing after our drain stays
+/// dirty and is carried by the next publish (its own folder always publishes
+/// after it).
 pub fn publish_transfers(projector: &Projector, store: &TransferStore) -> Vec<ProducedRegion> {
-    let delta = store.drain_delta();
+    let mut divergence = None;
     let published = projector.publish_delta(TRANSFERS_REGION, |view| {
-        apply_transfer_delta(view, &delta, store)
+        // Debug builds also take the whole-region snapshot atomically with the
+        // drain, as the ground truth for the PERF-006 cross-check.
+        let (delta, truth) = if cfg!(debug_assertions) {
+            let (delta, truth) = store.drain_delta_with_snapshot();
+            (delta, Some(truth))
+        } else {
+            (store.drain_delta(), None)
+        };
+        #[cfg(test)]
+        crate::projection::publish_hook::fire_after_drain();
+        let (ops, diverged) =
+            apply_transfer_delta(view, &delta, truth.as_ref(), || store.snapshot());
+        divergence = diverged;
+        ops
     });
+    // Reported only after `publish_delta` returned: the (resynced) frame has
+    // already been fanned out and the region lock released.
+    if let Some(reason) = divergence {
+        report_perf006_divergence(&reason);
+    }
     match published {
         Some(version) => vec![ProducedRegion {
             region: TRANSFERS_REGION.to_string(),
@@ -103,9 +137,25 @@ pub fn publish_transfers(projector: &Projector, store: &TransferStore) -> Vec<Pr
     }
 }
 
+/// Surface a PERF-006 cross-check failure: a real dirty-tracking or ordering bug
+/// in the incremental publish, already healed by a resync. Logged loudly and
+/// never a panic mid-publish (#3788, as #3780: a panic there dropped the frame
+/// after the view was spliced, and once aborted the whole debug app). Unit tests
+/// still fail hard on it — after the fan-out, so the region stays consistent.
+fn report_perf006_divergence(reason: &str) {
+    tracing::error!(
+        region = TRANSFERS_REGION,
+        "PERF-006: incremental transfer publish diverged from the store; \
+         resynced to the whole-region diff: {reason}"
+    );
+    #[cfg(test)]
+    panic!("PERF-006: incremental transfer publish diverged: {reason}");
+}
+
 /// Compute the RFC-6902 ops for a drained [`RegionDelta`] and splice its new
 /// subtrees into the held region `view` in place — the incremental core of
-/// [`publish_transfers`] (PERF-006, rollout of #2878).
+/// [`publish_transfers`] (PERF-006, rollout of #2878). Returns the ops to fan
+/// out and, if the cross-check failed, why.
 ///
 /// ## Why the reduced diff is byte-identical to the whole-region diff
 ///
@@ -121,26 +171,34 @@ pub fn publish_transfers(projector: &Projector, store: &TransferStore) -> Vec<Pr
 /// in presence and in sorted position (`"minimized"` sorts before `"queue"`), and
 /// no spurious top-level op appears.
 ///
-/// Under `debug_assertions` this is cross-checked against a fresh whole-region
-/// diff, so any dirty-tracking miss or ordering drift fails loudly in tests
-/// rather than silently corrupting a subscriber's cache.
+/// ## The cross-check
+///
+/// When `truth` is given (debug builds: the whole-region snapshot taken under
+/// the same store lock as the drain, so it is exactly the state this delta
+/// brings the region to), the incremental result is cross-checked against it:
+/// the ops must equal the whole-region diff and the spliced view must equal
+/// `truth`. Any mismatch is a dirty-tracking / ordering bug. It is reported, and
+/// the publish **resyncs** — the view is replaced by `truth` and the emitted ops
+/// become the whole-region diff — so subscribers stay correct and no frame is
+/// dropped. `snapshot` is only called for the unseeded-view fallback when no
+/// `truth` is at hand.
 fn apply_transfer_delta(
     view: &mut Value,
     delta: &RegionDelta,
-    store: &TransferStore,
-) -> Vec<DiffOp> {
+    truth: Option<&Value>,
+    snapshot: impl FnOnce() -> Value,
+) -> (Vec<DiffOp>, Option<String>) {
     // Fallback: an unseeded / unexpected view shape (e.g. the region was never
     // seeded with the empty-store baseline) → the original whole-region path,
     // byte-for-byte. Production always seeds the region in `lib.rs::setup()`.
     if !view.get("queue").is_some_and(Value::is_object) || view.get("minimized").is_none() {
-        let full = store.snapshot();
+        let full = truth.cloned().unwrap_or_else(snapshot);
         let ops = compute_ops(view, &full);
         *view = full;
-        return ops;
+        return (ops, None);
     }
 
-    #[cfg(debug_assertions)]
-    let old_full = view.clone();
+    let old_full = truth.map(|_| view.clone());
 
     let old_minimized = view.get("minimized").cloned().unwrap_or(Value::Bool(false));
     let reduced_old = json!({
@@ -158,24 +216,35 @@ fn apply_transfer_delta(
         obj.insert("minimized".to_string(), Value::Bool(delta.minimized));
     }
 
-    #[cfg(debug_assertions)]
-    {
-        // Ground truth: the whole-region diff and a fresh full snapshot. The
-        // incremental ops must equal the former, and the spliced view the latter
-        // — either mismatch is a dirty-tracking / ordering bug, not a perf tweak.
-        let fresh = store.snapshot();
-        debug_assert_eq!(
-            ops,
-            compute_ops(&old_full, &fresh),
-            "PERF-006: incremental transfer delta diverged from the whole-region diff"
-        );
-        debug_assert_eq!(
-            *view, fresh,
-            "PERF-006: spliced transfer view diverged from the store snapshot"
-        );
+    if let (Some(truth), Some(old_full)) = (truth, old_full) {
+        if let Some(reason) = perf006_divergence(&ops, &old_full, view, truth) {
+            *view = truth.clone();
+            return (compute_ops(&old_full, truth), Some(reason));
+        }
     }
 
-    ops
+    (ops, None)
+}
+
+/// The PERF-006 cross-check: `None` when the incremental `ops` equal the
+/// whole-region diff `old_full → truth` and the spliced `view` equals `truth`;
+/// otherwise a description of the mismatch.
+fn perf006_divergence(
+    ops: &[DiffOp],
+    old_full: &Value,
+    view: &Value,
+    truth: &Value,
+) -> Option<String> {
+    let expected = compute_ops(old_full, truth);
+    if ops != expected.as_slice() {
+        return Some(format!(
+            "incremental ops {ops:?} != whole-region ops {expected:?}"
+        ));
+    }
+    if view != truth {
+        return Some(format!("spliced view {view} != store snapshot {truth}"));
+    }
+    None
 }
 
 /// Collect the touched keys that are present in `src` into a fresh object — the

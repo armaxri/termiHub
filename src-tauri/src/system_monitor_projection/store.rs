@@ -148,20 +148,7 @@ impl SystemMonitorStore {
     /// Pure with respect to monitor state (never mutates), so the projector can
     /// safely diff two consecutive snapshots.
     pub fn snapshot(&self) -> Value {
-        let inner = self.lock();
-        let mut monitors = Map::with_capacity(inner.monitors.len());
-        for (key, entry) in &inner.monitors {
-            if let Ok(value) = serde_json::to_value(entry) {
-                monitors.insert(key.clone(), value);
-            }
-        }
-        let mut cache = Map::with_capacity(inner.stats_cache.len());
-        for (key, stats) in &inner.stats_cache {
-            if let Ok(value) = serde_json::to_value(stats) {
-                cache.insert(key.clone(), value);
-            }
-        }
-        json!({ "monitors": Value::Object(monitors), "statsCache": Value::Object(cache) })
+        snapshot_of(&self.lock())
     }
 
     /// `monitor.open` — begin an initial connect. Upserts a fresh loading entry
@@ -318,33 +305,20 @@ impl SystemMonitorStore {
     /// which likewise omits an entry it cannot serialize), so the region converges
     /// on the same result either way.
     pub fn drain_delta(&self) -> RegionDelta {
+        drain_delta_of(&mut self.lock())
+    }
+
+    /// [`Self::drain_delta`] plus a whole-region [`Self::snapshot`], both taken
+    /// under **one** store lock so no fold can land between them (#3788, the
+    /// #3780 pattern). The snapshot is therefore exactly the state the drained
+    /// delta brings the region to — the ground truth for the debug PERF-006
+    /// cross-check in [`crate::system_monitor_projection::projection`]. A fresh
+    /// `snapshot()` taken after the drain would also contain any fold that raced
+    /// in afterwards (still dirty, published next), failing the check spuriously.
+    pub fn drain_delta_with_snapshot(&self) -> (RegionDelta, Value) {
         let mut inner = self.lock();
-        let monitor_keys: Vec<String> = inner.dirty_monitors.drain().collect();
-        let cache_keys: Vec<String> = inner.dirty_cache.drain().collect();
-        let monitors = monitor_keys
-            .into_iter()
-            .map(|key| {
-                let value = inner
-                    .monitors
-                    .get(&key)
-                    .and_then(|entry| serde_json::to_value(entry).ok());
-                (key, value)
-            })
-            .collect();
-        let stats_cache = cache_keys
-            .into_iter()
-            .map(|key| {
-                let value = inner
-                    .stats_cache
-                    .get(&key)
-                    .and_then(|stats| serde_json::to_value(stats).ok());
-                (key, value)
-            })
-            .collect();
-        RegionDelta {
-            monitors,
-            stats_cache,
-        }
+        let delta = drain_delta_of(&mut inner);
+        (delta, snapshot_of(&inner))
     }
 
     /// Read one monitor entry (test / diagnostics helper).
@@ -363,6 +337,55 @@ impl SystemMonitorStore {
         // Short critical sections only; a poisoned lock means another thread
         // panicked mid-mutation (a bug) — recover rather than cascade.
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// The whole-region view model of the locked store (see
+/// [`SystemMonitorStore::snapshot`]).
+fn snapshot_of(inner: &Inner) -> Value {
+    let mut monitors = Map::with_capacity(inner.monitors.len());
+    for (key, entry) in &inner.monitors {
+        if let Ok(value) = serde_json::to_value(entry) {
+            monitors.insert(key.clone(), value);
+        }
+    }
+    let mut cache = Map::with_capacity(inner.stats_cache.len());
+    for (key, stats) in &inner.stats_cache {
+        if let Ok(value) = serde_json::to_value(stats) {
+            cache.insert(key.clone(), value);
+        }
+    }
+    json!({ "monitors": Value::Object(monitors), "statsCache": Value::Object(cache) })
+}
+
+/// Drain the locked store's dirty sets into a [`RegionDelta`] (see
+/// [`SystemMonitorStore::drain_delta`]).
+fn drain_delta_of(inner: &mut Inner) -> RegionDelta {
+    let monitor_keys: Vec<String> = inner.dirty_monitors.drain().collect();
+    let cache_keys: Vec<String> = inner.dirty_cache.drain().collect();
+    let monitors = monitor_keys
+        .into_iter()
+        .map(|key| {
+            let value = inner
+                .monitors
+                .get(&key)
+                .and_then(|entry| serde_json::to_value(entry).ok());
+            (key, value)
+        })
+        .collect();
+    let stats_cache = cache_keys
+        .into_iter()
+        .map(|key| {
+            let value = inner
+                .stats_cache
+                .get(&key)
+                .and_then(|stats| serde_json::to_value(stats).ok());
+            (key, value)
+        })
+        .collect();
+    RegionDelta {
+        monitors,
+        stats_cache,
     }
 }
 
