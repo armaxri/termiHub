@@ -38,7 +38,7 @@ use crate::system_monitor_projection::store::SystemMonitorStore;
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 
-use super::manager::SessionEntry;
+use super::manager::{SessionEntry, SessionMap};
 
 /// Receive from an optional status receiver for use inside `tokio::select!`.
 ///
@@ -68,8 +68,11 @@ fn fold_status_update(store: &SystemMonitorStore, key: &str, update: MonitorStat
 /// so it carries no state of its own; the manager constructs one on demand via
 /// [`SessionManager::monitoring`](super::manager::SessionManager). Each method
 /// mirrors the corresponding monitoring provider operation.
-pub(super) struct MonitoringController<'a> {
-    sessions: &'a Mutex<HashMap<String, SessionEntry>>,
+pub(super) struct MonitoringController<
+    'a,
+    M: SessionMap = termihub_core::session::registry::Sessions<SessionEntry>,
+> {
+    sessions: &'a Mutex<M>,
     monitoring_tasks: &'a Mutex<HashMap<String, AbortHandle>>,
     /// Standalone monitoring providers for session monitors whose run-location
     /// resolved to an agent (#2593). Keyed by session id, these agent-self
@@ -79,11 +82,11 @@ pub(super) struct MonitoringController<'a> {
     monitoring_overrides: &'a Mutex<HashMap<String, Arc<dyn MonitoringProvider + Send + Sync>>>,
 }
 
-impl<'a> MonitoringController<'a> {
+impl<'a, M: SessionMap> MonitoringController<'a, M> {
     /// Wrap the manager's `sessions`, `monitoring_tasks` and
     /// `monitoring_overrides` maps.
     pub(super) fn new(
-        sessions: &'a Mutex<HashMap<String, SessionEntry>>,
+        sessions: &'a Mutex<M>,
         monitoring_tasks: &'a Mutex<HashMap<String, AbortHandle>>,
         monitoring_overrides: &'a Mutex<HashMap<String, Arc<dyn MonitoringProvider + Send + Sync>>>,
     ) -> Self {
