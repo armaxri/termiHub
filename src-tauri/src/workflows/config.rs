@@ -277,6 +277,71 @@ pub enum WorkflowTrigger {
         /// The keybinding string (e.g. `Ctrl+Alt+H`).
         binding: String,
     },
+
+    /// Fires once when a session for one of the named connections ends
+    /// (PROD-041, #3791). `when` picks which endings count; absent means
+    /// [`WorkflowDisconnectCause::Drop`] (unexpected drops only).
+    #[serde(rename_all = "camelCase")]
+    OnDisconnect {
+        /// Connection ids this trigger is bound to.
+        #[serde(default)]
+        connection_ids: Vec<String>,
+        /// Which session endings fire the trigger; absent → drops only.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        when: Option<WorkflowDisconnectCause>,
+    },
+
+    /// Fires when a session for one of the named connections prints output
+    /// matching `pattern` (PROD-041, #3791). The pattern is matched on the
+    /// frontend against bounded, ANSI-stripped output; the limits below are
+    /// persisted here and clamped at dispatch.
+    #[serde(rename_all = "camelCase")]
+    OnOutputMatch {
+        /// Connection ids this trigger is bound to.
+        #[serde(default)]
+        connection_ids: Vec<String>,
+        /// A literal substring, or a regular expression when `is_regex`.
+        pattern: String,
+        /// When `true`, `pattern` is a regular expression.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        is_regex: Option<bool>,
+        /// Minimum time (ms) between two fires in one session.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cooldown_ms: Option<u64>,
+        /// Maximum number of fires per session.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_fires_per_session: Option<u32>,
+    },
+}
+
+impl WorkflowTrigger {
+    /// The saved-connection ids a connection-bound trigger names, mutably, so a
+    /// connection rename/move can re-point them (#3596). `None` for triggers
+    /// that are not bound to connections.
+    pub fn connection_ids_mut(&mut self) -> Option<&mut Vec<String>> {
+        match self {
+            WorkflowTrigger::OnConnect { connection_ids }
+            | WorkflowTrigger::OnDisconnect { connection_ids, .. }
+            | WorkflowTrigger::OnOutputMatch { connection_ids, .. } => Some(connection_ids),
+            WorkflowTrigger::Manual | WorkflowTrigger::Hotkey { .. } => None,
+        }
+    }
+}
+
+/// Which session endings fire an [`WorkflowTrigger::OnDisconnect`] trigger.
+/// Serialised kebab-case (`drop`, `user-close`, `any`) to match the TypeScript
+/// `WorkflowDisconnectCause` union.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum WorkflowDisconnectCause {
+    /// Only an unexpected end: a lost connection or a non-zero exit.
+    #[default]
+    Drop,
+    /// Only an end the user caused: closing the tab, killing the session, or
+    /// a clean logout.
+    UserClose,
+    /// Every session end.
+    Any,
 }
 
 /// The value type of a [`WorkflowParameter`] (PROD-0040). Serialised lowercase
@@ -380,7 +445,7 @@ pub struct WorkflowStore {
 impl Default for WorkflowStore {
     fn default() -> Self {
         Self {
-            version: "1".to_string(),
+            version: <Self as crate::utils::migrate::VersionedStore>::CURRENT_VERSION.to_string(),
             workflows: Vec::new(),
             extra: serde_json::Map::new(),
         }
@@ -389,7 +454,22 @@ impl Default for WorkflowStore {
 
 impl crate::utils::migrate::VersionedStore for WorkflowStore {
     const STORE_NAME: &'static str = "workflows.json";
-    const CURRENT_VERSION: u32 = 1;
+    /// v2 (#3791) adds the `on-disconnect` and `on-output-match` trigger kinds.
+    /// Every v1 trigger is valid v2 unchanged, so the v1 → v2 step only stamps
+    /// the version. The bump is what makes the change downgrade-safe: a v1
+    /// build refuses to overwrite a v2 file (PER-004) instead of discarding
+    /// the workflows whose triggers it cannot parse.
+    const CURRENT_VERSION: u32 = 2;
+
+    fn migrate(value: serde_json::Value, from_version: u32) -> anyhow::Result<serde_json::Value> {
+        let mut value = value;
+        if from_version < 2 {
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert("version".to_string(), serde_json::Value::from("2"));
+            }
+        }
+        Ok(value)
+    }
 
     /// Per-entry salvage (PER-004): drop only the individually-corrupt workflows
     /// instead of resetting all of the user's authored automation.
@@ -455,7 +535,7 @@ mod tests {
     #[test]
     fn workflow_store_default_is_empty() {
         let store = WorkflowStore::default();
-        assert_eq!(store.version, "1");
+        assert_eq!(store.version, "2");
         assert!(store.workflows.is_empty());
     }
 
@@ -552,8 +632,25 @@ mod tests {
             WorkflowTrigger::Hotkey {
                 binding: "Ctrl+Alt+H".to_string(),
             },
+            WorkflowTrigger::OnDisconnect {
+                connection_ids: vec!["prod-web-1".to_string()],
+                when: Some(WorkflowDisconnectCause::UserClose),
+            },
+            WorkflowTrigger::OnOutputMatch {
+                connection_ids: vec!["prod-web-1".to_string()],
+                pattern: "ERROR \\d+".to_string(),
+                is_regex: Some(true),
+                cooldown_ms: Some(5_000),
+                max_fires_per_session: Some(3),
+            },
         ];
         let json = serde_json::to_string(&triggers).unwrap();
+        assert!(json.contains("\"kind\":\"on-disconnect\""));
+        assert!(json.contains("\"when\":\"user-close\""));
+        assert!(json.contains("\"kind\":\"on-output-match\""));
+        assert!(json.contains("\"isRegex\":true"));
+        assert!(json.contains("\"cooldownMs\":5000"));
+        assert!(json.contains("\"maxFiresPerSession\":3"));
         assert!(json.contains("\"kind\":\"manual\""));
         assert!(json.contains("\"kind\":\"on-connect\""));
         assert!(json.contains("\"connectionIds\""));
@@ -583,6 +680,96 @@ mod tests {
         assert!(json.contains("\"updatedAt\""));
         let parsed: Workflow = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, wf);
+    }
+
+    #[test]
+    fn new_trigger_kinds_default_their_optional_fields() {
+        let parsed: Vec<WorkflowTrigger> = serde_json::from_str(
+            r#"[{"kind":"on-disconnect"},{"kind":"on-output-match","pattern":"ready"}]"#,
+        )
+        .unwrap();
+        assert_eq!(
+            parsed,
+            vec![
+                WorkflowTrigger::OnDisconnect {
+                    connection_ids: Vec::new(),
+                    when: None,
+                },
+                WorkflowTrigger::OnOutputMatch {
+                    connection_ids: Vec::new(),
+                    pattern: "ready".to_string(),
+                    is_regex: None,
+                    cooldown_ms: None,
+                    max_fires_per_session: None,
+                },
+            ]
+        );
+        // Absent optional fields stay absent on the wire.
+        let json = serde_json::to_string(&parsed).unwrap();
+        assert!(!json.contains("when"));
+        assert!(!json.contains("isRegex"));
+        assert!(!json.contains("cooldownMs"));
+        assert_eq!(
+            WorkflowDisconnectCause::default(),
+            WorkflowDisconnectCause::Drop
+        );
+    }
+
+    #[test]
+    fn connection_ids_mut_covers_every_connection_bound_kind() {
+        let mut triggers = [
+            WorkflowTrigger::Manual,
+            WorkflowTrigger::Hotkey {
+                binding: "Ctrl+H".to_string(),
+            },
+            WorkflowTrigger::OnConnect {
+                connection_ids: vec!["a".to_string()],
+            },
+            WorkflowTrigger::OnDisconnect {
+                connection_ids: vec!["b".to_string()],
+                when: None,
+            },
+            WorkflowTrigger::OnOutputMatch {
+                connection_ids: vec!["c".to_string()],
+                pattern: "x".to_string(),
+                is_regex: None,
+                cooldown_ms: None,
+                max_fires_per_session: None,
+            },
+        ];
+        let bound: Vec<String> = triggers
+            .iter_mut()
+            .filter_map(|t| t.connection_ids_mut().map(|ids| ids.join(",")))
+            .collect();
+        assert_eq!(bound, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn v1_store_migrates_to_v2_unchanged() {
+        use crate::utils::migrate::{load_versioned, LoadOutcome};
+        let raw = r#"{"version":"1","workflows":[{"id":"wf-1","name":"Login","triggers":[{"kind":"manual"},{"kind":"on-connect","connectionIds":["c1"]},{"kind":"hotkey","binding":"Ctrl+Alt+H"}]}]}"#;
+        match load_versioned::<WorkflowStore>(raw) {
+            LoadOutcome::Loaded {
+                data,
+                migrated_from,
+            } => {
+                assert_eq!(migrated_from, Some(1));
+                assert_eq!(data.version, "2");
+                assert_eq!(
+                    data.workflows[0].triggers,
+                    vec![
+                        WorkflowTrigger::Manual,
+                        WorkflowTrigger::OnConnect {
+                            connection_ids: vec!["c1".to_string()],
+                        },
+                        WorkflowTrigger::Hotkey {
+                            binding: "Ctrl+Alt+H".to_string(),
+                        },
+                    ]
+                );
+            }
+            _ => panic!("a v1 workflow store must load and migrate"),
+        }
     }
 
     #[test]

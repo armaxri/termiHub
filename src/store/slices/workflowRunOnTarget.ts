@@ -162,6 +162,13 @@ export interface WorkflowTargetRun {
    * refused instead of asking.
    */
   unattended?: boolean;
+  /**
+   * The run has no live session (an on-disconnect trigger, #3791): it runs in
+   * the connection's context after the session ended. Send-based steps,
+   * `run-macro` and `wait-for-output` fail at once instead of touching the
+   * dead tab; `wait` and `run-local-process` work as usual.
+   */
+  sessionless?: boolean;
 }
 
 /** Show the terminal toast for a single-target run's outcome. */
@@ -214,6 +221,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     targetLabel,
     fanout,
     unattended,
+    sessionless,
   } = run;
   const workflowId = workflow.id;
   // This run's key in the workflow-run region (#3418): concurrent targets of a
@@ -225,14 +233,14 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   // through the single choke point.
   const injector = getTerminalInputInjector();
   const send: WorkflowSendSeam = (data) => {
-    if (!injector) return false;
+    if (!injector || sessionless) return false;
     return injector(targetTabId, data);
   };
 
   // A `run-macro` step replays a stored macro by id through the macro-playback
   // service, into the same target tab, reusing the macro's recorded timing.
   const runMacro: WorkflowRunMacroSeam = async (macroId) => {
-    if (!injector) return false;
+    if (!injector || sessionless) return false;
     const macro = get().macros.find((m) => m.id === macroId);
     if (!macro || macro.steps.length === 0) return false;
     const startedAt = new Date();
@@ -497,7 +505,8 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
       readScriptFile: localReadFile,
       authorizeLocalProcess,
       runLocalProcess,
-      waitForOutput,
+      // A sessionless run has no output to wait for: the step fails loudly.
+      waitForOutput: sessionless ? undefined : waitForOutput,
     },
     {
       onProgress: (completed) => {

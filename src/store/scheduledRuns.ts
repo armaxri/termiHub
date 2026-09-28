@@ -94,7 +94,7 @@ function targetTabIds(state: AppState, connectionIds: readonly string[]): string
  * type-appropriate empty value. Returns the name of a required parameter that
  * has no usable default (the run must then not start — it cannot prompt).
  */
-function unattendedParamValues(
+export function unattendedParamValues(
   parameters: readonly WorkflowParameter[]
 ): { values: WorkflowParamValues } | { missing: string } {
   const values: WorkflowParamValues = {};

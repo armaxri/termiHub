@@ -28,6 +28,12 @@ pub enum WorkflowRunTrigger {
     Hotkey,
     /// Fired by a schedule (PROD-043).
     Scheduled,
+    /// Fired by an on-disconnect trigger when a bound connection's session
+    /// ended (#3791).
+    OnDisconnect,
+    /// Fired by an on-output-match trigger when a bound session printed
+    /// matching output (#3791).
+    OnOutputMatch,
 }
 
 /// A single persisted, **metadata-only** record of a finished workflow run
@@ -206,6 +212,9 @@ mod tests {
             WorkflowRunTrigger::Manual,
             WorkflowRunTrigger::OnConnect,
             WorkflowRunTrigger::Hotkey,
+            WorkflowRunTrigger::Scheduled,
+            WorkflowRunTrigger::OnDisconnect,
+            WorkflowRunTrigger::OnOutputMatch,
         ] {
             let json = serde_json::to_string(&trigger).unwrap();
             let parsed: WorkflowRunTrigger = serde_json::from_str(&json).unwrap();

@@ -33,6 +33,15 @@ function sampleWorkflow(overrides: Partial<Workflow> = {}): Workflow {
       { kind: "manual" },
       { kind: "on-connect", connectionIds: ["prod-web-1"] },
       { kind: "hotkey", binding: "Ctrl+Alt+H" },
+      { kind: "on-disconnect", connectionIds: ["prod-web-1"], when: "user-close" },
+      {
+        kind: "on-output-match",
+        connectionIds: ["prod-web-1"],
+        pattern: "ERROR \\d+",
+        isRegex: true,
+        cooldownMs: 5000,
+        maxFiresPerSession: 3,
+      },
     ],
     createdAt: "2026-07-24T00:00:00Z",
     updatedAt: "2026-07-24T00:00:00Z",
@@ -109,6 +118,54 @@ describe("serializeWorkflows / parseWorkflowEnvelope", () => {
       ],
     });
     expect(() => parseWorkflowEnvelope(json)).toThrow(/invalid "connectionIds"/);
+  });
+
+  it("rejects an on-disconnect trigger with an unknown cause", () => {
+    const json = JSON.stringify({
+      version: WORKFLOW_EXPORT_VERSION,
+      workflows: [
+        {
+          name: "X",
+          steps: [],
+          triggers: [{ kind: "on-disconnect", connectionIds: [], when: "sometimes" }],
+        },
+      ],
+    });
+    expect(() => parseWorkflowEnvelope(json)).toThrow(/invalid "when"/);
+  });
+
+  it("rejects an on-output-match trigger with an invalid or unsafe regex", () => {
+    const envelope = (pattern: string) =>
+      JSON.stringify({
+        version: WORKFLOW_EXPORT_VERSION,
+        workflows: [
+          {
+            name: "X",
+            steps: [],
+            triggers: [{ kind: "on-output-match", connectionIds: [], pattern, isRegex: true }],
+          },
+        ],
+      });
+    expect(() => parseWorkflowEnvelope(envelope("(["))).toThrow(
+      /unusable pattern \(invalid-regex\)/
+    );
+    expect(() => parseWorkflowEnvelope(envelope("(a+)+"))).toThrow(
+      /unusable pattern \(unsafe-regex\)/
+    );
+  });
+
+  it("rejects an on-output-match trigger with a negative cooldown", () => {
+    const json = JSON.stringify({
+      version: WORKFLOW_EXPORT_VERSION,
+      workflows: [
+        {
+          name: "X",
+          steps: [],
+          triggers: [{ kind: "on-output-match", connectionIds: [], pattern: "x", cooldownMs: -1 }],
+        },
+      ],
+    });
+    expect(() => parseWorkflowEnvelope(json)).toThrow(/invalid "cooldownMs"/);
   });
 
   it("tolerates absent optional collections (triggers/tags/timestamps)", () => {

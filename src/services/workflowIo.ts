@@ -19,10 +19,12 @@ import type {
   WorkflowParameterType,
   WorkflowStep,
   WorkflowStepKind,
+  WorkflowDisconnectCause,
   WorkflowTrigger,
   WorkflowTriggerKind,
 } from "@/types/workflow";
 import { newId } from "@/services/transport/ids";
+import { validateOutputPattern } from "@/services/workflowOutputTriggers";
 
 /**
  * Current version of the workflow export envelope. Bump only on an incompatible
@@ -89,7 +91,39 @@ const CONDITION_OPS: readonly WorkflowComparisonOp[] = [
 ];
 
 /** All valid trigger-kind discriminants. */
-const TRIGGER_KINDS: readonly WorkflowTriggerKind[] = ["manual", "on-connect", "hotkey"];
+const TRIGGER_KINDS: readonly WorkflowTriggerKind[] = [
+  "manual",
+  "on-connect",
+  "hotkey",
+  "on-disconnect",
+  "on-output-match",
+];
+
+/** All valid on-disconnect `when` values (#3791). */
+const DISCONNECT_CAUSES: readonly WorkflowDisconnectCause[] = ["drop", "user-close", "any"];
+
+/** Validate a trigger's `connectionIds` array. */
+function validateConnectionIds(raw: Record<string, unknown>, at: string, kind: string): string[] {
+  if (!Array.isArray(raw.connectionIds) || raw.connectionIds.some((c) => typeof c !== "string")) {
+    throw new Error(`Invalid workflow file: ${at} (${kind}) has invalid "connectionIds".`);
+  }
+  return raw.connectionIds as string[];
+}
+
+/** Validate an optional non-negative number field of a trigger. */
+function optionalNonNegative(
+  raw: Record<string, unknown>,
+  field: string,
+  at: string,
+  kind: string
+): number | undefined {
+  const value = raw[field];
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error(`Invalid workflow file: ${at} (${kind}) has an invalid "${field}".`);
+  }
+  return value;
+}
 
 /**
  * Serialise workflows into a pretty-printed export envelope string ready to
@@ -306,18 +340,44 @@ function validateTrigger(raw: unknown, where: string, triggerIndex: number): Wor
     case "manual":
       return { kind };
     case "on-connect":
-      if (
-        !Array.isArray(raw.connectionIds) ||
-        raw.connectionIds.some((c) => typeof c !== "string")
-      ) {
-        throw new Error(`Invalid workflow file: ${at} (on-connect) has invalid "connectionIds".`);
-      }
-      return { kind, connectionIds: raw.connectionIds as string[] };
+      return { kind, connectionIds: validateConnectionIds(raw, at, kind) };
     case "hotkey":
       if (typeof raw.binding !== "string") {
         throw new Error(`Invalid workflow file: ${at} (hotkey) is missing "binding".`);
       }
       return { kind, binding: raw.binding };
+    case "on-disconnect": {
+      const connectionIds = validateConnectionIds(raw, at, kind);
+      if (raw.when === undefined) return { kind, connectionIds };
+      if (!DISCONNECT_CAUSES.includes(raw.when as WorkflowDisconnectCause)) {
+        throw new Error(`Invalid workflow file: ${at} (on-disconnect) has an invalid "when".`);
+      }
+      return { kind, connectionIds, when: raw.when as WorkflowDisconnectCause };
+    }
+    case "on-output-match": {
+      const connectionIds = validateConnectionIds(raw, at, kind);
+      if (typeof raw.pattern !== "string") {
+        throw new Error(`Invalid workflow file: ${at} (on-output-match) is missing "pattern".`);
+      }
+      if (raw.isRegex !== undefined && typeof raw.isRegex !== "boolean") {
+        throw new Error(`Invalid workflow file: ${at} (on-output-match) has an invalid "isRegex".`);
+      }
+      const isRegex = raw.isRegex as boolean | undefined;
+      // An invalid or unbounded pattern is rejected here, never stored.
+      const patternError = validateOutputPattern(raw.pattern, isRegex);
+      if (patternError) {
+        throw new Error(
+          `Invalid workflow file: ${at} (on-output-match) has an unusable pattern (${patternError}).`
+        );
+      }
+      const trigger: WorkflowTrigger = { kind, connectionIds, pattern: raw.pattern };
+      if (isRegex !== undefined) trigger.isRegex = isRegex;
+      const cooldownMs = optionalNonNegative(raw, "cooldownMs", at, kind);
+      if (cooldownMs !== undefined) trigger.cooldownMs = cooldownMs;
+      const maxFires = optionalNonNegative(raw, "maxFiresPerSession", at, kind);
+      if (maxFires !== undefined) trigger.maxFiresPerSession = maxFires;
+      return trigger;
+    }
     default: {
       const _exhaustive: never = kind;
       throw new Error(`Invalid workflow file: ${at} has unknown kind ${String(_exhaustive)}.`);

@@ -272,6 +272,13 @@ export class TerminalOutputDispatcher {
   private pendingExit = new Map<string, number | null>();
   private unlistenOutput: UnlistenFn | null = null;
   private unlistenExit: UnlistenFn | null = null;
+  /**
+   * Optional observer of every raw (still base64-encoded) output chunk — the
+   * on-output-match workflow trigger tap (#3791). Called before decoding with
+   * the payload string only, so an installed tap costs one call per chunk and
+   * no tap costs a null check. The tap must stay O(1); it defers its work.
+   */
+  private outputTap: ((sessionId: string, encoded: string) => void) | null = null;
   private initPromise: Promise<void> | null = null;
   private initGeneration = 0;
 
@@ -296,6 +303,7 @@ export class TerminalOutputDispatcher {
 
     const unlistenOutput = await listen<TerminalOutputEvent>("terminal-output", (event) => {
       const { session_id, data } = event.payload;
+      this.outputTap?.(session_id, data);
       const cbs = this.outputCallbacks.get(session_id);
       const chunk = base64ToBytes(data);
       if (cbs && cbs.size > 0) {
@@ -347,6 +355,14 @@ export class TerminalOutputDispatcher {
       return;
     }
     this.unlistenExit = unlistenExit;
+  }
+
+  /**
+   * Install (or, with `null`, remove) the single raw-output tap. See
+   * {@link TerminalOutputDispatcher.outputTap}.
+   */
+  setOutputTap(tap: ((sessionId: string, encoded: string) => void) | null): void {
+    this.outputTap = tap;
   }
 
   /** Subscribe to output events for a specific session. Returns an unsubscribe function. */
