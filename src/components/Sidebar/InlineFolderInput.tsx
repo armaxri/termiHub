@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Folder, Check, X } from "lucide-react";
 import { Button, Input, Tooltip } from "@/components/ui";
+import { isImeComposing } from "@/utils/imeComposition";
 
 interface InlineFolderInputProps {
   depth: number;
@@ -12,6 +13,7 @@ export function InlineFolderInput({ depth, onConfirm, onCancel }: InlineFolderIn
   const [name, setName] = useState("");
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (isImeComposing(e)) return;
     if (e.key === "Enter" && name.trim()) {
       onConfirm(name.trim());
     } else if (e.key === "Escape") {

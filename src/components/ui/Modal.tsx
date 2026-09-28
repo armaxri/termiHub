@@ -1,7 +1,7 @@
 import React from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
-import { isImeComposing } from "../../utils/imeComposition";
+import { isImeComposing } from "@/utils/imeComposition";
 import "./ui.css";
 
 /**
@@ -56,7 +56,10 @@ export interface ModalProps {
   hideClose?: boolean;
   /** Content width. `md` (default) is 420px; `lg` is 640px for content-heavy panels. */
   size?: "md" | "lg";
-  /** Key handler forwarded to the content node (e.g. Enter-to-confirm). */
+  /**
+   * Key handler forwarded to the content node (e.g. Enter-to-confirm). Not
+   * called for keys that belong to an IME composition.
+   */
   onKeyDown?: React.KeyboardEventHandler<HTMLDivElement>;
   /** Test hook forwarded to the content node. */
   "data-testid"?: string;
@@ -91,7 +94,16 @@ export function Modal({
           ref={setContentEl}
           className={size === "lg" ? "ui-modal ui-modal--lg" : "ui-modal"}
           data-testid={rest["data-testid"]}
-          onKeyDown={onKeyDown}
+          onKeyDown={
+            onKeyDown
+              ? (e) => {
+                  // Dialog-level Enter-to-confirm etc. never act on an IME
+                  // composition key (#3767).
+                  if (isImeComposing(e)) return;
+                  onKeyDown(e);
+                }
+              : undefined
+          }
           onEscapeKeyDown={(e) => {
             // Escape that discards an IME preedit must not close the dialog (#3767).
             if (isImeComposing(e)) e.preventDefault();

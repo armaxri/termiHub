@@ -161,6 +161,31 @@ describe("Modal", () => {
       expect(onOpenChange).not.toHaveBeenCalled();
     });
 
+    it("does not forward composition Enter keys to the onKeyDown handler", () => {
+      const onKeyDown = vi.fn();
+      render(
+        <Modal
+          data-testid="modal"
+          open
+          onOpenChange={() => {}}
+          title="Rename"
+          onKeyDown={onKeyDown}
+        >
+          <input data-testid="modal-input" type="text" />
+        </Modal>
+      );
+      const el = document.querySelector<HTMLInputElement>('[data-testid="modal-input"]')!;
+      const enter = (init: KeyboardEventInit) =>
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...init });
+      fire(el, new CompositionEvent("compositionstart", { data: "", bubbles: true }));
+      fire(el, enter({ isComposing: true }));
+      fire(el, new CompositionEvent("compositionend", { data: "日本語", bubbles: true }));
+      fire(el, enter({ keyCode: 229 }));
+      expect(onKeyDown).not.toHaveBeenCalled();
+      fire(el, enter({}));
+      expect(onKeyDown).toHaveBeenCalledTimes(1);
+    });
+
     it("a normal Escape still closes the dialog", () => {
       const onOpenChange = vi.fn();
       const el = openWithInput(onOpenChange);

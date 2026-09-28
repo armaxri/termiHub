@@ -4,6 +4,7 @@ import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { SerialPortScanPrefix } from "@/types/connection";
 import { Button, Input, Toggle, Tooltip } from "@/components/ui";
+import { isImeComposing } from "@/utils/imeComposition";
 
 interface SerialPortSettingsProps {
   visibleFields?: Set<string>;
@@ -147,6 +148,7 @@ export function SerialPortSettings({ visibleFields }: SerialPortSettingsProps) {
             setAddError("");
           }}
           onKeyDown={(e) => {
+            if (isImeComposing(e)) return;
             if (e.key === "Enter") handleAdd();
           }}
         />

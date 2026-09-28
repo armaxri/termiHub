@@ -8,6 +8,7 @@ import { ExternalFileConfig } from "@/types/connection";
 import { Button, Input, Toggle, Tooltip, EmptyState } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { SettingsField } from "./SettingsField";
+import { isImeComposing } from "@/utils/imeComposition";
 
 /**
  * External connection file management, extracted from SettingsPanel.
@@ -154,6 +155,7 @@ export function ExternalFilesSettings() {
               value={createName}
               onChange={(e) => setCreateName(e.target.value)}
               onKeyDown={(e) => {
+                if (isImeComposing(e)) return;
                 if (e.key === "Enter") handleCreateFile();
                 if (e.key === "Escape") setShowCreatePrompt(false);
               }}

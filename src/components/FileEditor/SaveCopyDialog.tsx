@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Copy } from "lucide-react";
 import { Modal, Button, Field, Input } from "@/components/ui";
+import { isImeComposing } from "@/utils/imeComposition";
 
 export interface SaveCopyDialogProps {
   /** Whether the dialog is open (controlled). */
@@ -51,6 +52,7 @@ export function SaveCopyDialog({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (isImeComposing(e)) return;
       if (e.key === "Enter") handleSubmit();
     },
     [handleSubmit]

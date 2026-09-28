@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { isImeComposing } from "@/utils/imeComposition";
 
 export interface TreeSelectionResult {
   selectedIds: Set<string>;
@@ -64,6 +65,7 @@ export function useTreeSelection(flatVisibleIds: string[]): TreeSelectionResult 
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (isImeComposing(e)) return;
       if (e.key === "Escape") clearSelection();
     };
     document.addEventListener("keydown", onKeyDown);
