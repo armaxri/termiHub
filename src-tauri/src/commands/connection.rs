@@ -95,7 +95,11 @@ pub struct ConnectionData {
 }
 
 /// An error encountered when loading an external connection file.
+///
+/// The TypeScript DTO is generated from this struct via ts-rs (audit DUP-030).
 #[derive(Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ExternalFileError {
     pub file_path: String,
