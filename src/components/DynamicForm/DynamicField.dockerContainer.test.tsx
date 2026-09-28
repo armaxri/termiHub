@@ -211,3 +211,72 @@ describe("DynamicField dockerContainer picker on an agent-hosted connection (#34
     expect(q("field-existingContainer-option-fresh")).not.toBeNull();
   });
 });
+
+describe("DynamicField dockerContainer picker compose awareness (#3425)", () => {
+  const compose = (name: string, project: string, service: string, running = true) =>
+    info(name, running, { composeProject: project, composeService: service });
+
+  it("groups mixed compose and plain containers by project, plain ones last", async () => {
+    mockedList.mockResolvedValue([
+      compose("shop-web-1", "shop", "web"),
+      info("standalone", true),
+      compose("blog-db-1", "blog", "db"),
+      compose("shop-db-1", "shop", "db", false),
+    ]);
+    await render("");
+    const labels = [...container.querySelectorAll(".settings-form__container-group-label")].map(
+      (el) => el.textContent
+    );
+    expect(labels).toEqual(["Compose project: blog", "Compose project: shop", "Other containers"]);
+    const shopGroup = q("field-existingContainer-group-project-shop")?.parentElement;
+    expect(
+      shopGroup?.querySelector('[data-testid="field-existingContainer-option-shop-web-1"]')
+    ).not.toBeNull();
+    expect(
+      shopGroup?.querySelector('[data-testid="field-existingContainer-option-shop-db-1"]')
+    ).not.toBeNull();
+    const otherGroup = q("field-existingContainer-group-other")?.parentElement;
+    expect(
+      otherGroup?.querySelector('[data-testid="field-existingContainer-option-standalone"]')
+    ).not.toBeNull();
+  });
+
+  it("shows the service name and still selects by container name", async () => {
+    mockedList.mockResolvedValue([compose("shop-web-1", "shop", "web")]);
+    const onChange = await render("");
+    expect(q("field-existingContainer-service-shop-web-1")?.textContent).toBe("service: web");
+    act(() => q("field-existingContainer-option-shop-web-1")?.click());
+    expect(onChange).toHaveBeenCalledWith("shop-web-1");
+  });
+
+  it("renders a flat list without group headers when nothing is from compose", async () => {
+    mockedList.mockResolvedValue([info("web", true), info("worker", true)]);
+    await render("");
+    expect(container.querySelector(".settings-form__container-group-label")).toBeNull();
+    expect(q("field-existingContainer-option-web")).not.toBeNull();
+  });
+
+  it("filters by project and service name", async () => {
+    mockedList.mockResolvedValue([
+      compose("shop-web-1", "shop", "frontend"),
+      compose("blog-api-1", "blog", "api"),
+      info("standalone", true),
+    ]);
+    await render("frontend");
+    expect(q("field-existingContainer-option-shop-web-1")).not.toBeNull();
+    expect(q("field-existingContainer-option-blog-api-1")).toBeNull();
+    await render("blog");
+    expect(q("field-existingContainer-option-blog-api-1")).not.toBeNull();
+    expect(q("field-existingContainer-option-standalone")).toBeNull();
+  });
+
+  it("groups an agent host's compose containers the same way", async () => {
+    mockedAgentList.mockResolvedValue({
+      supported: true,
+      containers: [compose("shop-web-1", "shop", "web"), info("plain", true)],
+    });
+    await render("", vi.fn(), { runtime: "docker", listingEnabled: true, agentId: "a1" });
+    expect(q("field-existingContainer-group-project-shop")).not.toBeNull();
+    expect(q("field-existingContainer-group-other")).not.toBeNull();
+  });
+});
