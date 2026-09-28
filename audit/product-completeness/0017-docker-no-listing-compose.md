@@ -8,8 +8,8 @@ is_workaround: false
 subsystem: core/backends/docker
 evidence:
   - core/src/backends/docker/mod.rs:365
-status: partial
-resolution: "#3426, #3765 — docker container picker local (#3426) + agent-hosted via docker.list_containers RPC, old agents fall back to typed field (#3765, protocol 0.14.0). Remaining: compose project/service awareness #3425"
+status: fixed
+resolution: "#3426, #3765, #3785 — docker container picker local (#3426) + agent-hosted via docker.list_containers (#3765) + compose project/service grouping from compose labels, back-compatible optional DTO fields (#3785). Service-name targeting optional follow-up #3784"
 ---
 
 ## What
