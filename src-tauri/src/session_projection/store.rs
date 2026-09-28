@@ -268,14 +268,7 @@ impl SessionLifecycleStore {
     /// Pure with respect to lifecycle state (never mutates), so the projector can
     /// safely diff two consecutive snapshots.
     pub fn snapshot(&self) -> Value {
-        let inner = self.lock();
-        let mut map = Map::with_capacity(inner.sessions.len());
-        for (id, lifecycle) in &inner.sessions {
-            if let Ok(value) = serde_json::to_value(lifecycle) {
-                map.insert(id.clone(), value);
-            }
-        }
-        json!({ "sessions": Value::Object(map) })
+        snapshot_of(&self.lock())
     }
 
     /// `session.connect` — begin an initial connect. Resets any prior state for
@@ -807,19 +800,20 @@ impl SessionLifecycleStore {
     /// which likewise omits an entry it cannot serialize), so the region converges
     /// on the same result either way.
     pub fn drain_delta(&self) -> RegionDelta {
+        drain_delta_of(&mut self.lock())
+    }
+
+    /// [`Self::drain_delta`] plus a whole-region [`Self::snapshot`], both taken
+    /// under **one** store lock so no fold can land between them (#3780). The
+    /// snapshot is therefore exactly the state the drained delta brings the
+    /// region to — the ground truth the debug PERF-006 cross-check in
+    /// [`crate::session_projection::projection`] compares against. A fresh
+    /// `snapshot()` taken after the drain would also contain any fold that raced
+    /// in afterwards (still dirty, published next), failing the check spuriously.
+    pub fn drain_delta_with_snapshot(&self) -> (RegionDelta, Value) {
         let mut inner = self.lock();
-        let keys: Vec<String> = inner.dirty.drain().collect();
-        let sessions = keys
-            .into_iter()
-            .map(|key| {
-                let value = inner
-                    .sessions
-                    .get(&key)
-                    .and_then(|entry| serde_json::to_value(entry).ok());
-                (key, value)
-            })
-            .collect();
-        RegionDelta { sessions }
+        let delta = drain_delta_of(&mut inner);
+        (delta, snapshot_of(&inner))
     }
 
     /// Read a session's current lifecycle (test / diagnostics helper).
@@ -861,6 +855,35 @@ impl SessionLifecycleStore {
         // panicked mid-mutation (a bug) — recover rather than cascade.
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
+}
+
+/// The whole-region view model of the locked store (see
+/// [`SessionLifecycleStore::snapshot`]).
+fn snapshot_of(inner: &Inner) -> Value {
+    let mut map = Map::with_capacity(inner.sessions.len());
+    for (id, lifecycle) in &inner.sessions {
+        if let Ok(value) = serde_json::to_value(lifecycle) {
+            map.insert(id.clone(), value);
+        }
+    }
+    json!({ "sessions": Value::Object(map) })
+}
+
+/// Drain the locked store's dirty set into a [`RegionDelta`] (see
+/// [`SessionLifecycleStore::drain_delta`]).
+fn drain_delta_of(inner: &mut Inner) -> RegionDelta {
+    let keys: Vec<String> = inner.dirty.drain().collect();
+    let sessions = keys
+        .into_iter()
+        .map(|key| {
+            let value = inner
+                .sessions
+                .get(&key)
+                .and_then(|entry| serde_json::to_value(entry).ok());
+            (key, value)
+        })
+        .collect();
+    RegionDelta { sessions }
 }
 
 /// Whether a session is in the sticky [`SessionStatus::Evicted`] state (SM-003).
