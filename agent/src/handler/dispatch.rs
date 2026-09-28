@@ -886,7 +886,13 @@ fn register_connection_create(module: &mut RpcModule<Mutex<HandlerState>>) -> an
         let span = session_create_span(type_id, p.correlation_id.as_deref());
 
         let snapshot = session_manager
-            .create(type_id, title, p.config, p.definition_id)
+            .create_correlated(
+                type_id,
+                title,
+                p.config,
+                p.definition_id,
+                p.correlation_id.as_deref(),
+            )
             .instrument(span.clone())
             .await
             .map_err(|e| match e {

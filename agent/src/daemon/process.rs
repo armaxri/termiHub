@@ -13,7 +13,7 @@
 use std::time::Duration;
 
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, Instrument};
 
 use crate::daemon::protocol::{self, *};
 use crate::daemon::transport::{self, BoxedReader, BoxedWriter, DaemonListener};
@@ -56,6 +56,45 @@ pub(crate) fn positive_secs(raw: Option<&str>) -> Option<Duration> {
 /// The configured [`DETACHED_TIMEOUT_ENV`] bound, or `None` (unbounded).
 fn detached_timeout_from_env() -> Option<Duration> {
     positive_secs(std::env::var(DETACHED_TIMEOUT_ENV).ok().as_deref())
+}
+
+/// Env var carrying the desktop's `correlation_id` for this session (#3782).
+///
+/// The spawning worker exports the already-validated id from
+/// `connection.create` so the daemon's own log lines join the desktop's
+/// `termihub.log` under the same `agent_session` span the worker's create path
+/// uses (OBS-004). Unset means the session was created without one — the
+/// daemon then logs exactly as before, minus the field.
+pub const CORRELATION_ID_ENV: &str = "TERMIHUB_CORRELATION_ID";
+
+/// The launch correlation id from [`CORRELATION_ID_ENV`], re-validated.
+///
+/// The environment is untrusted input to this process, so the id is checked
+/// again with the protocol's own rule and a malformed one (a newline that could
+/// forge a log line, an escape sequence, an oversized value) is dropped rather
+/// than logged.
+fn correlation_id_from_env() -> Option<String> {
+    let id = std::env::var(CORRELATION_ID_ENV).ok()?;
+    if termihub_core::protocol::methods::is_valid_correlation_id(&id) {
+        Some(id)
+    } else {
+        debug!("ignoring malformed {CORRELATION_ID_ENV}");
+        None
+    }
+}
+
+/// The `tracing` span the daemon runs its session under (#3782).
+///
+/// Same name and fields as the worker's `connection.create` span, so a log
+/// search for one `correlation_id` finds both processes' lines. The field is
+/// left out entirely when there is no (valid) id.
+fn daemon_session_span(config: &DaemonConfig, correlation_id: Option<&str>) -> tracing::Span {
+    tracing::info_span!(
+        "agent_session",
+        correlation_id,
+        type_id = config.type_id.as_str(),
+        session_id = config.session_id.as_str(),
+    )
 }
 
 /// Configuration for the session daemon, read from environment variables.
@@ -154,6 +193,15 @@ pub async fn run_daemon(session_id: &str) -> anyhow::Result<()> {
     let settings = read_settings_from_stdin()?;
     let config = DaemonConfig::from_env(session_id, settings)?;
 
+    // Log the whole session under the desktop's correlation id when the
+    // worker handed one over (#3782, OBS-004).
+    let span = daemon_session_span(&config, correlation_id_from_env().as_deref());
+    run_daemon_session(config).instrument(span).await
+}
+
+/// Connect the session's [`ConnectionType`], bind the endpoint and run the
+/// event loop until the session ends. Runs inside [`daemon_session_span`].
+async fn run_daemon_session(config: DaemonConfig) -> anyhow::Result<()> {
     info!(
         "Session daemon starting: id={}, type={}, buffer={}",
         config.session_id, config.type_id, config.buffer_size
@@ -1498,8 +1546,8 @@ pub(crate) mod tests {
             .find(|l| l.contains("Session daemon starting"))
             .unwrap_or_else(|| panic!("no daemon start line in {logs:?}"));
         assert!(start.contains("agent_session"), "{start}");
-        assert!(start.contains("correlation_id=desk-sid-1"), "{start}");
-        assert!(start.contains("session_id=sess-3782"), "{start}");
+        assert!(start.contains(r#"correlation_id="desk-sid-1""#), "{start}");
+        assert!(start.contains(r#"session_id="sess-3782""#), "{start}");
     }
 
     #[tokio::test]
