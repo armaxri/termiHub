@@ -40,6 +40,7 @@ import {
   agentGraphicalTabConfig,
   isAgentTunnelledGraphicalType,
 } from "@/utils/agentGraphicalTunnel";
+import { resolveAgentGraphicalSettings } from "@/utils/agentGraphicalSecret";
 import { Button, StatusDot, Tooltip, toast } from "@/components/ui";
 import type { StatusTone } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
@@ -1013,12 +1014,25 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
       if (isAgentTunnelledGraphicalType(def.sessionType)) {
         // VNC/RDP under an agent runs on this computer and tunnels through the
         // agent's port forwarding (#3241) — a remote-desktop tab, not a session.
-        addTab(
-          def.name,
-          def.sessionType,
-          agentGraphicalTabConfig(agent.id, def.sessionType, def.config),
-          { contentType: "remote-desktop" }
-        );
+        // Its password comes from this computer's credential store or a prompt,
+        // never from the agent host (#3803).
+        void resolveAgentGraphicalSettings({
+          agentId: agent.id,
+          definitionId: def.id,
+          settings: def.config,
+          requestPassword,
+        }).then((resolved) => {
+          if (resolved.status === "canceled") {
+            toast.info("Connect canceled");
+            return;
+          }
+          addTab(
+            def.name,
+            def.sessionType,
+            agentGraphicalTabConfig(agent.id, def.sessionType, resolved.settings),
+            { contentType: "remote-desktop" }
+          );
+        });
         return;
       }
       addTab(
@@ -1040,7 +1054,7 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
         { terminalOptions: def.terminalOptions }
       );
     },
-    [agent.id, addTab]
+    [agent.id, addTab, requestPassword]
   );
 
   const handleRefresh = useCallback(() => {
