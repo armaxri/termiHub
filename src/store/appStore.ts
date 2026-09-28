@@ -25,39 +25,17 @@ import {
 import {
   FileEntry,
   TransferState,
-  RemoteAgentDefinition,
-  AgentCapabilities,
-  AgentSettings,
   DEFAULT_LAYOUT,
   PersistentRunState,
   PersistentSessionEntry,
 } from "@/types/connection";
-import {
-  loadConnections,
-  persistAgent,
-  removeAgent,
-  reorderAgents as persistAgentOrder,
-  getSettings,
-  getRecoveryWarnings,
-} from "@/services/storage";
+import { loadConnections, getSettings, getRecoveryWarnings } from "@/services/storage";
 import { deriveTabStatus, type TabStatusMaps } from "@/utils/tabStatus";
 import { isAutoReconnectEnabled } from "@/utils/autoReconnect";
 import {
   sessionGetCapabilities,
   listAvailableShells,
   getDefaultShell,
-  connectAgent as apiConnectAgent,
-  disconnectAgent as apiDisconnectAgent,
-  shutdownAgent as apiShutdownAgent,
-  applyAgentSettings as apiApplyAgentSettings,
-  listAgentSessions,
-  listAgentConnections,
-  saveAgentDefinition,
-  updateAgentDefinition as apiUpdateAgentDefinition,
-  deleteAgentDefinition,
-  createAgentFolder as apiCreateAgentFolder,
-  updateAgentFolder as apiUpdateAgentFolder,
-  deleteAgentFolder as apiDeleteAgentFolder,
   AgentDefinitionInfo,
   getConnectionTypes,
   startPersistentSession as apiStartPersistentSession,
@@ -78,14 +56,6 @@ import {
   collectWindowLayouts,
   takePendingWindowRestore,
 } from "@/services/api";
-import {
-  buildAgentConnectionCreate,
-  buildAgentConnectionMove,
-  buildAgentFolderExpanded,
-} from "@/services/agentConnectionPayloads";
-import type { ConnectionCreateParams } from "@/types/generated/ConnectionCreateParams";
-import type { ConnectionUpdateParams } from "@/types/generated/ConnectionUpdateParams";
-import type { FolderUpdateParams } from "@/types/generated/FolderUpdateParams";
 import type {
   MoveWindowTarget,
   TabHandoffRecord,
@@ -107,7 +77,6 @@ import type { CapturedWindowLayout, WindowRestorePlanEntry } from "@/utils/windo
 import { classifyWindowCloseSessions, windowCloseWouldLoseData } from "@/utils/windowClose";
 import type { ConnectionTypeInfo, ContainerSpawn, ShellSpawn } from "@/services/api";
 import type { SpawnRequestPayload } from "@/services/events";
-import { RemoteAgentConfig } from "@/types/terminal";
 import { createTunnelSlice, TunnelSlice } from "./slices/tunnelSlice";
 import { createEmbeddedServersSlice, EmbeddedServersSlice } from "./slices/embedded-serversSlice";
 import { createMacrosSlice, MacrosSlice } from "./slices/macrosSlice";
@@ -135,6 +104,7 @@ import { createPortableModeSlice, PortableModeSlice } from "./slices/portableMod
 import { createEditorSlice, EditorSlice } from "./slices/editorSlice";
 import { createSettingsSlice, SettingsSlice } from "./slices/settingsSlice";
 import { createUiChromeSlice, UiChromeSlice } from "./slices/uiChromeSlice";
+import { createAgentsSlice, AgentsSlice } from "./slices/agentsSlice";
 
 export type { MacroPlaybackState, PlayMacroOptions } from "./slices/macrosSlice";
 export type {
@@ -195,7 +165,6 @@ import {
 import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
 import { fireAndForget, frontendError, frontendLog } from "@/utils/frontendLog";
 import { readConfigBoolean, readConfigString } from "@/utils/connectionConfigFields";
-import { backendErrorMessage } from "@/utils/backendErrorCode";
 import { quotePath } from "@/utils/quotePath";
 import { toast } from "@/components/ui";
 import {
@@ -241,7 +210,7 @@ import {
   onSessionView,
 } from "@/store/sessionBridge";
 import { currentMonitorsView } from "@/store/systemMonitorBridge";
-import { currentAgentsView, ensureAgentsSubscribed, mirrorAgentIntent } from "@/store/agentsBridge";
+import { currentAgentsView, ensureAgentsSubscribed } from "@/store/agentsBridge";
 import { currentConnectionsView, ensureConnectionsSubscribed } from "@/store/connectionsBridge";
 import { currentSettingsView, ensureSettingsSubscribed } from "@/store/settingsBridge";
 import { currentBroadcastView, dispatchBroadcastIntentBestEffort } from "@/store/broadcastBridge";
@@ -253,8 +222,6 @@ import {
   type ProjectedSettlement,
 } from "@/store/restoreCohortBridge";
 import { errorMessage } from "@/utils/errorMessage";
-import { agentBookmarkScopePrefix } from "@/utils/fileBookmarkScope";
-import { useFileBookmarksStore } from "@/store/fileBookmarksStore";
 import { resolveWindowEviction } from "@/utils/tabOwnership";
 
 export type SidebarView =
@@ -379,15 +346,6 @@ export interface AgentUpdatePending {
   since: number;
 }
 
-/**
- * Extra seconds added to the agent's own restart estimate before the queued
- * auto-reconnect fires (#1602). The agent only begins its restart once every
- * host has disconnected (or a 10 s window closes), so reconnecting exactly at
- * the estimate would race the process still coming up; a small buffer avoids a
- * wasted failing attempt.
- */
-const AGENT_UPDATE_RECONNECT_BUFFER_SECS = 3;
-
 export interface AppState
   extends
     TunnelSlice,
@@ -414,7 +372,8 @@ export interface AppState
     PortableModeSlice,
     EditorSlice,
     SettingsSlice,
-    UiChromeSlice {
+    UiChromeSlice,
+    AgentsSlice {
   // Connection type registry (loaded from backend at startup)
   connectionTypes: ConnectionTypeInfo[];
 
@@ -1124,72 +1083,11 @@ export interface AppState
   // Remote agents — the ordered agent list plus each agent's live sessions, saved
   // definitions and folders are region-authoritative (#2409): they live only in the
   // shared `agents` projection region, read via `useProjectedAgents()` /
-  // `currentAgentsView()`. `appStore` holds no agents slice; the lifecycle actions
-  // below are thin backend-command wrappers. The per-client update sub-slices below
-  // (`agentUpdates` / `agentUpdatesDismissed` / `agentUpdatePending`) are
-  // presentation state the region does not model and stay here.
-  /** Staged/available agent updates by agent id, from `agent.update_available` (#1352). */
-  agentUpdates: Record<string, AgentPendingUpdate>;
-  /** Per-agent dismissal of the deferred-update banner (#1352). */
-  agentUpdatesDismissed: Record<string, boolean>;
-  /** Record (or clear) a staged/available update for an agent. */
-  setAgentUpdateAvailable: (agentId: string, update: AgentPendingUpdate) => void;
-  /** Hide the deferred-update banner for an agent for this session. */
-  dismissAgentUpdate: (agentId: string) => void;
-  /**
-   * Coordinated updates in progress on an agent, initiated by another host,
-   * from `agent.update_pending` (#1602). Keyed by agent id.
-   */
-  agentUpdatePending: Record<string, AgentUpdatePending>;
-  /**
-   * Handle an incoming `agent.update_pending` (#1602): record the notice,
-   * suspend the affected agent connection (the disconnect *is* the ack the
-   * updating host waits for), and queue an auto-reconnect to the new version
-   * once the agent's restart window has elapsed. Sessions survive in detached
-   * daemons and are recovered on reconnect, so only the connection is suspended.
-   */
-  handleAgentUpdatePending: (
-    agentId: string,
-    requestedByVersion: string,
-    estimatedRestartSecs: number
-  ) => void;
-  /** Clear a recorded coordinated-update-pending notice for an agent. */
-  clearAgentUpdatePending: (agentId: string) => void;
-  addRemoteAgent: (agent: RemoteAgentDefinition) => void;
-  updateRemoteAgent: (agent: RemoteAgentDefinition) => void;
-  deleteRemoteAgent: (agentId: string) => void;
-  reorderRemoteAgents: (oldIndex: number, newIndex: number) => void;
-  toggleRemoteAgent: (agentId: string) => void;
-  connectRemoteAgent: (agentId: string, password?: string) => Promise<void>;
-  disconnectRemoteAgent: (agentId: string) => Promise<void>;
-  /**
-   * Gracefully shut down a remote agent (stop remote sessions) and disconnect.
-   * Resolves to the number of sessions the agent reported as detached/killed.
-   */
-  shutdownRemoteAgent: (agentId: string) => Promise<number>;
-  setAgentConnectionState: (
-    agentId: string,
-    state: RemoteAgentDefinition["connectionState"],
-    error?: string
-  ) => void;
-  setAgentCapabilities: (agentId: string, capabilities: AgentCapabilities) => void;
-  clearAgentSessions: (agentId: string) => void;
-  updateAgentSettings: (agentId: string, settings: AgentSettings) => Promise<void>;
-  refreshAgentSessions: (agentId: string) => Promise<void>;
-  saveAgentDef: (agentId: string, definition: ConnectionCreateParams) => Promise<void>;
-  duplicateAgentDef: (agentId: string, definitionId: string) => Promise<void>;
-  updateAgentDef: (agentId: string, params: ConnectionUpdateParams) => Promise<void>;
-  moveAgentDefToFolder: (agentId: string, defId: string, folderId: string | null) => Promise<void>;
-  bulkMoveAgentDefsToFolder: (
-    agentId: string,
-    defIds: string[],
-    folderId: string | null
-  ) => Promise<void>;
-  deleteAgentDef: (agentId: string, definitionId: string) => Promise<void>;
-  createAgentFolder: (agentId: string, name: string, parentId?: string | null) => Promise<void>;
-  updateAgentFolder: (agentId: string, params: FolderUpdateParams) => Promise<void>;
-  deleteAgentFolder: (agentId: string, folderId: string) => Promise<void>;
-  toggleAgentFolder: (agentId: string, folderId: string) => void;
+  // `currentAgentsView()`. The lifecycle / definition / folder actions and the
+  // per-client update sub-slices (`agentUpdates` / `agentUpdatesDismissed` /
+  // `agentUpdatePending`) are provided by AgentsSlice (ARCH-001/FES-011,
+  // extracted under #2077 via #2881). `resolveAgentErrorTabs` stays here because
+  // it rewrites the tab trees (tabs/layout domain).
   /** Convert all agent-error tabs for the given agent into live terminal tabs after reconnect. */
   resolveAgentErrorTabs: (agentId: string) => void;
 
@@ -2615,6 +2513,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     ...createPortableModeSlice(set, get, store),
     ...createSettingsSlice(set, get, store),
     ...createUiChromeSlice(set, get, store),
+    ...createAgentsSlice(set, get, store),
 
     // Connection type registry — updated by loadFromBackend()
     connectionTypes: [],
@@ -5542,450 +5441,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }
     },
 
-    // Remote agents — the ordered agent list plus each agent's sessions /
-    // definitions / folders are region-authoritative (#2409); no `appStore` slice.
-    // See the `agents` projection region (read via `useProjectedAgents()` /
-    // `currentAgentsView()`). The per-client update sub-slices below stay here.
-    agentUpdates: {},
-    agentUpdatesDismissed: {},
-
-    setAgentUpdateAvailable: (agentId, update) => {
-      set((s) => ({
-        agentUpdates: { ...s.agentUpdates, [agentId]: update },
-        // A freshly reported update re-arms the banner even if a prior one was
-        // dismissed this session.
-        agentUpdatesDismissed: { ...s.agentUpdatesDismissed, [agentId]: false },
-      }));
-    },
-
-    dismissAgentUpdate: (agentId) => {
-      set((s) => ({
-        agentUpdatesDismissed: { ...s.agentUpdatesDismissed, [agentId]: true },
-      }));
-    },
-
-    agentUpdatePending: {},
-
-    handleAgentUpdatePending: (agentId, requestedByVersion, estimatedRestartSecs) => {
-      // Ignore a duplicate notice for an agent already suspended for this
-      // coordinated update — its reconnect is already queued.
-      if (get().agentUpdatePending[agentId]) return;
-
-      const agentName =
-        currentAgentsView().remoteAgents.find((a) => a.id === agentId)?.name ?? "Agent";
-      const toastId = `agent-update-pending-${agentId}`;
-
-      set((s) => ({
-        agentUpdatePending: {
-          ...s.agentUpdatePending,
-          [agentId]: { requestedByVersion, estimatedRestartSecs, since: Date.now() },
-        },
-      }));
-
-      // Surface the "being updated by another host" notice. A loading toast is
-      // the design system's long-running-work affordance (the "reactive"
-      // pillar): it shows the suspend/restart is in progress and resolves in
-      // place to success/error when the reconnect settles.
-      toast.loading(`${agentName} is being updated by another host…`, {
-        id: toastId,
-        description: "Sessions are paused briefly and reconnect automatically.",
-      });
-
-      // Suspend the connection: disconnecting is the ack the updating host waits
-      // for (there is no reply frame — see docs/remote-protocol.md
-      // `agent.update_pending`). Sessions live on in detached daemons and are
-      // recovered on reconnect, so only the transport goes away here.
-      void get().disconnectRemoteAgent(agentId);
-
-      // Queue the auto-reconnect once the agent has had its restart window.
-      const delayMs =
-        (Math.max(estimatedRestartSecs, 1) + AGENT_UPDATE_RECONNECT_BUFFER_SECS) * 1000;
-      setTimeout(() => {
-        // Skip if the notice was cleared meanwhile (e.g. a manual reconnect).
-        if (!get().agentUpdatePending[agentId]) return;
-        get().clearAgentUpdatePending(agentId);
-        get()
-          .connectRemoteAgent(agentId)
-          .then(() => {
-            toast.success(`${agentName} reconnected to the updated version.`, {
-              id: toastId,
-            });
-          })
-          .catch(() => {
-            toast.error(`Couldn't reconnect to ${agentName} after the update.`, {
-              id: toastId,
-            });
-          });
-      }, delayMs);
-    },
-
-    clearAgentUpdatePending: (agentId) => {
-      set((s) => {
-        if (!(agentId in s.agentUpdatePending)) return {};
-        const next = { ...s.agentUpdatePending };
-        delete next[agentId];
-        return { agentUpdatePending: next };
-      });
-    },
-
-    addRemoteAgent: (agent) => {
-      // Optimistic append in the authoritative region (#2409), then persist. The
-      // backend folds the persisted agent list back at the source (#2403).
-      mirrorAgentIntent("agent.add", {
-        id: agent.id,
-        name: agent.name,
-        config: agent.config,
-        agentSettings: agent.agentSettings,
-      });
-      persistAgent({
-        id: agent.id,
-        name: agent.name,
-        config: agent.config,
-        agentSettings: agent.agentSettings,
-      }).catch((err) => {
-        frontendLog("app_store", `Failed to persist new agent: ${errorMessage(err)}`);
-        toast.error(`Failed to save agent ${agent.name}: ${errorMessage(err)}`);
-      });
-    },
-
-    updateRemoteAgent: (agent) => {
-      // Optimistic edit in the region (#2409), then persist.
-      mirrorAgentIntent("agent.update", {
-        id: agent.id,
-        name: agent.name,
-        config: agent.config,
-        agentSettings: agent.agentSettings,
-      });
-      persistAgent({
-        id: agent.id,
-        name: agent.name,
-        config: agent.config,
-        agentSettings: agent.agentSettings,
-      }).catch((err) => {
-        frontendLog("app_store", `Failed to persist agent update: ${errorMessage(err)}`);
-        toast.error(`Failed to save agent ${agent.name}: ${errorMessage(err)}`);
-      });
-    },
-
-    reorderRemoteAgents: (oldIndex, newIndex) => {
-      // Compute the new id order from the authoritative region view, optimistically
-      // reorder it in the region (#2409), then persist the new order.
-      const agents = [...currentAgentsView().remoteAgents];
-      const [moved] = agents.splice(oldIndex, 1);
-      agents.splice(newIndex, 0, moved);
-      const agentIds = agents.map((a) => a.id);
-      mirrorAgentIntent("agent.reorder", { oldIndex, newIndex });
-      persistAgentOrder(agentIds).catch((err) => {
-        frontendLog("app_store", `Failed to persist agent reorder: ${errorMessage(err)}`);
-        toast.error(`Failed to save agent order: ${errorMessage(err)}`);
-      });
-    },
-
-    deleteRemoteAgent: (agentId) => {
-      // Disconnect first if connected
-      const agent = currentAgentsView().remoteAgents.find((a) => a.id === agentId);
-      if (agent && agent.connectionState !== "disconnected") {
-        // Best-effort transport teardown during delete — a failure leaks the
-        // connection, so log it to the LogViewer rather than swallowing it
-        // (WA-FE-005).
-        apiDisconnectAgent(agentId).catch((err) => {
-          frontendError(
-            "app_store",
-            `Failed to disconnect agent ${agentId} during delete: ${errorMessage(err)}`
-          );
-        });
-      }
-      // Optimistic remove in the region — drops the agent and all of its sub-state
-      // (the store's `remove` clears sessions/definitions/folders too, #2409);
-      // the persisted-list fold reconciles server-side (#2403).
-      mirrorAgentIntent("agent.remove", { id: agentId });
-      removeAgent(agentId)
-        .then(() => {
-          // The backend pruned the agent's file-browser bookmarks (#3562);
-          // drop them from the UI cache too.
-          const prefix = agentBookmarkScopePrefix(agentId);
-          useFileBookmarksStore.getState().forgetScopes((scope) => scope.startsWith(prefix));
-        })
-        .catch((err) => {
-          frontendLog("app_store", `Failed to persist agent deletion: ${errorMessage(err)}`);
-          toast.error(`Failed to delete agent ${agent?.name ?? ""}: ${errorMessage(err)}`);
-        });
-    },
-
-    toggleRemoteAgent: (agentId) => {
-      // Optimistically flip the sidebar expansion in the authoritative region (#2409).
-      mirrorAgentIntent("agent.toggleExpanded", { id: agentId });
-    },
-
-    connectRemoteAgent: async (agentId, password) => {
-      const agent = currentAgentsView().remoteAgents.find((a) => a.id === agentId);
-      if (!agent) return;
-
-      // Single-writer rule (G4/#1234): `connectionState` is written ONLY by the
-      // backend `agent-state-change` event (via `setAgentConnectionState`). This
-      // action just kicks off the request and consumes the returned
-      // `capabilities` — it writes no `connecting`/`connected`/`disconnected`
-      // states. The backend is authoritative for every transition (it emits
-      // "connecting" up front and "connected"/"disconnected" on the outcome),
-      // so an optimistic write here could clobber a fast drop → "reconnecting"
-      // event that arrives before this promise settles.
-      // The agent's expansion before this connect: connect force-expands the
-      // sidebar entry, so the region only needs a toggle when it was collapsed.
-      const wasExpanded = agent.isExpanded;
-      try {
-        const config: RemoteAgentConfig = { ...agent.config };
-        if (password && config.authMethod === "password") {
-          config.password = password;
-        }
-        const result = await apiConnectAgent(agentId, config, agent.agentSettings);
-
-        // Consume capabilities only (no connectionState write): record the
-        // capabilities and the force-expand optimistically in the authoritative
-        // region (#2409). `connectionState` stays a single-writer field driven by
-        // the `agent-state-change` event (`setAgentConnectionState` →
-        // `agent.status`), so it is deliberately not written here.
-        mirrorAgentIntent("agent.setCapabilities", {
-          id: agentId,
-          capabilities: result.capabilities,
-        });
-        if (!wasExpanded) mirrorAgentIntent("agent.toggleExpanded", { id: agentId });
-
-        // The session/definition refresh is owned by the "connected" event
-        // (`setAgentConnectionState`), so it runs exactly once per connect and
-        // also covers the reconnect path — do not refresh here (de-dup, G4).
-      } catch (err) {
-        frontendLog("app_store", `Failed to connect agent ${agentId}: ${backendErrorMessage(err)}`);
-        // No optimistic "disconnected" write: the backend emits "disconnected"
-        // on every connect-failure path, so the event will drive the state.
-        throw err;
-      }
-    },
-
-    disconnectRemoteAgent: async (agentId) => {
-      try {
-        await apiDisconnectAgent(agentId);
-      } catch (err) {
-        frontendLog("app_store", `Failed to disconnect agent ${agentId}: ${errorMessage(err)}`);
-        toast.error(`Failed to disconnect agent: ${errorMessage(err)}`);
-      }
-      // Optimistically force the region entry to disconnected and clear its live
-      // sessions/folders (the store's `disconnect` does exactly this, #2409).
-      mirrorAgentIntent("agent.disconnect", { id: agentId });
-    },
-
-    shutdownRemoteAgent: async (agentId) => {
-      // Unlike disconnect (detach), shutdown stops the remote sessions and then
-      // drops the transport. The backend returns how many sessions were
-      // detached/killed so the UI can report the impact.
-      const detached = await apiShutdownAgent(agentId);
-      // As with disconnect, optimistically force the region entry to disconnected
-      // and clear its live sessions/folders (#2409).
-      mirrorAgentIntent("agent.disconnect", { id: agentId });
-      return detached;
-    },
-
-    setAgentConnectionState: (agentId, connectionState, error) => {
-      // Single writer for `connectionState` (G4/#1234): only the backend
-      // `agent-state-change` event reaches this setter. Read the previous state
-      // from the authoritative region to guard the once-per-connect refresh below.
-      const previous = currentAgentsView().remoteAgents.find(
-        (a) => a.id === agentId
-      )?.connectionState;
-
-      // Optimistically set the connection state in the region (#2409). This is the
-      // single writer for `connectionState` (G4/#1234); the store's `set_status`
-      // tracks `lastError` across auto-reconnect exhaustion (G3/#1236) with the same
-      // rules the frontend used — record it on `disconnected` (falling back to the
-      // stored one), clear it on `connecting`/`connected`, leave it otherwise.
-      mirrorAgentIntent("agent.status", { id: agentId, state: connectionState, error });
-
-      // The refresh of sessions/definitions is owned by the transition INTO
-      // "connected" — this is the single, de-duped refresh per connect (G4).
-      // Guarding on the previous state keeps a redundant/duplicate "connected"
-      // event from triggering a second refresh, and it also covers the
-      // reconnect path (reconnecting → connected) which never runs
-      // `connectRemoteAgent`.
-      if (connectionState === "connected" && previous !== "connected") {
-        void get().refreshAgentSessions(agentId);
-      }
-    },
-
-    clearAgentSessions: (agentId) => {
-      // Optimistically empty the region's live-session list for the agent (#2409).
-      mirrorAgentIntent("agent.clearSessions", { id: agentId });
-    },
-
-    setAgentCapabilities: (agentId, capabilities) => {
-      // Optimistically record the negotiated capabilities in the region (#2409).
-      mirrorAgentIntent("agent.setCapabilities", { id: agentId, capabilities });
-    },
-
-    updateAgentSettings: async (agentId, settings) => {
-      await apiApplyAgentSettings(agentId, settings);
-      // Optimistically apply just the settings in the region (#2409).
-      mirrorAgentIntent("agent.applySettings", { id: agentId, agentSettings: settings });
-    },
-
-    refreshAgentSessions: async (agentId) => {
-      try {
-        const [sessions, connectionsData] = await Promise.all([
-          listAgentSessions(agentId),
-          listAgentConnections(agentId),
-        ]);
-        // Optimistically replace the agent's live sessions plus its saved
-        // definitions and folders in the region in one shot (the once-per-connect
-        // refresh set, #2409).
-        mirrorAgentIntent("agent.refresh", {
-          id: agentId,
-          sessions,
-          definitions: connectionsData.connections,
-          folders: connectionsData.folders,
-        });
-      } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to refresh agent sessions for ${agentId}: ${errorMessage(err)}`
-        );
-        toast.error(`Failed to load agent sessions: ${errorMessage(err)}`);
-      }
-    },
-
-    saveAgentDef: async (agentId, definition) => {
-      try {
-        const saved = await saveAgentDefinition(agentId, definition);
-        // Optimistically upsert the saved definition in the region (#2409).
-        mirrorAgentIntent("agent.saveDefinition", { id: agentId, definition: saved });
-      } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to save agent definition on ${agentId}: ${errorMessage(err)}`
-        );
-        toast.error(`Failed to save connection: ${errorMessage(err)}`);
-      }
-    },
-
-    duplicateAgentDef: async (agentId, definitionId) => {
-      const original = currentAgentsView().agentDefinitions[agentId]?.find(
-        (d) => d.id === definitionId
-      );
-      if (!original) return;
-      await useAppStore.getState().saveAgentDef(
-        agentId,
-        buildAgentConnectionCreate(
-          {
-            name: `Copy of ${original.name}`,
-            type: original.sessionType,
-            config: original.config,
-            persistent: original.persistent,
-            terminalOptions: original.terminalOptions,
-            icon: original.icon,
-          },
-          original.folderId
-        )
-      );
-    },
-
-    deleteAgentDef: async (agentId, definitionId) => {
-      try {
-        await deleteAgentDefinition(agentId, definitionId);
-        // Optimistically remove the definition from the region (#2409).
-        mirrorAgentIntent("agent.deleteDefinition", { id: agentId, definitionId });
-      } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to delete agent definition on ${agentId}: ${errorMessage(err)}`
-        );
-        toast.error(`Failed to delete connection: ${errorMessage(err)}`);
-      }
-    },
-
-    updateAgentDef: async (agentId, params) => {
-      try {
-        const updated = await apiUpdateAgentDefinition(agentId, params);
-        // Optimistically replace the definition by id in the region (#2409).
-        mirrorAgentIntent("agent.updateDefinition", { id: agentId, definition: updated });
-      } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to update agent definition on ${agentId}: ${errorMessage(err)}`
-        );
-        toast.error(`Failed to update connection: ${errorMessage(err)}`);
-      }
-    },
-
-    moveAgentDefToFolder: async (agentId, defId, folderId) => {
-      await get().updateAgentDef(agentId, buildAgentConnectionMove(defId, folderId));
-    },
-
-    bulkMoveAgentDefsToFolder: async (agentId, defIds, folderId) => {
-      await Promise.all(
-        defIds.map((defId) => get().moveAgentDefToFolder(agentId, defId, folderId))
-      );
-    },
-
-    createAgentFolder: async (agentId, name, parentId) => {
-      try {
-        const folder = await apiCreateAgentFolder(agentId, name, parentId);
-        // Optimistically append the folder to the region (#2409).
-        mirrorAgentIntent("agent.createFolder", { id: agentId, folder });
-        toast.success(`Created folder ${folder.name}`);
-      } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to create agent folder on ${agentId}: ${errorMessage(err)}`
-        );
-        toast.error(`Failed to create folder: ${errorMessage(err)}`);
-      }
-    },
-
-    updateAgentFolder: async (agentId, params) => {
-      // A rename carries a new `name`; other prop updates (e.g. expansion state)
-      // stay silent so we do not toast on bookkeeping writes.
-      const isRename = typeof params.name === "string";
-      try {
-        const updated = await apiUpdateAgentFolder(agentId, params);
-        // Optimistically replace the folder by id in the region (#2409).
-        mirrorAgentIntent("agent.updateFolder", { id: agentId, folder: updated });
-        if (isRename) toast.success(`Renamed folder to ${updated.name}`);
-      } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to update agent folder on ${agentId}: ${errorMessage(err)}`
-        );
-        if (isRename) {
-          toast.error(`Failed to rename folder: ${errorMessage(err)}`);
-        }
-      }
-    },
-
-    deleteAgentFolder: async (agentId, folderId) => {
-      try {
-        await apiDeleteAgentFolder(agentId, folderId);
-        // Optimistically remove the folder and reparent its child definitions to
-        // the root (the store's `delete_folder` does both, #2409).
-        mirrorAgentIntent("agent.deleteFolder", { id: agentId, folderId });
-      } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to delete agent folder on ${agentId}: ${errorMessage(err)}`
-        );
-        toast.error(`Failed to delete folder: ${errorMessage(err)}`);
-      }
-    },
-
-    toggleAgentFolder: (agentId, folderId) => {
-      const existing = (currentAgentsView().agentFolders[agentId] ?? []).find(
-        (f) => f.id === folderId
-      );
-      if (!existing) return;
-      const folder = { ...existing, isExpanded: !existing.isExpanded };
-      // Optimistically replace the folder (with its flipped expansion) in the
-      // region (#2409), then fire-and-forget persist the expansion state.
-      mirrorAgentIntent("agent.updateFolder", { id: agentId, folder });
-      apiUpdateAgentFolder(agentId, buildAgentFolderExpanded(folderId, folder.isExpanded)).catch(
-        () => {}
-      );
-    },
+    // Remote agents — the agent lifecycle / definition / folder actions and the
+    // per-client update sub-slices (agentUpdates / agentUpdatesDismissed /
+    // agentUpdatePending + handleAgentUpdatePending) are provided by
+    // createAgentsSlice (ARCH-001/FES-011, extracted under #2077 via #2881). The
+    // agent list itself stays region-authoritative (#2409). resolveAgentErrorTabs
+    // stays here: it rewrites the tab trees via setAndReseed + tabContent.
 
     resolveAgentErrorTabs: (agentId) => {
       const defs = currentAgentsView().agentDefinitions[agentId] ?? [];
