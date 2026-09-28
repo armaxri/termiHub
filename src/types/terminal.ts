@@ -1,4 +1,3 @@
-import type { ConnectionHighlightingConfig } from "./syntaxHighlighting";
 // ts-rs-generated DTO (audit DUP-030). Imported here so this module can both
 // re-export it (below) and reference it locally in the interfaces further down.
 import type { ConnectionConfig } from "./generated/ConnectionConfig";
@@ -269,32 +268,13 @@ export interface TerminalAutoReconnectState {
   onReconnectCommand?: string;
 }
 
-export interface TerminalOptions {
-  horizontalScrolling?: boolean;
-  color?: string;
-  fontFamily?: string;
-  fontSize?: number;
-  lineHeight?: number;
-  scrollbackBuffer?: number;
-  cursorStyle?: "block" | "underline" | "bar";
-  cursorBlink?: boolean;
-  /** Per-connection line-ending override. Falls back to the global default. */
-  lineEnding?: LineEnding;
-  /**
-   * When `true`, this connection's session output is logged to a file on
-   * connect (#1960), using the default `<connection>-<timestamp>.log` location.
-   * Absent/false → no automatic logging (the toolbar toggle still works).
-   */
-  logToFile?: boolean;
-  /** When logging to a file, prefix each line with a timestamp (#1960). */
-  logTimestamps?: boolean;
-  /**
-   * Per-connection syntax-highlighting override (epic #1696). Absent → the
-   * connection follows the global setting (`override: "global"`). See
-   * `services/syntaxHighlightingConfig.ts` → `resolveHighlightingConfig`.
-   */
-  syntaxHighlighting?: ConnectionHighlightingConfig;
-}
+// Per-connection terminal display options.
+// Generated from the Rust `TerminalOptions` (src-tauri/src/connection/config.rs)
+// via ts-rs (audit DUP-030 / FEC-008). `cursorStyle`/`lineEnding` are narrowed to
+// their frontend unions and `syntaxHighlighting` to `ConnectionHighlightingConfig`
+// by fidelity overrides on the Rust side; the backend's forward-compat `extra`
+// catch-all (#2311) is deliberately not part of the frontend type.
+export type { TerminalOptions } from "./generated/TerminalOptions";
 
 // An external connection file configured for a remote agent.
 // Generated from the Rust `ExternalAgentFile` (src-tauri/src/terminal/backend.rs)

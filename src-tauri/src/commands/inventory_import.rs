@@ -35,12 +35,23 @@ use crate::utils::errors::TerminalError;
 /// `label` is the display name for the created connection (falls back to `host`
 /// when the file gives no label). `port`/`username` are *optional per-host
 /// overrides* — `None` means "inherit the template's value".
+///
+/// The TypeScript DTO is generated from this struct via ts-rs (audit DUP-030).
+/// The overrides are omitted from the wire when unset so the generated
+/// `port?: number` / `username?: string` shape matches what the frontend
+/// receives (and what it builds itself for scan-result rows).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct InventoryHost {
     pub label: String,
     pub host: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub username: Option<String>,
 }
 

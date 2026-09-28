@@ -17,7 +17,11 @@ use super::config::{ConnectionFolder, SavedConnection};
 use super::tree::{compute_connection_id, compute_folder_id};
 
 /// One saved connection's id changed from `old_id` to `new_id`.
+///
+/// The TypeScript DTO is generated from this struct via ts-rs (audit DUP-030).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionIdChange {
     pub old_id: String,

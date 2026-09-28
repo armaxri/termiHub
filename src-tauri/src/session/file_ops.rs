@@ -7,7 +7,6 @@
 //! discipline are exactly what lived inline on the manager — the `sessions`
 //! lock is held across the browser `await`, as before.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
@@ -18,7 +17,9 @@ use termihub_core::files::{FileBrowser, FileEntry};
 use crate::files::sftp::{sftp_op_error, ElevatedWriteResult, Writability};
 use crate::utils::errors::TerminalError;
 
-use super::manager::SessionEntry;
+use termihub_core::session::registry::Sessions;
+
+use super::manager::{SessionEntry, SessionMap};
 
 /// Borrowing facade exposing a session's file-browser operations.
 ///
@@ -26,13 +27,13 @@ use super::manager::SessionEntry;
 /// of its own; the manager constructs one on demand via
 /// [`SessionManager::file_ops`](super::manager::SessionManager). Each method
 /// mirrors the corresponding [`FileBrowser`] operation.
-pub(super) struct FileOps<'a> {
-    sessions: &'a Mutex<HashMap<String, SessionEntry>>,
+pub(super) struct FileOps<'a, M: SessionMap = Sessions<SessionEntry>> {
+    sessions: &'a Mutex<M>,
 }
 
-impl<'a> FileOps<'a> {
+impl<'a, M: SessionMap> FileOps<'a, M> {
     /// Wrap the manager's `sessions` map.
-    pub(super) fn new(sessions: &'a Mutex<HashMap<String, SessionEntry>>) -> Self {
+    pub(super) fn new(sessions: &'a Mutex<M>) -> Self {
         Self { sessions }
     }
 
@@ -40,7 +41,7 @@ impl<'a> FileOps<'a> {
     /// [`TerminalError::SessionNotFound`] when the session is unknown and
     /// [`TerminalError::RemoteError`] when it exposes no file-browser capability.
     fn browser<'g>(
-        sessions: &'g HashMap<String, SessionEntry>,
+        sessions: &'g M,
         session_id: &str,
     ) -> Result<&'g dyn FileBrowser, TerminalError> {
         let entry = sessions
@@ -301,11 +302,12 @@ impl<'a> FileOps<'a> {
         container_id: &str,
     ) -> Option<termihub_core::backends::docker::DockerTransferTarget> {
         let sessions = self.sessions.lock().await;
-        sessions
+        let target = sessions
             .values()
             .filter_map(|entry| entry.connection.file_browser())
             .filter_map(termihub_core::backends::docker::docker_transfer_target_of)
-            .find(|target| !container_id.is_empty() && target.container_id() == container_id)
+            .find(|target| !container_id.is_empty() && target.container_id() == container_id);
+        target
     }
 
     /// Resolve a remote path to its canonical absolute form via SFTP realpath.

@@ -15,7 +15,11 @@ use crate::utils::migrate::{guard_not_newer, load_store_with_recovery, Versioned
 const FILE_NAME: &str = "settings.json";
 
 /// Configuration for a single external connection file.
+///
+/// The TypeScript DTO is generated from this struct via ts-rs (audit DUP-030).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct ExternalFileConfig {
     pub path: String,
     pub enabled: bool,
