@@ -68,6 +68,8 @@ const SETTINGS_FILE_NAME: &str = "plugin-settings.json";
 /// JSON values are the lowercase names from the plugin-system concept:
 /// `installed` / `active` / `disabled` / `error` / `incompatible`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum PluginState {
     /// Extracted and enabled, but not (yet) loaded into a running host — the
@@ -96,6 +98,8 @@ pub enum PluginState {
 /// One installed plugin: its trusted manifest plus the management-layer state
 /// this crate tracks for it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct InstalledPlugin {
     /// The plugin's validated `manifest.json`.
@@ -105,8 +109,10 @@ pub struct InstalledPlugin {
     /// Human-readable detail when [`state`](InstalledPlugin::state) is
     /// [`PluginState::Error`]; `null`/absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub error_message: Option<String>,
     /// When the plugin was installed, as milliseconds since the Unix epoch.
+    #[cfg_attr(test, ts(type = "number"))]
     pub installed_at: u64,
 }
 

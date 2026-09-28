@@ -31,6 +31,8 @@ pub const TRUST_STORE_FILE_NAME: &str = "trust-store.json";
 
 /// How a trusted key came to be trusted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "kebab-case")]
 pub enum TrustSource {
     /// A termiHub-official key that ships pre-trusted in the app. Cannot be
@@ -42,6 +44,8 @@ pub enum TrustSource {
 
 /// One trusted publisher key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct TrustedPublisher {
     /// `sha256:` fingerprint of the public key — the store's primary key.

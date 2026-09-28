@@ -46,7 +46,7 @@ function plugin(state: PluginState, m: Partial<PluginManifest> = {}): InstalledP
     manifest: manifest(m),
     state,
     errorMessage: state === "error" ? "dependency aws CLI not found in PATH" : undefined,
-    installedAt: "2026-01-01T00:00:00Z",
+    installedAt: 1767225600000,
   };
 }
 

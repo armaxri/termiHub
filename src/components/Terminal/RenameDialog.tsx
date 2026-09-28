@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Modal, Button, Input } from "@/components/ui";
+import { isImeComposing } from "@/utils/imeComposition";
 
 interface RenameDialogProps {
   open: boolean;
@@ -52,6 +53,7 @@ export function RenameDialog({ open, onOpenChange, currentTitle, onRename }: Ren
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         onKeyDown={(e) => {
+          if (isImeComposing(e)) return;
           if (e.key === "Enter") handleSubmit();
         }}
         autoFocus

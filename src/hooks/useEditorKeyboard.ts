@@ -1,4 +1,5 @@
 import { useCallback, type KeyboardEvent } from "react";
+import { isImeComposing } from "../utils/imeComposition";
 
 /** Input `type`s that submit on Enter — single-line free-text entry only. */
 const TEXT_ENTRY_TYPES = new Set(["text", "number", "password", "email", "search", "tel", "url"]);
@@ -33,7 +34,8 @@ function isTextEntry(target: EventTarget | null): target is HTMLInputElement {
  * **Enter** from a single-line text input runs the primary action and
  * **Escape** cancels. Multi-line (`<textarea>`), non-text inputs (checkbox,
  * radio, …), and inputs inside an `exemptSelector` container never submit, so
- * list/repeatable fields keep their own Enter semantics.
+ * list/repeatable fields keep their own Enter semantics. Neither key acts
+ * while an IME is composing (see {@link isImeComposing}).
  *
  * Returns an `onKeyDown` handler to spread onto the editor's root element. A
  * scoped handler (rather than a native `<form>`) avoids turning the editors'
@@ -48,6 +50,9 @@ export function useEditorKeyboard({
   return useCallback(
     (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
+      // An IME owns Enter (confirm candidate) and Escape (discard preedit)
+      // while composing — including WebKit's post-compositionend keydown (#3767).
+      if (isImeComposing(e)) return;
 
       if (e.key === "Escape") {
         e.preventDefault();
@@ -55,14 +60,7 @@ export function useEditorKeyboard({
         return;
       }
 
-      if (
-        e.key === "Enter" &&
-        !e.shiftKey &&
-        !e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey &&
-        !e.nativeEvent.isComposing
-      ) {
+      if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const target = e.target;
         if (!isTextEntry(target)) return;
         if (exemptSelector && target.closest(exemptSelector)) return;

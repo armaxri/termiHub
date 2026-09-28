@@ -19,6 +19,7 @@ import { readConfigString } from "@/utils/connectionConfigFields";
 import { Modal, Input } from "@/components/ui";
 import type { SavedConnection } from "@/types/connection";
 import "./CommandPalette.css";
+import { isImeComposing } from "@/utils/imeComposition";
 
 /** A single fuzzy-matchable palette entry — either a command or a saved connection. */
 type PaletteEntry =
@@ -291,6 +292,7 @@ export function CommandPalette(): React.ReactElement {
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
+      if (isImeComposing(event)) return;
       if (event.key === "ArrowDown") {
         event.preventDefault();
         setActiveIndex((i) => (results.length === 0 ? 0 : (i + 1) % results.length));

@@ -41,6 +41,15 @@ use serde::{Deserialize, Serialize};
 
 /// How an incoming plugin package relates to the installed copy of the same id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(
+    test,
+    ts(
+        export,
+        export_to = "../../src/types/generated/",
+        rename = "PluginVersionChangeKind"
+    )
+)]
 #[serde(rename_all = "camelCase")]
 pub enum VersionChangeKind {
     /// No plugin with this id is installed.
@@ -75,6 +84,15 @@ impl VersionChangeKind {
 /// A classified install/update: the kind of change plus both versions, as the
 /// confirmation prompt shows them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(
+    test,
+    ts(
+        export,
+        export_to = "../../src/types/generated/",
+        rename = "PluginVersionChange"
+    )
+)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionChange {
     /// The plugin id being installed.

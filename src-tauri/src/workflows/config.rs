@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 /// kebab-case (`send-command`, `run-script`, …); struct-variant fields are
 /// camelCase so the JSON shape matches the TypeScript `Workflow` type exactly.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum WorkflowStep {
     /// Send a single authored command line into the active session (with a
@@ -38,9 +40,11 @@ pub enum WorkflowStep {
         script: String,
         /// Optional delay (ms) inserted between each streamed line.
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional, type = "number"))]
         per_line_delay_ms: Option<u64>,
         /// Optional on-disk path the script body was loaded from.
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
         source_path: Option<String>,
     },
 
@@ -63,6 +67,7 @@ pub enum WorkflowStep {
         #[serde(flatten)]
         error_handling: WorkflowStepErrorHandling,
         /// How long to pause, in milliseconds.
+        #[cfg_attr(test, ts(type = "number"))]
         delay_ms: u64,
     },
 
@@ -100,6 +105,7 @@ pub enum WorkflowStep {
         then: Vec<WorkflowStep>,
         /// Steps run when the condition is false; empty/omitted → false is a no-op.
         #[serde(rename = "else", default, skip_serializing_if = "Vec::is_empty")]
+        #[cfg_attr(test, ts(as = "Option<Vec<WorkflowStep>>", optional))]
         otherwise: Vec<WorkflowStep>,
     },
 
@@ -141,10 +147,12 @@ pub enum WorkflowStep {
         /// substring (the default). Omitted from JSON when absent so a step
         /// authored without it round-trips byte-identically.
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
         is_regex: Option<bool>,
         /// Max time (ms) to wait before the step times out. Omitted → the
         /// frontend's named default applies.
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional, type = "number"))]
         timeout_ms: Option<u64>,
     },
 }
@@ -152,6 +160,8 @@ pub enum WorkflowStep {
 /// How the delay between retries of a failing step grows (PROD-045). Mirrors
 /// the TypeScript `WorkflowRetryBackoff` (lowercase strings over the wire).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum WorkflowRetryBackoff {
     /// Wait the same `delayMs` before every retry.
@@ -163,15 +173,19 @@ pub enum WorkflowRetryBackoff {
 /// A bounded retry policy for one step (PROD-045). Purely persisted here; the
 /// frontend runner clamps `count` and the delay to its named safety caps.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowStepRetry {
     /// Extra attempts after the first failure.
     pub count: u32,
     /// Delay (ms) before the first retry; omitted → retry immediately.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "number"))]
     pub delay_ms: Option<u64>,
     /// How the delay grows between attempts; omitted → fixed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub backoff: Option<WorkflowRetryBackoff>,
 }
 
@@ -181,13 +195,17 @@ pub struct WorkflowStepRetry {
 /// round-trips byte-identically and keeps today's behaviour (no retry, the
 /// first failure stops the run).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowStepErrorHandling {
     /// When `true`, a failure of this step is tolerated and the run continues.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub continue_on_error: Option<bool>,
     /// Retry this step when it fails.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub retry: Option<WorkflowStepRetry>,
 }
 
@@ -197,6 +215,8 @@ pub struct WorkflowStepErrorHandling {
 /// loop can never run forever. Tagged by `kind` (`count` / `while`), mirroring
 /// the TypeScript `WorkflowLoopMode` discriminated union byte-for-byte.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum WorkflowLoopMode {
     /// Repeat the body exactly `count` times (clamped to the safety cap).
@@ -217,6 +237,8 @@ pub enum WorkflowLoopMode {
 /// lowercase (`eq`, `ne`, `gt`, `lt`, `gte`, `lte`, `contains`) to match the
 /// TypeScript `WorkflowComparisonOp` union byte-for-byte over the wire.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum WorkflowComparisonOp {
     /// String equality (`left == right`).
@@ -244,6 +266,8 @@ pub enum WorkflowComparisonOp {
 /// for slice 1). Mirrors the TypeScript `WorkflowCondition` byte-for-byte
 /// (camelCase fields).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowCondition {
     /// The left-hand operand (may reference `${param}`).
@@ -257,6 +281,8 @@ pub struct WorkflowCondition {
 /// A trigger that launches a workflow. The complete v1 union is defined here up
 /// front; dispatch is wired by #1855 (manual palette/hotkey + on-connect).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum WorkflowTrigger {
     /// The user runs it from the palette, the Workflow sidebar, or a button.
@@ -288,6 +314,7 @@ pub enum WorkflowTrigger {
         connection_ids: Vec<String>,
         /// Which session endings fire the trigger; absent → drops only.
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
         when: Option<WorkflowDisconnectCause>,
     },
 
@@ -304,12 +331,15 @@ pub enum WorkflowTrigger {
         pattern: String,
         /// When `true`, `pattern` is a regular expression.
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
         is_regex: Option<bool>,
         /// Minimum time (ms) between two fires in one session.
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional, type = "number"))]
         cooldown_ms: Option<u64>,
         /// Maximum number of fires per session.
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
         max_fires_per_session: Option<u32>,
     },
 }
@@ -332,6 +362,8 @@ impl WorkflowTrigger {
 /// Serialised kebab-case (`drop`, `user-close`, `any`) to match the TypeScript
 /// `WorkflowDisconnectCause` union.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "kebab-case")]
 pub enum WorkflowDisconnectCause {
     /// Only an unexpected end: a lost connection or a non-zero exit.
@@ -348,6 +380,8 @@ pub enum WorkflowDisconnectCause {
 /// (`string`, `number`, `boolean`, `enum`) to match the TypeScript
 /// `WorkflowParameterType` union.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum WorkflowParameterType {
     /// Free-text value.
@@ -369,12 +403,15 @@ pub enum WorkflowParameterType {
 /// runner. Mirrors the TypeScript `WorkflowParameter` byte-for-byte (camelCase
 /// fields; `type` is the wire key for [`WorkflowParameter::param_type`]).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowParameter {
     /// The reference name used in `${name}` interpolations.
     pub name: String,
     /// Optional human-friendly label for the run-time prompt (defaults to `name`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub label: Option<String>,
     /// The value type, which selects the prompt control and coercion.
     #[serde(rename = "type")]
@@ -382,12 +419,15 @@ pub struct WorkflowParameter {
     /// Optional default value, pre-filled in the run-time prompt. Kept as an
     /// opaque JSON value so `string`/`number`/`boolean` defaults all round-trip.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "string | number | boolean"))]
     pub default: Option<serde_json::Value>,
     /// When `true`, the prompt requires a non-empty value before the run proceeds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub required: Option<bool>,
     /// For `param_type: Enum`, the selectable string options.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub options: Option<Vec<String>>,
 }
 
@@ -398,6 +438,8 @@ pub struct WorkflowParameter {
 /// with a discriminated [`WorkflowStep`] list and adds a [`WorkflowTrigger`]
 /// list.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct Workflow {
     /// Unique workflow identifier.
@@ -406,6 +448,7 @@ pub struct Workflow {
     pub name: String,
     /// Optional free-text description.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub description: Option<String>,
     /// Optional tags for grouping/filtering in the manager UI.
     #[serde(default)]
@@ -420,6 +463,7 @@ pub struct Workflow {
     /// fields via `${name}`. Empty and omitted from JSON for a workflow that
     /// uses no parameters, so existing files round-trip byte-identically.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(as = "Option<Vec<WorkflowParameter>>", optional))]
     pub parameters: Vec<WorkflowParameter>,
     /// RFC 3339 timestamp of when the workflow was first created.
     #[serde(default)]

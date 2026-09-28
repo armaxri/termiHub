@@ -3,6 +3,7 @@ import { useAppStore } from "@/store/appStore";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Modal, Button, Checkbox } from "@/components/ui";
 import "./PasswordPrompt.css";
+import { isImeComposing } from "@/utils/imeComposition";
 
 /**
  * Global dialog that prompts the user for an SSH password at connect time.
@@ -56,6 +57,7 @@ export function PasswordPrompt() {
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (isImeComposing(e)) return;
       if (e.key === "Enter") handleSubmit();
     },
     [handleSubmit]

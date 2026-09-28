@@ -91,6 +91,8 @@ fn default_terminal() -> bool {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct Capabilities {
     /// Whether this connection supports system monitoring (CPU, memory, etc.).
@@ -107,6 +109,7 @@ pub struct Capabilities {
     /// FTP into a browser-only tab. Access the framebuffer surface via
     /// [`ConnectionType::graphical()`].
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub graphical: bool,
     /// Whether terminal resize is supported (false for serial; telnet
     /// propagates it via NAWS).
@@ -123,6 +126,7 @@ pub struct Capabilities {
     /// session (no `create_connection`). Any future terminal-less type inherits
     /// this without per-type special-casing.
     #[serde(default = "default_terminal")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub terminal: bool,
     /// Whether this connection type can host SSH-style port forwards (tunnels).
     ///
@@ -137,6 +141,7 @@ pub struct Capabilities {
     /// Defaults to `false` (via `#[serde(default)]`) so capabilities serialized
     /// before this field existed deserialize as non-tunnel-capable.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub tunneling: bool,
 }
 

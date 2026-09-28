@@ -108,7 +108,7 @@ function frontendPlugin(id: string): InstalledPlugin {
       },
     },
     state: "active",
-    installedAt: "2026-07-26T00:00:00Z",
+    installedAt: 1785024000000,
   };
 }
 
