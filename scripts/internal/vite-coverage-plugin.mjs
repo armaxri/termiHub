@@ -4,8 +4,8 @@
 // OFF BY DEFAULT, and off means absent: unless TERMIHUB_FRONTEND_COVERAGE=1 is
 // set, `coveragePlugins()` returns an empty list and istanbul-lib-instrument is
 // never even imported, so dev and release builds are byte-for-byte what they
-// were. Only scripts/internal/build-system-test-app.sh --coverage sets it, and
-// only the nightly system-integration Linux leg passes --coverage.
+// were. Only `scripts/internal/harness-coverage.sh env` sets it, for a
+// system-test app build; in CI only the nightly system-integration Linux leg.
 //
 // When on, every frontend source file vitest measures (src/**/*.{ts,tsx} minus
 // tests, src/test/**, *.d.ts and src/main.tsx, mirroring vitest.config.ts) is

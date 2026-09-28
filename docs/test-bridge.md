@@ -138,15 +138,17 @@ unchanged (TIN-014, #3720). The rules are backward compatible:
 
 The Python `Driver` addresses windows by label:
 
-| Call                                | Does                                                                                    |
-| ----------------------------------- | --------------------------------------------------------------------------------------- |
-| `driver.window_label`               | The label of the window this driver drives (`main` for the suite's driver)              |
-| `driver.windows()`                  | Labels of every window with a live bridge connection, main first                        |
-| `driver.window(label)`              | A `Driver` for that window, waiting for it to connect; `window("main")` is `self`       |
-| `driver.wait_for_window(predicate)` | Wait for a window whose label matches (e.g. one not in an earlier `windows()` snapshot) |
-| `driver.wait_until_closed()`        | Block until this window's socket closes (the window was destroyed)                      |
-| `driver.close_window()`             | The `closeWindow` verb — close this window through the OS close path                    |
-| `driver.list_windows()`             | The `listWindows` verb — the backend window registry                                    |
+| Call                                 | Does                                                                                    |
+| ------------------------------------ | --------------------------------------------------------------------------------------- |
+| `driver.window_label`                | The label of the window this driver drives (`main` for the suite's driver)              |
+| `driver.windows()`                   | Labels of every window with a live bridge connection, main first                        |
+| `driver.window(label)`               | A `Driver` for that window, waiting for it to connect; `window("main")` is `self`       |
+| `driver.wait_for_window(predicate)`  | Wait for a window whose label matches (e.g. one not in an earlier `windows()` snapshot) |
+| `driver.wait_until_closed()`         | Block until this window's socket closes (the window was destroyed)                      |
+| `driver.close_window()`              | The `closeWindow` verb — close this window through the OS close path                    |
+| `driver.list_windows()`              | The `listWindows` verb — the backend window registry                                    |
+| `driver.read_coverage_chunk(offset)` | The `readCoverage` verb — one chunk of this window's coverage (coverage builds)         |
+| `driver.exit_app()`                  | The `exitApp` verb — quit the app normally so coverage profiles are written             |
 
 ```python
 before = self.driver.windows()                      # ["main"]
@@ -238,6 +240,8 @@ unmount.
 | `severAgentTransport` | Test-only: sever a connected agent's transport (see below)     |
 | `closeWindow`         | Close this window through the OS close path (see below)        |
 | `listWindows`         | Read the backend window registry (`[{ label, tabCount? }]`)    |
+| `readCoverage`        | Read a chunk of `window.__coverage__` (coverage builds only)   |
+| `exitApp`             | Test-only: quit the app normally (coverage profiles, below)    |
 
 Every command returns a structured `BridgeResponse` (`{ ok, action, value?,
 error? }`). Nothing throws across the bridge — failures are `ok: false` with an
@@ -516,6 +520,25 @@ A native window's close has no DOM control, so the close-with-live-tabs decision
 Like `emitEvent`, `closeWindow` acts past the DOM, so the live `TestBridge`
 re-checks `isTestBridgeEnabled()` at the call site. Unit tests inject stubs via
 the `closeWindow` / `listWindows` deps.
+
+### Coverage collection (`readCoverage`, `exitApp`)
+
+The harness uses these two verbs to collect coverage from an instrumented test
+build (#3657). See [testing.md → Harness coverage](testing.md#harness-coverage-nightly-bridge-harness-lane).
+
+- `{ action: "readCoverage", offset?: n }` returns one chunk of the page's
+  Istanbul coverage as `{ total, offset, chunk }`. The value is `null` when the
+  build is not instrumented (no `window.__coverage__`). `offset: 0` (or no offset)
+  serializes a fresh snapshot, and later offsets page through that same snapshot
+  in 4 MiB chunks, well under the runner's frame limit. The harness helper is
+  `termihub_harness.coverage.read_frontend_coverage(driver)`.
+- `{ action: "exitApp" }` quits the whole app through the test-bridge-only
+  `test_exit_app` Tauri command (`AppHandle::exit(0)`), so an LLVM-instrumented
+  app writes its `.profraw`. The harness normally kills the app, and a killed
+  process writes no profile. Like `closeWindow` the exit is deferred until after
+  the response is sent, and both the `TestBridge` wiring and the Rust command
+  refuse unless the test bridge is enabled. The command is compiled out of
+  release builds with the rest of the `test-bridge` feature.
 
 ### Element-to-element drag (`dragTo`) and @dnd-kit
 
