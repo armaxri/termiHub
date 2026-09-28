@@ -28,6 +28,8 @@ from typing import Callable, IO, Optional, Sequence
 
 import psutil
 
+from . import coverage
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -190,6 +192,16 @@ def _terminate_tree(process: subprocess.Popen, timeout: float = 5.0) -> None:
     _terminate_procs(parent.children(recursive=True) + [parent], timeout)
 
 
+def _children_of(process: Optional[subprocess.Popen]) -> list:
+    """The live descendants of ``process`` (empty if it is gone or unknown)."""
+    if process is None or process.poll() is not None:
+        return []
+    try:
+        return psutil.Process(process.pid).children(recursive=True)
+    except psutil.Error:
+        return []
+
+
 def _is_webview2_for_data_dir(name: str, cmdline: list[str], user_data_dir: Path) -> bool:
     """True if a process is a ``msedgewebview2.exe`` pinned to ``user_data_dir``.
 
@@ -342,6 +354,8 @@ class AppInstance:
         )
         self._pump = threading.Thread(target=self._pump_output, daemon=True)
         self._pump.start()
+        # Opt-in coverage collection (#3657); a no-op unless enabled.
+        coverage.register_app(self, bridge_port)
         return self
 
     def _pump_output(self) -> None:
@@ -369,8 +383,30 @@ class AppInstance:
                 except (OSError, ValueError):
                     pass
 
+    def wait_exited(self, timeout: float) -> bool:
+        """Wait up to ``timeout`` for the app to exit on its own; True if it did."""
+        if self._process is None:
+            return True
+        try:
+            self._process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return False
+        return True
+
     def stop(self) -> None:
-        """Kill the app process tree and stop log capture."""
+        """Kill the app process tree and stop log capture.
+
+        With coverage collection on (#3657) the app's coverage is read first,
+        and an LLVM-instrumented app is asked to exit normally so it writes its
+        profile; see :mod:`termihub_harness.coverage`.
+        """
+        # A normal exit re-parents the app's children, so remember them first
+        # and reap any that outlive it (only when coverage may exit it).
+        children = _children_of(self._process) if coverage.enabled() else []
+        coverage.before_app_stop(self)
+        coverage.unregister_app(self)
+        if children:
+            _terminate_procs([c for c in children if c.is_running()], timeout=2.0)
         if self._process is not None:
             _terminate_tree(self._process)
             # WebView2 hosts live outside the app's process tree; reap the ones

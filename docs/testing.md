@@ -687,8 +687,9 @@ the Rust tool once with `cargo install cargo-llvm-cov` (it needs the
   workflow on every push to `develop`/`main` (post-merge only since #3325) and uploads
   the merged lcov + summary as an artifact. The job is **blocking**: a ratchet failure
   reds the `develop`/`main` run (not the PR that caused it — the job does not run per PR).
-- The nightly integration lane contributes too — see
-  [Integration coverage](#integration-coverage-nightly-fixtures-lane) below.
+- The nightly integration lanes contribute too — see
+  [Integration coverage](#integration-coverage-nightly-fixtures-lane) and
+  [Harness coverage](#harness-coverage-nightly-bridge-harness-lane) below.
 - `release-check.sh` / `release-check.cmd` run the same script, so a coverage drop (or a
   missing `cargo-llvm-cov`) fails the release gate.
 
@@ -789,9 +790,78 @@ flowchart LR
   `cargo llvm-cov --no-report -p termihub-core --all-features -- --test-threads=1`
   against running fixtures, then
   `cargo llvm-cov report -p termihub-core --lcov --output-path int.lcov`.
-- **Not measured yet:** the Python bridge harness (`system-integration.yml`)
-  exercises the frontend and the desktop backend, but collects no coverage — see
-  [#3657](https://github.com/armaxri/termiHub/issues/3657). The whole report stays advisory; it gates nothing.
+- The Python bridge harness lane is measured too, see
+  [Harness coverage](#harness-coverage-nightly-bridge-harness-lane). The whole
+  report stays advisory; it gates nothing.
+
+### Harness coverage (nightly bridge harness lane)
+
+The Python bridge harness (`system-integration.yml`) drives the real app, so it
+reaches frontend components and desktop-backend (`src-tauri`) paths that no unit
+test does. Its Linux leg measures both and feeds the same unified report
+([#3657](https://github.com/armaxri/termiHub/issues/3657)). Advisory, like the
+fixtures overlay: it never gates anything, and every coverage step is
+`continue-on-error`, so only a failing test can red the lane.
+
+```mermaid
+flowchart LR
+    E["harness-coverage.sh env<br/>(after the agent build)"] --> B["build-system-test-app.sh<br/>Istanbul frontend + llvm-cov app"]
+    B --> T["pytest integration lane"]
+    T -- "before each app shutdown:<br/>readCoverage + exitApp" --> D["frontend/*.json<br/>+ *.profraw"]
+    D --> R["harness-coverage.sh report"] -- "artifact: harness-coverage-&lt;branch&gt;" --> C["coverage.yml<br/>unit + fixtures + harness"]
+```
+
+- **Instrumented build, opt-in only:** `TERMIHUB_FRONTEND_COVERAGE=1` adds an
+  Istanbul plugin to the Vite build
+  ([`vite-coverage-plugin.mjs`](../scripts/internal/vite-coverage-plugin.mjs),
+  `istanbul-lib-instrument`). It instruments `src/**` (the files vitest measures)
+  before esbuild strips the types, so the recorded locations are already
+  TypeScript source lines and no source-map remapping is needed. With the flag
+  unset the plugin list is empty and the instrumenter is never loaded: the dev
+  and release bundles are byte-identical to a build without the plugin. The
+  backend is built under `cargo llvm-cov show-env`, which instruments only the
+  workspace crates.
+- **Collection:** with `TERMIHUB_HARNESS_COVERAGE_DIR` set,
+  [`termihub_harness/coverage.py`](../tests/system/termihub_harness/coverage.py)
+  runs just before every app shutdown (suite teardown, `app.restart()`, or a
+  bridge closing first). It reads each window's `window.__coverage__` through
+  the bridge's `readCoverage` verb (in 4 MiB chunks) into
+  `frontend/<suite>-<window>-<pid>-<id>.json`. When `LLVM_PROFILE_FILE` is set it
+  then asks the app to quit normally (`exitApp` → the test-bridge-only
+  `test_exit_app` command → `AppHandle::exit(0)`), because a killed process never
+  writes its `.profraw`. The harness waits up to 20 s and then kills it as
+  before. Without the variable, nothing changes.
+- **Report:** `harness-coverage.sh report` converts the dumps to lcov
+  ([`istanbul-to-lcov.mjs`](../scripts/internal/istanbul-to-lcov.mjs):
+  repo-relative `src/**` paths, the same shape as vitest's lcov), exports the
+  backend profiles with `cargo llvm-cov report`, and writes `harness.lcov` plus
+  `harness-coverage.json`, which records the commit that was measured.
+- **When:** scheduled and manually dispatched `system-integration.yml` runs, on
+  the Linux leg only. macOS/Windows and the display-critical grades stay
+  uninstrumented. The release gate (`release-candidate.yml`) also runs the harness
+  uninstrumented, so it tests the exact frontend bundle and binary that ship.
+  Harness coverage is therefore **nightly only**.
+- **Merged:** `coverage.yml` fetches the newest `harness-coverage-<branch>`
+  artifact. It picks the artifact by name because scheduled runs are recorded
+  against `main` even when they grade `develop`. The stale-file list comes from
+  the sha in `harness-coverage.json`. `coverage.sh` merges it after the fixtures
+  lane (`TERMIHUB_HARNESS_LCOV` / `TERMIHUB_HARNESS_STALE`), and
+  `integration-gap.md` gets a second section listing the lines only the harness
+  reached. Frontend branch ids from Istanbul and from vitest's V8 report can
+  number the same `if` differently, so the merged branch figure is approximate.
+  Lines and functions merge exactly.
+- **Locally:**
+
+  ```bash
+  set -a; eval "$(scripts/internal/harness-coverage.sh env)"; set +a
+  scripts/internal/build-system-test-app.sh --debug
+  ./tests/system/pytest.sh -m integration tests/test_local_shell.py
+  scripts/internal/harness-coverage.sh report --out-dir target/harness-report
+  TERMIHUB_HARNESS_LCOV=target/harness-report/harness.lcov ./scripts/coverage.sh
+  ```
+
+  Rebuild without the `env` variables before any non-coverage run: the
+  instrumented app is slower.
 
 ### Release coverage summary (advisory)
 
@@ -805,6 +875,12 @@ file is stale and nothing is re-run:
 - **Integration:** `integration.lcov` from the `integration-coverage` artifact of
   the instrumented fixtures lane that
   [`release-candidate.yml`](../.github/workflows/release-candidate.yml) runs.
+- **Bridge harness: nightly only.** The release gate runs the harness lane
+  uninstrumented (#3657), so no `harness-coverage-<sha>` artifact normally
+  exists for the release commit, and the summary notes "harness coverage: nightly
+  only". The harness lane's coverage appears in the Coverage workflow on
+  `develop`/`main` instead. If an artifact does exist for the sha, it is merged
+  after the fixtures lane with its own gap section.
 
 [`scripts/internal/release-coverage-summary.mjs`](../scripts/internal/release-coverage-summary.mjs)
 merges them the same way `coverage.sh` does (`lcov-merge.mjs`: the unit report

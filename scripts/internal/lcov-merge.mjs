@@ -27,11 +27,16 @@
 // turned into `/`) so the absolute cargo-llvm-cov paths from two different
 // runners, and vitest's relative paths, all key the same way.
 //
+// Several overlays chain: run it once per overlay with the previous --out as
+// the next --base (coverage.sh merges the fixtures lane, then the bridge
+// harness lane, #3657). `--title` names the lane in the gap report and
+// `--append` adds to an existing report instead of replacing it.
+//
 // Usage:
 //   node lcov-merge.mjs --base <unit.lcov> --overlay <integration.lcov>
 //     [--skip-list <file>] [--root <repo root>] --out <merged.lcov>
-//     [--report <gap.md>]
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+//     [--report <gap.md>] [--title <text>] [--append]
+import { appendFileSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 /** Normalize an lcov SF path to a repo-relative, forward-slash key. */
@@ -156,10 +161,14 @@ export function mergeCoverage(base, overlay, skip = new Set()) {
       stats.notInBase += 1;
       continue;
     }
+    // Count only what THIS overlay gained: a base that is itself a merge result
+    // (chained overlays, #3657) already carries the earlier overlays' gains.
+    const gainedBefore = into.gained.lines;
     mergeRecord(into, rec);
-    if (into.gained.lines > 0) {
-      stats.newlyCoveredLines += into.gained.lines;
-      stats.perFile.set(path, into.gained.lines);
+    const gained = into.gained.lines - gainedBefore;
+    if (gained > 0) {
+      stats.newlyCoveredLines += gained;
+      stats.perFile.set(path, gained);
     }
   }
   return { merged, stats };
@@ -292,12 +301,17 @@ const FLAGS = {
   "--root": "root",
   "--out": "out",
   "--report": "report",
+  "--title": "title",
 };
 
 export function parseArgs(argv) {
   const opts = {};
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
+    if (flag === "--append") {
+      opts.append = true;
+      continue;
+    }
     const name = FLAGS[flag];
     if (!name || i + 1 >= argv.length) throw new Error(`bad argument: ${flag}`);
     opts[name] = argv[++i];
@@ -325,7 +339,7 @@ function main(argv) {
     console.error(`lcov-merge: ${e.message}`);
     console.error(
       "usage: lcov-merge.mjs --base <lcov> --overlay <lcov> [--skip-list <file>] " +
-        "[--root <dir>] --out <lcov> [--report <md>]"
+        "[--root <dir>] --out <lcov> [--report <md>] [--title <text>] [--append]"
     );
     return 2;
   }
@@ -337,8 +351,11 @@ function main(argv) {
       : new Set();
   const { merged, stats } = mergeCoverage(base, overlay, skip);
   writeFileSync(opts.out, formatLcov(merged));
-  const report = formatReport(stats);
-  if (opts.report) writeFileSync(opts.report, report);
+  const report = formatReport(stats, opts.title ? { title: opts.title } : {});
+  if (opts.report) {
+    if (opts.append && existsSync(opts.report)) appendFileSync(opts.report, "\n" + report);
+    else writeFileSync(opts.report, report);
+  }
   process.stdout.write(report);
   return 0;
 }

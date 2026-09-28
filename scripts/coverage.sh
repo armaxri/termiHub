@@ -26,6 +26,12 @@
 # records are skipped. CI's coverage.yml fetches both; locally they are unset
 # and the report is unit-only, as before.
 #
+# Bridge harness coverage (#3657): TERMIHUB_HARNESS_LCOV / TERMIHUB_HARNESS_STALE
+# work the same way for the nightly system-integration lane's lcov (frontend
+# lines the Python bridge harness drove, plus the src-tauri/core lines of the
+# harness-launched app). It is merged after the fixtures lane and gets its own
+# section in the gap report. Advisory like the fixtures overlay: never gated.
+#
 # Flags:
 #   --dry-run   Resolve everything and run the merge/summary logic against any
 #               existing lcov, but SKIP the heavy vitest/llvm-cov runs. Used to
@@ -58,6 +64,8 @@ RATCHET_REPORT="$OUT_DIR/ratchet.md"
 GAP_REPORT="$OUT_DIR/integration-gap.md"
 INTEGRATION_LCOV="${TERMIHUB_INTEGRATION_LCOV:-}"
 INTEGRATION_STALE="${TERMIHUB_INTEGRATION_STALE:-}"
+HARNESS_LCOV="${TERMIHUB_HARNESS_LCOV:-}"
+HARNESS_STALE="${TERMIHUB_HARNESS_STALE:-}"
 
 mkdir -p "$OUT_DIR"
 
@@ -97,6 +105,7 @@ echo "=== Merging lcov + computing unified number ==="
 FRONTEND_PRESENT=0
 RUST_PRESENT=0
 INTEGRATION_PRESENT=0
+HARNESS_PRESENT=0
 if [ -f "$FRONTEND_LCOV" ]; then
     cat "$FRONTEND_LCOV" >> "$UNIT_LCOV"
     FRONTEND_PRESENT=1
@@ -120,23 +129,35 @@ if [ ! -s "$UNIT_LCOV" ]; then
 fi
 
 # The frontend and Rust unit reports never share a source file, so a plain
-# concatenation is already a valid merged tracefile. The integration lcov DOES
-# share files with the Rust report, so it is merged per file instead (hits
-# summed, the unit report owning the denominator, stale files skipped).
+# concatenation is already a valid merged tracefile. The integration lcovs DO
+# share files with the unit report, so each is merged per file instead (hits
+# summed, the unit report owning the denominator, stale files skipped), one
+# after the other onto the merged tracefile.
 rm -f "$GAP_REPORT" "$RATCHET_REPORT"
-if [ -n "$INTEGRATION_LCOV" ] && [ -s "$INTEGRATION_LCOV" ]; then
+cp "$UNIT_LCOV" "$MERGED_LCOV"
+if { [ -n "$INTEGRATION_LCOV" ] && [ -s "$INTEGRATION_LCOV" ]; } ||
+    { [ -n "$HARNESS_LCOV" ] && [ -s "$HARNESS_LCOV" ]; }; then
     echo "--- unit tests only ---"
     node scripts/internal/lcov-summary.mjs "$UNIT_LCOV"
+fi
+if [ -n "$INTEGRATION_LCOV" ] && [ -s "$INTEGRATION_LCOV" ]; then
     echo "--- + nightly integration lane ($INTEGRATION_LCOV) ---"
-    node scripts/internal/lcov-merge.mjs --base "$UNIT_LCOV" --overlay "$INTEGRATION_LCOV" \
+    node scripts/internal/lcov-merge.mjs --base "$MERGED_LCOV" --overlay "$INTEGRATION_LCOV" \
         --skip-list "$INTEGRATION_STALE" --root "$PWD" \
         --out "$MERGED_LCOV" --report "$GAP_REPORT"
     INTEGRATION_PRESENT=1
-else
-    if [ -n "$INTEGRATION_LCOV" ]; then
-        echo "  note: no integration lcov at $INTEGRATION_LCOV"
-    fi
-    cp "$UNIT_LCOV" "$MERGED_LCOV"
+elif [ -n "$INTEGRATION_LCOV" ]; then
+    echo "  note: no integration lcov at $INTEGRATION_LCOV"
+fi
+if [ -n "$HARNESS_LCOV" ] && [ -s "$HARNESS_LCOV" ]; then
+    echo "--- + nightly bridge harness lane ($HARNESS_LCOV) ---"
+    node scripts/internal/lcov-merge.mjs --base "$MERGED_LCOV" --overlay "$HARNESS_LCOV" \
+        --skip-list "$HARNESS_STALE" --root "$PWD" \
+        --out "$MERGED_LCOV" --report "$GAP_REPORT" --append \
+        --title "Integration coverage (nightly bridge harness lane)"
+    HARNESS_PRESENT=1
+elif [ -n "$HARNESS_LCOV" ]; then
+    echo "  note: no harness lcov at $HARNESS_LCOV"
 fi
 
 # Sum lines/functions/branches (LF/LH, FNF/FNH, BRF/BRH) across every record in
@@ -145,10 +166,10 @@ fi
 node scripts/internal/lcov-summary.mjs "$MERGED_LCOV" | tee "$SUMMARY_FILE"
 
 echo ""
-echo "Sources merged: frontend=$FRONTEND_PRESENT rust=$RUST_PRESENT integration=$INTEGRATION_PRESENT"
+echo "Sources merged: frontend=$FRONTEND_PRESENT rust=$RUST_PRESENT integration=$INTEGRATION_PRESENT harness=$HARNESS_PRESENT"
 echo "Merged lcov:    $MERGED_LCOV"
 echo "Summary:        $SUMMARY_FILE"
-if [ "$INTEGRATION_PRESENT" -eq 1 ]; then
+if [ "$INTEGRATION_PRESENT" -eq 1 ] || [ "$HARNESS_PRESENT" -eq 1 ]; then
     echo "Gap report:     $GAP_REPORT"
 fi
 echo "HTML reports:   coverage/ (frontend) — run 'cargo llvm-cov --html' for Rust HTML"

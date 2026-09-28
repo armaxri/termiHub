@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "url";
 
 import { resolveDevPort } from "./scripts/internal/dev-local.mjs";
+import { coveragePlugins } from "./scripts/internal/vite-coverage-plugin.mjs";
 
 const host = process.env.TAURI_DEV_HOST;
 // Per-checkout dev port: TERMIHUB_DEV_PORT > dev.local.json's dev_port > 1420.
@@ -15,7 +16,13 @@ const devPort = resolveDevPort();
 
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
-  plugins: [react()],
+  // Istanbul instrumentation for the system-test harness's coverage (#3657):
+  // an empty list unless TERMIHUB_FRONTEND_COVERAGE=1, so dev and release builds
+  // are unchanged. It must precede react() so it sees the TypeScript source.
+  plugins: [
+    ...(await coveragePlugins(fileURLToPath(new URL(".", import.meta.url)))),
+    react(),
+  ],
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),

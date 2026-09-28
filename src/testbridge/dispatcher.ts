@@ -1,7 +1,7 @@
 import type { IntentAck } from "@/services/transport";
 
 import type { ProjectionDispatchRequest, ProjectionRecordingState } from "./projectionRecorder";
-import type { BridgeCommand, BridgeResponse } from "./protocol";
+import type { BridgeCommand, BridgeResponse, CoverageChunk } from "./protocol";
 import { errorMessage } from "@/utils/errorMessage";
 
 /**
@@ -101,6 +101,20 @@ export interface BridgeDeps {
    * fails with a clear "not available" error.
    */
   listWindows?: () => Promise<unknown>;
+  /**
+   * Read the frontend's Istanbul coverage object (`window.__coverage__`, #3657),
+   * or `undefined` when the build is not instrumented. Optional — absent, the
+   * `readCoverage` verb returns `null` just as an uninstrumented build does.
+   */
+  getCoverage?: () => unknown;
+  /**
+   * Quit the app via the test-bridge-only `test_exit_app` command (#3657) so an
+   * instrumented backend flushes its coverage profile. The live
+   * {@link import("./TestBridge").TestBridge} defers the call until after the
+   * response is sent. Optional — absent outside the harness, so the `exitApp`
+   * verb then fails with a clear "not available" error.
+   */
+  exitApp?: () => Promise<void>;
   /**
    * Drive the projection substrate (#2149) for the assertion harness (#2164):
    * subscribe to a region and record its pushed frames, dispatch intents, force
@@ -348,6 +362,48 @@ function resolvePath(state: Record<string, unknown>, path: string): unknown {
     current = (current as Record<string, unknown>)[key];
   }
   return current;
+}
+
+/**
+ * Characters per `readCoverage` chunk (#3657). JSON-escaping inside the response
+ * envelope can grow a chunk, so this stays well under the runner's 32 MiB frame
+ * limit (`MAX_BRIDGE_FRAME_BYTES` in the Python harness).
+ */
+export const COVERAGE_CHUNK_CHARS = 4 * 1024 * 1024;
+
+/** The serialized coverage snapshot the current chunked read pages through. */
+let coverageSnapshot: string | undefined;
+
+/**
+ * One chunk of the serialized coverage object, or `null` when there is none (an
+ * uninstrumented build). Offset 0 serializes a fresh snapshot; any other offset
+ * pages through the snapshot taken at offset 0, so every chunk of one read comes
+ * from the same moment even while the app keeps running.
+ */
+export function readCoverageChunk(
+  coverage: unknown,
+  offset: number,
+  chunkChars: number = COVERAGE_CHUNK_CHARS
+): CoverageChunk | null {
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error(`offset must be a non-negative integer, got ${String(offset)}`);
+  }
+  if (offset === 0) {
+    coverageSnapshot =
+      coverage !== null && typeof coverage === "object" ? JSON.stringify(coverage) : undefined;
+  }
+  if (coverageSnapshot === undefined) {
+    if (offset !== 0) throw new Error("no coverage snapshot to continue; read offset 0 first");
+    return null;
+  }
+  if (offset > coverageSnapshot.length) {
+    throw new Error(`offset ${offset} is past the snapshot's ${coverageSnapshot.length} chars`);
+  }
+  return {
+    total: coverageSnapshot.length,
+    offset,
+    chunk: coverageSnapshot.slice(offset, offset + chunkChars),
+  };
 }
 
 /** Error returned by every `projection*` verb when the recorder is not wired. */
@@ -851,6 +907,25 @@ export async function dispatchCommand(
         return ok("listWindows", await deps.listWindows());
       } catch (error) {
         return fail("listWindows", errorMessage(error));
+      }
+    }
+
+    case "readCoverage": {
+      try {
+        const chunk = readCoverageChunk(deps.getCoverage?.(), command.offset ?? 0);
+        return ok("readCoverage", chunk);
+      } catch (error) {
+        return fail("readCoverage", errorMessage(error));
+      }
+    }
+
+    case "exitApp": {
+      if (!deps.exitApp) return fail("exitApp", "app exit is not available");
+      try {
+        await deps.exitApp();
+        return ok("exitApp");
+      } catch (error) {
+        return fail("exitApp", errorMessage(error));
       }
     }
 
