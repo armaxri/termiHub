@@ -131,7 +131,7 @@ pub struct TerminalOptions {
     /// but the frontend only ever writes one of the xterm.js cursor styles, so
     /// the generated type narrows it to that union.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(test, ts(type = "\"block\" | \"underline\" | \"bar\""))]
+    #[cfg_attr(test, ts(optional, type = "\"block\" | \"underline\" | \"bar\""))]
     pub cursor_style: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor_blink: Option<bool>,
@@ -140,7 +140,7 @@ pub struct TerminalOptions {
     /// Narrowed in the generated type to the frontend `LineEnding` union
     /// (`src/types/terminal.ts`), which falls back to the global default.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(test, ts(type = "\"cr\" | \"lf\" | \"crlf\""))]
+    #[cfg_attr(test, ts(optional, type = "\"cr\" | \"lf\" | \"crlf\""))]
     pub line_ending: Option<String>,
     /// Per-connection terminal line-height multiplier (may be fractional).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -164,7 +164,10 @@ pub struct TerminalOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
         test,
-        ts(type = "import(\"../syntaxHighlighting\").ConnectionHighlightingConfig")
+        ts(
+            optional,
+            type = "import(\"../syntaxHighlighting\").ConnectionHighlightingConfig"
+        )
     )]
     pub syntax_highlighting: Option<serde_json::Value>,
     /// Forward-compatibility catch-all (#2311).

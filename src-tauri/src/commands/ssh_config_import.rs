@@ -49,10 +49,7 @@ pub struct ImportableHost {
     // `JumpHostConfig` lives in `termihub-core`, whose ts-rs derive is only
     // compiled under core's own tests, so it does not implement `TS` here.
     // Reference core's generated binding through an inline `import()` type.
-    #[cfg_attr(
-        test,
-        ts(type = "Array<import(\"./JumpHostConfig\").JumpHostConfig>")
-    )]
+    #[cfg_attr(test, ts(type = "Array<import(\"./JumpHostConfig\").JumpHostConfig>"))]
     pub proxy_jump: Vec<JumpHostConfig>,
 }
 
@@ -93,10 +90,7 @@ pub struct ImportableConnection {
     #[cfg_attr(test, ts(optional))]
     pub key_path: Option<String>,
     /// See [`ImportableHost::proxy_jump`] for the `import()` type override.
-    #[cfg_attr(
-        test,
-        ts(type = "Array<import(\"./JumpHostConfig\").JumpHostConfig>")
-    )]
+    #[cfg_attr(test, ts(type = "Array<import(\"./JumpHostConfig\").JumpHostConfig>"))]
     pub proxy_jump: Vec<JumpHostConfig>,
 }
 
