@@ -9,6 +9,7 @@ import { sshKeyboardInteractiveRespond } from "@/services/api";
 import type { SshKeyboardInteractivePromptPayload } from "@/types/sshKeyboardInteractive";
 import { isTabOpen, promptOwnerTabId, subscribeToTabs } from "./promptOwnerTab";
 import "./SshKeyboardInteractivePrompt.css";
+import { isImeComposing } from "@/utils/imeComposition";
 
 /** Server prompts usually end in ": " — drop that for the field label. */
 function promptLabel(prompt: string, index: number): string {
@@ -107,6 +108,7 @@ export function SshKeyboardInteractivePrompt() {
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (isImeComposing(e)) return;
       if (e.key === "Enter") handleSubmit();
     },
     [handleSubmit]

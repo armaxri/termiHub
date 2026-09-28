@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { ExternalAgentFile } from "@/types/terminal";
 import { Button, Input, Toggle } from "@/components/ui";
+import { isImeComposing } from "@/utils/imeComposition";
 
 interface AgentExternalFilesSettingsProps {
   files: ExternalAgentFile[];
@@ -93,6 +94,7 @@ export function AgentExternalFilesSettings({ files, onChange }: AgentExternalFil
           value={newPath}
           onChange={(e) => setNewPath(e.target.value)}
           onKeyDown={(e) => {
+            if (isImeComposing(e)) return;
             if (e.key === "Enter") handleAdd();
           }}
           placeholder="/home/user/team-connections.json"

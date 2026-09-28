@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { SearchInput } from "@/components/ui";
+import { isImeComposing } from "@/utils/imeComposition";
 
 interface SettingsSearchProps {
   query: string;
@@ -9,6 +10,7 @@ interface SettingsSearchProps {
 export function SettingsSearch({ query, onQueryChange }: SettingsSearchProps) {
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (isImeComposing(e)) return;
       if (e.key === "Escape") {
         e.preventDefault();
         onQueryChange("");

@@ -3,6 +3,7 @@ import { ChevronRight, Pencil } from "lucide-react";
 import { Button, Tooltip, Input } from "@/components/ui";
 import { splitPathSegments } from "@/utils/fileBrowserNav";
 import { useFileDropTarget } from "./fileBrowserDnd";
+import { isImeComposing } from "@/utils/imeComposition";
 
 interface FileBrowserPathBarProps {
   /** The path currently shown by the file browser. */
@@ -84,6 +85,7 @@ export function FileBrowserPathBar({ currentPath, onNavigate }: FileBrowserPathB
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
+            if (isImeComposing(e)) return;
             if (e.key === "Enter") {
               e.preventDefault();
               commit();

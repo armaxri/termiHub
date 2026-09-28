@@ -8,6 +8,7 @@ import type { FileEntry } from "@/types/connection";
 import { formatBytes } from "@/utils/formatters";
 import { isRootPath, type PaneListing } from "./usePaneListing";
 import { nextPaneCursor, rangeSelection } from "./paneSelection";
+import { isImeComposing } from "@/utils/imeComposition";
 
 /** What a dragged pane row carries (dnd-kit `data`). */
 export interface PaneDragData {
@@ -248,6 +249,7 @@ export function TransferPane({
           disabled={!!placeholder}
           onChange={(e) => setPathDraft(e.target.value)}
           onKeyDown={(e) => {
+            if (isImeComposing(e)) return;
             if (e.key === "Enter" && pathDraft.trim()) void listing.navigate(pathDraft.trim());
             if (e.key === "Escape") setPathDraft(path);
           }}

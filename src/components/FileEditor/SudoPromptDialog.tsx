@@ -3,6 +3,7 @@ import { ShieldCheck } from "lucide-react";
 import { Modal, Button, Field, Toggle } from "@/components/ui";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import "./SudoPromptDialog.css";
+import { isImeComposing } from "@/utils/imeComposition";
 
 /** Caching choices returned alongside the entered password. */
 export interface SudoAuthorizeOptions {
@@ -90,6 +91,7 @@ export function SudoPromptDialog({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (isImeComposing(e)) return;
       if (e.key === "Enter") handleSubmit();
     },
     [handleSubmit]
