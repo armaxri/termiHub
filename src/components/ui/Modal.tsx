@@ -1,6 +1,7 @@
 import React from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
+import { isImeComposing } from "../../utils/imeComposition";
 import "./ui.css";
 
 /**
@@ -91,6 +92,10 @@ export function Modal({
           className={size === "lg" ? "ui-modal ui-modal--lg" : "ui-modal"}
           data-testid={rest["data-testid"]}
           onKeyDown={onKeyDown}
+          onEscapeKeyDown={(e) => {
+            // Escape that discards an IME preedit must not close the dialog (#3767).
+            if (isImeComposing(e)) e.preventDefault();
+          }}
         >
           <div className="ui-modal__head">
             <Dialog.Title className="ui-modal__title">{title}</Dialog.Title>
