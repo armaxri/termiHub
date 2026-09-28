@@ -42,6 +42,8 @@ use serde_json::{json, Map, Value};
 
 /// Direction of a transfer, mirroring the frontend `TransferDirection`.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum TransferDirection {
     Download,
@@ -51,6 +53,8 @@ pub enum TransferDirection {
 /// The connection-type-agnostic state space of a queued transfer, mirroring the
 /// frontend `TransferQueueState` (#1336).
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum TransferQueueState {
     Queued,
@@ -77,6 +81,8 @@ impl TransferQueueState {
 /// The legacy `transfer-progress` lifecycle phase (#1245), mapped to a
 /// [`TransferQueueState`] for events that predate the #1336 `state` field.
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum TransferPhase {
     Transferring,
@@ -104,6 +110,8 @@ impl TransferPhase {
 /// `speedBytesPerSec`) serialize as `null`, so the view model matches the
 /// frontend JSON exactly and the render cut stays a parity swap.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct TransferEntry {
     /// Stable per-transfer id (the backend `transferId`).
@@ -116,38 +124,49 @@ pub struct TransferEntry {
     pub name: String,
     /// Remote path, when the backend supplies one (#1531).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub path: Option<String>,
     /// Derived lifecycle state.
     pub state: TransferQueueState,
     /// Bytes transferred so far.
+    #[cfg_attr(test, ts(type = "number"))]
     pub transferred: u64,
     /// Total bytes, or `null` when the size is unknown (indeterminate).
+    #[cfg_attr(test, ts(type = "number | null"))]
     pub total_bytes: Option<u64>,
     /// Completion percentage (0–100), or `null` when indeterminate.
     pub percent: Option<u32>,
     /// Smoothed throughput in bytes/sec, or `null` when not moving/unknown.
+    #[cfg_attr(test, ts(type = "number | null"))]
     pub speed_bytes_per_sec: Option<u64>,
     /// Estimated whole seconds remaining (UX-019 / PROD-038), or `null` when it
     /// cannot be known: not `active`, unknown total, zero/unknown throughput, or
     /// nothing left. `#[serde(default)]` keeps older persisted rows readable.
     #[serde(default)]
+    #[cfg_attr(test, ts(type = "number | null"))]
     pub eta_seconds: Option<u64>,
     /// Human-readable error, only populated for the `failed` state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub error: Option<String>,
     /// Current retry attempt (#1336), when reported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub attempt: Option<u32>,
     /// Maximum retry attempts (#1336), when reported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub max_attempts: Option<u32>,
     /// Wall-clock ms of the last update (throughput-delta seed).
+    #[cfg_attr(test, ts(type = "number"))]
     pub updated_at: u64,
 }
 
 /// The minimal description of a transfer known at registration time, before any
 /// `transfer-progress` event — mirrors the frontend `TransferSeed` (#1632).
 #[derive(Deserialize, Clone, Debug)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct TransferSeed {
     pub id: String,
@@ -155,8 +174,10 @@ pub struct TransferSeed {
     pub direction: TransferDirection,
     pub name: String,
     #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
     pub path: Option<String>,
     #[serde(default)]
+    #[cfg_attr(test, ts(optional, type = "number | null"))]
     pub total_bytes: Option<u64>,
 }
 
@@ -165,6 +186,8 @@ pub struct TransferSeed {
 /// `attempt`/`maxAttempts`) are preferred when present; otherwise the legacy
 /// #1245 fields (`phase`/`total`) drive the fold.
 #[derive(Deserialize, Clone, Debug)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct TransferProgress {
     pub transfer_id: String,
@@ -172,31 +195,43 @@ pub struct TransferProgress {
     pub direction: TransferDirection,
     pub file_name: String,
     #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
     pub path: Option<String>,
+    #[cfg_attr(test, ts(type = "number"))]
     pub transferred: u64,
     #[serde(default)]
+    #[cfg_attr(test, ts(type = "number"))]
     pub total: u64,
     pub phase: TransferPhase,
     #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
     pub message: Option<String>,
     #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
     pub state: Option<TransferQueueState>,
     #[serde(default)]
+    #[cfg_attr(test, ts(optional, type = "number"))]
     pub speed: Option<u64>,
     /// Backend-measured (already EMA-smoothed) seconds remaining (#1336).
     #[serde(default)]
+    #[cfg_attr(test, ts(optional, type = "number"))]
     pub eta_secs: Option<u64>,
     #[serde(default)]
+    #[cfg_attr(test, ts(optional, type = "number"))]
     pub total_bytes: Option<u64>,
     #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
     pub attempt: Option<u32>,
     #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
     pub max_attempts: Option<u32>,
 }
 
 /// A snapshot of one queued transfer from `transfer_list`, mirroring the frontend
 /// `TransferSnapshot` — the reconcile backstop (#1645 / #1657).
 #[derive(Deserialize, Clone, Debug)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct TransferSnapshot {
     pub transfer_id: String,
@@ -204,15 +239,19 @@ pub struct TransferSnapshot {
     pub direction: TransferDirection,
     pub file_name: String,
     #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
     pub path: Option<String>,
     pub state: TransferQueueState,
     /// Whether this is a genuinely settled outcome the reconcile may fold into a
     /// stuck row (#1657) — stricter than [`TransferQueueState::is_terminal`].
     pub settled: bool,
+    #[cfg_attr(test, ts(type = "number"))]
     pub transferred: u64,
     #[serde(default)]
+    #[cfg_attr(test, ts(type = "number"))]
     pub total: u64,
     #[serde(default)]
+    #[cfg_attr(test, ts(type = "number"))]
     pub speed: u64,
     #[serde(default)]
     pub attempt: u32,

@@ -46,7 +46,7 @@ function plugin(id: string, version: string, updateUrl?: string): InstalledPlugi
       updateUrl,
     },
     state: "active",
-    installedAt: "2026-01-01T00:00:00Z",
+    installedAt: 1767225600000,
   } as InstalledPlugin;
 }
 

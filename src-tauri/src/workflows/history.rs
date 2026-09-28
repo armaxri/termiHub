@@ -5,6 +5,15 @@ use serde::{Deserialize, Serialize};
 /// "failed"` union) so the persisted record matches the run outcome over the
 /// wire.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(
+    test,
+    ts(
+        export,
+        export_to = "../../src/types/generated/",
+        rename = "WorkflowRunHistoryStatus"
+    )
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum WorkflowRunStatus {
     /// Every step ran to completion.
@@ -18,6 +27,8 @@ pub enum WorkflowRunStatus {
 /// What launched the run. Mirrors the frontend `WorkflowRunTrigger`; the
 /// variant names are the same kebab-case strings the trigger union uses.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "kebab-case")]
 pub enum WorkflowRunTrigger {
     /// Run from the palette, the Workflow sidebar, or a toolbar button.
@@ -45,6 +56,8 @@ pub enum WorkflowRunTrigger {
 /// exactly (mirroring [`crate::workflows::config::Workflow`]'s serde
 /// conventions).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowRun {
     /// Unique identifier for this run record.
@@ -66,16 +79,20 @@ pub struct WorkflowRun {
     pub total: u32,
     /// For a failed run: the 0-based index of the step that failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub failed_step_index: Option<u32>,
     /// For a failed run: a human-readable failure reason.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub error: Option<String>,
     /// Number of step failures tolerated via `continueOnError` (PROD-045).
     /// Omitted when none were tolerated, so older records round-trip unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub continued_failures: Option<u32>,
     /// The terminal tab the run targeted, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub tab_id: Option<String>,
     /// What launched the run.
     pub triggered_by: WorkflowRunTrigger,

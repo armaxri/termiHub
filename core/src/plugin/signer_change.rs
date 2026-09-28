@@ -83,6 +83,15 @@ pub enum InstalledSigner<'a> {
 
 /// How the incoming package's signer relates to the installed copy's signer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(
+    test,
+    ts(
+        export,
+        export_to = "../../src/types/generated/",
+        rename = "PluginSignerChangeKind"
+    )
+)]
 #[serde(rename_all = "camelCase")]
 pub enum SignerChangeKind {
     /// No plugin with this id is installed.
@@ -117,6 +126,15 @@ impl SignerChangeKind {
 /// A classified signer transition plus both fingerprints, as the confirmation
 /// prompt shows them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(
+    test,
+    ts(
+        export,
+        export_to = "../../src/types/generated/",
+        rename = "PluginSignerChange"
+    )
+)]
 #[serde(rename_all = "camelCase")]
 pub struct SignerChange {
     /// The plugin id being installed.

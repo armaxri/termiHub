@@ -107,13 +107,13 @@ describe("plugin types (#1993)", () => {
     const installed: InstalledPlugin = {
       manifest: sampleManifest(),
       state: "active",
-      installedAt: "2026-07-26T00:00:00Z",
+      installedAt: 1785024000000,
     };
     const errored: InstalledPlugin = {
       manifest: sampleManifest(),
       state: "error",
       errorMessage: "failed to load library",
-      installedAt: "2026-07-26T00:00:00Z",
+      installedAt: 1785024000000,
     };
     expect(installed.state).toBe("active");
     expect(errored.errorMessage).toBe("failed to load library");

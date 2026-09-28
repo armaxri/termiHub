@@ -33,10 +33,18 @@
 //! machinery, and a much smaller harness says so more clearly than a flag
 //! threaded through the larger one.
 //!
-//! The agent still runs from a throwaway **copy** of the built binary. Nothing
-//! here should ever swap it (see below), and the copy is what makes that a
-//! checked expectation rather than a hope: a regression that did apply would
-//! clobber the copy, not cargo's build artifact.
+//! The agent still runs from a **copy** of the built binary. Nothing here should
+//! ever swap it (see below), and the copy is what makes that a checked
+//! expectation rather than a hope: a regression that did apply would clobber the
+//! copy, not cargo's build artifact.
+//!
+//! Every agent in the suite runs the **same** copy, made and executed once per
+//! build (see [`shared_agent_binary`]). One copy per agent made the suite flaky
+//! under load. On macOS, the first exec of a newly written executable is held
+//! while the system assesses it. For this ~100 MB debug binary that takes about
+//! 2 s, and the assessments run one at a time host-wide. So parallel agents
+//! queued behind each other: the seventh took ~15 s to reach `main`, which was
+//! the whole budget for its `Listening on` line.
 //!
 //! ## The staged binary is never applied
 //!
@@ -57,6 +65,7 @@ use std::net::TcpStream;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -76,7 +85,8 @@ const HOOK_DEFAULT_VERSION: &str = "99.99.99";
 
 /// How long to wait for a notification, or for the agent to log its bind.
 /// Generous: CI hosts are slow and this suite has no timing-sensitive assertion
-/// to protect.
+/// to protect. For the bind it covers only the agent's own startup: the OS's
+/// first-exec assessment is paid once up front, in [`shared_agent_binary`].
 const TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Overall budget for connecting and completing the `initialize` handshake.
@@ -91,6 +101,86 @@ fn agent_binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_termihub-agent"))
 }
 
+/// File-name prefix of the shared agent copy in cargo's per-target temp dir.
+const SHARED_COPY_PREFIX: &str = "deferred-hook-agent-";
+
+/// The one agent binary every [`LiveAgent`] in this suite runs: a copy of
+/// cargo's build artifact that has already been executed once.
+///
+/// **Why one copy, executed up front.** On macOS the first exec of a newly
+/// written executable is held while the system assesses it. For the debug agent
+/// (~100 MB) that takes about 2 s. It is paid per *file*, not per content, and
+/// the assessments are serialised host-wide. The suite used to copy the binary
+/// once per agent. With its agents starting in parallel, those assessments
+/// queued and the n-th agent did not reach `main` for about 2n s. Measured here
+/// at idle: 2.0, 4.1, 6.0, 7.9, 10.0 and 12.4 s, and the seventh passed the
+/// 15 s [`TIMEOUT`] with an empty log. Under load, or with other checkouts'
+/// suites queued on the same assessment, it failed sooner. A longer timeout only
+/// moves that cliff. Paying the cost once, outside every per-test deadline,
+/// removes it: the n-th agent no longer waits on n-1 others.
+///
+/// **Why it is still a copy.** A regression that did apply an update would
+/// clobber the copy, not cargo's artifact, and
+/// `deferred_hook_does_not_swap_the_agent_binary` would catch it by inode.
+///
+/// **Where it lives.** In `CARGO_TARGET_TMPDIR`, named by the artifact's size
+/// and mtime. A later run of the same build reuses the copy, which the OS has
+/// already assessed. A rebuild gets a fresh name and sweeps the old copies. The
+/// copy is written under a unique name and renamed into place. That way a
+/// concurrent run of this suite in the same target dir never executes a
+/// half-written file. `cargo clean` removes it with the rest of `target/`.
+fn shared_agent_binary() -> &'static Path {
+    static SHARED: OnceLock<PathBuf> = OnceLock::new();
+    SHARED.get_or_init(|| {
+        let source = agent_binary();
+        let meta = std::fs::metadata(&source).expect("stat agent binary");
+        let mtime = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_nanos());
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+        std::fs::create_dir_all(dir).expect("create target tmp dir");
+        let name = format!("{SHARED_COPY_PREFIX}{}-{mtime}", meta.len());
+        let path = dir.join(&name);
+
+        // Best effort: sweep copies left by earlier builds. A sibling run still
+        // executing one keeps its open inode, so unlinking it is harmless.
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let stale = entry.file_name().to_string_lossy().into_owned();
+                if stale.starts_with(SHARED_COPY_PREFIX) && stale != name {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+
+        // The copy and the warm-up exec both run under the fork lock. A fork
+        // during the copy would leak our write fd into the child and break our
+        // own execve with ETXTBSY (#1597). See `common::fork_guard`.
+        let _fork_guard = common::fork_guard();
+        if !path.exists() {
+            let staging = dir.join(format!(".{name}.{}", std::process::id()));
+            std::fs::copy(&source, &staging).expect("copy agent binary");
+            std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod agent copy");
+            std::fs::rename(&staging, &path).expect("move agent copy into place");
+        }
+        // Pay the first-exec assessment here, with no deadline, not inside a
+        // test's startup budget. `--version` prints and exits without touching
+        // config or the network.
+        let status = Command::new(&path)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("run agent copy --version");
+        assert!(status.success(), "agent copy --version failed: {status}");
+        path
+    })
+}
+
 fn inode(path: &Path) -> Option<u64> {
     std::fs::metadata(path).ok().map(|m| m.ino())
 }
@@ -103,9 +193,9 @@ struct LiveAgent {
     child: Child,
     /// The address the agent actually bound, read back from its log.
     addr: String,
+    /// The binary the agent runs: the suite's [`shared_agent_binary`].
     bin_path: PathBuf,
     stderr_path: PathBuf,
-    _install_dir: TempDir,
     config_home: TempDir,
 }
 
@@ -130,21 +220,16 @@ impl LiveAgent {
     /// same port and win the re-bind, killing this agent at startup. Letting the
     /// OS assign the port to the process that keeps it closes that window.
     fn spawn(gate: Option<&str>) -> Self {
-        let install_dir = TempDir::new().expect("install dir");
-        let bin_path = install_dir.path().join("termihub-agent");
+        let bin_path = shared_agent_binary().to_path_buf();
         let config_home = TempDir::new().expect("config home");
 
         let stderr_file = tempfile::NamedTempFile::new().expect("stderr file");
         let stderr_path = stderr_file.path().to_path_buf();
         let (stderr_handle, _keep) = stderr_file.keep().expect("persist stderr file");
 
-        // Everything from the copy to the spawn runs under the fork lock: a
-        // sibling thread forking mid-copy inherits our write fd and makes our
-        // own execve fail with ETXTBSY (#1597). See `common::fork_guard`.
+        // The spawn is a fork site, so it takes the fork lock (#1597). See
+        // `common::fork_guard`.
         let fork_guard = common::fork_guard();
-        std::fs::copy(agent_binary(), &bin_path).expect("copy agent binary");
-        std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o755))
-            .expect("chmod agent copy");
 
         let mut cmd = Command::new(&bin_path);
         cmd.arg("--listen")
@@ -182,7 +267,6 @@ impl LiveAgent {
             addr,
             bin_path,
             stderr_path,
-            _install_dir: install_dir,
             config_home,
         }
     }

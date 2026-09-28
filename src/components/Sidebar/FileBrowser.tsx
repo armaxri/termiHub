@@ -90,6 +90,7 @@ import { useFileMoveTransfer } from "@/hooks/useFileMoveTransfer";
 import { useFileDragOut } from "@/hooks/useFileDragOut";
 import { useFileBookmarkScope } from "@/hooks/useFileBookmarkScope";
 import "./FileBrowser.css";
+import { isImeComposing } from "@/utils/imeComposition";
 
 /**
  * Fixed row height in px, matching `.file-browser__row` in FileBrowser.css. Rows
@@ -526,6 +527,7 @@ function RenameRow({
           }}
           onClick={(e) => e.stopPropagation()}
           onKeyDown={(e) => {
+            if (isImeComposing(e)) return;
             if (e.key === "Enter") {
               e.preventDefault();
               onSubmit(entry, e.currentTarget.value);
@@ -1936,6 +1938,7 @@ export function FileBrowser() {
               value={newFileName}
               onChange={(e) => setNewFileName(e.target.value)}
               onKeyDown={(e) => {
+                if (isImeComposing(e)) return;
                 if (e.key === "Enter") handleCreateFile();
                 if (e.key === "Escape") setNewFileName(null);
               }}
@@ -1963,6 +1966,7 @@ export function FileBrowser() {
               value={newDirName}
               onChange={(e) => setNewDirName(e.target.value)}
               onKeyDown={(e) => {
+                if (isImeComposing(e)) return;
                 if (e.key === "Enter") handleCreateDir();
                 if (e.key === "Escape") setNewDirName(null);
               }}

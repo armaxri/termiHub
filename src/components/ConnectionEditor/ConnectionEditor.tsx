@@ -89,6 +89,11 @@ import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { buildGatedTypeOptions } from "@/utils/experimentalTypes";
+import {
+  agentGraphicalTabConfig,
+  isAgentTunnelledGraphicalType,
+  withAgentTunnelledTypes,
+} from "@/utils/agentGraphicalTunnel";
 import { partitionConnectionTypes } from "@/utils/pluginConnectionTypes";
 import { isWindows } from "@/utils/platform";
 import "./ConnectionEditor.css";
@@ -290,9 +295,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const isAgentDefinitionMode = !!meta.agentDefinitionId && !!existingAgent;
 
   // In definition mode, use the agent's own type registry
+  // plus this computer's VNC/RDP types, which run here and tunnel through the
+  // agent's port forwarding (#3241).
   const agentConnectionTypes = useMemo(
-    () => existingAgent?.capabilities?.connectionTypes ?? [],
-    [existingAgent?.capabilities?.connectionTypes]
+    () =>
+      withAgentTunnelledTypes(existingAgent?.capabilities?.connectionTypes ?? [], connectionTypes),
+    [existingAgent?.capabilities?.connectionTypes, connectionTypes]
   );
   const effectiveRegistry = isAgentDefinitionMode ? agentConnectionTypes : connectionTypes;
 
@@ -429,6 +437,13 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     (!!existingAgent || (selectedType === "remote" && !existingConnection));
   /** Either agent mode (used for shared behavior like hiding Terminal/Appearance). */
   const isAnyAgentMode = isAgentTransportMode || isAgentDefinitionMode;
+  /**
+   * A VNC/RDP connection under an agent (#3241): it runs on this computer and
+   * tunnels through the agent, so it has no agent-side persistence and no
+   * agent-session test.
+   */
+  const isAgentTunnelledGraphical =
+    isAgentDefinitionMode && isAgentTunnelledGraphicalType(selectedType);
 
   /** Whether the SSH "Jump Host" section applies to the current edit. */
   const showJumpHostSection = selectedType === "ssh" && !isAnyAgentMode;
@@ -1163,6 +1178,17 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         });
         throw err;
       }
+      if (isAgentTunnelledGraphicalType(selectedType)) {
+        // VNC/RDP under an agent runs here and tunnels through the agent (#3241).
+        addTab(
+          name.trim(),
+          selectedType,
+          agentGraphicalTabConfig(existingAgent.id, selectedType, connSettings),
+          { contentType: "remote-desktop" }
+        );
+        closeThisTab();
+        return;
+      }
       addTab(
         name.trim(),
         "remote-session",
@@ -1529,6 +1555,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             {isAgentDefinitionMode && " (resolved on the remote machine)"}
           </p>
         )}
+        {isAgentTunnelledGraphical && (
+          <p className="settings-form__hint" data-testid="connection-editor-agent-tunnel-hint">
+            Runs on this computer and connects through the agent&apos;s port forwarding — the host
+            and port must be reachable from the agent host.
+          </p>
+        )}
         {!isAnyAgentMode && enabledExternalFiles.length > 0 && (
           <label className="settings-form__field">
             <span className="settings-form__label">Storage File</span>
@@ -1686,7 +1718,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         </div>
       )}
 
-      {isAgentDefinitionMode && (
+      {isAgentDefinitionMode && !isAgentTunnelledGraphical && (
         <div className="settings-panel__category">
           <h3 className="settings-panel__category-title">Session</h3>
           <div className="settings-form__field">
@@ -1796,17 +1828,20 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         </Button>
         {!isAgentTransportMode && (
           <>
-            <Button
-              variant="secondary"
-              onClick={handleTest}
-              errorToast={false}
-              aria-disabled={!canSave}
-              data-invalid={!canSave || undefined}
-              pendingLabel="Testing…"
-              data-testid="connection-editor-test"
-            >
-              Test
-            </Button>
+            {/* No agent-session test for a tunnelled VNC/RDP connection (#3241). */}
+            {!isAgentTunnelledGraphical && (
+              <Button
+                variant="secondary"
+                onClick={handleTest}
+                errorToast={false}
+                aria-disabled={!canSave}
+                data-invalid={!canSave || undefined}
+                pendingLabel="Testing…"
+                data-testid="connection-editor-test"
+              >
+                Test
+              </Button>
+            )}
             {testConnectId && (
               <Button
                 variant="ghost"

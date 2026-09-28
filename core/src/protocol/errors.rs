@@ -119,11 +119,15 @@ pub const UPDATE_UNAUTHORIZED: i64 = -32026;
 /// or the binary's version cannot be determined.
 pub const UPDATE_DOWNGRADE_REFUSED: i64 = -32027;
 
+/// `agent.forward.connect` could not reach its target from the agent host
+/// (refused, unresolvable, or timed out) — a desktop port forward (a VNC/RDP
+/// connection routed through the agent, #3241) failed to open.
+pub const FORWARD_CONNECT_FAILED: i64 = -32028;
+
 /// The `--listen` TCP transport's pre-RPC auth handshake was refused: the
 /// first line was not an `auth` request carrying this agent instance's token
 /// (missing, malformed, or wrong). The agent closes the connection right after
-/// sending it (AGT-002, #3745). `-32028` is left to `agent.forward.connect`
-/// (#3241).
+/// sending it (AGT-002, #3745).
 pub const LISTEN_AUTH_REJECTED: i64 = -32029;
 
 #[cfg(test)]
@@ -165,6 +169,7 @@ mod tests {
             SECOND_FACTOR_FAILED,
             UPDATE_UNAUTHORIZED,
             UPDATE_DOWNGRADE_REFUSED,
+            FORWARD_CONNECT_FAILED,
             LISTEN_AUTH_REJECTED,
         ];
         for code in codes {
@@ -204,6 +209,7 @@ mod tests {
             SECOND_FACTOR_FAILED,
             UPDATE_UNAUTHORIZED,
             UPDATE_DOWNGRADE_REFUSED,
+            FORWARD_CONNECT_FAILED,
             LISTEN_AUTH_REJECTED,
         ];
         let n = codes.len();
@@ -258,6 +264,7 @@ mod tests {
             SECOND_FACTOR_FAILED,
             UPDATE_UNAUTHORIZED,
             UPDATE_DOWNGRADE_REFUSED,
+            FORWARD_CONNECT_FAILED,
             LISTEN_AUTH_REJECTED,
         ];
         for code in app_codes {

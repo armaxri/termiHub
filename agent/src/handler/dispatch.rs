@@ -31,12 +31,12 @@ use crate::monitoring::MonitoringManagerApi;
 use crate::network::streaming::{RunLimits, StartError, ToolRunManager};
 use crate::protocol::errors;
 use crate::protocol::methods::{
-    AgentForwardCloseParams, AgentForwardDataParams, AgentRequestDeferredUpdateParams,
-    AgentRequestDeferredUpdateResult, AgentRequestUpdateParams, AgentRequestUpdateResult,
-    AgentSettings, AgentSettingsUpdateParams, AgentShutdownParams, AgentShutdownResult,
-    Capabilities, ConnectionCreateParams, ConnectionDeleteParams, ConnectionInfo,
-    ConnectionListResult, ConnectionTypesResult, ConnectionUpdateParams, CrashReportSummary,
-    CrashReportsListResult, CrashReportsReadParams, CrashReportsReadResult,
+    AgentForwardCloseParams, AgentForwardConnectParams, AgentForwardDataParams,
+    AgentRequestDeferredUpdateParams, AgentRequestDeferredUpdateResult, AgentRequestUpdateParams,
+    AgentRequestUpdateResult, AgentSettings, AgentSettingsUpdateParams, AgentShutdownParams,
+    AgentShutdownResult, Capabilities, ConnectionCreateParams, ConnectionDeleteParams,
+    ConnectionInfo, ConnectionListResult, ConnectionTypesResult, ConnectionUpdateParams,
+    CrashReportSummary, CrashReportsListResult, CrashReportsReadParams, CrashReportsReadResult,
     EmbeddedServerActivityParams, EmbeddedServerActivityResult, EmbeddedServerClearActivityParams,
     EmbeddedServerClearActivityResult, FilesCopyParams, FilesCreateSymlinkParams,
     FilesDeleteParams, FilesListParams, FilesListResult, FilesMkdirParams, FilesReadParams,
@@ -62,6 +62,7 @@ use crate::protocol::methods as pm;
 use crate::registry_daemon::client::RegistryClient;
 use crate::registry_daemon::protocol::{BroadcastEnvelope, ClientRecord};
 use crate::service::AgentServiceRegistry;
+use crate::session::agent_forward::ClientForwardStreams;
 use crate::session::definitions::{Connection, ConnectionStoreApi, Folder};
 use crate::session::manager::{
     DeferredUpdateError, DeferredUpdateOutcome, SessionCreateError, SessionManagerApi, MAX_SESSIONS,
@@ -116,7 +117,11 @@ use termihub_core::monitoring::{LocalProcessManager, ProcessError, ProcessManage
 /// Bumped to 0.16.0 for the additive optional `correlation_id` member of
 /// `connection.create` params (#3085, OBS-004): the agent logs the session under
 /// the desktop's id. An older agent ignores it; an older desktop omits it.
-const AGENT_PROTOCOL_VERSION: &str = "0.16.0";
+/// Bumped to 0.17.0 for the additive `agent.forward.connect` request (#3241):
+/// a desktop-initiated TCP stream over the `agent.forward.*` relay, carrying a
+/// VNC/RDP connection routed through the agent. An older agent answers "method
+/// not found" and the desktop reports that the agent must be updated.
+const AGENT_PROTOCOL_VERSION: &str = "0.17.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -168,6 +173,10 @@ struct HandlerState {
     /// This connection's keyboard-interactive prompt relay binding (#3375).
     /// Shared with [`AgentHandler::ki_binding`] so disconnect detaches it.
     ki_binding: Arc<KiBinding>,
+    /// Desktop port-forward streams this connection opened
+    /// (`agent.forward.connect`, #3241). Shared with
+    /// [`AgentHandler::forward_streams`] so disconnect closes them.
+    forward_streams: Arc<ClientForwardStreams>,
     /// Crash-report directory override (#3574). Empty in production, where the
     /// agent's own `<config>/logs/crash-reports` is used; tests point it at a
     /// temp dir via [`AgentHandler::with_crash_dir`].
@@ -212,6 +221,9 @@ pub struct AgentHandler {
     /// This connection's keyboard-interactive prompt relay binding (#3375),
     /// wired by [`with_ki_prompt_relay`](Self::with_ki_prompt_relay).
     ki_binding: Arc<KiBinding>,
+    /// Desktop port-forward streams this connection opened (#3241), closed by
+    /// [`deregister_client`](Self::deregister_client).
+    forward_streams: Arc<ClientForwardStreams>,
     /// Shared with [`HandlerState`] so tests can read a hosted server's bound
     /// address (a server started on port `0`, #3533) without an RPC for it.
     #[cfg_attr(
@@ -262,6 +274,7 @@ impl AgentHandler {
         let ki_binding = KiBinding::new();
         let crash_dir: Arc<OnceLock<PathBuf>> = Arc::new(OnceLock::new());
         let update_auth: Arc<OnceLock<UpdateAuth>> = Arc::new(OnceLock::new());
+        let forward_streams = ClientForwardStreams::new(session_manager.clone());
 
         let state = Mutex::new(HandlerState {
             session_manager,
@@ -279,6 +292,7 @@ impl AgentHandler {
             tunnel_registry,
             tool_runs: tool_runs.clone(),
             ki_binding: ki_binding.clone(),
+            forward_streams: forward_streams.clone(),
             crash_dir: crash_dir.clone(),
             update_auth: update_auth.clone(),
         });
@@ -295,6 +309,7 @@ impl AgentHandler {
             registry_client,
             tool_runs,
             ki_binding,
+            forward_streams,
             service_registry,
             crash_dir,
             update_auth,
@@ -394,6 +409,8 @@ impl AgentHandler {
         self.tool_runs.shutdown();
         // Nobody can answer this desktop's prompts any more: cancel them (#3375).
         self.ki_binding.detach();
+        // Its port forwards (#3241) end with it, releasing their targets.
+        self.forward_streams.close_all();
         self.client_registry.remove(&self.client_id);
         if let Some(registry) = self.registry() {
             registry.deregister();
@@ -652,6 +669,7 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_connection_resize(module)?;
     register_agent_forward_data(module)?;
     register_agent_forward_close(module)?;
+    register_agent_forward_connect(module)?;
     register_connection_types(module)?;
     register_session_get_buffer(module)?;
     register_connections_list(module)?;
@@ -886,7 +904,13 @@ fn register_connection_create(module: &mut RpcModule<Mutex<HandlerState>>) -> an
         let span = session_create_span(type_id, p.correlation_id.as_deref());
 
         let snapshot = session_manager
-            .create(type_id, title, p.config, p.definition_id)
+            .create_correlated(
+                type_id,
+                title,
+                p.config,
+                p.definition_id,
+                p.correlation_id.as_deref(),
+            )
             .instrument(span.clone())
             .await
             .map_err(|e| match e {
@@ -1179,6 +1203,45 @@ fn register_agent_forward_close(module: &mut RpcModule<Mutex<HandlerState>>) -> 
             .map_err(|e| invalid_params("agent.forward.close", e))?;
 
         session_manager.agent_forward_close(&p.stream_id).await;
+        ctx.lock().await.forward_streams.untrack(&p.stream_id);
+
+        Ok::<_, ErrorObjectOwned>(json!({}))
+    })?;
+    Ok(())
+}
+
+/// `agent.forward.connect`: open a TCP stream from this host to a target for a
+/// desktop port forward (#3241) — how a VNC/RDP connection hosted under this
+/// agent reaches its server. The stream is then relayed with the ordinary
+/// `agent.forward.data` / `agent.forward.close` messages, and is closed when this
+/// client disconnects. An unreachable target is answered with an error.
+fn register_agent_forward_connect(
+    module: &mut RpcModule<Mutex<HandlerState>>,
+) -> anyhow::Result<()> {
+    module.register_async_method(pm::AGENT_FORWARD_CONNECT, |params, ctx, _ext| async move {
+        let (session_manager, forward_streams) = {
+            let s = ctx.lock().await;
+            if !s.initialized {
+                return Err(not_initialized());
+            }
+            (s.session_manager.clone(), s.forward_streams.clone())
+        };
+
+        let p: AgentForwardConnectParams = params
+            .parse()
+            .map_err(|e| invalid_params("agent.forward.connect", e))?;
+        if p.host.trim().is_empty() || p.port == 0 {
+            return Err(rpc_err(
+                errors::INVALID_PARAMS,
+                "agent.forward.connect needs a target host and a non-zero port".to_string(),
+            ));
+        }
+
+        session_manager
+            .agent_forward_connect(&p.stream_id, &p.host, p.port)
+            .await
+            .map_err(|msg| rpc_err(errors::FORWARD_CONNECT_FAILED, msg))?;
+        forward_streams.track(&p.stream_id);
 
         Ok::<_, ErrorObjectOwned>(json!({}))
     })?;
@@ -3467,11 +3530,94 @@ mod tests {
     /// SSH keyboard-interactive prompt relay, and the embedded-server access
     /// log RPC) may now arrive — and, from 0.12.0, that `network.*` is gone;
     /// 0.13.0 made the update RPCs require the auth token, 0.14.0 adds
-    /// `docker.list_containers`, 0.15.0 adds its Compose fields, and 0.16.0
-    /// the `connection.create` `correlation_id`.
+    /// `docker.list_containers`, 0.15.0 adds its Compose fields, 0.16.0 the
+    /// `connection.create` `correlation_id`, and 0.17.0 `agent.forward.connect`.
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.16.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.17.0");
+    }
+
+    // ── agent.forward.connect (desktop port forward, #3241) ────────
+
+    /// `agent.forward.connect` opens a TCP stream to a live target, tracks it
+    /// for this client, and a client disconnect releases the target connection.
+    #[tokio::test]
+    async fn agent_forward_connect_opens_and_disconnect_closes_the_stream() {
+        use tokio::io::AsyncReadExt;
+
+        let target = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = target.local_addr().unwrap().port();
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let result = dispatch(
+            &handler,
+            "agent.forward.connect",
+            json!({ "stream_id": "gfx#1", "host": "127.0.0.1", "port": port }),
+            2,
+        )
+        .await;
+        assert!(result.get("result").is_some(), "{result}");
+        assert_eq!(handler.forward_streams.len(), 1);
+        let (mut server, _) = target.accept().await.unwrap();
+
+        handler.deregister_client();
+        let mut rest = Vec::new();
+        let n = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            server.read_to_end(&mut rest),
+        )
+        .await
+        .expect("target released after the client disconnects")
+        .unwrap();
+        assert_eq!(n, 0);
+        assert_eq!(handler.forward_streams.len(), 0);
+    }
+
+    /// An unreachable target is a typed `FORWARD_CONNECT_FAILED` naming the
+    /// agent host; a missing port is invalid params.
+    #[tokio::test]
+    async fn agent_forward_connect_reports_unreachable_and_invalid_targets() {
+        let port = {
+            let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let refused = dispatch(
+            &handler,
+            "agent.forward.connect",
+            json!({ "stream_id": "gfx#2", "host": "127.0.0.1", "port": port }),
+            2,
+        )
+        .await;
+        assert_eq!(
+            refused["error"]["code"],
+            errors::FORWARD_CONNECT_FAILED,
+            "{refused}"
+        );
+        assert!(
+            refused["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("agent host"),
+            "{refused}"
+        );
+        assert_eq!(handler.forward_streams.len(), 0);
+
+        let invalid = dispatch(
+            &handler,
+            "agent.forward.connect",
+            json!({ "stream_id": "gfx#3", "host": "127.0.0.1", "port": 0 }),
+            3,
+        )
+        .await;
+        assert_eq!(
+            invalid["error"]["code"],
+            errors::INVALID_PARAMS,
+            "{invalid}"
+        );
     }
 
     // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────
@@ -6037,6 +6183,19 @@ mod tests {
         async fn agent_forward_write(&self, _stream_id: &str, _data: Vec<u8>) {}
 
         async fn agent_forward_close(&self, _stream_id: &str) {}
+
+        async fn agent_forward_connect(
+            &self,
+            _stream_id: &str,
+            host: &str,
+            _port: u16,
+        ) -> Result<(), String> {
+            if host == "unreachable.invalid" {
+                Err("cannot reach unreachable.invalid from the agent host".to_string())
+            } else {
+                Ok(())
+            }
+        }
     }
 
     fn make_mock_handler() -> AgentHandler {

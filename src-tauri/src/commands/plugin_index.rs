@@ -50,6 +50,8 @@ const DOWNLOAD_CACHE_DIR: &str = "plugin-downloads";
 /// The Browse view's data: which index was read, and every entry with this
 /// host's compatibility verdict.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct PluginIndexResult {
     /// The index URL that was fetched.
@@ -57,6 +59,10 @@ pub struct PluginIndexResult {
     /// Whether that is the built-in default index.
     pub is_default: bool,
     /// The listed plugins, in index order.
+    #[cfg_attr(
+        test,
+        ts(type = "Array<import(\"./PluginIndexEntryView\").PluginIndexEntryView>")
+    )]
     pub entries: Vec<PluginIndexEntryView>,
 }
 

@@ -60,6 +60,8 @@ pub const PROCESS_LIST_COMMAND: &str =
 /// Field naming is `camelCase` on the wire to match the frontend/agent JSON
 /// convention (as with [`SystemStats`](super::SystemStats)).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessInfo {
     /// Numeric process id — the exact, only target a kill ever uses.
@@ -77,6 +79,7 @@ pub struct ProcessInfo {
     /// `None` for `ps`-sourced remotes, which report only `pmem` percentage in
     /// the single round-trip.
     #[serde(default)]
+    #[cfg_attr(test, ts(type = "number | null"))]
     pub memory_kb: Option<u64>,
 }
 
@@ -85,6 +88,8 @@ pub struct ProcessInfo {
 /// Deliberately limited to the two safe, universally-portable signals. A fuller
 /// menu (HUP, INT, USR1/2, …) is an explicit follow-up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub enum KillSignal {
     /// SIGTERM — polite, catchable termination request. The default.

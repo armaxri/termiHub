@@ -15,6 +15,7 @@ import { SettingsField } from "./SettingsField";
 import { PluginCatalogEntryCard } from "./PluginCatalogEntryCard";
 import { PluginUrlInstall, urlFieldError } from "./PluginUrlInstall";
 import "./PluginCatalogSettings.css";
+import { isImeComposing } from "@/utils/imeComposition";
 
 /** Shown when the index URL setting is unset — mirrors the backend default. */
 const DEFAULT_PLUGIN_INDEX_URL =
@@ -131,6 +132,7 @@ export function PluginCatalogSettings() {
             onChange={(e) => setUrlDraft(e.target.value)}
             onBlur={() => saveUrl(urlDraft)}
             onKeyDown={(e) => {
+              if (isImeComposing(e)) return;
               if (e.key === "Enter") saveUrl(urlDraft);
             }}
             spellCheck={false}

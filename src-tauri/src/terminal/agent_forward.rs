@@ -17,6 +17,13 @@
 //!   back to the agent (carried as [`AgentIoCommand`]).
 //! - `agent.forward.close` → drop the stream.
 //!
+//! The same stream table also carries **desktop port forwards** (#3241): a
+//! VNC/RDP connection hosted under an agent registers a stream here with
+//! [`register_stream`](DesktopAgentForward::register_stream) before asking the
+//! agent to `agent.forward.connect` to its target, so the agent's `data` /
+//! `close` notifications for that stream reach the local loopback socket the
+//! graphical backend dialled (see `session::agent_port_forward`).
+//!
 //! No local agent is a graceful no-op: the connect fails, we answer with an
 //! immediate `agent.forward.close`, and the agent drops the forwarded channel —
 //! matching the no-agent behaviour of the SSH-reached path (#1699/#1719).
@@ -120,6 +127,26 @@ impl DesktopAgentForward {
         }
     }
 
+    /// Register a desktop-initiated port-forward stream (#3241): the agent's
+    /// `data` for `stream_id` is fed into `sink`, and its `close` (or
+    /// [`clear`](Self::clear)) drops `sink`, which the owner reads as the stream
+    /// ending.
+    pub fn register_stream(&self, stream_id: String, sink: UnboundedSender<Vec<u8>>) {
+        self.streams
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(stream_id, sink);
+    }
+
+    /// Drop every stream — the agent transport broke, so none of them survives
+    /// into a reconnected agent (#3241). Each owner sees its sink close.
+    pub fn clear(&self) {
+        self.streams
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+    }
+
     /// Handle `agent.forward.close` from the agent: drop the stream. Dropping the
     /// sink ends the writer, which shuts the local agent connection.
     pub fn on_close(&self, stream_id: &str) {
@@ -213,6 +240,25 @@ mod tests {
         let relay = DesktopAgentForward::new();
         relay.on_data("ghost#1", b"bytes".to_vec());
         relay.on_close("ghost#1");
+        assert!(relay.streams.lock().unwrap().is_empty());
+    }
+
+    /// A registered port-forward stream (#3241) receives the agent's bytes, and
+    /// both `close` and `clear` end it (its receiver sees the channel close).
+    #[tokio::test]
+    async fn registered_stream_receives_data_until_closed_or_cleared() {
+        let relay = DesktopAgentForward::new();
+        let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        relay.register_stream("gfx-1".to_string(), tx);
+        relay.on_data("gfx-1", b"frame".to_vec());
+        assert_eq!(rx.recv().await.as_deref(), Some(&b"frame"[..]));
+        relay.on_close("gfx-1");
+        assert_eq!(rx.recv().await, None);
+
+        let (tx2, mut rx2) = mpsc::unbounded_channel::<Vec<u8>>();
+        relay.register_stream("gfx-2".to_string(), tx2);
+        relay.clear();
+        assert_eq!(rx2.recv().await, None);
         assert!(relay.streams.lock().unwrap().is_empty());
     }
 

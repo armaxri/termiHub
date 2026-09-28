@@ -6,6 +6,7 @@ import type { SessionHistoryEntry } from "@/types/sessionHistory";
 import { parseQuickConnect, quickConnectConfig } from "@/utils/quickConnect";
 import { sessionHistoryTitle } from "@/utils/sessionHistoryTitle";
 import { formatRelativeTime } from "@/utils/formatters";
+import { isImeComposing } from "@/utils/imeComposition";
 
 /** Maximum autocomplete suggestions shown below the quick-connect input. */
 const MAX_SUGGESTIONS = 6;
@@ -98,6 +99,7 @@ export function QuickConnectBar({ history, defaultUser, onConnect }: QuickConnec
             }, 120);
           }}
           onKeyDown={(e) => {
+            if (isImeComposing(e)) return;
             if (e.key === "Enter") {
               e.preventDefault();
               submit();

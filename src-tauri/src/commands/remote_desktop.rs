@@ -33,7 +33,10 @@ use tracing::debug;
 
 use termihub_core::connection::{InputEvent, RemoteClipboardFile};
 
+use std::sync::Arc;
+
 use crate::session::graphical_manager::{GraphicalEventSink, GraphicalSessionManager};
+use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 use crate::window::WindowManager;
 
@@ -209,14 +212,22 @@ pub(crate) async fn gated_remote_clipboard_files(
 }
 
 /// Open a graphical remote-desktop session. Returns the new session id.
+///
+/// A connection hosted under an agent (its settings carry `agentId`, #3241)
+/// runs its VNC/RDP backend here and tunnels the TCP transport through the
+/// agent's port forwarding; any other connection dials directly.
 #[tauri::command]
 pub async fn remote_desktop_connect(
     type_id: String,
     settings: Value,
     app_handle: tauri::AppHandle,
     manager: State<'_, GraphicalSessionManager>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<String, TerminalError> {
-    manager.connect(&type_id, settings, app_handle).await
+    let agents = Some(agent_manager.inner().clone());
+    manager
+        .connect_routed(&type_id, settings, agents, app_handle)
+        .await
 }
 
 /// Request a new session resolution in pixels (Match Window / dynamic resize).

@@ -111,6 +111,12 @@ pub const AGENT_CRASH_REPORTS_READ: &str = "agent.crash_reports.read";
 pub const AGENT_FORWARD_OPEN: &str = "agent.forward.open";
 pub const AGENT_FORWARD_DATA: &str = "agent.forward.data";
 pub const AGENT_FORWARD_CLOSE: &str = "agent.forward.close";
+/// Desktop → agent request (#3241): open a TCP stream from the agent host to a
+/// `host:port` target and relay it over the same `agent.forward.data` /
+/// `agent.forward.close` stream protocol. Carries a desktop-side port forward
+/// (a VNC/RDP connection routed through the agent). An older agent answers
+/// "method not found".
+pub const AGENT_FORWARD_CONNECT: &str = "agent.forward.connect";
 
 // Agent-hosted tunnel forwarding (#2185).
 pub const TUNNEL_START: &str = "tunnel.start";
@@ -687,6 +693,19 @@ pub struct AgentForwardDataParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentForwardCloseParams {
     pub stream_id: String,
+}
+
+/// Desktop → agent: open a TCP stream from the agent host to `host:port` under
+/// the desktop-chosen `stream_id` (#3241). On success the stream is relayed with
+/// the existing `agent.forward.data` / `agent.forward.close` messages in both
+/// directions; a failed connect is answered with a JSON-RPC error.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentForwardConnectParams {
+    pub stream_id: String,
+    /// Target host, resolved on the agent host.
+    pub host: String,
+    /// Target TCP port.
+    pub port: u16,
 }
 
 // ── session.resize ─────────────────────────────────────────────────
@@ -3432,6 +3451,7 @@ mod tests {
         assert_eq!(AGENT_FORWARD_OPEN, "agent.forward.open");
         assert_eq!(AGENT_FORWARD_DATA, "agent.forward.data");
         assert_eq!(AGENT_FORWARD_CLOSE, "agent.forward.close");
+        assert_eq!(AGENT_FORWARD_CONNECT, "agent.forward.connect");
         assert_eq!(TUNNEL_START, "tunnel.start");
         assert_eq!(TUNNEL_STOP, "tunnel.stop");
         assert_eq!(TUNNEL_STATUS, "tunnel.status");

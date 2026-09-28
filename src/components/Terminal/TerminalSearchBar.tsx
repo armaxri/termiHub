@@ -5,6 +5,7 @@ import { useAppStore } from "@/store/appStore";
 import { Button, Input, Tooltip } from "@/components/ui";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import "./TerminalSearchBar.css";
+import { isImeComposing } from "@/utils/imeComposition";
 
 interface TerminalSearchBarProps {
   tabId: string;
@@ -72,6 +73,7 @@ export function TerminalSearchBar({ tabId }: TerminalSearchBarProps) {
       // Prevent terminal shortcuts from firing while typing in search
       e.stopPropagation();
 
+      if (isImeComposing(e)) return;
       if (e.key === "Escape") {
         handleClose();
       } else if (e.key === "Enter") {

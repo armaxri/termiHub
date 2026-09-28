@@ -21,6 +21,7 @@ import { newId } from "@/services/transport/ids";
 import { useFollowConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import { remapWorkspaceTabGroups } from "@/utils/connectionIdChanges";
 import "./WorkspaceEditor.css";
+import { isImeComposing } from "@/utils/imeComposition";
 
 interface WorkspaceEditorProps {
   tabId: string;
@@ -248,6 +249,7 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
                       onChange={(e) => setRenameValue(e.target.value)}
                       onBlur={() => commitRename(index)}
                       onKeyDown={(e) => {
+                        if (isImeComposing(e)) return;
                         if (e.key === "Enter") commitRename(index);
                         if (e.key === "Escape") setRenamingGroupIndex(null);
                         e.stopPropagation();

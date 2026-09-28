@@ -4,6 +4,7 @@ import { Button, Input, Modal, Tooltip, toast } from "@/components/ui";
 import { useFileBookmarksStore } from "@/store/fileBookmarksStore";
 import type { FileBookmark } from "@/types/fileBookmark";
 import { errorMessage } from "@/utils/errorMessage";
+import { isImeComposing } from "@/utils/imeComposition";
 
 /** Props for {@link FileBookmarksDialog}. */
 export interface FileBookmarksDialogProps {
@@ -100,6 +101,7 @@ export function FileBookmarksDialog({
                     onChange={(e) => setDraft(e.target.value)}
                     onBlur={() => setRenamingId(null)}
                     onKeyDown={(e) => {
+                      if (isImeComposing(e)) return;
                       if (e.key === "Enter") {
                         e.preventDefault();
                         void commitRename(b);

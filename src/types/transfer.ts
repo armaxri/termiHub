@@ -1,4 +1,7 @@
 import type { TransferProgress, TransferQueueState, TransferSnapshot } from "@/services/api";
+import type { TransferDirection } from "./generated/TransferDirection";
+import type { TransferEntry } from "./generated/TransferEntry";
+import type { TransferSeed } from "./generated/TransferSeed";
 import { formatRate } from "@/utils/formatters";
 import { blendRate, etaFromRate } from "@/utils/byteRate";
 
@@ -12,8 +15,13 @@ import { blendRate, etaFromRate } from "@/utils/byteRate";
  */
 export type { TransferQueueState };
 
-/** Direction of a transfer, driving the up/down icon and verb in the UI. */
-export type TransferDirection = "download" | "upload";
+/**
+ * The transfer direction, a Transfer Queue row ({@link TransferEntry}, #1337)
+ * and its registration-time seed ({@link TransferSeed}, #1632) are generated via
+ * ts-rs (audit DUP-030, #3088) from the authoritative transfer projection in
+ * `src-tauri/src/transfers_projection/store.rs`.
+ */
+export type { TransferDirection, TransferEntry, TransferSeed };
 
 /** The terminal states — a transfer in one of these will not move on its own. */
 export const TERMINAL_TRANSFER_STATES: readonly TransferQueueState[] = [
@@ -25,80 +33,6 @@ export const TERMINAL_TRANSFER_STATES: readonly TransferQueueState[] = [
 /** Whether a transfer state is terminal (finished, one way or another). */
 export function isTerminalTransferState(state: TransferQueueState): boolean {
   return TERMINAL_TRANSFER_STATES.includes(state);
-}
-
-/**
- * A single row in the Transfer Queue panel (#1337).
- *
- * Richer than the transient {@link TransferProgress} event payload: it carries a
- * derived {@link TransferQueueState}, a computed throughput, a nullable total
- * (unknown size), and — for failed rows — the error message and retry attempt
- * counters. Persisted in the store's `transferQueue` slice keyed by {@link id};
- * unlike the transient `transfers` map (#1247), terminal rows are retained until
- * the user clears or removes them.
- */
-export interface TransferEntry {
-  /** Stable per-transfer id (the backend `transferId`). */
-  id: string;
-  /** Owning session id (SFTP/FTP session), used for grouping and cancel-all. */
-  sessionId: string;
-  /** Upload or download. */
-  direction: TransferDirection;
-  /** Display name (file name). */
-  name: string;
-  /** Remote path, when the backend supplies one (SFTP and FTP events now do, #1531). */
-  path?: string;
-  /** Derived lifecycle state. */
-  state: TransferQueueState;
-  /** Bytes transferred so far. */
-  transferred: number;
-  /** Total bytes, or `null` when the size is unknown (indeterminate). */
-  totalBytes: number | null;
-  /** Completion percentage (0–100), or `null` when indeterminate. */
-  percent: number | null;
-  /** Instantaneous throughput in bytes/sec, or `null` when not moving/unknown. */
-  speedBytesPerSec: number | null;
-  /**
-   * Estimated time remaining in whole seconds (UX-019), or `null` when it cannot
-   * be known — the row is not actively moving, the total size is unknown
-   * (indeterminate), the throughput is zero/unknown, or no bytes remain.
-   */
-  etaSeconds: number | null;
-  /** Human-readable error, only populated for the `failed` state. */
-  error?: string;
-  /** Current retry attempt (SI-5 / #1336), when reported. */
-  attempt?: number;
-  /** Maximum retry attempts (SI-5 / #1336), when reported. */
-  maxAttempts?: number;
-  /** Wall-clock ms of the last update, used to compute throughput deltas. */
-  updatedAt: number;
-}
-
-/**
- * The minimal description of a transfer known at **registration time** — before
- * any `transfer-progress` event has been delivered (#1632).
- *
- * A transfer command (`sftp_download` / `sftp_upload`) returns its `transferId`
- * synchronously over the reliable request/response IPC channel, whereas live
- * progress arrives as best-effort fan-out events that can be dropped or delayed
- * when the webview is starved (e.g. under memory pressure / jetsam). Seeding the
- * queue from this snapshot at registration makes the Transfer Queue panel open
- * as soon as a transfer is known, independent of whether any progress event is
- * ever observed — a later event simply upserts the row.
- */
-export interface TransferSeed {
-  /** The backend `transferId` returned by the start command. */
-  id: string;
-  /** Owning SFTP/FTP session id. */
-  sessionId: string;
-  /** Upload or download. */
-  direction: TransferDirection;
-  /** Display name (file name). */
-  name: string;
-  /** Remote path, when known. */
-  path?: string;
-  /** Total bytes when already known (uploads), else `null`/omitted. */
-  totalBytes?: number | null;
 }
 
 /**

@@ -234,7 +234,7 @@ termiHub uses a VS Code-inspired three-column layout:
 
 ### Connection Types on a Remote Agent
 
-A connection you create **on a remote agent** runs on the agent's host, not on your computer: a local shell is a shell on the server, a serial connection uses a port plugged into the server, and so on. The agent hosts fewer connection types than the desktop. The connection editor only offers the types the connected agent reports.
+A connection you create **on a remote agent** runs on the agent's host, not on your computer: a local shell is a shell on the server, a serial connection uses a port plugged into the server, and so on. The agent hosts fewer connection types than the desktop. The connection editor offers the types the connected agent reports, plus Remote Desktop (RDP / VNC), which the agent carries through a tunnel.
 
 | Connection type            | Desktop            | Remote agent              | On the agent, survives an agent restart |
 | -------------------------- | ------------------ | ------------------------- | --------------------------------------- |
@@ -245,10 +245,10 @@ A connection you create **on a remote agent** runs on the agent's host, not on y
 | Docker                     | Yes                | Yes (server's Docker)     | Yes                                     |
 | WSL                        | Windows only       | Windows agents only       | Yes                                     |
 | FTP / FTPS                 | Yes                | Yes                       | No                                      |
-| Remote Desktop (RDP / VNC) | Yes (experimental) | **No**                    | —                                       |
+| Remote Desktop (RDP / VNC) | Yes (experimental) | Yes, via a tunnel         | —                                       |
 | Plugin connection types    | Yes                | **No**                    | —                                       |
 
-- **Why no RDP / VNC on the agent:** they are graphical sessions. The agent forwards terminal output only; it has no channel for streaming a remote-desktop picture. Open RDP / VNC connections from the desktop directly.
+- **RDP / VNC via a tunnel:** the remote-desktop session still runs on your computer. Only its network connection goes through the agent, so the RDP / VNC server must be reachable **from the agent host** (enter its host and port as the agent sees them). The session ends with its tab and cannot outlive a restart. With Auto-Reconnect on, a session that loses the agent reconnects through the tunnel once the agent is back. VNC's own SSH-tunnel option is not available under an agent.
 - **Why no plugin types on the agent:** the agent does not load plugins.
 - **Survives an agent restart:** most agent sessions run in a separate session process on the server, so they keep running if the agent itself restarts. Telnet and FTP sessions run inside the agent and end when it restarts.
 

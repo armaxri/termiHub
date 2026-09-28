@@ -6,6 +6,7 @@ import { BUILT_IN_FILENAME_MAPPINGS, BUILT_IN_EXTENSION_MAPPINGS } from "@/utils
 import { getAvailableLanguages } from "@/utils/monacoLanguages";
 import { Button, Input, Tooltip, EmptyState } from "@/components/ui";
 import { compareNames } from "@/utils/locale";
+import { isImeComposing } from "@/utils/imeComposition";
 
 /** Combined view of a built-in mapping row (shown in the reference table). */
 interface BuiltInRow {
@@ -157,6 +158,7 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
                   setAddError(null);
                 }}
                 onKeyDown={(e) => {
+                  if (isImeComposing(e)) return;
                   if (e.key === "Enter") handleAdd();
                 }}
                 placeholder="Filename or .ext"
@@ -171,6 +173,7 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
                   setAddError(null);
                 }}
                 onKeyDown={(e) => {
+                  if (isImeComposing(e)) return;
                   if (e.key === "Enter") handleAdd();
                 }}
                 placeholder="Language ID (e.g. groovy)"

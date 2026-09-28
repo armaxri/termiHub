@@ -288,6 +288,9 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                          |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.17.0          | 0.17.0        | Yes                                                                                                                                  |
+| 0.17.0          | 0.9.0–0.16.0  | Yes (no `agent.forward.connect` — a VNC/RDP connection under the agent fails with "update the agent")                                |
+| 0.16.0          | 0.17.0        | Yes (new method ignored)                                                                                                             |
 | 0.16.0          | 0.16.0        | Yes                                                                                                                                  |
 | 0.16.0          | 0.9.0–0.15.0  | Yes (`correlation_id` ignored — the agent's logs for a session are not keyed by the desktop's session id)                            |
 | 0.15.0          | 0.16.0        | Yes (no `correlation_id` — the agent logs the session without a desktop id)                                                          |
@@ -333,6 +336,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                           |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                 |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                  |
+
+**0.17.0 (additive, minor)** — adds [`agent.forward.connect`](#agentforwardconnect) (#3241): a **desktop-initiated** TCP stream from the agent host to a `host:port` target, relayed with the existing [`agent.forward.data`](#agentforwarddata) / [`agent.forward.close`](#agentforwardclose) methods and notifications, plus error code `-32028`. It carries VNC/RDP connections hosted under an agent: the desktop keeps running the VNC/RDP backend and only its TCP transport rides the agent. Negotiation is by **method-not-found fallback**: a pre-0.17.0 agent answers `-32601` and the desktop reports that the agent must be updated. A pre-0.17.0 desktop never calls the method.
 
 **0.16.0 (additive, minor)** — adds the optional `correlation_id` member to [`connection.create`](#connectioncreate) params (#3085, OBS-004). The desktop sends its own `session_id` for the logical session; the agent runs that session's create — and, for an in-process session, its output forwarder — under an `agent_session` `tracing` span carrying `correlation_id`, plus the agent's own `session_id` once the create succeeds. One agent-hosted session can then be followed across the desktop's `termihub.log` and the agent's log by filtering on one id. Diagnostics only: the field never changes behavior. Backwards compatible in both directions: a pre-0.16.0 desktop omits the member (the agent logs without it), and a pre-0.16.0 agent ignores it.
 
@@ -886,6 +891,31 @@ Desktop → agent. The desktop closed a forwarded ssh-agent stream — its local
 | `stream_id` | `string` | Forwarded ssh-agent stream id |
 
 **Response**: `{}`. Idempotent.
+
+---
+
+### `agent.forward.connect`
+
+Desktop → agent (#3241). Opens a TCP connection **from the agent host** to `host:port` and relays it as stream `stream_id` — the agent end of a desktop port forward. This is how a VNC/RDP connection hosted under an agent reaches its server: the desktop binds a loopback port, its own VNC/RDP backend dials that port, and every connection to it becomes one `agent.forward.connect` stream. The target must therefore be reachable from the agent host.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 42,
+  "method": "agent.forward.connect",
+  "params": { "stream_id": "pf-7f3c...", "host": "10.0.0.5", "port": 5901 }
+}
+```
+
+| Param       | Type     | Description                                                 |
+| ----------- | -------- | ----------------------------------------------------------- |
+| `stream_id` | `string` | Desktop-chosen stream id (unique among the agent's streams) |
+| `host`      | `string` | Target host, resolved on the agent host                     |
+| `port`      | `number` | Target TCP port (non-zero)                                  |
+
+**Response**: `{}` once the TCP connection is established. From then on the stream uses the ordinary relay messages in both directions: the desktop sends target-bound bytes with the [`agent.forward.data`](#agentforwarddata) method and ends the stream with [`agent.forward.close`](#agentforwardclose) (which also drops the agent's target connection); the agent sends the target's bytes as [`agent.forward.data` notifications](#agentforwarddata-notification) and an [`agent.forward.close` notification](#agentforwardclose-notification) when the target hangs up. There is no `agent.forward.open` for these streams. The agent closes every stream a client opened when that client disconnects.
+
+**Errors**: `-32602` for a missing host or port `0`; `-32028` when the target is refused, unresolvable, or does not answer within 10 seconds — the message names the target and says it could not be reached from the agent host. An agent older than 0.17.0 answers `-32601`.
 
 ---
 
@@ -3251,6 +3281,7 @@ For serial sessions:
 | `-32025` | Second factor failed        | An agent-authenticated SSH connection's one-time code was rejected after an earlier factor was accepted — keep the password |
 | `-32026` | Update unauthorized         | An agent update RPC lacked the instance's update auth token (missing or wrong), or the agent has none (AGT-003)             |
 | `-32027` | Update downgrade refused    | An agent update was refused by the downgrade policy: an unpinned downgrade, a mismatched pin, or an unknown version         |
+| `-32028` | Forward connect failed      | `agent.forward.connect` could not reach its target from the agent host (refused, unresolvable, timed out)                   |
 | `-32029` | Listen auth rejected        | The `--listen` pre-RPC `auth` handshake was refused (missing, malformed, or wrong token); the agent closes the connection   |
 
 ---
