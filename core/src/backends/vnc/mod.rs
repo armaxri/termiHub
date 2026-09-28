@@ -349,7 +349,11 @@ async fn build_vencrypt_config(cfg: &VncConfig) -> Result<VencryptConfig, Sessio
     };
     Ok(VencryptConfig {
         username: cfg.username.clone(),
-        server_name: cfg.host.clone(),
+        server_name: cfg
+            .tls_server_name
+            .clone()
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| cfg.host.clone()),
         verify,
     })
 }
@@ -1562,6 +1566,19 @@ mod tests {
     }
 
     // --- VeNCrypt config resolution (#1714) ---
+
+    /// An agent-routed connection dials `127.0.0.1:<forward>` but must still
+    /// verify the certificate against the real server name (#3241).
+    #[tokio::test]
+    async fn vencrypt_server_name_prefers_the_tls_server_name_override() {
+        let cfg = VncConfig {
+            host: "127.0.0.1".to_string(),
+            tls_server_name: Some("vnc.example.com".to_string()),
+            ..VncConfig::default()
+        };
+        let ve = build_vencrypt_config(&cfg).await.unwrap();
+        assert_eq!(ve.server_name, "vnc.example.com");
+    }
 
     #[tokio::test]
     async fn vencrypt_config_defaults_to_system_roots() {

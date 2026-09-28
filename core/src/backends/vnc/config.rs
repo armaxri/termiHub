@@ -64,6 +64,12 @@ pub struct VncConfig {
     pub tls_verify: String,
     /// PEM CA bundle path used when [`tls_verify`](Self::tls_verify) is `"ca"`.
     pub tls_ca_path: Option<String>,
+    /// TLS server name to verify the VeNCrypt certificate against, when it
+    /// differs from [`host`](Self::host). Not an editor field: the desktop sets it
+    /// when it dials the server through a loopback port forward (an agent-routed
+    /// connection, #3241) so `host` is `127.0.0.1` but the certificate still
+    /// names the real server.
+    pub tls_server_name: Option<String>,
     /// Suppress all keyboard/mouse input when `true`.
     pub view_only: bool,
     /// Render server-pushed cursor shapes when `true`.
@@ -130,6 +136,7 @@ impl Default for VncConfig {
             username: String::new(),
             tls_verify: "system".to_string(),
             tls_ca_path: None,
+            tls_server_name: None,
             view_only: false,
             show_remote_cursor: true,
             preferred_encoding: "zrle".to_string(),
