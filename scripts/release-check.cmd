@@ -3,6 +3,12 @@ REM Release readiness checklist — validates that the repo is ready for a relea
 REM Run from the repo root: scripts\release-check.cmd
 REM
 REM Usage: scripts\release-check.cmd [--versions-only] [--expect-version VER] [--help]
+REM
+REM The full run (no flags) gates on: versions, CHANGELOG, unit tests, the coverage
+REM ratchet, quality checks, a clean tree on main/release/*, green CI integration
+REM lanes for HEAD (needs gh, logged in), a blocking TODO/FIXME/HACK scan with an
+REM allowlist, and a real bundle build plus smoke test (needs a display). Slow.
+REM
 REM   --versions-only         Run only the version checks (5-file consistency, the
 REM                           optional expected version, Tauri npm/crate drift) and
 REM                           exit. Mirrors release-check.sh --versions-only, the
@@ -37,6 +43,9 @@ exit /b 2
 
 :usage
 echo Usage: scripts\release-check.cmd [--versions-only] [--expect-version VER] [--help]
+echo   The full run also requires green CI integration lanes for HEAD ^(gh, logged in^), a
+echo   blocking TODO/FIXME/HACK scan ^(scripts\release-marker-allowlist.json^) and a real
+echo   bundle build + smoke test ^(needs a display^).
 echo   --versions-only         Run only the version checks and exit (no tests, no git checks).
 echo   --expect-version VER    Also require every version source to equal VER (a leading v is ignored).
 echo   --help                  Show this help and exit.
@@ -261,36 +270,119 @@ if "%BRANCH%"=="main" (
     )
 )
 
+REM === Integration / System Tests (CI lanes on this commit) ===
+echo.
+echo === Integration / System Tests (CI lanes on this commit) ===
+
+REM The unit tests above never touch the bridge integration lane, the Docker
+REM fixture suites or the agent live tests (TOOL-011, #3750), and running them
+REM locally is not reliable (Docker fixtures, a real display, a quiet machine).
+REM So, like the Release workflow, require the newest 'Release Candidate: Full
+REM Integration' run and the post-merge Code Quality and Dev Build push runs to
+REM be green on this exact commit, via the same release-integration-gate.mjs.
+REM Needs the gh CLI, logged in. Mirrors release-check.sh.
+for /f %%s in ('git rev-parse HEAD') do set "HEAD_SHA=%%s"
+set "GATE_REF=%BRANCH%"
+if "%GATE_REF%"=="HEAD" set "GATE_REF=RELEASE-BRANCH-OR-TAG"
+set "GATE_REPO=armaxri/termiHub"
+set "GATE_TOKEN="
+where gh >nul 2>&1
+if errorlevel 1 (
+    echo   FAIL: gh CLI not installed - cannot verify the integration lanes ^(https://cli.github.com^)
+    set FAILED=1
+    goto :markers
+)
+for /f %%r in ('gh repo view --json nameWithOwner -q .nameWithOwner 2^>nul') do set "GATE_REPO=%%r"
+set "DISPATCH_CMD=gh workflow run release-candidate.yml --repo %GATE_REPO% --ref %GATE_REF%"
+for /f %%t in ('gh auth token 2^>nul') do set "GATE_TOKEN=%%t"
+if not defined GATE_TOKEN (
+    echo   FAIL: gh CLI not logged in - cannot verify the integration lanes ^(run: gh auth login^)
+    set FAILED=1
+    goto :markers
+)
+set "ON_REMOTE="
+for /f %%b in ('git branch -r --contains %HEAD_SHA% 2^>nul') do set "ON_REMOTE=1"
+if not defined ON_REMOTE (
+    echo   FAIL: HEAD %HEAD_SHA% is on no remote branch, so no CI run can exist for it
+    echo     Push it first ^(git push^), then run the full integration lanes on it:
+    echo       %DISPATCH_CMD%
+    echo     If you pushed it from elsewhere, run 'git fetch' and re-run this script.
+    set FAILED=1
+    goto :markers
+)
+set "RELEASE_GATE_LOCAL=1"
+set "RELEASE_SHA=%HEAD_SHA%"
+set "RELEASE_REF_NAME=%GATE_REF%"
+set "GITHUB_REPOSITORY=%GATE_REPO%"
+set "GITHUB_TOKEN=%GATE_TOKEN%"
+node scripts\internal\release-integration-gate.mjs
+set GATE_RC=%errorlevel%
+set "GITHUB_TOKEN="
+set "RELEASE_GATE_LOCAL="
+if not %GATE_RC%==0 (
+    echo     The dispatched run grades the ref's tip, so dispatch it on a ref whose tip is
+    echo     %HEAD_SHA% ^(the release branch you are on, or the release tag^).
+    echo   FAIL: Integration lanes not green on %HEAD_SHA% - run: %DISPATCH_CMD%
+    set FAILED=1
+) else (
+    echo   PASS: Integration lanes green on %HEAD_SHA%
+)
+
 REM === TODO/FIXME/HACK Scan ===
+:markers
 echo.
 echo === TODO/FIXME/HACK Scan ===
 
-REM FIXME and HACK mark known-broken code or workarounds and BLOCK a release
-REM (WA-CI-030); TODO stays a warning. Mirrors release-check.sh: the blocking scan
-REM only matches a marker that opens a comment (// FIXME, /* HACK, * FIXME, ...),
-REM so string literals and test fixtures that merely mention the words do not trip it.
-set "MARKER_FILES=src\*.ts src\*.tsx src-tauri\src\*.rs core\src\*.rs agent\src\*.rs"
-set "MARKER_OUT=%TEMP%\termihub-release-markers.txt"
-
-findstr /s /n /r /c:"//[/!]* *FIXME\>" /c:"//[/!]* *HACK\>" /c:"/\*[*!]* *FIXME\>" /c:"/\*[*!]* *HACK\>" /c:"^ *\* *FIXME\>" /c:"^ *\* *HACK\>" %MARKER_FILES% > "%MARKER_OUT%" 2>nul
-if %errorlevel%==0 (
-    echo   FAIL: Found FIXME/HACK markers in source code
-    type "%MARKER_OUT%"
+REM A TODO/FIXME/HACK comment in shipped source BLOCKS the release unless it is
+REM listed, with a reason, in scripts\release-marker-allowlist.json (TOOL-011,
+REM #3750; WA-CI-030). Only markers that open a comment count. The scan is one
+REM Node script, so this and release-check.sh run the identical check.
+node scripts\internal\release-marker-scan.mjs
+if errorlevel 1 (
+    echo   FAIL: TODO/FIXME/HACK markers block the release ^(allowlist: scripts\release-marker-allowlist.json^)
     set FAILED=1
 ) else (
-    echo   PASS: No FIXME/HACK markers found
+    echo   PASS: No un-allowlisted TODO/FIXME/HACK markers
 )
 
-findstr /s /n /r /c:"\<TODO\>" %MARKER_FILES% > "%MARKER_OUT%" 2>nul
-if %errorlevel%==0 (
-    echo   WARN: Found TODO markers in source code
-    set /a WARNINGS+=1
-) else (
-    echo   PASS: No TODO markers found
+REM === Release Bundle Build + Smoke Test ===
+echo.
+echo === Release Bundle Build + Smoke Test ===
+
+REM Build the real installable bundle with the installers' recipe (build.cmd:
+REM RDP sidecar + notices + 'pnpm tauri build'), then launch it with
+REM smoke-test.cmd (TOOL-011, #3750). Runs last: slowest step, needs a desktop
+REM session. Mirrors release-check.sh.
+set "SMOKE_APP=target\release\termihub.exe"
+call scripts\build.cmd
+if errorlevel 1 (
+    echo   FAIL: Release bundle build failed ^(scripts\build.cmd^)
+    set FAILED=1
+    goto :summary
 )
-del "%MARKER_OUT%" >nul 2>&1
+set "INSTALLER="
+for %%f in (target\release\bundle\msi\*.msi target\release\bundle\nsis\*.exe) do set "INSTALLER=%%f"
+if defined INSTALLER (
+    echo   PASS: Bundle build produced %INSTALLER%
+) else (
+    echo   FAIL: Bundle build produced no installer ^(expected target\release\bundle\msi\*.msi or nsis\*.exe^)
+    set FAILED=1
+)
+if not exist "%SMOKE_APP%" (
+    echo   FAIL: Built app not found at %SMOKE_APP% - cannot smoke-test it
+    set FAILED=1
+    goto :summary
+)
+call scripts\smoke-test.cmd "%SMOKE_APP%"
+if errorlevel 1 (
+    echo   FAIL: Smoke test failed against %SMOKE_APP%
+    set FAILED=1
+) else (
+    echo   PASS: Smoke test passed against %SMOKE_APP%
+)
 
 REM === Summary ===
+:summary
 echo.
 echo ===========================================
 echo   Release Readiness Summary
