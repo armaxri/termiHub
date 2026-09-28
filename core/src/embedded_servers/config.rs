@@ -8,6 +8,8 @@ use crate::service::ServiceStatus;
 
 /// Protocol type for an embedded server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub enum ServerType {
     Http,
@@ -22,6 +24,8 @@ pub enum ServerType {
 /// `embedded_servers.json` (#3514). It is `#[serde(default)]` so a persisted
 /// config — which omits it — still parses. `Debug` redacts it.
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum FtpAuth {
     Anonymous,
@@ -66,6 +70,8 @@ fn redacted(secret: &str) -> &'static str {
 /// Like [`FtpAuth`], the `password` lives in the desktop's credential store and
 /// is never persisted to `embedded_servers.json` (#3514); `Debug` redacts it.
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct HttpBasicAuth {
     pub username: String,
@@ -84,6 +90,8 @@ impl std::fmt::Debug for HttpBasicAuth {
 
 /// Configuration for a single embedded server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct EmbeddedServerConfig {
     /// Unique server identifier.
@@ -106,9 +114,11 @@ pub struct EmbeddedServerConfig {
     pub read_only: bool,
     /// Show directory listing (HTTP only).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub directory_listing: Option<bool>,
     /// Authentication for FTP servers.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub ftp_auth: Option<FtpAuth>,
     /// Optional HTTP Basic authentication (HTTP only, PROD-0035).
     ///
@@ -116,6 +126,7 @@ pub struct EmbeddedServerConfig {
     /// field existed) serves the directory unauthenticated exactly as before;
     /// `Some(_)` protects it behind a Basic-auth challenge.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub http_auth: Option<HttpBasicAuth>,
     /// Maximum size, in bytes, of a single file transfer.
     ///
@@ -123,11 +134,14 @@ pub struct EmbeddedServerConfig {
     /// design) to bound the memory/disk an anonymous client can consume in one
     /// transfer (CORE-021). `None` falls back to the server's built-in default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "number"))]
     pub max_transfer_bytes: Option<u64>,
 }
 
 /// Current status of an embedded server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub enum ServerStatus {
     Stopped,
@@ -173,24 +187,34 @@ impl ServerStatus {
 
 /// Live traffic statistics for an active server.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ServerStats {
+    #[cfg_attr(test, ts(type = "number"))]
     pub active_connections: u64,
+    #[cfg_attr(test, ts(type = "number"))]
     pub total_connections: u64,
+    #[cfg_attr(test, ts(type = "number"))]
     pub bytes_sent: u64,
+    #[cfg_attr(test, ts(type = "number"))]
     pub bytes_received: u64,
 }
 
 /// Combined runtime state for a server (returned to the frontend).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ServerState {
     pub server_id: String,
     pub status: ServerStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub error: Option<String>,
     pub stats: ServerStats,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub started_at: Option<String>,
 }
 

@@ -48,6 +48,15 @@ pub const DEFAULT_MONITORING_INTERVAL_MS: u64 = 2000;
 // `SystemStats` (a field below) does not derive `PartialEq`, so this record
 // can't either; tests compare via the serialised view model instead.
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(
+    test,
+    ts(
+        export,
+        export_to = "../../src/types/generated/",
+        rename = "MonitoringEntry"
+    )
+)]
 #[serde(rename_all = "camelCase")]
 pub struct MonitorEntry {
     /// Stable key identifying this monitor (the owning terminal session id).
@@ -58,12 +67,14 @@ pub struct MonitorEntry {
     /// subscription is live, `None` until established (or after a failed open).
     pub monitor_session_id: Option<String>,
     /// Last-known stats for this host, or `None` before the first sample.
+    #[cfg_attr(test, ts(type = "import(\"./SystemStats\").SystemStats | null"))]
     pub stats: Option<SystemStats>,
     /// True while the initial connect (or a cache-primed reconnect) is in flight.
     pub loading: bool,
     /// Last error message for this host, or `None`.
     pub error: Option<String>,
     /// Observable collector-loop status (`live`/`stale`/…), or `None` when idle.
+    #[cfg_attr(test, ts(type = "import(\"./MonitorStatus\").MonitorStatus | null"))]
     pub status: Option<MonitorStatus>,
     /// Why the loop left `Live` — the failure kind behind a `stale` /
     /// `reconnecting` / `offline` status (`transport` / `parse` / `silent`),
@@ -71,12 +82,20 @@ pub struct MonitorEntry {
     /// unreadable" rather than always "connection lost". Defaulted on
     /// deserialize so a `monitor.replace` seed without it stays valid.
     #[serde(default)]
+    #[cfg_attr(
+        test,
+        ts(
+            optional,
+            type = "import(\"./MonitorStatusReason\").MonitorStatusReason | null"
+        )
+    )]
     pub status_reason: Option<MonitorStatusReason>,
     /// Number of stats samples received on this connection (drives CPU priming).
     pub sample_count: u32,
     /// True while the user has paused collection (#1233); transport stays open.
     pub paused: bool,
     /// Per-entry refresh interval in milliseconds (#1233).
+    #[cfg_attr(test, ts(type = "number"))]
     pub interval_ms: u64,
 }
 
