@@ -11,8 +11,8 @@ evidence:
   - agent/Cargo.toml:50
   - core/Cargo.toml:138
   - Cargo.lock:1938
-status: partial
-resolution: "#3331 — agent update ed25519 signature verification implemented; activation pending maintainer key setup"
+status: fixed
+resolution: "#3331, #3800 — ed25519 agent-update signature verification (#3331, desktop #3756) now active: real maintainer public key committed, private key only as AGENT_UPDATE_SIGNING_KEY secret (#3800)"
 ---
 
 ## What
