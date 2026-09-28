@@ -23,6 +23,7 @@ pub async fn serve(endpoint: &SpawnEndpoint, handler: SpawnHandler) -> anyhow::R
     loop {
         let (reader, writer) = listener.accept().await.context("accept spawn connection")?;
         let handler = handler.clone();
+        // Not app-owned (#3105): one short IPC exchange under the app-owned accept loop.
         tokio::spawn(async move {
             if let Err(e) = serve_halves(reader, writer, &handler).await {
                 tracing::warn!("spawn connection error: {e}");

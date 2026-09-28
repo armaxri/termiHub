@@ -145,6 +145,7 @@ fn handle_session_evicted_notification<R: Runtime>(
     let app = app_handle.clone();
     let agent_id = agent_id.to_string();
     let evicted: std::collections::HashSet<String> = [remote_sid.to_string()].into();
+    // Not app-owned (#3105): one-shot eviction fold for a single agent notification.
     tauri::async_runtime::spawn(async move {
         let hosted = hosted_sessions_for_agent(&app, &agent_id).await;
         fold_evicted_hosted_sessions(&app, &hosted, &evicted);

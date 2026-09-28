@@ -325,6 +325,7 @@ impl AgentKiPromptRelay {
         let outstanding = self.activity.begin();
         let id = request_id.clone();
         let mut guard = self.rounds.lock().unwrap_or_else(|e| e.into_inner());
+        // Not app-owned (#3105): one prompt round; cancelled with its owning session/round.
         let task = tokio::spawn(async move {
             let _outstanding = outstanding;
             let answer = match prompter {

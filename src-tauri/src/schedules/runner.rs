@@ -12,6 +12,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::manager::{ScheduleFire, ScheduleManager};
+use crate::app_tasks::AppTasks;
 
 /// How often the loop ticks. Well inside [`super::manager::MISSED_GRACE`], so
 /// an on-time run is never mistaken for a missed one.
@@ -116,6 +117,33 @@ pub async fn run_loop<Tz>(
     }
 }
 
+/// Spawn [`run_loop`] on the app-owned task registry (ARCH-007, #3105).
+///
+/// The scheduler is an app-lifetime loop: it breaks on the app cancellation
+/// token between ticks — a tick itself ([`tick_once`]) is synchronous, so a
+/// cancellation can never land mid-tick — and teardown awaits it, bounded.
+pub fn spawn_owned<Tz>(
+    tasks: &AppTasks,
+    manager: Arc<ScheduleManager>,
+    clock: Arc<dyn Clock>,
+    tz: Tz,
+    sink: Arc<dyn ScheduleSink>,
+    period: std::time::Duration,
+) -> tokio::task::JoinHandle<()>
+where
+    Tz: TimeZone + Send + Sync + 'static,
+{
+    let cancel = tasks.cancellation_token();
+    tasks.spawn(async move {
+        tokio::select! {
+            _ = run_loop(manager, clock, tz, sink, period) => {}
+            _ = cancel.cancelled() => {
+                tracing::info!("schedule runner cancelled on shutdown (ARCH-007)");
+            }
+        }
+    })
+}
+
 /// Start the scheduler loop for the app (production wiring: wall clock, the
 /// machine's local time zone, Tauri events).
 pub fn start(app: &AppHandle) {
@@ -125,13 +153,14 @@ pub fn start(app: &AppHandle) {
     };
     let manager = manager.inner().clone();
     let sink: Arc<dyn ScheduleSink> = Arc::new(TauriSink::new(app.clone()));
-    tauri::async_runtime::spawn(run_loop(
+    spawn_owned(
+        &AppTasks::for_app(app),
         manager,
         Arc::new(SystemClock),
         chrono::Local,
         sink,
         TICK_PERIOD,
-    ));
+    );
 }
 
 #[cfg(test)]

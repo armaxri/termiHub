@@ -101,6 +101,7 @@ impl DesktopAgentForward {
             .insert(stream_id.clone(), tx);
 
         let streams = self.streams.clone();
+        // Not app-owned (#3105): stream-scoped relay; ends when the forwarded stream closes.
         tokio::spawn(async move {
             pump_local_agent(stream_id, rx, command_tx, streams, connect).await;
         });
@@ -158,6 +159,7 @@ async fn pump_local_agent(
     let (mut read_half, mut write_half) = tokio::io::split(agent);
 
     // Writer: agent→desktop bytes → local agent, until the stream is closed.
+    // Not app-owned (#3105): stream-scoped writer; ends when the stream's channel closes.
     let writer = tokio::spawn(async move {
         let mut rx = rx;
         while let Some(bytes) = rx.recv().await {

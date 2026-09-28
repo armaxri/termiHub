@@ -34,6 +34,7 @@ use super::storage::TunnelStorage;
 use crate::agent_service::{
     agent_rpc_client, AgentHosted, AgentInstances, AgentStatusPollDelegate, AgentStatusPoller,
 };
+use crate::app_tasks::AppTasks;
 use crate::connection::jump_host_resolver::ReferenceRole;
 use crate::connection::manager::ConnectionManager;
 use crate::connection::recovery::RecoveryWarning;
@@ -284,6 +285,62 @@ fn snapshot_active_stats(active: &HashMap<String, ActiveTunnel>) -> Vec<TunnelSt
         .collect()
 }
 
+/// Spawn the single live-stats emitter loop (GAP 6, #1248) on the app-owned
+/// task registry (ARCH-007, #3105).
+///
+/// Every [`STATS_EMIT_INTERVAL`] it snapshots the active tunnels' live stats and
+/// hands them to `emit` (outside the lock). It ends — and clears `slot` so a
+/// later start re-spawns it — once no tunnel is active, or promptly between
+/// ticks when the app cancellation token fires. `emit` is a closure so the loop
+/// is testable without a live Tauri `AppHandle`.
+fn spawn_stats_emitter(
+    tasks: &AppTasks,
+    active_tunnels: Arc<Mutex<HashMap<String, ActiveTunnel>>>,
+    slot: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    mut emit: impl FnMut(&[TunnelStatsUpdate]) + Send + 'static,
+) -> tokio::task::JoinHandle<()> {
+    let cancel = tasks.cancellation_token();
+    tasks.spawn(async move {
+        loop {
+            // App teardown wins over the next tick; nothing is in flight between
+            // ticks, so stopping here cannot truncate an emit.
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                _ = tokio::time::sleep(STATS_EMIT_INTERVAL) => {}
+            }
+
+            // Snapshot under the lock, then release it before emitting so a
+            // slow event dispatch never blocks start/stop of other tunnels.
+            let updates = match active_tunnels.lock() {
+                Ok(active) => snapshot_active_stats(&active),
+                Err(_) => break,
+            };
+
+            // No tunnel left active: stop emitting and clear the slot so a
+            // later start re-spawns the task.
+            if updates.is_empty() {
+                break;
+            }
+
+            emit(&updates);
+        }
+
+        // Self-reap: drop our own handle from the tracking slot so
+        // `ensure_stats_emitter` spawns a fresh task on the next start.
+        if let Ok(mut slot) = slot.lock() {
+            *slot = None;
+        }
+    })
+}
+
+/// The cancellation token for a new per-tunnel supervisor (#1243): a child of
+/// the app token (ARCH-007, #3105), so app teardown stops every supervisor —
+/// and, through `supervise`'s child `loop_cancel`, any reconnect backoff —
+/// while an explicit per-tunnel Stop still cancels just its own.
+fn supervisor_cancel_token(tasks: &AppTasks) -> CancellationToken {
+    tasks.cancellation_token().child_token()
+}
+
 /// The tunnel side of the shared agent status poller (DUP-020).
 ///
 /// Supplies the tunnel-specific pieces to [`AgentStatusPoller`]: the live
@@ -489,6 +546,11 @@ pub struct TunnelManager {
     /// local forwarder; the shared [`AgentStatusPoller`] owns the task lifecycle
     /// (DUP-020).
     agent_stats_poller: AgentStatusPoller,
+    /// The app-wide owned-task registry (ARCH-007, #3105). The live-stats
+    /// emitter, the agent `tunnel.status` poller, and every per-tunnel
+    /// supervisor (death-watch + reconnect backoff) are spawned through it and
+    /// stop on its cancellation token, so app teardown awaits them (bounded).
+    tasks: AppTasks,
 }
 
 impl TunnelManager {
@@ -500,6 +562,7 @@ impl TunnelManager {
         let result = storage
             .load_with_recovery()
             .context("Failed to load tunnels")?;
+        let tasks = AppTasks::for_app(app_handle);
 
         Ok(Self {
             tunnel_configs: Mutex::new(result.data),
@@ -513,7 +576,8 @@ impl TunnelManager {
             app_handle: app_handle.clone(),
             recovery_warnings: Mutex::new(result.warnings),
             stats_emitter: Arc::new(Mutex::new(None)),
-            agent_stats_poller: AgentStatusPoller::new(),
+            agent_stats_poller: AgentStatusPoller::with_tasks(tasks.clone()),
+            tasks,
         })
     }
 
@@ -1043,28 +1107,13 @@ impl TunnelManager {
             return;
         }
 
-        let active_tunnels = Arc::clone(&self.active_tunnels);
         let app_handle = self.app_handle.clone();
-        let emitter_slot = Arc::clone(&self.stats_emitter);
-
-        let handle = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(STATS_EMIT_INTERVAL).await;
-
-                // Snapshot under the lock, then release it before emitting so a
-                // slow event dispatch never blocks start/stop of other tunnels.
-                let updates = match active_tunnels.lock() {
-                    Ok(active) => snapshot_active_stats(&active),
-                    Err(_) => break,
-                };
-
-                // No tunnel left active: stop emitting and clear the slot so a
-                // later start re-spawns the task.
-                if updates.is_empty() {
-                    break;
-                }
-
-                for update in &updates {
+        let handle = spawn_stats_emitter(
+            &self.tasks,
+            Arc::clone(&self.active_tunnels),
+            Arc::clone(&self.stats_emitter),
+            move |updates| {
+                for update in updates {
                     let _ = app_handle.emit(TUNNEL_STATS_EVENT, update);
                 }
                 // Project live stats onto the `tunnels` region (#2150) so a
@@ -1072,14 +1121,8 @@ impl TunnelManager {
                 // as the legacy event above. The active-tunnels lock is already
                 // released here, so the re-lock inside is safe.
                 crate::tunnel::projection::publish_tunnels(&app_handle);
-            }
-
-            // Self-reap: drop our own handle from the tracking slot so
-            // `ensure_stats_emitter` spawns a fresh task on the next start.
-            if let Ok(mut slot) = emitter_slot.lock() {
-                *slot = None;
-            }
-        });
+            },
+        );
 
         *slot = Some(handle);
     }
@@ -1256,7 +1299,7 @@ impl TunnelManager {
         reconnect_on_disconnect: bool,
     ) -> Result<(), TerminalError> {
         let death = forwarder.take_death_signal();
-        let supervisor_cancel = CancellationToken::new();
+        let supervisor_cancel = supervisor_cancel_token(&self.tasks);
         let mut active = self
             .active_tunnels
             .lock()
@@ -1338,7 +1381,10 @@ impl TunnelManager {
         let last_errors = Arc::clone(&self.last_errors);
         let reconnecting = Arc::clone(&self.reconnecting);
         let app_handle = self.app_handle.clone();
-        tokio::spawn(async move {
+        // App-owned (ARCH-007, #3105): `cancel` is a child of the app token (see
+        // `supervisor_cancel_token`), so teardown ends the death-watch — and any
+        // reconnect backoff it entered — and awaits the task, bounded.
+        self.tasks.spawn(async move {
             supervise(
                 active_tunnels,
                 last_errors,
@@ -1773,7 +1819,10 @@ async fn supervise(
     // Register a loop cancel token so Stop reaches the backoff even though the
     // tunnel is no longer in `active_tunnels`.
     tracing::info!("Tunnel {tunnel_id} died ({reason}) — reconnecting under backoff");
-    let loop_cancel = CancellationToken::new();
+    // A child of the supervisor token so app teardown (which cancels it via the
+    // app token, ARCH-007) also ends the backoff; an explicit Stop still reaches
+    // it through the `reconnecting` registry.
+    let loop_cancel = cancel.child_token();
     if let Ok(mut map) = reconnecting.lock() {
         map.insert(tunnel_id.clone(), loop_cancel.clone());
     }
@@ -2615,6 +2664,118 @@ mod tests {
         .await;
         assert_eq!(outcome, ReconnectOutcome::Cancelled);
         assert_eq!(tries, 0, "Stop wins the race — no reconnect attempt runs");
+    }
+
+    // --- App teardown (ARCH-007, #3105) ---------------------------------------
+    //
+    // The emitter, the per-tunnel supervisors and their reconnect backoff are
+    // spawned on the app-owned `AppTasks` registry. These paused-clock tests
+    // show each stops on the app cancellation token — not on its own next tick
+    // or backoff deadline — and that teardown completes within its bound.
+
+    /// The live-stats emitter stops mid-sleep on app cancellation: teardown
+    /// completes before its first tick would fire, nothing is emitted, and the
+    /// tracking slot is cleared.
+    #[tokio::test(start_paused = true)]
+    async fn stats_emitter_stops_on_app_cancellation() {
+        let tasks = crate::app_tasks::AppTasks::new();
+        let active: Arc<Mutex<HashMap<String, ActiveTunnel>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let slot = Arc::new(Mutex::new(None));
+        let emits = Arc::new(AtomicUsize::new(0));
+        let counter = emits.clone();
+        let handle = super::spawn_stats_emitter(&tasks, active, slot.clone(), move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
+        *slot.lock().unwrap() = Some(handle);
+        // Let the loop reach its first sleep.
+        tokio::task::yield_now().await;
+
+        let started = tokio::time::Instant::now();
+        let outcome = tasks
+            .shutdown(crate::app_tasks::DEFAULT_SHUTDOWN_TIMEOUT)
+            .await;
+
+        assert_eq!(outcome, crate::app_tasks::ShutdownOutcome::Completed);
+        assert!(
+            started.elapsed() < super::STATS_EMIT_INTERVAL,
+            "stopped on cancellation, not on its first tick"
+        );
+        assert_eq!(emits.load(Ordering::SeqCst), 0);
+        assert!(
+            slot.lock().unwrap().is_none(),
+            "the emitter self-reaps its slot"
+        );
+    }
+
+    /// A supervisor's death-watch (no death signal, no liveness watch — it would
+    /// wait forever) ends on app cancellation through its child token, exactly
+    /// as `supervise` races `cancel` first.
+    #[tokio::test(start_paused = true)]
+    async fn supervisor_death_watch_stops_on_app_cancellation() {
+        let tasks = crate::app_tasks::AppTasks::new();
+        let cancel = super::supervisor_cancel_token(&tasks);
+        let watch = tasks.spawn(async move {
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => true,
+                _ = wait_forwarder_death(None) => false,
+                _ = wait_session_death(None) => false,
+            }
+        });
+
+        let outcome = tasks
+            .shutdown(crate::app_tasks::DEFAULT_SHUTDOWN_TIMEOUT)
+            .await;
+
+        assert_eq!(outcome, crate::app_tasks::ShutdownOutcome::Completed);
+        assert!(
+            watch.await.expect("join"),
+            "the cancel branch ended the watch"
+        );
+    }
+
+    /// A supervisor that entered reconnect backoff (the real tunnel policy,
+    /// every attempt failing) is cancelled by app teardown via the
+    /// `loop_cancel` child of its supervisor token — well before its backoff
+    /// budget would be spent — so teardown completes within its bound.
+    #[tokio::test(start_paused = true)]
+    async fn supervisor_reconnect_backoff_stops_on_app_cancellation() {
+        let tasks = crate::app_tasks::AppTasks::new();
+        let loop_cancel = super::supervisor_cancel_token(&tasks).child_token();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let counter = attempts.clone();
+        let backoff = tasks.spawn(async move {
+            run_reconnect_loop(
+                &loop_cancel,
+                &TUNNEL_RECONNECT_POLICY,
+                &mut || 0.5,
+                |_, _| {},
+                |_| {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    false
+                },
+            )
+            .await
+        });
+        // Let a couple of backoff windows elapse.
+        tokio::time::sleep(Duration::from_secs(4)).await;
+
+        let started = tokio::time::Instant::now();
+        let outcome = tasks
+            .shutdown(crate::app_tasks::DEFAULT_SHUTDOWN_TIMEOUT)
+            .await;
+
+        assert_eq!(outcome, crate::app_tasks::ShutdownOutcome::Completed);
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(backoff.await.expect("join"), ReconnectOutcome::Cancelled);
+        let before = attempts.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_secs(120)).await;
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            before,
+            "no reconnect attempt runs after teardown"
+        );
     }
 
     /// #2168 regression: `lib.rs` registers the tunnel manager as

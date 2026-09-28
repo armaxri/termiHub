@@ -155,6 +155,7 @@ pub async fn probe_connection_path_cmd(
     // A cheap clone (Arc inside) the spawned task can keep to clear its entry.
     let registry_handle: ProbeRegistry = registry.inner().clone();
 
+    // Not app-owned (#3105): request-scoped probe, cancelled via its `ProbeRegistry` token.
     tokio::spawn(async move {
         let probe_token = token.clone();
         let mut on_progress = {

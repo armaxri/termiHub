@@ -1078,6 +1078,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             // clone means an all-external-senders-dropped condition can never close
             // the loop, so a guaranteed force-stop is the only escape hatch for a
             // wedged task. Kept in the `AgentConnection` and fired only on teardown.
+            // Not app-owned (#3105): connection-scoped; ended by Disconnect / teardown abort.
             let io_task = tokio::spawn(async move {
                 agent_io_task(
                     session,
@@ -3740,6 +3741,7 @@ async fn reconnect_agent(
         //    `SshConfig::connect_timeout`. A watcher task fires the token the
         //    moment `alive` goes false and is aborted once the connect returns.
         let connect_token = CancellationToken::new();
+        // Not app-owned (#3105): connect-scoped; aborted once the connect returns.
         let cancel_watcher = tokio::spawn(cancel_connect_when_disconnected(
             alive.clone(),
             connect_token.clone(),

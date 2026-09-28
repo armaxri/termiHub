@@ -1,0 +1,22 @@
+{
+  "_comment": "Test-inventory ratchet baseline (#3755, CI-012). CI fails when a gap appears that is not listed here. Shrink with: python3 scripts/build-test-inventory.py --update-baseline (never adds). A deliberate new gap is added by hand, in the PR that causes it.",
+  "coverage_gaps": [],
+  "per_pr_gaps": [
+    "config recovery",
+    "credential store",
+    "export / import",
+    "external app",
+    "input routing",
+    "monitoring",
+    "native dialogs",
+    "network tools",
+    "remote agent",
+    "settings",
+    "sftp",
+    "split views",
+    "tabs",
+    "telnet",
+    "tunnels",
+    "workspace / automation"
+  ]
+}

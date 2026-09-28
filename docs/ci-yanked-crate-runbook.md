@@ -59,6 +59,15 @@ Operational notes for that PR:
   auto-merge"). If that setting is off the command no-ops (swallowed so the chore
   still succeeds) and the PR waits for a human. **Maintainer:** enabling repo
   auto-merge makes this chore fully hands-off.
+- **A lockfile that fails the gate opens as a draft, and the run fails.** Before
+  opening the PR the job runs the same cargo-deny gate as Security Audit
+  (`cargo deny check advisories bans licenses sources`). If the refreshed
+  lockfile fails it (a crate yanked or flagged after the update, a new license,
+  …), the PR is opened, or an
+  open one converted, as a **draft** with the cargo-deny output at the top of its
+  body, auto-merge is disabled, and the workflow run fails so the red scheduled
+  run is noticed (#3755). Fix it with the manual path below on that branch or a
+  fresh one; the next passing run marks the PR ready again.
 - **The PR carries the `automation` label** so the coordinator/maintainer can
   spot and merge it fast when auto-merge is unavailable.
 - **CI may not start automatically.** A PR opened by the built-in `GITHUB_TOKEN`

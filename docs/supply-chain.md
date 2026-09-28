@@ -75,11 +75,16 @@ runs on pull requests that change a dependency manifest or lockfile, on every pu
   which sets `AUDIT_STRICT=1` — it runs in **strict mode**: an unreachable registry fails the
   job instead, so an unaudited tree never ships (WA-CI-008). Re-run the job once the registry
   is reachable.
-- **Full tree (incl. devDependencies) — advisory.** Dev/build tooling does not ship, so a
-  dev-only advisory does not block unrelated PRs. The step still writes a per-severity count to
-  the job summary and raises a warning annotation when any high or critical advisory is present,
-  so it is visible without reading the log. Fix it by bumping the tool or adding/raising an
-  override (with a row above).
+- **Full tree (incl. devDependencies) — advisory, except when a fix exists.** Dev/build
+  tooling does not ship, so a dev-only advisory with no patched version does not block
+  unrelated PRs. The step still writes a per-severity count to the job summary and raises a
+  warning annotation when any high or critical advisory is present, so it is visible without
+  reading the log. A high or critical advisory that **already has a patched version** fails the
+  step ([`scripts/internal/pnpm-audit-summary.mjs`](../scripts/internal/pnpm-audit-summary.mjs),
+  #3755): take the fix by bumping the tool, running `pnpm update <pkg>`, or adding/raising an
+  override (with a row above). If the fix truly cannot be taken yet, add the advisory's GHSA id
+  to `pnpm.auditConfig.ignoreGhsas` in `package.json` and list it here with the reason and
+  what unblocks it. No GHSA id is accepted today.
 
 ## Vendored forks
 
