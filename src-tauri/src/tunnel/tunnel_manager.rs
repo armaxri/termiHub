@@ -2702,7 +2702,10 @@ mod tests {
             "stopped on cancellation, not on its first tick"
         );
         assert_eq!(emits.load(Ordering::SeqCst), 0);
-        assert!(slot.lock().unwrap().is_none(), "the emitter self-reaps its slot");
+        assert!(
+            slot.lock().unwrap().is_none(),
+            "the emitter self-reaps its slot"
+        );
     }
 
     /// A supervisor's death-watch (no death signal, no liveness watch — it would
@@ -2726,7 +2729,10 @@ mod tests {
             .await;
 
         assert_eq!(outcome, crate::app_tasks::ShutdownOutcome::Completed);
-        assert!(watch.await.expect("join"), "the cancel branch ended the watch");
+        assert!(
+            watch.await.expect("join"),
+            "the cancel branch ended the watch"
+        );
     }
 
     /// A supervisor that entered reconnect backoff (the real tunnel policy,

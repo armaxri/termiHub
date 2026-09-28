@@ -796,7 +796,10 @@ mod tests {
             started.elapsed() < TICK,
             "the loop must stop on cancellation, not on its next tick"
         );
-        assert!(!poller.is_running(), "the cancelled loop self-reaps its slot");
+        assert!(
+            !poller.is_running(),
+            "the cancelled loop self-reaps its slot"
+        );
         // No further tick runs after teardown.
         tokio::time::advance(TICK * 3).await;
         tokio::task::yield_now().await;

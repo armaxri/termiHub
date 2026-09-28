@@ -570,6 +570,7 @@ fn spawn_relaunch<F, Fut>(
     };
 
     let sink = super::app_progress_sink(app_handle.clone());
+    // Not app-owned (#3105): a transfer; cancelled explicitly via `TransferRegistry::cancel_all`.
     tauri::async_runtime::spawn(run(handle, registry.clone(), sink));
 }
 

@@ -41,6 +41,7 @@ fn spawn_streaming_task(
     // The owned `Arc<NetworkManager>` clone keeps the manager alive for exactly
     // as long as this task needs it.
     let manager = Arc::clone(manager);
+    // Not app-owned (#3105): request-scoped tool run with its own task token (`cancel_task`).
     tokio::spawn(async move {
         tool_runner::run_streaming(target, tool, &tid, params, &cancel, move |name, payload| {
             let _ = app.emit(name, payload);

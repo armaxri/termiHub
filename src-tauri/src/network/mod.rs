@@ -1006,6 +1006,7 @@ impl Default for NetworkManager {
 /// same `HttpCheckResult` payload as before the lift. The task ends when the
 /// service is dropped (channel closed).
 fn spawn_event_bridge(app: AppHandle, events: termihub_core::service::ServiceEventReceiver) {
+    // Not app-owned (#3105): ends when the monitor's service (and its channel) drops.
     tauri::async_runtime::spawn(async move {
         drain_broadcast(events, move |event| {
             if event.kind == http_monitor::CHECK_EVENT_KIND {

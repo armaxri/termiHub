@@ -1414,6 +1414,7 @@ impl MonitoringProvider for RemoteMonitoringProxy {
         let agent_id = self.agent_id.clone();
         let interval_ms = self.interval_ms.clone();
         let paused_rx = self.paused_tx.subscribe();
+        // Not app-owned (#3105): session-scoped; ends when the sample feed or consumer closes.
         tokio::spawn(drive_monitor_status(
             raw_rx,
             stats_tx,
