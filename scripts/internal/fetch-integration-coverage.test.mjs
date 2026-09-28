@@ -8,8 +8,13 @@ import {
   staleListFrom,
   parseArgs,
   fetchIntegrationCoverage,
+  fetchHarnessCoverage,
+  harnessArtifactName,
+  readMeasuredSha,
   ARTIFACT,
   LCOV_NAME,
+  HARNESS_LCOV,
+  HARNESS_META,
 } from "./fetch-integration-coverage.mjs";
 
 const run = (id, over = {}) => ({
@@ -176,5 +181,103 @@ describe("fetchIntegrationCoverage", () => {
     expect(
       fetchIntegrationCoverage({ repo, branch: "develop", outDir }, exec, () => {})
     ).toBeNull();
+  });
+});
+
+describe("fetchHarnessCoverage (#3657)", () => {
+  const repo = "o/r";
+  const listRuns = "gh api -X GET repos/o/r/actions/workflows/system-integration.yml/runs";
+  const measured = "a".repeat(40);
+
+  function downloadInto(outDir, { meta = { sha: measured, branch: "develop" }, lcov = true } = {}) {
+    return () => {
+      if (lcov) writeFileSync(path.join(outDir, HARNESS_LCOV), "SF:src/a.ts\nend_of_record\n");
+      if (meta) writeFileSync(path.join(outDir, HARNESS_META), JSON.stringify(meta));
+      return "";
+    };
+  }
+
+  it("picks the branch's artifact by name and diffs against the MEASURED sha", () => {
+    const outDir = mkdtempSync(path.join(tmpdir(), "harness-cov-"));
+    const calls = [];
+    // The scheduled run is recorded on main (head_sha = main's) but graded develop.
+    const exec = fakeExec(
+      [
+        [listRuns, JSON.stringify({ workflow_runs: [run(1, { head_sha: "m".repeat(40) })] })],
+        [
+          "gh api repos/o/r/actions/runs/1/artifacts",
+          JSON.stringify({
+            artifacts: [
+              { name: harnessArtifactName("main"), expired: false },
+              { name: harnessArtifactName("develop"), expired: false },
+            ],
+          }),
+        ],
+        ["gh run download 1", downloadInto(outDir)],
+        ["git fetch", ""],
+        ["git diff --name-only", "src/b.ts\n"],
+      ],
+      calls
+    );
+    const res = fetchHarnessCoverage({ repo, branch: "develop", outDir }, exec, () => {});
+    expect(res.sha).toBe(measured);
+    expect(res.lcov).toBe(path.join(outDir, HARNESS_LCOV));
+    expect(readFileSync(res.staleList, "utf8")).toBe("src/b.ts\n");
+    expect(calls[0]).not.toContain("branch=");
+    expect(calls).toContain(
+      `gh run download 1 -R o/r -n ${harnessArtifactName("develop")} -D ${outDir}`
+    );
+    expect(calls).toContain(`git diff --name-only ${measured} HEAD`);
+  });
+
+  it("returns null (advisory) when no run carries the branch's artifact", () => {
+    const logs = [];
+    const exec = fakeExec([
+      [listRuns, JSON.stringify({ workflow_runs: [run(1)] })],
+      [
+        "gh api repos/o/r/actions/runs/1/artifacts",
+        JSON.stringify({ artifacts: [{ name: harnessArtifactName("main"), expired: false }] }),
+      ],
+    ]);
+    expect(
+      fetchHarnessCoverage({ repo, branch: "develop", outDir: "x" }, exec, (m) => logs.push(m))
+    ).toBeNull();
+    expect(logs.at(-1)).toMatch(
+      /no system-integration.yml run with a live 'harness-coverage-develop'/
+    );
+  });
+
+  it("returns null when the artifact has no valid measured sha", () => {
+    const outDir = mkdtempSync(path.join(tmpdir(), "harness-cov-"));
+    const exec = fakeExec([
+      [listRuns, JSON.stringify({ workflow_runs: [run(1)] })],
+      [
+        "gh api repos/o/r/actions/runs/1/artifacts",
+        JSON.stringify({ artifacts: [{ name: harnessArtifactName("develop"), expired: false }] }),
+      ],
+      ["gh run download 1", downloadInto(outDir, { meta: { sha: "nope" } })],
+    ]);
+    expect(fetchHarnessCoverage({ repo, branch: "develop", outDir }, exec, () => {})).toBeNull();
+  });
+
+  it("returns null when the gh API fails", () => {
+    const exec = fakeExec([[listRuns, new Error("HTTP 403")]]);
+    expect(
+      fetchHarnessCoverage({ repo, branch: "develop", outDir: "x" }, exec, () => {})
+    ).toBeNull();
+  });
+});
+
+describe("readMeasuredSha", () => {
+  it("accepts only a full sha", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "meta-"));
+    const meta = path.join(dir, "m.json");
+    writeFileSync(meta, JSON.stringify({ sha: "b".repeat(40) }));
+    expect(readMeasuredSha(meta)).toBe("b".repeat(40));
+    writeFileSync(meta, JSON.stringify({ sha: "b".repeat(39) }));
+    expect(readMeasuredSha(meta)).toBeNull();
+    writeFileSync(meta, "{");
+    expect(readMeasuredSha(meta)).toBeNull();
+    expect(readMeasuredSha(path.join(dir, "missing.json"))).toBeNull();
   });
 });

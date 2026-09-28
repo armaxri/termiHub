@@ -104,6 +104,7 @@
     "@vitest/coverage-v8": "^4.1.11",
     "eslint": "^9.39.5",
     "eslint-plugin-react-hooks": "^5.2.0",
+    "istanbul-lib-instrument": "^6.0.3",
     "jest-axe": "^11.0.0",
     "jsdom": "^28.1.0",
     "knip": "^6.38.0",

@@ -40,10 +40,11 @@ mock-remote-desktop = ["termihub-core/mock-remote-desktop"]
 # otherwise switch on a CSP-relaxed, scriptable app. Everything test-bridge —
 # the `utils::test_bridge` module, its CSP relaxation, the always-on-top /
 # anti-throttle / webview-console / projection-diagnostics hooks, and the
-# `test_sever_agent_transport` command — is gated behind this feature. Opt in
-# for E2E/system-test builds with `--features test-bridge` (the test-app builds
-# in system-integration.yml and scripts/test-system-py.sh pass it); per-PR CI's
-# `cargo test/clippy --all-features` still exercises the gated Rust tests.
+# `test_sever_agent_transport` and `test_exit_app` commands — is gated behind
+# this feature. Opt in for E2E/system-test builds with `--features test-bridge`
+# (the test-app builds in system-integration.yml and scripts/test-system-py.sh
+# pass it); per-PR CI's `cargo test/clippy --all-features` still exercises the
+# gated Rust tests.
 test-bridge = []
 # VNC (RFB) graphical remote-desktop backend (#1681). Gated so the registration
 # is `#[cfg(feature = "vnc")]`. Ships experimental — hidden unless the user

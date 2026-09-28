@@ -22,8 +22,10 @@ name: "Release Candidate: Full Integration"
 #
 # ADVISORY coverage summary (#3658, TOOL-005): the fixtures lane runs instrumented
 # here (measure_coverage), and the "Release coverage summary" job merges its lcov
-# with the unit lcov of the Coverage run on the same commit. The job summary then
-# shows the unified coverage and the integration gap for the exact commit. That
+# with the unit lcov of the Coverage run on the same commit. The bridge harness
+# lane stays uninstrumented here so the gate tests the shipped bundle and binary;
+# its coverage is nightly only (#3657). The job summary then shows the unified
+# coverage and the integration gap for the exact commit. That
 # job is continue-on-error and nothing needs it, so it can never red this run or
 # the release gate.
 #
@@ -49,6 +51,8 @@ jobs:
     uses: ./.github/workflows/system-integration.yml
     with:
       ref: ${{ github.sha }}
+      # Deliberately NOT instrumented (#3657): the release gate must exercise the
+      # same frontend bundle and binary that ship. Harness coverage is nightly only.
 
   integration-fixtures:
     name: Integration fixtures

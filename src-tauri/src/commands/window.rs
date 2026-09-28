@@ -327,3 +327,55 @@ pub async fn replay_session_scrollback(
     let bytes = manager.replay_scrollback(&session_id).await;
     Ok(crate::utils::ipc_bytes::encode_bytes_base64(&bytes))
 }
+
+/// Quit the app with exit code 0, exactly as an explicit Quit does
+/// (`AppHandle::exit`), on the system-test harness's request (#3657).
+///
+/// The harness normally kills the app process at the end of a suite. A killed
+/// process never runs its exit handlers, so an LLVM-instrumented build
+/// (`cargo llvm-cov show-env`) never writes its `.profraw` coverage profile.
+/// The harness calls this (through the bridge's `exitApp` verb) before the
+/// kill whenever it collects backend coverage.
+///
+/// Test-bridge-only (SEC-005): compiled out of release builds with the rest of
+/// the test bridge, and refused unless the app was launched in test-bridge mode.
+#[cfg(feature = "test-bridge")]
+#[tauri::command]
+pub fn test_exit_app(app: AppHandle) -> Result<(), String> {
+    exit_app_gated(crate::utils::test_bridge::is_test_bridge_enabled(), || {
+        app.exit(0)
+    })
+}
+
+/// The gate for [`test_exit_app`], split out so it is unit-testable without a
+/// running app: `do_exit` is never called unless `bridge_enabled`.
+#[cfg(feature = "test-bridge")]
+fn exit_app_gated<F: FnOnce()>(bridge_enabled: bool, do_exit: F) -> Result<(), String> {
+    if !bridge_enabled {
+        return Err("test_exit_app is a test-bridge-only hook".to_string());
+    }
+    tracing::warn!("TEST-ONLY: exiting the app on the system-test harness's request");
+    do_exit();
+    Ok(())
+}
+
+#[cfg(all(test, feature = "test-bridge"))]
+mod test_exit_app_tests {
+    use super::exit_app_gated;
+    use std::cell::Cell;
+
+    #[test]
+    fn refuses_and_never_exits_when_the_bridge_is_off() {
+        let called = Cell::new(false);
+        let result = exit_app_gated(false, || called.set(true));
+        assert!(result.is_err());
+        assert!(!called.get());
+    }
+
+    #[test]
+    fn exits_when_the_bridge_is_on() {
+        let called = Cell::new(false);
+        assert_eq!(exit_app_gated(true, || called.set(true)), Ok(()));
+        assert!(called.get());
+    }
+}
