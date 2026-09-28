@@ -7,6 +7,7 @@ import {
   COVERAGE_ARTIFACT,
   COVERAGE_WORKFLOW,
   GAP_TITLE,
+  HARNESS_GAP_TITLE,
   UNIT_LCOV,
   computeCoverage,
   downloadArtifactForSha,
@@ -59,6 +60,17 @@ const INTEGRATION = [
   "DA:1,1",
   "LF:1",
   "LH:1",
+  "end_of_record",
+].join("\n");
+
+// Bridge harness report (same commit): covers ssh.rs line 4 (left uncovered by
+// the fixtures lane) through the desktop app.
+const HARNESS = [
+  `SF:${ROOT}/core/src/backends/ssh.rs`,
+  "DA:3,1",
+  "DA:4,5",
+  "LF:2",
+  "LH:2",
   "end_of_record",
 ].join("\n");
 
@@ -190,6 +202,23 @@ describe("computeCoverage", () => {
     expect(r.components.map((c) => c.component)).toEqual(["frontend", "core", "unified"]);
   });
 
+  it("merges the bridge harness lane after the fixtures lane (#3657)", () => {
+    const r = computeCoverage({
+      unitText: UNIT,
+      integrationText: INTEGRATION,
+      harnessText: HARNESS,
+      root: ROOT,
+    });
+    expect(r.unified).toMatchObject({ LF: 6, LH: 6 });
+    expect(r.stats.newlyCoveredLines).toBe(1); // line 3, by the fixtures lane
+    expect(r.harnessStats.newlyCoveredLines).toBe(1); // then line 4, by the harness
+    expect(r.harness).toMatchObject({ LF: 2, LH: 2 });
+
+    const harnessOnly = computeCoverage({ unitText: UNIT, harnessText: HARNESS, root: ROOT });
+    expect(harnessOnly.stats).toBeNull();
+    expect(harnessOnly.harnessStats.newlyCoveredLines).toBe(2);
+  });
+
   it("reports unit-only coverage without an integration lcov", () => {
     const r = computeCoverage({ unitText: UNIT, integrationText: null, root: ROOT });
     expect(r.unified).toBeNull();
@@ -252,7 +281,7 @@ describe("formatMarkdown", () => {
       result: computeCoverage({ unitText: null, integrationText: INTEGRATION, root: ROOT }),
     });
     expect(intOnly).toContain("no unified number");
-    expect(intOnly).toContain("| Integration lane | 66.67% (2/3) |");
+    expect(intOnly).toContain("| Docker fixtures lane | 66.67% (2/3) |");
     expect(intOnly).toContain("- Unit: none");
 
     const none = formatMarkdown({ ...base, result: computeCoverage({ root: ROOT }) });
@@ -261,6 +290,12 @@ describe("formatMarkdown", () => {
 });
 
 describe("parseArgs", () => {
+  it("accepts --harness-lcov", () => {
+    expect(
+      parseArgs(["--repo", "o/r", "--sha", SHA, "--out-dir", "d", "--harness-lcov", "h.lcov"])
+    ).toMatchObject({ harnessLcov: "h.lcov" });
+  });
+
   it("parses and normalizes the sha", () => {
     expect(
       parseArgs(["--repo", "o/r", "--sha", ` ${SHA.toUpperCase()} `, "--out-dir", "d"])
@@ -341,6 +376,55 @@ describe("runSummary", () => {
     const md = readFileSync(path.join(s.out, "release-coverage.md"), "utf8");
     expect(md).toContain("**UNIFIED LINE COVERAGE: 83.33%**");
     expect(md).toContain("artifact of this Release Candidate run");
+  });
+
+  it("adds the bridge harness lane: by sha in release.yml mode, from disk in RC mode", () => {
+    const s = setup();
+    const harnessArtifact = `harness-coverage-${SHA}`;
+    const { exec } = fakeGh({
+      runs: {
+        [COVERAGE_WORKFLOW]: [run(1)],
+        [CANDIDATE_WORKFLOW]: [run(2, { event: "workflow_dispatch" })],
+      },
+      artifacts: {
+        1: [{ name: COVERAGE_ARTIFACT }],
+        2: [{ name: "integration-coverage" }, { name: harnessArtifact }],
+      },
+      files: {
+        [`1/${COVERAGE_ARTIFACT}`]: { [UNIT_LCOV]: UNIT },
+        "2/integration-coverage": { "integration.lcov": INTEGRATION },
+        [`2/${harnessArtifact}`]: { "harness.lcov": HARNESS },
+      },
+    });
+    runSummary(opts(s), { exec, env: {}, log: quiet });
+    const md = readFileSync(path.join(s.out, "release-coverage.md"), "utf8");
+    expect(md).toContain("**UNIFIED LINE COVERAGE: 100.00%**");
+    expect(md).toContain(`### ${HARNESS_GAP_TITLE}`);
+    expect(md).toContain(`- Bridge harness: \`${harnessArtifact}\` artifact of Release Candidate`);
+    const gap = readFileSync(path.join(s.out, "integration-gap.md"), "utf8");
+    expect(gap).toContain(GAP_TITLE);
+    expect(gap).toContain(HARNESS_GAP_TITLE);
+
+    // Release-candidate mode: both lcovs on disk, nothing looked up remotely.
+    const rc = setup();
+    const integration = path.join(rc.dir, "integration.lcov");
+    const harness = path.join(rc.dir, "harness.lcov");
+    writeFileSync(integration, INTEGRATION);
+    writeFileSync(harness, HARNESS);
+    const gh = fakeGh({
+      runs: { [COVERAGE_WORKFLOW]: [run(1)] },
+      artifacts: { 1: [{ name: COVERAGE_ARTIFACT }] },
+      files: { [`1/${COVERAGE_ARTIFACT}`]: { [UNIT_LCOV]: UNIT } },
+    });
+    runSummary(opts(rc, { integrationLcov: integration, harnessLcov: harness }), {
+      exec: gh.exec,
+      env: {},
+      log: quiet,
+    });
+    expect(gh.calls.some((c) => c.includes(CANDIDATE_WORKFLOW))).toBe(false);
+    const rcMd = readFileSync(path.join(rc.out, "release-coverage.md"), "utf8");
+    expect(rcMd).toContain("**UNIFIED LINE COVERAGE: 100.00%**");
+    expect(rcMd).toContain("- Bridge harness: `harness-coverage-");
   });
 
   it("never fails: gh down and no lcov still exit 0 with notes", () => {

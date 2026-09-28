@@ -22,6 +22,8 @@ REM names an lcov from the nightly integration-fixtures lane, it is merged into
 REM the unified report per source file (lcov-merge.mjs); TERMIHUB_INTEGRATION_STALE
 REM optionally lists files changed since that nightly commit (skipped). Unset
 REM locally, so the report stays unit-only.
+REM TERMIHUB_HARNESS_LCOV / TERMIHUB_HARNESS_STALE do the same for the nightly
+REM bridge harness lane (#3657), merged after it with its own gap-report section.
 
 cd /d "%~dp0\.."
 
@@ -77,6 +79,7 @@ break > "%UNIT_LCOV%"
 set FRONTEND_PRESENT=0
 set RUST_PRESENT=0
 set INTEGRATION_PRESENT=0
+set HARNESS_PRESENT=0
 if exist "%FRONTEND_LCOV%" (
     type "%FRONTEND_LCOV%" >> "%UNIT_LCOV%"
     set FRONTEND_PRESENT=1
@@ -100,24 +103,39 @@ if "%UNIT_SIZE%"=="0" (
     exit /b 1
 )
 
-REM The integration lcov shares files with the Rust report, so it is merged per
-REM file (hits summed, unit report owns the denominator, stale files skipped).
+REM The integration lcovs share files with the unit report, so each is merged
+REM per file (hits summed, unit report owns the denominator, stale files
+REM skipped), one after the other onto the merged tracefile.
 if exist "%GAP_REPORT%" del "%GAP_REPORT%"
 if exist "%RATCHET_REPORT%" del "%RATCHET_REPORT%"
+copy /y "%UNIT_LCOV%" "%MERGED_LCOV%" >nul
 set INTEGRATION_SIZE=0
 if defined TERMIHUB_INTEGRATION_LCOV if exist "%TERMIHUB_INTEGRATION_LCOV%" (
     for %%A in ("%TERMIHUB_INTEGRATION_LCOV%") do set INTEGRATION_SIZE=%%~zA
 )
-if not "%INTEGRATION_SIZE%"=="0" (
+set HARNESS_SIZE=0
+if defined TERMIHUB_HARNESS_LCOV if exist "%TERMIHUB_HARNESS_LCOV%" (
+    for %%A in ("%TERMIHUB_HARNESS_LCOV%") do set HARNESS_SIZE=%%~zA
+)
+if not "%INTEGRATION_SIZE%%HARNESS_SIZE%"=="00" (
     echo --- unit tests only ---
     node scripts\internal\lcov-summary.mjs "%UNIT_LCOV%"
+)
+if not "%INTEGRATION_SIZE%"=="0" (
     echo --- + nightly integration lane ^(%TERMIHUB_INTEGRATION_LCOV%^) ---
-    node scripts\internal\lcov-merge.mjs --base "%UNIT_LCOV%" --overlay "%TERMIHUB_INTEGRATION_LCOV%" --skip-list "%TERMIHUB_INTEGRATION_STALE%" --root "%CD%" --out "%MERGED_LCOV%" --report "%GAP_REPORT%"
+    node scripts\internal\lcov-merge.mjs --base "%MERGED_LCOV%" --overlay "%TERMIHUB_INTEGRATION_LCOV%" --skip-list "%TERMIHUB_INTEGRATION_STALE%" --root "%CD%" --out "%MERGED_LCOV%" --report "%GAP_REPORT%"
     if errorlevel 1 exit /b 1
     set INTEGRATION_PRESENT=1
 ) else (
     if defined TERMIHUB_INTEGRATION_LCOV echo   note: no integration lcov at %TERMIHUB_INTEGRATION_LCOV%
-    copy /y "%UNIT_LCOV%" "%MERGED_LCOV%" >nul
+)
+if not "%HARNESS_SIZE%"=="0" (
+    echo --- + nightly bridge harness lane ^(%TERMIHUB_HARNESS_LCOV%^) ---
+    node scripts\internal\lcov-merge.mjs --base "%MERGED_LCOV%" --overlay "%TERMIHUB_HARNESS_LCOV%" --skip-list "%TERMIHUB_HARNESS_STALE%" --root "%CD%" --out "%MERGED_LCOV%" --report "%GAP_REPORT%" --append --title "Integration coverage (nightly bridge harness lane)"
+    if errorlevel 1 exit /b 1
+    set HARNESS_PRESENT=1
+) else (
+    if defined TERMIHUB_HARNESS_LCOV echo   note: no harness lcov at %TERMIHUB_HARNESS_LCOV%
 )
 
 REM Sum LF/LH, FNF/FNH, BRF/BRH across the merged tracefile via the shared Node
@@ -127,10 +145,10 @@ if errorlevel 1 exit /b 1
 type "%SUMMARY_FILE%"
 
 echo.
-echo Sources merged: frontend=%FRONTEND_PRESENT% rust=%RUST_PRESENT% integration=%INTEGRATION_PRESENT%
+echo Sources merged: frontend=%FRONTEND_PRESENT% rust=%RUST_PRESENT% integration=%INTEGRATION_PRESENT% harness=%HARNESS_PRESENT%
 echo Merged lcov:    %MERGED_LCOV%
 echo Summary:        %SUMMARY_FILE%
-if "%INTEGRATION_PRESENT%"=="1" echo Gap report:     %GAP_REPORT%
+if "%INTEGRATION_PRESENT%%HARNESS_PRESENT%" neq "00" echo Gap report:     %GAP_REPORT%
 echo HTML reports:   coverage\ (frontend) — run 'cargo llvm-cov --html' for Rust HTML
 
 REM Ratchet: fail on a coverage decrease against the committed baseline, or

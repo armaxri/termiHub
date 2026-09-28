@@ -23,7 +23,14 @@
 //                own run); otherwise the newest Release Candidate run on the sha
 //                is looked up and its artifact downloaded (release.yml).
 //
-// Both come from the same commit, so no file is stale and the merge
+//   harness      the `harness-coverage-<sha>` artifact (harness.lcov) that the
+//                bridge harness lane (system-integration.yml, Linux leg) uploads
+//                inside the same Release Candidate run when measure_coverage is
+//                on (#3657): frontend Istanbul + desktop-app llvm-cov lines.
+//                --harness-lcov when on disk; otherwise looked up like the
+//                fixtures artifact. Merged after the fixtures lane.
+//
+// All come from the same commit, so no file is stale and the merge
 // (lcov-merge.mjs: unit report owns the denominator, hits summed) needs no skip
 // list. Every "nothing usable" outcome — no run, expired artifact, gh
 // unavailable, a malformed lcov — becomes a note in the summary, and the script
@@ -35,7 +42,8 @@
 // exist.
 //
 // Usage: node release-coverage-summary.mjs --repo <owner/name> --sha <sha>
-//          --out-dir <dir> [--integration-lcov <file>] [--ref <name>]
+//          --out-dir <dir> [--integration-lcov <file>] [--harness-lcov <file>]
+//          [--ref <name>]
 //          [--root <repo root>] [--baseline <coverage-baseline.json>]
 // Needs GH_TOKEN with `actions: read`.
 import { execFileSync } from "node:child_process";
@@ -43,7 +51,12 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { COMPONENTS, percentages, tallyLcov } from "./coverage-ratchet.mjs";
-import { ARTIFACT as INTEGRATION_ARTIFACT, LCOV_NAME } from "./fetch-integration-coverage.mjs";
+import {
+  ARTIFACT as INTEGRATION_ARTIFACT,
+  HARNESS_LCOV,
+  LCOV_NAME,
+  harnessArtifactName,
+} from "./fetch-integration-coverage.mjs";
 import { formatLcov, formatReport, mergeCoverage, parseLcov } from "./lcov-merge.mjs";
 import { pct, summarizeLcov } from "./lcov-summary.mjs";
 
@@ -53,6 +66,7 @@ export const UNIT_LCOV = path.join("coverage-unified", "unit.lcov");
 export const CANDIDATE_WORKFLOW = "release-candidate.yml";
 export const BASELINE_PLATFORM = "linux";
 export const GAP_TITLE = "Integration coverage gap (Docker fixtures lane, release commit)";
+export const HARNESS_GAP_TITLE = "Integration coverage gap (bridge harness lane, release commit)";
 
 const USABLE_CONCLUSIONS = new Set(["success", "failure"]);
 const SHA_RE = /^[0-9a-f]{40}$/;
@@ -131,26 +145,41 @@ export function downloadArtifactForSha({ repo, sha, workflow, events, artifact, 
 }
 
 /**
- * Compute unit, integration-only and unified coverage from lcov texts. Either
+ * Compute unit, integration-only and unified coverage from lcov texts. Any
  * text may be null. Returns totals (LF/LH/FNF/FNH/BRF/BRH) per scope, per-
- * component line percentages, and lcov-merge's stats when both exist.
+ * component line percentages, and lcov-merge's stats per merged overlay: the
+ * fixtures lane (`stats`), then the bridge harness lane (`harnessStats`).
  */
-export function computeCoverage({ unitText, integrationText, root }) {
-  const result = { unit: null, integration: null, unified: null, components: [], stats: null };
+export function computeCoverage({ unitText, integrationText, harnessText = null, root }) {
+  const result = {
+    unit: null,
+    integration: null,
+    harness: null,
+    unified: null,
+    components: [],
+    stats: null,
+    harnessStats: null,
+  };
   if (integrationText) result.integration = summarizeLcov(integrationText);
+  if (harnessText) result.harness = summarizeLcov(harnessText);
   if (!unitText) return result;
 
   result.unit = summarizeLcov(unitText);
   let unifiedText = null;
-  if (integrationText) {
-    const { merged, stats } = mergeCoverage(
-      parseLcov(unitText, root),
-      parseLcov(integrationText, root)
-    );
+  let merged = parseLcov(unitText, root);
+  for (const [text, key] of [
+    [integrationText, "stats"],
+    [harnessText, "harnessStats"],
+  ]) {
+    if (!text) continue;
+    const out = mergeCoverage(merged, parseLcov(text, root));
+    merged = out.merged;
+    result[key] = out.stats;
     unifiedText = formatLcov(merged);
+  }
+  if (unifiedText) {
     result.unified = summarizeLcov(unifiedText);
     result.unifiedText = unifiedText;
-    result.stats = stats;
   }
   const unitPct = percentages(tallyLcov([unitText], root));
   const unifiedPct = unifiedText ? percentages(tallyLcov([unifiedText], root)) : null;
@@ -182,6 +211,7 @@ export function formatMarkdown({
   result,
   unitRun,
   integrationSource,
+  harnessSource = null,
   notes,
   baseline,
 }) {
@@ -226,29 +256,29 @@ export function formatMarkdown({
       );
     }
     lines.push("");
-  } else if (result.integration) {
+  } else if (result.integration || result.harness) {
     lines.push(
       "No unit coverage for this commit, so there is no unified number. " +
-        "Integration lane on its own (`termihub-core` only):",
+        "Integration lanes on their own:",
       "",
       "| Scope | Lines | Functions | Branches |",
-      "| --- | ---: | ---: | ---: |",
-      row("Integration lane", result.integration),
-      ""
+      "| --- | ---: | ---: | ---: |"
     );
+    if (result.integration) lines.push(row("Docker fixtures lane", result.integration));
+    if (result.harness) lines.push(row("Bridge harness lane", result.harness));
+    lines.push("");
   } else {
     lines.push("_No coverage data was available for this commit._", "");
   }
 
-  if (result.stats) {
-    lines.push(formatReport(result.stats, { title: GAP_TITLE }).replace(/^## /, "### "));
-  }
+  lines.push(...gapReports(result).map((r) => r.replace(/^## /, "### ")));
 
   lines.push("### Sources", "");
   lines.push(
     `- Unit: ${unitRun ? `Coverage ${runLink(serverUrl, repo, unitRun)}, \`${UNIT_LCOV.replace(/\\/g, "/")}\`` : "none"}`
   );
   lines.push(`- Integration: ${integrationSource ?? "none"}`);
+  lines.push(`- Bridge harness: ${harnessSource ?? "none"}`);
   if (notes.length > 0) {
     lines.push("", "### Notes", "");
     for (const n of notes) lines.push(`- ${n}`);
@@ -256,11 +286,22 @@ export function formatMarkdown({
   return lines.join("\n") + "\n";
 }
 
+/** The gap report of each merged overlay, fixtures lane first. */
+export function gapReports(result) {
+  const out = [];
+  if (result.stats) out.push(formatReport(result.stats, { title: GAP_TITLE }));
+  if (result.harnessStats) {
+    out.push(formatReport(result.harnessStats, { title: HARNESS_GAP_TITLE }));
+  }
+  return out;
+}
+
 const FLAGS = {
   "--repo": "repo",
   "--sha": "sha",
   "--out-dir": "outDir",
   "--integration-lcov": "integrationLcov",
+  "--harness-lcov": "harnessLcov",
   "--ref": "ref",
   "--root": "root",
   "--baseline": "baseline",
@@ -369,9 +410,12 @@ export function runSummary(
     }
   }
 
+  // Bridge harness coverage (#3657): the same candidate run's harness lane.
+  const harness = resolveHarness(opts, { exec, env, notes });
+
   let result;
   try {
-    result = computeCoverage({ unitText, integrationText, root });
+    result = computeCoverage({ unitText, integrationText, harnessText: harness.text, root });
   } catch (e) {
     notes.push(`Could not compute coverage: ${firstLine(e)}.`);
     result = { unit: null, integration: null, unified: null, components: [], stats: null };
@@ -385,17 +429,14 @@ export function runSummary(
     result,
     unitRun,
     integrationSource,
+    harnessSource: harness.source,
     notes,
     baseline: readBaseline(opts.baseline ?? path.join("scripts", "coverage-baseline.json")),
   });
   writeFileSync(path.join(outDir, "release-coverage.md"), markdown);
   if (result.unifiedText) writeFileSync(path.join(outDir, "merged.lcov"), result.unifiedText);
-  if (result.stats) {
-    writeFileSync(
-      path.join(outDir, "integration-gap.md"),
-      formatReport(result.stats, { title: GAP_TITLE })
-    );
-  }
+  const gaps = gapReports(result);
+  if (gaps.length > 0) writeFileSync(path.join(outDir, "integration-gap.md"), gaps.join("\n"));
   if (env.GITHUB_STEP_SUMMARY) {
     try {
       appendFileSync(env.GITHUB_STEP_SUMMARY, markdown);
@@ -407,6 +448,45 @@ export function runSummary(
   return 0;
 }
 
+/** The harness lane's lcov text + a source line, or notes explaining its absence. */
+function resolveHarness(opts, { exec, env, notes }) {
+  const { repo, sha, outDir } = opts;
+  const artifact = harnessArtifactName(sha);
+  // Release-candidate mode (any lcov passed on disk): the caller downloaded this
+  // run's own artifacts, so nothing is looked up remotely.
+  if (opts.harnessLcov || opts.integrationLcov) {
+    const text = opts.harnessLcov ? readIfPresent(opts.harnessLcov) : null;
+    if (text) return { text, source: `\`${artifact}\` artifact of this Release Candidate run` };
+    notes.push(
+      `Bridge harness coverage unavailable: no ${opts.harnessLcov ?? "--harness-lcov"} (the ` +
+        "harness lane failed before measuring, or ran without measure_coverage)."
+    );
+    return { text: null, source: null };
+  }
+  const dl = downloadArtifactForSha(
+    {
+      repo,
+      sha,
+      workflow: CANDIDATE_WORKFLOW,
+      events: ["workflow_dispatch"],
+      artifact,
+      dir: path.join(outDir, "harness"),
+    },
+    exec
+  );
+  if (dl.note) {
+    notes.push(`Bridge harness coverage unavailable: ${dl.note}.`);
+    return { text: null, source: null };
+  }
+  const text = readIfPresent(path.join(dl.dir, HARNESS_LCOV));
+  if (!text) {
+    notes.push(`Release Candidate run ${dl.run.id}'s ${artifact} has no ${HARNESS_LCOV}.`);
+    return { text: null, source: null };
+  }
+  const link = runLink(env.GITHUB_SERVER_URL, repo, dl.run);
+  return { text, source: `\`${artifact}\` artifact of Release Candidate ${link}` };
+}
+
 function main(argv) {
   let opts;
   try {
@@ -415,7 +495,8 @@ function main(argv) {
     console.error(`release-coverage-summary: ${e.message}`);
     console.error(
       "usage: release-coverage-summary.mjs --repo <owner/name> --sha <sha> --out-dir <dir> " +
-        "[--integration-lcov <file>] [--ref <name>] [--root <dir>] [--baseline <json>]"
+        "[--integration-lcov <file>] [--harness-lcov <file>] [--ref <name>] [--root <dir>] " +
+        "[--baseline <json>]"
     );
     return 2;
   }
