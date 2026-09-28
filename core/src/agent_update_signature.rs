@@ -456,6 +456,17 @@ mod tests {
     }
 
     #[test]
+    fn embedded_policy_carries_the_requested_allowance_and_committed_keys() {
+        let strict = SignaturePolicy::embedded(false);
+        let relaxed = SignaturePolicy::embedded(true);
+        assert!(!strict.allows_unsigned());
+        assert!(relaxed.allows_unsigned());
+        let committed = !parse_public_keys_pem(EMBEDDED_PUBLIC_KEYS_PEM).is_empty();
+        assert_eq!(strict.has_trusted_keys(), committed);
+        assert!(!SignaturePolicy::strict(Vec::new()).has_trusted_keys());
+    }
+
+    #[test]
     fn build_policy_allows_unsigned_only_in_debug_builds() {
         assert_eq!(
             SignaturePolicy::for_build().allow_unsigned,

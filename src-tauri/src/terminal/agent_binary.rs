@@ -6,12 +6,30 @@
 //! 1. **Local cache** — `~/.cache/termihub/agent-binaries/<version>/termihub-agent-<arch>`
 //! 2. **Bundled resource** — shipped inside the Tauri app bundle
 //! 3. **GitHub Releases download** — fetched on demand and cached locally
+//!
+//! Every resolution is verified before it is handed to a deploy path:
+//!
+//! - **SHA-256 checksum** against the `.sha256` sidecar (AGT-004 / AGT-007);
+//! - **Ed25519 signature** against the `.sig` sidecar and the release key
+//!   compiled in from `agent/keys/update-signing.pub.pem` (AGT-005, #3330), using
+//!   the same `termihub_core::agent_update_signature` code the agent gates its
+//!   own self-updates on.
+//!
+//! Release builds fail closed on both (missing, malformed or non-verifying
+//! sidecars, and the placeholder key, all reject). Dev/branch builds stay
+//! relaxed: a missing sidecar is tolerated with a warning, but a present one must
+//! still verify. Because verification happens at resolution, it covers every
+//! deploy path — the immediate shutdown + install over SSH, the Windows fallback,
+//! and the coordinated push.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
+use termihub_core::agent_update_signature::{
+    signature_sidecar_path, SignaturePolicy, SignatureVerdict, SIGNATURE_EXT,
+};
 use tracing::{debug, info, warn};
 
 use crate::utils::download::download_to_file;
@@ -23,13 +41,6 @@ const GITHUB_REPO: &str = "armaxri/termiHub";
 /// File-name suffix for the SHA-256 checksum sidecar published next to every
 /// agent binary release asset (e.g. `termihub-agent-linux-x64.sha256`).
 const CHECKSUM_EXT: &str = "sha256";
-
-/// File-name suffix for the detached Ed25519 signature sidecar published next
-/// to every release agent binary (e.g. `termihub-agent-linux-x64.sig`). The
-/// desktop does not verify it — the agent does, against its compiled-in release
-/// key, before applying a coordinated update (AGT-005, #3213). The desktop only
-/// fetches it alongside the binary and forwards its contents.
-const SIGNATURE_EXT: &str = "sig";
 
 /// Map a remote OS string and architecture string to the artifact suffix we use.
 ///
@@ -229,21 +240,14 @@ fn checksum_sidecar_path(binary_path: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// Return the path of the `.sig` signature sidecar for a binary path.
-fn signature_sidecar_path(binary_path: &Path) -> PathBuf {
-    let mut name = binary_path.as_os_str().to_owned();
-    name.push(".");
-    name.push(SIGNATURE_EXT);
-    PathBuf::from(name)
-}
-
 /// Read the base64 Ed25519 signature from the `.sig` sidecar next to a resolved
 /// agent binary, if one exists (AGT-005, #3213).
 ///
 /// Returned verbatim (trimmed) for the `signature` param of
-/// `agent.request_update`; the agent is the verifier. `None` for local dev
-/// builds and dev/branch downloads, which are not signed — a release-built
-/// agent refuses such an update, a debug-built one tolerates it with a warning.
+/// `agent.request_update`; the agent re-verifies it before the swap (the desktop
+/// has already verified it at resolution, #3330). `None` for local dev builds
+/// and unsigned dev/branch downloads — a release desktop never resolves such a
+/// binary, and a release-built agent refuses it.
 pub fn read_signature_sidecar(binary_path: &Path) -> Option<String> {
     fs::read_to_string(signature_sidecar_path(binary_path))
         .ok()
@@ -252,17 +256,94 @@ pub fn read_signature_sidecar(binary_path: &Path) -> Option<String> {
 }
 
 /// Best-effort fetch of the `.sig` sidecar published next to `url` into
-/// `<dest>.sig`. A missing signature is not an error here — the agent decides
-/// (release agents refuse unsigned updates). Any stale sidecar from a previous
-/// download is removed first so it can never be paired with new bytes.
+/// `<dest>.sig`. A missing signature is not an error *here* — the caller then
+/// runs [`verify_adjacent_signature`], which fails closed on it for release
+/// builds. Any stale sidecar from a previous download is removed first so it can
+/// never be paired with new bytes.
 fn fetch_signature_sidecar(url: &str, dest: &Path) {
     let sig_sidecar = signature_sidecar_path(dest);
     let _ = fs::remove_file(&sig_sidecar);
     let sig_url = format!("{url}.{SIGNATURE_EXT}");
     if let Err(e) = download_to_file(&sig_url, &sig_sidecar, |_, _| {}) {
         let _ = fs::remove_file(&sig_sidecar);
-        debug!("No signature sidecar at {sig_url} ({e}); forwarding the binary unsigned");
+        debug!("No signature sidecar at {sig_url} ({e})");
     }
+}
+
+/// The signature policy for a resolution: the embedded release key(s), with the
+/// unsigned allowance on only when `require_verified` is `false` (dev/branch
+/// builds — the same rule that relaxes the AGT-007 checksum requirement).
+fn signature_policy(require_verified: bool) -> SignaturePolicy {
+    SignaturePolicy::embedded(!require_verified)
+}
+
+/// Verify the `.sig` sidecar next to `binary_path` over `digest_hex` — the
+/// SHA-256 of the exact bytes that will be deployed (AGT-005, #3330).
+///
+/// Fails closed under a strict (release) policy on a missing, malformed or
+/// non-verifying signature and on the placeholder key; a relaxed (dev) policy
+/// tolerates only a *missing* signature. Callers that re-read the binary before
+/// deploying (the coordinated push) pass the digest of the bytes they actually
+/// upload, so a file swapped after resolution is still caught.
+pub fn verify_signature_for_digest(
+    binary_path: &Path,
+    digest_hex: &str,
+    policy: &SignaturePolicy,
+) -> Result<()> {
+    let signature = read_signature_sidecar(binary_path);
+    match policy.verify(digest_hex, signature.as_deref()) {
+        Ok(SignatureVerdict::Verified) => {
+            debug!("Agent binary signature verified: {}", binary_path.display());
+            Ok(())
+        }
+        Ok(SignatureVerdict::UnsignedDevBuild) => {
+            warn!(
+                "No signature sidecar for {} — deploying an unsigned agent binary (dev build only)",
+                binary_path.display()
+            );
+            Ok(())
+        }
+        Err(e) => bail!(
+            "Signature verification failed for {}: {e}. Refusing to deploy this agent binary.",
+            binary_path.display()
+        ),
+    }
+}
+
+/// The signature policy a deploy of the resolved agent binary for `version`
+/// must satisfy — strict for release builds, relaxed for dev/branch builds
+/// (same rule as [`resolve_agent_binary`]).
+pub fn deploy_signature_policy(version: &str) -> SignaturePolicy {
+    signature_policy(!is_dev_build(version))
+}
+
+/// Re-verify the signature over the exact bytes a deploy path is about to
+/// upload (read after resolution), closing the window in which the resolved file
+/// could be swapped between verification and upload.
+pub fn verify_deploy_bytes(binary_path: &Path, bytes: &[u8], version: &str) -> Result<()> {
+    verify_signature_for_digest(
+        binary_path,
+        &sha256_hex_of_bytes(bytes),
+        &deploy_signature_policy(version),
+    )
+}
+
+/// Verify the `.sig` sidecar next to a resolved binary against the binary's
+/// on-disk bytes. See [`verify_signature_for_digest`].
+fn verify_adjacent_signature(binary_path: &Path, policy: &SignaturePolicy) -> Result<()> {
+    let digest = sha256_hex_of_file(binary_path)?;
+    verify_signature_for_digest(binary_path, &digest, policy)
+}
+
+/// Verify a resolved binary before it may be deployed: the `.sha256` checksum
+/// (AGT-004 / AGT-007) and then the `.sig` signature (AGT-005, #3330).
+fn verify_resolved_binary(
+    binary_path: &Path,
+    require_checksum: bool,
+    policy: &SignaturePolicy,
+) -> Result<()> {
+    verify_with_adjacent_sidecar(binary_path, require_checksum)?;
+    verify_adjacent_signature(binary_path, policy)
 }
 
 /// Verify a resolved binary against a `.sha256` sidecar sitting next to it.
@@ -324,10 +405,15 @@ fn verify_with_adjacent_sidecar(binary_path: &Path, require_checksum: bool) -> R
 ///   omitting the `.sha256`.
 /// - `false` (out-of-scope dev/branch builds that do not publish checksums yet)
 ///   → a missing sidecar is tolerated with a warning.
+///
+/// After the checksum passes, the `.sig` sidecar is fetched and verified under
+/// `policy` (AGT-005, #3330); a rejected signature removes the binary and both
+/// sidecars, exactly like a checksum mismatch.
 fn download_binary_with_checksum<F>(
     url: &str,
     dest: &Path,
     require_checksum: bool,
+    policy: &SignaturePolicy,
     progress_cb: F,
 ) -> Result<()>
 where
@@ -350,23 +436,42 @@ where
             });
         }
         // Out-of-scope dev/branch build with no published checksum — keep the
-        // binary but warn that integrity could not be verified.
+        // binary but warn that integrity could not be verified. Still honour a
+        // published signature: a present one must verify.
         warn!(
             "No checksum available at {checksum_url} ({e}) — installing agent binary \
              without integrity verification"
         );
+        fetch_signature_sidecar(url, dest);
+        if let Err(e) = verify_adjacent_signature(dest, policy) {
+            remove_download(dest);
+            return Err(e);
+        }
         return Ok(());
     }
 
     // The sidecar was just fetched next to `dest`; verify against it and clean
     // up both files on any mismatch or malformed sidecar.
     if let Err(e) = verify_with_adjacent_sidecar(dest, require_checksum) {
-        let _ = fs::remove_file(dest);
-        let _ = fs::remove_file(&sidecar);
+        remove_download(dest);
         return Err(e);
     }
+    // AGT-005 (#3330): the binary must also carry a valid release signature
+    // (release builds) before it may become a cache hit or be deployed.
     fetch_signature_sidecar(url, dest);
+    if let Err(e) = verify_adjacent_signature(dest, policy) {
+        remove_download(dest);
+        return Err(e);
+    }
     Ok(())
+}
+
+/// Remove a rejected download and its sidecars so it can never masquerade as a
+/// valid cache hit.
+fn remove_download(dest: &Path) {
+    let _ = fs::remove_file(dest);
+    let _ = fs::remove_file(checksum_sidecar_path(dest));
+    let _ = fs::remove_file(signature_sidecar_path(dest));
 }
 
 /// Download the agent binary from an explicit URL and cache it under `cache_key/termihub-agent-{arch}`.
@@ -387,7 +492,15 @@ where
     let dest = cache_dir()
         .join(cache_key)
         .join(format!("termihub-agent-{arch_suffix}"));
-    download_binary_with_checksum(url, &dest, /* require_checksum */ false, progress_cb)?;
+    // Relaxed (dev/branch) posture for both checksum and signature: a missing
+    // sidecar is tolerated, a present one must verify.
+    download_binary_with_checksum(
+        url,
+        &dest,
+        /* require_checksum */ false,
+        &signature_policy(/* require_verified */ false),
+        progress_cb,
+    )?;
     Ok(dest)
 }
 
@@ -412,7 +525,11 @@ where
         debug!("Using cached branch build binary: {}", cached.display());
         // Branch builds do not publish checksums yet (out of scope for #1350), so
         // a missing sidecar is tolerated — same relaxed posture as their download.
-        verify_with_adjacent_sidecar(&cached, /* require_checksum */ false)?;
+        verify_resolved_binary(
+            &cached,
+            /* require_checksum */ false,
+            &signature_policy(/* require_verified */ false),
+        )?;
         return Ok(cached);
     }
 
@@ -425,7 +542,8 @@ where
 ///
 /// Dev builds are identified by debug mode, the CI dev-build flag, or a `-dev`
 /// version suffix. Release downloads are the negation, and only they are gated
-/// on a mandatory checksum (see [`download_binary_with_checksum`]).
+/// on a mandatory checksum and release signature (see
+/// [`download_binary_with_checksum`]).
 fn is_dev_build(version: &str) -> bool {
     cfg!(debug_assertions) || env!("TERMIHUB_IS_DEV_BUILD") == "1" || version.ends_with("-dev")
 }
@@ -502,7 +620,15 @@ where
     let dest = cached_binary_path(version, arch_suffix);
     // Release downloads (`v{version}`) must carry a published checksum; dev tags
     // (`dev-latest` / `dev-develop-latest`) do not publish one yet (out of scope).
-    download_binary_with_checksum(&url, &dest, !is_dev_build(version), progress_cb)?;
+    // Release downloads must also carry a valid release signature (#3330).
+    let require_verified = !is_dev_build(version);
+    download_binary_with_checksum(
+        &url,
+        &dest,
+        require_verified,
+        &signature_policy(require_verified),
+        progress_cb,
+    )?;
     Ok(dest)
 }
 
@@ -522,13 +648,16 @@ where
     // path (cache, bundle, download) — not just the download. Dev/branch builds
     // stay relaxed so local iteration is not broken (AGT-007).
     let require_checksum = !is_dev_build(version);
+    // The same rule governs the release signature (AGT-005, #3330): a release
+    // desktop deploys only an agent binary signed by the embedded release key.
+    let policy = signature_policy(require_checksum);
 
     // 1. Check local cache
     if let Some(path) = find_cached_binary(version, arch_suffix) {
         info!("Using cached agent binary: {}", path.display());
         // Reject a cache entry that has been tampered with since it was fetched,
         // and (release builds) one that carries no published checksum at all.
-        verify_with_adjacent_sidecar(&path, require_checksum)?;
+        verify_resolved_binary(&path, require_checksum, &policy)?;
         return Ok(path);
     }
 
@@ -537,8 +666,8 @@ where
         info!("Using bundled agent binary: {}", path.display());
         // Verify against a bundled `.sha256` sidecar; a mismatch rejects the
         // bundle rather than deploying it, and a release build rejects a bundle
-        // that ships no sidecar at all.
-        verify_with_adjacent_sidecar(&path, require_checksum)?;
+        // that ships no sidecar at all. The same holds for the signature.
+        verify_resolved_binary(&path, require_checksum, &policy)?;
         // Copy to cache for future use, including the checksum sidecar so later
         // cache hits stay verifiable.
         let cache_path = cached_binary_path(version, arch_suffix);
@@ -579,6 +708,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use termihub_core::agent_update_signature::test_support::{sign_digest, test_signing_key};
 
     #[test]
     fn artifact_name_linux_x86_64() {
@@ -1082,43 +1212,72 @@ mod tests {
 
     // --- download + verify integration ------------------------------------
 
-    /// Serve the agent binary and (optionally) its `.sha256` sidecar over an
-    /// ephemeral loopback HTTP server, so `download_binary_with_checksum` can be
-    /// exercised end-to-end. Handles exactly two sequential connections (the
-    /// binary GET then the sidecar GET); the response is chosen by whether the
-    /// requested path ends in `.sha256`. Returns the binary URL and the server
-    /// thread handle. When `sidecar` is `None` the sidecar request gets a 404.
+    /// A loopback HTTP server serving the agent binary plus optional `.sha256`
+    /// and `.sig` sidecars, so `download_binary_with_checksum` can be exercised
+    /// end-to-end. The response is chosen by the requested path's suffix; an
+    /// absent sidecar answers 404. The server stops (and its thread is joined)
+    /// when the guard drops, however many requests the code under test made.
+    struct AgentDownloadServer {
+        url: String,
+        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        handle: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl Drop for AgentDownloadServer {
+        fn drop(&mut self) {
+            self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            if let Some(handle) = self.handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+
     fn serve_agent_download(
         binary: &'static [u8],
         sidecar: Option<String>,
-    ) -> (String, std::thread::JoinHandle<()>) {
+        signature: Option<String>,
+    ) -> AgentDownloadServer {
         use std::io::{Read, Write};
         use std::net::TcpListener;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
         let addr = listener.local_addr().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_thread = Arc::clone(&stop);
         let handle = std::thread::spawn(move || {
-            for _ in 0..2 {
-                let (mut stream, _) = match listener.accept() {
-                    Ok(s) => s,
+            while !stop_thread.load(Ordering::SeqCst) {
+                let mut stream = match listener.accept() {
+                    Ok((s, _)) => s,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        continue;
+                    }
                     Err(_) => return,
                 };
+                let _ = stream.set_nonblocking(false);
                 let mut buf = [0u8; 1024];
                 let n = stream.read(&mut buf).unwrap_or(0);
                 let req = String::from_utf8_lossy(&buf[..n]);
-                let is_sidecar = req
+                let path = req
                     .lines()
                     .next()
-                    .map(|l| l.contains(".sha256"))
-                    .unwrap_or(false);
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .unwrap_or("")
+                    .to_string();
 
-                let (status, body): (&str, Vec<u8>) = if is_sidecar {
-                    match &sidecar {
-                        Some(content) => ("200 OK", content.clone().into_bytes()),
-                        None => ("404 Not Found", Vec::new()),
-                    }
+                let served = if path.ends_with(".sha256") {
+                    sidecar.clone().map(String::into_bytes)
+                } else if path.ends_with(".sig") {
+                    signature.clone().map(String::into_bytes)
                 } else {
-                    ("200 OK", binary.to_vec())
+                    Some(binary.to_vec())
+                };
+                let (status, body) = match served {
+                    Some(body) => ("200 OK", body),
+                    None => ("404 Not Found", Vec::new()),
                 };
                 let header = format!(
                     "HTTP/1.1 {status}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
@@ -1129,22 +1288,52 @@ mod tests {
                 let _ = stream.flush();
             }
         });
-        (format!("http://{addr}/termihub-agent-linux-x64"), handle)
+        AgentDownloadServer {
+            url: format!("http://{addr}/termihub-agent-linux-x64"),
+            stop,
+            handle: Some(handle),
+        }
+    }
+
+    /// Seed of the test signing key the download/resolution tests trust.
+    const TEST_KEY_SEED: u8 = 7;
+
+    /// A strict (release) policy trusting only the test key.
+    fn release_policy() -> SignaturePolicy {
+        SignaturePolicy::strict(vec![test_signing_key(TEST_KEY_SEED).verifying_key()])
+    }
+
+    /// A relaxed (dev/branch) policy trusting only the test key.
+    fn dev_policy() -> SignaturePolicy {
+        SignaturePolicy::new(vec![test_signing_key(TEST_KEY_SEED).verifying_key()], true)
+    }
+
+    /// The test key's signature over the SHA-256 of `abc`.
+    fn sig_of_abc() -> String {
+        sign_digest(&test_signing_key(TEST_KEY_SEED), SHA256_OF_ABC)
     }
 
     #[test]
     fn download_with_checksum_accepts_matching_sidecar() {
-        let (url, server) = serve_agent_download(b"abc", Some(format!("{SHA256_OF_ABC}  bin\n")));
+        let server = serve_agent_download(
+            b"abc",
+            Some(format!("{SHA256_OF_ABC}  bin\n")),
+            Some(sig_of_abc()),
+        );
         let tmp = tempfile::tempdir().unwrap();
         let dest = tmp.path().join("termihub-agent-linux-x64");
 
-        download_binary_with_checksum(&url, &dest, true, |_, _| {}).unwrap();
-        server.join().unwrap();
+        download_binary_with_checksum(&server.url, &dest, true, &release_policy(), |_, _| {})
+            .unwrap();
 
         assert_eq!(fs::read(&dest).unwrap(), b"abc");
         assert!(
             checksum_sidecar_path(&dest).is_file(),
             "the verified sidecar must be cached next to the binary"
+        );
+        assert!(
+            signature_sidecar_path(&dest).is_file(),
+            "the verified signature must be cached next to the binary"
         );
     }
 
@@ -1152,12 +1341,13 @@ mod tests {
     fn download_with_checksum_rejects_mismatched_sidecar_and_removes_binary() {
         // Sidecar advertises a digest the body does not have.
         let wrong = "0".repeat(64);
-        let (url, server) = serve_agent_download(b"abc", Some(wrong));
+        let server = serve_agent_download(b"abc", Some(wrong), Some(sig_of_abc()));
         let tmp = tempfile::tempdir().unwrap();
         let dest = tmp.path().join("termihub-agent-linux-x64");
 
-        let err = download_binary_with_checksum(&url, &dest, true, |_, _| {}).unwrap_err();
-        server.join().unwrap();
+        let err =
+            download_binary_with_checksum(&server.url, &dest, true, &release_policy(), |_, _| {})
+                .unwrap_err();
 
         assert!(
             err.to_string().to_ascii_lowercase().contains("checksum"),
@@ -1172,14 +1362,15 @@ mod tests {
 
     #[test]
     fn download_with_checksum_fails_closed_when_release_sidecar_missing() {
-        let (url, server) = serve_agent_download(b"abc", None);
+        let server = serve_agent_download(b"abc", None, Some(sig_of_abc()));
         let tmp = tempfile::tempdir().unwrap();
         let dest = tmp.path().join("termihub-agent-linux-x64");
 
         // require_checksum = true (a release download) → a missing sidecar is a
         // hard failure and the binary must not be left on disk.
-        let err = download_binary_with_checksum(&url, &dest, true, |_, _| {}).unwrap_err();
-        server.join().unwrap();
+        let err =
+            download_binary_with_checksum(&server.url, &dest, true, &release_policy(), |_, _| {})
+                .unwrap_err();
 
         assert!(
             err.to_string().contains("checksum"),
@@ -1193,16 +1384,160 @@ mod tests {
 
     #[test]
     fn download_with_checksum_tolerates_missing_sidecar_for_dev_builds() {
-        let (url, server) = serve_agent_download(b"abc", None);
+        let server = serve_agent_download(b"abc", None, None);
         let tmp = tempfile::tempdir().unwrap();
         let dest = tmp.path().join("termihub-agent-linux-x64");
 
-        // require_checksum = false (dev/branch build) → a missing sidecar is
-        // tolerated and the binary is kept.
-        download_binary_with_checksum(&url, &dest, false, |_, _| {}).unwrap();
-        server.join().unwrap();
+        // require_checksum = false (dev/branch build) → a missing sidecar (and
+        // a missing signature) is tolerated and the binary is kept.
+        download_binary_with_checksum(&server.url, &dest, false, &dev_policy(), |_, _| {}).unwrap();
 
         assert_eq!(fs::read(&dest).unwrap(), b"abc");
+    }
+
+    // ── AGT-005: desktop-side signature verification (#3330) ──────────────
+
+    /// Download under the release policy with a valid checksum and the given
+    /// `.sig` body; returns the result and whether anything was left on disk.
+    fn release_download_with_sig(signature: Option<String>) -> (Result<()>, bool) {
+        let server =
+            serve_agent_download(b"abc", Some(format!("{SHA256_OF_ABC}  bin\n")), signature);
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("termihub-agent-linux-x64");
+        let result =
+            download_binary_with_checksum(&server.url, &dest, true, &release_policy(), |_, _| {});
+        let left = dest.exists()
+            || checksum_sidecar_path(&dest).exists()
+            || signature_sidecar_path(&dest).exists();
+        (result, left)
+    }
+
+    #[test]
+    fn release_download_rejects_missing_signature_and_removes_everything() {
+        let (result, left) = release_download_with_sig(None);
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Signature verification failed"), "got: {err}");
+        assert!(
+            !left,
+            "an unsigned release download must not become a cache hit"
+        );
+    }
+
+    #[test]
+    fn release_download_rejects_tampered_or_foreign_signature() {
+        // Signature over a different binary ("abd") — i.e. the bytes were swapped.
+        let over_other = sign_digest(
+            &test_signing_key(TEST_KEY_SEED),
+            "a52d159f262b2c6ddb724a61840befc36eb30c88877a4030b65cbe86298449c9",
+        );
+        // Signature by a key the build does not trust.
+        let foreign = sign_digest(&test_signing_key(99), SHA256_OF_ABC);
+        for sig in [over_other, foreign, "not base64!!".to_string()] {
+            let (result, left) = release_download_with_sig(Some(sig));
+            assert!(result.is_err());
+            assert!(!left, "a rejected download must be removed");
+        }
+    }
+
+    #[test]
+    fn dev_download_rejects_a_present_but_bad_signature() {
+        let server = serve_agent_download(
+            b"abc",
+            Some(format!("{SHA256_OF_ABC}  bin\n")),
+            Some(sign_digest(&test_signing_key(99), SHA256_OF_ABC)),
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("termihub-agent-linux-x64");
+        assert!(
+            download_binary_with_checksum(&server.url, &dest, false, &dev_policy(), |_, _| {})
+                .is_err()
+        );
+        assert!(!dest.exists());
+    }
+
+    /// Write `abc` + a matching checksum sidecar (+ optional `.sig`) into a
+    /// temp dir, as a cache or bundle entry would look.
+    fn resolved_entry(signature: Option<&str>) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("termihub-agent-linux-x64");
+        fs::write(&bin, b"abc").unwrap();
+        fs::write(checksum_sidecar_path(&bin), format!("{SHA256_OF_ABC}\n")).unwrap();
+        if let Some(sig) = signature {
+            fs::write(signature_sidecar_path(&bin), sig).unwrap();
+        }
+        (tmp, bin)
+    }
+
+    #[test]
+    fn resolved_entry_with_valid_signature_is_accepted() {
+        let (_tmp, bin) = resolved_entry(Some(&sig_of_abc()));
+        verify_resolved_binary(&bin, true, &release_policy()).unwrap();
+    }
+
+    #[test]
+    fn resolved_entry_with_tampered_binary_is_rejected() {
+        let (_tmp, bin) = resolved_entry(Some(&sig_of_abc()));
+        // Tamper the bytes AND the checksum sidecar consistently — only the
+        // signature can catch this substitution.
+        fs::write(&bin, b"abd").unwrap();
+        fs::write(
+            checksum_sidecar_path(&bin),
+            "a52d159f262b2c6ddb724a61840befc36eb30c88877a4030b65cbe86298449c9",
+        )
+        .unwrap();
+        let err = verify_resolved_binary(&bin, true, &release_policy()).unwrap_err();
+        assert!(err.to_string().contains("does not verify"), "got: {err}");
+    }
+
+    #[test]
+    fn resolved_entry_without_signature_fails_closed_for_release_only() {
+        let (_tmp, bin) = resolved_entry(None);
+        let err = verify_resolved_binary(&bin, true, &release_policy()).unwrap_err();
+        assert!(err.to_string().contains("no signature"), "got: {err}");
+        // Dev/branch builds stay relaxed.
+        verify_resolved_binary(&bin, false, &dev_policy()).unwrap();
+    }
+
+    #[test]
+    fn placeholder_key_refuses_every_release_deploy() {
+        let (_tmp, bin) = resolved_entry(Some(&sig_of_abc()));
+        // A build made from the placeholder key file trusts no key: signed or
+        // not, nothing verifies.
+        let no_key = SignaturePolicy::strict(Vec::new());
+        let err = verify_resolved_binary(&bin, true, &no_key).unwrap_err();
+        assert!(err.to_string().contains("placeholder"), "got: {err}");
+        let (_tmp2, unsigned) = resolved_entry(None);
+        assert!(verify_resolved_binary(&unsigned, true, &no_key).is_err());
+
+        // The committed key file is still the placeholder until the maintainer
+        // generates the real key; while it is, the embedded release policy must
+        // refuse even a validly test-signed binary.
+        let embedded = signature_policy(/* require_verified */ true);
+        if !embedded.has_trusted_keys() {
+            assert!(verify_resolved_binary(&bin, true, &embedded).is_err());
+        }
+    }
+
+    #[test]
+    fn signature_is_checked_over_the_deployed_bytes() {
+        let (_tmp, bin) = resolved_entry(Some(&sig_of_abc()));
+        verify_signature_for_digest(&bin, SHA256_OF_ABC, &release_policy()).unwrap();
+        // The file on disk still verifies, but the bytes about to be uploaded
+        // were swapped after resolution — refused.
+        assert!(
+            verify_signature_for_digest(&bin, &sha256_hex_of_bytes(b"abd"), &release_policy())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn deploy_policy_follows_the_dev_build_rule() {
+        assert_eq!(
+            deploy_signature_policy("1.2.3").allows_unsigned(),
+            is_dev_build("1.2.3")
+        );
+        assert!(deploy_signature_policy("1.2.3-dev").allows_unsigned());
+        assert!(!signature_policy(true).allows_unsigned());
     }
 
     // ── AGT-005: signature sidecar forwarding (#3213) ─────────────────────
