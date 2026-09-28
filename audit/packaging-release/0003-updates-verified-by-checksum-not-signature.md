@@ -11,8 +11,8 @@ evidence:
   - agent/src/update/checksum.rs:53
   - .github/workflows/release.yml:363
   - src-tauri/src/commands/update.rs:95
-status: deferred
-resolution: "release strategy 2026-09-06 unsigned beta — desktop updater check-only; agent half signed (#3331), key pending SUP-009"
+status: partial
+resolution: "#3331 — agent half signed (ed25519); desktop auto-update is check-only (manual download) — signing key pending maintainer setup"
 ---
 
 ## What
