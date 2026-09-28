@@ -186,6 +186,7 @@ import {
   connectTimeoutMs,
   type ConnectTimeoutKind,
 } from "@/utils/connectTimeout";
+import type { ConnectionErrorKind } from "@/utils/connectionErrorHints";
 import { onConnectionIdsChanged, onPersistentSessionStateChanged } from "@/services/events";
 import { onThemeChange } from "@/themes";
 import {
@@ -970,6 +971,12 @@ export interface AppState
 
   // Per-tab terminal spawn errors (runtime-only, cleared on retry or tab close)
   terminalSpawnErrors: Record<string, string>;
+  /**
+   * Per-tab typed failure kind of the spawn error, from the backend's
+   * locale-independent error code (I18N-009). The overlay selects its hint from
+   * this and the backend family — never from the message text. Absent = `other`.
+   */
+  terminalSpawnErrorKinds: Record<string, ConnectionErrorKind>;
   terminalRetryCounters: Record<string, number>;
   /**
    * Per-tab wall-clock deadline (epoch ms + kind) for the active timed
@@ -978,7 +985,7 @@ export interface AppState
    * remount instead of restarting the countdown (#1263).
    */
   terminalConnectDeadline: Record<string, ConnectDeadline>;
-  setTerminalSpawnError: (tabId: string, error: string | null) => void;
+  setTerminalSpawnError: (tabId: string, error: string | null, kind?: ConnectionErrorKind) => void;
   retryTerminalSpawn: (tabId: string) => void;
   setTerminalConnecting: (tabId: string, connecting: boolean) => void;
   /** Auto-retry attempt count for agent sessions (> 0 = actively auto-retrying). */
@@ -4405,6 +4412,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         const remainingOpts = omitKey(state.tabTerminalOptions, tabId);
         const remainingSearch = omitKey(state.terminalSearchVisible, tabId);
         const remainingSpawnErrors = omitKey(state.terminalSpawnErrors, tabId);
+        const remainingSpawnErrorKinds = omitKey(state.terminalSpawnErrorKinds, tabId);
         const remainingRetryCounters = omitKey(state.terminalRetryCounters, tabId);
         const remainingConnectDeadline = omitKey(state.terminalConnectDeadline, tabId);
         const remainingView = omitKey(state.terminalViewMode, tabId);
@@ -4456,6 +4464,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
             tabTerminalOptions: remainingOpts,
             terminalSearchVisible: remainingSearch,
             terminalSpawnErrors: remainingSpawnErrors,
+            terminalSpawnErrorKinds: remainingSpawnErrorKinds,
             terminalRetryCounters: remainingRetryCounters,
             terminalConnectDeadline: remainingConnectDeadline,
             terminalViewMode: remainingView,
@@ -4479,6 +4488,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
           tabTerminalOptions: remainingOpts,
           terminalSearchVisible: remainingSearch,
           terminalSpawnErrors: remainingSpawnErrors,
+          terminalSpawnErrorKinds: remainingSpawnErrorKinds,
           terminalRetryCounters: remainingRetryCounters,
           terminalConnectDeadline: remainingConnectDeadline,
           terminalViewMode: remainingView,
@@ -5258,11 +5268,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     // Per-tab terminal spawn errors (runtime-only)
     terminalSpawnErrors: {},
+    terminalSpawnErrorKinds: {},
     terminalRetryCounters: {},
     terminalConnectDeadline: {},
     terminalAutoRetryCount: {},
     terminalWaitingForAgent: {},
-    setTerminalSpawnError: (tabId, error) => {
+    setTerminalSpawnError: (tabId, error, kind) => {
       // #2205 PR-B: the resilient-reconnect loop is owned by the backend redrive,
       // so a spawn error here is a plain error write — the client no longer feeds a
       // failed attempt into a local `driveAutoReconnect` engine. A genuine drop that
@@ -5272,11 +5283,18 @@ export const useAppStore = create<AppState>((set, get, store) => {
           error === null
             ? omitKey(state.terminalSpawnErrors, tabId)
             : { ...state.terminalSpawnErrors, [tabId]: error },
+        // The kind always travels with the error it classifies, so a stale kind
+        // can never label a later, unclassified error.
+        terminalSpawnErrorKinds:
+          error === null || kind === undefined || kind === "other"
+            ? omitKey(state.terminalSpawnErrorKinds, tabId)
+            : { ...state.terminalSpawnErrorKinds, [tabId]: kind },
       }));
     },
     retryTerminalSpawn: (tabId) =>
       set((state) => ({
         terminalSpawnErrors: omitKey(state.terminalSpawnErrors, tabId),
+        terminalSpawnErrorKinds: omitKey(state.terminalSpawnErrorKinds, tabId),
         terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
         terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
         terminalConnectDeadline: omitKey(state.terminalConnectDeadline, tabId),
@@ -5346,6 +5364,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
             ...state.terminalSpawnErrors,
             [tabId]: connectTimeoutMessage(kind),
           },
+          // A connect that outlived its deadline is a timeout of the tab's own
+          // backend; waiting on the parent agent is not, so it stays unhinted.
+          terminalSpawnErrorKinds:
+            kind === "connecting"
+              ? { ...state.terminalSpawnErrorKinds, [tabId]: "timeout" as const }
+              : omitKey(state.terminalSpawnErrorKinds, tabId),
         };
       }),
     abortTerminalConnect: (tabId) =>
@@ -5365,6 +5389,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
             ...state.terminalSpawnErrors,
             [tabId]: ABORTED_CONNECT_MESSAGE,
           },
+          terminalSpawnErrorKinds: omitKey(state.terminalSpawnErrorKinds, tabId),
         };
       }),
 

@@ -9,7 +9,7 @@
 #   message   = "termihub-agent-update-v1" || 0x00 || SHA-256(binary)   (raw bytes)
 #   <bin>.sig = base64(Ed25519-sign(private_key, message))              (one line)
 #
-# This MUST stay byte-identical to agent/src/update/signature.rs (its
+# This MUST stay byte-identical to core/src/agent_update_signature.rs (its
 # `openssl_produced_signature_verifies` test pins this exact pipeline).
 #
 # Subcommands:

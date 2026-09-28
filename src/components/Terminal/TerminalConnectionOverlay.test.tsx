@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { TerminalConnectionOverlay } from "./TerminalConnectionOverlay";
 import { useAppStore } from "@/store/appStore";
+import type { ConnectionErrorKind } from "@/utils/connectionErrorHints";
 import {
   connecting,
   flushSessionRegion,
@@ -36,6 +37,7 @@ function seedConnecting(tabId: string = TAB_ID): void {
 function resetStore() {
   useAppStore.setState({
     terminalSpawnErrors: {},
+    terminalSpawnErrorKinds: {},
     terminalAutoRetryCount: {},
     terminalWaitingForAgent: {},
     terminalRetryCounters: {},
@@ -437,8 +439,16 @@ describe("TerminalConnectionOverlay — failed state", () => {
     ).not.toBeNull();
   });
 
-  it("shows SSH agent hint when error contains 'Agent auth failed'", () => {
-    useAppStore.setState({ terminalSpawnErrors: { [TAB_ID]: "Agent auth failed" } });
+  /** Render a failed tab with the given message, typed kind, and session type. */
+  function renderFailure(
+    message: string,
+    kind: ConnectionErrorKind | undefined,
+    sessionType: string
+  ): string {
+    useAppStore.setState({
+      terminalSpawnErrors: { [TAB_ID]: message },
+      terminalSpawnErrorKinds: kind ? { [TAB_ID]: kind } : {},
+    });
     act(() => {
       root.render(
         <TerminalConnectionOverlay
@@ -446,27 +456,21 @@ describe("TerminalConnectionOverlay — failed state", () => {
           panelId={PANEL_ID}
           tabTitle="my-server"
           isVisible={true}
-          sessionType="ssh"
+          sessionType={sessionType}
         />
       );
     });
-    expect(container.textContent).toContain("SSH Agent not running");
+    return container.textContent ?? "";
+  }
+
+  it("shows the SSH agent hint for the agent-auth kind", () => {
+    expect(renderFailure("Agent auth failed: x", "agent-auth", "ssh")).toContain(
+      "SSH Agent not running"
+    );
   });
 
-  it("shows timeout hint when error contains 'timed out'", () => {
-    useAppStore.setState({ terminalSpawnErrors: { [TAB_ID]: "connection timed out" } });
-    act(() => {
-      root.render(
-        <TerminalConnectionOverlay
-          tabId={TAB_ID}
-          panelId={PANEL_ID}
-          tabTitle="my-server"
-          isVisible={true}
-          sessionType="ssh"
-        />
-      );
-    });
-    expect(container.textContent).toContain("timed out");
+  it("shows the timeout hint for the timeout kind", () => {
+    expect(renderFailure("connection timed out", "timeout", "ssh")).toContain("timed out");
   });
 
   // Regression for #2088: an SSH connect timeout must give SSH-appropriate,
@@ -474,169 +478,98 @@ describe("TerminalConnectionOverlay — failed state", () => {
   // agent binary" (that hint belongs to agent connections, and a timeout means
   // the transport never connected in the first place).
   it("gives an SSH-appropriate timeout hint, not the agent-binary one", () => {
-    useAppStore.setState({
-      terminalSpawnErrors: { [TAB_ID]: "Connection timed out after 45s" },
-    });
-    act(() => {
-      root.render(
-        <TerminalConnectionOverlay
-          tabId={TAB_ID}
-          panelId={PANEL_ID}
-          tabTitle="my-server"
-          isVisible={true}
-          sessionType="ssh"
-        />
-      );
-    });
-    const text = container.textContent ?? "";
+    const text = renderFailure("Connection timed out after 45s", "timeout", "ssh");
     expect(text).not.toContain("agent binary");
     expect(text).toContain("SSH");
     expect(text).toContain("reachable");
   });
 
   it("gives a telnet timeout hint free of any agent-binary mention", () => {
-    useAppStore.setState({
-      terminalSpawnErrors: { [TAB_ID]: "TCP connect failed: connection timed out" },
-    });
-    act(() => {
-      root.render(
-        <TerminalConnectionOverlay
-          tabId={TAB_ID}
-          panelId={PANEL_ID}
-          tabTitle="my-telnet"
-          isVisible={true}
-          sessionType="telnet"
-        />
-      );
-    });
-    const text = container.textContent ?? "";
+    const text = renderFailure("TCP connect failed: connection timed out", "timeout", "telnet");
     expect(text).not.toContain("agent binary");
     expect(text).toContain("reachable");
   });
 
   // #2088: the SSH ssh-agent hint (remedy: start ssh-agent) is SSH-specific and
-  // must not leak onto other backends even if their raw error happens to contain
-  // the "Agent auth failed" marker.
+  // must not leak onto other backends even with the agent-auth kind.
   it("does not show the SSH-agent hint on a non-SSH backend", () => {
-    useAppStore.setState({ terminalSpawnErrors: { [TAB_ID]: "Agent auth failed" } });
-    act(() => {
-      root.render(
-        <TerminalConnectionOverlay
-          tabId={TAB_ID}
-          panelId={PANEL_ID}
-          tabTitle="my-telnet"
-          isVisible={true}
-          sessionType="telnet"
-        />
-      );
-    });
-    expect(container.textContent).not.toContain("SSH Agent not running");
+    expect(renderFailure("Agent auth failed", "agent-auth", "telnet")).not.toContain(
+      "SSH Agent not running"
+    );
   });
 
   it("shows serial not-found hint for serial sessionType", () => {
-    useAppStore.setState({
-      terminalSpawnErrors: { [TAB_ID]: "Serial port '/dev/ttyUSB0' not found — check connected" },
-    });
-    act(() => {
-      root.render(
-        <TerminalConnectionOverlay
-          tabId={TAB_ID}
-          panelId={PANEL_ID}
-          tabTitle="serial"
-          isVisible={true}
-          sessionType="serial"
-        />
-      );
-    });
-    expect(container.textContent).toContain("Serial port not found");
+    expect(renderFailure("Serial port '/dev/ttyUSB0' not found", "not-found", "serial")).toContain(
+      "Serial port not found"
+    );
   });
 
   it("shows serial permission hint for serial sessionType", () => {
-    useAppStore.setState({
-      terminalSpawnErrors: { [TAB_ID]: "Permission denied on '/dev/ttyUSB0'" },
-    });
-    act(() => {
-      root.render(
-        <TerminalConnectionOverlay
-          tabId={TAB_ID}
-          panelId={PANEL_ID}
-          tabTitle="serial"
-          isVisible={true}
-          sessionType="serial"
-        />
-      );
-    });
-    expect(container.textContent).toContain("Permission denied");
-    expect(container.textContent).toContain("dialout");
+    const text = renderFailure("Permission denied on '/dev/ttyUSB0'", "permission", "serial");
+    expect(text).toContain("Permission denied");
+    expect(text).toContain("dialout");
   });
 
-  // Regression for #1830: the raw backend error embeds the same remediation
-  // (including the fix command) that the hint panel renders, so both the plain
-  // error text and the copyable CommandBlock showed the command — twice. The
-  // raw error box must drop the embedded remediation clause so the command and
-  // its guidance appear exactly once, in the hint panel.
+  // Regression for #1830: the fix command and its guidance appear exactly once,
+  // in the hint panel. The backend message states only the fact (I18N-009), so
+  // the raw error box is shown verbatim — no em-dash split.
   it("does not duplicate the serial permission remediation command", () => {
     const command = "sudo usermod -aG dialout $USER";
-    useAppStore.setState({
-      terminalSpawnErrors: {
-        [TAB_ID]: `Permission denied on 'COM7' — on Linux, add your user to the dialout group: ${command}`,
-      },
-    });
-    act(() => {
-      root.render(
-        <TerminalConnectionOverlay
-          tabId={TAB_ID}
-          panelId={PANEL_ID}
-          tabTitle="serial"
-          isVisible={true}
-          sessionType="serial"
-        />
-      );
-    });
-    const text = container.textContent ?? "";
-    const commandOccurrences = text.split(command).length - 1;
-    expect(commandOccurrences).toBe(1);
-    // The raw failure reason is still shown once (with the port name).
+    const text = renderFailure("Permission denied on 'COM7'", "permission", "serial");
+    expect(text.split(command).length - 1).toBe(1);
     expect(text).toContain("Permission denied on 'COM7'");
-    // The dialout guidance appears once, in the hint panel — not echoed by the
-    // raw error box.
     expect(text.split("dialout group").length - 1).toBe(1);
   });
 
   it("shows serial busy hint for serial sessionType", () => {
-    useAppStore.setState({
-      terminalSpawnErrors: { [TAB_ID]: "Serial port '/dev/ttyUSB0' is already in use" },
-    });
-    act(() => {
-      root.render(
-        <TerminalConnectionOverlay
-          tabId={TAB_ID}
-          panelId={PANEL_ID}
-          tabTitle="serial"
-          isVisible={true}
-          sessionType="serial"
-        />
-      );
-    });
-    expect(container.textContent).toContain("already in use");
+    expect(
+      renderFailure("Serial port '/dev/ttyUSB0' is already in use", "busy", "serial")
+    ).toContain("already in use by another application");
+  });
+
+  it("shows an auth hint for the auth kind on SSH", () => {
+    expect(renderFailure("Authentication failed", "auth", "ssh")).toContain(
+      "rejected the credentials"
+    );
   });
 
   it("does not show serial hint for non-serial sessionType", () => {
-    useAppStore.setState({
-      terminalSpawnErrors: { [TAB_ID]: "No such file or directory" },
-    });
-    act(() => {
-      root.render(
-        <TerminalConnectionOverlay
-          tabId={TAB_ID}
-          panelId={PANEL_ID}
-          tabTitle="ssh"
-          isVisible={true}
-          sessionType="ssh"
-        />
-      );
-    });
-    expect(container.textContent).not.toContain("Serial port not found");
+    expect(renderFailure("No such file or directory", "not-found", "ssh")).not.toContain(
+      "Serial port not found"
+    );
+  });
+
+  // I18N-009: hints are selected from the typed kind, never from the message.
+  // A German (OS-localized) message still gets the right hint…
+  it("selects the hint from the kind for a non-English message", () => {
+    const busy = renderFailure(
+      "Der serielle Anschluss 'COM3' wird bereits verwendet",
+      "busy",
+      "serial"
+    );
+    expect(busy).toContain("The serial port is already in use by another application.");
+    const denied = renderFailure("Zugriff verweigert auf '/dev/ttyUSB0'", "permission", "serial");
+    expect(denied).toContain("dialout");
+    const timeout = renderFailure("Zeitüberschreitung der Verbindung", "timeout", "ssh");
+    expect(timeout).toContain("before the SSH session was established");
+  });
+
+  // …and English text that used to trigger a hint by substring match shows
+  // none without a typed kind. The message is also displayed whole: nothing is
+  // split off at an em dash.
+  it("shows no hint for hint-like English text without a kind", () => {
+    const serial = renderFailure(
+      "Permission denied on 'COM7' — something busy not found timed out",
+      undefined,
+      "serial"
+    );
+    expect(serial).not.toContain("dialout");
+    expect(serial).not.toContain("Serial port not found");
+    expect(serial).not.toContain("already in use by another application");
+    expect(serial).toContain("Permission denied on 'COM7' — something busy not found timed out");
+    const ssh = renderFailure("Agent auth failed: connection timed out", undefined, "ssh");
+    expect(ssh).not.toContain("SSH Agent not running");
+    expect(ssh).not.toContain("before the SSH session was established");
   });
 
   it("Retry button calls retryTerminalSpawn", () => {

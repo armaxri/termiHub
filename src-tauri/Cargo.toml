@@ -108,7 +108,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 base64 = "0.22"
 anyhow = "1"
 thiserror = { workspace = true }
-termihub-core = { path = "../core", features = ["serial", "local-shell", "telnet", "ssh", "docker", "wsl", "local-transfer", "plugin", "embedded-servers", "http-monitor", "tracing"] }
+termihub-core = { path = "../core", features = ["serial", "local-shell", "telnet", "ssh", "docker", "wsl", "local-transfer", "plugin", "embedded-servers", "http-monitor", "tracing", "agent-update-signing"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros", "net", "time", "io-util"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 async-trait = { workspace = true }
@@ -274,6 +274,8 @@ keyring = { version = "3", default-features = false, features = [
 zbus = "5"
 
 [dev-dependencies]
+# Deterministic test signing helpers for the agent-binary signature tests (#3330).
+termihub-core = { path = "../core", features = ["agent-update-signing-test-support"] }
 # Paused-clock time control (`tokio::test(start_paused)`) for deterministic
 # timeout tests — the owned-task shutdown bounded-timeout path (ARCH-007) is
 # verified without a wall-clock sleep. Dev-only: absent from the release binary.

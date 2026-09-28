@@ -6,6 +6,8 @@
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 
+#[cfg(feature = "agent-update-signing")]
+pub mod agent_update_signature;
 #[cfg(any(
     feature = "local-shell",
     feature = "serial",

@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, Runtime, State};
 use tracing::{debug, info};
 use zeroize::Zeroizing;
 
@@ -30,6 +30,59 @@ fn config_error(e: impl std::fmt::Display) -> TerminalError {
     TerminalError::InternalError(e.to_string())
 }
 
+/// A projection region a `ConnectionManager` mutation is re-folded into.
+///
+/// Every connection-config command that changes (or reloads) what the
+/// [`ConnectionManager`] holds names the regions it feeds here, and the fold
+/// runs through [`commit`] — the single choke point (TAURI-006, #3762). No
+/// command calls a `fold_*_from_manager` directly, so a new mutation cannot
+/// persist without also re-folding its authoritative region.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Fold {
+    /// The authoritative `connections` region (#2389/#2394/#2401): the unified
+    /// main + external-file tree.
+    Connections,
+    /// The authoritative `agents` region's list-membership (#2403).
+    Agents,
+    /// The authoritative `settings` region (#2386).
+    Settings,
+}
+
+impl Fold {
+    /// Reflect the manager's current state for this region into its store and
+    /// publish the region diff.
+    fn apply<R: Runtime>(self, app: &AppHandle<R>) {
+        match self {
+            Fold::Connections => {
+                crate::connections_projection::projection::fold_connections_from_manager(app)
+            }
+            Fold::Agents => crate::agents_projection::projection::fold_agents_from_manager(app),
+            Fold::Settings => {
+                crate::settings_projection::projection::fold_settings_from_manager(app)
+            }
+        }
+    }
+}
+
+/// The single choke point every `ConnectionManager` mutation command goes
+/// through (TAURI-006, #3762).
+///
+/// Runs `op` — the persisted mutation plus any same-step side effect that must
+/// precede the fold (e.g. pruning a deleted connection's bookmarks) — and only
+/// when it succeeds folds each region in `folds`, in the order given. A failed
+/// `op` folds nothing, so a rejected mutation never republishes a region.
+pub(crate) fn commit<R: Runtime, T, E>(
+    app: &AppHandle<R>,
+    folds: &[Fold],
+    op: impl FnOnce() -> Result<T, E>,
+) -> Result<T, E> {
+    let value = op()?;
+    for fold in folds {
+        fold.apply(app);
+    }
+    Ok(value)
+}
+
 /// Response containing all connections (unified), folders, and agents.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,27 +104,23 @@ pub struct ExternalFileError {
 
 /// Load all saved connections, folders, and agents (unified view).
 #[tauri::command]
-pub fn load_connections_and_folders(
-    app: AppHandle,
+pub fn load_connections_and_folders<R: Runtime>(
+    app: AppHandle<R>,
     manager: State<'_, ConnectionManager>,
 ) -> Result<ConnectionData, TerminalError> {
     info!("Loading connections and folders");
     // The unified main + external view (the same one reflected into the
     // `ConnectionsStore` server-side, #2394), so the command and the projection
     // region cannot drift.
-    let view = manager.load_unified_view().map_err(config_error)?;
-
-    // Server-authority fold (#2403): reflect the loaded agent list-membership into
-    // the `AgentsStore` at the source, so the `agents` region tracks the
-    // persisted list on a reload — not only the client seed. Additive; no
-    // user-facing change.
-    crate::agents_projection::projection::fold_agents_from_manager(&app);
-
-    // Server-authority fold (#2401): re-fold the unified connection view into the
-    // authoritative `connections` region so a focus / external reload
-    // (`reloadConnectionsFromBackend`) refreshes every region reader — the frontend
-    // no longer holds a connections slice to re-seed. Additive; no user-facing change.
-    crate::connections_projection::projection::fold_connections_from_manager(&app);
+    //
+    // A reload re-folds both regions, agents first: the `agents` region tracks the
+    // persisted list on a reload, not only the client seed (#2403), and a focus /
+    // external reload (`reloadConnectionsFromBackend`) refreshes every
+    // `connections` region reader — the frontend holds no connections slice to
+    // re-seed (#2401).
+    let view = commit(&app, &[Fold::Agents, Fold::Connections], || {
+        manager.load_unified_view().map_err(config_error)
+    })?;
 
     Ok(ConnectionData {
         connections: view.connections,
@@ -89,52 +138,52 @@ pub fn load_connections_and_folders(
 /// `sourceFile`. Returns the connection's **persisted** id (recomputed from
 /// folder + name), so the frontend can reconcile its optimistic `conn-<ts>` id.
 #[tauri::command]
-pub fn save_connection(
+pub fn save_connection<R: Runtime>(
     connection: SavedConnection,
-    app: AppHandle,
+    app: AppHandle<R>,
     manager: State<'_, ConnectionManager>,
 ) -> Result<String, TerminalError> {
     debug!(id = %connection.id, name = %connection.name, "Saving connection");
-    let persisted_id = manager
-        .save_connection_routed(connection)
-        .map_err(config_error)?;
-    // Server-authority fold (#2389/#2394): reflect the persisted tree — main
-    // store *and* the external-file overlay — into the `ConnectionsStore`
-    // at the source. A save routed to an external file (`sourceFile` set) updates
-    // the region via that overlay. Additive; no user-facing change.
-    crate::connections_projection::projection::fold_connections_from_manager(&app);
-    Ok(persisted_id)
+    // The fold reflects the persisted tree — main store *and* the external-file
+    // overlay (#2389/#2394) — so a save routed to an external file (`sourceFile`
+    // set) updates the region via that overlay.
+    commit(&app, &[Fold::Connections], || {
+        manager
+            .save_connection_routed(connection)
+            .map_err(config_error)
+    })
 }
 
 /// Delete a connection by ID, optionally from an external file.
 #[tauri::command]
-pub fn delete_connection(
+pub fn delete_connection<R: Runtime>(
     id: String,
     source_file: Option<String>,
-    app: AppHandle,
+    app: AppHandle<R>,
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), TerminalError> {
     info!(id, ?source_file, "Deleting connection");
-    manager
-        .delete_connection_routed(&id, source_file.as_deref())
-        .map_err(config_error)?;
-    // Drop the connection's file-browser bookmarks (#3562) here, next to the
-    // delete, so every window's delete prunes them. Only after the delete is
-    // durable, so a rejected delete never loses bookmarks.
-    if let Some(bookmarks) = app.try_state::<FileBookmarkManager>() {
-        bookmarks.prune_deleted_connection(&id);
-    }
-    crate::connections_projection::projection::fold_connections_from_manager(&app);
-    Ok(())
+    commit(&app, &[Fold::Connections], || {
+        manager
+            .delete_connection_routed(&id, source_file.as_deref())
+            .map_err(config_error)?;
+        // Drop the connection's file-browser bookmarks (#3562) here, next to the
+        // delete, so every window's delete prunes them. Only after the delete is
+        // durable, so a rejected delete never loses bookmarks.
+        if let Some(bookmarks) = app.try_state::<FileBookmarkManager>() {
+            bookmarks.prune_deleted_connection(&id);
+        }
+        Ok(())
+    })
 }
 
 /// Move a connection between storage files (main <-> external).
 #[tauri::command]
-pub fn move_connection_to_file(
+pub fn move_connection_to_file<R: Runtime>(
     connection_id: String,
     current_source: Option<String>,
     target_source: Option<String>,
-    app: AppHandle,
+    app: AppHandle<R>,
     manager: State<'_, ConnectionManager>,
 ) -> Result<SavedConnection, TerminalError> {
     info!(
@@ -143,14 +192,14 @@ pub fn move_connection_to_file(
         ?target_source,
         "Moving connection to file"
     );
-    let moved = manager
-        .move_connection_to_file(&connection_id, current_source.as_deref(), target_source)
-        .map_err(config_error)?;
     // The fold reflects both the main store and the external-file overlay
     // (#2394), so a move into/out of the main store *and* an external↔external
     // move (the `sourceFile` changes) are reflected in the region.
-    crate::connections_projection::projection::fold_connections_from_manager(&app);
-    Ok(moved)
+    commit(&app, &[Fold::Connections], || {
+        manager
+            .move_connection_to_file(&connection_id, current_source.as_deref(), target_source)
+            .map_err(config_error)
+    })
 }
 
 /// Save an edited connection whose storage file changed: the edit is written
@@ -158,10 +207,10 @@ pub fn move_connection_to_file(
 /// from `currentSource` in one step, so it ends up there exactly once (#3590).
 /// Returns the connection as written to the target.
 #[tauri::command]
-pub fn save_connection_to_file(
+pub fn save_connection_to_file<R: Runtime>(
     connection: SavedConnection,
     current_source: Option<String>,
-    app: AppHandle,
+    app: AppHandle<R>,
     manager: State<'_, ConnectionManager>,
 ) -> Result<SavedConnection, TerminalError> {
     info!(
@@ -170,37 +219,37 @@ pub fn save_connection_to_file(
         target_source = ?connection.source_file,
         "Saving connection to file"
     );
-    let saved = manager
-        .save_connection_to_file(connection, current_source.as_deref())
-        .map_err(config_error)?;
-    crate::connections_projection::projection::fold_connections_from_manager(&app);
-    Ok(saved)
+    commit(&app, &[Fold::Connections], || {
+        manager
+            .save_connection_to_file(connection, current_source.as_deref())
+            .map_err(config_error)
+    })
 }
 
 /// Save (add or update) a folder.
 #[tauri::command]
-pub fn save_folder(
+pub fn save_folder<R: Runtime>(
     folder: ConnectionFolder,
-    app: AppHandle,
+    app: AppHandle<R>,
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), TerminalError> {
-    manager.save_folder(folder).map_err(config_error)?;
     // Covers `addFolder` and the `toggleFolder`-persist edge (the frontend
     // persists a folder's `isExpanded` flip via `save_folder`).
-    crate::connections_projection::projection::fold_connections_from_manager(&app);
-    Ok(())
+    commit(&app, &[Fold::Connections], || {
+        manager.save_folder(folder).map_err(config_error)
+    })
 }
 
 /// Delete a folder by ID.
 #[tauri::command]
-pub fn delete_folder(
+pub fn delete_folder<R: Runtime>(
     id: String,
-    app: AppHandle,
+    app: AppHandle<R>,
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), TerminalError> {
-    manager.delete_folder(&id).map_err(config_error)?;
-    crate::connections_projection::projection::fold_connections_from_manager(&app);
-    Ok(())
+    commit(&app, &[Fold::Connections], || {
+        manager.delete_folder(&id).map_err(config_error)
+    })
 }
 
 /// Export all connections as a JSON string.
@@ -211,14 +260,14 @@ pub fn export_connections(manager: State<'_, ConnectionManager>) -> Result<Strin
 
 /// Import connections from a JSON string. Returns the number imported.
 #[tauri::command]
-pub fn import_connections(
+pub fn import_connections<R: Runtime>(
     json: String,
-    app: AppHandle,
+    app: AppHandle<R>,
     manager: State<'_, ConnectionManager>,
 ) -> Result<usize, TerminalError> {
-    let count = manager.import_json(&json).map_err(config_error)?;
-    crate::connections_projection::projection::fold_connections_from_manager(&app);
-    Ok(count)
+    commit(&app, &[Fold::Connections], || {
+        manager.import_json(&json).map_err(config_error)
+    })
 }
 
 /// Get the current application settings.
@@ -233,108 +282,108 @@ pub fn get_settings(manager: State<'_, ConnectionManager>) -> Result<AppSettings
 
 /// Update and persist application settings.
 #[tauri::command]
-pub fn save_settings(
+pub fn save_settings<R: Runtime>(
     settings: AppSettings,
-    app: AppHandle,
+    app: AppHandle<R>,
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), TerminalError> {
-    manager.save_settings(settings).map_err(config_error)?;
-    // Server-authority fold (#2386): reflect the persisted `AppSettings`
-    // document into the `SettingsStore` at the source. Additive; no
-    // user-facing change. (`AppHandle` is Tauri-injected — no JS invoke change.)
-    crate::settings_projection::projection::fold_settings_from_manager(&app);
-    Ok(())
+    // The fold reflects the persisted `AppSettings` document into the
+    // authoritative `settings` region (#2386). (`AppHandle` is Tauri-injected —
+    // no JS invoke change.)
+    commit(&app, &[Fold::Settings], || {
+        manager.save_settings(settings).map_err(config_error)
+    })
 }
 
 /// Save an external connection file to disk.
 #[tauri::command]
-pub fn save_external_file(
+pub fn save_external_file<R: Runtime>(
     file_path: String,
     name: String,
     folders: Vec<ConnectionFolder>,
     connections: Vec<SavedConnection>,
-    app: AppHandle,
+    app: AppHandle<R>,
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), TerminalError> {
-    manager
-        .save_external_file(&file_path, &name, folders, connections)
-        .map_err(config_error)?;
-    // Server-authority fold (#2394): reflect the external-file overlay (as it is
-    // now on disk) into the `ConnectionsStore` when the saved file is a
-    // currently-enabled external source. The fold resolves the `ConnectionManager`
-    // from `app`. Additive; no user-facing change.
-    crate::connections_projection::projection::fold_connections_from_manager(&app);
-    Ok(())
+    // The fold reflects the external-file overlay (as it is now on disk) into
+    // the `connections` region when the saved file is a currently-enabled
+    // external source (#2394).
+    commit(&app, &[Fold::Connections], || {
+        manager
+            .save_external_file(&file_path, &name, folders, connections)
+            .map_err(config_error)
+    })
 }
 
 /// Reload external connection files and return flattened connections.
 #[tauri::command]
-pub fn reload_external_connections(
-    app: AppHandle,
+pub fn reload_external_connections<R: Runtime>(
+    app: AppHandle<R>,
     manager: State<'_, ConnectionManager>,
 ) -> Result<Vec<SavedConnection>, TerminalError> {
-    let sources = manager.load_external_sources();
-    let mut connections = Vec::new();
-    for source in sources {
-        connections.extend(source.connections);
-    }
-    // Server-authority fold (#2394): the external overlay just changed on disk /
-    // in the enabled set — reflect the unified main + external tree into the
-    // `ConnectionsStore` so the region stays in sync with the frontend's
-    // `reloadExternalConnections`. Additive; no user-facing change.
-    crate::connections_projection::projection::fold_connections_from_manager(&app);
-    Ok(connections)
+    // The external overlay just changed on disk / in the enabled set — the fold
+    // reflects the unified main + external tree into the `connections` region so
+    // it stays in sync with the frontend's `reloadExternalConnections` (#2394).
+    commit(&app, &[Fold::Connections], || {
+        let sources = manager.load_external_sources();
+        let mut connections = Vec::new();
+        for source in sources {
+            connections.extend(source.connections);
+        }
+        Ok(connections)
+    })
 }
 
 /// Save (add or update) a remote agent definition.
 #[tauri::command]
-pub fn save_remote_agent(
+pub fn save_remote_agent<R: Runtime>(
     agent: SavedRemoteAgent,
-    app: AppHandle,
+    app: AppHandle<R>,
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), TerminalError> {
-    manager.save_agent(agent).map_err(config_error)?;
-    // Server-authority fold (#2403): reflect the persisted agent list-membership
-    // into the `AgentsStore` at the source, so a newly-added agent's identity
-    // enters the `agents` region without a client `agent.add`. Additive; no
-    // user-facing change.
-    crate::agents_projection::projection::fold_agents_from_manager(&app);
-    Ok(())
+    // The fold reflects the persisted agent list-membership into the `agents`
+    // region, so a newly-added agent's identity enters it without a client
+    // `agent.add` (#2403).
+    commit(&app, &[Fold::Agents], || {
+        manager.save_agent(agent).map_err(config_error)
+    })
 }
 
 /// Delete a remote agent definition by ID.
 #[tauri::command]
-pub fn delete_remote_agent(
+pub fn delete_remote_agent<R: Runtime>(
     id: String,
-    app: AppHandle,
+    app: AppHandle<R>,
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), TerminalError> {
-    manager.delete_agent(&id).map_err(config_error)?;
-    // Deleting an agent is a terminal point for its retained reattach secret
-    // (#3661). The frontend only disconnects an agent it still sees as
-    // connected, so a *reaped* agent's retained config would otherwise linger.
-    if let Some(agents) = app.try_state::<Arc<dyn crate::terminal::agent_manager::AgentRpcClient>>()
-    {
-        agents.clear_retained_agent_config(&id);
-    }
-    // Drop the bookmarks of the agent's sessions, every session type (#3562).
-    if let Some(bookmarks) = app.try_state::<FileBookmarkManager>() {
-        bookmarks.prune_deleted_agent(&id);
-    }
-    crate::agents_projection::projection::fold_agents_from_manager(&app);
-    Ok(())
+    commit(&app, &[Fold::Agents], || {
+        manager.delete_agent(&id).map_err(config_error)?;
+        // Deleting an agent is a terminal point for its retained reattach secret
+        // (#3661). The frontend only disconnects an agent it still sees as
+        // connected, so a *reaped* agent's retained config would otherwise linger.
+        if let Some(agents) =
+            app.try_state::<Arc<dyn crate::terminal::agent_manager::AgentRpcClient>>()
+        {
+            agents.clear_retained_agent_config(&id);
+        }
+        // Drop the bookmarks of the agent's sessions, every session type (#3562).
+        if let Some(bookmarks) = app.try_state::<FileBookmarkManager>() {
+            bookmarks.prune_deleted_agent(&id);
+        }
+        Ok(())
+    })
 }
 
 /// Reorder remote agents by providing a list of agent IDs in the desired order.
 #[tauri::command]
-pub fn reorder_remote_agents(
+pub fn reorder_remote_agents<R: Runtime>(
     agent_ids: Vec<String>,
-    app: AppHandle,
+    app: AppHandle<R>,
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), TerminalError> {
-    manager.reorder_agents(&agent_ids).map_err(config_error)?;
-    crate::agents_projection::projection::fold_agents_from_manager(&app);
-    Ok(())
+    commit(&app, &[Fold::Agents], || {
+        manager.reorder_agents(&agent_ids).map_err(config_error)
+    })
 }
 
 /// Reorder saved connections by providing connection IDs in the desired order.
@@ -343,16 +392,16 @@ pub fn reorder_remote_agents(
 /// desired order of connection ids; the manager persists the new array order and
 /// the fold reflects it into the authoritative `connections` region.
 #[tauri::command]
-pub fn reorder_connections(
+pub fn reorder_connections<R: Runtime>(
     connection_ids: Vec<String>,
-    app: AppHandle,
+    app: AppHandle<R>,
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), TerminalError> {
-    manager
-        .reorder_connections(&connection_ids)
-        .map_err(config_error)?;
-    crate::connections_projection::projection::fold_connections_from_manager(&app);
-    Ok(())
+    commit(&app, &[Fold::Connections], || {
+        manager
+            .reorder_connections(&connection_ids)
+            .map_err(config_error)
+    })
 }
 
 /// Gate a connection export that carries credentials with the same
@@ -501,10 +550,10 @@ pub struct ConnectionImportResult {
 ///
 /// This is async because Argon2id key derivation is CPU-intensive.
 #[tauri::command]
-pub async fn import_connections_with_credentials(
+pub async fn import_connections_with_credentials<R: Runtime>(
     json: String,
     import_password: Option<String>,
-    app: AppHandle,
+    app: AppHandle<R>,
     manager: State<'_, ConnectionManager>,
     credentials: State<'_, Arc<CredentialManager>>,
     registry: State<'_, Arc<NamedCredentialRegistry>>,
@@ -518,14 +567,14 @@ pub async fn import_connections_with_credentials(
     let mode = credentials.get_mode();
     let prepared = transfer::prepare_import(&json, password, &registry, &**credentials, &mode)
         .map_err(ImportError::from_import_failure)?;
-    let result = match manager.import_encrypted_json(&prepared.json, password) {
-        Ok(result) => result,
-        Err(e) => {
-            transfer::rollback(&prepared.created, &registry, &**credentials, &mode);
-            return Err(ImportError::from_import_failure(e));
-        }
-    };
-    crate::connections_projection::projection::fold_connections_from_manager(&app);
+    let result = commit(&app, &[Fold::Connections], || {
+        manager
+            .import_encrypted_json(&prepared.json, password)
+            .map_err(|e| {
+                transfer::rollback(&prepared.created, &registry, &**credentials, &mode);
+                ImportError::from_import_failure(e)
+            })
+    })?;
     Ok(ConnectionImportResult {
         connections_imported: result.connections_imported,
         credentials_imported: result.credentials_imported,
@@ -788,3 +837,7 @@ mod tests {
         assert!(value["details"].is_null());
     }
 }
+
+#[cfg(test)]
+#[path = "connection_fold_tests.rs"]
+mod fold_tests;

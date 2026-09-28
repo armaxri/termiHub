@@ -1196,6 +1196,9 @@ Before creating a release, run the quality scripts and verify:
 ```
 
 - [ ] All scripts pass without errors
+- [ ] `./scripts/release-check.sh` (Windows: `scripts\release-check.cmd`) reports
+      **READY** on the exact commit you will tag, on `main` or `release/*` (see
+      [What release-check gates on](#what-release-check-gates-on))
 - [ ] **Right after opening the release PR into `main`** (before it has to go green), a
       repository admin applies `main`'s pending required checks, if
       `.github/branch-protection.json` still has a `branches.main.pending` block:
@@ -1215,6 +1218,31 @@ Before creating a release, run the quality scripts and verify:
 - [ ] No open `supply-chain` issue from the [vendored-fork drift job](supply-chain.md#vendored-forks):
       upstream fixes and advisories for `vnc-rs` and `ironrdp-rdpsnd` were ported or acknowledged
       (run the **Vendored Forks** workflow manually first for a fresh result)
+
+#### What release-check gates on
+
+A full run (no flags) of `release-check.sh` / `release-check.cmd` is slow: it runs the
+unit tests, coverage and a production build. Every check below is blocking unless marked as
+a warning:
+
+| Check                         | What it requires                                                                                                                                                                                                                                                                                                               |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Versions                      | All five version files agree and the Tauri npm packages match their Rust crates (`--versions-only` runs just this)                                                                                                                                                                                                             |
+| Changelog                     | A dated `## [X.Y.Z] - YYYY-MM-DD` section; stale `[Unreleased]` items and leftover `docs/changes/` fragments are warnings                                                                                                                                                                                                      |
+| Unit tests, coverage, quality | `pnpm test`, `cargo test --workspace`, the [coverage ratchet](testing.md#coverage-ratchet) and `scripts/check.sh`                                                                                                                                                                                                              |
+| Git state                     | A clean tree on `main` or `release/*`                                                                                                                                                                                                                                                                                          |
+| Integration / system tests    | The [release integration gate](#release-integration-gate), run locally: green Release Candidate, Code Quality and Dev Build runs on `HEAD`. Needs `gh`, logged in, and `HEAD` pushed. On failure it prints the exact `gh workflow run release-candidate.yml --ref …` command                                                   |
+| TODO/FIXME/HACK markers       | No comment marker in shipped source (`src`, `src-tauri/src`, `core/src`, `agent/src`, `plugin-api/src`, `rdp-sidecar/src`) unless it is listed, with a reason, in [`scripts/release-marker-allowlist.json`](../scripts/release-marker-allowlist.json). An allowlist entry that no longer matches any marker also fails         |
+| Bundle build + smoke test     | `scripts/build.sh` (`build.cmd`) builds the real installer, which must exist, and `scripts/smoke-test.sh` (`smoke-test.cmd`) launches the built app from it. Needs a desktop session (headless Linux uses `xvfb-run` if installed), and no other termiHub instance may be running, because the smoke test refuses to share one |
+
+**Why integration tests are checked in CI, not run locally.** The integration lanes need
+the Docker fixtures, a real display and a quiet machine. On macOS the container VMs pin the
+CPU and stall the WKWebView, so a local run is flaky and would make the release gate flaky
+too. The Release Candidate run covers all three platforms on one exact commit, and the
+Release workflow enforces the same gate at tag time. release-check reuses
+[`release-integration-gate.mjs`](../scripts/internal/release-integration-gate.mjs), so the
+two cannot disagree. Running release-check first means you learn about a missing or red
+lane before you tag, not after.
 
 ### Version Bump
 
@@ -1353,6 +1381,9 @@ gh workflow run release-candidate.yml --ref main
 gh run watch "$(gh run list --workflow=release-candidate.yml --limit 1 --json databaseId -q '.[0].databaseId')"
 ```
 
+`./scripts/release-check.sh` runs this same gate against your checkout's `HEAD`
+(`RELEASE_GATE_LOCAL=1`) and prints the dispatch command when a run is missing.
+
 If you pushed the tag first, the release fails at **Verify Integration Lanes** with the
 exact commands to run: dispatch the candidate on the tag
 (`gh workflow run release-candidate.yml --ref vX.Y.Z`), then, once it is green, re-run the
@@ -1453,8 +1484,11 @@ cargo cyclonedx --manifest-path rdp-sidecar/Cargo.toml --format json --spec-vers
 
 A release-built agent only applies a self-update (GitHub-fetched or desktop-pushed via
 `agent.request_update`) whose binary carries a valid Ed25519 signature from the termiHub
-release key (AGT-005, [#3213](https://github.com/armaxri/termiHub/issues/3213)). The public
-half is compiled into the agent from
+release key (AGT-005, [#3213](https://github.com/armaxri/termiHub/issues/3213)), and a
+release desktop deploys an agent binary on **any** path — immediate install over SSH, the
+Windows fallback, and the coordinated push — only when that signature verifies
+([#3330](https://github.com/armaxri/termiHub/issues/3330)). The public half is compiled into
+the agent and the desktop (via `termihub-core`) from
 [`agent/keys/update-signing.pub.pem`](../agent/keys/update-signing.pub.pem); the private
 half exists **only** as the `AGENT_UPDATE_SIGNING_KEY` GitHub Actions secret.
 
@@ -1462,17 +1496,27 @@ half exists **only** as the `AGENT_UPDATE_SIGNING_KEY` GitHub Actions secret.
 flowchart LR
     K["setup-agent-signing-key.sh<br/>(maintainer, once)"] -->|public key| P[agent/keys/update-signing.pub.pem]
     K -->|private key, stdin| S[(secret AGENT_UPDATE_SIGNING_KEY)]
-    P -->|include_str!| A[agent binary]
+    P -->|include_str! via termihub-core| A[agent binary]
+    P -->|include_str! via termihub-core| D[desktop]
     S --> R[release.yml sign-agent-binaries]
     R -->|"&lt;asset&gt;.sig"| G[GitHub Release]
+    G -->|binary + .sha256 + .sig| D2[desktop verifies before deploy]
     G -->|binary + .sha256 + .sig| A2[running agent verifies before apply]
 ```
 
 - **What is signed:** `Ed25519(b"termihub-agent-update-v1\0" || SHA-256(binary))`. The
   `<asset>.sig` sidecar holds the 64-byte signature, base64, one line. See
-  `agent/src/update/signature.rs` and `scripts/internal/agent-update-signing.sh`.
+  `core/src/agent_update_signature.rs` (shared by the agent and the desktop, feature
+  `agent-update-signing`) and `scripts/internal/agent-update-signing.sh`.
+- **Desktop side:** every agent-binary resolution (cache, bundle, download) is checked for the
+  `.sha256` checksum and then the `.sig` signature before it is deployed; the coordinated
+  and immediate paths re-check the signature over the exact bytes they upload
+  (`src-tauri/src/terminal/agent_binary.rs`). A release desktop fails closed, like the
+  AGT-007 checksum rule. Dev/branch desktop builds (debug, CI dev build, or a `-dev`
+  version) tolerate a _missing_ signature, but a present one must verify.
 - **Placeholder:** until the key is generated, the committed file is a marked
-  **placeholder**. Release-built agents then refuse every update (fail closed), and
+  **placeholder**. Release-built agents then refuse every update, a release desktop refuses
+  to deploy any agent binary (both fail closed), and
   `release.yml` fails in its first job. `dev-build.yml` publishes unsigned agents with a
   warning.
 - **Debug builds** (`cargo test`, `scripts/dev.sh`) accept a _missing_ signature with a loud
@@ -1508,7 +1552,8 @@ rather than re-running the script.
 
 **Compromise:** replace the secret and the public key immediately (`--force`). Agents that
 still embed only the leaked key can no longer be updated automatically — redeploy them from
-the desktop (the immediate-deploy path installs over SSH, independent of this check).
+a desktop built with the new key (the immediate-deploy path installs over SSH and does not
+depend on the old agent's check; the desktop verifies against its own compiled-in key).
 
 ### Hotfix Process
 
