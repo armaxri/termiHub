@@ -185,6 +185,124 @@ mod tests {
     }
 
     #[test]
+    fn token_file_names_are_parsed_strictly() {
+        assert_eq!(token_file_pid("4242.token"), Some(4242));
+        assert_eq!(token_file_pid("0.token"), Some(0));
+        assert_eq!(token_file_pid("007.token"), None);
+        assert_eq!(token_file_pid("+7.token"), None);
+        assert_eq!(token_file_pid("abc.token"), None);
+        assert_eq!(token_file_pid("42.token.tmp"), None);
+        assert_eq!(token_file_pid("42"), None);
+        assert_eq!(token_file_pid(".token"), None);
+    }
+
+    #[test]
+    fn prune_removes_only_dead_agents_tokens() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        for name in ["100.token", "200.token", "300.token", "301.token"] {
+            std::fs::write(d.join(name), "t").unwrap();
+        }
+        // Files that are not `<pid>.token` are never touched.
+        for name in ["notes.txt", "abc.token", "0300.token", ".tmpXYZ"] {
+            std::fs::write(d.join(name), "x").unwrap();
+        }
+        std::fs::create_dir(d.join("302.token")).unwrap();
+
+        let probed = std::sync::Mutex::new(Vec::new());
+        // pid 100 is us, 200 is a live agent, 300/301/302 are gone.
+        let removed = prune_stale_token_files(d, 100, |pid, mtime| {
+            assert!(mtime.is_some(), "a regular file has an mtime");
+            probed.lock().unwrap().push(pid);
+            pid == 200
+        });
+
+        assert_eq!(removed, 2);
+        assert!(d.join("100.token").exists(), "own token is kept");
+        assert!(d.join("200.token").exists(), "a live agent's token is kept");
+        assert!(!d.join("300.token").exists());
+        assert!(!d.join("301.token").exists());
+        assert!(d.join("302.token").is_dir(), "directories are ignored");
+        for name in ["notes.txt", "abc.token", "0300.token", ".tmpXYZ"] {
+            assert!(d.join(name).exists(), "{name} must be left alone");
+        }
+        let mut probed = probed.into_inner().unwrap();
+        probed.sort_unstable();
+        assert!(!probed.contains(&100), "own pid is never probed");
+        assert!(!probed.contains(&302), "a directory is never probed");
+    }
+
+    #[test]
+    fn prune_of_missing_dir_is_a_no_op() {
+        let dir = tempfile::tempdir().unwrap();
+        let removed = prune_stale_token_files(&dir.path().join("absent"), 1, |_, _| false);
+        assert_eq!(removed, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prune_does_not_follow_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("victim");
+        std::fs::write(&target, "keep").unwrap();
+        std::os::unix::fs::symlink(&target, dir.path().join("300.token")).unwrap();
+        prune_stale_token_files(dir.path(), 1, |_, _| false);
+        assert!(target.exists(), "the link target must never be removed");
+    }
+
+    /// End to end with the real process probe: a token of the running process
+    /// (written now) survives; one of an exited process and one whose pid was
+    /// reused after it was written are removed.
+    #[test]
+    fn prune_with_real_probe_keeps_live_and_removes_dead() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let me = std::process::id();
+
+        #[cfg(unix)]
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        #[cfg(windows)]
+        let mut child = std::process::Command::new("cmd")
+            .args(["/C", "exit"])
+            .spawn()
+            .unwrap();
+        let dead = child.id();
+        child.wait().unwrap();
+        let dead_is_gone = super::super::process_probe::probe(dead)
+            == super::super::process_probe::ProcessProbe::Gone;
+
+        let live_path = d.join(format!("{me}.token"));
+        std::fs::write(&live_path, "t").unwrap();
+        let dead_path = d.join(format!("{dead}.token"));
+        std::fs::write(&dead_path, "t").unwrap();
+
+        // Pretend we are some other agent so our own file is subject to pruning.
+        let not_me = if me == 1 { 2 } else { 1 };
+        prune_stale_token_files(d, not_me, super::super::process_probe::owner_may_be_live);
+        assert!(
+            live_path.exists(),
+            "a live agent's fresh token must be kept"
+        );
+        if dead_is_gone {
+            assert!(!dead_path.exists(), "a dead agent's token must be removed");
+        }
+
+        #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+        {
+            // The live pid "wrote" this file long before it started: reused pid.
+            let f = std::fs::File::options()
+                .write(true)
+                .open(&live_path)
+                .unwrap();
+            f.set_modified(std::time::UNIX_EPOCH).unwrap();
+            drop(f);
+            prune_stale_token_files(d, not_me, super::super::process_probe::owner_may_be_live);
+            assert!(!live_path.exists(), "a reused pid's older token is removed");
+        }
+    }
+
+    #[test]
     fn missing_or_wrong_token_does_not_verify() {
         let auth = UpdateAuth::for_test("right");
         assert!(auth.verify(Some(&UpdateAuthToken("right".into()))));
