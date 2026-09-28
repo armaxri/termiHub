@@ -24,6 +24,9 @@ use crate::errors::SessionError;
 
 /// One container as shown in the connection-editor picker.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "DockerContainerInfo", optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct ContainerInfo {
     /// Full container ID.

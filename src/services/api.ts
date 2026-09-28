@@ -57,6 +57,8 @@ import type { ConnectionImportResult } from "@/types/generated/ConnectionImportR
 import type { ConnectionCreateParams } from "@/types/generated/ConnectionCreateParams";
 import type { ConnectionUpdateParams } from "@/types/generated/ConnectionUpdateParams";
 import type { FolderUpdateParams } from "@/types/generated/FolderUpdateParams";
+import type { DockerContainerInfo } from "@/types/generated/DockerContainerInfo";
+import type { AgentDockerContainersResult } from "@/types/generated/AgentDockerContainersResult";
 import type { ContainerRuntime, SpawnTarget } from "@/types/spawn";
 import type {
   TabHandoffRecord,
@@ -1153,25 +1155,11 @@ export async function listDockerImages(): Promise<string[]> {
   return await invoke<string[]>("list_docker_images");
 }
 
-/** One container of the local runtime, as listed for the container picker (PROD-017). */
-export interface DockerContainerInfo {
-  /** Full container ID. */
-  id: string;
-  /** Primary name without the leading `/` (short ID when unnamed). */
-  name: string;
-  /** Image the container was created from (empty when unknown). */
-  image: string;
-  /** Machine-readable state (`running`, `exited`, …). */
-  state: string;
-  /** Human-readable status (e.g. `Up 3 hours`). */
-  status: string;
-  /** Whether the container is running (only running ones accept a shell). */
-  running: boolean;
-  /** Docker Compose project (`com.docker.compose.project` label); absent when not Compose (#3425). */
-  composeProject?: string;
-  /** Docker Compose service (`com.docker.compose.service` label); absent when unknown (#3425). */
-  composeService?: string;
-}
+/**
+ * One container of the local runtime, as listed for the container picker
+ * (PROD-017). Generated from the core `ContainerInfo` via ts-rs (#3088).
+ */
+export type { DockerContainerInfo };
 
 /**
  * List the containers (running first) of the selected local container runtime
@@ -1184,13 +1172,8 @@ export async function listDockerContainers(runtime?: string): Promise<DockerCont
   });
 }
 
-/** Result of {@link listAgentDockerContainers}. */
-export interface AgentDockerContainersResult {
-  /** `false` when the agent predates container listing (update the agent to use it). */
-  supported: boolean;
-  /** The agent host's containers, running first (empty when unsupported). */
-  containers: DockerContainerInfo[];
-}
+/** Result of {@link listAgentDockerContainers}, generated via ts-rs (#3088). */
+export type { AgentDockerContainersResult };
 
 /**
  * List the containers of a connected agent host's container runtime, for the
