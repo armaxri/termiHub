@@ -181,7 +181,12 @@ pub const CONNECTION_MONITORING_STATUS: &str = "connection.monitoring.status";
 // ── initialize ──────────────────────────────────────────────────────
 
 /// Runtime behaviour preferences sent by the desktop on connect.
-#[derive(Debug, Clone, Deserialize, Default)]
+///
+/// `Serialize` is used by the desktop, which converts its own persisted
+/// `AgentSettings` into this wire DTO when it builds [`InitializeParams`]
+/// (DUP-001, #3226). `defaultShell` is omitted when unset, matching the
+/// desktop's historical wire shape.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSettings {
     #[serde(default = "default_true")]
@@ -190,7 +195,7 @@ pub struct AgentSettings {
     pub enable_file_browser: bool,
     #[serde(default = "default_true")]
     pub enable_docker: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_shell: Option<String>,
     #[serde(default)]
     pub starting_directory: String,
@@ -215,7 +220,9 @@ fn default_persistent_buffer_mb() -> u32 {
     1
 }
 
-#[derive(Debug, Clone, Deserialize)]
+/// Params of the `initialize` request (desktop → agent). Serialized by the
+/// desktop, deserialized by the agent.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeParams {
     pub protocol_version: String,
@@ -354,17 +361,31 @@ pub struct KbdInteractiveClosedNotification {
     pub request_id: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct InitializeResult {
+/// Result of the `initialize` request (agent → desktop).
+///
+/// Generic over the capabilities payload (DUP-001, #3226): the agent
+/// serializes the typed [`Capabilities`] (the default), while the desktop
+/// deserializes into its own capabilities type, which keeps
+/// `connectionTypes` as pass-through JSON for the frontend. The envelope's
+/// field set is defined once, here.
+///
+/// The `serde(default)`s only affect deserialization (the desktop) and keep
+/// its historical tolerance of older agents: a missing version reads as
+/// `"unknown"`, a missing `client_id` (pre-0.3.0) as empty.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct InitializeResult<C = Capabilities> {
+    #[serde(default = "unknown_version")]
     pub protocol_version: String,
+    #[serde(default = "unknown_version")]
     pub agent_version: String,
     /// Agent-assigned id for this client connection.
     ///
     /// Lets the desktop recognise its own entry in an `agent.list_connections`
     /// snapshot so the connected-host update guard (#1349) can exclude itself.
     /// Added in protocol 0.3.0 (additive, backwards compatible).
+    #[serde(default)]
     pub client_id: String,
-    pub capabilities: Capabilities,
+    pub capabilities: C,
     /// Path (on the agent host) of this agent instance's owner-only (`0600`)
     /// update auth token file (AGT-003, #3213). The desktop reads the token from
     /// it out of band — over its SSH session, so only a peer able to read the
@@ -374,6 +395,17 @@ pub struct InitializeResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update_auth_token_path: Option<String>,
 }
+
+fn unknown_version() -> String {
+    "unknown".to_string()
+}
+
+/// Params of a request that takes no parameters; serializes to `{}`.
+///
+/// Used by the desktop for `agent.list_connections`, `connection.list`,
+/// `connection.list_host_sessions` and `connections.list` (DUP-001, #3226).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EmptyParams {}
 
 // ── agent.list_connections ───────────────────────────────────────────
 
@@ -582,7 +614,34 @@ pub struct SessionInputParams {
     pub data: String,
 }
 
+// ── connection.output / connection.evicted (notification payloads) ──
+
+/// Payload of a [`CONNECTION_OUTPUT`] notification (agent → desktop).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConnectionOutputNotification {
+    pub session_id: String,
+    /// Base64-encoded session output bytes.
+    pub data: String,
+}
+
+/// Payload of a [`CONNECTION_EVICTED`] notification (agent → desktop, SM-003).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConnectionEvictedNotification {
+    pub session_id: String,
+    /// `"takeover"` or `"heldByPeer"`. Informational only: the desktop keys
+    /// off `session_id`, so a missing reason still parses.
+    #[serde(default)]
+    pub reason: String,
+}
+
 // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────────
+
+/// Agent → desktop: a new forwarded ssh-agent stream was opened (notification
+/// only; there is no desktop → agent `open`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentForwardOpenParams {
+    pub stream_id: String,
+}
 
 /// Desktop → agent: reply bytes from the operator's local ssh-agent, tagged
 /// with the forwarded stream they belong to.
@@ -1220,7 +1279,7 @@ pub struct MonitoringUnsubscribeParams {
 /// identifier. The stats are flattened so the wire shape stays a flat object
 /// (`{host, hostname, uptimeSeconds, …}`), while the field set is defined once
 /// on [`SystemStats`] rather than hand-maintained here (DUP-015).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MonitoringData {
     /// `"self"` or connection ID identifying the monitored host.
@@ -3792,5 +3851,154 @@ mod tests {
         assert!(r.containers[0].running);
         assert_eq!(r.containers[1].image, "");
         assert!(!r.containers[1].running);
+    }
+
+    // ── DUP-001 (#3226): desktop-side DTOs keep the historical wire shape ──
+
+    #[test]
+    fn initialize_params_serialize_to_the_legacy_desktop_shape() {
+        let params = InitializeParams {
+            protocol_version: "0.3.0".to_string(),
+            client: "termihub-desktop".to_string(),
+            client_version: "1.2.3".to_string(),
+            external_connection_files: vec!["/a.json".to_string()],
+            agent_settings: AgentSettings {
+                enable_monitoring: true,
+                enable_file_browser: false,
+                enable_docker: true,
+                default_shell: None,
+                starting_directory: "~".to_string(),
+                log_level: "debug".to_string(),
+                verbose_tracing: true,
+                persistent_scrollback_buffer_size_mb: 4,
+            },
+            client_capabilities: ClientCapabilities {
+                keyboard_interactive_prompts: true,
+            },
+        };
+        let expected = json!({
+            "protocolVersion": "0.3.0",
+            "client": "termihub-desktop",
+            "clientVersion": "1.2.3",
+            "externalConnectionFiles": ["/a.json"],
+            "agentSettings": {
+                "enableMonitoring": true,
+                "enableFileBrowser": false,
+                "enableDocker": true,
+                "startingDirectory": "~",
+                "logLevel": "debug",
+                "verboseTracing": true,
+                "persistentScrollbackBufferSizeMb": 4,
+            },
+            "clientCapabilities": { "keyboardInteractivePrompts": true },
+        });
+        let v = serde_json::to_value(&params).unwrap();
+        assert_eq!(v, expected);
+        assert_eq!(v.to_string(), expected.to_string());
+        // And the agent reads it back unchanged.
+        let back: InitializeParams = serde_json::from_value(v).unwrap();
+        assert_eq!(back, params);
+    }
+
+    #[test]
+    fn agent_settings_serialize_a_set_default_shell() {
+        let settings = AgentSettings {
+            default_shell: Some("/bin/zsh".to_string()),
+            ..AgentSettings::default()
+        };
+        let v = serde_json::to_value(&settings).unwrap();
+        assert_eq!(v["defaultShell"], "/bin/zsh");
+    }
+
+    #[test]
+    fn initialize_result_deserializes_with_a_custom_capabilities_type() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        #[serde(rename_all = "camelCase")]
+        struct PassThrough {
+            connection_types: Vec<Value>,
+        }
+        let wire = json!({
+            "protocol_version": "0.13.0",
+            "agent_version": "1.4.2",
+            "client_id": "c-1",
+            "capabilities": { "connectionTypes": [{ "typeId": "local" }] },
+            "update_auth_token_path": "/t",
+        });
+        let r: InitializeResult<PassThrough> = serde_json::from_value(wire).unwrap();
+        assert_eq!(r.protocol_version, "0.13.0");
+        assert_eq!(r.agent_version, "1.4.2");
+        assert_eq!(r.client_id, "c-1");
+        assert_eq!(r.capabilities.connection_types[0]["typeId"], "local");
+        assert_eq!(r.update_auth_token_path.as_deref(), Some("/t"));
+    }
+
+    #[test]
+    fn initialize_result_tolerates_an_older_agent() {
+        let r: InitializeResult<serde::de::IgnoredAny> =
+            serde_json::from_value(json!({ "capabilities": {} })).unwrap();
+        assert_eq!(r.protocol_version, "unknown");
+        assert_eq!(r.agent_version, "unknown");
+        assert_eq!(r.client_id, "");
+        assert_eq!(r.update_auth_token_path, None);
+        // Capabilities stay mandatory.
+        assert!(
+            serde_json::from_value::<InitializeResult<serde::de::IgnoredAny>>(json!({
+                "agent_version": "1.0.0",
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn empty_params_serialize_to_an_empty_object() {
+        let v = serde_json::to_value(EmptyParams {}).unwrap();
+        assert_eq!(v, json!({}));
+        assert_eq!(v.to_string(), "{}");
+    }
+
+    #[test]
+    fn notification_dtos_match_the_agent_wire_shapes() {
+        // Shapes the agent builds by hand (agent/src/transport.rs,
+        // agent/src/daemon/client.rs, agent/src/session/agent_forward.rs).
+        let output = json!({ "session_id": "s-1", "data": "aGk=" });
+        let n: ConnectionOutputNotification = serde_json::from_value(output.clone()).unwrap();
+        assert_eq!(n.session_id, "s-1");
+        assert_eq!(serde_json::to_value(&n).unwrap(), output);
+
+        let evicted = json!({ "session_id": "s-1", "reason": "takeover" });
+        let n: ConnectionEvictedNotification = serde_json::from_value(evicted.clone()).unwrap();
+        assert_eq!(n.reason, "takeover");
+        assert_eq!(serde_json::to_value(&n).unwrap(), evicted);
+        let n: ConnectionEvictedNotification =
+            serde_json::from_value(json!({ "session_id": "s-2" })).unwrap();
+        assert_eq!(n.session_id, "s-2");
+
+        let open = json!({ "stream_id": "st-1" });
+        let n: AgentForwardOpenParams = serde_json::from_value(open.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&n).unwrap(), open);
+    }
+
+    #[test]
+    fn monitoring_data_round_trips_its_flat_shape() {
+        let wire = json!({
+            "host": "self",
+            "hostname": "myhost",
+            "uptimeSeconds": 1234.5,
+            "loadAverage": [0.1, 0.2, 0.3],
+            "cpuUsagePercent": 50.0,
+            "memoryTotalKb": 8000000,
+            "memoryAvailableKb": 4000000,
+            "memoryUsedPercent": 50.0,
+            "diskTotalKb": 100000000,
+            "diskUsedKb": 50000000,
+            "diskUsedPercent": 50.0,
+            "osInfo": "Linux 6.1",
+        });
+        let d: MonitoringData = serde_json::from_value(wire).unwrap();
+        assert_eq!(d.host, "self");
+        assert_eq!(d.stats.hostname, "myhost");
+        let v = serde_json::to_value(&d).unwrap();
+        assert_eq!(v["host"], "self");
+        assert_eq!(v["hostname"], "myhost");
     }
 }
