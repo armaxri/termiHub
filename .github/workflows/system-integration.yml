@@ -54,12 +54,6 @@ on:
         description: "Full 40-char commit sha to grade"
         type: string
         required: true
-      measure_coverage:
-        # The release candidate opts in (#3657), as it does for the fixtures
-        # lane, so the release coverage summary includes the harness lane.
-        description: Measure harness coverage on the Linux leg (advisory)
-        type: boolean
-        default: false
 
 # Key concurrency on the trigger so the daily-develop and weekly-main runs (which
 # overlap on Wednesday) do not cancel each other, while a redundant re-fire of the
@@ -190,12 +184,12 @@ jobs:
       # shutdown; the lcov is uploaded as `harness-coverage-<branch>`, which
       # coverage.yml merges into the unified report
       # (scripts/internal/fetch-integration-coverage.mjs). On for scheduled and
-      # dispatched runs; a called run (the release candidate) only when it
-      # passes measure_coverage. The recipe lives in
+      # dispatched runs only: a called run (the release candidate gate) stays
+      # uninstrumented so it tests the shipped bundle and binary. The recipe lives in
       # scripts/internal/harness-coverage.sh, not here (#3664). macOS/Windows
       # and the display-grades job below stay uninstrumented. Every coverage
       # step is continue-on-error: only the tests can red this lane.
-      MEASURE_COVERAGE: ${{ matrix.os == 'ubuntu-latest' && (!inputs.ref || inputs.measure_coverage) }}
+      MEASURE_COVERAGE: ${{ matrix.os == 'ubuntu-latest' && !inputs.ref }}
 
     steps:
       - name: Checkout code
@@ -471,8 +465,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          # coverage.yml finds it by this name (fetch-integration-coverage.mjs);
-          # the release summary by harness-coverage-<sha>.
+          # coverage.yml finds it by this name (fetch-integration-coverage.mjs).
           name: harness-coverage-${{ matrix.branch }}
           path: |
             harness-coverage/harness.lcov

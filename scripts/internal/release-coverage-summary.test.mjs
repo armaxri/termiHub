@@ -8,6 +8,7 @@ import {
   COVERAGE_WORKFLOW,
   GAP_TITLE,
   HARNESS_GAP_TITLE,
+  HARNESS_NIGHTLY_ONLY_NOTE,
   UNIT_LCOV,
   computeCoverage,
   downloadArtifactForSha,
@@ -425,6 +426,42 @@ describe("runSummary", () => {
     const rcMd = readFileSync(path.join(rc.out, "release-coverage.md"), "utf8");
     expect(rcMd).toContain("**UNIFIED LINE COVERAGE: 100.00%**");
     expect(rcMd).toContain("- Bridge harness: `harness-coverage-");
+  });
+
+  it("notes 'harness coverage: nightly only' when the release sha has no harness artifact", () => {
+    // release.yml mode: nothing on the candidate run carries harness-coverage-<sha>.
+    const s = setup();
+    const { exec } = fakeGh({
+      runs: {
+        [COVERAGE_WORKFLOW]: [run(1)],
+        [CANDIDATE_WORKFLOW]: [run(2, { event: "workflow_dispatch" })],
+      },
+      artifacts: { 1: [{ name: COVERAGE_ARTIFACT }], 2: [{ name: "integration-coverage" }] },
+      files: {
+        [`1/${COVERAGE_ARTIFACT}`]: { [UNIT_LCOV]: UNIT },
+        "2/integration-coverage": { "integration.lcov": INTEGRATION },
+      },
+    });
+    runSummary(opts(s), { exec, env: {}, log: quiet });
+    const md = readFileSync(path.join(s.out, "release-coverage.md"), "utf8");
+    expect(md).toContain(`- ${HARNESS_NIGHTLY_ONLY_NOTE}`);
+    expect(md).toContain("- Bridge harness: none");
+    expect(md).not.toContain(HARNESS_GAP_TITLE);
+    expect(md).toContain("**UNIFIED LINE COVERAGE: 83.33%**");
+
+    // Release-candidate mode (only the fixtures lcov on disk): same note, no lookup.
+    const rc = setup();
+    const integration = path.join(rc.dir, "integration.lcov");
+    writeFileSync(integration, INTEGRATION);
+    const gh = fakeGh({
+      runs: { [COVERAGE_WORKFLOW]: [run(1)] },
+      artifacts: { 1: [{ name: COVERAGE_ARTIFACT }] },
+      files: { [`1/${COVERAGE_ARTIFACT}`]: { [UNIT_LCOV]: UNIT } },
+    });
+    runSummary(opts(rc, { integrationLcov: integration }), { exec: gh.exec, env: {}, log: quiet });
+    expect(gh.calls.some((c) => c.includes(CANDIDATE_WORKFLOW))).toBe(false);
+    const rcMd = readFileSync(path.join(rc.out, "release-coverage.md"), "utf8");
+    expect(rcMd).toContain(`- ${HARNESS_NIGHTLY_ONLY_NOTE}`);
   });
 
   it("never fails: gh down and no lcov still exit 0 with notes", () => {

@@ -23,12 +23,14 @@
 //                own run); otherwise the newest Release Candidate run on the sha
 //                is looked up and its artifact downloaded (release.yml).
 //
-//   harness      the `harness-coverage-<sha>` artifact (harness.lcov) that the
-//                bridge harness lane (system-integration.yml, Linux leg) uploads
-//                inside the same Release Candidate run when measure_coverage is
-//                on (#3657): frontend Istanbul + desktop-app llvm-cov lines.
-//                --harness-lcov when on disk; otherwise looked up like the
-//                fixtures artifact. Merged after the fixtures lane.
+//   harness      NIGHTLY ONLY (#3657). The release gate runs the bridge harness
+//                lane uninstrumented, so it tests the bundle and binary that
+//                ship; the harness lcov comes from the nightly
+//                system-integration.yml runs instead. The summary therefore
+//                normally notes "harness coverage: nightly only". Should a
+//                `harness-coverage-<sha>` artifact (harness.lcov) exist for the
+//                release sha (--harness-lcov, or a Release Candidate run that
+//                carries one), it is merged after the fixtures lane.
 //
 // All come from the same commit, so no file is stale and the merge
 // (lcov-merge.mjs: unit report owns the denominator, hits summed) needs no skip
@@ -67,6 +69,9 @@ export const CANDIDATE_WORKFLOW = "release-candidate.yml";
 export const BASELINE_PLATFORM = "linux";
 export const GAP_TITLE = "Integration coverage gap (Docker fixtures lane, release commit)";
 export const HARNESS_GAP_TITLE = "Integration coverage gap (bridge harness lane, release commit)";
+export const HARNESS_NIGHTLY_ONLY_NOTE =
+  "harness coverage: nightly only. The release gate runs the bridge harness uninstrumented, " +
+  "so it tests the shipped bundle and binary; see the Coverage workflow on develop/main.";
 
 const USABLE_CONCLUSIONS = new Set(["success", "failure"]);
 const SHA_RE = /^[0-9a-f]{40}$/;
@@ -452,16 +457,16 @@ export function runSummary(
 function resolveHarness(opts, { exec, env, notes }) {
   const { repo, sha, outDir } = opts;
   const artifact = harnessArtifactName(sha);
+  const nightlyOnly = () => {
+    notes.push(HARNESS_NIGHTLY_ONLY_NOTE);
+    return { text: null, source: null };
+  };
   // Release-candidate mode (any lcov passed on disk): the caller downloaded this
   // run's own artifacts, so nothing is looked up remotely.
   if (opts.harnessLcov || opts.integrationLcov) {
     const text = opts.harnessLcov ? readIfPresent(opts.harnessLcov) : null;
     if (text) return { text, source: `\`${artifact}\` artifact of this Release Candidate run` };
-    notes.push(
-      `Bridge harness coverage unavailable: no ${opts.harnessLcov ?? "--harness-lcov"} (the ` +
-        "harness lane failed before measuring, or ran without measure_coverage)."
-    );
-    return { text: null, source: null };
+    return nightlyOnly();
   }
   const dl = downloadArtifactForSha(
     {
@@ -474,15 +479,9 @@ function resolveHarness(opts, { exec, env, notes }) {
     },
     exec
   );
-  if (dl.note) {
-    notes.push(`Bridge harness coverage unavailable: ${dl.note}.`);
-    return { text: null, source: null };
-  }
+  if (dl.note) return nightlyOnly();
   const text = readIfPresent(path.join(dl.dir, HARNESS_LCOV));
-  if (!text) {
-    notes.push(`Release Candidate run ${dl.run.id}'s ${artifact} has no ${HARNESS_LCOV}.`);
-    return { text: null, source: null };
-  }
+  if (!text) return nightlyOnly();
   const link = runLink(env.GITHUB_SERVER_URL, repo, dl.run);
   return { text, source: `\`${artifact}\` artifact of Release Candidate ${link}` };
 }

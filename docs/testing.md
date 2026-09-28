@@ -838,7 +838,9 @@ flowchart LR
   `harness-coverage.json`, which records the commit that was measured.
 - **When:** scheduled and manually dispatched `system-integration.yml` runs, on
   the Linux leg only. macOS/Windows and the display-critical grades stay
-  uninstrumented. The release candidate opts in with `measure_coverage: true`.
+  uninstrumented. The release gate (`release-candidate.yml`) also runs the harness
+  uninstrumented, so it tests the exact frontend bundle and binary that ship.
+  Harness coverage is therefore **nightly only**.
 - **Merged:** `coverage.yml` fetches the newest `harness-coverage-<branch>`
   artifact. It picks the artifact by name because scheduled runs are recorded
   against `main` even when they grade `develop`. The stale-file list comes from
@@ -873,9 +875,12 @@ file is stale and nothing is re-run:
 - **Integration:** `integration.lcov` from the `integration-coverage` artifact of
   the instrumented fixtures lane that
   [`release-candidate.yml`](../.github/workflows/release-candidate.yml) runs.
-- **Bridge harness:** `harness.lcov` from the `harness-coverage-<sha>` artifact
-  of the same run's system-integration Linux leg (#3657), merged after the
-  fixtures lane with its own gap section.
+- **Bridge harness: nightly only.** The release gate runs the harness lane
+  uninstrumented (#3657), so no `harness-coverage-<sha>` artifact normally
+  exists for the release commit, and the summary notes "harness coverage: nightly
+  only". The harness lane's coverage appears in the Coverage workflow on
+  `develop`/`main` instead. If an artifact does exist for the sha, it is merged
+  after the fixtures lane with its own gap section.
 
 [`scripts/internal/release-coverage-summary.mjs`](../scripts/internal/release-coverage-summary.mjs)
 merges them the same way `coverage.sh` does (`lcov-merge.mjs`: the unit report
