@@ -10,8 +10,8 @@ evidence:
   - src-tauri/src/workspace/
   - docs/testing.md
   - tests/system/tests/
-status: partial
-resolution: "develop — backend save/reload roundtrip covered: workspace/storage.rs:171 unknown_field_survives_load_save_round_trip + manager.rs/last_session.rs save_then_load_round_trips; remaining: no bridge e2e restart-restore journey, multi-window restore uncovered (couples TIN-014)"
+status: fixed
+resolution: "#3786 — backend round-trips + bridge e2e restart journeys: last-session restore, --workspace CLI launch, sidebar workspace launch, multi-window workspace restore (tests/system/tests/test_workspace_restore_ui.py); found #3780"
 ---
 
 ## What
