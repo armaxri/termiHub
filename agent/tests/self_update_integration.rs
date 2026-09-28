@@ -72,6 +72,10 @@ const AGENT_SUFFIX: &str = "linux-x64";
 const NEWER_TAG: &str = "v9.9.9";
 const NEWER_VERSION: &str = "9.9.9";
 
+/// Fragment of the `warn!` the self-update poll logs once an apply has failed
+/// and the staged update is kept (`run_check_once` in `agent/src/update/mod.rs`).
+const FAILED_APPLY_LOG: &str = "keeping it staged for retry";
+
 // ── Binary + hashing helpers ────────────────────────────────────────────────
 
 /// Path to the freshly built agent binary under test.
@@ -729,15 +733,27 @@ async fn failed_apply_keeps_pending_update() {
     let install_dir = agent.bin_path.parent().unwrap().to_path_buf();
     set_dir_mode(&install_dir, 0o555);
 
-    // The failed apply keeps the staged update recorded for retry.
-    let kept = wait_until(Duration::from_secs(30), || {
-        !agent.state()["update"]["pending_update"].is_null()
+    // Wait for the apply to have actually *failed* before restoring write perms.
+    // `pending_update` alone is not that signal: `request_deferred_update`
+    // persists it at staging, *before* the apply runs, and the apply then
+    // re-hashes, re-verifies and version-scans the staged binary (#3213) before
+    // it touches the install dir. Restoring perms on `pending_update` alone
+    // raced that window — a slow (coverage-instrumented) agent reached the swap
+    // after the restore, applied for real and re-execed onto a new port.
+    let apply_failed = wait_until(Duration::from_secs(30), || {
+        agent.stderr().contains(FAILED_APPLY_LOG)
     });
     // Restore write perms so the TempDir can be cleaned up on drop.
     set_dir_mode(&install_dir, 0o755);
 
     assert!(
-        kept,
+        apply_failed,
+        "apply never failed against the read-only install dir.\n{}",
+        agent.stderr()
+    );
+    // The failed apply keeps the staged update recorded for retry.
+    assert!(
+        !agent.state()["update"]["pending_update"].is_null(),
         "failed apply did not keep pending_update for retry.\n{}",
         agent.stderr()
     );
