@@ -754,11 +754,11 @@ flowchart LR
   dispatches it on `develop` daily. The lane's own cron is not instrumented: it
   fires from the default branch (`main`) but checks out `develop` (#3664), so
   its run's branch and commit would not match the code it measured. PR-triggered fixture runs stay a plain
-  `cargo test`, so PR runtime is unchanged, and so do the runs
-  [`release-candidate.yml`](../.github/workflows/release-candidate.yml) makes of
-  this lane via `workflow_call`: the release gate is not slowed by
-  instrumentation, and its artifact would sit on the candidate run, which the
-  merge step never reads.
+  `cargo test`, so PR runtime is unchanged.
+  [`release-candidate.yml`](../.github/workflows/release-candidate.yml) calls
+  this lane with `measure_coverage: true` for the
+  [release coverage summary](#release-coverage-summary-advisory). That artifact
+  sits on the candidate run, which the nightly merge step never reads.
 - **Activation:** scheduled runs execute the workflow files of the default
   branch (`main`), so `integration-coverage-nightly.yml`'s cron starts firing
   only once develop's workflows have reached `main`. Until then, dispatch
@@ -788,6 +788,39 @@ flowchart LR
 - **Not measured yet:** the Python bridge harness (`system-integration.yml`)
   exercises the frontend and the desktop backend, but collects no coverage — see
   [#3657](https://github.com/armaxri/termiHub/issues/3657). The whole report stays advisory; it gates nothing.
+
+### Release coverage summary (advisory)
+
+A release run shows the unified coverage and the integration coverage gap for the
+**exact release commit** (#3658). Both come from runs keyed to that commit, so no
+file is stale and nothing is re-run:
+
+- **Unit:** `coverage-unified/unit.lcov` from the `coverage-unified` artifact of
+  the newest [`coverage.yml`](../.github/workflows/coverage.yml) push (or
+  dispatch) run on the commit.
+- **Integration:** `integration.lcov` from the `integration-coverage` artifact of
+  the instrumented fixtures lane that
+  [`release-candidate.yml`](../.github/workflows/release-candidate.yml) runs.
+
+[`scripts/internal/release-coverage-summary.mjs`](../scripts/internal/release-coverage-summary.mjs)
+merges them the same way `coverage.sh` does (`lcov-merge.mjs`: the unit report
+owns the denominator). It writes a summary with the unit and unified
+line/function/branch coverage, the per-component line coverage next to the
+[ratchet baseline](#coverage-ratchet), and the files with lines only the
+integration lane covers.
+
+**Where to read it:** the **job summary** of the _Release coverage summary
+(advisory)_ job in the Release Candidate run, and of the _Release Coverage Summary
+(advisory)_ job in the Release run. Both runs also upload a `release-coverage`
+artifact with `release-coverage.md`, `integration-gap.md` and `merged.lcov`.
+
+**Advisory only:** both jobs are `continue-on-error`, no job needs them, and the
+script exits 0 when an input is missing. It then prints a note instead of the
+number. A missing Coverage run is produced with
+`gh workflow run coverage.yml --ref <release ref>`. In the Release Candidate run,
+a failed `cargo-llvm-cov` install makes the fixtures lane run uninstrumented and
+does not fail it. Whether release coverage should ever block is a separate
+maintainer decision.
 
 ## Testing Best Practices
 
