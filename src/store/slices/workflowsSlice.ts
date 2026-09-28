@@ -21,6 +21,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
 
 import { clearWorkflowOutputContent, dispatchWorkflowDismissOutput } from "../workflowRunBridge";
+import { syncWorkflowOutputTriggers } from "../workflowSessionTriggers";
 import { getActiveTab, type AppState } from "../appStore";
 import {
   clampFanoutConcurrency,
@@ -263,6 +264,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     try {
       const workflows = await apiListWorkflows();
       set({ workflows });
+      syncWorkflowOutputTriggers({ get, set }, workflows);
     } catch (err) {
       frontendLog("app_store", `Failed to load workflows: ${errorMessage(err)}`);
     }
@@ -279,6 +281,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     set((state) => ({
       workflows: state.workflows.filter((w) => w.id !== workflowId),
     }));
+    syncWorkflowOutputTriggers({ get, set }, get().workflows);
   },
 
   workflowRuns: [],

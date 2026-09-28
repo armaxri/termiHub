@@ -218,7 +218,48 @@ export type WorkflowTrigger =
       kind: "hotkey";
       /** The keybinding string (e.g. `Ctrl+Alt+H`). */
       binding: string;
+    }
+  | {
+      /**
+       * Fire once when a terminal session for one of the named connections ends
+       * (PROD-041, #3791). The run has no live session: session steps fail, so
+       * the workflow should use `run-local-process` / `wait` steps.
+       */
+      kind: "on-disconnect";
+      /** Connection ids this trigger is bound to. */
+      connectionIds: string[];
+      /** Which session endings fire the trigger. Absent → `"drop"`. */
+      when?: WorkflowDisconnectCause;
+    }
+  | {
+      /**
+       * Fire when a terminal session for one of the named connections prints
+       * ANSI-stripped output matching {@link pattern} (PROD-041, #3791). Bounded
+       * by a per-session cooldown and a max-fires-per-session limit, both
+       * clamped at dispatch (see `workflowOutputTriggers`).
+       */
+      kind: "on-output-match";
+      /** Connection ids this trigger is bound to. */
+      connectionIds: string[];
+      /** A literal substring, or a regular expression when {@link isRegex}. */
+      pattern: string;
+      /** When `true`, `pattern` is a regular expression; otherwise a substring. */
+      isRegex?: boolean;
+      /** Minimum time (ms) between two fires in one session. Absent → default. */
+      cooldownMs?: number;
+      /** Maximum number of fires per session. Absent → default. */
+      maxFiresPerSession?: number;
     };
+
+/**
+ * Which session endings fire an `on-disconnect` trigger (#3791):
+ * - `drop` — an unexpected end: the connection was lost or the process exited
+ *   non-zero (the default);
+ * - `user-close` — an end the user caused: closing the tab, killing the session,
+ *   or a clean logout (exit code 0);
+ * - `any` — every end.
+ */
+export type WorkflowDisconnectCause = "drop" | "user-close" | "any";
 
 /** The discriminant literal of a {@link WorkflowTrigger}. */
 export type WorkflowTriggerKind = WorkflowTrigger["kind"];
@@ -262,7 +303,13 @@ export interface WorkflowParameter {
 export type WorkflowRunHistoryStatus = "completed" | "cancelled" | "failed";
 
 /** What launched a run. Mirrors the Rust `WorkflowRunTrigger` enum. */
-export type WorkflowRunTrigger = "manual" | "on-connect" | "hotkey" | "scheduled";
+export type WorkflowRunTrigger =
+  | "manual"
+  | "on-connect"
+  | "hotkey"
+  | "scheduled"
+  | "on-disconnect"
+  | "on-output-match";
 
 /**
  * A persisted, **metadata-only** record of a finished workflow run (PROD-0046).

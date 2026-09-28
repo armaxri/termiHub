@@ -169,6 +169,11 @@ import { probeRestoreTargets } from "@/utils/restoreReachability";
 import { probeTargetReachable } from "@/services/networkApi";
 import { getTerminalInputInjector } from "@/services/macroPlayback";
 import { dispatchOnConnectTriggers } from "@/services/workflowTriggers";
+import {
+  notifyWorkflowSessionExited,
+  notifyWorkflowSessionStarted,
+  notifyWorkflowTabClosing,
+} from "./workflowSessionTriggers";
 import { newId } from "@/services/transport/ids";
 import {
   saveLastSession as apiSaveLastSession,
@@ -3790,6 +3795,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // once per session open (interactive shells only — file-browser and
         // remote-desktop tabs are excluded here). Matching/guarding lives in the
         // workflowTriggers service; the store only supplies state and the run.
+        // The tab's new session can fire on-disconnect again when it ends (#3791).
+        notifyWorkflowSessionStarted(tabId);
         const connectedTab = getAllLeaves(curLayout().rootPanel)
           .flatMap((l) => l.tabs)
           .find((t) => t.id === tabId);
@@ -4348,6 +4355,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // from the shared region so the store does not leak a dead session. Any
       // pending backend reconnect timer is cancelled by `session.remove`.
       mirrorSessionIntent("session.remove", tabId);
+
+      // On-disconnect workflow triggers (#3791): closing a tab whose session is
+      // still live is a user close. Checked before the tab leaves the layout.
+      notifyWorkflowTabClosing({ get, set }, tabId);
 
       // Relinquish backend ownership of this tab's live session (#1939). A closed
       // tab's session is torn down here (or already exited), so its
@@ -5269,6 +5280,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // classified (a bare `setTerminalExited(tabId)` with no info records nothing).
       if (info) {
         mirrorSessionExited(tabId, info);
+        // On-disconnect workflow triggers (#3791): a drop or a user close.
+        notifyWorkflowSessionExited({ get, set }, tabId, info.reason);
       }
       // Fold the exit into the shared `session-lifecycle` region — the sole
       // reconnect authority (#2205 PR-B):

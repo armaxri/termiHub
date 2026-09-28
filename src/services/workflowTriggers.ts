@@ -5,7 +5,8 @@
  * session-open guard for on-connect; the actual run is delegated back to the
  * store's `runWorkflow` so single-run-at-a-time enforcement is not duplicated.
  *
- * Three trigger kinds dispatch through here:
+ * Four trigger kinds dispatch through here (on-output-match, which watches the
+ * output stream, lives in {@link "@/services/workflowOutputTriggers"}):
  * - `manual` — surfaced as command-palette entries and the sidebar run action
  *   (no matching needed; those call `runWorkflow` directly).
  * - `hotkey` — {@link matchHotkeyWorkflow} maps a keyboard event to a workflow,
@@ -13,8 +14,12 @@
  *   speak the same combo language.
  * - `on-connect` — {@link dispatchOnConnectTriggers} runs every workflow bound
  *   to a connection when a session for it finishes opening.
+ * - `on-disconnect` — {@link dispatchOnDisconnectTriggers} runs every workflow
+ *   bound to a connection when a session for it ends, filtered by whether the
+ *   end was a drop or a user close (#3791).
  */
-import type { Workflow } from "@/types/workflow";
+import type { Workflow, WorkflowDisconnectCause } from "@/types/workflow";
+import type { TerminalExitReason } from "@/types/terminal";
 import type { KeyCombo } from "@/types/keybindings";
 import { parseBinding, eventMatchesCombo, isUnboundCombo } from "@/services/keybindings";
 
@@ -109,4 +114,101 @@ export function forgetOnConnectSession(sessionId: string): void {
 /** Clear all on-connect dispatch state. Intended for tests. */
 export function resetOnConnectDispatchState(): void {
   dispatchedSessions.clear();
+}
+
+// ── On-disconnect (PROD-041, #3791) ─────────────────────────────────────────
+
+/** How a session ended, as far as an on-disconnect trigger cares. */
+export type SessionEndCause = "drop" | "user-close";
+
+/**
+ * Classify a terminal exit reason (#1121) for on-disconnect: an unexpected
+ * termination (`dropped`) is a drop; a user kill or a clean exit (the user
+ * logged out) is a user close.
+ */
+export function sessionEndCauseFromExit(reason: TerminalExitReason): SessionEndCause {
+  return reason === "dropped" ? "drop" : "user-close";
+}
+
+/** Whether an on-disconnect trigger's `when` accepts `cause` (absent → drops only). */
+export function disconnectCauseMatches(
+  when: WorkflowDisconnectCause | undefined,
+  cause: SessionEndCause
+): boolean {
+  const effective = when ?? "drop";
+  return effective === "any" || effective === cause;
+}
+
+/** Every workflow with an `on-disconnect` trigger bound to `connectionId` that accepts `cause`. */
+export function matchOnDisconnectWorkflows(
+  connectionId: string,
+  cause: SessionEndCause,
+  workflows: Workflow[]
+): Workflow[] {
+  return workflows.filter((workflow) =>
+    workflow.triggers.some(
+      (trigger) =>
+        trigger.kind === "on-disconnect" &&
+        trigger.connectionIds.includes(connectionId) &&
+        disconnectCauseMatches(trigger.when, cause)
+    )
+  );
+}
+
+/**
+ * Tabs whose current session end was already handled. A session end can be
+ * signalled more than once — a user close tears the session down and the exit
+ * event may follow, or a drop is later followed by closing the dead tab — and
+ * on-disconnect must fire only for the first. Cleared when the tab's next
+ * session connects ({@link armSessionEnd}).
+ */
+const endedTabs = new Set<string>();
+
+/** Arguments for {@link dispatchOnDisconnectTriggers}. */
+export interface OnDisconnectDispatch {
+  /** The tab whose session ended. */
+  tabId: string;
+  /** Saved-connection id the session belonged to. */
+  connectionId: string;
+  /** How the session ended. */
+  cause: SessionEndCause;
+  /** Current set of saved workflows to match against. */
+  workflows: Workflow[];
+  /** Run a matched workflow in the connection's context (no live session). */
+  run: (workflowId: string) => void;
+}
+
+/**
+ * Handle a session end: run every workflow whose `on-disconnect` trigger names
+ * `connectionId` and accepts `cause`. Fires at most once per session end of a
+ * tab. Returns `false` when this end was already handled.
+ */
+export function dispatchOnDisconnectTriggers({
+  tabId,
+  connectionId,
+  cause,
+  workflows,
+  run,
+}: OnDisconnectDispatch): boolean {
+  if (endedTabs.has(tabId)) return false;
+  endedTabs.add(tabId);
+  for (const workflow of matchOnDisconnectWorkflows(connectionId, cause, workflows)) {
+    run(workflow.id);
+  }
+  return true;
+}
+
+/** Whether the tab's current session end was already handled. */
+export function isSessionEndHandled(tabId: string): boolean {
+  return endedTabs.has(tabId);
+}
+
+/** A tab's (new) session connected: its next end may fire on-disconnect again. */
+export function armSessionEnd(tabId: string): void {
+  endedTabs.delete(tabId);
+}
+
+/** Clear all on-disconnect dispatch state. Intended for tests. */
+export function resetOnDisconnectDispatchState(): void {
+  endedTabs.clear();
 }
