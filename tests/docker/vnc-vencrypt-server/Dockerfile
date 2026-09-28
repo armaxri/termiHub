@@ -29,6 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     feh \
     imagemagick \
     x11-utils \
+    xclip \
     && rm -rf /var/lib/apt/lists/*
 
 # Bake the deterministic test pattern (four primary-colour quadrants of a
