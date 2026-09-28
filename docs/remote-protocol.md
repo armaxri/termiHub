@@ -2,7 +2,7 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.15.0
+**Version**: 0.16.0
 **Status**: Draft
 **Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425
 
@@ -288,6 +288,9 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                          |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.16.0          | 0.16.0        | Yes                                                                                                                                  |
+| 0.16.0          | 0.9.0–0.15.0  | Yes (`correlation_id` ignored — the agent's logs for a session are not keyed by the desktop's session id)                            |
+| 0.15.0          | 0.16.0        | Yes (no `correlation_id` — the agent logs the session without a desktop id)                                                          |
 | 0.15.0          | 0.15.0        | Yes                                                                                                                                  |
 | 0.15.0          | 0.14.0        | Yes (no `composeProject` / `composeService` — the container picker lists an agent's containers ungrouped)                            |
 | 0.14.0          | 0.15.0        | Yes (unknown `docker.list_containers` entry fields ignored)                                                                          |
@@ -330,6 +333,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                           |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                 |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                  |
+
+**0.16.0 (additive, minor)** — adds the optional `correlation_id` member to [`connection.create`](#connectioncreate) params (#3085, OBS-004). The desktop sends its own `session_id` for the logical session; the agent runs that session's create — and, for an in-process session, its output forwarder — under an `agent_session` `tracing` span carrying `correlation_id`, plus the agent's own `session_id` once the create succeeds. One agent-hosted session can then be followed across the desktop's `termihub.log` and the agent's log by filtering on one id. Diagnostics only: the field never changes behavior. Backwards compatible in both directions: a pre-0.16.0 desktop omits the member (the agent logs without it), and a pre-0.16.0 agent ignores it.
 
 **0.15.0 (additive, minor)** — `docker.list_containers` entries gain the optional `composeProject` / `composeService` fields (#3425, PROD-017), read from the `com.docker.compose.project` / `com.docker.compose.service` container labels, so the container picker can group an agent host's containers by Docker Compose project and show each container's service. Both are omitted when absent, so a 0.14.0 agent's response still parses (its containers are listed ungrouped) and a 0.14.0 desktop ignores the new fields.
 
@@ -518,11 +523,12 @@ For serial sessions:
 }
 ```
 
-| Param    | Type      | Description                                                                                |
-| -------- | --------- | ------------------------------------------------------------------------------------------ |
-| `type`   | `string`  | Connection type ID (e.g., `"local"`, `"ssh"`, `"serial"`, `"docker"`, `"telnet"`, `"wsl"`) |
-| `config` | `object`  | Type-specific configuration (see below)                                                    |
-| `title`  | `string?` | Optional display title                                                                     |
+| Param            | Type      | Description                                                                                                                                                                                                                                                                                                 |
+| ---------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type`           | `string`  | Connection type ID (e.g., `"local"`, `"ssh"`, `"serial"`, `"docker"`, `"telnet"`, `"wsl"`)                                                                                                                                                                                                                  |
+| `config`         | `object`  | Type-specific configuration (see below)                                                                                                                                                                                                                                                                     |
+| `title`          | `string?` | Optional display title                                                                                                                                                                                                                                                                                      |
+| `correlation_id` | `string?` | Optional log correlation id (0.16.0, #3085): the desktop's own `session_id`. The agent logs this session under an `agent_session` span carrying it. At most 128 characters of `A–Z a–z 0–9 - _ .`; the agent ignores (does not log) any other value rather than failing the create. Older agents ignore it. |
 
 **Local shell config fields:**
 
