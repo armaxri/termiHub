@@ -1,10 +1,12 @@
-//! Windows device-independent bitmap (DIB) ↔ RGBA conversion for the CLIPRDR
-//! image clipboard (PROD-021).
+//! Windows device-independent bitmap (DIB) ↔ RGBA conversion for the
+//! remote-desktop image clipboard (PROD-021).
 //!
-//! RDP carries clipboard images as `CF_DIB` (a `BITMAPINFO`: header, optional
-//! masks / color table, then the pixel rows) or `CF_DIBV5` (the same with a
-//! `BITMAPV5HEADER`). The shared remote-desktop layer speaks top-down RGBA
-//! ([`ClipboardImage`]), so the sidecar converts at the protocol edge:
+//! RDP (CLIPRDR) carries clipboard images as `CF_DIB` (a `BITMAPINFO`: header,
+//! optional masks / color table, then the pixel rows) or `CF_DIBV5` (the same
+//! with a `BITMAPV5HEADER`); the RFB Extended Clipboard's `dib` format is the
+//! same structure (#3472). The shared remote-desktop layer speaks top-down RGBA
+//! ([`ClipboardImage`]), so each protocol converts at its edge — the RDP
+//! sidecar and the VNC backend both through this module:
 //!
 //! - **remote → host** ([`dib_to_image`]): 16/24/32-bit uncompressed (`BI_RGB`)
 //!   and bit-field (`BI_BITFIELDS` / `BI_ALPHABITFIELDS`) DIBs, bottom-up or
@@ -24,7 +26,7 @@
 //! [`MAX_DIB_BYTES`]. A violating DIB is rejected with a typed [`DibError`] —
 //! never truncated, scaled or partially read.
 
-use termihub_core::connection::{
+use super::clipboard_image::{
     check_clipboard_image_size, ClipboardImage, ClipboardImageViolation, MAX_CLIPBOARD_IMAGE_BYTES,
 };
 
