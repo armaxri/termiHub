@@ -27,6 +27,7 @@
 //! update RPC: fail closed.
 
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
@@ -57,12 +58,15 @@ impl UpdateAuth {
 
     /// Generate and persist a fresh per-process token for a `--stdio` agent.
     ///
-    /// Written to `<config>/instance-auth/<pid>.token`. A stale file from a
-    /// crashed process is harmless — its token died with that process — and a
-    /// re-exec (self-update) keeps the pid, so it simply overwrites its own file.
+    /// Written to `<config>/instance-auth/<pid>.token`. A re-exec (self-update)
+    /// keeps the pid, so it simply overwrites its own file. Token files left
+    /// behind by crashed agents are pruned first (#3744) — see
+    /// [`prune_stale_token_files`].
     pub fn generate_for_stdio() -> Result<Self> {
         let dir = crate::state::persistence::AgentState::config_dir().join(INSTANCE_TOKEN_DIR);
-        Self::generate_in(&dir, std::process::id()).map(|(auth, _)| auth)
+        let own_pid = std::process::id();
+        prune_stale_token_files(&dir, own_pid, super::process_probe::owner_may_be_live);
+        Self::generate_in(&dir, own_pid).map(|(auth, _)| auth)
     }
 
     /// Path-injectable core of [`generate_for_stdio`](Self::generate_for_stdio),
@@ -118,6 +122,77 @@ pub fn carries_update_auth_token(line: &str) -> bool {
         .ok()
         .and_then(|m| m.method)
         .is_some_and(|m| m == AGENT_REQUEST_UPDATE || m == AGENT_REQUEST_DEFERRED_UPDATE)
+}
+
+/// Remove `<pid>.token` files in `dir` whose writing agent is provably gone
+/// (#3744). Returns how many were removed.
+///
+/// A stale token is harmless — it died with its process — but the files would
+/// otherwise accumulate. Only regular files named exactly `<decimal pid>.token`
+/// are considered; `own_pid`'s file is never touched, and a file is removed only
+/// when `may_be_live(pid, mtime)` says its owner cannot still be running (see
+/// [`super::process_probe::owner_may_be_live`]: the pid is gone, belongs to
+/// another user, or was reused by a process started after the file was
+/// written). Best effort: every error is logged and skipped.
+fn prune_stale_token_files(
+    dir: &Path,
+    own_pid: u32,
+    may_be_live: impl Fn(u32, Option<SystemTime>) -> bool,
+) -> usize {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return 0,
+        Err(e) => {
+            warn!(
+                "cannot scan {} for stale update auth tokens: {e}",
+                dir.display()
+            );
+            return 0;
+        }
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let Some(pid) = token_file_pid(&entry.file_name().to_string_lossy()) else {
+            continue;
+        };
+        if pid == own_pid {
+            continue;
+        }
+        // symlink_metadata: never follow a link out of the private dir.
+        let Ok(meta) = entry.path().symlink_metadata() else {
+            continue;
+        };
+        if !meta.is_file() || may_be_live(pid, meta.modified().ok()) {
+            continue;
+        }
+        let path = entry.path();
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                removed += 1;
+                debug!("removed stale update auth token {}", path.display());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => warn!(
+                "failed to remove stale update auth token {}: {e}",
+                path.display()
+            ),
+        }
+    }
+    if removed > 0 {
+        info!(
+            "removed {removed} stale update auth token file(s) from {}",
+            dir.display()
+        );
+    }
+    removed
+}
+
+/// The pid of a `<pid>.token` file name, if it is exactly that (canonical
+/// decimal, no sign or leading zeros).
+fn token_file_pid(name: &str) -> Option<u32> {
+    let stem = name.strip_suffix(".token")?;
+    let pid: u32 = stem.parse().ok()?;
+    (pid.to_string() == stem).then_some(pid)
 }
 
 /// Create `dir` (and parents), owner-only on unix.
