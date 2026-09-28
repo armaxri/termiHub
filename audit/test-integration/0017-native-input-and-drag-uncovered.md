@@ -9,8 +9,8 @@ subsystem: src/testbridge, tests/system
 evidence:
   - docs/test-bridge.md:567
   - docs/testing.md:1413
-status: partial
-resolution: "develop — split/drag drop-zone testids exist: PanelDropZone.tsx:57/86 panel-drop-edge/center-<panel> + PanelDropZone.test.tsx closes the no-stable-testid gap; remaining: native OS pointer DnD/IME/focus inherently uncovered by synthetic-event bridge (by design)"
+status: fixed
+resolution: "#3768 — drop-zone testids + component tests; native OS DnD/IME/focus covered by 19 release-gating manual cases tests/manual/native-input.yaml (MT-NIN-*); tauri-driver revival evaluated and rejected (no macOS driver, no IME/OS-drop reach)"
 ---
 
 ## What
