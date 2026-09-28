@@ -174,7 +174,12 @@ pub const CONNECTION_MONITORING_STATUS: &str = "connection.monitoring.status";
 // ── initialize ──────────────────────────────────────────────────────
 
 /// Runtime behaviour preferences sent by the desktop on connect.
-#[derive(Debug, Clone, Deserialize, Default)]
+///
+/// `Serialize` is used by the desktop, which converts its own persisted
+/// `AgentSettings` into this wire DTO when it builds [`InitializeParams`]
+/// (DUP-001, #3226). `defaultShell` is omitted when unset, matching the
+/// desktop's historical wire shape.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSettings {
     #[serde(default = "default_true")]
@@ -183,7 +188,7 @@ pub struct AgentSettings {
     pub enable_file_browser: bool,
     #[serde(default = "default_true")]
     pub enable_docker: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_shell: Option<String>,
     #[serde(default)]
     pub starting_directory: String,
@@ -208,7 +213,9 @@ fn default_persistent_buffer_mb() -> u32 {
     1
 }
 
-#[derive(Debug, Clone, Deserialize)]
+/// Params of the `initialize` request (desktop → agent). Serialized by the
+/// desktop, deserialized by the agent.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeParams {
     pub protocol_version: String,
@@ -347,17 +354,31 @@ pub struct KbdInteractiveClosedNotification {
     pub request_id: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct InitializeResult {
+/// Result of the `initialize` request (agent → desktop).
+///
+/// Generic over the capabilities payload (DUP-001, #3226): the agent
+/// serializes the typed [`Capabilities`] (the default), while the desktop
+/// deserializes into its own capabilities type, which keeps
+/// `connectionTypes` as pass-through JSON for the frontend. The envelope's
+/// field set is defined once, here.
+///
+/// The `serde(default)`s only affect deserialization (the desktop) and keep
+/// its historical tolerance of older agents: a missing version reads as
+/// `"unknown"`, a missing `client_id` (pre-0.3.0) as empty.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct InitializeResult<C = Capabilities> {
+    #[serde(default = "unknown_version")]
     pub protocol_version: String,
+    #[serde(default = "unknown_version")]
     pub agent_version: String,
     /// Agent-assigned id for this client connection.
     ///
     /// Lets the desktop recognise its own entry in an `agent.list_connections`
     /// snapshot so the connected-host update guard (#1349) can exclude itself.
     /// Added in protocol 0.3.0 (additive, backwards compatible).
+    #[serde(default)]
     pub client_id: String,
-    pub capabilities: Capabilities,
+    pub capabilities: C,
     /// Path (on the agent host) of this agent instance's owner-only (`0600`)
     /// update auth token file (AGT-003, #3213). The desktop reads the token from
     /// it out of band — over its SSH session, so only a peer able to read the
@@ -367,6 +388,17 @@ pub struct InitializeResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update_auth_token_path: Option<String>,
 }
+
+fn unknown_version() -> String {
+    "unknown".to_string()
+}
+
+/// Params of a request that takes no parameters; serializes to `{}`.
+///
+/// Used by the desktop for `agent.list_connections`, `connection.list`,
+/// `connection.list_host_sessions` and `connections.list` (DUP-001, #3226).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EmptyParams {}
 
 // ── agent.list_connections ───────────────────────────────────────────
 
@@ -575,7 +607,34 @@ pub struct SessionInputParams {
     pub data: String,
 }
 
+// ── connection.output / connection.evicted (notification payloads) ──
+
+/// Payload of a [`CONNECTION_OUTPUT`] notification (agent → desktop).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConnectionOutputNotification {
+    pub session_id: String,
+    /// Base64-encoded session output bytes.
+    pub data: String,
+}
+
+/// Payload of a [`CONNECTION_EVICTED`] notification (agent → desktop, SM-003).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConnectionEvictedNotification {
+    pub session_id: String,
+    /// `"takeover"` or `"heldByPeer"`. Informational only: the desktop keys
+    /// off `session_id`, so a missing reason still parses.
+    #[serde(default)]
+    pub reason: String,
+}
+
 // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────────
+
+/// Agent → desktop: a new forwarded ssh-agent stream was opened (notification
+/// only; there is no desktop → agent `open`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentForwardOpenParams {
+    pub stream_id: String,
+}
 
 /// Desktop → agent: reply bytes from the operator's local ssh-agent, tagged
 /// with the forwarded stream they belong to.
@@ -1213,7 +1272,7 @@ pub struct MonitoringUnsubscribeParams {
 /// identifier. The stats are flattened so the wire shape stays a flat object
 /// (`{host, hostname, uptimeSeconds, …}`), while the field set is defined once
 /// on [`SystemStats`] rather than hand-maintained here (DUP-015).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MonitoringData {
     /// `"self"` or connection ID identifying the monitored host.

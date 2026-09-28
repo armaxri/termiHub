@@ -30,7 +30,10 @@ use termihub_core::protocol::methods::{
     SessionResizeParams,
 };
 use termihub_core::protocol::methods::{
-    ClientCapabilities, MonitoringStatusNotification, UpdateAuthToken,
+    AgentForwardOpenParams, ClientCapabilities, ConnectionEvictedNotification,
+    ConnectionOutputNotification, EmptyParams, InitializeParams, InitializeResult, MonitoringData,
+    MonitoringStatusNotification, UpdateAuthToken, UpdateAvailableNotification,
+    UpdatePendingNotification,
 };
 use termihub_core::reconnect_backoff::{
     policy_for, reconnect_reducer, system_jitter, BackoffConfig, ReconnectEvent, ReconnectKind,
@@ -951,39 +954,25 @@ impl<R: Runtime> AgentConnectionManager<R> {
 
                 match jsonrpc::classify_handshake_message(msg, request_id) {
                     jsonrpc::HandshakeOutcome::Response(result) => {
-                        let caps = result.get("capabilities").ok_or_else(|| {
+                        // Parse into the shared `InitializeResult` DTO (DUP-001,
+                        // #3226), with the desktop's own capabilities type so
+                        // `connectionTypes` stays pass-through JSON for the
+                        // frontend. Missing versions read as "unknown" and a
+                        // missing `client_id` (pre-0.3.0 agent) as empty.
+                        let init = parse_initialize_result(result).map_err(|e| {
                             emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                            TerminalError::RemoteError(
-                                "Missing capabilities in initialize response".into(),
-                            )
+                            TerminalError::RemoteError(e)
                         })?;
-                        let mut capabilities = serde_json::from_value::<AgentCapabilities>(
-                            caps.clone(),
-                        )
-                        .map_err(|e| {
-                            emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                            TerminalError::RemoteError(format!("Parse capabilities: {}", e))
-                        })?;
-                        let agent_version = result
-                            .get("agent_version")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown")
-                            .to_string();
-                        let protocol_version = result
-                            .get("protocol_version")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown")
-                            .to_string();
-                        // Agent-assigned id for this connection (protocol 0.3.0+);
-                        // empty against older agents that don't report one.
-                        let client_id = result
-                            .get("client_id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or_default()
-                            .to_string();
                         // AGT-003 (#3213): where this instance's update auth token
                         // lives (protocol 0.13.0+; absent on older agents).
-                        let update_auth_token_path = token_path_from_initialize(&result);
+                        let update_auth_token_path = token_path_from_initialize(&init);
+                        let InitializeResult {
+                            protocol_version,
+                            agent_version,
+                            client_id,
+                            mut capabilities,
+                            ..
+                        } = init;
                         // Copy agent_version into capabilities so the UI can read it.
                         capabilities.agent_version = agent_version.clone();
                         // Diagnostic for #2480: the handshake completed — the
@@ -1434,7 +1423,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
         let result = self.send_request(
             agent_id,
             termihub_core::protocol::methods::AGENT_LIST_CONNECTIONS,
-            serde_json::json!({}),
+            empty_params(),
         )?;
         // Deserialize the reply into the shared `ConnectionListResult` wire DTO
         // (DUP-001); a malformed reply degrades to "no other hosts", matching the
@@ -1739,7 +1728,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
         let result = self.send_request(
             agent_id,
             termihub_core::protocol::methods::CONNECTION_LIST,
-            serde_json::json!({}),
+            empty_params(),
         )?;
         // Deserialize each entry into the shared `SessionListEntry` wire DTO
         // (DUP-001) and convert to the frontend `AgentSessionInfo`.
@@ -1769,7 +1758,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
         parse_host_sessions_reply(self.send_request(
             agent_id,
             termihub_core::protocol::methods::CONNECTION_LIST_HOST_SESSIONS,
-            serde_json::json!({}),
+            empty_params(),
         ))
     }
 
@@ -1781,7 +1770,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
         let result = self.send_request(
             agent_id,
             termihub_core::protocol::methods::CONNECTIONS_LIST,
-            serde_json::json!({}),
+            empty_params(),
         )?;
         // Deserialize each entry into the shared `ConnectionDefinition` /
         // `FolderDefinition` wire DTO (DUP-001) and convert to the frontend
@@ -2485,11 +2474,12 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-/// Build the `initialize` JSON-RPC params including agent runtime settings and external files.
+/// Build the `initialize` JSON-RPC params including agent runtime settings and
+/// external files, as the shared [`InitializeParams`] DTO (DUP-001, #3226).
 fn build_initialize_params(settings: &AgentSettings, external_files: &[&str]) -> Value {
-    serde_json::json!({
-        "protocolVersion": "0.3.0",
-        "client": "termihub-desktop",
+    let params = InitializeParams {
+        protocol_version: "0.3.0".to_string(),
+        client: "termihub-desktop".to_string(),
         // AGT-014: report the desktop crate's real version rather than a stale
         // literal. The agent records this in its per-process client registry and
         // echoes it via `agent.list_connections` (the connected-client update
@@ -2498,16 +2488,31 @@ fn build_initialize_params(settings: &AgentSettings, external_files: &[&str]) ->
         // source Tauri's `package_info().version` derives from (both come from
         // `Cargo.toml`), and matches how the rest of the desktop reports its
         // version (see `cli::version_string`, `agent_deploy`, `agent_setup`).
-        "clientVersion": env!("CARGO_PKG_VERSION"),
-        "agentSettings": settings,
-        "externalConnectionFiles": external_files,
+        client_version: env!("CARGO_PKG_VERSION").to_string(),
+        external_connection_files: external_files.iter().map(|f| f.to_string()).collect(),
+        agent_settings: settings.into(),
         // Optional features this desktop supports (#3375). Older agents ignore
         // the member; newer ones only relay SSH keyboard-interactive prompts
         // to a desktop that advertises them.
-        "clientCapabilities": ClientCapabilities {
+        client_capabilities: ClientCapabilities {
             keyboard_interactive_prompts: true,
         },
-    })
+    };
+    // Serializing plain strings/bools/ints cannot fail; the fallback is
+    // unreachable but keeps this path panic-free.
+    serde_json::to_value(params).unwrap_or_else(|_| empty_params())
+}
+
+/// The `{}` params of a request that takes none (the shared [`EmptyParams`]
+/// DTO, DUP-001 #3226).
+fn empty_params() -> Value {
+    serde_json::to_value(EmptyParams {}).unwrap_or_else(|_| Value::Object(Default::default()))
+}
+
+/// Parse an `initialize` result into the shared [`InitializeResult`] DTO with
+/// the desktop's [`AgentCapabilities`] (DUP-001, #3226).
+fn parse_initialize_result(result: Value) -> Result<InitializeResult<AgentCapabilities>, String> {
+    serde_json::from_value(result).map_err(|e| format!("Parse initialize response: {}", e))
 }
 
 /// Serialize an `ssh.keyboard_interactive.respond` request line (#3375) into
@@ -3655,7 +3660,7 @@ async fn list_recovered_session_ids(
     let line = serialize_request(
         req_id,
         termihub_core::protocol::methods::CONNECTION_LIST,
-        serde_json::json!({}),
+        empty_params(),
     )
     .ok()?;
     channel.data(line.as_bytes()).await.ok()?;
@@ -4103,7 +4108,13 @@ async fn reconnect_agent(
 
             match jsonrpc::classify_handshake_message(msg, *request_id) {
                 jsonrpc::HandshakeOutcome::Response(result) => {
-                    token_path = token_path_from_initialize(&result);
+                    // Only the token path matters here; the capabilities are
+                    // ignored, and a malformed result still counts as a
+                    // successful re-initialize (as before DUP-001, #3226).
+                    token_path =
+                        serde_json::from_value::<InitializeResult<serde::de::IgnoredAny>>(result)
+                            .ok()
+                            .and_then(|r| token_path_from_initialize(&r));
                     success = true;
                     break;
                 }
