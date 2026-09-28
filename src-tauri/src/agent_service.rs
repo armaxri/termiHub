@@ -18,7 +18,9 @@
 //! guard, the fixed-interval tick loop, snapshotting the poll targets, the
 //! self-reap when no agent-hosted instance remains, resolving the agent RPC
 //! client fresh each tick, running the blocking status batch on a `spawn_blocking`
-//! thread, and aborting the task on shutdown.
+//! thread, and aborting the task on shutdown. The task is owned by the app-wide
+//! [`AppTasks`] tracker (ARCH-007, #3105): it breaks on the app cancellation
+//! token and teardown awaits it, bounded.
 //!
 //! What stays service-specific (the delegate): which instances to poll, the
 //! `*.status` RPC + reply parse, and how a fresh sample is written back into the
@@ -32,6 +34,7 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Manager};
 
+use crate::app_tasks::AppTasks;
 use crate::terminal::agent_manager::AgentRpcClient;
 
 /// Resolve the shared agent RPC client from Tauri managed state, if available.
@@ -100,13 +103,25 @@ pub struct AgentStatusPoller {
     /// `Some` while the task is running; the task self-reaps this to `None` once no
     /// instance remains, and [`stop`](Self::stop) aborts it on shutdown.
     slot: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// Owner of the poller task (ARCH-007, #3105): the task is spawned through
+    /// it and breaks on its cancellation token, so app teardown stops and
+    /// awaits it. A standalone (never shut down) registry for [`new`](Self::new).
+    tasks: AppTasks,
 }
 
 impl AgentStatusPoller {
-    /// Create an idle poller (no task running).
+    /// Create an idle poller (no task running) with a standalone task owner —
+    /// for unit tests and managers built before the app's [`AppTasks`] exists.
     pub fn new() -> Self {
+        Self::with_tasks(AppTasks::new())
+    }
+
+    /// Create an idle poller whose task is owned by the app-wide `tasks`
+    /// registry, so app teardown cancels and (bounded) awaits it (#3105).
+    pub fn with_tasks(tasks: AppTasks) -> Self {
         Self {
             slot: Arc::new(Mutex::new(None)),
+            tasks,
         }
     }
 
@@ -130,10 +145,16 @@ impl AgentStatusPoller {
 
         let poller_slot = Arc::clone(&self.slot);
         let interval = delegate.interval();
+        let cancel = self.tasks.cancellation_token();
 
-        let handle = tokio::spawn(async move {
+        let handle = self.tasks.spawn(async move {
             loop {
-                tokio::time::sleep(interval).await;
+                // App teardown (ARCH-007) wins over the next tick: the loop has
+                // nothing in flight between ticks, so breaking here is safe.
+                tokio::select! {
+                    _ = cancel.cancelled() => break,
+                    _ = tokio::time::sleep(interval) => {}
+                }
 
                 // Snapshot the targets, then decide the loop's fate before any
                 // RPC so a slow agent never blocks a start/stop.
@@ -157,9 +178,14 @@ impl AgentStatusPoller {
 
                 // The `*.status` RPC is blocking; run the whole batch on a blocking
                 // thread so no async worker is stalled.
-                let samples = tokio::task::spawn_blocking(move || D::poll(client, &targets))
-                    .await
-                    .unwrap_or_default();
+                let poll = tokio::task::spawn_blocking(move || D::poll(client, &targets));
+                // A slow agent must not hold app teardown: on cancellation the
+                // in-flight read-only status batch is abandoned (its samples are
+                // discarded — nothing is written back after shutdown).
+                let samples = tokio::select! {
+                    _ = cancel.cancelled() => break,
+                    samples = poll => samples.unwrap_or_default(),
+                };
 
                 delegate.apply(samples);
             }
@@ -744,6 +770,55 @@ mod tests {
         assert!(poller.is_running());
 
         poller.stop();
+    }
+
+    /// App teardown (ARCH-007, #3105): a poller owned by the app's [`AppTasks`]
+    /// breaks on the app cancellation token — mid-sleep, without waiting for its
+    /// next tick — and `shutdown` completes well within its bound.
+    #[tokio::test(start_paused = true)]
+    async fn stops_on_app_cancellation_and_teardown_completes_within_bound() {
+        let tasks = AppTasks::new();
+        let poller = AgentStatusPoller::with_tasks(tasks.clone());
+        // Client-less delegate: loops forever, never self-reaps.
+        let (d, ticks, _applied) = delegate(false);
+        poller.ensure(d);
+        advance_ticks(2).await;
+        assert_eq!(ticks.load(Ordering::SeqCst), 2);
+        assert!(poller.is_running());
+
+        let started = tokio::time::Instant::now();
+        let outcome = tasks
+            .shutdown(crate::app_tasks::DEFAULT_SHUTDOWN_TIMEOUT)
+            .await;
+
+        assert_eq!(outcome, crate::app_tasks::ShutdownOutcome::Completed);
+        assert!(
+            started.elapsed() < TICK,
+            "the loop must stop on cancellation, not on its next tick"
+        );
+        assert!(!poller.is_running(), "the cancelled loop self-reaps its slot");
+        // No further tick runs after teardown.
+        tokio::time::advance(TICK * 3).await;
+        tokio::task::yield_now().await;
+        assert_eq!(ticks.load(Ordering::SeqCst), 2);
+    }
+
+    /// Once the app token is cancelled, a late `ensure` (e.g. an agent-hosted
+    /// instance started during teardown) spawns a task that exits immediately
+    /// instead of polling past shutdown.
+    #[tokio::test(start_paused = true)]
+    async fn ensure_after_app_cancellation_does_not_poll() {
+        let tasks = AppTasks::new();
+        let poller = AgentStatusPoller::with_tasks(tasks.clone());
+        let outcome = tasks
+            .shutdown(crate::app_tasks::DEFAULT_SHUTDOWN_TIMEOUT)
+            .await;
+        assert_eq!(outcome, crate::app_tasks::ShutdownOutcome::Completed);
+
+        let (d, ticks, _applied) = delegate(true);
+        poller.ensure(d);
+        advance_until(|| !poller.is_running()).await;
+        assert_eq!(ticks.load(Ordering::SeqCst), 0, "no tick after shutdown");
     }
 
     /// A minimal [`AgentHosted`] handle for the tracker tests.
