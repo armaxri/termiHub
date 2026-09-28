@@ -2,9 +2,9 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.14.0
+**Version**: 0.15.0
 **Status**: Draft
-**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424
+**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425
 
 ---
 
@@ -288,6 +288,9 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                          |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.15.0          | 0.15.0        | Yes                                                                                                                                  |
+| 0.15.0          | 0.14.0        | Yes (no `composeProject` / `composeService` — the container picker lists an agent's containers ungrouped)                            |
+| 0.14.0          | 0.15.0        | Yes (unknown `docker.list_containers` entry fields ignored)                                                                          |
 | 0.14.0          | 0.14.0        | Yes                                                                                                                                  |
 | 0.14.0          | 0.9.0–0.13.0  | Yes (no `docker.list_containers` — the Docker container picker of an agent-hosted connection keeps a typed name/ID)                  |
 | 0.13.0          | 0.14.0        | Yes (new method ignored)                                                                                                             |
@@ -327,6 +330,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                           |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                 |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                  |
+
+**0.15.0 (additive, minor)** — `docker.list_containers` entries gain the optional `composeProject` / `composeService` fields (#3425, PROD-017), read from the `com.docker.compose.project` / `com.docker.compose.service` container labels, so the container picker can group an agent host's containers by Docker Compose project and show each container's service. Both are omitted when absent, so a 0.14.0 agent's response still parses (its containers are listed ungrouped) and a 0.14.0 desktop ignores the new fields.
 
 **0.14.0 (additive, minor)** — adds [`docker.list_containers`](#dockerlist_containers) (#3424, PROD-017): a `docker ps -a`-style listing of the agent host's container runtime, so the Docker connection editor can offer its container picker for an **agent-hosted** Docker connection instead of a typed container name/ID. Negotiation is by **method-not-found fallback**: a pre-0.14.0 agent answers `-32601` and the desktop keeps the typed name/ID field with an "update the agent" hint. A pre-0.14.0 desktop never calls the method.
 
@@ -2771,14 +2776,16 @@ List every container (running and stopped) of the **agent host's** container run
 
 Each container:
 
-| Field     | Type      | Description                                                                   |
-| --------- | --------- | ----------------------------------------------------------------------------- |
-| `id`      | `string`  | Full container ID                                                             |
-| `name`    | `string`  | Primary name without the leading `/` (the 12-character short ID when unnamed) |
-| `image`   | `string`  | Image the container was created from (empty when unknown)                     |
-| `state`   | `string`  | Machine-readable state (`running`, `exited`, `paused`, …; empty when unknown) |
-| `status`  | `string`  | Human-readable status (e.g. `Up 3 hours`, `Exited (0) 2 days ago`)            |
-| `running` | `boolean` | Whether the container is running (only running ones accept a shell)           |
+| Field            | Type      | Description                                                                                       |
+| ---------------- | --------- | ------------------------------------------------------------------------------------------------- |
+| `id`             | `string`  | Full container ID                                                                                 |
+| `name`           | `string`  | Primary name without the leading `/` (the 12-character short ID when unnamed)                     |
+| `image`          | `string`  | Image the container was created from (empty when unknown)                                         |
+| `state`          | `string`  | Machine-readable state (`running`, `exited`, `paused`, …; empty when unknown)                     |
+| `status`         | `string`  | Human-readable status (e.g. `Up 3 hours`, `Exited (0) 2 days ago`)                                |
+| `running`        | `boolean` | Whether the container is running (only running ones accept a shell)                               |
+| `composeProject` | `string`  | Docker Compose project from the `com.docker.compose.project` label (0.15.0+; omitted when absent) |
+| `composeService` | `string`  | Docker Compose service from the `com.docker.compose.service` label (0.15.0+; omitted when absent) |
 
 **Errors:** `-32007` before `initialize`; `-32602` for an unknown `runtime`; `-32603` when the runtime is unreachable, with the runtime's own explanation as the message (the desktop shows it and keeps the typed name/ID field). A pre-0.14.0 agent answers `-32601`, which the desktop treats as "this agent cannot list containers".
 

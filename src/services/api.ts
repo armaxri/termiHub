@@ -1167,6 +1167,10 @@ export interface DockerContainerInfo {
   status: string;
   /** Whether the container is running (only running ones accept a shell). */
   running: boolean;
+  /** Docker Compose project (`com.docker.compose.project` label); absent when not Compose (#3425). */
+  composeProject?: string;
+  /** Docker Compose service (`com.docker.compose.service` label); absent when unknown (#3425). */
+  composeService?: string;
 }
 
 /**

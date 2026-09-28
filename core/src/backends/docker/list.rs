@@ -41,6 +41,37 @@ pub struct ContainerInfo {
     /// Whether the container is running — only running containers can host an
     /// interactive shell in existing-container mode.
     pub running: bool,
+    /// Docker Compose project the container belongs to, from the
+    /// `com.docker.compose.project` label (#3425); `None` for a container not
+    /// started by Compose. The picker groups containers by it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose_project: Option<String>,
+    /// Docker Compose service the container runs, from the
+    /// `com.docker.compose.service` label (#3425); `None` when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose_service: Option<String>,
+}
+
+/// Label Docker Compose stamps with the project name on every container it creates.
+pub const COMPOSE_PROJECT_LABEL: &str = "com.docker.compose.project";
+/// Label Docker Compose stamps with the service name on every container it creates.
+pub const COMPOSE_SERVICE_LABEL: &str = "com.docker.compose.service";
+
+/// Read the Compose project and service from a container's labels (#3425).
+///
+/// Each is independent — a container can carry one label without the other —
+/// and a missing, empty or whitespace-only value is `None`.
+pub fn compose_labels(
+    labels: Option<&HashMap<String, String>>,
+) -> (Option<String>, Option<String>) {
+    let get = |key: &str| {
+        labels
+            .and_then(|l| l.get(key))
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+    };
+    (get(COMPOSE_PROJECT_LABEL), get(COMPOSE_SERVICE_LABEL))
 }
 
 /// Wire form for the agent's `docker.list_containers` result (#3424).
@@ -53,6 +84,8 @@ impl From<ContainerInfo> for crate::protocol::methods::DockerContainerEntry {
             state: c.state,
             status: c.status,
             running: c.running,
+            compose_project: c.compose_project,
+            compose_service: c.compose_service,
         }
     }
 }
@@ -68,6 +101,8 @@ impl From<crate::protocol::methods::DockerContainerEntry> for ContainerInfo {
             state: c.state,
             status: c.status,
             running: c.running,
+            compose_project: c.compose_project,
+            compose_service: c.compose_service,
         }
     }
 }
@@ -94,6 +129,7 @@ pub fn summarize_containers(raw: Vec<bollard::models::ContainerSummary>) -> Vec<
                 .unwrap_or_else(|| id.chars().take(SHORT_ID_LEN).collect());
             let state = c.state.unwrap_or_default();
             let running = state.eq_ignore_ascii_case("running");
+            let (compose_project, compose_service) = compose_labels(c.labels.as_ref());
             Some(ContainerInfo {
                 id,
                 name,
@@ -101,6 +137,8 @@ pub fn summarize_containers(raw: Vec<bollard::models::ContainerSummary>) -> Vec<
                 state,
                 status: c.status.unwrap_or_default(),
                 running,
+                compose_project,
+                compose_service,
             })
         })
         .collect();
@@ -161,6 +199,8 @@ mod tests {
                 state: "running".to_string(),
                 status: "running status".to_string(),
                 running: true,
+                compose_project: None,
+                compose_service: None,
             }]
         );
     }
@@ -213,6 +253,8 @@ mod tests {
             state: "running".into(),
             status: "Up".into(),
             running: true,
+            compose_project: None,
+            compose_service: None,
         };
         let json = serde_json::to_value(&info).expect("serialize");
         assert_eq!(
@@ -236,6 +278,8 @@ mod tests {
             state: "exited".into(),
             status: "Exited (0)".into(),
             running: false,
+            compose_project: Some("shop".into()),
+            compose_service: Some("db".into()),
         };
         let wire = DockerContainerEntry::from(info.clone());
         assert_eq!(
@@ -243,5 +287,137 @@ mod tests {
             serde_json::to_value(&info).unwrap()
         );
         assert_eq!(ContainerInfo::from(wire), info);
+    }
+
+    fn labels(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn compose_labels_present() {
+        let l = labels(&[
+            (COMPOSE_PROJECT_LABEL, "shop"),
+            (COMPOSE_SERVICE_LABEL, "web"),
+            ("other", "x"),
+        ]);
+        assert_eq!(
+            compose_labels(Some(&l)),
+            (Some("shop".to_string()), Some("web".to_string()))
+        );
+    }
+
+    #[test]
+    fn compose_labels_absent() {
+        assert_eq!(compose_labels(None), (None, None));
+        assert_eq!(compose_labels(Some(&labels(&[("a", "b")]))), (None, None));
+    }
+
+    #[test]
+    fn compose_labels_partial_and_blank() {
+        let only_project = labels(&[(COMPOSE_PROJECT_LABEL, "shop")]);
+        assert_eq!(
+            compose_labels(Some(&only_project)),
+            (Some("shop".to_string()), None)
+        );
+        let only_service = labels(&[(COMPOSE_SERVICE_LABEL, "web")]);
+        assert_eq!(
+            compose_labels(Some(&only_service)),
+            (None, Some("web".to_string()))
+        );
+        let blank = labels(&[(COMPOSE_PROJECT_LABEL, "  "), (COMPOSE_SERVICE_LABEL, "")]);
+        assert_eq!(compose_labels(Some(&blank)), (None, None));
+    }
+
+    #[test]
+    fn summarize_carries_compose_labels() {
+        let mut compose = summary("c1", &["/shop-web-1"], "running");
+        compose.labels = Some(labels(&[
+            (COMPOSE_PROJECT_LABEL, "shop"),
+            (COMPOSE_SERVICE_LABEL, "web"),
+        ]));
+        let out = summarize_containers(vec![compose, summary("p1", &["/plain"], "running")]);
+        let web = out.iter().find(|c| c.id == "c1").unwrap();
+        assert_eq!(web.compose_project.as_deref(), Some("shop"));
+        assert_eq!(web.compose_service.as_deref(), Some("web"));
+        let plain = out.iter().find(|c| c.id == "p1").unwrap();
+        assert_eq!(
+            (plain.compose_project.clone(), plain.compose_service.clone()),
+            (None, None)
+        );
+    }
+
+    #[test]
+    fn serializes_compose_fields_camel_case_when_present() {
+        let info = ContainerInfo {
+            id: "i".into(),
+            name: "n".into(),
+            image: "img".into(),
+            state: "running".into(),
+            status: "Up".into(),
+            running: true,
+            compose_project: Some("shop".into()),
+            compose_service: Some("web".into()),
+        };
+        let json = serde_json::to_value(&info).expect("serialize");
+        assert_eq!(json["composeProject"], "shop");
+        assert_eq!(json["composeService"], "web");
+    }
+
+    /// Wire shape (#3425): the compose fields are omitted when absent, so an
+    /// entry without them is byte-identical to the pre-0.15.0 shape.
+    #[test]
+    fn wire_entry_omits_absent_compose_fields() {
+        use crate::protocol::methods::DockerContainerEntry;
+        let wire = DockerContainerEntry {
+            id: "a".into(),
+            name: "plain".into(),
+            image: "nginx".into(),
+            state: "running".into(),
+            status: "Up".into(),
+            running: true,
+            compose_project: None,
+            compose_service: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&wire).unwrap(),
+            serde_json::json!({
+                "id": "a", "name": "plain", "image": "nginx",
+                "state": "running", "status": "Up", "running": true
+            })
+        );
+    }
+
+    #[test]
+    fn wire_entry_carries_compose_fields_when_present() {
+        use crate::protocol::methods::DockerContainerEntry;
+        let json = serde_json::json!({
+            "id": "a", "name": "shop-web-1", "image": "nginx",
+            "state": "running", "status": "Up", "running": true,
+            "composeProject": "shop", "composeService": "web"
+        });
+        let wire: DockerContainerEntry = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(wire.compose_project.as_deref(), Some("shop"));
+        assert_eq!(wire.compose_service.as_deref(), Some("web"));
+        assert_eq!(serde_json::to_value(&wire).unwrap(), json);
+    }
+
+    /// A pre-0.15.0 agent's response (no compose fields) still parses.
+    #[test]
+    fn old_agent_result_without_compose_fields_parses() {
+        use crate::protocol::methods::DockerListContainersResult;
+        let result: DockerListContainersResult = serde_json::from_value(serde_json::json!({
+            "containers": [{
+                "id": "a", "name": "web", "image": "nginx",
+                "state": "running", "status": "Up", "running": true
+            }]
+        }))
+        .unwrap();
+        let info = ContainerInfo::from(result.containers[0].clone());
+        assert_eq!(info.compose_project, None);
+        assert_eq!(info.compose_service, None);
+        assert_eq!(info.name, "web");
     }
 }
