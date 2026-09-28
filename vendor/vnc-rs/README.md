@@ -227,5 +227,36 @@ Tests: `src/client/desktop_size_tests.rs` (wire format, parser, read-loop
 resize handling, unsupported inference, hostile inputs incl. a seeded fuzz of
 layout rectangles, and SetDesktopSize / refresh through the real client).
 
+## Extended Clipboard (#3472)
+
+The standard `ServerCutText` / `ClientCutText` carry Latin-1 text only. The fork
+implements the community RFB spec's Extended Clipboard pseudo-encoding
+(`0xC0A1E5CE`, `src/client/ext_clipboard.rs`), opt-in via
+`VncEncoding::ExtendedClipboardPseudo { images }`:
+
+- The negative-length `ServerCutText` / `ClientCutText` forms are parsed and
+  emitted with all five actions (`caps`, `request`, `peek`, `notify`,
+  `provide`); `provide` payloads are zlib (flate2). A negative length is only
+  interpreted when the consumer advertised the encoding.
+- The client answers the server's `caps` with its own, requests notified
+  formats it wants, answers `peek` / `request`, and sends local text (TigerVNC
+  style: unsolicited `provide` when it fits the server's size, else `notify`).
+  Until the server announces `caps` — a server without the extension never
+  does — `X11Event::CopyText` keeps the legacy (#3469) message.
+- Formats: `text` (UTF-8, CRLF, NUL-terminated — surfaced as `VncEvent::Text`)
+  and, with `images`, `dib` (`VncEvent::ClipboardDib` raw bytes /
+  `X11Event::CopyDib`). `VncEvent::ClipboardCapabilities` reports what the
+  server announced. rtf / html / files are skipped; `files` has no specified
+  payload layout, so it is not implemented (see the module docs).
+- Bounds: the wire payload is capped at 64 MiB (larger is skipped unbuffered);
+  each format's announced decompressed size is checked against its cap (text
+  16 MiB, dib `MAX_CLIPBOARD_DIB_BYTES`) before anything is buffered, and one
+  `provide` decompresses at most 64 MiB in total, skipped formats included. A
+  malformed or over-cap message is consumed and dropped; the session continues.
+
+Tests: `src/client/ext_clipboard_tests.rs` (round trips, caps, zlib bombs,
+malformed / truncated input, the state machine, negotiation with and without
+the extension through the real client).
+
 Everything else is upstream `0.5.3`, under the original MIT/Apache-2.0 licenses
 (`LICENSE-MIT`, `LICENSE-APACHE`).

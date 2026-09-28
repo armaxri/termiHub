@@ -1993,11 +1993,12 @@ module, but the live PDU exchange needs a real server:
 
 #### Clipboard images (CLIPRDR `CF_DIB`, PROD-021 / #3469)
 
-Image clipboard works over RDP in both directions; VNC's standard RFB clipboard
-is Latin-1 text only, so the image section is hidden for VNC sessions. DIB ↔
-RGBA conversion, the size caps and the owner gate are unit-tested (`rdp-sidecar`
-`dib` + `clipboard` image tests, `termihub-core` `clipboard_image`, and
-`src-tauri` `remote_desktop_image`); the live PDU exchange needs a real server:
+Image clipboard works over RDP in both directions, and over VNC when the server
+announces the RFB Extended Clipboard's `dib` format (#3472); otherwise the image
+section is hidden for VNC sessions. DIB ↔ RGBA conversion, the size caps and the
+owner gate are unit-tested (`termihub-core` `clipboard_dib` + `clipboard_image`,
+`rdp-sidecar` `clipboard` image tests, `vnc-rs` `ext_clipboard`, and `src-tauri`
+`remote_desktop_image`); the live PDU exchange needs a real server:
 
 1. Build the sidecar and point `TERMIHUB_RDP_HELPER` at it (as above), then
    connect to a Windows RDP host.
@@ -2012,8 +2013,12 @@ RGBA conversion, the size caps and the owner gate are unit-tested (`rdp-sidecar`
    click **Send local image**. **Expected:** an error toast; nothing is sent.
 5. **View-only:** reconnect with **View Only**. **Expected:** **Send local image**
    is hidden; copying a remote image still works.
-6. **VNC:** open the clipboard panel on a VNC session. **Expected:** no Image
-   section; accented text (`café`) round-trips through the text clipboard.
+6. **VNC (TigerVNC, text-only Extended Clipboard):** open the clipboard panel on
+   a VNC session. **Expected:** no Image section; non-Latin-1 text (`日本語 🎉`)
+   and accented text (`café`) round-trip losslessly through the text clipboard
+   (#3472). A server without the extension (x11vnc) still round-trips `café`.
+7. **VNC with `dib` (e.g. RealVNC Server):** **Expected:** the Image section
+   appears; steps 2–4 behave as for RDP.
 
 #### Delayed-render paste to the host OS clipboard (macOS, #1804)
 
