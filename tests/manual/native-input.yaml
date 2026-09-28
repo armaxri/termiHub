@@ -1,0 +1,391 @@
+category: native-input
+display_name: "Native Input"
+
+# Native OS input the synthetic-event test bridge cannot drive (TIN-017, #3764).
+# The bridge dispatches DOM events inside the webview, so it never exercises the
+# OS drag-and-drop pipeline (Tauri intercepts OS file drops natively and reports
+# physical screen coordinates), IME composition (the OS input method owns the
+# preedit and candidate window), or real window focus (only the OS can move it
+# to another app and back). Every item here is release-gating.
+#
+# Not duplicated here — the guided-manual suite tests/system/tests/
+# test_input_routing.py already walks the plain drags on every OS: tab drag to a
+# panel edge (MT-TAB-06), tab drag across groups (MT-TAB-07), connection into a
+# folder (MT-CONN-01), editor tab between panels (MT-FB-20) and a single-file OS
+# drop onto a terminal pane (MT-UI-34). The items below cover what that suite
+# does not: multi-file quoting, scaled / mixed-DPI hit-testing, the Linux display
+# servers, the file-browser drop target, native drag-out, drags that end outside
+# the window, IME, dead keys, the OS character picker and window focus.
+#
+# Where the platforms genuinely differ (quoting, IME framework, focus model),
+# the item is split per platform or states the per-platform expectation.
+
+tests:
+  # --- OS pointer drag-and-drop ---
+
+  - id: MT-NIN-01
+    release_gate: true
+    manual_reason: "real OS multi-file drag from the file manager; the bridge cannot synthesize a native drop"
+    name: "OS drop of several files with spaces and quotes into a terminal is quoted per platform"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - 'In a scratch folder create three files: ''plain.txt'', ''two words.txt'' and "it''s.txt"'
+      - "Open a local shell tab (New Terminal) and type 'ls -l ' (Windows PowerShell: 'Get-Item ') without pressing Enter"
+      - "Select all three files in Finder / Explorer / Files and drag them together onto the terminal pane"
+      - "Release, look at the prompt line, then press Enter"
+    expected:
+      - "While hovering, the terminal pane shows the file-drop highlight"
+      - "All three paths are inserted on the prompt line, separated by spaces, and nothing runs until Enter"
+      - "macOS / Linux: each path is single-quoted and the apostrophe in it's.txt is escaped as '\\''"
+      - "Windows: each path is wrapped in double quotes"
+      - "After Enter the command lists all three files with no 'not found' error"
+    verification: manual
+    tags: [os-native, dnd]
+
+  - id: MT-NIN-02
+    release_gate: true
+    manual_reason: "native drop coordinates on a scaled display; the bridge has no physical-pixel pointer"
+    name: "OS file drop targets the pane under the cursor on a scaled display"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Use a scaled display: a Retina screen on macOS, 150% scaling on Windows, 125% or 150% fractional scaling on Linux"
+      - "Split the terminal area into two side-by-side panes, each with a local shell"
+      - "Drag a file from the OS file manager slowly across both panes, crossing the divider, then drop it just inside the RIGHT pane near the divider"
+      - "Drag the file again and drop it on the tab bar, outside both terminal areas"
+    expected:
+      - "The drop highlight follows the pane that is actually under the cursor and switches exactly at the divider"
+      - "The first drop inserts the path into the RIGHT pane's shell only; the left pane is unchanged"
+      - "The drop on the tab bar inserts nothing into either shell"
+    verification: manual
+    tags: [os-native, dnd]
+
+  - id: MT-NIN-03
+    release_gate: true
+    manual_reason: "per-monitor DPI change is an OS window-manager event; needs two physical displays"
+    name: "OS file drop still hits the right pane after moving the window to a display with a different scale"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Connect two displays with different scale factors (e.g. Retina + a 100% external monitor, or 100% + 150% on Windows / Linux)"
+      - "Split the terminal area into two side-by-side panes, each with a local shell"
+      - "Drop a file onto the RIGHT pane near the divider on the first display"
+      - "Drag the termiHub window fully onto the other display and repeat the drop"
+    expected:
+      - "On both displays the highlight and the drop land on the RIGHT pane, not the pane beside it"
+      - "No offset appears after the move (the hit area matches the visible pane on the new display)"
+    verification: manual
+    tags: [os-native, dnd]
+
+  - id: MT-NIN-04
+    release_gate: true
+    manual_reason: "GTK native drop under a real Wayland and a real X11 session; needs a desktop login per session type"
+    name: "Linux — OS file drop works in both a Wayland and an X11 session"
+    platforms: [linux]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Log into a Wayland desktop session (check: echo $XDG_SESSION_TYPE prints 'wayland')"
+      - "Open a local shell tab and drop a file from Files / Dolphin onto it"
+      - "Open the Files sidebar in local mode and drop a file onto the listing"
+      - "Log out, log into an X11 session ('x11') and repeat both drops"
+    expected:
+      - "In both sessions the terminal drop inserts the quoted path into the shell"
+      - "In both sessions the file-browser drop copies the file into the shown folder"
+      - "The drop highlight appears while hovering in both sessions"
+    verification: manual
+    tags: [os-native, dnd]
+
+  - id: MT-NIN-05
+    release_gate: true
+    manual_reason: "real OS file drag onto the file browser; the bridge cannot synthesize a native drop"
+    name: "OS file drop onto the local file browser copies the file into the shown folder"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open the Files sidebar in local mode and navigate to an empty scratch folder"
+      - "From the OS file manager, drag a file from a different folder over the file-browser listing and drop it"
+    expected:
+      - "While hovering, the file-browser listing shows its drop highlight"
+      - "A 'Copied <name>' toast appears and the file shows up in the listing without a manual refresh"
+      - "The original file is still in its source folder (a copy, not a move)"
+    verification: manual
+    tags: [os-native, dnd]
+
+  - id: MT-NIN-06
+    release_gate: true
+    manual_reason: "native drag-out session (NSDraggingSession / DoDragDrop / GTK) to a real OS file manager"
+    name: "Drag a file-browser row out to the OS file manager; dropping it back is not re-imported"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open the Files sidebar in local mode on a folder containing a small file"
+      - "Drag that row out of the termiHub window and drop it into a different folder in Finder / Explorer / Files"
+      - "Start dragging the same row out again, move the pointer outside the window, bring it back over the termiHub file browser and release there"
+    expected:
+      - "The first drag creates the file in the OS folder you dropped on, with the same contents"
+      - "Releasing back over termiHub does nothing: no drop highlight, no copy, no 'Copied' toast, no duplicate row"
+    verification: manual
+    tags: [os-native, dnd]
+
+  - id: MT-NIN-07
+    release_gate: true
+    manual_reason: "a pointer release outside the app window happens in the OS, never inside the webview"
+    name: "A tab drag released outside the window is cancelled cleanly"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open two local shell tabs in one panel"
+      - "Drag one tab, move the pointer off the termiHub window over the desktop or another app, and release there"
+      - "Click back into termiHub and type in the dragged tab's terminal"
+    expected:
+      - "The tab stays in its original panel and position; no split or new window is created"
+      - "No drag overlay, ghost tab or drop-zone highlight is left on screen"
+      - "The terminal session is still live and accepts typing; the next click in the tab bar behaves normally"
+    verification: manual
+    tags: [os-native, dnd]
+
+  # --- IME composition ---
+
+  - id: MT-NIN-10
+    release_gate: true
+    manual_reason: "macOS input method (IMK) owns the preedit and candidate window; the bridge cannot compose"
+    name: "macOS — Japanese IME composition in the terminal"
+    platforms: [macos]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Add the 'Japanese – Romaji' input source (System Settings → Keyboard → Input Sources)"
+      - "Open a local shell tab and type 'echo ' with the ABC input source"
+      - "Switch to Japanese (Ctrl+Space), type 'nihongo', press Space to convert, then press Enter once"
+      - "Press Enter again"
+      - "Type 'tesuto' (still composing), press Escape, then switch back to ABC"
+    expected:
+      - "The preedit is shown at the terminal cursor and the candidate window opens next to it, not at the window corner"
+      - "The first Enter only commits: '日本語' appears once after 'echo ' and the command does not run"
+      - "The second Enter runs the command and prints 日本語 exactly once"
+      - "Escape discards 'tesuto': nothing is inserted into the shell and no stray escape sequence appears"
+    verification: manual
+    tags: [os-native, ime]
+
+  - id: MT-NIN-11
+    release_gate: true
+    manual_reason: "Windows input method (TSF) owns the preedit and candidate window; the bridge cannot compose"
+    name: "Windows — Japanese IME composition in the terminal"
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Add the Japanese language with 'Microsoft IME' (Settings → Time & language → Language & region)"
+      - "Open a PowerShell tab and type 'echo ' in English input mode"
+      - "Switch to Microsoft IME (Win+Space), turn on Hiragana (Alt+`), type 'nihongo', press Space to convert, then press Enter once"
+      - "Press Enter again"
+      - "Type 'tesuto' (still composing), press Escape, then switch back to English"
+    expected:
+      - "The preedit is shown at the terminal cursor and the candidate window opens next to it, not at the window corner"
+      - "The first Enter only commits: '日本語' appears once after 'echo ' and the command does not run"
+      - "The second Enter runs the command and prints 日本語 exactly once"
+      - "Escape discards 'tesuto': nothing is inserted into the shell"
+    verification: manual
+    tags: [os-native, ime]
+
+  - id: MT-NIN-12
+    release_gate: true
+    manual_reason: "Linux IME frameworks (IBus / Fcitx5 via GTK) differ per display server; needs a real desktop session"
+    name: "Linux — IME composition in the terminal under Wayland and X11"
+    platforms: [linux]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Install and enable Fcitx5 or IBus with a Japanese (Mozc) or Chinese (Pinyin) engine"
+      - "In a Wayland session, open a local shell tab and type 'echo ' in the plain layout"
+      - "Switch to the IME, type 'nihongo' (Mozc) or 'zhongwen' (Pinyin), pick the first candidate, then press Enter once"
+      - "Press Enter again"
+      - "Start a new composition, press Escape, then switch back to the plain layout"
+      - "Log into an X11 session and repeat all steps"
+    expected:
+      - "In both sessions the preedit is visible at the terminal cursor and the candidate window opens next to it"
+      - "The committing Enter only commits: the characters appear once after 'echo ' and the command does not run"
+      - "The second Enter runs the command and prints the characters exactly once"
+      - "Escape discards the composition: nothing is inserted into the shell"
+    verification: manual
+    tags: [os-native, ime]
+
+  - id: MT-NIN-13
+    release_gate: true
+    manual_reason: "real OS input method in the Monaco editor's native edit context; the bridge cannot compose"
+    name: "IME composition in the file editor"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Enable a Japanese IME (macOS: Japanese – Romaji; Windows: Microsoft IME; Linux: Fcitx5 / IBus with Mozc)"
+      - "Create a text file in the Files sidebar and open it in the editor"
+      - "Type 'abc ', switch to the IME, type 'nihongo', press Space to convert and Enter to commit"
+      - "Keep typing on the same line, then compose again and press Cmd+S / Ctrl+S while the preedit is still open"
+      - "Commit the composition, then press Cmd+S / Ctrl+S"
+    expected:
+      - "The preedit and candidate window sit at the editor caret"
+      - "The committing Enter inserts '日本語' once and does not add a new line"
+      - "Save does not fire, and the preedit is not lost, while composing"
+      - "After committing, save writes the file; reopening it shows the committed text exactly once"
+    verification: manual
+    tags: [os-native, ime]
+
+  - id: MT-NIN-14
+    release_gate: true
+    manual_reason: "the real IME Enter/keydown order differs per webview engine; unit tests only replay a synthetic sequence"
+    name: "IME Enter / Escape in a form field act on the composition, not the form"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Enable a Japanese IME (as in MT-NIN-13)"
+      - "Open the connection editor for a new local connection"
+      - "In the Name field, compose 'tesuto' and press Escape while the preedit is still open"
+      - "Compose 'nihongo', convert with Space and press Enter to commit the candidate"
+      - "Press Enter a second time"
+    expected:
+      - "Escape during composition only discards the preedit: the connection editor stays open"
+      - "The first Enter only commits: the Name field shows '日本語' and the editor stays open"
+      - "The second Enter saves the connection, which appears in the sidebar named 日本語"
+    verification: manual
+    tags: [os-native, ime]
+
+  - id: MT-NIN-15
+    release_gate: true
+    manual_reason: "dead keys are composed by the OS keyboard layout, not by DOM key events"
+    name: "Dead-key composition in the terminal and the editor"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "macOS: use the ABC layout and type Option+e then e, and Option+u then u"
+      - "Windows / Linux: switch to US-International (or German) and type ' then e, then ` then space"
+      - "Do this once in a local shell tab after typing 'echo ', then once in an open editor file"
+    expected:
+      - "The terminal receives é and ü (Windows / Linux: é and a plain `) as single characters, each exactly once"
+      - "No bare accent is left behind before the composed character"
+      - "The editor shows the same characters at the caret"
+    verification: manual
+    tags: [os-native, ime]
+
+  - id: MT-NIN-16
+    release_gate: true
+    manual_reason: "the OS emoji / character picker inserts through the input method; the bridge cannot open it"
+    name: "OS emoji picker inserts into the terminal and the editor"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a local shell tab and type 'echo '"
+      - "Open the OS picker (macOS: Ctrl+Cmd+Space or Fn+E; Windows: Win+.; Linux GNOME / IBus: Ctrl+.) and pick 👍"
+      - "Press Enter"
+      - "Repeat the picker insertion in an open editor file"
+    expected:
+      - "👍 appears once on the prompt line and the command prints it exactly once"
+      - "The editor inserts 👍 once at the caret"
+      - "Keyboard focus is back in the terminal / editor after the picker closes"
+    verification: manual
+    tags: [os-native, ime]
+
+  # --- Native focus ---
+
+  - id: MT-NIN-20
+    release_gate: true
+    manual_reason: "moving focus to another application and back is an OS action; the bridge cannot blur the window"
+    name: "Keyboard focus survives switching to another app and back"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Split into two panes: a local shell on the left, an open editor file on the right; click into the shell"
+      - "Switch to another app (macOS: Cmd+Tab; Windows / Linux: Alt+Tab) and back again with the keyboard, then type 'abc'"
+      - "Click into the editor, switch away and back again the same way, then type 'xyz'"
+    expected:
+      - "While termiHub is in the background the terminal cursor is drawn in its unfocused style"
+      - "After switching back, 'abc' lands in the shell without clicking and the cursor is drawn focused again"
+      - "After the second switch, 'xyz' lands at the editor caret where it was, not in the shell"
+    verification: manual
+    tags: [os-native, focus]
+
+  - id: MT-NIN-21
+    release_gate: true
+    manual_reason: "a native OS file dialog takes and returns window focus outside the webview"
+    name: "Focus returns to the editor after a native Save dialog is cancelled or confirmed"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Run 'echo hello' in a local shell tab, right-click the tab and choose Open in Editor"
+      - "In the new unsaved editor tab press Cmd+S / Ctrl+S to open the native Save dialog, then press Escape"
+      - "Type 'one' without clicking"
+      - "Press Cmd+S / Ctrl+S again, save to a scratch folder with Enter, then type 'two' without clicking"
+    expected:
+      - "macOS shows the dialog as a sheet on the termiHub window; Windows / Linux show a separate dialog window"
+      - "After Escape, 'one' is inserted at the editor caret"
+      - "After saving, 'two' is inserted at the editor caret and the tab shows the saved file name"
+      - "Keystrokes never go to another window or get lost after either dialog closes"
+    verification: manual
+    tags: [os-native, focus]
+
+  - id: MT-NIN-22
+    release_gate: true
+    manual_reason: "first-click activation of an inactive window is OS focus-model behaviour"
+    name: "Clicking into an inactive termiHub window focuses the clicked pane"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Split into two panes with a local shell in each; click into the LEFT shell"
+      - "Click another app's window so termiHub is inactive"
+      - "Click once inside the RIGHT shell pane of termiHub, then type 'abc'"
+    expected:
+      - "Windows / Linux: the one click activates the window and focuses the RIGHT pane; 'abc' lands there"
+      - "macOS: the click activates the window; 'abc' lands in whichever pane is drawn as focused (RIGHT if the first click was passed through, LEFT otherwise)"
+      - "On every OS, typing never lands in a pane other than the one drawn as focused"
+    verification: manual
+    tags: [os-native, focus]
+
+  - id: MT-NIN-23
+    release_gate: true
+    manual_reason: "which native window has OS keyboard focus is decided by the window manager, not the webview"
+    name: "With two windows open, typing and shortcuts go only to the focused window"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a second window (Cmd+Shift+N / Ctrl+Shift+N) and a local shell in each; place them side by side"
+      - "Click into window A's shell and type 'aaa'"
+      - "Click into window B's shell and type 'bbb'"
+      - "With window B focused, press New Terminal (Cmd+Shift+` / Ctrl+Shift+`)"
+    expected:
+      - "'aaa' appears only in window A and 'bbb' only in window B"
+      - "The new terminal tab opens in window B only; window A's tabs are unchanged"
+    verification: manual
+    tags: [os-native, focus]
+
+  - id: MT-NIN-24
+    release_gate: true
+    manual_reason: "a window blur during a held key happens in the OS; needs a remote desktop with a visible text field"
+    name: "Remote desktop releases held keys when the window loses focus"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Connect a VNC or RDP tab to a remote desktop that has a text editor open (the Docker fixtures show no text field, so use a real host)"
+      - "Click into the remote desktop canvas and focus the remote text editor"
+      - "Hold Shift, switch to another app (Cmd+Tab / Alt+Tab), release Shift there, then switch back"
+      - "Click the canvas and type 'abc'"
+    expected:
+      - "The remote editor receives lowercase 'abc': Shift is not stuck down on the remote"
+      - "The canvas takes keyboard input normally again after one click"
+    verification: manual
+    tags: [os-native, focus]
