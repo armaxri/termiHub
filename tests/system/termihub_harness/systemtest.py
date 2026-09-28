@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import Callable, ClassVar, Optional, TypeVar
+from typing import Callable, ClassVar, Optional, Sequence, TypeVar
 
 import pytest
 
@@ -272,14 +272,22 @@ class SystemTest:
         """The suite app's isolated config dir (``TERMIHUB_CONFIG_DIR``)."""
         return self.app.config_dir
 
-    def restart_app(self, between: Optional[Callable[[], None]] = None) -> None:
+    def restart_app(
+        self,
+        between: Optional[Callable[[], None]] = None,
+        *,
+        args: Sequence[str] = (),
+    ) -> None:
         """Kill and relaunch the app, then re-acquire the bridge for the suite.
 
         ``between`` runs while the app is down — e.g. to corrupt a config file so
         the relaunch exercises startup recovery (see
         :class:`~termihub_harness.ui.ConfigRecoveryUi`).
+
+        ``args`` are extra command-line arguments for this relaunch only — e.g.
+        ``["--workspace", name]`` to launch a saved workspace at startup (#3778).
         """
-        self.app.restart(between)
+        self.app.restart(between, args=args)
         type(self).driver = self.bridge.wait_for_app(
             request_timeout=type(self).request_timeout
         )
