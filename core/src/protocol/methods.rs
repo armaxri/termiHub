@@ -504,6 +504,36 @@ pub struct SessionCreateParams {
     /// tab close, agent restart, or desktop restart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub definition_id: Option<String>,
+    /// Desktop-side correlation id of the logical session this create is for
+    /// (#3085, OBS-004; protocol 0.15.0). The desktop sends its own
+    /// `session_id`; the agent attaches it as a `correlation_id` field on the
+    /// `tracing` span of this session, so desktop and agent log lines for one
+    /// session can be joined on a single id. Diagnostics only — it never
+    /// affects behavior.
+    ///
+    /// Append-only and backward compatible: omitted from the wire when `None`
+    /// (an older desktop never sends it), and an older agent ignores the
+    /// unknown member.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
+}
+
+/// Upper bound on a [`SessionCreateParams::correlation_id`] an agent will log
+/// (#3085). Generous for a UUID (36 chars) while keeping an untrusted value
+/// from bloating every log line.
+pub const MAX_CORRELATION_ID_LEN: usize = 128;
+
+/// Whether `id` is acceptable as a log correlation id (#3085): non-empty, at
+/// most [`MAX_CORRELATION_ID_LEN`] bytes, and only ASCII alphanumerics, `-`,
+/// `_` and `.` — so an untrusted value can never inject line breaks or
+/// control sequences into a log. An agent drops (does not log) an id that
+/// fails this check rather than failing the create.
+pub fn is_valid_correlation_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= MAX_CORRELATION_ID_LEN
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2391,6 +2421,58 @@ mod tests {
     }
 
     #[test]
+    fn session_create_params_with_correlation_id_round_trips() {
+        let params = SessionCreateParams {
+            session_type: "ssh".to_string(),
+            config: json!({}),
+            title: None,
+            definition_id: None,
+            correlation_id: Some("3f1c-desk-sid".to_string()),
+        };
+        let v = serde_json::to_value(&params).unwrap();
+        assert_eq!(v["correlation_id"], "3f1c-desk-sid");
+        let back: SessionCreateParams = serde_json::from_value(v).unwrap();
+        assert_eq!(back.correlation_id.as_deref(), Some("3f1c-desk-sid"));
+    }
+
+    #[test]
+    fn session_create_params_without_correlation_id_keeps_legacy_wire_shape() {
+        // An older desktop never sends the member; a new desktop with no id
+        // must serialize byte-identically to the pre-0.15.0 shape.
+        let params = SessionCreateParams {
+            session_type: "local".to_string(),
+            config: json!({"shell": "/bin/bash"}),
+            title: Some("Build".to_string()),
+            definition_id: None,
+            correlation_id: None,
+        };
+        let v = serde_json::to_value(&params).unwrap();
+        assert!(v.get("correlation_id").is_none());
+        assert_eq!(
+            v,
+            json!({"type": "local", "config": {"shell": "/bin/bash"}, "title": "Build"})
+        );
+        let legacy: SessionCreateParams = serde_json::from_value(json!({"type": "local"})).unwrap();
+        assert!(legacy.correlation_id.is_none());
+    }
+
+    #[test]
+    fn correlation_id_validation() {
+        assert!(is_valid_correlation_id(
+            "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+        ));
+        assert!(is_valid_correlation_id("sess_1.x"));
+        assert!(!is_valid_correlation_id(""));
+        assert!(!is_valid_correlation_id("line\nbreak"));
+        assert!(!is_valid_correlation_id("has space"));
+        assert!(!is_valid_correlation_id("\u{1b}[31m"));
+        assert!(is_valid_correlation_id(&"a".repeat(MAX_CORRELATION_ID_LEN)));
+        assert!(!is_valid_correlation_id(
+            &"a".repeat(MAX_CORRELATION_ID_LEN + 1)
+        ));
+    }
+
+    #[test]
     fn session_create_params_definition_id_absent() {
         let json = json!({"type": "shell"});
         let params: SessionCreateParams = serde_json::from_value(json).unwrap();
@@ -3441,6 +3523,7 @@ mod tests {
             config: json!({ "shell": "/bin/bash" }),
             title: Some("Build".to_string()),
             definition_id: Some("def-1".to_string()),
+            correlation_id: None,
         };
         assert_eq!(serde_json::to_value(&typed).unwrap(), legacy);
 
@@ -3452,6 +3535,7 @@ mod tests {
             config: json!({}),
             title: None,
             definition_id: None,
+            correlation_id: None,
         };
         assert_eq!(serde_json::to_value(&typed_min).unwrap(), legacy_min);
     }

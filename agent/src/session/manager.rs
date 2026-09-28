@@ -1993,7 +1993,11 @@ fn spawn_output_forwarder(
         // Ignored when `wait_for_clear` is false.
         clear_wait_timeout: Duration::from_secs(0),
     };
-    tokio::spawn(async move {
+    // Run under the caller's span: for a `connection.create` that is the
+    // session's `agent_session` span carrying the desktop correlation id
+    // (#3085), so the forwarder's logs over the session's life stay joinable.
+    let span = tracing::Span::current();
+    tokio::spawn(tracing::Instrument::instrument(async move {
         match run_output_pump(&session_id, &mut output_rx, &sink, None, &opts).await {
             // The output channel closed: the backend process exited / hit EOF on
             // its own. Mark the backend dead so the manager settles the session
@@ -2018,7 +2022,7 @@ fn spawn_output_forwarder(
             // share that no-settle semantics, so they fall through identically.
             PumpEnd::StreamSinkClosed | PumpEnd::Cancelled | PumpEnd::ClearFlushSinkClosed => {}
         }
-    })
+    }, span))
 }
 
 /// Settle any session whose backend has exited on its own to
