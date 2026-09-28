@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { Modal, useModalPortalContainer } from "./Modal";
+import { resetImeCompositionTrackerForTests } from "../../utils/imeComposition";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -111,5 +112,60 @@ describe("Modal", () => {
     );
     act(() => (document.querySelector('[data-testid="modal-close"]') as HTMLElement).click());
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  describe("IME composition (#3767)", () => {
+    function openWithInput(onOpenChange: (open: boolean) => void): HTMLInputElement {
+      render(
+        <Modal data-testid="modal" open onOpenChange={onOpenChange} title="Rename">
+          <input data-testid="modal-input" type="text" />
+        </Modal>
+      );
+      return document.querySelector<HTMLInputElement>('[data-testid="modal-input"]')!;
+    }
+
+    function fire(el: HTMLElement, ev: Event) {
+      act(() => {
+        el.dispatchEvent(ev);
+      });
+    }
+
+    function escape(isComposing: boolean, keyCode = 0): KeyboardEvent {
+      return new KeyboardEvent("keydown", {
+        key: "Escape",
+        isComposing,
+        keyCode,
+        bubbles: true,
+        cancelable: true,
+      });
+    }
+
+    beforeEach(() => resetImeCompositionTrackerForTests());
+    afterEach(() => resetImeCompositionTrackerForTests());
+
+    it("Escape during composition keeps the dialog open", () => {
+      const onOpenChange = vi.fn();
+      const el = openWithInput(onOpenChange);
+      fire(el, new CompositionEvent("compositionstart", { data: "", bubbles: true }));
+      fire(el, escape(true));
+      fire(el, escape(false, 229));
+      expect(onOpenChange).not.toHaveBeenCalled();
+    });
+
+    it("Escape right after compositionend (WebKit order) keeps the dialog open", () => {
+      const onOpenChange = vi.fn();
+      const el = openWithInput(onOpenChange);
+      fire(el, new CompositionEvent("compositionstart", { data: "", bubbles: true }));
+      fire(el, new CompositionEvent("compositionend", { data: "", bubbles: true }));
+      fire(el, escape(false));
+      expect(onOpenChange).not.toHaveBeenCalled();
+    });
+
+    it("a normal Escape still closes the dialog", () => {
+      const onOpenChange = vi.fn();
+      const el = openWithInput(onOpenChange);
+      fire(el, escape(false));
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
   });
 });
