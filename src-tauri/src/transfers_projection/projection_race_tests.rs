@@ -91,7 +91,7 @@ fn fold(store: &TransferStore, step: usize, id: &str) {
         0 => store.seed(&seed(id), now),
         1 => store.progress(&progress(id, "active", step as u64 % 1000), now),
         2 => store.progress(&progress(id, "completed", 1000), now),
-        3 => store.set_minimized(step % 2 == 0),
+        3 => store.set_minimized(step.is_multiple_of(2)),
         4 => store.remove(id),
         5 => store.clear_completed(),
         _ => store.progress(&progress(id, "paused", step as u64 % 1000), now),

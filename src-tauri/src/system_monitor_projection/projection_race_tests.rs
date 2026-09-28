@@ -89,7 +89,7 @@ fn fold(store: &SystemMonitorStore, step: usize, key: &str) {
         1 => store.opened(key),
         2 => store.stats(key, stats(step as f64)),
         3 => store.set_status(key, MonitorStatus::Stale, None),
-        4 => store.set_paused(key, step % 2 == 0),
+        4 => store.set_paused(key, step.is_multiple_of(2)),
         5 => store.set_interval(key, 1000 + step as u64),
         _ => store.close(key),
     }
