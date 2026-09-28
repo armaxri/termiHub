@@ -767,7 +767,8 @@ export async function remoteDesktopGetClipboard(sessionId: SessionId): Promise<s
 }
 
 /**
- * Whether the session supports an image clipboard (PROD-021: RDP yes, VNC no)
+ * Whether the session supports an image clipboard (PROD-021: RDP yes; VNC when
+ * the server offers the Extended Clipboard `dib` format, #3472)
  * and the dimensions of the image the remote most recently copied, if any.
  * Ownership-gated in the backend: a non-owning window never sees the image.
  */
@@ -794,7 +795,8 @@ export async function remoteDesktopCopyClipboardImage(
 /**
  * Send the image on the local OS clipboard to the remote (PROD-021). Resolves to
  * its dimensions, or null when the local clipboard holds no image. Rejects when
- * the image exceeds the size caps or the protocol has no image clipboard (VNC).
+ * the image exceeds the size caps or the session has no image clipboard (a VNC
+ * server without Extended Clipboard `dib`).
  */
 export async function remoteDesktopSendClipboardImage(
   sessionId: SessionId

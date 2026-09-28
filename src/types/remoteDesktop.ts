@@ -152,7 +152,10 @@ export interface ClipboardImageInfo {
 
 /** Image-clipboard state the clipboard panel renders from (PROD-021). */
 export interface ClipboardImageStatus {
-  /** Whether the session's protocol bridges clipboard images (RDP yes, VNC no). */
+  /**
+   * Whether the session bridges clipboard images (RDP yes; VNC when the server
+   * offers the Extended Clipboard `dib` format).
+   */
   supported: boolean;
   /** The image the remote most recently copied, if any. */
   image: ClipboardImageInfo | null;

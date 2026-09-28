@@ -688,7 +688,8 @@ impl GraphicalSessionManager {
 
     /// Push a local clipboard image to a session's remote (PROD-021). The image
     /// is validated against the clipboard-image caps first; a backend without an
-    /// image clipboard (VNC) reports an error.
+    /// image clipboard (a VNC server without Extended Clipboard `dib`) reports an
+    /// error.
     pub async fn send_clipboard_image(
         &self,
         session_id: &str,

@@ -13,8 +13,9 @@
 //! cannot push one. Every image is checked against the shared clipboard-image
 //! caps ([`check_clipboard_image_size`]) before it is forwarded; an oversize
 //! local image is refused with an error the panel surfaces, never scaled.
-//! Protocol support: RDP bridges images both ways over CLIPRDR; VNC's standard
-//! RFB clipboard is Latin-1 text only, so a send there reports "not supported".
+//! Protocol support: RDP bridges images both ways over CLIPRDR; VNC does so
+//! through the RFB Extended Clipboard's `dib` format when the server announces
+//! it (#3472) — otherwise a send there reports "not supported".
 
 use tauri::State;
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -83,8 +84,9 @@ pub(crate) fn host_image_to_clipboard_image(
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClipboardImageStatus {
-    /// Whether the session's protocol bridges clipboard images at all (RDP yes,
-    /// VNC no) — the panel hides the image actions when it does not.
+    /// Whether the session bridges clipboard images at all (RDP yes; VNC when
+    /// the server announced Extended Clipboard `dib`) — the panel hides the
+    /// image actions when it does not.
     pub supported: bool,
     /// Dimensions of the image the remote most recently copied, if any.
     pub image: Option<ClipboardImageInfo>,
@@ -154,8 +156,8 @@ pub async fn remote_desktop_copy_clipboard_image(
 /// Push the image on the host OS clipboard to the remote. Returns its
 /// dimensions, or `None` when the host clipboard holds no image or the calling
 /// window does not control the session (ownership-gated, #3388). Errors when the
-/// image exceeds the clipboard-image caps or the protocol has no image clipboard
-/// (VNC).
+/// image exceeds the clipboard-image caps or the session has no image clipboard
+/// (a VNC server without Extended Clipboard `dib`).
 #[tauri::command]
 pub async fn remote_desktop_send_clipboard_image(
     session_id: String,
