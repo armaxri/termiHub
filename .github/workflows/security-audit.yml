@@ -110,18 +110,19 @@ jobs:
       - name: pnpm audit (production deps, blocking)
         run: ./scripts/internal/pnpm-audit-prod-gate.sh
 
-      # Advisory-only visibility for the FULL tree (incl. devDependencies). These
-      # are dev/build-time highs — eslint/typescript-eslint -> minimatch ->
-      # brace-expansion, commitlint -> ajv -> fast-uri, vite -> postcss — none of
-      # which reach the shipped app. Kept non-blocking so they surface in the log
-      # without gating the release; promote a fix to the blocking step above once
-      # the upstream dev tool patches land.
-      #
-      # Not silent, though (SUP-008): the step writes a per-severity count to the
-      # job summary and raises a warning annotation when any high/critical
-      # advisory is present. See docs/supply-chain.md -> "Audit gates".
-      - name: pnpm audit (full tree, advisory)
-        continue-on-error: true  # Dev-only advisories: warn, do not fail
+      # FULL tree (incl. devDependencies) — mostly advisory, with one forcing
+      # function (#3755, CI-012). Dev/build-time advisories do not reach the
+      # shipped app, so a finding in general only warns: the step writes a
+      # per-severity count to the job summary and raises a warning annotation on
+      # any high/critical (SUP-008). But a high/critical that ALREADY HAS A
+      # PATCHED VERSION fails the step — there is nothing to wait for, so take the
+      # fix (bump the tool, `pnpm update`, or an override with its
+      # docs/supply-chain.md row). A fix that truly cannot be taken yet goes into
+      # package.json pnpm.auditConfig.ignoreGhsas, documented in
+      # docs/supply-chain.md. An unreachable registry only warns here; the
+      # production gate above owns that policy. See docs/supply-chain.md ->
+      # "Audit gates".
+      - name: pnpm audit (full tree, fails on a fixable high/critical)
         run: |
           pnpm audit --audit-level=moderate || true
           pnpm audit --json > "$RUNNER_TEMP/pnpm-audit-full.json" || true
