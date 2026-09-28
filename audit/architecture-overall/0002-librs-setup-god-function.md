@@ -10,8 +10,8 @@ evidence:
   - src-tauri/src/lib.rs:403
   - src-tauri/src/lib.rs:774
   - src-tauri/src/lib.rs:1322
-status: partial
-resolution: "#3179, #3774 — slices 1-9 merged incl. S9 agent notification dispatch carved to terminal/agent_manager/notifications.rs (pure move + output-order test, #3774); agent_manager.rs 4267->3999. Remaining: reconnect-machinery carve (agent_io_task etc.) - own reviewed slice"
+status: fixed
+resolution: "#3179, #3774, #3797 — god-setup decomposed to boot + all slices merged: S9 notifications carve (#3774) and final agent io_task/reconnect/recovery/state_events carve as verified pure moves with reconnect-ordering pin tests (#3797); agent_manager.rs 4267->2755"
 ---
 
 ## What
