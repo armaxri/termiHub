@@ -10,8 +10,8 @@ evidence:
   - src-tauri/src/terminal/agent_manager.rs:2248
   - src-tauri/src/session/manager.rs:1136
   - src-tauri/src/files/transfer/mod.rs:420
-status: partial
-resolution: "#3086 — desktop-side half DONE: #[tracing::instrument] spans scope session lifecycle (create_connection/reattach_agent_session/close_session + agent_io_task reconnect loop) so nested events group under session_id; structured agent_id/error fields replace string interpolation at reconnect log sites; session_id chosen as correlation key (nothing crosses to agent in this scope). Capturing-Layer TDD tests, serialized under serial_test to dodge parallel-tracing race. DEFERRED: correlation-id threading through agent protocol handshake (wire change, couples DUP-030) → follow-up #3085 Ready2Implement"
+status: fixed
+resolution: "#3086, #3781 — desktop tracing spans per session (#3086); optional validated correlation_id on connection.create (desktop session_id) -> agent agent_session span ties agent log lines to the desktop id, back-compatible, protocol 0.16.0 (#3781). Daemon-process lines -> #3782"
 ---
 
 ## What
