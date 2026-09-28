@@ -52,12 +52,14 @@
 //! | `layout.addGroupWithTab`    | `{ tabId, fromPanelId }`                       | pull a tab into a brand-new active group        |
 //! | `layout.replaceGroups`      | `{ activeGroupId, groups }`                    | install a whole multi-group layout              |
 //!
-//! # Shadow mode
+//! # Authoritative
 //!
-//! Registered and fully served, but **not** driving the live UI: no frontend
-//! subscribes to `layout@<clientId>` or dispatches `layout.*` yet, so these
-//! intents mutate only the shadow store and project to regions nobody renders.
-//! The `appStore` panel-tree reducers and `SplitView` remain authoritative. Per
+//! The region drives the live UI (inversion #2543/#2544; appStore's mirror
+//! fields deleted in #2562): the frontend layout bridge subscribes to
+//! `layout@<clientId>`, `SplitView` renders the tree composed from the region,
+//! granular structural mutations dispatch `layout.*` intents, and the structural
+//! writers with no granular intent reseed the whole layout via
+//! `layout.replaceGroups`. `appStore` holds only the raw region view. Per
 //! the substrate contract the result of an intent is never returned inline — it
 //! always arrives as a projection diff on the client's `layout` region.
 

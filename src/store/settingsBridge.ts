@@ -28,7 +28,7 @@
  * # The settings document is opaque
  *
  * `AppSettings` is one large, open-ended JSON document the app loads and saves as a
- * whole. The Rust store models it opaquely (see the shadow's `store.rs`); the
+ * whole. The Rust store models it opaquely (see `settings_projection/store.rs`); the
  * region snapshot **is** that document, so the projected view maps one-to-one to
  * the frontend {@link AppSettings} shape and reading from it is a pure read.
  */
