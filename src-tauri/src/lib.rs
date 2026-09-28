@@ -53,11 +53,11 @@ mod file_browser_projection;
 /// transfer subsystem (public so integration tests can drive the transfer
 /// subsystem / `TransferRegistry` directly — issue #1245).
 pub mod files;
-/// Shadow `LayoutStore` (#2151, Phase 3 step 1 of #2139): the client-scoped
+/// Layout authority (#2151, Phase 3 of #2139): the client-scoped
 /// `layout@<clientId>` projection region + `layout.*` intents, built on the
-/// ported panel-tree algebra (#2143). The remaining migration outlier —
-/// registered and served but **not yet** driving the live UI (deferred reducer
-/// removal tracked as #2562) — see [`layout`].
+/// ported panel-tree algebra (#2143). Authoritative for panel-tree structure and
+/// driving the live UI (inversion #2543/#2544, appStore mirror fields deleted in
+/// #2562) — see [`layout`].
 mod layout;
 /// Native Linux X11 `CLIPBOARD`-selection binding for pasting remote-copied RDP
 /// clipboard files into local apps with delayed rendering (`text/uri-list`) —
