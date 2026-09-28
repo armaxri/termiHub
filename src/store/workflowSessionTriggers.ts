@@ -112,6 +112,19 @@ function launchTriggeredRun(
   return true;
 }
 
+/**
+ * Run a trigger hook without letting it fail its caller: the hooks sit on the
+ * tab-close and session-exit paths, which must complete even if trigger
+ * dispatch throws.
+ */
+function guarded(what: string, hook: () => void): void {
+  try {
+    hook();
+  } catch (err) {
+    frontendLog("workflow", `${what} trigger hook failed: ${String(err)}`);
+  }
+}
+
 // ── On-disconnect ────────────────────────────────────────────────────────────
 
 /**
@@ -153,7 +166,9 @@ export function notifyWorkflowSessionExited(
   tabId: string,
   reason: TerminalExitReason
 ): void {
-  notifyWorkflowSessionEnded(store, tabId, sessionEndCauseFromExit(reason));
+  guarded("session-exit", () =>
+    notifyWorkflowSessionEnded(store, tabId, sessionEndCauseFromExit(reason))
+  );
 }
 
 /**
@@ -162,16 +177,18 @@ export function notifyWorkflowSessionExited(
  * the tab's end-of-session record is dropped with the tab.
  */
 export function notifyWorkflowTabClosing(store: WorkflowTriggerStore, tabId: string): void {
-  const tab = collectLiveTabs(store.get()).find((t) => t.id === tabId);
-  const live =
-    !!tab?.sessionId && !isSessionEndHandled(tabId) && !regionExited(currentSessionView()[tabId]);
-  if (live) notifyWorkflowSessionEnded(store, tabId, "user-close");
-  armSessionEnd(tabId);
+  guarded("tab-close", () => {
+    const tab = collectLiveTabs(store.get()).find((t) => t.id === tabId);
+    const live =
+      !!tab?.sessionId && !isSessionEndHandled(tabId) && !regionExited(currentSessionView()[tabId]);
+    if (live) notifyWorkflowSessionEnded(store, tabId, "user-close");
+    armSessionEnd(tabId);
+  });
 }
 
 /** A tab's (new) session connected: re-arm its on-disconnect guard. */
 export function notifyWorkflowSessionStarted(tabId: string): void {
-  armSessionEnd(tabId);
+  guarded("session-start", () => armSessionEnd(tabId));
 }
 
 // ── On-output-match ──────────────────────────────────────────────────────────
@@ -181,7 +198,11 @@ let outputStore: WorkflowTriggerStore | null = null;
 
 /** The raw-output tap: O(1), defers all work to the engine's batch. */
 function outputTap(sessionId: string, encoded: string): void {
-  outputEngine?.enqueue(sessionId, encoded);
+  try {
+    outputEngine?.enqueue(sessionId, encoded);
+  } catch {
+    // Never let trigger bookkeeping disturb terminal output delivery.
+  }
 }
 
 function createOutputEngine(): OutputTriggerEngine {

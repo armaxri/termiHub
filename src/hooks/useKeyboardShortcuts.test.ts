@@ -17,7 +17,8 @@ vi.mock("@/services/keybindings", () => ({
   }),
 }));
 
-vi.mock("@/services/workflowTriggers", () => ({
+vi.mock("@/services/workflowTriggers", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/workflowTriggers")>()),
   matchHotkeyWorkflow: vi.fn(() => null),
 }));
 
