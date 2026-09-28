@@ -1387,4 +1387,141 @@ pub(crate) mod tests {
             );
         }
     }
+
+    // ── correlation id in daemon logs (#3782, OBS-004) ────────────────
+
+    /// A `Write` sink shared with the test, so formatted log lines can be read
+    /// back after the daemon code under test ran.
+    #[derive(Clone, Default)]
+    struct LogBuf(std::sync::Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogBuf {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl LogBuf {
+        fn text(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+        }
+    }
+
+    /// Install a plain-text fmt subscriber writing into a [`LogBuf`] as this
+    /// thread's default. Pins two no-op dispatchers first so a parallel test
+    /// cannot cache a shared callsite's interest as `never` for this subscriber
+    /// (see `file_log`'s tests).
+    fn capture_logs() -> (LogBuf, tracing::subscriber::DefaultGuard) {
+        use std::sync::OnceLock;
+        use tracing::subscriber::NoSubscriber;
+        use tracing::Dispatch;
+        static PINNED: OnceLock<[Dispatch; 2]> = OnceLock::new();
+        PINNED.get_or_init(|| {
+            [
+                Dispatch::new(NoSubscriber::default()),
+                Dispatch::new(NoSubscriber::default()),
+            ]
+        });
+        let buf = LogBuf::default();
+        let writer = buf.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .with_max_level(tracing::Level::DEBUG)
+            .finish();
+        (buf, tracing::subscriber::set_default(subscriber))
+    }
+
+    /// A config whose type id no registry knows: the daemon session logs its
+    /// start line, then fails fast at connection-type creation — no real
+    /// connection or endpoint is needed to observe the loop's span.
+    fn unknown_type_config() -> DaemonConfig {
+        DaemonConfig {
+            session_id: "sess-3782".to_string(),
+            endpoint: "unused".to_string(),
+            type_id: "no-such-type".to_string(),
+            settings: serde_json::json!({}),
+            buffer_size: DEFAULT_BUFFER_SIZE,
+        }
+    }
+
+    /// Run the daemon session under the span built from `correlation_id`, and
+    /// return what it logged.
+    async fn logged_session(correlation_id: Option<String>) -> String {
+        let (buf, _guard) = capture_logs();
+        let config = unknown_type_config();
+        let span = daemon_session_span(&config, correlation_id.as_deref());
+        let result = run_daemon_session(config).instrument(span).await;
+        assert!(result.is_err(), "the unknown type id must fail the session");
+        buf.text()
+    }
+
+    #[test]
+    fn correlation_id_from_env_reads_a_valid_id() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var(CORRELATION_ID_ENV, "desk-sid-1");
+        let id = correlation_id_from_env();
+        std::env::remove_var(CORRELATION_ID_ENV);
+        assert_eq!(id.as_deref(), Some("desk-sid-1"));
+    }
+
+    #[test]
+    fn correlation_id_from_env_is_none_when_unset() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var(CORRELATION_ID_ENV);
+        assert_eq!(correlation_id_from_env(), None);
+    }
+
+    #[test]
+    fn correlation_id_from_env_drops_a_malformed_id() {
+        // The env var is untrusted input: an id that could forge a log line
+        // (newline, escape sequence) or is oversized must be dropped.
+        let _guard = ENV_LOCK.lock().unwrap();
+        for bad in ["evil\nforged line", "\u{1b}[31m", "has space", ""] {
+            std::env::set_var(CORRELATION_ID_ENV, bad);
+            assert_eq!(correlation_id_from_env(), None, "{bad:?} must be dropped");
+        }
+        std::env::set_var(CORRELATION_ID_ENV, "a".repeat(10_000));
+        assert_eq!(correlation_id_from_env(), None, "oversized id dropped");
+        std::env::remove_var(CORRELATION_ID_ENV);
+    }
+
+    #[tokio::test]
+    async fn daemon_log_lines_carry_the_launch_correlation_id() {
+        let logs = logged_session(Some("desk-sid-1".to_string())).await;
+        let start = logs
+            .lines()
+            .find(|l| l.contains("Session daemon starting"))
+            .unwrap_or_else(|| panic!("no daemon start line in {logs:?}"));
+        assert!(start.contains("agent_session"), "{start}");
+        assert!(start.contains("correlation_id=desk-sid-1"), "{start}");
+        assert!(start.contains("session_id=sess-3782"), "{start}");
+    }
+
+    #[tokio::test]
+    async fn daemon_log_lines_have_no_correlation_field_without_an_id() {
+        let logs = logged_session(None).await;
+        assert!(logs.contains("Session daemon starting"), "{logs:?}");
+        assert!(logs.contains("agent_session"), "{logs:?}");
+        assert!(!logs.contains("correlation_id"), "{logs:?}");
+    }
+
+    #[tokio::test]
+    async fn a_malformed_launch_correlation_id_never_reaches_the_log() {
+        let id = {
+            let _guard = ENV_LOCK.lock().unwrap();
+            std::env::set_var(CORRELATION_ID_ENV, "evil\nforged line");
+            let id = correlation_id_from_env();
+            std::env::remove_var(CORRELATION_ID_ENV);
+            id
+        };
+        let logs = logged_session(id).await;
+        assert!(logs.contains("Session daemon starting"), "{logs:?}");
+        assert!(!logs.contains("correlation_id"), "{logs:?}");
+        assert!(!logs.contains("forged"), "{logs:?}");
+    }
 }

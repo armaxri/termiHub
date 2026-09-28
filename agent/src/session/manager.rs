@@ -4618,4 +4618,7 @@ mod tests {
 
     /// Keyboard-interactive prompt relay through daemon launches (#3375).
     mod ki_prompt_tests;
+
+    /// The desktop's correlation id reaches the daemon launch (#3782).
+    mod correlation_tests;
 }
