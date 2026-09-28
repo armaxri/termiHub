@@ -22,6 +22,13 @@ on:
   # Called by release-candidate.yml (#3652) on the exact release commit; the
   # checkouts below default to the caller's sha, and no path filter applies.
   workflow_call:
+    inputs:
+      measure_coverage:
+        # The release candidate opts in (#3658) so the release run can show the
+        # unified coverage and the integration gap for the exact release commit.
+        description: Run the suite under cargo-llvm-cov and upload integration-coverage
+        type: boolean
+        default: false
   # Also run when the fixtures, the integration tests, or the backend *source*
   # they exercise change — so a PR that edits the SSH/SFTP/telnet/serial/Docker
   # backends gets integration feedback without waiting for the nightly run. The
@@ -90,14 +97,18 @@ jobs:
       # PR-triggered runs stay a plain `cargo test`, so PR runtime is unchanged.
       # The develop nightly is dispatched by integration-coverage-nightly.yml.
       #
-      # NOT when called by release-candidate.yml (#3652): under workflow_call,
-      # `github.event_name` and `github.workflow_ref` are the CALLER's, so a
-      # dispatched candidate run would otherwise read as `workflow_dispatch` and
-      # instrument. The release gate runs the plain `cargo test` instead — its
-      # artifact would sit on the Release Candidate run, which
+      # A CALLED run instruments only when its caller asks via the
+      # `measure_coverage` input: under workflow_call, `github.event_name` and
+      # `github.workflow_ref` are the CALLER's, so a dispatched candidate run
+      # would otherwise read as `workflow_dispatch`; the workflow_ref check
+      # tells a direct run of this file from a called one. release-candidate.yml
+      # opts in (#3658): its artifact sits on the Release Candidate run, which
       # fetch-integration-coverage.mjs (it lists integration-fixtures.yml runs)
-      # never reads, so instrumenting it would only slow the gate. The
-      # workflow_ref check tells a direct run of this file from a called one.
+      # never reads, so it does not leak into coverage.yml's nightly merge; the
+      # release coverage summary (scripts/internal/release-coverage-summary.mjs)
+      # reads it instead. There a coverage problem must never fail the gate:
+      # the cargo-llvm-cov install is non-fatal and the suite falls back to a
+      # plain `cargo test` without it (MEASURE_COVERAGE_OPTIONAL).
       #
       # NOT on `schedule` either (#3664): a scheduled run fires from main but
       # checks out develop, so its run metadata (branch, head_sha) would not
@@ -105,8 +116,10 @@ jobs:
       # merge develop's lcov into main's report. develop's instrumented run is
       # the integration-coverage-nightly.yml dispatch.
       MEASURE_COVERAGE: >-
-        ${{ github.event_name == 'workflow_dispatch'
-        && contains(github.workflow_ref, '/.github/workflows/integration-fixtures.yml@') }}
+        ${{ (github.event_name == 'workflow_dispatch'
+        && contains(github.workflow_ref, '/.github/workflows/integration-fixtures.yml@'))
+        || inputs.measure_coverage == true }}
+      MEASURE_COVERAGE_OPTIONAL: ${{ inputs.measure_coverage == true }}
 
     steps:
       - name: Checkout code
@@ -127,6 +140,8 @@ jobs:
 
       - name: Install cargo-llvm-cov
         if: env.MEASURE_COVERAGE == 'true'
+        # Optional for a release-candidate call: the suite then runs uninstrumented.
+        continue-on-error: ${{ env.MEASURE_COVERAGE_OPTIONAL == 'true' }}
         uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
         with:
           tool: cargo-llvm-cov
@@ -203,6 +218,14 @@ jobs:
         # defers the lcov export to the always() step below, so a failing test
         # still yields coverage for everything that did run.
         run: |
+          if [ "$MEASURE_COVERAGE" = "true" ] && ! cargo llvm-cov --version >/dev/null 2>&1; then
+            if [ "$MEASURE_COVERAGE_OPTIONAL" != "true" ]; then
+              echo "::error::cargo-llvm-cov is not installed"
+              exit 1
+            fi
+            echo "::warning::cargo-llvm-cov unavailable; running uninstrumented (no integration coverage)"
+            MEASURE_COVERAGE=false
+          fi
           if [ "$MEASURE_COVERAGE" = "true" ]; then
             cargo llvm-cov --no-report -p termihub-core --all-features -- --test-threads=1
           else
@@ -224,7 +247,11 @@ jobs:
             node scripts/internal/lcov-summary.mjs integration-coverage/integration.lcov
             echo '```'
             echo ""
-            echo "Merged into the unified report by the next Coverage workflow run on this branch."
+            if [ "$MEASURE_COVERAGE_OPTIONAL" = "true" ]; then
+              echo "Merged with the release commit's unit coverage by the Release coverage summary job."
+            else
+              echo "Merged into the unified report by the next Coverage workflow run on this branch."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload integration coverage artifact
