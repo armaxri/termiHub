@@ -45,8 +45,6 @@ use crate::terminal::jsonrpc;
 
 // ── Async I/O task ───────────────────────────────────────────────────
 
-/// Main async I/O task for an agent connection.
-///
 /// TEST-ONLY (#2573): abruptly sever a desktop russh agent transport in-process
 /// by dropping its channel and session handle.
 ///
@@ -139,6 +137,11 @@ pub(super) fn log_agent_reconnect_failed(agent_id: &str, error: &str) {
 }
 
 /// Drive one agent's live I/O and reconnect loop.
+///
+/// Owns the russh `SshSession` and `Channel` exclusively. Concurrently polls
+/// incoming SSH data and outgoing commands using `tokio::select!`. Routes
+/// JSON-RPC responses to waiting callers and notifications to registered
+/// session output channels.
 ///
 /// Wrapped in an `agent_io` span (OBS-004) keyed by `agent_id`, so every nested
 /// log event — handshake, parse errors, reconnect attempts — is groupable and
