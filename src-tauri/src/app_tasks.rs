@@ -79,6 +79,14 @@ impl AppTasks {
         Self::default()
     }
 
+    /// The app's managed registry, or a standalone (never shut down) one when
+    /// the app has none — e.g. a manager built under a mock app in unit tests.
+    pub fn for_app<R: tauri::Runtime>(app: &impl tauri::Manager<R>) -> Self {
+        app.try_state::<AppTasks>()
+            .map(|tasks| tasks.inner().clone())
+            .unwrap_or_default()
+    }
+
     /// Spawn an owned background task onto Tauri's managed runtime and track it
     /// so [`shutdown`](Self::shutdown) will await its completion.
     ///

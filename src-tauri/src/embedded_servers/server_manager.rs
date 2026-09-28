@@ -40,6 +40,7 @@ use super::storage::EmbeddedServerStorage;
 use crate::agent_service::{
     agent_rpc_client, AgentHosted, AgentInstances, AgentStatusPollDelegate, AgentStatusPoller,
 };
+use crate::app_tasks::AppTasks;
 use crate::connection::recovery::RecoveryWarning;
 use crate::credential::CredentialStore;
 use crate::run_location::{Locality, ResolvedLocation, RunLocation, RunLocationResolver};
@@ -140,7 +141,8 @@ impl EmbeddedServerManager {
             agent_servers: AgentInstances::new(),
             run_locations: Mutex::new(HashMap::new()),
             run_location: RunLocationResolver::new(),
-            agent_status_poller: AgentStatusPoller::new(),
+            // App-owned (ARCH-007, #3105): teardown cancels + awaits the poller.
+            agent_status_poller: AgentStatusPoller::with_tasks(AppTasks::for_app(app_handle)),
             app_handle: app_handle.clone(),
             recovery_warnings: Mutex::new(result.warnings),
         })
