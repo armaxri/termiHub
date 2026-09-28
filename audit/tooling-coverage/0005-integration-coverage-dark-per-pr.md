@@ -11,7 +11,7 @@ evidence:
   - docs/testing.md:331
   - docs/testing.md:359
 status: partial
-resolution: "#3659 — nightly fixtures lane instrumented with cargo-llvm-cov, merged into unified report (activates once workflows reach main); frontend/src-tauri harness coverage #3657, release-gate summary #3658"
+resolution: "#3659, #3776 — nightly fixtures lane instrumented + merged into unified report (#3659); release runs show unified unit+integration coverage and gap summary for the exact release sha, advisory (#3776). Remaining: frontend/src-tauri coverage from the Python bridge harness #3657"
 ---
 
 ## What
