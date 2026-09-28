@@ -91,7 +91,10 @@ pub struct ClipboardImageStatus {
     /// image actions when it does not.
     pub supported: bool,
     /// Dimensions of the image the remote most recently copied, if any.
-    #[cfg_attr(test, ts(type = "import(\"./ClipboardImageInfo\").ClipboardImageInfo | null"))]
+    #[cfg_attr(
+        test,
+        ts(type = "import(\"./ClipboardImageInfo\").ClipboardImageInfo | null")
+    )]
     pub image: Option<ClipboardImageInfo>,
 }
 

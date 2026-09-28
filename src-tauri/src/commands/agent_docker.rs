@@ -42,7 +42,10 @@ pub struct AgentDockerContainersResult {
     /// back to a typed name/ID and suggests updating the agent).
     pub supported: bool,
     /// The agent host's containers, running first (empty when unsupported).
-    #[cfg_attr(test, ts(type = "Array<import(\"./DockerContainerInfo\").DockerContainerInfo>"))]
+    #[cfg_attr(
+        test,
+        ts(type = "Array<import(\"./DockerContainerInfo\").DockerContainerInfo>")
+    )]
     pub containers: Vec<ContainerInfo>,
 }
 

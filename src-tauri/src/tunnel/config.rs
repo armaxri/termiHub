@@ -31,12 +31,18 @@ pub enum TunnelType {
     ),
     /// Remote port forwarding: binds a port on the SSH server and forwards to a local target.
     Remote(
-        #[cfg_attr(test, ts(type = "import(\"./RemoteForwardConfig\").RemoteForwardConfig"))]
+        #[cfg_attr(
+            test,
+            ts(type = "import(\"./RemoteForwardConfig\").RemoteForwardConfig")
+        )]
         RemoteForwardConfig,
     ),
     /// Dynamic (SOCKS5) forwarding: binds a local port as a SOCKS5 proxy via SSH.
     Dynamic(
-        #[cfg_attr(test, ts(type = "import(\"./DynamicForwardConfig\").DynamicForwardConfig"))]
+        #[cfg_attr(
+            test,
+            ts(type = "import(\"./DynamicForwardConfig\").DynamicForwardConfig")
+        )]
         DynamicForwardConfig,
     ),
 }
