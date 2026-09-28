@@ -9,8 +9,8 @@
 //! frontend as Tauri events.
 //!
 //! Carved verbatim out of the parent `agent_manager` module: no behaviour,
-//! emit-order, channel, lock or task change. The I/O task and reconnect
-//! machinery that *call* these functions stay in the parent.
+//! emit-order, channel, lock or task change. The I/O task that *calls* these
+//! functions lives in the sibling `io_task` module (#3794).
 
 use std::collections::HashMap;
 
