@@ -217,7 +217,8 @@ def _make_app(monkeypatch, tmp_path, system):
     monkeypatch.setattr(orchestrator, "_terminate_tree", lambda *_a, **_k: None)
     captured = {}
 
-    def _fake_popen(_argv, *, env, **_kwargs):
+    def _fake_popen(argv, *, env, **_kwargs):
+        captured["argv"] = list(argv)
         captured["env"] = env
         return _FakePopen()
 
@@ -243,6 +244,29 @@ def test_start_omits_webview2_folder_off_windows(tmp_path, monkeypatch):
     instance.start(9999)
     try:
         assert "WEBVIEW2_USER_DATA_FOLDER" not in captured["env"]
+    finally:
+        instance.stop()
+
+
+def test_start_passes_extra_args_after_the_binary(tmp_path, monkeypatch):
+    instance, captured = _make_app(monkeypatch, tmp_path, "Linux")
+    instance.start(9999, ["--workspace", "Dev"])
+    try:
+        assert captured["argv"] == [str(tmp_path / "app.exe"), "--workspace", "Dev"]
+    finally:
+        instance.stop()
+
+
+def test_restart_args_apply_to_that_relaunch_only(tmp_path, monkeypatch):
+    # A CLI launch (e.g. `--workspace`, #3778) must not stick to later restarts.
+    instance, captured = _make_app(monkeypatch, tmp_path, "Linux")
+    instance.start(9999)
+    try:
+        assert captured["argv"] == [str(tmp_path / "app.exe")]
+        instance.restart(args=["--workspace", "Dev"])
+        assert captured["argv"][1:] == ["--workspace", "Dev"]
+        instance.restart()
+        assert captured["argv"] == [str(tmp_path / "app.exe")]
     finally:
         instance.stop()
 

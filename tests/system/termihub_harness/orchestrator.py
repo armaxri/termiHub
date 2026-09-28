@@ -24,7 +24,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Callable, IO, Optional
+from typing import Callable, IO, Optional, Sequence
 
 import psutil
 
@@ -309,8 +309,11 @@ class AppInstance:
             return None
         return self._process.poll()
 
-    def start(self, bridge_port: int) -> "AppInstance":
+    def start(self, bridge_port: int, args: Sequence[str] = ()) -> "AppInstance":
         """Launch the app pointed at the bridge server on ``bridge_port``.
+
+        ``args`` are extra command-line arguments for this launch only, e.g.
+        ``["--workspace", "Dev"]`` to exercise the CLI workspace launch (#3778).
 
         The app's merged stdout/stderr is **captured** to :attr:`log_path` (for
         the failure-artifact bundle) while still being echoed live, so ``-s`` runs
@@ -330,7 +333,7 @@ class AppInstance:
         # Append so the log survives a restart() (same config dir, same file).
         self._log_file = open(self._log_path, "a", encoding="utf-8", errors="replace")
         self._process = subprocess.Popen(
-            [str(self._binary)],
+            [str(self._binary), *args],
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -389,12 +392,20 @@ class AppInstance:
                 pass
             self._log_file = None
 
-    def restart(self, between: Optional[Callable[[], None]] = None) -> None:
+    def restart(
+        self,
+        between: Optional[Callable[[], None]] = None,
+        *,
+        args: Sequence[str] = (),
+    ) -> None:
         """Kill and relaunch against the same bridge port and config dir.
 
         ``between`` runs while the app is down (after ``stop``, before ``start``)
         — used to tamper with on-disk config so the relaunch exercises startup
         recovery, which can only be done while no app holds the files.
+
+        ``args`` are extra command-line arguments for the relaunch only; a later
+        plain ``restart()`` starts the app without them again.
         """
         if self._bridge_port is None:
             raise RuntimeError("app was never started")
@@ -402,7 +413,7 @@ class AppInstance:
         self.stop()
         if between is not None:
             between()
-        self.start(port)
+        self.start(port, args)
 
     @property
     def pid(self) -> Optional[int]:
