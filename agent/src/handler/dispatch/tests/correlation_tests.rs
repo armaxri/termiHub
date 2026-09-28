@@ -99,7 +99,8 @@ fn install() -> (Capture, tracing::subscriber::DefaultGuard) {
         ]
     });
     let capture = Capture::default();
-    let guard = tracing::subscriber::set_default(tracing_subscriber::registry().with(capture.clone()));
+    let guard =
+        tracing::subscriber::set_default(tracing_subscriber::registry().with(capture.clone()));
     (capture, guard)
 }
 
@@ -118,13 +119,19 @@ async fn connection_create_logs_under_the_desktop_correlation_id() {
         2,
     )
     .await;
-    let agent_sid = r["result"]["session_id"].as_str().expect("created").to_string();
+    let agent_sid = r["result"]["session_id"]
+        .as_str()
+        .expect("created")
+        .to_string();
 
     let events = capture.events_with_message(CREATED);
     assert_eq!(events.len(), 1, "{events:?}");
     let e = &events[0];
     assert_eq!(e.get("span").map(String::as_str), Some("agent_session"));
-    assert_eq!(e.get("correlation_id").map(String::as_str), Some("desk-sid-1"));
+    assert_eq!(
+        e.get("correlation_id").map(String::as_str),
+        Some("desk-sid-1")
+    );
     assert_eq!(e.get("session_id"), Some(&agent_sid));
     assert_eq!(e.get("type_id").map(String::as_str), Some("local"));
 }
@@ -165,7 +172,10 @@ async fn connection_create_drops_a_malformed_correlation_id() {
         2,
     )
     .await;
-    assert!(r.get("result").is_some(), "a bad id must not fail the create: {r}");
+    assert!(
+        r.get("result").is_some(),
+        "a bad id must not fail the create: {r}"
+    );
 
     let events = capture.events_with_message(CREATED);
     assert_eq!(events.len(), 1, "{events:?}");

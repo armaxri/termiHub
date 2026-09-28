@@ -1386,6 +1386,8 @@ struct RetainAgent {
     /// (dropping the sender would EOF the reader and look like a genuine drop,
     /// removing the tab binding before a deliberate close can observe it).
     outputs: std::sync::Mutex<Vec<OutputSender>>,
+    /// The `correlation_id` every `connection.create` carried (#3085).
+    correlation_ids: std::sync::Arc<std::sync::Mutex<Vec<Option<String>>>>,
 }
 
 type Recorded = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
@@ -1406,6 +1408,7 @@ impl RetainAgent {
                 cleared: cleared.clone(),
                 retained: retained.clone(),
                 outputs: std::sync::Mutex::new(Vec::new()),
+                correlation_ids: Default::default(),
             },
             retained,
             cleared,
@@ -1477,6 +1480,22 @@ impl AgentRpcClient for RetainAgent {
             attached: true,
             definition_id: definition_id.map(str::to_string),
         })
+    }
+    fn create_session_owned(
+        &self,
+        agent_id: &str,
+        session_type: &str,
+        config: Value,
+        title: Option<&str>,
+        definition_id: Option<&str>,
+        _owner: Option<&str>,
+        correlation_id: Option<&str>,
+    ) -> Result<AgentSessionInfo, TerminalError> {
+        self.correlation_ids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(correlation_id.map(str::to_string));
+        self.create_session(agent_id, session_type, config, title, definition_id)
     }
     fn attach_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
         Ok(())
@@ -1613,6 +1632,30 @@ async fn open_agent_tab(manager: &SessionManager, connect_id: &str, resilient: b
         )
         .await
         .expect("agent session should open")
+}
+
+#[tokio::test]
+async fn agent_connect_sends_the_desktop_session_id_as_correlation_id() {
+    // #3085 (OBS-004): the agent logs the session under the desktop's own
+    // session id, so `connection.create` must carry exactly that id.
+    let mut registry = termihub_core::connection::ConnectionTypeRegistry::new();
+    registry.register(
+        "mock",
+        "Mock",
+        "mock",
+        Box::new(|| Box::new(MockConnection::default())),
+    );
+    let (agent, _retained, _cleared) = RetainAgent::recording();
+    let correlation_ids = agent.correlation_ids.clone();
+    let manager = SessionManager::new(registry, Arc::new(agent));
+
+    let session_id = open_agent_tab(&manager, "tab-c:0", false).await;
+
+    assert_eq!(
+        *correlation_ids.lock().unwrap(),
+        vec![Some(session_id)],
+        "connection.create must carry the desktop session id"
+    );
 }
 
 #[tokio::test]

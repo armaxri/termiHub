@@ -418,8 +418,10 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     /// [`create_session`](Self::create_session) on behalf of the desktop
     /// connect `owner` (its `connect_id`, #3437): an SSH keyboard-interactive
     /// round the agent relays while this create runs is attributed to `owner`,
-    /// so closing / cancelling that connect cancels it. Defaults to a plain
-    /// create so test doubles need not implement it.
+    /// so closing / cancelling that connect cancels it. `correlation_id` is the
+    /// desktop session id the agent logs this session under (#3085). Defaults
+    /// to a plain create so test doubles need not implement it.
+    #[allow(clippy::too_many_arguments)]
     fn create_session_owned(
         &self,
         agent_id: &str,
@@ -428,6 +430,7 @@ pub trait AgentRpcClient: Send + Sync + 'static {
         title: Option<&str>,
         definition_id: Option<&str>,
         _owner: Option<&str>,
+        _correlation_id: Option<&str>,
     ) -> Result<AgentSessionInfo, TerminalError> {
         self.create_session(agent_id, session_type, config, title, definition_id)
     }
@@ -1588,7 +1591,8 @@ impl<R: Runtime> AgentConnectionManager<R> {
 
     /// [`create_session`](Self::create_session) with its relayed prompt rounds
     /// attributed to the desktop connect `owner` (#3437) for as long as the
-    /// create is in flight.
+    /// create is in flight, sending `correlation_id` (#3085) for the agent's logs.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_session_owned(
         &self,
         agent_id: &str,
@@ -1597,6 +1601,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
         title: Option<&str>,
         definition_id: Option<&str>,
         owner: Option<&str>,
+        correlation_id: Option<&str>,
     ) -> Result<AgentSessionInfo, TerminalError> {
         let _owned = match owner {
             Some(owner) => self
@@ -1604,7 +1609,9 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 .map(|a| a.begin_owned_create(owner)),
             None => None,
         };
-        self.create_session(agent_id, session_type, config, title, definition_id)
+        let params =
+            session_create_params(session_type, config, title, definition_id, correlation_id)?;
+        self.send_create(agent_id, params)
     }
 
     /// Mark the in-flight creates owned by the desktop connect `owner` cancelled
@@ -1640,16 +1647,16 @@ impl<R: Runtime> AgentConnectionManager<R> {
         title: Option<&str>,
         definition_id: Option<&str>,
     ) -> Result<AgentSessionInfo, TerminalError> {
-        let params = serde_json::to_value(SessionCreateParams {
-            session_type: session_type.to_string(),
-            config,
-            title: title.map(str::to_string),
-            definition_id: definition_id.map(str::to_string),
-        })
-        .map_err(|e| {
-            TerminalError::RemoteError(format!("Failed to build connection.create params: {e}"))
-        })?;
+        let params = session_create_params(session_type, config, title, definition_id, None)?;
+        self.send_create(agent_id, params)
+    }
 
+    /// Send a built `connection.create` request and parse its result.
+    fn send_create(
+        &self,
+        agent_id: &str,
+        params: Value,
+    ) -> Result<AgentSessionInfo, TerminalError> {
         // The agent's SSH connect may wait on the user answering a relayed OTP
         // prompt (#3375): exclude that time from the request timeout.
         let result = self.send_request_excluding_prompts(
@@ -2279,6 +2286,7 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
         title: Option<&str>,
         definition_id: Option<&str>,
         owner: Option<&str>,
+        correlation_id: Option<&str>,
     ) -> Result<AgentSessionInfo, TerminalError> {
         AgentConnectionManager::create_session_owned(
             self,
@@ -2288,6 +2296,7 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
             title,
             definition_id,
             owner,
+            correlation_id,
         )
     }
 
@@ -2850,6 +2859,29 @@ fn filter_reconnect_backlog(drained: Vec<AgentIoCommand>) -> Vec<AgentIoCommand>
 /// JSON-RPC responses to waiting callers and notifications to registered
 /// session output channels.
 #[allow(clippy::too_many_arguments)]
+/// Build `connection.create` params from the shared DTO. `correlation_id` is
+/// the desktop's session id (#3085, OBS-004): the agent logs the session under
+/// it so both sides' log lines join on one id. Omitted from the wire when
+/// `None`, and an agent older than protocol 0.15.0 ignores it.
+fn session_create_params(
+    session_type: &str,
+    config: Value,
+    title: Option<&str>,
+    definition_id: Option<&str>,
+    correlation_id: Option<&str>,
+) -> Result<Value, TerminalError> {
+    serde_json::to_value(SessionCreateParams {
+        session_type: session_type.to_string(),
+        config,
+        title: title.map(str::to_string),
+        definition_id: definition_id.map(str::to_string),
+        correlation_id: correlation_id.map(str::to_string),
+    })
+    .map_err(|e| {
+        TerminalError::RemoteError(format!("Failed to build connection.create params: {e}"))
+    })
+}
+
 /// Structured reconnect-lifecycle log vocabulary (OBS-004).
 ///
 /// Each line carries `agent_id` (and the failure `error`) as a `tracing`

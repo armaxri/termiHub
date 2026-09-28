@@ -35,7 +35,7 @@ use termihub_core::files::FileEntry;
 use super::line_ending::{normalize_line_endings, LineEnding};
 use super::output_sink::TerminalOutputSink;
 use super::persistent_controller::PersistentController;
-use super::remote_proxy::{ReattachOutcome, RemoteProxy};
+use super::remote_proxy::{ReattachOutcome, RemoteProxy, CORRELATION_ID_KEY};
 use super::retained_request::{RetainedConnectionRequest, RetainedRequestStore};
 use super::session_log::{default_session_log_path, desktop_clock};
 use super::ssh_keyboard_interactive::with_prompt_owner;
@@ -939,9 +939,12 @@ impl SessionManager {
                 // Remote: create proxy to agent.
                 let mut proxy = RemoteProxy::new(aid.to_string(), self.agent_manager.clone());
                 // Wrap settings with the type information for the remote side.
+                // The desktop session id rides along so the agent logs this
+                // session under the same id (#3085, OBS-004).
                 let remote_settings = serde_json::json!({
                     "type": type_id,
                     "config": settings,
+                    (CORRELATION_ID_KEY): session_id,
                 });
                 // Scoped to the connect id so an OTP prompt it raises is owned
                 // by this tab and cancelled when the tab closes (#3437).
