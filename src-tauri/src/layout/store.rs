@@ -1,4 +1,4 @@
-//! The authoritative, client-scoped layout model behind the shadow
+//! The authoritative, client-scoped layout model behind the
 //! `layout@<clientId>` projection region (#2151, widened for #2283 slice A).
 //!
 //! Every structural transform delegates to the pure panel-tree algebra ported in
@@ -194,7 +194,7 @@ impl ClientLayout {
     }
 }
 
-/// The shadow layout authority. Owns one [`ClientLayout`] per attached client,
+/// The layout authority. Owns one [`ClientLayout`] per attached client,
 /// keyed by `clientId`; an unknown client is seeded lazily on first touch.
 #[derive(Default)]
 pub struct LayoutStore {
