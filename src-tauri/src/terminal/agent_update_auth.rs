@@ -15,11 +15,10 @@
 
 use std::time::Duration;
 
-use serde_json::Value;
 use tracing::warn;
 
 use termihub_core::backends::ssh::handler::SshSession;
-use termihub_core::protocol::methods::UpdateAuthToken;
+use termihub_core::protocol::methods::{InitializeResult, UpdateAuthToken};
 
 use crate::utils::remote_exec::read_small_file_async;
 
@@ -31,10 +30,15 @@ pub const UPDATE_TOKEN_READ_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_TOKEN_LEN: usize = 1024;
 
 /// The token-file path an agent advertised in its `initialize` result, if any.
-pub fn token_path_from_initialize(result: &Value) -> Option<String> {
+///
+/// Generic over the capabilities payload so both the initial connect (which
+/// parses the desktop capabilities) and the reconnect path (which ignores them)
+/// read it off the shared [`InitializeResult`] DTO (DUP-001, #3226). An empty
+/// path reads as "none advertised".
+pub fn token_path_from_initialize<C>(result: &InitializeResult<C>) -> Option<String> {
     result
-        .get("update_auth_token_path")
-        .and_then(Value::as_str)
+        .update_auth_token_path
+        .as_deref()
         .filter(|p| !p.is_empty())
         .map(str::to_string)
 }
@@ -74,9 +78,18 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// Parse an `initialize` result the way the reconnect path does
+    /// (capabilities ignored).
+    fn parse(v: serde_json::Value) -> InitializeResult<serde::de::IgnoredAny> {
+        serde_json::from_value(v).expect("initialize result parses")
+    }
+
     #[test]
     fn token_path_is_read_from_the_initialize_result() {
-        let result = json!({ "update_auth_token_path": "/home/u/.config/termihub-agent/t" });
+        let result = parse(json!({
+            "capabilities": {},
+            "update_auth_token_path": "/home/u/.config/termihub-agent/t",
+        }));
         assert_eq!(
             token_path_from_initialize(&result).as_deref(),
             Some("/home/u/.config/termihub-agent/t")
@@ -85,14 +98,24 @@ mod tests {
 
     #[test]
     fn an_older_agent_advertises_no_token_path() {
-        assert_eq!(token_path_from_initialize(&json!({})), None);
         assert_eq!(
-            token_path_from_initialize(&json!({ "update_auth_token_path": "" })),
+            token_path_from_initialize(&parse(json!({ "capabilities": {} }))),
             None
         );
         assert_eq!(
-            token_path_from_initialize(&json!({ "update_auth_token_path": 7 })),
+            token_path_from_initialize(&parse(json!({
+                "capabilities": {},
+                "update_auth_token_path": "",
+            }))),
             None
+        );
+        // A non-string path is a malformed result, not a path.
+        assert!(
+            serde_json::from_value::<InitializeResult<serde::de::IgnoredAny>>(json!({
+                "capabilities": {},
+                "update_auth_token_path": 7,
+            }))
+            .is_err()
         );
     }
 

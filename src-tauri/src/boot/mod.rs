@@ -538,13 +538,13 @@ pub(crate) fn init_tunnels(
 fn register_all_projection_intents(app: &tauri::App) -> crate::projection::HandlerRegistry {
     let mut registry = crate::projection::HandlerRegistry::new();
     tunnel::projection::register_tunnel_intents(&mut registry, app.handle().clone());
-    // Shadow LayoutStore (#2151 step 1): client-scoped
-    // `layout@<clientId>` region + `layout.*` intents on the ported
-    // panel-tree algebra (#2143). Layout is the remaining migration
-    // outlier: the store is managed authoritative state and serves
-    // intents, but nothing in the live UI subscribes to or renders the
-    // region yet — still a shadow (deferred reducer removal tracked as
-    // #2562; steps 2+ cut mutations, then rendering, over to it). No
+    // LayoutStore (#2151): client-scoped `layout@<clientId>` region +
+    // `layout.*` intents on the ported panel-tree algebra (#2143).
+    // Authoritative for panel-tree structure and driving the live UI
+    // (inversion #2543/#2544; appStore's mirror fields deleted in #2562):
+    // `SplitView` renders the tree composed from the region, granular
+    // structural mutations dispatch `layout.*` intents, and the non-intent
+    // structural writers reseed the region via `layout.replaceGroups`. No
     // client region is seeded here: layout regions are client-scoped
     // and created lazily on a client's first `layout.*` intent.
     app.manage(Arc::new(layout::LayoutStore::new()));

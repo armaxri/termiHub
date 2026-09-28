@@ -1277,7 +1277,11 @@ signature = Ed25519-sign(termiHub release key, message)             (64 bytes, b
 ```
 
 Release assets publish it as `<asset>.sig` next to `<asset>.sha256`; the desktop forwards its
-contents as `signature`, and the self-updater downloads it itself. A signature supplied with
+contents as `signature`, and the self-updater downloads it itself. A **release desktop**
+verifies the same signature itself (#3330) before any deploy — immediate install over SSH, the
+Windows fallback, and the coordinated push — with the same code
+(`termihub_core::agent_update_signature`) and the same compiled-in key, so it never pushes a
+binary the agent would refuse. A signature supplied with
 `binaryPath` is checked before the update is staged, so a refused update fails the call with
 `-32021` instead of being deferred. A **release-built** agent refuses a missing signature
 and, while built from the placeholder key file, every update. A **debug** agent tolerates a
