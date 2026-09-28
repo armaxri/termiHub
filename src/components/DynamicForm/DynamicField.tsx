@@ -3,11 +3,12 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { HelpCircle, Info, Plus, RefreshCw, TriangleAlert, X } from "lucide-react";
 import type { SettingsField, FieldType } from "@/types/schema";
 import { KeyPathInput } from "@/components/Settings/KeyPathInput";
-import { listDockerContainers, listSerialPorts } from "@/services/api";
+import { listAgentDockerContainers, listDockerContainers, listSerialPorts } from "@/services/api";
 import type { DockerContainerInfo } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Button, Input, Modal, NumberInput, Select, Toggle } from "@/components/ui";
 import { fieldPlatformLimitation } from "@/utils/platformFieldSupport";
+import { backendErrorMessage } from "@/utils/backendErrorCode";
 
 interface DynamicFieldProps {
   field: SettingsField;
@@ -32,9 +33,11 @@ interface DynamicFieldProps {
   /**
    * Context for `dockerContainer` fields (PROD-017): the connection's selected
    * container runtime (`auto` / `docker` / `podman`) the picker lists from,
-   * and whether local listing is possible at all. Listing is disabled for
-   * agent-hosted connections — the local runtime is not the agent's — so the
-   * field falls back to a typed name/ID. Defaults to enabled with `auto`.
+   * and whether listing is possible at all. For an agent-hosted connection the
+   * local runtime is not the agent's: pass the agent's id so the picker lists
+   * the agent host's containers (#3424); without one, listing is disabled and
+   * the field falls back to a typed name/ID. Defaults to local listing with
+   * `auto`.
    */
   containerContext?: ContainerContext;
   /**
@@ -634,14 +637,36 @@ function SerialPortField({
 export interface ContainerContext {
   /** Selected container runtime setting (`auto` / `docker` / `podman`). */
   runtime?: string;
-  /** False when the containers cannot be listed locally (agent-hosted). */
+  /** False when the containers cannot be listed at all (agent-hosted, no agent id). */
   listingEnabled: boolean;
+  /**
+   * List the containers of this connected agent's host instead of the local
+   * runtime (#3424). An agent too old to list containers degrades to the
+   * typed name/ID field.
+   */
+  agentId?: string;
 }
 
 type ContainerListState =
   | { status: "loading" }
   | { status: "loaded"; containers: DockerContainerInfo[] }
-  | { status: "error"; message: string };
+  | { status: "error"; message: string }
+  /** The agent predates `docker.list_containers` (#3424). */
+  | { status: "unsupported" };
+
+/** Fetch the picker's containers from the agent (when given) or the local runtime. */
+async function fetchContainers(
+  runtime: string | undefined,
+  agentId: string | undefined
+): Promise<ContainerListState> {
+  if (agentId === undefined) {
+    return { status: "loaded", containers: await listDockerContainers(runtime) };
+  }
+  const result = await listAgentDockerContainers(agentId, runtime);
+  return result.supported
+    ? { status: "loaded", containers: result.containers }
+    : { status: "unsupported" };
+}
 
 /** Case-insensitive match of the typed text against a container's name, image or ID prefix. */
 function containerMatches(c: DockerContainerInfo, query: string): boolean {
@@ -661,7 +686,9 @@ function containerMatches(c: DockerContainerInfo, query: string): boolean {
  * container name or ID — and doubles as the search box for the list of the
  * runtime's containers below it (running first, stopped ones marked). A
  * refresh button re-queries; an unreachable runtime shows its error and leaves
- * the typed fallback working.
+ * the typed fallback working. For an agent-hosted connection the list comes
+ * from the agent's host (#3424); an agent too old for that keeps the typed
+ * field only.
  */
 function DockerContainerField({
   field,
@@ -673,6 +700,7 @@ function DockerContainerField({
 }: FieldProps & { context?: ContainerContext; a11y: FieldA11y; testIdBase: string }) {
   const listingEnabled = context?.listingEnabled ?? true;
   const runtime = context?.runtime;
+  const agentId = context?.agentId;
   const currentValue = (value as string) ?? "";
   const [list, setList] = useState<ContainerListState>({ status: "loading" });
   const [refreshToken, setRefreshToken] = useState(0);
@@ -681,17 +709,17 @@ function DockerContainerField({
     if (!listingEnabled) return;
     let cancelled = false;
     setList({ status: "loading" });
-    listDockerContainers(runtime)
-      .then((containers) => {
-        if (!cancelled) setList({ status: "loaded", containers });
+    fetchContainers(runtime, agentId)
+      .then((next) => {
+        if (!cancelled) setList(next);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setList({ status: "error", message: String(err) });
+        if (!cancelled) setList({ status: "error", message: backendErrorMessage(err) });
       });
     return () => {
       cancelled = true;
     };
-  }, [listingEnabled, runtime, refreshToken]);
+  }, [listingEnabled, runtime, agentId, refreshToken]);
 
   const input = (
     <Input
@@ -716,6 +744,19 @@ function DockerContainerField({
         {input}
         <p className="settings-form__hint" data-testid={`${testIdBase}-listing-unavailable`}>
           Container listing is not available for agent connections — type the container name or ID.
+        </p>
+      </>
+    );
+  }
+
+  if (list.status === "unsupported") {
+    return (
+      <>
+        <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
+        {input}
+        <p className="settings-form__hint" data-testid={`${testIdBase}-listing-unsupported`}>
+          This agent version cannot list containers — update the agent, or type the container name
+          or ID.
         </p>
       </>
     );
