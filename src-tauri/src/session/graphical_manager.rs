@@ -368,6 +368,7 @@ impl GraphicalSessionManager {
             jitter: self.jitter,
             sink,
         };
+        // Not app-owned (#3105): session-scoped; aborted with the session on close.
         let tasks = vec![tokio::spawn(supervisor.run(generation))];
 
         let session = GraphicalSession {

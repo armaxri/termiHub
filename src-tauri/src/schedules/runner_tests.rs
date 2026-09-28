@@ -235,3 +235,35 @@ async fn the_global_pause_stops_the_loop_from_firing() {
     wait(60).await;
     assert_eq!(h.sink.fire_count(), 1);
 }
+
+/// App teardown (ARCH-007, #3105): the app-owned scheduler loop stops on the
+/// app cancellation token between ticks, teardown completes within its bound,
+/// and no schedule fires afterwards.
+#[tokio::test(start_paused = true)]
+async fn the_owned_loop_stops_on_app_cancellation() {
+    let h = start(1, MissedRunPolicy::Skip);
+    // Replace the harness's bare loop with the production app-owned spawn.
+    h.task.abort();
+    let tasks = AppTasks::new();
+    let _owned = spawn_owned(
+        &tasks,
+        h.manager.clone(),
+        h.clock.clone() as Arc<dyn Clock>,
+        Utc,
+        h.sink.clone() as Arc<dyn ScheduleSink>,
+        TICK_PERIOD,
+    );
+    wait(70).await;
+    assert_eq!(h.sink.fire_count(), 1, "the owned loop really runs");
+    done(&h);
+
+    let started = tokio::time::Instant::now();
+    let outcome = tasks
+        .shutdown(crate::app_tasks::DEFAULT_SHUTDOWN_TIMEOUT)
+        .await;
+    assert_eq!(outcome, crate::app_tasks::ShutdownOutcome::Completed);
+    assert!(started.elapsed() < TICK_PERIOD, "stopped between ticks");
+
+    wait(600).await;
+    assert_eq!(h.sink.fire_count(), 1, "nothing fires after teardown");
+}

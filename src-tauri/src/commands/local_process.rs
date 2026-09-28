@@ -154,6 +154,7 @@ fn spawn_reader<R>(
 where
     R: AsyncRead + Unpin + Send + 'static,
 {
+    // Not app-owned (#3105): request-scoped pipe reader; ends at the process's EOF.
     tokio::spawn(async move {
         let Some(reader) = reader else {
             return;
@@ -323,6 +324,7 @@ pub async fn run_local_process(
     let emit_task = {
         let app = app_handle.clone();
         let run_id = run_id.clone();
+        // Not app-owned (#3105): request-scoped; cancelling could drop buffered process output.
         tokio::spawn(async move {
             while let Some((stream, line)) = rx.recv().await {
                 let _ = app.emit(

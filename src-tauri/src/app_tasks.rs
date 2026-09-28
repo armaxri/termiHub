@@ -15,15 +15,30 @@
 //! At that point "all owned tasks finished or were cancelled" holds
 //! deterministically.
 //!
-//! ## Why [`tauri::async_runtime::spawn`] and not `tokio::spawn`
+//! ## Why not the free `tokio::spawn`
 //!
 //! Spawn sites are reached synchronously from Tauri's setup / event-loop thread,
 //! which runs *outside* any Tokio runtime context. The free `tokio::spawn`
 //! (which [`TaskTracker::spawn`] uses internally) panics there
 //! ("must be called from the context of a Tokio 1.x runtime"). So
 //! [`AppTasks::spawn`] tracks the future with [`TaskTracker::track_future`] and
-//! dispatches it onto Tauri's managed runtime, which is thread-agnostic — the
-//! same load-bearing pattern the reconnect scheduler documents (#2503).
+//! dispatches it onto the *ambient* runtime when the caller is already inside
+//! one (an async command, a manager method reached from a runtime worker — in
+//! production that is Tauri's own runtime), and onto Tauri's managed runtime
+//! otherwise, which is thread-agnostic — the same load-bearing pattern the
+//! reconnect scheduler documents (#2503).
+//!
+//! Preferring the ambient runtime keeps the migrated `tokio::spawn` sites
+//! (#3105) on exactly the runtime they ran on before, and lets unit tests drive
+//! tracked loops under a paused Tokio clock.
+//!
+//! ## Loops on a dedicated thread
+//!
+//! A loop that owns its own runtime on a dedicated OS thread (the HTTP monitor)
+//! cannot be spawned here. It registers with the tracker instead: it takes a
+//! [`TaskTracker::token`] from [`AppTasks::tracker`] for the thread's lifetime
+//! and a child of [`AppTasks::cancellation_token`] as its stop signal, so
+//! [`AppTasks::shutdown`] still cancels and awaits it.
 
 use std::future::Future;
 use std::time::Duration;
@@ -64,6 +79,14 @@ impl AppTasks {
         Self::default()
     }
 
+    /// The app's managed registry, or a standalone (never shut down) one when
+    /// the app has none — e.g. a manager built under a mock app in unit tests.
+    pub fn for_app<R: tauri::Runtime>(app: &impl tauri::Manager<R>) -> Self {
+        app.try_state::<AppTasks>()
+            .map(|tasks| tasks.inner().clone())
+            .unwrap_or_default()
+    }
+
     /// Spawn an owned background task onto Tauri's managed runtime and track it
     /// so [`shutdown`](Self::shutdown) will await its completion.
     ///
@@ -71,14 +94,35 @@ impl AppTasks {
     /// loops, accept loops, watchers. Do **not** use it for short request-scoped
     /// work, nor for anything whose cancellation could truncate in-flight
     /// critical work (e.g. a mid-write to disk); leave those on a bare spawn.
-    pub fn spawn<F>(&self, future: F) -> tauri::async_runtime::JoinHandle<F::Output>
+    ///
+    /// Returns a plain Tokio [`JoinHandle`](tokio::task::JoinHandle) so a site
+    /// that keeps its handle (to `abort()` it early, or check `is_finished()`)
+    /// can store it exactly as it stored a `tokio::spawn` handle.
+    pub fn spawn<F>(&self, future: F) -> tokio::task::JoinHandle<F::Output>
     where
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
         // track_future increments the tracker synchronously (before the future
         // is ever polled), so `wait()` reflects this task immediately.
-        tauri::async_runtime::spawn(self.tracker.track_future(future))
+        let tracked = self.tracker.track_future(future);
+        // The ambient runtime when there is one (see the module doc), else
+        // Tauri's managed runtime — never the panicking free `tokio::spawn`
+        // outside a runtime context.
+        let runtime = tokio::runtime::Handle::try_current()
+            .unwrap_or_else(|_| tauri::async_runtime::handle().inner().clone());
+        runtime.spawn(tracked)
+    }
+
+    /// A clone of the underlying [`TaskTracker`].
+    ///
+    /// Only for a loop that runs on its own dedicated thread + runtime and so
+    /// cannot go through [`spawn`](Self::spawn): it holds a
+    /// [`TaskTracker::token`] for the thread's lifetime so
+    /// [`shutdown`](Self::shutdown) awaits it too. Everything else uses
+    /// [`spawn`](Self::spawn).
+    pub fn tracker(&self) -> TaskTracker {
+        self.tracker.clone()
     }
 
     /// A clone of the app-wide cancellation token. Long-lived loops select on

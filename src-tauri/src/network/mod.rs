@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use termihub_core::service::drain_broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
@@ -34,6 +34,7 @@ use uuid::Uuid;
 use crate::agent_service::{
     AgentHosted, AgentInstances, AgentStatusPollDelegate, AgentStatusPoller,
 };
+use crate::app_tasks::AppTasks;
 use http_monitor::{HttpCheckResult, HttpMonitorConfig, HttpMonitorService, HttpMonitorState};
 use termihub_core::network::WolDevice;
 use termihub_core::protocol::methods::{
@@ -142,6 +143,13 @@ pub struct NetworkManager {
     /// App config directory for persistence.
     config_dir: PathBuf,
     app_handle: Arc<Mutex<Option<AppHandle>>>,
+    /// The app-wide owned-task registry (ARCH-007, #3105), captured in
+    /// [`init`](Self::init). Every desktop-hosted HTTP-monitor poll loop is
+    /// scoped to it (its stop token is a child of the app token and its thread
+    /// is tracked), so app teardown cancels and awaits the loops even if a
+    /// monitor escaped [`stop_all_http_monitors`](Self::stop_all_http_monitors).
+    /// `None` until `init` (and in unit tests), where loops stay standalone.
+    tasks: Option<AppTasks>,
 }
 
 impl NetworkManager {
@@ -160,6 +168,23 @@ impl NetworkManager {
             wol_devices: Mutex::new(Vec::new()),
             config_dir: PathBuf::new(),
             app_handle: Arc::new(Mutex::new(None)),
+            tasks: None,
+        }
+    }
+
+    /// Adopt the app-wide owned-task registry (ARCH-007, #3105): HTTP-monitor
+    /// poll loops and the agent `service.status` poller become app-owned, so
+    /// app teardown cancels them and waits (bounded) for them to finish.
+    fn adopt_app_tasks(&mut self, tasks: AppTasks) {
+        self.agent_status_poller = AgentStatusPoller::with_tasks(tasks.clone());
+        self.tasks = Some(tasks);
+    }
+
+    /// Scope a desktop-hosted monitor's poll loop to the app lifetime when the
+    /// app task registry is known (see [`adopt_app_tasks`](Self::adopt_app_tasks)).
+    fn own_monitor(&self, service: &mut HttpMonitorService) {
+        if let Some(tasks) = &self.tasks {
+            service.set_owner(tasks.cancellation_token(), tasks.tracker());
         }
     }
 
@@ -238,6 +263,10 @@ impl NetworkManager {
     /// Loads persisted WoL devices from disk.
     pub fn init(&mut self, config_dir: PathBuf, app_handle: AppHandle) {
         self.config_dir = config_dir.clone();
+        // Before any monitor is loaded, so every poll loop is app-owned.
+        if let Some(tasks) = app_handle.try_state::<AppTasks>() {
+            self.adopt_app_tasks(tasks.inner().clone());
+        }
         if let Ok(mut handle) = self.app_handle.lock() {
             *handle = Some(app_handle);
         }
@@ -458,6 +487,7 @@ impl NetworkManager {
         let id = config.id.clone();
 
         let mut service = HttpMonitorService::new();
+        self.own_monitor(&mut service);
         // Subscribe before starting so the bridge cannot miss the first check.
         let events = service.subscribe_events();
         service.start_with(config);
@@ -482,7 +512,9 @@ impl NetworkManager {
     /// path is needed here.
     fn load_http_monitor_stopped(&self, config: HttpMonitorConfig) {
         let id = config.id.clone();
-        let service = HttpMonitorService::stopped_with(config);
+        let mut service = HttpMonitorService::stopped_with(config);
+        // A later resume re-spawns the loop app-owned.
+        self.own_monitor(&mut service);
         // Wire the bridge now so a later resume forwards events without a
         // re-subscribe; skipped only when there is no app handle (e.g. in unit
         // tests), where the stopped monitor emits nothing anyway.
@@ -974,6 +1006,7 @@ impl Default for NetworkManager {
 /// same `HttpCheckResult` payload as before the lift. The task ends when the
 /// service is dropped (channel closed).
 fn spawn_event_bridge(app: AppHandle, events: termihub_core::service::ServiceEventReceiver) {
+    // Not app-owned (#3105): ends when the monitor's service (and its channel) drops.
     tauri::async_runtime::spawn(async move {
         drain_broadcast(events, move |event| {
             if event.kind == http_monitor::CHECK_EVENT_KIND {
@@ -1141,6 +1174,51 @@ mod tests {
             .expect("http monitor lock")
             .insert(id.clone(), HttpMonitorService::test_running(config));
         id
+    }
+
+    /// App teardown (ARCH-007, #3105): a desktop-hosted monitor's poll loop —
+    /// on its own thread + runtime — is scoped to the app's [`AppTasks`], so
+    /// `shutdown` cancels it and awaits its thread even without
+    /// `stop_all_http_monitors`, well within the bound. (Real clock: the loop
+    /// runs on its own runtime, which a paused test clock cannot drive.)
+    #[tokio::test]
+    async fn http_monitor_loop_stops_on_app_cancellation() {
+        let tasks = AppTasks::new();
+        let mut mgr = NetworkManager::new();
+        mgr.adopt_app_tasks(tasks.clone());
+
+        // A long interval: without cancellation the loop would sleep for a
+        // minute; nothing subscribes, so it does no network work either.
+        let config = HttpMonitorConfig::new(
+            "http://127.0.0.1:9/".to_string(),
+            60_000,
+            "GET".to_string(),
+            200,
+            1_000,
+        );
+        let mut service = HttpMonitorService::new();
+        mgr.own_monitor(&mut service);
+        service.start_with(config);
+        assert!(service.is_running());
+        // Let the loop thread get past client setup into its long idle sleep;
+        // it is still registered with the tracker (it would sleep 60 s).
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(tasks.tracker().len(), 1, "the loop thread is tracked");
+
+        let started = std::time::Instant::now();
+        let outcome = tasks
+            .shutdown(crate::app_tasks::DEFAULT_SHUTDOWN_TIMEOUT)
+            .await;
+
+        assert_eq!(outcome, crate::app_tasks::ShutdownOutcome::Completed);
+        assert!(
+            started.elapsed() < crate::app_tasks::DEFAULT_SHUTDOWN_TIMEOUT,
+            "teardown completes within its bound"
+        );
+        assert!(
+            !service.is_running(),
+            "the app token cancelled the monitor's own stop token"
+        );
     }
 
     #[test]

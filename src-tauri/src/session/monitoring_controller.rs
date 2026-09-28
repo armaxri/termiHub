@@ -292,6 +292,7 @@ impl<'a> MonitoringController<'a> {
         F: std::future::Future<Output = ()> + Send + 'static,
     {
         let mut tasks = self.monitoring_tasks.lock().await;
+        // Not app-owned (#3105): session-scoped; aborted via `monitoring_tasks` on stop/close.
         let handle = tokio::spawn(task);
         if let Some(previous) = tasks.insert(session_id.to_string(), handle.abort_handle()) {
             previous.abort();

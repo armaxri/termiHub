@@ -141,6 +141,7 @@ where
                 // Fire-and-forget: the confirmation is the run's `tool.done`.
                 let (client, agent_id) = (Arc::clone(client), agent_id.to_string());
                 let params = ToolCancelParams { run_id: run_id.to_string() };
+                // Not app-owned (#3105): one-shot fire-and-forget `tool.cancel` RPC.
                 tokio::spawn(async move {
                     let _ = request(&client, &agent_id, TOOL_CANCEL, &params).await;
                 });

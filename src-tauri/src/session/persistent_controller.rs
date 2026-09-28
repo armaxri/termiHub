@@ -332,6 +332,7 @@ impl<'a> PersistentController<'a> {
                     let session_loggers = self.manager.session_loggers.clone();
                     let session_tab_ids = self.manager.session_tab_ids.clone();
                     let sid = session_id.clone();
+                    // Not app-owned (#3105): session-scoped reader, stopped by its `reader_cancel`.
                     tokio::spawn(async move {
                         SessionManager::run_output_reader(
                             sid,

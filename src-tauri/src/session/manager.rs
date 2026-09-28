@@ -1132,6 +1132,7 @@ impl SessionManager {
         let session_loggers = self.session_loggers.clone();
         let session_tab_ids = self.session_tab_ids.clone();
         let sid = session_id.clone();
+        // Not app-owned (#3105): session-scoped reader, stopped by the session's `reader_cancel`.
         tokio::spawn(async move {
             Self::run_output_reader(
                 sid,
@@ -1157,6 +1158,7 @@ impl SessionManager {
             let sessions = self.sessions.clone();
             let sid = session_id.clone();
             let cmd = cmd.to_string();
+            // Not app-owned (#3105): one-shot 200 ms initial-command injection for this session.
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(200)).await;
                 Self::inject_initial_command(&sessions, &sid, &cmd).await;
@@ -1798,6 +1800,7 @@ impl SessionManager {
         let session_loggers = self.session_loggers.clone();
         let session_tab_ids = self.session_tab_ids.clone();
         let sid = session_id.clone();
+        // Not app-owned (#3105): session-scoped reader, stopped by the session's `reader_cancel`.
         tokio::spawn(async move {
             Self::run_output_reader(
                 sid,
