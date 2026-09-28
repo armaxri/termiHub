@@ -78,11 +78,15 @@ pub struct RemoteDesktopClipboardEvent {
 /// frontend `events.ts` wrapper renames to camelCase. The `state` value itself
 /// is a camelCase-serialized [`GraphicalState`] (e.g. `"connectFailed"`).
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct RemoteDesktopStateEvent {
     pub session_id: String,
+    #[cfg_attr(test, ts(type = "import(\"./GraphicalState\").GraphicalState"))]
     pub state: GraphicalState,
     pub reconnect_attempt: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub message: Option<String>,
 }
 

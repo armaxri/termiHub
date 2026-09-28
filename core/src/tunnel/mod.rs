@@ -49,7 +49,7 @@ pub(crate) const MAX_CONCURRENT_FORWARDED_CONNECTIONS: usize = 256;
 /// Who can reach an agent-hosted tunnel's listen socket.
 ///
 /// Per the endpoint-semantics concept, the listen socket's home depends on the
-/// mode. An agent-hosted **local**/**dynamic** forward binds on the agent: a
+/// mode. An agent-hosted **local** or **dynamic** forward binds on the agent: a
 /// loopback bind is reachable only from the agent itself; a widened bind (the
 /// agent's LAN address or `0.0.0.0`) is reachable from the agent's network. An
 /// agent-hosted **remote** (`-R`) forward instead binds on the **SSH server** —
@@ -57,6 +57,8 @@ pub(crate) const MAX_CONCURRENT_FORWARDED_CONNECTIONS: usize = 256;
 /// socket lives on the server's network, not the agent's. The desktop surfaces
 /// this as the "reachability" warning + badge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub enum ReachableFrom {
     /// Loopback bind on the agent — only processes on the agent can connect.

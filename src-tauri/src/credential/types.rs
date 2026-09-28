@@ -133,11 +133,15 @@ impl StorageMode {
 
 /// Status information about the credential store, returned to the frontend.
 #[derive(Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct CredentialStoreStatusInfo {
     /// Current storage mode: `"master_password"` or `"none"`.
+    #[cfg_attr(test, ts(type = "\"master_password\" | \"os_keychain\" | \"none\""))]
     pub mode: String,
     /// Current status: `"unlocked"`, `"locked"`, or `"unavailable"`.
+    #[cfg_attr(test, ts(type = "\"unlocked\" | \"locked\" | \"unavailable\""))]
     pub status: String,
 }
 

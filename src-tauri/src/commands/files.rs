@@ -182,6 +182,8 @@ pub fn unwatch_local_dir(
 // --- VS Code integration ---
 
 #[derive(Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 struct VscodeEditCompleteEvent {
     remote_path: String,

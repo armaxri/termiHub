@@ -51,6 +51,8 @@ pub const SPAWN_PICKER_REQUESTED_EVENT: &str = "spawn-picker-requested";
 /// by falling back to the legacy presence-based inference (a spawn is a
 /// container iff it carries a `container_image`/`container_mount`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "snake_case")]
 pub enum SpawnKind {
     /// A "new container" spawn (Docker/Podman image + optional mount).
@@ -103,33 +105,43 @@ impl SpawnKind {
 /// partially-specified requests round-trip cleanly; resolution of the effective
 /// connection type happens downstream (out of scope for #1364).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct SpawnRequest {
     /// Filesystem path (folder or file) the session should open at.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub location: Option<String>,
     /// Identifier of the context-menu entry that triggered the spawn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub entry_id: Option<String>,
     /// Explicit connection id override (highest-priority resolution).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub connection: Option<String>,
     /// Open in a fresh window instead of attaching to the running instance.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub new_window: bool,
     /// Force the interactive session picker.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub pick: bool,
     /// Docker/Podman image to use for a "new container" spawn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub container_image: Option<String>,
     /// Mount target path inside the container (default resolved downstream).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub container_mount: Option<String>,
     /// Explicit spawn-kind discriminator (#1465). Defaults to
     /// [`SpawnKind::Auto`] so pre-#1465 payloads (which omit the field)
     /// round-trip and downstream consumers can fall back to presence-based
     /// inference.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<SpawnKind>", optional))]
     pub kind: SpawnKind,
 }
 

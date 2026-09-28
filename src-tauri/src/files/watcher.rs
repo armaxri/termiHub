@@ -47,6 +47,9 @@ const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(300);
 /// `watch_id` routes the event back to the exact editor instance that
 /// registered the watch.
 #[derive(Clone, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "LocalFileChangedPayload"))]
 #[serde(rename_all = "camelCase")]
 struct FileChangedPayload {
     watch_id: String,
@@ -58,6 +61,9 @@ struct FileChangedPayload {
 /// `watch_id` routes the event back to the browser instance that registered the
 /// watch; `path` echoes the watched directory (#1626).
 #[derive(Clone, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "LocalDirChangedPayload"))]
 #[serde(rename_all = "camelCase")]
 struct DirChangedPayload {
     watch_id: String,

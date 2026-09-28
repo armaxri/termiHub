@@ -29,6 +29,8 @@ pub fn default_env_filter() -> EnvFilter {
 
 /// A single captured log entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct LogEntry {
     pub timestamp: String,
     pub level: String,

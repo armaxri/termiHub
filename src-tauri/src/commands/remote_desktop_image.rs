@@ -82,6 +82,8 @@ pub(crate) fn host_image_to_clipboard_image(
 
 /// What the clipboard panel needs to render its image section (PROD-021).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ClipboardImageStatus {
     /// Whether the session bridges clipboard images at all (RDP yes; VNC when
@@ -89,6 +91,10 @@ pub struct ClipboardImageStatus {
     /// image actions when it does not.
     pub supported: bool,
     /// Dimensions of the image the remote most recently copied, if any.
+    #[cfg_attr(
+        test,
+        ts(type = "import(\"./ClipboardImageInfo\").ClipboardImageInfo | null")
+    )]
     pub image: Option<ClipboardImageInfo>,
 }
 

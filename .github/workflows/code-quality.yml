@@ -181,8 +181,10 @@ jobs:
       # `#[cfg]`-gated fields, so the output is platform-independent.
       - name: Regenerate ts-rs TypeScript bindings
         run: cargo test -p termihub --lib export_bindings
+      # `ssh` / `docker` enable core's feature-gated `tunnel` and
+      # `backends::docker` modules, whose DTOs are generated too.
       - name: Regenerate ts-rs TypeScript bindings (core crate)
-        run: cargo test -p termihub-core --lib export_bindings
+        run: cargo test -p termihub-core --lib --features ssh,docker export_bindings
       - name: Fail if generated TypeScript is stale
         run: git diff --exit-code -- src/types/generated
 

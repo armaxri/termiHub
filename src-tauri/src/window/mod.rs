@@ -166,6 +166,8 @@ pub fn should_prevent_exit(code: Option<i32>) -> bool {
 /// Payload for the `session-ownership-superseded` event pushed to a window that
 /// just lost ownership of a session because another window claimed it (SM-026).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct OwnershipSupersededPayload {
     /// The session whose ownership moved away from the notified window.

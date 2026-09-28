@@ -106,6 +106,8 @@ impl VersionedStore for SeenStore {
 
 /// One pending notice: an agent with crash reports newer than the last seen.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCrashNotice {
     /// The agent's id (the frontend maps it to a display name).

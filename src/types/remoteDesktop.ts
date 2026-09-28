@@ -121,53 +121,31 @@ export type { RemoteDesktopClipboardEvent as RemoteDesktopClipboardPayload } fro
 
 /**
  * One file the remote copied to its clipboard, surfaced to the host for a local
- * paste with delayed rendering (#1793/#1804). Mirrors the Rust
- * `RemoteClipboardFile` (camelCase). The bytes are not present — they are fetched
- * from the remote only on the actual paste gesture, keyed by {@link index}.
+ * paste with delayed rendering (#1793/#1804). The bytes are not present — they
+ * are fetched from the remote only on the actual paste gesture, keyed by `index`.
+ * Generated from the Rust `RemoteClipboardFile` via ts-rs (#3088).
  */
-export interface RemoteClipboardFile {
-  /** Sanitized basename (no path separators). */
-  name: string;
-  /** Sanitized `/`-separated directory portion within the copied collection, or null for a top-level entry. */
-  relativePath: string | null;
-  /** File size when the remote advertised it; null means "resolve on fetch". */
-  size: number | null;
-  /** Whether this entry is a directory (no bytes to fetch). */
-  isDir: boolean;
-  /** Position in the remote's advertised file list — the opaque fetch token. */
-  index: number;
-}
+export type { RemoteClipboardFile } from "./generated/RemoteClipboardFile";
 
 /**
- * Dimensions of a remote-desktop clipboard image (PROD-021), mirroring the Rust
- * `ClipboardImageInfo`. The pixels never reach the webview — the backend moves
- * them between the session and the host OS clipboard itself.
+ * Dimensions of a remote-desktop clipboard image (PROD-021). The pixels never
+ * reach the webview — the backend moves them between the session and the host
+ * OS clipboard itself. Generated from the Rust `ClipboardImageInfo` via ts-rs.
  */
-export interface ClipboardImageInfo {
-  /** Width in pixels. */
-  width: number;
-  /** Height in pixels. */
-  height: number;
-}
+export type { ClipboardImageInfo } from "./generated/ClipboardImageInfo";
 
-/** Image-clipboard state the clipboard panel renders from (PROD-021). */
-export interface ClipboardImageStatus {
-  /**
-   * Whether the session bridges clipboard images (RDP yes; VNC when the server
-   * offers the Extended Clipboard `dib` format).
-   */
-  supported: boolean;
-  /** The image the remote most recently copied, if any. */
-  image: ClipboardImageInfo | null;
-}
+/**
+ * Image-clipboard state the clipboard panel renders from (PROD-021). Generated
+ * from the Rust `ClipboardImageStatus` via ts-rs.
+ */
+export type { ClipboardImageStatus } from "./generated/ClipboardImageStatus";
 
-/** `remote-desktop-state` event payload. */
-export interface RemoteDesktopStatePayload {
-  session_id: string;
-  state: GraphicalSessionState;
-  reconnect_attempt: number;
-  message?: string;
-}
+/**
+ * `remote-desktop-state` event payload. Generated from the Rust
+ * `RemoteDesktopStateEvent` via ts-rs (MOCK-010, #3088); re-exported under the
+ * historical `…Payload` name so consumers stay unchanged.
+ */
+export type { RemoteDesktopStateEvent as RemoteDesktopStatePayload } from "./generated/RemoteDesktopStateEvent";
 
 /**
  * `remote-desktop-cert-prompt` event payload (#1767): the server presented an

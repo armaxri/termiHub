@@ -22,12 +22,22 @@ import type {
   RemoteDesktopStatePayload,
   RemoteDesktopCertPromptPayload,
 } from "@/types/remoteDesktop";
-// Wire event payloads generated from their Rust source of truth
-// (`src-tauri/src/session/manager.rs`) via ts-rs (audit DUP-030 / MOCK-010),
-// replacing the hand-written snake_case mirror interfaces below.
+// Wire event payloads generated from their Rust source of truth (the emitting
+// structs in `src-tauri/src/`) via ts-rs (audit DUP-030 / MOCK-010, #3088),
+// replacing the hand-written mirror interfaces this file used to declare.
 import type { TerminalOutputEvent } from "@/types/generated/TerminalOutputEvent";
 import type { TerminalExitEvent } from "@/types/generated/TerminalExitEvent";
 import type { PersistentSessionStateEvent } from "@/types/generated/PersistentSessionStateEvent";
+import type { OwnershipSupersededPayload } from "@/types/generated/OwnershipSupersededPayload";
+import type { AgentSetupProgress } from "@/types/generated/AgentSetupProgress";
+import type { AgentUpdateAvailableEvent } from "@/types/generated/AgentUpdateAvailableEvent";
+import type { RemoteAgentUpdatePendingEvent } from "@/types/generated/RemoteAgentUpdatePendingEvent";
+import type { VscodeEditCompleteEvent } from "@/types/generated/VscodeEditCompleteEvent";
+import type { LocalFileChangedPayload } from "@/types/generated/LocalFileChangedPayload";
+import type { LocalDirChangedPayload } from "@/types/generated/LocalDirChangedPayload";
+import type { HopStatusPayload } from "@/types/generated/HopStatusPayload";
+import type { ProbeCompletePayload } from "@/types/generated/ProbeCompletePayload";
+import type { SpawnRequest } from "@/types/generated/SpawnRequest";
 
 /**
  * Decode a base64 (standard alphabet, padded) string into a `Uint8Array`.
@@ -223,12 +233,7 @@ export async function onPluginsChanged(callback: () => void): Promise<UnlistenFn
 }
 
 /** Payload for {@link onSessionOwnershipSuperseded} (SM-026). */
-export interface SessionOwnershipSupersededPayload {
-  /** The session whose ownership moved away from this window. */
-  sessionId: string;
-  /** The window label that now owns (and sizes) the session. */
-  newOwner: string;
-}
+export type SessionOwnershipSupersededPayload = OwnershipSupersededPayload;
 
 /**
  * Listen for a **targeted** `session-ownership-superseded` event (SM-026):
@@ -459,32 +464,16 @@ export class TerminalOutputDispatcher {
 /** Singleton instance used by Terminal components. */
 export const terminalDispatcher = new TerminalOutputDispatcher();
 
-interface AgentSetupProgressPayload {
-  agent_id: string;
-  step: string;
-  message: string;
-}
-
-/** Subscribe to agent setup progress events. */
+/**
+ * Subscribe to agent setup progress events. The payload is the generated
+ * `AgentSetupProgress` (camelCase `agentId` on the wire).
+ */
 export async function onAgentSetupProgress(
   callback: (agentId: string, step: string, message: string) => void
 ): Promise<UnlistenFn> {
-  return await listen<AgentSetupProgressPayload>("agent-setup-progress", (event) => {
-    callback(event.payload.agent_id, event.payload.step, event.payload.message);
+  return await listen<AgentSetupProgress>("agent-setup-progress", (event) => {
+    callback(event.payload.agentId, event.payload.step, event.payload.message);
   });
-}
-
-/**
- * Payload of an `agent-update-available` event (#1352). The desktop backend
- * forwards the agent's `agent.update_available` JSON-RPC notification, tagging
- * it with the originating `agent_id`. `staged: true` means a verified new binary
- * is staged on the agent and ready to apply (idle) or defer (busy).
- */
-interface AgentUpdateAvailablePayload {
-  agent_id: string;
-  currentVersion: string;
-  availableVersion: string;
-  staged: boolean;
 }
 
 /** A staged/available agent update, keyed to its originating agent. */
@@ -502,7 +491,7 @@ export interface AgentUpdateAvailable {
 export async function onAgentUpdateAvailable(
   callback: (update: AgentUpdateAvailable) => void
 ): Promise<UnlistenFn> {
-  return await listen<AgentUpdateAvailablePayload>("agent-update-available", (event) => {
+  return await listen<AgentUpdateAvailableEvent>("agent-update-available", (event) => {
     callback({
       agentId: event.payload.agent_id,
       currentVersion: event.payload.currentVersion,
@@ -510,18 +499,6 @@ export async function onAgentUpdateAvailable(
       staged: event.payload.staged,
     });
   });
-}
-
-/**
- * Payload of a `remote-agent-update-pending` event (#1602). The desktop backend
- * forwards the agent's `agent.update_pending` JSON-RPC notification — broadcast
- * by the agent to every *other* connected host when one host initiates a
- * coordinated update (#1351) — tagged with the originating `agent_id`.
- */
-interface RemoteAgentUpdatePendingPayload {
-  agent_id: string;
-  requestedByVersion: string;
-  estimatedRestartSecs: number;
 }
 
 /**
@@ -545,7 +522,7 @@ export interface RemoteAgentUpdatePending {
 export async function onRemoteAgentUpdatePending(
   callback: (pending: RemoteAgentUpdatePending) => void
 ): Promise<UnlistenFn> {
-  return await listen<RemoteAgentUpdatePendingPayload>("remote-agent-update-pending", (event) => {
+  return await listen<RemoteAgentUpdatePendingEvent>("remote-agent-update-pending", (event) => {
     callback({
       agentId: event.payload.agent_id,
       requestedByVersion: event.payload.requestedByVersion,
@@ -554,24 +531,13 @@ export async function onRemoteAgentUpdatePending(
   });
 }
 
-interface VscodeEditCompletePayload {
-  remotePath: string;
-  success: boolean;
-  error: string | null;
-}
-
 /** Subscribe to VS Code edit-complete events (remote file re-upload). */
 export async function onVscodeEditComplete(
   callback: (remotePath: string, success: boolean, error: string | null) => void
 ): Promise<UnlistenFn> {
-  return await listen<VscodeEditCompletePayload>("vscode-edit-complete", (event) => {
+  return await listen<VscodeEditCompleteEvent>("vscode-edit-complete", (event) => {
     callback(event.payload.remotePath, event.payload.success, event.payload.error);
   });
-}
-
-interface LocalFileChangedPayload {
-  watchId: string;
-  path: string;
 }
 
 /**
@@ -585,11 +551,6 @@ export async function onLocalFileChanged(
   return await listen<LocalFileChangedPayload>("local-file-changed", (event) => {
     callback(event.payload.watchId, event.payload.path);
   });
-}
-
-interface LocalDirChangedPayload {
-  watchId: string;
-  path: string;
 }
 
 /**
@@ -706,29 +667,12 @@ export async function onConnectionIdsChanged(
   });
 }
 
+// The `jump-host-hop-status` / `jump-host-probe-complete` payloads are
+// generated from the Rust `HopStatusEvent` / `ProbeCompleteEvent` via ts-rs.
+export type { HopStatusPayload, ProbeCompletePayload };
+
 /** Live status of a single node during a connection-path probe (#962). */
-export type HopProbeStatus = "connecting" | "connected" | "failed";
-
-/** Payload of a `jump-host-hop-status` event (already camelCase from Rust). */
-export interface HopStatusPayload {
-  probeId: string;
-  /** Zero-based node index along the path (gateway hops first, target last). */
-  index: number;
-  /** Total probed nodes (gateway hops + target). */
-  total: number;
-  host: string;
-  port: number;
-  status: HopProbeStatus;
-  /** Failure reason for a `failed` status; empty otherwise. */
-  message: string;
-}
-
-/** Payload of a `jump-host-probe-complete` event. */
-export interface ProbeCompletePayload {
-  probeId: string;
-  /** `true` when every node was reached; `false` when a hop failed. */
-  success: boolean;
-}
+export type HopProbeStatus = HopStatusPayload["status"];
 
 /**
  * Subscribe to per-hop status updates emitted while probing a connection path
@@ -781,41 +725,17 @@ export async function onXServerProgress(
 }
 
 /**
- * Explicit spawn-kind discriminator (#1465). Mirrors the Rust `SpawnKind`
- * (snake_case wire tokens). Consumers branch on this authoritative field rather
- * than inferring intent from which optional fields are set. Pre-#1465 payloads
- * omit it and are treated as `"auto"`, resolved by falling back to
- * presence-based inference.
+ * Explicit spawn-kind discriminator (#1465), the Rust `SpawnKind` (snake_case
+ * wire tokens). Pre-#1465 payloads omit it and are treated as `"auto"`.
  */
-export type SpawnKind = "container" | "local" | "wsl" | "ssh" | "auto";
+export type { SpawnKind } from "@/types/spawn";
 
 /**
- * Payload of a `spawn-request` event (#1364). Emitted by the backend IPC
- * rendezvous when an external `termiHub spawn …` invocation reaches the running
- * instance. Fields mirror the Rust `SpawnRequest` (snake_case; all optional
- * except `kind`, which defaults to `"auto"` on the wire).
+ * Payload of a `spawn-request` event (#1364), generated from the Rust
+ * `SpawnRequest` via ts-rs (#3088). Every field is optional on the wire
+ * (snake_case); an absent `kind` means `"auto"`.
  */
-export interface SpawnRequestPayload {
-  /** Filesystem path (folder or file) the session should open at. */
-  location?: string;
-  /** Identifier of the context-menu entry that triggered the spawn. */
-  entry_id?: string;
-  /** Explicit connection id override. */
-  connection?: string;
-  /** Open in a fresh window instead of attaching to the running instance. */
-  new_window?: boolean;
-  /** Force the interactive session picker. */
-  pick?: boolean;
-  /** Docker/Podman image for a "new container" spawn (marks a container spawn). */
-  container_image?: string;
-  /** Mount target path inside the container. */
-  container_mount?: string;
-  /**
-   * Explicit spawn-kind discriminator (#1465). Absent on pre-#1465 payloads,
-   * where it is treated as `"auto"` and resolved by presence-based inference.
-   */
-  kind?: SpawnKind;
-}
+export type SpawnRequestPayload = SpawnRequest;
 
 /**
  * Subscribe to `spawn-request` events (#1364/#1446). Each event is one external

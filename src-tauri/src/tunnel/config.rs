@@ -20,18 +20,37 @@ pub use termihub_core::tunnel::ReachableFrom;
 
 /// The three SSH tunnel types.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(tag = "type", content = "config", rename_all = "camelCase")]
 pub enum TunnelType {
     /// Local port forwarding: binds a local port and forwards to a remote target via SSH.
-    Local(LocalForwardConfig),
+    Local(
+        #[cfg_attr(test, ts(type = "import(\"./LocalForwardConfig\").LocalForwardConfig"))]
+        LocalForwardConfig,
+    ),
     /// Remote port forwarding: binds a port on the SSH server and forwards to a local target.
-    Remote(RemoteForwardConfig),
+    Remote(
+        #[cfg_attr(
+            test,
+            ts(type = "import(\"./RemoteForwardConfig\").RemoteForwardConfig")
+        )]
+        RemoteForwardConfig,
+    ),
     /// Dynamic (SOCKS5) forwarding: binds a local port as a SOCKS5 proxy via SSH.
-    Dynamic(DynamicForwardConfig),
+    Dynamic(
+        #[cfg_attr(
+            test,
+            ts(type = "import(\"./DynamicForwardConfig\").DynamicForwardConfig")
+        )]
+        DynamicForwardConfig,
+    ),
 }
 
 /// A saved tunnel configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct TunnelConfig {
     /// Unique tunnel identifier.
@@ -50,6 +69,7 @@ pub struct TunnelConfig {
     /// on deserialize so tunnels saved before this field existed load as
     /// desktop-hosted, and so agent hosting stays opt-in.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<RunLocation>", optional))]
     pub host: RunLocation,
     /// Whether to start this tunnel automatically when the app launches.
     #[serde(default)]
@@ -62,6 +82,7 @@ pub struct TunnelConfig {
     /// deserialize so tunnels saved before this field existed load unchanged, as
     /// not bound to their connection's sessions.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub start_with_connection: bool,
     /// Whether to reconnect automatically on disconnect.
     #[serde(default)]
@@ -77,11 +98,14 @@ pub struct TunnelConfig {
     /// Defaulted on deserialize and skipped when absent, so tunnels saved before
     /// chaining existed round-trip byte-for-byte unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub companion_of: Option<String>,
 }
 
 /// Current status of a tunnel.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub enum TunnelStatus {
     Disconnected,
@@ -135,6 +159,8 @@ mod tunnel_status_map_tests {
 
 /// Combined runtime state for a tunnel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct TunnelState {
     /// Tunnel ID this state belongs to.
@@ -143,22 +169,27 @@ pub struct TunnelState {
     pub status: TunnelStatus,
     /// Error message, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub error: Option<String>,
     /// Live traffic statistics.
+    #[cfg_attr(test, ts(type = "import(\"./TunnelStats\").TunnelStats"))]
     pub stats: TunnelStats,
     /// For an agent-hosted tunnel: which agent forwards it (its agent id), as
     /// confirmed by the agent's report. `None` for desktop-hosted tunnels
     /// (#2199). The frontend resolves the id to a human agent name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub bound_on: Option<String>,
     /// For an agent-hosted tunnel: the `host:port` the listen socket actually
     /// bound (on the agent for `-L`/`-D`, on the SSH server for `-R`), reported
     /// by the agent. `None` for desktop-hosted tunnels (#2199).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub bound_address: Option<String>,
     /// For an agent-hosted tunnel: who can reach the listen socket, as the agent
     /// classified it at bind time. `None` for desktop-hosted tunnels (#2199).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "import(\"./ReachableFrom\").ReachableFrom"))]
     pub reachable_from: Option<ReachableFrom>,
 }
 

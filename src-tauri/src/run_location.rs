@@ -33,6 +33,8 @@ use thiserror::Error;
 
 /// Where the user asked a service/tool to run.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase", tag = "kind", content = "agentId")]
 pub enum RunLocation {
     /// The desktop host — "This computer". The default.

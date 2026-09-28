@@ -34,12 +34,18 @@ pub const AGENT_DOCKER_LIST_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Result of [`list_agent_docker_containers`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentDockerContainersResult {
     /// `false` when the agent is too old to list containers (the picker falls
     /// back to a typed name/ID and suggests updating the agent).
     pub supported: bool,
     /// The agent host's containers, running first (empty when unsupported).
+    #[cfg_attr(
+        test,
+        ts(type = "Array<import(\"./DockerContainerInfo\").DockerContainerInfo>")
+    )]
     pub containers: Vec<ContainerInfo>,
 }
 

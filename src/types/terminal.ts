@@ -511,12 +511,8 @@ export interface EditorActions {
   moveCursor: (direction: EditorCursorDirection, times?: number) => void;
 }
 
-export interface LogEntry {
-  timestamp: string;
-  level: string;
-  target: string;
-  message: string;
-}
+/** A captured backend log entry (generated from the Rust `LogEntry` via ts-rs, #3088). */
+export type { LogEntry } from "./generated/LogEntry";
 
 /** A named workspace-level tab group with its own independent panel tree. */
 export interface TabGroup {

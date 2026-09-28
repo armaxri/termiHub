@@ -13,16 +13,25 @@ use serde::{Deserialize, Serialize};
 /// accepted connection is forwarded to `remote_host:remote_port` resolved from
 /// the SSH server's network. On an agent-hosted tunnel the "local" side is the
 /// agent — see `docs/concepts/future/stateless-ui-agent-tunnel-endpoints.html`.
+///
+/// The TypeScript DTO is generated via ts-rs (audit DUP-030). Its ports widen to
+/// `number | ""`: the frontend shares this shape with the tunnel editor, where a
+/// cleared field is the `""` blank-value convention (#1444). A persisted config
+/// always holds a number.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct LocalForwardConfig {
     /// Local address to bind (e.g. "127.0.0.1").
     pub local_host: String,
     /// Local port to listen on.
+    #[cfg_attr(test, ts(type = "number | \"\""))]
     pub local_port: u16,
     /// Remote host to connect to (from the SSH server's perspective).
     pub remote_host: String,
     /// Remote port to connect to.
+    #[cfg_attr(test, ts(type = "number | \"\""))]
     pub remote_port: u16,
 }
 
@@ -33,16 +42,25 @@ pub struct LocalForwardConfig {
 /// from the tunnel host's network. On an agent-hosted tunnel the "local" side is
 /// the agent — the target is reached from the agent, not the desktop. See
 /// `docs/concepts/future/stateless-ui-agent-tunnel-endpoints.html`.
+///
+/// The TypeScript DTO is generated via ts-rs (audit DUP-030). Its ports widen to
+/// `number | ""`: the frontend shares this shape with the tunnel editor, where a
+/// cleared field is the `""` blank-value convention (#1444). A persisted config
+/// always holds a number.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteForwardConfig {
     /// Address on the SSH server to bind.
     pub remote_host: String,
     /// Port on the SSH server to listen on.
+    #[cfg_attr(test, ts(type = "number | \"\""))]
     pub remote_port: u16,
     /// Local host to forward connections to (resolved from the tunnel host).
     pub local_host: String,
     /// Local port to forward connections to (resolved from the tunnel host).
+    #[cfg_attr(test, ts(type = "number | \"\""))]
     pub local_port: u16,
 }
 
@@ -54,26 +72,42 @@ pub struct RemoteForwardConfig {
 /// agent-hosted tunnel the "local" side is the agent — the SOCKS proxy listens
 /// on the agent (loopback by default) and targets are resolved from the SSH
 /// server. See `docs/concepts/future/stateless-ui-agent-tunnel-endpoints.html`.
+///
+/// The TypeScript DTO is generated via ts-rs (audit DUP-030). Its ports widen to
+/// `number | ""`: the frontend shares this shape with the tunnel editor, where a
+/// cleared field is the `""` blank-value convention (#1444). A persisted config
+/// always holds a number.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct DynamicForwardConfig {
     /// Local address to bind the SOCKS5 proxy (e.g. "127.0.0.1").
     pub local_host: String,
     /// Local port for the SOCKS5 proxy.
+    #[cfg_attr(test, ts(type = "number | \"\""))]
     pub local_port: u16,
 }
 
 /// Live traffic statistics for an active tunnel.
+///
+/// ts-rs maps `u64` to `bigint`, but serde emits a JSON number, so the generated
+/// counters are overridden to `number`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct TunnelStats {
     /// Total bytes sent through the tunnel.
+    #[cfg_attr(test, ts(type = "number"))]
     pub bytes_sent: u64,
     /// Total bytes received through the tunnel.
+    #[cfg_attr(test, ts(type = "number"))]
     pub bytes_received: u64,
     /// Number of currently active connections through the tunnel.
     pub active_connections: u32,
     /// Total connections made since the tunnel started.
+    #[cfg_attr(test, ts(type = "number"))]
     pub total_connections: u64,
 }
 
