@@ -978,7 +978,7 @@ impl SessionManager {
                     // (retry>0, owned by the client loop + backend timer #2203, whose
                     // give-up is not yet source-foldable); and **agent** connects (this is
                     // the non-agent branch — an agent connect silently auto-retries
-                    // client-side without an intent). Additive, shadow-only.
+                    // client-side without an intent).
                     // A dismissed keyboard-interactive prompt (#3371) is a user
                     // cancel too, not a connect failure.
                     let cancelled = cancel_token
