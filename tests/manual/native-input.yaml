@@ -31,7 +31,7 @@ tests:
     prerequisites:
       - app: true
     instructions:
-      - "In a scratch folder create three files: 'plain.txt', 'two words.txt' and \"it's.txt\""
+      - 'In a scratch folder create three files: ''plain.txt'', ''two words.txt'' and "it''s.txt"'
       - "Open a local shell tab (New Terminal) and type 'ls -l ' (Windows PowerShell: 'Get-Item ') without pressing Enter"
       - "Select all three files in Finder / Explorer / Files and drag them together onto the terminal pane"
       - "Release, look at the prompt line, then press Enter"
