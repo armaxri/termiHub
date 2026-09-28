@@ -210,7 +210,8 @@ jobs:
           fi
 
       - name: Export integration coverage (lcov)
-        # Advisory: a coverage hiccup must never red the fixture lane.
+        # advisory: a coverage hiccup must never red the fixture lane, whose
+        # tests (the step above) are the forcing function; coverage is an overlay.
         if: always() && env.MEASURE_COVERAGE == 'true'
         continue-on-error: true
         run: |
@@ -229,6 +230,7 @@ jobs:
 
       - name: Upload integration coverage artifact
         if: always() && env.MEASURE_COVERAGE == 'true'
+        # advisory: same as the export step; the fixture tests are the gate.
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

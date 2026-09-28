@@ -168,6 +168,8 @@ jobs:
       # visible in the log and its trend can be watched over time; it never fails
       # the build (`continue-on-error`, and `|| true` so an empty tree is fine).
       - name: Cargo Tree (duplicate versions, advisory)
+        # advisory: duplicates are not a supply-chain signal (SUP-010). Forcing
+        # function: none by design; deny.toml [bans] gates crates that must not appear.
         continue-on-error: true
         run: cargo tree --duplicates --workspace --edges normal || true
 

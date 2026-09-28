@@ -415,6 +415,8 @@ jobs:
       # unused-file/-export findings are a separate future cleanup effort, not
       # this step's job; the step only surfaces them in the run log.
       - name: Unused-code report (knip, advisory)
+        # advisory: unused-code findings are not defects, and #3158 says keep it
+        # non-blocking. Forcing function: the #3158 cleanup tracker.
         continue-on-error: true
         run: pnpm knip || true
 
@@ -434,6 +436,8 @@ jobs:
     name: Bundle Size (advisory)
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request'
+    # advisory: a size trend, not a correctness gate. Forcing function: none yet;
+    # #3757 tracks making an over-budget bundle red the post-merge run.
     continue-on-error: true
 
     steps:
@@ -450,14 +454,17 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
+        # advisory: install failures are gated by the real build/test lanes.
         continue-on-error: true
         run: pnpm install --frozen-lockfile
 
       - name: Build frontend
+        # advisory: build failures are gated by the real build/test lanes.
         continue-on-error: true
         run: pnpm build
 
       - name: Report bundle size (advisory)
+        # advisory: see the job comment; #3757 adds the forcing function.
         continue-on-error: true
         run: pnpm size >> "$GITHUB_STEP_SUMMARY"
 
