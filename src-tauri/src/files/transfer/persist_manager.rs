@@ -18,7 +18,7 @@ use tauri::AppHandle;
 
 use super::persist::{
     FolderPasteEndpoint, FolderPasteOperation, PersistedDockerTarget, PersistedFolderPaste,
-    PersistedTransfer, PersistedTransferStatus, PersistedTransferStore,
+    PersistedRemoteSource, PersistedTransfer, PersistedTransferStatus, PersistedTransferStore,
 };
 use super::persist_storage::TransferPersistenceStorage;
 use super::TransferDirection;
@@ -156,6 +156,7 @@ impl TransferPersistenceManager {
             group_id: None,
             folder_paste_id: None,
             source_mtime: None,
+            remote_source: None,
         };
         let mut store = self.lock();
         store.upsert(entry);
@@ -172,6 +173,23 @@ impl TransferPersistenceManager {
         };
         entry.docker = Some(PersistedDockerTarget {
             container_id: container_id.to_string(),
+        });
+        store.upsert(entry);
+        self.schedule_write(&store);
+    }
+
+    /// Attach the source endpoint of a remote-to-remote copy to a registered
+    /// transfer (#3206), so a relaunch after a restart can re-attach both
+    /// sessions. References and paths only — never credentials. A no-op for
+    /// an unknown id (never fabricates a record).
+    pub fn record_remote_source(&self, transfer_id: &str, session_id: &str, path: &str) {
+        let mut store = self.lock();
+        let Some(mut entry) = store.get(transfer_id).cloned() else {
+            return;
+        };
+        entry.remote_source = Some(PersistedRemoteSource {
+            session_id: session_id.to_string(),
+            path: path.to_string(),
         });
         store.upsert(entry);
         self.schedule_write(&store);
@@ -494,6 +512,44 @@ mod tests {
             })
         );
         assert_eq!(rehydrated[0].resume_offset, CHECKPOINT_BYTES + 1);
+    }
+
+    /// A remote-to-remote copy's source endpoint (#3206) survives progress
+    /// checkpoints and rehydration; attaching it to an unknown id never
+    /// fabricates a record.
+    #[test]
+    fn remote_source_survives_progress_and_rehydration() {
+        let (_d, m) = mgr();
+        m.record_registration(
+            "r2r",
+            "sess-dst",
+            TransferDirection::Upload,
+            "data.csv",
+            "/dst/data.csv",
+            None,
+            0,
+        );
+        m.record_remote_source("r2r", "sess-src", "/src/data.csv");
+        m.record_remote_source("ghost", "sess-src", "/src/data.csv");
+        m.note_progress(
+            "r2r",
+            PersistedTransferStatus::Active,
+            CHECKPOINT_BYTES + 1,
+            2048,
+            false,
+            Some(7),
+        );
+        let rehydrated = m.load_incomplete_as_paused();
+        assert_eq!(rehydrated.len(), 1, "no record fabricated for `ghost`");
+        assert_eq!(
+            rehydrated[0].remote_source,
+            Some(PersistedRemoteSource {
+                session_id: "sess-src".to_string(),
+                path: "/src/data.csv".to_string(),
+            })
+        );
+        assert_eq!(rehydrated[0].resume_offset, CHECKPOINT_BYTES + 1);
+        assert_eq!(rehydrated[0].source_mtime, Some(7));
     }
 
     #[test]

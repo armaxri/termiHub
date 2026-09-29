@@ -12,11 +12,14 @@
 
 mod file_browser;
 mod listing_parser;
+#[cfg(test)]
+pub(crate) mod mock_server;
 pub(crate) mod reconnect;
 mod transfer;
 
 pub use transfer::{
-    probe_remote_size, run_attempt, AttemptOutcome, FtpDirection, StopReason, FTP_CHUNK_SIZE,
+    probe_remote_file, probe_remote_size, run_attempt, AttemptOutcome, FtpDirection, FtpRemoteFile,
+    FtpServerCaps, StopReason, FTP_CHUNK_SIZE,
 };
 
 use std::sync::Arc;

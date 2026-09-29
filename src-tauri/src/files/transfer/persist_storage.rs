@@ -96,6 +96,7 @@ mod tests {
             group_id: None,
             folder_paste_id: None,
             source_mtime: None,
+            remote_source: None,
         }
     }
 

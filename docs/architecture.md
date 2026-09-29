@@ -2167,6 +2167,16 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
   file anyway — so the folder is reported as one unit. Drag-out
   staging downloads are never persisted: their directories are deleted at
   quit, and records under the staging root are pruned at startup (#3629).
+  A rehydrated **FTP** transfer relaunches like an SFTP one (#3206): its
+  session reference resolves to the live FTP session's connection settings,
+  so the password comes from that session, never from `transfers.json`. Before
+  every attempt the executor probes the server: `FEAT` says whether `REST
+STREAM` and `MDTM` are supported, and `SIZE` + `MDTM` fingerprint the remote
+  file. Without `REST STREAM` the transfer restarts from zero; without `MDTM`
+  a resume is checked against the size only. A **remote-to-remote** copy
+  persists its source endpoint (`remoteSource`: session reference + path) and
+  relaunches by re-attaching both sessions; the source is checked against the
+  persisted size and mtime like any other relaunch.
 - **Desktop and agent** — the `ftp` cargo feature (on by default) registers the backend in both
   `src-tauri/src/session/registry.rs::build_desktop_registry()` and the agent's
   `agent/src/registry.rs::build_registry()` (PARITY-003), so an agent-hosted FTP connection uses

@@ -35,6 +35,7 @@ pub mod persist_manager;
 pub mod persist_storage;
 pub(crate) mod relaunch;
 pub(crate) mod relaunch_docker;
+pub(crate) mod relaunch_session;
 
 // The FTP/SFTP transfer executors moved to `termihub-core` (DUP-026 slice 2b):
 // `run_ftp_transfer`, `run_sftp_transfer`, `run_sftp_remote_copy`, plus SFTP's
