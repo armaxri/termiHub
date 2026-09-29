@@ -47,7 +47,7 @@ import { errorMessage } from "@/utils/errorMessage";
  * until reload (FES-005).
  *
  * The referential-integrity sweep after a delete ({@link sweepDeletedConnectionRefs}
- * in the factory) reaches other domains — persistent sessions, open tabs, tunnels —
+ * in the factory) reaches other domains — persistent sessions, open tabs, bookmarks —
  * purely through the composed `AppState` via `get()` / `set()`, so it stays local
  * to this slice without importing those domains directly.
  */
@@ -138,7 +138,8 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
    * keyed off the connection id and were left dangling once it was gone: a live
    * persistent/background session (an orphan reconnect target + badge), open tabs
    * still pointing at the removed id, and SSH tunnels that reference it. This
-   * sweeps each dependent so a delete leaves no quiet inconsistency behind.
+   * sweeps each frontend-owned dependent so a delete leaves no quiet
+   * inconsistency behind.
    *
    * **Ordering vs the FES-005 rollback.** The persistent-session teardown kills a
    * backend process and is not revertible, so the sweep must run only once the
@@ -157,11 +158,9 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
    *   #2562). The tab keeps running from its own captured config snapshot; it just
    *   no longer points at a removed connection (the restore path already tolerates
    *   every referenced connection having been deleted).
-   * - **tunnels** — the tunnels region is backend-authoritative (this slice holds
-   *   only a projected cache), so the frontend cannot repoint or remove a tunnel
-   *   here; it surfaces the dangling reference (the tunnel already renders as
-   *   "Unknown") so the inconsistency is not silent. The authoritative cascade is
-   *   backend-owned (tracked as a follow-up).
+   * - **tunnels** — not swept here: the backend cascade (#2850) stops a tunnel
+   *   whose SSH connection was deleted and projects it as `missingConnection`
+   *   through the `tunnels` region, so every client shows it the same way.
    * - **file-browser bookmarks** — the backend `delete_connection` already pruned
    *   the `connection:<id>` list (#3562); drop it from the UI cache too.
    */
@@ -202,19 +201,7 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       return changed ? { tabContent: nextContent } : {};
     });
 
-    // 3. Tunnels — surface any that now reference a deleted SSH connection. The
-    // tunnels region is backend-authoritative, so we cannot repoint/remove here;
-    // the tunnel stays (rendered "Unknown") and the user is told, rather than the
-    // reference silently rotting. The authoritative cascade is a backend follow-up.
-    const orphanedTunnels = get().tunnels.filter((t) => idSet.has(t.sshConnectionId));
-    if (orphanedTunnels.length > 0) {
-      const noun = orphanedTunnels.length === 1 ? "tunnel" : "tunnels";
-      toast.info(`${orphanedTunnels.length} ${noun} now reference a deleted SSH connection`, {
-        description: orphanedTunnels.map((t) => t.name).join(", "),
-      });
-    }
-
-    // 4. File-browser bookmarks — mirror the backend prune in the UI cache (#3562).
+    // 3. File-browser bookmarks — mirror the backend prune in the UI cache (#3562).
     const deletedScopes = new Set(deletedIds.map(connectionBookmarkScope));
     useFileBookmarksStore.getState().forgetScopes((scope) => deletedScopes.has(scope));
   };
