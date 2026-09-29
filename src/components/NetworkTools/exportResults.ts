@@ -15,7 +15,7 @@ export interface PortScanExportRow {
   host: string;
   port: number;
   state: string;
-  latencyMs?: number;
+  latencyMs?: number | null;
 }
 
 /** A CSV cell value; nullish renders as an empty cell. */

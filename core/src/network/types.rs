@@ -2,9 +2,9 @@
 //!
 //! The frontend DTOs (`src/types/network.ts`) are generated from these via
 //! ts-rs (audit DUP-030, #3802). `u64` fields are mapped to `number`. `Option`
-//! fields serialize as `null` when unset but keep the frontend's historical
-//! `field?: T` typing via `ts(optional)`; tightening them to `T | null` is
-//! tracked in #3821 so consumers can be updated first.
+//! fields serialize as `null` when unset, so they are typed `field?: T | null`
+//! via `ts(optional = nullable)` (#3821) and consumers must treat `null` and
+//! `undefined` alike.
 
 use serde::{Deserialize, Serialize};
 
@@ -37,7 +37,7 @@ pub struct PortScanResult {
     pub port: u16,
     pub state: PortState,
     /// Round-trip latency in milliseconds for open ports.
-    #[cfg_attr(test, ts(optional, type = "number"))]
+    #[cfg_attr(test, ts(optional = nullable, type = "number | null"))]
     pub latency_ms: Option<u64>,
 }
 
@@ -66,10 +66,10 @@ pub struct PingResult {
     /// Sequence number (starts at 1).
     pub seq: u32,
     /// Round-trip time in milliseconds. `None` when the packet timed out.
-    #[cfg_attr(test, ts(optional, type = "number"))]
+    #[cfg_attr(test, ts(optional = nullable, type = "number | null"))]
     pub latency_ms: Option<u64>,
     /// IP time-to-live from the reply. `None` on timeout or TCP fallback.
-    #[cfg_attr(test, ts(optional))]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub ttl: Option<u8>,
     /// `true` when no reply was received within the timeout window.
     pub timed_out: bool,
@@ -106,10 +106,10 @@ pub struct PingSweepResult {
     /// The probed address (an IP string, or the original hostname token).
     pub host: String,
     /// Round-trip time in milliseconds for the reply.
-    #[cfg_attr(test, ts(optional, type = "number"))]
+    #[cfg_attr(test, ts(optional = nullable, type = "number | null"))]
     pub latency_ms: Option<u64>,
     /// Best-effort reverse-DNS hostname for the address, if resolvable.
-    #[cfg_attr(test, ts(optional))]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub hostname: Option<String>,
 }
 
@@ -223,10 +223,10 @@ pub struct TracerouteHop {
     /// TTL value at this hop (1-based).
     pub hop: u8,
     /// Reverse-DNS hostname of the router, if resolved.
-    #[cfg_attr(test, ts(optional))]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub host: Option<String>,
     /// IP address of the router. `None` when the hop did not respond (`* * *`).
-    #[cfg_attr(test, ts(optional))]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub ip: Option<String>,
     /// Three probe round-trip times in milliseconds.
     pub rtt_ms: [Option<f64>; 3],
@@ -254,10 +254,10 @@ pub struct OpenPort {
     pub protocol: Protocol,
     pub local_addr: String,
     /// Owning process ID, if available.
-    #[cfg_attr(test, ts(optional))]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub pid: Option<u32>,
     /// Owning process name, if available.
-    #[cfg_attr(test, ts(optional))]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub process: Option<String>,
 }
 

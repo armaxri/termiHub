@@ -5,6 +5,8 @@ use crate::connection::id_changes::ConnectionIdRemap;
 
 /// Reference to a remote agent connection definition.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRef {
     /// The remote agent's ID.
@@ -15,27 +17,39 @@ pub struct AgentRef {
 
 /// A tab definition within a workspace leaf panel.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceTabDef {
     /// Reference to a saved connection by ID.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub connection_ref: Option<String>,
     /// Inline connection config as fallback when no saved connection is referenced.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        test,
+        ts(optional, type = "{ type: string; config: Record<string, unknown> }")
+    )]
     pub inline_config: Option<serde_json::Value>,
     /// Reference to a remote agent definition.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub agent_ref: Option<AgentRef>,
     /// Optional title override for the tab.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub title: Option<String>,
     /// Optional command to run after the session connects.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub initial_command: Option<String>,
 }
 
 /// Recursive layout tree for a workspace.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum WorkspaceLayoutNode {
     /// A leaf panel containing one or more tabs.
@@ -46,6 +60,7 @@ pub enum WorkspaceLayoutNode {
         children: Vec<WorkspaceLayoutNode>,
         /// Optional percentage sizes for each child (must sum to 100, length must match children).
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
         sizes: Option<Vec<f64>>,
     },
 }
@@ -81,6 +96,8 @@ pub fn follow_connection_id_changes_in_groups(
 
 /// Split direction for layout containers.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub enum SplitDirection {
     Horizontal,
@@ -89,12 +106,15 @@ pub enum SplitDirection {
 
 /// Definition of a single tab group within a workspace.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceTabGroupDef {
     /// Display name for this tab group.
     pub name: String,
     /// Optional accent dot color (e.g. "#ff6b6b").
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub color: Option<String>,
     /// The panel layout tree for this group.
     pub layout: WorkspaceLayoutNode,
@@ -103,6 +123,7 @@ pub struct WorkspaceTabGroupDef {
     /// the primary window and for legacy single-window saves; an absent value
     /// restores into the main window.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub window_id: Option<String>,
 }
 
@@ -117,6 +138,8 @@ pub struct WorkspaceTabGroupDef {
 /// save/restore round trip. Legacy single-window saves omit the window
 /// dimension entirely.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceWindowDef {
     /// Logical window id referenced by tab groups. `"main"` is the primary window.
@@ -125,6 +148,8 @@ pub struct WorkspaceWindowDef {
 
 /// A complete workspace definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceDefinition {
     /// Unique workspace identifier.
@@ -133,6 +158,7 @@ pub struct WorkspaceDefinition {
     pub name: String,
     /// Optional description.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub description: Option<String>,
     /// The tab groups in this workspace (always at least one).
     pub tab_groups: Vec<WorkspaceTabGroupDef>,
@@ -140,16 +166,20 @@ pub struct WorkspaceDefinition {
     /// persistence, #1905). Absent/empty on legacy single-window saves, which
     /// restore entirely into the main window.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub windows: Option<Vec<WorkspaceWindowDef>>,
     /// Per-workspace settings overrides (PROD-052): theme, terminal font, and
     /// defaults for new local shells. Absent → the workspace inherits every
     /// global setting. Added in schema v2.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub settings: Option<WorkspaceSettings>,
 }
 
 /// Summary of a workspace for list display (without full layout details).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceSummary {
     /// Unique workspace identifier.
@@ -158,11 +188,13 @@ pub struct WorkspaceSummary {
     pub name: String,
     /// Optional description.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub description: Option<String>,
     /// Total number of tabs across all groups.
     pub connection_count: usize,
     /// Number of tab groups (omitted when 1 for clean display).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub group_count: Option<usize>,
 }
 
@@ -264,6 +296,8 @@ pub struct WorkspaceExportEntry {
 
 /// Preview of a workspace import file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceImportPreview {
     pub workspace_count: usize,
@@ -277,6 +311,8 @@ pub struct WorkspaceImportPreview {
 /// external file, or two external files) is exported by its raw id without a
 /// portable name, and the warning tells the user which tab and which files.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceExportResult {
     /// The portable export JSON (file format unchanged).
@@ -293,6 +329,8 @@ pub struct WorkspaceExportResult {
 /// longer resolves. The tab is kept regardless; the warning lets the UI tell the
 /// user the imported workspace is partially broken instead of failing silently.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceImportResult {
     /// Number of workspaces added to the store (duplicates by name are skipped).

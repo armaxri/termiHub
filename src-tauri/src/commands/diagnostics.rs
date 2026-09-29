@@ -24,6 +24,8 @@ use crate::utils::file_log;
 
 /// The newest crash report the user has not yet been told about.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct CrashReportNotice {
     /// Report file name (pass to [`read_crash_report`]).
@@ -36,6 +38,8 @@ pub struct CrashReportNotice {
 
 /// Result of a diagnostics export.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct DiagnosticsExportResult {
     /// Where the bundle was written.

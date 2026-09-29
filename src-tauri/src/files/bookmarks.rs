@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 
 /// One bookmarked directory.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct FileBookmark {
     /// Unique identifier for this bookmark.

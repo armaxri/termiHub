@@ -32,7 +32,7 @@ interface ScanRow {
   host: string;
   port: number;
   state: string;
-  latencyMs?: number;
+  latencyMs?: number | null;
 }
 
 /** Port Scanner diagnostic tab content. */

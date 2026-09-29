@@ -24,6 +24,8 @@ const FILE_NAME: &str = "last-session.json";
 /// a workspace it has no name/id and is never shown in the workspace list — it is
 /// silently saved on every layout change and silently restored on startup.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct LastSession {
     /// Schema version for forward compatibility.
@@ -37,6 +39,7 @@ pub struct LastSession {
     /// persistence, #1905). Absent/empty for a legacy single-window session,
     /// which restores entirely into the main window.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub windows: Option<Vec<WorkspaceWindowDef>>,
     /// Id of the workspace whose settings overrides (PROD-052) were active when
     /// the session was saved, so a restart re-activates it (#3517). Stamped by
@@ -45,10 +48,12 @@ pub struct LastSession {
     /// deleted. Absent when no workspace was active. Additive and optional, so
     /// the schema version is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub active_workspace_id: Option<String>,
     /// Unknown top-level keys, captured verbatim so an older app preserves
     /// fields a newer version added rather than dropping them on save (PER-010).
     #[serde(flatten, default)]
+    #[cfg_attr(test, ts(skip))]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
@@ -778,5 +783,24 @@ mod tests {
             fs::read_to_string(dir.path().join(FILE_NAME)).unwrap(),
             before
         );
+    }
+
+    // ── On-disk byte-compatibility (ts-rs rollout, #3088) ──────────────────
+    //
+    // A `last-session.json` in the format this backend has always written must
+    // load and re-save byte for byte (unknown keys included), so generating the
+    // TS `LastSession` from this struct is invisible on disk.
+    #[test]
+    fn legacy_last_session_file_round_trips_byte_identical() {
+        const LEGACY: &str = include_str!("testdata/last_session_legacy.json");
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        fs::write(dir.path().join(FILE_NAME), LEGACY).unwrap();
+        let session = storage.load().unwrap().expect("session loads");
+        assert_eq!(session.active_group_index, 1);
+        assert_eq!(session.active_workspace_id.as_deref(), Some("ws-1"));
+        storage.save(&session).unwrap();
+        let saved = fs::read_to_string(dir.path().join(FILE_NAME)).unwrap();
+        assert_eq!(saved, LEGACY.trim_end());
     }
 }

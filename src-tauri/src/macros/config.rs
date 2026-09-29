@@ -7,17 +7,22 @@ use serde::{Deserialize, Serialize};
 /// byte string — recording (#1674) and playback (#1675) decide the encoding; the
 /// storage layer treats it as an opaque string.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct MacroStep {
     /// The recorded input for this step (UTF-8 text or base64-encoded bytes).
     pub data: String,
     /// Delay in milliseconds to wait before this step is played back.
     #[serde(default)]
+    #[cfg_attr(test, ts(type = "number"))]
     pub delay_ms: u64,
 }
 
 /// A named, stored sequence of recorded terminal input.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct Macro {
     /// Unique macro identifier.
@@ -26,6 +31,7 @@ pub struct Macro {
     pub name: String,
     /// Optional free-text description.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub description: Option<String>,
     /// Optional tags for grouping/filtering in the manager UI.
     #[serde(default)]

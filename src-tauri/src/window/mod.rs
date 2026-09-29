@@ -106,11 +106,14 @@ struct StoredLayout {
 /// One window's reported layout slice as returned to the frontend for assembly
 /// (#1925). The `tab_groups` payload is opaque frontend JSON.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct WindowLayoutReport {
     /// The reporting window's runtime label (`main`, `win-1`, …).
     pub label: String,
     /// That window's captured `WorkspaceTabGroupDef[]` (opaque frontend JSON).
+    #[cfg_attr(test, ts(as = "Vec<crate::workspace::config::WorkspaceTabGroupDef>"))]
     pub tab_groups: serde_json::Value,
     /// Index of the active group within this window's own groups.
     pub active_group_index: usize,

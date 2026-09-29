@@ -14,4 +14,4 @@ host: string, port: number, state: PortState,
 /**
  * Round-trip latency in milliseconds for open ports.
  */
-latencyMs?: number, };
+latencyMs?: number | null, };
