@@ -3,6 +3,9 @@
 import type { ConnectionConfig } from "./generated/ConnectionConfig";
 import type { BroadcastGroup } from "./generated/BroadcastGroup";
 import type { LineEnding } from "./generated/LineEnding";
+import type { TerminalExitReason } from "./generated/TerminalExitReason";
+import type { BroadcastScope } from "./generated/BroadcastScope";
+import type { DropEdge } from "./generated/DropEdge";
 
 export type SessionId = string;
 
@@ -227,7 +230,8 @@ export type { LineEnding };
  * - `killed`  — the user explicitly terminated the session (e.g. via the Open
  *               Connections panel); no "unexpected disconnect" overlay is shown.
  */
-export type TerminalExitReason = "clean" | "dropped" | "killed";
+// Generated from the Rust `TerminalExitReason` via ts-rs (#3088).
+export type { TerminalExitReason };
 
 /** Details about how a terminal session ended (#1121). */
 export interface TerminalExitInfo {
@@ -320,7 +324,8 @@ export type { ConnectionConfig };
  * broadcast foundation (#1955); `"panel"` and `"custom"` are reserved for the
  * scope-selection follow-up (#1956).
  */
-export type BroadcastScope = "all" | "panel" | "custom";
+// Generated from the Rust `BroadcastScope` via ts-rs (#3088).
+export type { BroadcastScope };
 
 /**
  * A persistent, named broadcast group (PROD-061, #3443): a reusable set of
@@ -475,7 +480,8 @@ export interface SplitContainer {
 }
 
 export type PanelNode = LeafPanel | SplitContainer;
-export type DropEdge = "left" | "right" | "top" | "bottom" | "center";
+// Generated from the Rust `DropEdge` via ts-rs (#3088).
+export type { DropEdge };
 
 export interface LanguageInfo {
   id: string;

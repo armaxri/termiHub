@@ -99,6 +99,8 @@ pub enum Position {
 
 /// The edge of a drop target a drag was released on.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum DropEdge {
     Left,

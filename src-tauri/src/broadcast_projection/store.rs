@@ -66,6 +66,8 @@ use serde_json::{json, Value};
 /// How the broadcast target group was derived. Mirrors the frontend
 /// `BroadcastScope` union (`src/types/terminal.ts`).
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum BroadcastScope {
     /// Every terminal tab in the source tab's own group.

@@ -41,6 +41,8 @@ use super::handler::SshSession;
 /// *actual* ability to open the file for writing — it catches the owner-mismatch
 /// case (e.g. a `rw-r--r--` file owned by another user).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub enum Writability {
     /// The file could be opened for writing.

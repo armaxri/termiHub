@@ -20,27 +20,15 @@
  * state. The UI is honest about that; see `TerminalDisconnectOverlay`.
  */
 
-/** Tunables for the exponential backoff schedule. */
-export interface BackoffConfig {
-  /** Delay before the first retry, in ms. */
-  baseDelayMs: number;
-  /** Multiplier applied per attempt (2 → doubles each time). */
-  factor: number;
-  /** Upper bound on any single delay, in ms (before jitter). */
-  maxDelayMs: number;
-  /**
-   * Maximum number of connection attempts before giving up. `0` means retry
-   * forever (the user's Cancel is then the only way to stop).
-   */
-  maxAttempts: number;
-  /**
-   * Fraction of the computed delay that random jitter may shave off, in
-   * `[0, MAX_JITTER_RATIO]` (larger values are clamped). `0.5` draws each window
-   * from `[d/2, d]` so a fleet of dropped tabs does not stampede the server in
-   * lockstep. `0` disables jitter (deterministic).
-   */
-  jitterRatio: number;
-}
+import type { BackoffConfig } from "@/types/generated/BackoffConfig";
+import type { ReconnectEvent } from "@/types/generated/ReconnectEvent";
+import type { ReconnectPhase } from "@/types/generated/ReconnectPhase";
+import type { ReconnectState } from "@/types/generated/ReconnectState";
+
+// The machine's data types are generated via ts-rs from their Rust twins in
+// `core/src/reconnect_backoff.rs` (#3088), so the two ports cannot drift in shape;
+// the golden fixtures pin their behaviour equal.
+export type { BackoffConfig, ReconnectEvent, ReconnectPhase, ReconnectState };
 
 /**
  * Largest jitter ratio the engine honours (#3730). A configured `jitterRatio` is
@@ -78,39 +66,6 @@ export const RECONNECT_POLICY: BackoffConfig = {
  * shortens a window). Twin of the Rust `RECONNECT_GIVE_UP_WINDOW_MS`.
  */
 export const RECONNECT_GIVE_UP_WINDOW_MS = 181_000;
-
-/**
- * Phase of the auto-reconnect loop for one tab.
- *
- * - `idle`       — not auto-reconnecting.
- * - `waiting`    — backoff timer is running before the next attempt.
- * - `connecting` — an attempt is in flight (the transport is being re-established).
- * - `connected`  — the transport came back; the loop settled successfully.
- * - `gaveup`     — attempts exhausted or the user cancelled; hand off to the
- *                  manual disconnect overlay.
- */
-export type ReconnectPhase = "idle" | "waiting" | "connecting" | "connected" | "gaveup";
-
-/** Immutable snapshot of the reconnect loop for one tab. */
-export interface ReconnectState {
-  phase: ReconnectPhase;
-  /** Number of connection attempts started so far in this loop. */
-  attempt: number;
-  /** Delay the current `waiting` phase is counting down, in ms (0 otherwise). */
-  delayMs: number;
-}
-
-/**
- * Events that drive the machine:
- *
- * - `drop`    — the connection was lost; begin (or, from `connected`, restart)
- *               the backoff loop.
- * - `attempt` — the backoff timer fired; start a connection attempt.
- * - `success` — the attempt connected.
- * - `failure` — the attempt failed; back off further or give up.
- * - `cancel`  — the user asked to stop retrying.
- */
-export type ReconnectEvent = "drop" | "attempt" | "success" | "failure" | "cancel";
 
 /** The starting state for a tab that is not auto-reconnecting. */
 export const initialReconnectState: ReconnectState = {

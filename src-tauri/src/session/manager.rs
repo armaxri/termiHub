@@ -268,6 +268,9 @@ impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
 
 /// Information about an active session.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "LocalSessionInfo"))]
 #[serde(rename_all = "camelCase")]
 pub struct SessionInfo {
     pub id: String,
@@ -276,6 +279,7 @@ pub struct SessionInfo {
     pub alive: bool,
     /// Set when the session is a remote proxy; identifies the agent it runs on.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub agent_id: Option<String>,
     /// `true` when the session was opened via the CLI/context-menu spawn path
     /// (#1446, #1466) — a container with no saved connection id. Recorded on the
@@ -283,6 +287,7 @@ pub struct SessionInfo {
     /// Containers" from this authoritative backend marker, surviving a tab close
     /// (whereas the frontend `spawned` tab flag is lost once the tab is gone).
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub spawned: bool,
 }
 
