@@ -1,13 +1,17 @@
 /**
- * `useMonitorHistory` — client-side rolling history for a system monitor
- * (PROD-0030).
+ * `useMonitorHistory` — rolling metric history for a system monitor
+ * (PROD-0030, #3204).
  *
- * The `system-monitors` projection region is authoritative but retains only the
- * *latest* sample per monitor — there is no server-side time series. This hook
- * reconstructs a short rolling window on the client by folding each new sample of
- * the active monitor into fixed-capacity rings ({@link pushBounded}), one per
- * tracked metric (CPU, memory, swap, network rx/tx), so compact sparklines and a
- * history panel can be drawn without any backend change.
+ * **Region-preferred.** The `system-monitors` projection region retains a bounded
+ * ring of recent samples per live monitor (`history`, #3204), so a newly-opened
+ * window or a remounted status bar draws the existing history immediately. When
+ * the caller passes that ring as `regionSamples`, the hook derives its series from
+ * it ({@link historiesFromRegionSamples}).
+ *
+ * **Client-side fallback.** Without a region ring the hook reconstructs a short
+ * rolling window on the client by folding each new sample of the active monitor
+ * into fixed-capacity rings ({@link pushBounded}), one per tracked metric (CPU,
+ * memory, swap, network rx/tx). The fold always runs, so falling back is seamless.
  *
  * New samples are detected by the monitor's monotonically increasing
  * `sampleCount` (from the region), not by object identity: a paused or stale
@@ -17,11 +21,16 @@
  * never bleeds into another's and a reconnect is not graphed as continuous.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import type { MonitorHistorySample, SystemStats } from "@/types/monitoring";
 import { pushBounded } from "@/utils/ringBuffer";
 
-/** Number of samples retained per monitor metric (bounded memory). */
+/**
+ * Number of samples retained per monitor metric (bounded memory). Equal to the
+ * backend ring bound (`MONITOR_HISTORY_CAPACITY` in
+ * `src-tauri/src/system_monitor_projection/store.rs`).
+ */
 export const MONITOR_HISTORY_CAP = 90;
 
 /** The system-metric series tracked for history. */
@@ -66,6 +75,50 @@ export interface MonitorSampleInput {
   sampleCount: number;
   /** The per-metric values for this sample; `null` marks a gap for that metric. */
   values: MonitorMetricValues;
+}
+
+/**
+ * The tracked metric values for one sample (pure). CPU and the network rates
+ * report a priming/zero first sample (no prior delta, audit gap G10), so sample
+ * #1 is a gap (`null`) for those — matching the "CPU —" placeholder rather than a
+ * misleading 0. Memory is correct from the first sample; swap is `null` when the
+ * host has no swap so its window stays empty (chart omitted). A metric the sample
+ * lists as unavailable (#3202 — e.g. a Docker-stats sample) is a gap too, never a
+ * placeholder zero.
+ */
+export function monitorMetricValues(
+  stats: SystemStats | null,
+  sampleCount: number
+): MonitorMetricValues {
+  if (!stats) return { cpu: null, memory: null, swap: null, netRx: null, netTx: null };
+  const unavailable = new Set(stats.unavailableMetrics ?? []);
+  const primed = sampleCount >= 2;
+  const net = primed && !unavailable.has("network");
+  return {
+    cpu: primed && !unavailable.has("cpu") ? stats.cpuUsagePercent : null,
+    memory: unavailable.has("memory") ? null : stats.memoryUsedPercent,
+    swap: stats.swapTotalKb > 0 && !unavailable.has("swap") ? stats.swapUsedPercent : null,
+    netRx: net ? stats.netRxBytesPerSec : null,
+    netTx: net ? stats.netTxBytesPerSec : null,
+  };
+}
+
+/**
+ * Derive the per-metric series from the region's retained ring (pure, #3204):
+ * the newest `capacity` samples, oldest first, each mapped through
+ * {@link monitorMetricValues} with its own `sampleCount`.
+ */
+export function historiesFromRegionSamples(
+  samples: readonly MonitorHistorySample[],
+  capacity: number = MONITOR_HISTORY_CAP
+): MonitorHistories {
+  const series = emptyMonitorHistories();
+  const start = Math.max(0, samples.length - Math.max(0, capacity));
+  for (let i = start; i < samples.length; i++) {
+    const values = monitorMetricValues(samples[i].stats, samples[i].sampleCount);
+    for (const k of MONITOR_METRIC_KEYS) series[k].push(values[k]);
+  }
+  return series;
 }
 
 /** Seed each metric window from a single sample (bounded by capacity). */
@@ -130,18 +183,26 @@ export interface UseMonitorHistoryOptions {
   values: MonitorMetricValues;
   /** Samples to retain per metric (defaults to {@link MONITOR_HISTORY_CAP}). */
   capacity?: number;
+  /**
+   * The region's retained ring for this monitor (#3204). When present it is
+   * preferred over the client-side window; `undefined`/`null` falls back to it.
+   */
+  regionSamples?: readonly MonitorHistorySample[] | null;
 }
 
 /**
- * Maintain bounded rolling windows of the monitor metrics across renders,
- * appending one point per new region sample. Returns the retained values per
- * metric (oldest first), ready to hand to a sparkline or the history panel.
+ * The rolling windows of the monitor metrics: derived from the region's retained
+ * ring when `regionSamples` is given, otherwise maintained client-side across
+ * renders by appending one point per new region sample. Returns the retained
+ * values per metric (oldest first), ready to hand to a sparkline or the history
+ * panel.
  */
 export function useMonitorHistory({
   key,
   sampleCount,
   values,
   capacity = MONITOR_HISTORY_CAP,
+  regionSamples,
 }: UseMonitorHistoryOptions): MonitorHistories {
   const [state, setState] = useState<MonitorHistoryState>(initialMonitorHistoryState);
 
@@ -159,5 +220,12 @@ export function useMonitorHistory({
     );
   }, [key, sampleCount, cpu, memory, swap, netRx, netTx, capacity]);
 
-  return state.series;
+  // The projection client applies diffs copy-on-write, so a changed ring is a new
+  // array and an unchanged one keeps its identity — memoizing on it is exact.
+  const regionSeries = useMemo(
+    () => (regionSamples ? historiesFromRegionSamples(regionSamples, capacity) : null),
+    [regionSamples, capacity]
+  );
+
+  return regionSeries ?? state.series;
 }

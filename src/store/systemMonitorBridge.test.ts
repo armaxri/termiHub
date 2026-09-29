@@ -51,6 +51,24 @@ describe("region subscription + fan-out", () => {
     unB();
   });
 
+  it("passes the retained history ring through to listeners (#3204)", async () => {
+    const received: SystemMonitorsView[] = [];
+    const unsubscribe = onMonitorsView((v) => received.push(v));
+    await ensureMonitorsSubscribed();
+
+    const history = {
+      s1: [
+        { sampleCount: 1, stats: fakeStats("host-a", 10) },
+        { sampleCount: 2, stats: fakeStats("host-a", 20) },
+      ],
+    };
+    transport.seed({ ...monitorsView([fakeMonitor("s1")]), history });
+
+    expect(received[received.length - 1].history).toEqual(history);
+    expect(currentMonitorsView().history).toEqual(history);
+    unsubscribe();
+  });
+
   it("stops delivering once unsubscribed", async () => {
     const received: SystemMonitorsView[] = [];
     const unsubscribe = onMonitorsView((v) => received.push(v));
