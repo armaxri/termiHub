@@ -25,6 +25,7 @@ use crate::daemon::monitoring_rpc::{
 use crate::daemon::process_rpc::{self, ProcessRequest, ProcessResponse};
 use crate::daemon::protocol::{self, *};
 use crate::daemon::transport::{self, BoxedReader, BoxedWriter, DaemonListener};
+use crate::daemon::worker_sink::{self, SinkEvent, WorkerSink};
 use termihub_core::buffer::{RingBuffer, DEFAULT_BUFFER_CAPACITY};
 use termihub_core::connection::{ConnectionType, OutputReceiver};
 
@@ -339,8 +340,7 @@ pub(crate) trait WorkerAcceptor {
 impl WorkerAcceptor for DaemonListener {
     fn accept(
         &mut self,
-    ) -> impl std::future::Future<Output = std::io::Result<(BoxedReader, BoxedWriter)>> + Send
-    {
+    ) -> impl std::future::Future<Output = std::io::Result<(BoxedReader, BoxedWriter)>> + Send {
         DaemonListener::accept(self)
     }
 }
@@ -361,7 +361,10 @@ async fn daemon_loop(
     detached_timeout: Option<Duration>,
 ) -> anyhow::Result<()> {
     let mut ring_buffer = RingBuffer::new(buffer_size);
-    let mut agent_writer: Option<BoxedWriter> = None;
+    // The attached worker's outbound queue (#3890): the loop only enqueues, a
+    // writer task writes under a progress deadline, so a worker that stops
+    // reading can never block this loop.
+    let mut agent_writer: Option<WorkerSink> = None;
     let mut reader_task: Option<tokio::task::JoinHandle<()>> = None;
     // Monotonically increasing counter bumped on every new agent connection.
     // Passed into each reader task so that a stale Disconnected from an old
@@ -427,6 +430,10 @@ async fn daemon_loop(
         let detached_deadline = detached_timeout
             .zip(detached_since)
             .map(|(timeout, since)| since + timeout);
+        // Forward output and replies only while the worker's queue is under its
+        // budget (#3890); otherwise leave them waiting in their channels until
+        // the worker catches up or is dropped. Unattached, everything flows.
+        let forwarding = agent_writer.as_ref().is_none_or(WorkerSink::has_room);
 
         tokio::select! {
             // No worker has been attached for the whole `detached_timeout`
@@ -443,22 +450,35 @@ async fn daemon_loop(
                 return Ok(());
             }
 
+            // The attached worker's writer task ended — the worker stopped
+            // reading, or its socket failed (#3890) — or its queue drained
+            // back under the budget.
+            event = next_sink_event(&mut agent_writer) => {
+                match event {
+                    SinkEvent::Room => {}
+                    SinkEvent::Finished(result) => {
+                        match result {
+                            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                                warn!(session_id, "Dropping a worker that stopped reading: {e}");
+                            }
+                            Err(e) => debug!("Agent connection lost on write: {e}"),
+                            Ok(()) => debug!("Agent writer ended"),
+                        }
+                        agent_writer = None;
+                        abort_reader(&mut reader_task);
+                    }
+                }
+            }
+
             // Output from the ConnectionType
-            output = output_rx.recv() => {
+            output = output_rx.recv(), if forwarding => {
                 match output {
                     Some(data) => {
                         ring_buffer.write(&data);
 
                         // Forward to agent if connected
-                        if let Some(ref mut writer) = agent_writer {
-                            if protocol::write_frame_async(writer, MSG_OUTPUT, &data)
-                                .await
-                                .is_err()
-                            {
-                                debug!("Agent connection lost on write");
-                                agent_writer = None;
-                                abort_reader(&mut reader_task);
-                            }
+                        if let Some(ref sink) = agent_writer {
+                            sink.send(MSG_OUTPUT, &data);
                         }
                     }
                     None => {
@@ -501,15 +521,19 @@ async fn daemon_loop(
                                     "Refusing recovery connect: a live writer is still \
                                      attached, leaving the session with its owner (AGT-015)"
                                 );
-                                let _ = protocol::write_frame_async(
-                                    &mut write_half,
-                                    MSG_ERROR,
-                                    ERR_OWNED_BY_LIVE_PEER,
-                                )
-                                .await;
+                                // Off the loop, bounded (#3890): the refused
+                                // peer may not be reading either.
+                                tokio::spawn(async move {
+                                    let _ = worker_sink::write_with_progress_deadline(
+                                        &mut write_half,
+                                        &protocol::encode_frame(MSG_ERROR, ERR_OWNED_BY_LIVE_PEER),
+                                        EVICTED_NOTIFY_TIMEOUT,
+                                    )
+                                    .await;
+                                });
                                 // Keep the existing writer and do NOT bump the
                                 // generation; the refused connection is dropped
-                                // here at end of scope.
+                                // once the refusal is written.
                                 continue;
                             }
                             AttachDecision::EvictAndTakeover => {
@@ -527,7 +551,7 @@ async fn daemon_loop(
                                 // evicted *before* its connection is dropped below,
                                 // so its desktop folds an explicit "taken over"
                                 // state rather than an ambiguous drop.
-                                notify_evicted(&mut agent_writer).await;
+                                notify_evicted(&mut agent_writer);
                             }
                             AttachDecision::FreshAttach => {}
                         }
@@ -537,53 +561,35 @@ async fn daemon_loop(
                         connection_gen += 1;
                         let gen = connection_gen;
 
-                        // Drop the old connection
-                        agent_writer = None;
+                        // Drop the old connection (its writer task is aborted)
+                        drop(agent_writer.take());
                         abort_reader(&mut reader_task);
                         while agent_cmd_rx.try_recv().is_ok() {}
                         // Its unfinished writes will never get their data.
                         uploads.clear();
 
+                        // The handshake goes through the worker's queue like
+                        // everything after it (#3890), so even a 16 MiB replay
+                        // to a newcomer that never reads cannot stall the loop;
+                        // a failed handshake surfaces as a finished sink.
+                        let sink = WorkerSink::spawn(write_half);
+
                         // Send buffer replay
                         let buffered = ring_buffer.read_all();
-                        if !buffered.is_empty()
-                            && protocol::write_frame_async(
-                                &mut write_half,
-                                MSG_BUFFER_REPLAY,
-                                &buffered,
-                            )
-                            .await
-                            .is_err()
-                        {
-                            warn!("Failed to send buffer replay");
-                            continue;
+                        if !buffered.is_empty() {
+                            sink.send(MSG_BUFFER_REPLAY, &buffered);
                         }
 
                         // Advertise optional features before Ready (#3210). A
                         // pre-#3210 worker skips the unknown handshake frame.
-                        if capability_flags != 0
-                            && protocol::write_frame_async(
-                                &mut write_half,
-                                MSG_CAPABILITIES,
-                                &[capability_flags],
-                            )
-                            .await
-                            .is_err()
-                        {
-                            warn!("Failed to send capabilities");
-                            continue;
+                        if capability_flags != 0 {
+                            sink.send(MSG_CAPABILITIES, &[capability_flags]);
                         }
 
                         // Send ready signal
-                        if protocol::write_frame_async(&mut write_half, MSG_READY, &[])
-                            .await
-                            .is_err()
-                        {
-                            warn!("Failed to send ready");
-                            continue;
-                        }
+                        sink.send(MSG_READY, &[]);
 
-                        agent_writer = Some(write_half);
+                        agent_writer = Some(sink);
 
                         // Spawn reader task for agent commands
                         let tx = agent_cmd_tx.clone();
@@ -599,82 +605,49 @@ async fn daemon_loop(
 
             // A finished process request (#3210): reply to the connection that
             // asked, if it still holds the session.
-            Some((gen, response)) = process_rx.recv() => {
+            Some((gen, response)) = process_rx.recv(), if forwarding => {
                 processes_in_flight = processes_in_flight.saturating_sub(1);
                 if gen != connection_gen {
                     debug!("Dropping process reply for a replaced connection");
                     continue;
                 }
-                let Some(ref mut writer) = agent_writer else {
+                let Some(ref sink) = agent_writer else {
                     continue;
                 };
-                let payload = match serde_json::to_vec(&response) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        warn!("Failed to encode process reply: {e}");
-                        continue;
-                    }
-                };
-                if protocol::write_frame_async(writer, MSG_PROCESS_RESPONSE, &payload)
-                    .await
-                    .is_err()
-                {
-                    debug!("Agent connection lost on process reply");
-                    agent_writer = None;
-                    abort_reader(&mut reader_task);
+                match serde_json::to_vec(&response) {
+                    Ok(payload) => sink.send(MSG_PROCESS_RESPONSE, &payload),
+                    Err(e) => warn!("Failed to encode process reply: {e}"),
                 }
             }
 
             // A monitoring reply or streamed sample (#3871): only the connection
             // that asked — and still holds the session — receives it.
-            Some((gen, event)) = monitor_event_rx.recv() => {
+            Some((gen, event)) = monitor_event_rx.recv(), if forwarding => {
                 if gen != connection_gen {
                     continue;
                 }
-                let Some(ref mut writer) = agent_writer else {
+                let Some(ref sink) = agent_writer else {
                     continue;
                 };
-                let payload = match serde_json::to_vec(&event) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        warn!("Failed to encode monitoring event: {e}");
-                        continue;
-                    }
-                };
-                if protocol::write_frame_async(writer, MSG_MONITORING_EVENT, &payload)
-                    .await
-                    .is_err()
-                {
-                    debug!("Agent connection lost on monitoring event");
-                    agent_writer = None;
-                    abort_reader(&mut reader_task);
+                match serde_json::to_vec(&event) {
+                    Ok(payload) => sink.send(MSG_MONITORING_EVENT, &payload),
+                    Err(e) => warn!("Failed to encode monitoring event: {e}"),
                 }
             }
 
             // A file reply or read chunk (#3242): only the connection that
             // asked — and still holds the session — receives it. One frame per
             // loop turn, so output interleaves with a large read.
-            Some((gen, frame)) = file_event_rx.recv() => {
+            Some((gen, frame)) = file_event_rx.recv(), if forwarding => {
                 if gen != connection_gen {
                     continue;
                 }
-                let Some(ref mut writer) = agent_writer else {
+                let Some(ref sink) = agent_writer else {
                     continue;
                 };
-                let (msg_type, payload) = match frame.encode() {
-                    Ok(encoded) => encoded,
-                    Err(e) => {
-                        warn!("Failed to encode file reply: {e}");
-                        continue;
-                    }
-                };
-                if protocol::write_frame_async(writer, msg_type, &payload)
-                    .await
-                    .is_err()
-                {
-                    debug!("Agent connection lost on file reply");
-                    agent_writer = None;
-                    abort_reader(&mut reader_task);
+                match frame.encode() {
+                    Ok((msg_type, payload)) => sink.send(msg_type, &payload),
+                    Err(e) => warn!("Failed to encode file reply: {e}"),
                 }
             }
 
@@ -705,16 +678,8 @@ async fn daemon_loop(
                         return Ok(());
                     }
                     Some(AgentCommand::QueryBuffer) => {
-                        if let Some(ref mut writer) = agent_writer {
-                            let buffered = ring_buffer.read_all();
-                            if protocol::write_frame_async(writer, MSG_BUFFER_REPLAY, &buffered)
-                                .await
-                                .is_err()
-                            {
-                                debug!("Failed to send buffer reply to agent");
-                                agent_writer = None;
-                                abort_reader(&mut reader_task);
-                            }
+                        if let Some(ref sink) = agent_writer {
+                            sink.send(MSG_BUFFER_REPLAY, &ring_buffer.read_all());
                         }
                     }
                     Some(AgentCommand::Process(request)) => {
@@ -766,11 +731,10 @@ async fn daemon_loop(
                         route_file_step(step, connection_gen, file_job_tx.as_ref(), &file_event_tx);
                     }
                     Some(AgentCommand::Ping) => {
-                        send_heartbeat_frame(&mut agent_writer, &mut reader_task, MSG_PONG).await;
+                        send_heartbeat_frame(agent_writer.as_ref(), MSG_PONG);
                     }
                     Some(AgentCommand::Probe) => {
-                        send_heartbeat_frame(&mut agent_writer, &mut reader_task, MSG_DAEMON_PING)
-                            .await;
+                        send_heartbeat_frame(agent_writer.as_ref(), MSG_DAEMON_PING);
                     }
                     Some(AgentCommand::Disconnected(gen)) => {
                         if gen == connection_gen {
@@ -810,24 +774,21 @@ fn capability_flags(processes: bool, monitoring: bool, files: bool) -> u8 {
     flags | CAP_HEARTBEAT
 }
 
-/// Send an empty heartbeat frame (#3140) — a pong for the agent's ping, or a
-/// probe of a silent agent — to the attached agent, dropping the connection if
-/// the write fails like every other write to it.
-async fn send_heartbeat_frame(
-    agent_writer: &mut Option<BoxedWriter>,
-    reader_task: &mut Option<tokio::task::JoinHandle<()>>,
-    msg_type: u8,
-) {
-    let Some(writer) = agent_writer.as_mut() else {
-        return;
-    };
-    if protocol::write_frame_async(writer, msg_type, &[])
-        .await
-        .is_err()
-    {
-        debug!("Agent connection lost on heartbeat frame 0x{msg_type:02x}");
-        *agent_writer = None;
-        abort_reader(reader_task);
+/// Queue an empty heartbeat frame (#3140) — a pong for the agent's ping, or a
+/// probe of a silent agent — for the attached agent. Heartbeat frames bypass
+/// the output budget (#3890): they are tiny, and a pong held back behind a
+/// paused queue would only look like silence to a worker that is reading.
+fn send_heartbeat_frame(agent_writer: Option<&WorkerSink>, msg_type: u8) {
+    if let Some(sink) = agent_writer {
+        sink.send(msg_type, &[]);
+    }
+}
+
+/// The attached worker's next [`SinkEvent`], or never when none is attached.
+async fn next_sink_event(agent_writer: &mut Option<WorkerSink>) -> SinkEvent {
+    match agent_writer {
+        Some(sink) => sink.next_event().await,
+        None => std::future::pending().await,
     }
 }
 
@@ -943,16 +904,16 @@ fn route_monitoring_request(
 /// the bound only guards against a wedged incumbent stalling the takeover.
 const EVICTED_NOTIFY_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// Best-effort: send [`MSG_EVICTED`] to the current writer, if any, just before a
-/// takeover drops it (SM-003, single-attach). Failures are ignored — the incumbent
-/// then observes the plain EOF, which is the historical behaviour.
-async fn notify_evicted(agent_writer: &mut Option<BoxedWriter>) {
-    if let Some(writer) = agent_writer.as_mut() {
-        let _ = tokio::time::timeout(
-            EVICTED_NOTIFY_TIMEOUT,
-            protocol::write_frame_async(writer, MSG_EVICTED, &[]),
-        )
-        .await;
+/// Best-effort: send [`MSG_EVICTED`] to the current writer, if any, as a
+/// takeover drops it (SM-003, single-attach). The frame joins the end of the
+/// incumbent's queue, which drains off the loop for at most
+/// [`EVICTED_NOTIFY_TIMEOUT`] before its connection closes (#3890); failures
+/// are ignored — the incumbent then observes the plain EOF, which is the
+/// historical behaviour.
+fn notify_evicted(agent_writer: &mut Option<WorkerSink>) {
+    if let Some(sink) = agent_writer.take() {
+        sink.send(MSG_EVICTED, &[]);
+        tokio::spawn(sink.close(EVICTED_NOTIFY_TIMEOUT));
     }
 }
 
@@ -1140,11 +1101,18 @@ fn abort_reader(task: &mut Option<tokio::task::JoinHandle<()>>) {
     }
 }
 
-/// Send an Exited frame to the agent if connected.
-async fn send_exited_async(writer: &mut Option<BoxedWriter>, code: i32) {
-    if let Some(ref mut w) = writer {
-        let payload = protocol::encode_exit_code(code);
-        let _ = protocol::write_frame_async(w, MSG_EXITED, &payload).await;
+/// How long a session that is ending waits for its worker to take the queued
+/// frames and the final [`MSG_EXITED`] (#3890). A reading worker drains the
+/// output budget over a local socket in milliseconds; a worker that is not
+/// reading must not keep an exiting daemon alive.
+const EXIT_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Send an Exited frame to the agent if connected, after the frames already
+/// queued for it, and close the connection.
+async fn send_exited_async(agent_writer: &mut Option<WorkerSink>, code: i32) {
+    if let Some(sink) = agent_writer.take() {
+        sink.send(MSG_EXITED, &protocol::encode_exit_code(code));
+        sink.close(EXIT_DRAIN_TIMEOUT).await;
     }
 }
 
