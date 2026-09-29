@@ -85,7 +85,7 @@ pub fn register_http_monitor(registry: &mut ServiceRegistry) {
 ///
 /// This and [`HttpCheckResult`] / [`HttpMonitorState`] generate the frontend
 /// DTOs via ts-rs (audit DUP-030, #3802); see `crate::network::types` for the
-/// `Option` → `field?: T` convention used.
+/// `Option` → `field?: T | null` convention used.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
@@ -121,12 +121,12 @@ pub struct HttpMonitorConfig {
 #[serde(rename_all = "camelCase")]
 pub struct HttpCheckResult {
     pub monitor_id: String,
-    #[cfg_attr(test, ts(optional))]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub status_code: Option<u16>,
-    #[cfg_attr(test, ts(optional, type = "number"))]
+    #[cfg_attr(test, ts(optional = nullable, type = "number | null"))]
     pub latency_ms: Option<u64>,
     pub ok: bool,
-    #[cfg_attr(test, ts(optional))]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub error: Option<String>,
     #[cfg_attr(test, ts(type = "number"))]
     pub timestamp_ms: u64,
@@ -147,7 +147,7 @@ pub struct HttpMonitorState {
     pub config: HttpMonitorConfig,
     pub running: bool,
     pub paused: bool,
-    #[cfg_attr(test, ts(optional))]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub last_result: Option<HttpCheckResult>,
 }
 

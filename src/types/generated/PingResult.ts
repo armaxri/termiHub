@@ -11,11 +11,11 @@ seq: number,
 /**
  * Round-trip time in milliseconds. `None` when the packet timed out.
  */
-latencyMs?: number, 
+latencyMs?: number | null, 
 /**
  * IP time-to-live from the reply. `None` on timeout or TCP fallback.
  */
-ttl?: number, 
+ttl?: number | null, 
 /**
  * `true` when no reply was received within the timeout window.
  */

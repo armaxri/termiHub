@@ -5,7 +5,6 @@ import {
   LeafPanel,
   PanelNode,
   ConnectionConfig,
-  ShellType,
   DropEdge,
   TabContentType,
   TerminalOptions,
@@ -21,15 +20,11 @@ import {
   SessionCloseConfirmRequest,
   BroadcastScope,
 } from "@/types/terminal";
-import { FileEntry, TransferState, DEFAULT_LAYOUT, PersistentRunState } from "@/types/connection";
-import { loadConnections, getSettings, getRecoveryWarnings } from "@/services/storage";
+import { FileEntry, TransferState } from "@/types/connection";
 import { deriveTabStatus, type TabStatusMaps } from "@/utils/tabStatus";
 import { isAutoReconnectEnabled } from "@/utils/autoReconnect";
 import {
   sessionGetCapabilities,
-  listAvailableShells,
-  getDefaultShell,
-  getConnectionTypes,
   closeTerminal as apiCloseTerminal,
   reclaimSession as apiReclaimSession,
   detachPersistentTab as apiDetachPersistentTab,
@@ -38,8 +33,6 @@ import {
   sendHandoffToWindow,
   claimSession,
   releaseSession,
-  listSessionOwners,
-  takePendingHandoffs,
   reportWindowLayout,
   collectWindowLayouts,
   takePendingWindowRestore,
@@ -48,8 +41,6 @@ import type {
   MoveWindowTarget,
   TabHandoffRecord,
   HandoffTab,
-  WindowInfo,
-  WindowCloseRequest,
   WindowRestorePayload,
 } from "@/types/window";
 import { MAIN_WINDOW_LABEL } from "@/types/window";
@@ -62,8 +53,7 @@ import {
   assembleWindowedGroups,
 } from "@/utils/windowPersistence";
 import type { CapturedWindowLayout, WindowRestorePlanEntry } from "@/utils/windowPersistence";
-import { classifyWindowCloseSessions, windowCloseWouldLoseData } from "@/utils/windowClose";
-import type { ConnectionTypeInfo, ContainerSpawn, ShellSpawn } from "@/services/api";
+import type { ContainerSpawn, ShellSpawn } from "@/services/api";
 import { createTunnelSlice, TunnelSlice } from "./slices/tunnelSlice";
 import { createEmbeddedServersSlice, EmbeddedServersSlice } from "./slices/embedded-serversSlice";
 import { createMacrosSlice, MacrosSlice } from "./slices/macrosSlice";
@@ -109,6 +99,8 @@ import {
   PersistentSessionsSlice,
 } from "./slices/persistentSessionsSlice";
 import { createRestoreCohortSlice, RestoreCohortSlice } from "./slices/restoreCohortSlice";
+import { createStartupSlice, StartupSlice } from "./slices/startupSlice";
+import { createWindowManagementSlice, WindowManagementSlice } from "./slices/windowManagementSlice";
 
 export type { MacroPlaybackState, PlayMacroOptions } from "./slices/macrosSlice";
 export type {
@@ -151,18 +143,13 @@ import {
   clearLastSession as apiClearLastSession,
 } from "@/services/lastSessionApi";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
-import { onConnectionIdsChanged, onPersistentSessionStateChanged } from "@/services/events";
-import { onThemeChange } from "@/themes";
 import {
   activateWorkspace,
-  applyEffectiveTheme,
   getActiveWorkspace,
   loadExistingWorkspaceSettings,
-  primeActiveWorkspace,
   subscribeActiveWorkspace,
 } from "@/services/workspaceSettings";
-import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
-import { fireAndForget, frontendError, frontendLog } from "@/utils/frontendLog";
+import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 import { readConfigBoolean, readConfigString } from "@/utils/connectionConfigFields";
 import { quotePath } from "@/utils/quotePath";
 import { toast } from "@/components/ui";
@@ -207,16 +194,15 @@ import {
   mirrorSessionIntent,
   onSessionView,
 } from "@/store/sessionBridge";
-import { currentAgentsView, ensureAgentsSubscribed } from "@/store/agentsBridge";
-import { currentConnectionsView, ensureConnectionsSubscribed } from "@/store/connectionsBridge";
-import { currentSettingsView, ensureSettingsSubscribed } from "@/store/settingsBridge";
+import { currentAgentsView } from "@/store/agentsBridge";
+import { currentConnectionsView } from "@/store/connectionsBridge";
+import { currentSettingsView } from "@/store/settingsBridge";
 import { currentBroadcastView } from "@/store/broadcastBridge";
 import {
   setRestoreSettlementRenderer,
   type ProjectedSettlement,
 } from "@/store/restoreCohortBridge";
 import { errorMessage } from "@/utils/errorMessage";
-import { resolveWindowEviction } from "@/utils/tabOwnership";
 
 export type SidebarView =
   | "connections"
@@ -351,12 +337,11 @@ export interface AppState
     TabRuntimeSlice,
     TerminalSessionStateSlice,
     PersistentSessionsSlice,
-    RestoreCohortSlice {
-  // Connection type registry (loaded from backend at startup)
-  connectionTypes: ConnectionTypeInfo[];
-
-  // Platform default shell (detected from backend at startup)
-  defaultShell: ShellType;
+    RestoreCohortSlice,
+    StartupSlice,
+    WindowManagementSlice {
+  // Connection type registry + platform default shell — provided by StartupSlice
+  // (ARCH-001/FES-011, extracted under #2077 via #2881).
 
   // Sidebar — sidebarView / sidebarCollapsed / sidebarWidth + setSidebarView /
   // toggleSidebar / setSidebarWidth are provided by UiChromeSlice
@@ -566,75 +551,10 @@ export interface AppState
   /** Clear a tab's one-shot scrollback-replay flag after a re-parent (#1900). */
   clearPendingScrollbackReplay: (tabId: string) => void;
 
-  // ── Multi-window foundation (#1900) ──
-  /**
-   * Session ids currently being re-parented to another window. While a session
-   * is in this set, the source window's {@link Terminal} must NOT close the
-   * backend session on unmount — the destination window is adopting it. The flag
-   * is consumed once by the source's deferred close.
-   */
-  movingSessionIds: string[];
-  /**
-   * Session ids whose Transfer Queue rows this window handed off to another
-   * window (#1951). While a session id is in this set, this window's transfer
-   * folds ({@link applyTransferProgress}, {@link applyTransferProgressToQueue})
-   * ignore its broadcast `transfer-progress` events, so a moved-away transfer is
-   * not re-adopted into the source window's queue. Cleared for a session when it
-   * is hydrated back in ({@link hydrateHandoffTab}) or a new local transfer is
-   * seeded for it ({@link seedTransferQueue}).
-   */
-  releasedTransferSessions: string[];
-  /**
-   * This window's runtime label (`main`, `win-1`, …), captured once at store
-   * creation. Used to scope transfer folds to the owning window (#1964): a
-   * broadcast `transfer-progress` event is folded only when this window owns the
-   * transfer's session. Falls back to {@link MAIN_WINDOW_LABEL} outside Tauri.
-   */
-  windowLabel: string;
-  /**
-   * Local mirror of the backend `session_id → owning_window` map (#1900),
-   * refreshed while transfers are active (#1964). Gates the transfer folds
-   * ({@link applyTransferProgress}, {@link applyTransferProgressToQueue}) so a
-   * transfer is shown only in the window that owns its session — even without a
-   * tab move (which #1951 already handled via {@link releasedTransferSessions}).
-   * A session absent from the map is unclaimed (background/spawned, or not yet
-   * claimed) and folds everywhere as a safe fallback.
-   */
-  sessionOwners: Record<string, string>;
-  /**
-   * Replace {@link sessionOwners} with a fresh snapshot and drop any transient
-   * {@link transfers} / persistent {@link transferQueue} rows for sessions now
-   * owned by a *different* window (#1964). Rows for sessions this window renders
-   * locally are always kept, so a stale snapshot can never evict a live row.
-   */
-  setSessionOwners: (owners: Record<string, string>) => void;
-  /**
-   * Refetch the backend ownership map into {@link sessionOwners} (#1964).
-   * Best-effort (a failed refetch keeps the previous map). Callers that fire it
-   * on high-frequency events (e.g. `transfer-progress`) should coalesce — see
-   * {@link useTransferEvents}.
-   */
-  refreshSessionOwners: () => Promise<void>;
-  /**
-   * Whether *this* window is evicted from `sessionId` (#3368): another window
-   * has taken the session over, so this window must send it no input or resize
-   * until the user explicitly reclaims it. Resolved from {@link sessionOwners}
-   * via `resolveWindowEviction` (unclaimed / owned here / mid-move → `false`).
-   */
-  isSessionWindowEvicted: (sessionId: string | null | undefined) => boolean;
-  /**
-   * Explicit **Reclaim** of a session another window took over (#3368): claim it
-   * for this window (the backend supersedes the other window atomically and that
-   * window folds to its Evicted overlay in turn), then refresh the ownership
-   * mirror so this window leaves the evicted state immediately. Never called
-   * automatically — only from the overlay's Reclaim button — so control cannot
-   * ping-pong between windows. Resolves `true` on success.
-   */
-  reclaimWindowSession: (sessionId: string) => Promise<boolean>;
-  /** Whether a session is mid-move (read by the source Terminal's unmount cleanup). */
-  isSessionMoving: (sessionId: string) => boolean;
-  /** Clear a session's moving flag once the source has released its view. */
-  clearMovingSession: (sessionId: string) => void;
+  // Multi-window ownership (#1900 / #1964 / #3368), hand-off draining,
+  // layout reporting (#1925) and the close-with-live-tabs decision (#1903) are
+  // provided by WindowManagementSlice (ARCH-001/FES-011, extracted under #2077 via
+  // #2881). The tab-tree writers below stay here: they reseed the layout region.
   /**
    * Re-parent a session-bearing tab into another window (a brand-new window or
    * an existing one). The backend session keeps running; the source view is
@@ -647,8 +567,6 @@ export interface AppState
    * The tab re-attaches to its live backend session and replays scrollback.
    */
   hydrateHandoffTab: (record: TabHandoffRecord) => void;
-  /** Drain and hydrate any hand-off records queued for this window. */
-  receivePendingHandoffs: () => Promise<void>;
   /**
    * Drain and hydrate the tab groups a restore-spawned secondary window was
    * seeded with (#1925). A no-op for a window not spawned by a multi-window
@@ -656,51 +574,6 @@ export interface AppState
    * main window rebuilds its own in {@link restoreLastSession}.
    */
   receivePendingWindowRestore: () => Promise<void>;
-  /**
-   * Report this (secondary) window's captured layout slice to the backend
-   * aggregation authority (#1925) so the main window can persist a document that
-   * spans every window. Debounced via {@link scheduleWindowLayoutReport}.
-   */
-  reportOwnWindowLayout: () => Promise<void>;
-  /** Debounced trigger for {@link reportOwnWindowLayout} on a layout change. */
-  scheduleWindowLayoutReport: () => void;
-  /**
-   * Open a brand-new, empty native window (no hand-off) — the top-level "New
-   * Window" command (#1902). The window boots into the empty-window CTA state.
-   * Failures are surfaced as a recoverable toast rather than thrown.
-   */
-  openNewWindow: () => Promise<void>;
-
-  /**
-   * Pending close-with-live-tabs decision (#1903). Non-null while the
-   * detach-vs-terminate dialog is open for this window; set by
-   * {@link prepareWindowClose} and cleared when the dialog resolves.
-   */
-  pendingWindowClose: WindowCloseRequest | null;
-  /** Set or clear the pending close-with-live-tabs decision (#1903). */
-  setPendingWindowClose: (request: WindowCloseRequest | null) => void;
-  /**
-   * Assess this window's owned live sessions when the OS requests its close
-   * (#1903) and pick the next step:
-   *
-   * - `"proceed"` — nothing would be lost: the window is empty, or every live
-   *   session is persistent/agent and is detached here (kept running) with a
-   *   toast. The caller may destroy the window.
-   * - `"prompt"` — at least one non-persistent session would be terminated, so
-   *   the decision dialog is raised ({@link pendingWindowClose}); the caller
-   *   must NOT destroy the window — the dialog resolves it.
-   */
-  prepareWindowClose: (otherWindows: WindowInfo[]) => Promise<"proceed" | "prompt">;
-  /**
-   * Destructive close outcome (#1903): detach every persistent/agent session
-   * and terminate every non-persistent one owned by this window.
-   */
-  endWindowSessions: () => Promise<void>;
-  /**
-   * Safe close outcome (#1903): re-parent every owned live session tab into
-   * another window so nothing is lost, reusing the #1900 hand-off seam.
-   */
-  moveWindowSessionsToWindow: (target: MoveWindowTarget) => Promise<void>;
 
   // Connections — the saved-connection / folder tree is region-authoritative
   // (#2401): it lives only in the shared `connections` projection region, read
@@ -744,15 +617,6 @@ export interface AppState
   // loadFromBackend still populates recoveryWarnings/recoveryDialogOpen via the
   // shared set.
 
-  loadFromBackend: () => Promise<void>;
-  /**
-   * Re-fetch the connection-type registry from the backend and replace
-   * {@link connectionTypes}. The registry embeds backend-detected data such as
-   * the local shell field's option list, so refreshing it lets a just-installed
-   * shell (e.g. guided Git Bash, #1692) become selectable without an app
-   * restart. A backend failure leaves the current registry untouched.
-   */
-  refreshConnectionTypes: () => Promise<void>;
   // Settings setters — updateSettings / updateShellIntegration are provided by
   // SettingsSlice (ARCH-001/FES-011, extracted under #2077 via #2881).
   // Connection tree — reloadExternalConnections / reloadConnectionsFromBackend /
@@ -964,7 +828,7 @@ let lastSessionPersistTimer: ReturnType<typeof setTimeout> | null = null;
  * window. Falls back to {@link MAIN_WINDOW_LABEL} when the Tauri window API is
  * unavailable (e.g. browser dev mode) so capture never throws.
  */
-function currentWindowLabel(): string {
+export function currentWindowLabel(): string {
   try {
     return getCurrentWindow().label;
   } catch {
@@ -1039,9 +903,7 @@ async function restoreWindowedLayout(
   return mainEntry ? mainEntry.tabGroups : plan.flatMap((entry) => entry.tabGroups);
 }
 
-const LAST_SESSION_SAVE_DEBOUNCE_MS = 500;
-/** Debounce timer for reporting a secondary window's layout slice (#1925). */
-let windowLayoutReportTimer: ReturnType<typeof setTimeout> | null = null;
+export const LAST_SESSION_SAVE_DEBOUNCE_MS = 500;
 /**
  * Settle timer for the restore-in-progress guard (GAP G5, #1146). After a
  * restore/launch places its layout, per-tab connects keep mutating the tree for
@@ -1125,7 +987,7 @@ async function probeRestorePromptReachability(
  * Used wherever a "whole window" operation must span groups — session teardown
  * on restore/launch and the close-with-live-tabs decision (#1903).
  */
-function collectWindowTabs(state: LayoutViewState): TerminalTab[] {
+export function collectWindowTabs(state: LayoutViewState): TerminalTab[] {
   const { tabGroups } = getComposedLayout(state);
   return tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((leaf) => leaf.tabs));
 }
@@ -1895,7 +1757,7 @@ function tabTransferSessionIds(tab: TerminalTab): string[] {
  * status bar) is still per-window, so its session ids are released here and
  * re-folded from live events in the destination.
  */
-function buildTransferAwareHandoff(tab: TerminalTab): {
+export function buildTransferAwareHandoff(tab: TerminalTab): {
   record: TabHandoffRecord;
   transferSessionIds: string[];
 } {
@@ -1981,7 +1843,7 @@ export function windowOwnsTransferSession(state: OwnershipView, sessionId: strin
  * The persistent Transfer Queue is region-authoritative and shared (#2229), so it
  * is not pruned here — only the per-window transient `transfers` map is.
  */
-function pruneForeignTransfers(
+export function pruneForeignTransfers(
   state: OwnershipView & {
     transfers: Record<string, TransferState>;
   },
@@ -2194,12 +2056,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
     ...createTerminalSessionStateSlice(set, get, store),
     ...createPersistentSessionsSlice(set, get, store),
     ...createRestoreCohortSlice(set, get, store),
-
-    // Connection type registry — updated by loadFromBackend()
-    connectionTypes: [],
-
-    // Platform default shell — updated by loadFromBackend()
-    defaultShell: "bash",
+    ...createStartupSlice(set, get, store),
+    ...createWindowManagementSlice(set, get, store),
 
     // Network monitors (httpMonitors + setHttpMonitors) provided by
     // createHttpMonitorsSlice (extracted under #2077 via #2300).
@@ -2521,61 +2379,11 @@ export const useAppStore = create<AppState>((set, get, store) => {
       mirrorLayoutMove(pre, postLayoutSnapshot(prev, next));
     },
 
-    // ── Multi-window foundation (#1900) ──
-    movingSessionIds: [],
-    releasedTransferSessions: [],
-    windowLabel: currentWindowLabel(),
-    sessionOwners: {},
-    setSessionOwners: (owners) =>
-      set((state) => ({
-        sessionOwners: owners,
-        ...pruneForeignTransfers(withComposedLayout(state), owners),
-      })),
-    refreshSessionOwners: async () => {
-      try {
-        const owners = await listSessionOwners();
-        // Coerce a missing/non-object result (e.g. an unmocked IPC bridge in
-        // tests returning `undefined`) to an empty map so the fold gate never
-        // reads through `undefined`.
-        get().setSessionOwners(owners ?? {});
-      } catch {
-        // Ownership is advisory (see `bestEffortOwnership`): a failed refetch (IPC
-        // unavailable / unit test stub) must never disrupt the transfer UI. The
-        // stale map simply keeps the previous scoping.
-      }
-    },
-    isSessionMoving: (sessionId) => get().movingSessionIds.includes(sessionId),
-    isSessionWindowEvicted: (sessionId) => {
-      const state = get();
-      return (
-        resolveWindowEviction({
-          sessionId,
-          sessionOwners: state.sessionOwners,
-          windowLabel: state.windowLabel,
-          moving: !!sessionId && state.movingSessionIds.includes(sessionId),
-        }) !== null
-      );
-    },
-    reclaimWindowSession: async (sessionId) => {
-      try {
-        await claimSession(sessionId);
-      } catch (err) {
-        frontendLog("multi_window", `Failed to reclaim session ${sessionId}: ${errorMessage(err)}`);
-        toast.error(`Could not reclaim the session: ${errorMessage(err)}`);
-        return false;
-      }
-      // Leave the evicted state at once rather than waiting for the
-      // `session-ownership-changed` round-trip, then converge on the backend map.
-      set((state) => ({
-        sessionOwners: { ...state.sessionOwners, [sessionId]: state.windowLabel },
-      }));
-      await get().refreshSessionOwners();
-      return true;
-    },
-    clearMovingSession: (sessionId) =>
-      set((state) => ({
-        movingSessionIds: state.movingSessionIds.filter((id) => id !== sessionId),
-      })),
+    // Multi-window ownership, hand-off draining, layout reporting and the
+    // close-with-live-tabs decision surface are provided by
+    // createWindowManagementSlice (ARCH-001/FES-011, extracted under #2077 via
+    // #2881). The three tab-tree writers (`moveTabToWindow`, `hydrateHandoffTab`,
+    // `receivePendingWindowRestore`) stay here: they go through `setAndReseed`.
 
     moveTabToWindow: async (tabId, fromPanelId, target) => {
       // Locate the tab in the active group's live rootPanel.
@@ -2704,28 +2512,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
         };
       }),
 
-    receivePendingHandoffs: async () => {
-      let records: TabHandoffRecord[];
-      try {
-        records = await takePendingHandoffs();
-      } catch (err) {
-        frontendLog("multi_window", `takePendingHandoffs failed: ${String(err)}`);
-        return;
-      }
-      for (const record of records) {
-        // Claim ownership for this window so the backend `session → window` map
-        // points here (single-owner invariant + resize gating).
-        if (record.tab.sessionId) {
-          try {
-            await claimSession(record.tab.sessionId);
-          } catch (err) {
-            frontendLog("multi_window", `claimSession failed: ${String(err)}`);
-          }
-        }
-        get().hydrateHandoffTab(record);
-      }
-    },
-
     receivePendingWindowRestore: async () => {
       let payload: WindowRestorePayload | null;
       try {
@@ -2779,134 +2565,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
       });
       const { pendingTabIds, preFailedCount } = collectRestoreCohort(builtGroups);
       get().beginRestoreCohort(pendingTabIds, preFailedCount);
-    },
-
-    reportOwnWindowLayout: async () => {
-      const layout = curLayout();
-      const tabGroups = captureAllTabGroups(
-        layout.tabGroups,
-        layout.activeTabGroupId,
-        layout.rootPanel,
-        currentConnectionsView().connections
-      );
-      const activeGroupIndex = Math.max(
-        0,
-        layout.tabGroups.findIndex((g) => g.id === layout.activeTabGroupId)
-      );
-      try {
-        await reportWindowLayout(tabGroups, activeGroupIndex);
-      } catch (err) {
-        frontendLog("multi_window", `reportWindowLayout failed: ${String(err)}`);
-      }
-    },
-
-    scheduleWindowLayoutReport: () => {
-      // While a restore/hydrate is settling, the layout tree is mid-flight; a
-      // report now would push a transient slice to the aggregation authority and
-      // nudge the main window to persist it (GAP G5, #1146). Hold until settled.
-      if (get().restoreInProgress) return;
-      if (windowLayoutReportTimer) clearTimeout(windowLayoutReportTimer);
-      windowLayoutReportTimer = setTimeout(() => {
-        windowLayoutReportTimer = null;
-        void get().reportOwnWindowLayout();
-      }, LAST_SESSION_SAVE_DEBOUNCE_MS);
-    },
-
-    openNewWindow: async () => {
-      // No hand-off record: the new window boots empty and shows the
-      // empty-window CTA (#1902). Window creation is a fast native op, so no
-      // pending toast — only a recoverable error toast if it fails.
-      try {
-        await openWindow();
-      } catch (err) {
-        frontendLog("multi_window", `openNewWindow failed: ${String(err)}`);
-        toast.error("Could not open a new window");
-      }
-    },
-
-    // ── Close-with-live-tabs decision surface (#1903) ────────────────────
-    pendingWindowClose: null,
-    setPendingWindowClose: (request) => set({ pendingWindowClose: request }),
-
-    prepareWindowClose: async (otherWindows) => {
-      const sessions = classifyWindowCloseSessions(collectWindowTabs(get()));
-      if (sessions.length === 0) {
-        // Empty window (no live sessions) — nothing to decide, just close.
-        return "proceed";
-      }
-      if (!windowCloseWouldLoseData(sessions)) {
-        // Every owned session detaches cleanly — no data is lost, so close with
-        // just a toast instead of a dialog (concept: "All-persistent → no
-        // dialog").
-        await get().endWindowSessions();
-        toast.success(
-          `${sessions.length} session${sessions.length === 1 ? "" : "s"} detached — still running`
-        );
-        return "proceed";
-      }
-      // At least one non-persistent session would be terminated — raise the
-      // detach-vs-terminate decision surface.
-      set({ pendingWindowClose: { sessions, otherWindows } });
-      return "prompt";
-    },
-
-    endWindowSessions: async () => {
-      const tabs = collectWindowTabs(get()).filter((tab) => tab.sessionId);
-      await Promise.all(
-        tabs.map((tab) => {
-          const sessionId = tab.sessionId as string;
-          // Bulk window-session teardown: surface a failed detach/close at ERROR
-          // (a leaked session), LogViewer-only with no per-item toast (UX-033).
-          const teardown = tab.persistentConnectionId
-            ? apiDetachPersistentTab(sessionId, tab.id)
-            : apiCloseTerminal(sessionId);
-          return teardown.catch((err: unknown) => {
-            frontendError(
-              "workspace",
-              `Failed to tear down session ${sessionId} on window close: ${String(err)}`
-            );
-          });
-        })
-      );
-    },
-
-    moveWindowSessionsToWindow: async (target) => {
-      const tabs = collectWindowTabs(get()).filter((tab) => tab.sessionId);
-      if (tabs.length === 0) return;
-
-      // Mark every session as moving up front so a source Terminal unmounting
-      // during the window teardown does NOT tear down the backend session — the
-      // destination window adopts each still-running session (#1900 seam).
-      const sessionIds = tabs.map((tab) => tab.sessionId as string);
-      set((state) => ({
-        movingSessionIds: Array.from(new Set([...state.movingSessionIds, ...sessionIds])),
-      }));
-
-      // Build a hand-off record per tab. The Transfer Queue is region-authoritative
-      // and shared (#2229), so no queue rows are carried — the destination window
-      // already sees them; this window is being torn down, so no source-side
-      // transient-map release is needed either.
-      const records: TabHandoffRecord[] = tabs.map((tab) => buildTransferAwareHandoff(tab).record);
-      try {
-        if (target.kind === "new") {
-          // Create the destination window seeded with the first tab, then queue
-          // the rest for it to drain on boot / on the nudge.
-          const label = await openWindow(records[0]);
-          for (const record of records.slice(1)) {
-            await sendHandoffToWindow(label, record);
-          }
-        } else {
-          for (const record of records) {
-            await sendHandoffToWindow(target.label, record);
-          }
-        }
-      } catch (err) {
-        // Hand-off failed: clear the moving flags so a later close still tears
-        // the sessions down rather than leaking them.
-        for (const sessionId of sessionIds) get().clearMovingSession(sessionId);
-        frontendLog("multi_window", `move window sessions failed: ${String(err)}`);
-        throw err;
-      }
     },
 
     draggingTabId: null,
@@ -4063,202 +3721,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
     // open/close flags provided by createDialogsSlice (extracted under #2077 via
     // #2300).
 
-    loadFromBackend: async () => {
-      try {
-        // The saved-connection / folder tree AND the agent list are
-        // region-authoritative (#2401 / #2409): the backend seeds and folds the
-        // `connections` and `agents` regions server-side (this
-        // `load_connections_and_folders` call also re-folds both, #2389 / #2403),
-        // so we only read `externalErrors` here and never seed a slice.
-        const { externalErrors } = await loadConnections();
-        // Prime the region subscription so `currentConnectionsView()` is populated
-        // for the store's own connect / session / restore reads (which run before
-        // the sidebar's `useProjectedConnections` may have mounted). Best-effort:
-        // the eager transport build throws synchronously in a non-Tauri env, so
-        // guard both the throw and the rejection.
-        try {
-          await ensureConnectionsSubscribed();
-        } catch (subErr) {
-          frontendLog("app_store", `connections region subscribe failed: ${errorMessage(subErr)}`);
-        }
-        // The persisted settings document is region-authoritative (#2404): the
-        // backend seeds the `settings` region from the persisted document at
-        // startup (#2386), so prime the region subscription here so
-        // `currentSettingsView()` is populated for the store's own imperative reads
-        // (connect / restore / line-ending). Best-effort — the eager transport
-        // build throws synchronously in a non-Tauri env, so guard throw + rejection.
-        try {
-          await ensureSettingsSubscribed();
-        } catch (subErr) {
-          frontendLog("app_store", `settings region subscribe failed: ${errorMessage(subErr)}`);
-        }
-        // The agent list is region-authoritative (#2409): the backend seeds the
-        // `agents` region from the persisted list at startup and re-folds it on the
-        // `load_connections_and_folders` above (#2403), so prime the region
-        // subscription here so `currentAgentsView()` is populated for the store's own
-        // imperative reads (workspace hydration / restore / reconnect). Best-effort —
-        // the eager transport build throws synchronously in a non-Tauri env, so guard
-        // throw + rejection.
-        try {
-          await ensureAgentsSubscribed();
-        } catch (subErr) {
-          frontendLog("app_store", `agents region subscribe failed: ${errorMessage(subErr)}`);
-        }
-        // Still read the persisted document directly: it drives one-time startup
-        // side-effects that do not live in the region view (theme apply, layout /
-        // sidebar hydration, keybinding overrides, language packages / grammars).
-        const settings = await getSettings();
-        if (externalErrors.length > 0) {
-          for (const err of externalErrors) {
-            frontendLog("app_store", `Failed to load external file ${err.filePath}: ${err.error}`);
-          }
-        }
-        const layoutConfig = settings.layout ?? DEFAULT_LAYOUT;
-        const persistedView =
-          (layoutConfig.sidebarView as SidebarView | undefined) ?? "connections";
-        const sidebarView: SidebarView = persistedView === "files" ? "connections" : persistedView;
-        const sidebarCollapsed = layoutConfig.sidebarCollapsed ?? false;
-        set({
-          layoutConfig,
-          sidebarView,
-          sidebarCollapsed,
-        });
-        // #3517: read a workspace the backend re-activated from the last session
-        // first, so this single theme apply already includes its override (no
-        // flash of the global theme).
-        await primeActiveWorkspace();
-        applyEffectiveTheme(settings);
-        void get().loadSessionHistory();
-        if (settings.keybindingOverrides) {
-          setKeybindingOverrides(settings.keybindingOverrides);
-        }
-        // Register user-installed language packages / custom grammars via a
-        // deferred dynamic import (PERF-001): this keeps monaco-editor + Shiki out
-        // of the eager appStore/entry chunk. Only users who actually have custom
-        // packages or grammars pull the editor chunk here; the common case never
-        // touches it. Idempotent with the editor's own registration.
-        if (settings.installedLanguagePackages?.length) {
-          const packages = settings.installedLanguagePackages;
-          void import("@/utils/monacoCustomLanguages").then((m) =>
-            m.registerAdditionalLanguagePackages(packages)
-          );
-        }
-        if (settings.customLanguageGrammars?.length) {
-          const grammars = settings.customLanguageGrammars;
-          void import("@/utils/monacoCustomLanguages")
-            .then((m) => m.registerCustomGrammars(grammars))
-            .catch((err: unknown) => {
-              frontendLog(
-                "app_store",
-                `Failed to register custom grammars on startup: ${errorMessage(err)}`
-              );
-            });
-        }
-        // Re-render terminals when OS theme changes in system mode
-        onThemeChange(() => {
-          set({});
-        });
-      } catch (err) {
-        frontendLog("app_store", `Failed to load connections from backend: ${errorMessage(err)}`);
-        toast.error(`Failed to load connections: ${errorMessage(err)}`, {
-          id: "load-connections-error",
-        });
-      }
-      // Load connection type registry
-      try {
-        const connectionTypes = await getConnectionTypes();
-        set({ connectionTypes });
-      } catch (err) {
-        frontendLog("app_store", `Failed to load connection types: ${errorMessage(err)}`);
-      }
-      // Detect platform default shell
-      try {
-        const shells = await listAvailableShells();
-        const detectedDefault = await getDefaultShell();
-        if (detectedDefault && shells.includes(detectedDefault)) {
-          set({ defaultShell: detectedDefault as ShellType });
-        } else if (shells.length > 0) {
-          set({ defaultShell: shells[0] as ShellType });
-        }
-      } catch (err) {
-        frontendLog("app_store", `Failed to detect available shells: ${errorMessage(err)}`);
-      }
-      // Load SSH tunnels
-      get().loadTunnels();
-      // Load embedded servers
-      get().loadEmbeddedServers();
-      // Load workspaces
-      get().loadWorkspaces();
-      // Load macros
-      get().loadMacros();
-      // Load workflows
-      get().loadWorkflows();
-      // Load scheduled runs (PROD-043)
-      get().loadSchedules();
-      // Load installed plugins (#1997)
-      get().loadPlugins();
-      // Load app mode (portable vs. installed) for status bar and settings display
-      await get().loadAppMode();
-      // Load credential store status (dialog opens on-demand when credentials are needed)
-      await get().loadCredentialStoreStatus();
-      // Check VS Code availability in the background
-      get().checkVscodeAvailability();
-      // Check for recovery warnings from corrupt config files
-      try {
-        const warnings = await getRecoveryWarnings();
-        if (warnings.length > 0) {
-          set({ recoveryWarnings: warnings, recoveryDialogOpen: true });
-        }
-      } catch (err) {
-        frontendLog("app_store", `Failed to load recovery warnings: ${errorMessage(err)}`);
-      }
-      // Open tabs follow a saved connection's id when it is renamed or moved (#3579).
-      onConnectionIdsChanged((changes) => get().followConnectionIdChanges(changes)).catch(
-        (err: unknown) => {
-          frontendLog(
-            "app_store",
-            `Failed to subscribe to connection id changes: ${errorMessage(err)}`
-          );
-        }
-      );
-      // Subscribe to persistent session state changes from the backend
-      onPersistentSessionStateChanged((change) => {
-        const { connectionId, sessionId, state: rawState, attachedTabCount, errorMessage } = change;
-        const runState = rawState as PersistentRunState;
-        if (runState === "stopped") {
-          // Remove the entry entirely when the session stops
-          set((s) => {
-            const { [connectionId]: _dropped, ...remaining } = s.persistentSessions;
-            return { persistentSessions: remaining };
-          });
-        } else {
-          set((s) => {
-            const existing = s.persistentSessions[connectionId];
-            return {
-              persistentSessions: {
-                ...s.persistentSessions,
-                [connectionId]: {
-                  connectionId,
-                  sessionId: sessionId ?? existing?.sessionId ?? null,
-                  state: runState,
-                  attachedTabIds: existing?.attachedTabIds ?? [],
-                  ...(errorMessage ? { errorMessage } : {}),
-                },
-              },
-            };
-          });
-        }
-        frontendLog(
-          "app_store",
-          `persistent-session-state: ${connectionId} → ${rawState} (tabs: ${attachedTabCount})`
-        );
-      }).catch((err: unknown) => {
-        frontendLog(
-          "app_store",
-          `Failed to subscribe to persistent session events: ${errorMessage(err)}`
-        );
-      });
-    },
+    // Startup — the connection-type registry, default shell, `loadFromBackend` and
+    // `refreshConnectionTypes` are provided by createStartupSlice (ARCH-001/FES-011,
+    // extracted under #2077 via #2881).
 
     // Settings setters (updateSettings / updateShellIntegration) provided by
     // createSettingsSlice (ARCH-001/FES-011, extracted under #2077 via #2881).
@@ -4386,15 +3851,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
     // Remote-desktop resolutions (remoteDesktopResolutions + set/clear) provided
     // by createRemoteDesktopResolutionsSlice (#1709, extracted under #2077 via
     // #2300).
-
-    refreshConnectionTypes: async () => {
-      try {
-        const connectionTypes = await getConnectionTypes();
-        set({ connectionTypes });
-      } catch (err) {
-        frontendLog("app_store", `Failed to refresh connection types: ${errorMessage(err)}`);
-      }
-    },
 
     openTunnelEditorTab: (tunnelId, options) =>
       setAndReseed((state) => {

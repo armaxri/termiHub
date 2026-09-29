@@ -63,6 +63,7 @@ import type { TransferPhase } from "@/types/generated/TransferPhase";
 import type { TransferQueueState } from "@/types/generated/TransferQueueState";
 import type { TransferProgress } from "@/types/generated/TransferProgress";
 import type { TransferSnapshot } from "@/types/generated/TransferSnapshot";
+import type { AgentConnectResult } from "@/types/generated/AgentConnectResult";
 import type { ContainerRuntime, SpawnTarget } from "@/types/spawn";
 import type {
   TabHandoffRecord,
@@ -2394,13 +2395,6 @@ export interface AgentFolderInfo {
 export interface AgentConnectionsData {
   connections: AgentDefinitionInfo[];
   folders: AgentFolderInfo[];
-}
-
-/** Result of connecting to an agent. */
-interface AgentConnectResult {
-  capabilities: AgentCapabilities;
-  agentVersion: string;
-  protocolVersion: string;
 }
 
 /** Connect to a remote agent via SSH. Returns capabilities. */

@@ -99,6 +99,8 @@ pub fn agent_call_error(e: TerminalError) -> AgentCallError {
 
 /// One connected agent's crash reports, for the export preview.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCrashReports {
     /// The agent's id (the frontend maps it to the agent's display name).
@@ -106,14 +108,21 @@ pub struct AgentCrashReports {
     /// `false` when the agent is too old to share crash reports.
     pub supported: bool,
     /// The agent's crash reports, newest first (validated names only).
+    #[cfg_attr(
+        test,
+        ts(type = "Array<import(\"./AgentCrashReportSummary\").AgentCrashReportSummary>")
+    )]
     pub reports: Vec<CrashReportSummary>,
     /// Why the listing failed, when it did (the agent is then skipped).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub error: Option<String>,
 }
 
 /// One remote report the user chose to include.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCrashReportRef {
     pub agent_id: String,

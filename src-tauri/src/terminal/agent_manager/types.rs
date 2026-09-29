@@ -83,6 +83,8 @@ pub type ToolRunSender = tokio::sync::mpsc::UnboundedSender<ToolRunMessage>;
 
 /// Result of connecting to an agent.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentConnectResult {
     pub capabilities: AgentCapabilities,

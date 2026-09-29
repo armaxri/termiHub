@@ -59,6 +59,8 @@ pub fn get_app_info(app_handle: AppHandle) -> AppInfo {
 
 /// Result returned to the frontend after an update check.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateInfo {
     /// Whether a newer version than the running one is available.

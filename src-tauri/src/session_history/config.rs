@@ -13,6 +13,8 @@ fn default_use_count() -> u32 {
 /// metadata (host, port, user, auth method, …) carried in `config`, which
 /// mirrors the frontend `ConnectionConfig` shape `{ type, config: { … } }`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct SessionHistoryEntry {
     /// Deduplication key (e.g. `ssh:admin@prod-db:22`).
@@ -22,10 +24,13 @@ pub struct SessionHistoryEntry {
     /// Connection type identifier (`ssh`, `serial`, `docker`, …).
     pub connection_type: String,
     /// Connection configuration, same shape as the frontend `ConnectionConfig`.
+    #[cfg_attr(test, ts(type = "import(\"../terminal\").ConnectionConfig"))]
     pub config: Value,
     /// When this session was first recorded (Unix timestamp, milliseconds).
+    #[cfg_attr(test, ts(type = "number"))]
     pub first_used: u64,
     /// When this session was last used (Unix timestamp, milliseconds).
+    #[cfg_attr(test, ts(type = "number"))]
     pub last_used: u64,
     /// Total number of times connected.
     #[serde(default = "default_use_count")]

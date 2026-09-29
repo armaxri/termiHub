@@ -9,21 +9,17 @@
 
 import type { ConnectionConfig, TabContentType } from "@/types/terminal";
 import type { WorkspaceTabGroupDef } from "@/types/workspace";
+import type { WindowInfo } from "./generated/WindowInfo";
 
 /** Runtime label of the primary application window. */
 export const MAIN_WINDOW_LABEL = "main";
 
-/** A native window known to the app, for the window picker (#1901/#1902). */
-export interface WindowInfo {
-  /** The window's runtime label (`main`, `win-1`, …). */
-  label: string;
-  /**
-   * The window's live tab count, sourced from that window's own store via the
-   * backend registry (#1910). `null`/absent when the window has not reported a
-   * count yet — the picker then shows no "N tabs" hint for it.
-   */
-  tabCount?: number | null;
-}
+/**
+ * A native window known to the app, for the window picker (#1901/#1902).
+ * `tabCount` is `null`/absent until the window reports one (#1910). Generated
+ * from `src-tauri/src/commands/window.rs` via ts-rs (#3088).
+ */
+export type { WindowInfo };
 
 /**
  * The subset of a `TerminalTab` view-model carried across a native-window
@@ -65,21 +61,11 @@ export type MoveWindowTarget = { kind: "new" } | { kind: "existing"; label: stri
 /**
  * One window's captured layout slice, reported to the backend aggregation
  * authority and read back when the main window assembles the full multi-window
- * last-session / workspace document (#1925).
- *
- * Each window's tab groups live in its own JS context, so the main window cannot
- * see another window's layout directly — it collects every window's reported
- * slice from the backend (`collect_window_layouts`) and stamps + concatenates
- * them (see `src/utils/windowPersistence.ts`).
+ * last-session / workspace document (#1925). See
+ * `src/utils/windowPersistence.ts`. Generated from `src-tauri/src/window/mod.rs`
+ * via ts-rs (#3088).
  */
-export interface WindowLayoutReport {
-  /** The reporting window's runtime label (`main`, `win-1`, …). */
-  label: string;
-  /** That window's captured tab groups (its panel trees). */
-  tabGroups: WorkspaceTabGroupDef[];
-  /** Index of the active group within this window's own groups. */
-  activeGroupIndex: number;
-}
+export type { WindowLayoutReport } from "./generated/WindowLayoutReport";
 
 /**
  * The tab groups a restore-spawned secondary window hydrates on boot (#1925).

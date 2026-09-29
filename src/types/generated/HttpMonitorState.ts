@@ -11,4 +11,4 @@ import type { HttpMonitorConfig } from "./HttpMonitorConfig";
  *
  * (`running: false` implies `paused: false`.)
  */
-export type HttpMonitorState = { config: HttpMonitorConfig, running: boolean, paused: boolean, lastResult?: HttpCheckResult, };
+export type HttpMonitorState = { config: HttpMonitorConfig, running: boolean, paused: boolean, lastResult?: HttpCheckResult | null, };

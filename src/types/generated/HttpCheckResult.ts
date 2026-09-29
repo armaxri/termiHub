@@ -3,4 +3,4 @@
 /**
  * The result of a single HTTP check.
  */
-export type HttpCheckResult = { monitorId: string, statusCode?: number, latencyMs?: number, ok: boolean, error?: string, timestampMs: number, };
+export type HttpCheckResult = { monitorId: string, statusCode?: number | null, latencyMs?: number | null, ok: boolean, error?: string | null, timestampMs: number, };

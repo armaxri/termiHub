@@ -454,4 +454,25 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("newer version"));
     }
+
+    // ── On-disk byte-compatibility (ts-rs rollout, #3088) ──────────────────
+    //
+    // The fixture is a `workspaces.json` in the format this backend has always
+    // written (keys sorted: `save` goes through a `serde_json::Value`). Loading
+    // and re-saving it must reproduce it byte for byte, so generating the TS
+    // types from these structs is invisible on disk — including unknown keys at
+    // the top level and inside a workspace's settings.
+    #[test]
+    fn legacy_workspaces_file_round_trips_byte_identical() {
+        const LEGACY: &str = include_str!("testdata/workspaces_legacy.json");
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        fs::write(&storage.file_path, LEGACY).unwrap();
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(loaded.data.workspaces.len(), 2);
+        storage.save(&loaded.data).unwrap();
+        let saved = fs::read_to_string(&storage.file_path).unwrap();
+        assert_eq!(saved, LEGACY.trim_end());
+    }
 }

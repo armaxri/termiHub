@@ -30,8 +30,8 @@ interface PingSweepPanelProps {
 
 interface SweepRow {
   host: string;
-  latencyMs?: number;
-  hostname?: string;
+  latencyMs?: number | null;
+  hostname?: string | null;
 }
 
 /**

@@ -11,11 +11,11 @@ hop: number,
 /**
  * Reverse-DNS hostname of the router, if resolved.
  */
-host?: string, 
+host?: string | null, 
 /**
  * IP address of the router. `None` when the hop did not respond (`* * *`).
  */
-ip?: string, 
+ip?: string | null, 
 /**
  * Three probe round-trip times in milliseconds.
  */
