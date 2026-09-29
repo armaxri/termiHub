@@ -11,7 +11,10 @@ use base64::Engine;
 
 use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
-use crate::protocol::methods::{CONNECTION_EXIT, CONNECTION_OUTPUT};
+use crate::protocol::methods::{
+    ConnectionErrorNotification, ConnectionExitNotification, ConnectionOutputNotification,
+    CONNECTION_ERROR, CONNECTION_EXIT, CONNECTION_OUTPUT,
+};
 use termihub_core::errors::SessionError;
 use termihub_core::session::traits::OutputSink;
 
@@ -36,13 +39,15 @@ impl OutputSink for JsonRpcOutputSink {
         let b64 = base64::engine::general_purpose::STANDARD;
         // Chunk large payloads to stay under the 1 MiB NDJSON line limit.
         for chunk in data.chunks(65536) {
-            let encoded = b64.encode(chunk);
+            // `into_params` moves the encoded chunk into the params object, so
+            // this builds no more than the old `json!` did (#3759).
             let notification = JsonRpcNotification::new(
                 CONNECTION_OUTPUT,
-                serde_json::json!({
-                    "session_id": session_id,
-                    "data": encoded,
-                }),
+                ConnectionOutputNotification {
+                    session_id: session_id.to_owned(),
+                    data: b64.encode(chunk),
+                }
+                .into_params(),
             );
             self.notification_tx.send(notification).map_err(|e| {
                 SessionError::Io(std::io::Error::new(
@@ -57,9 +62,9 @@ impl OutputSink for JsonRpcOutputSink {
     fn send_exit(&self, session_id: &str, exit_code: Option<i32>) -> Result<(), SessionError> {
         let notification = JsonRpcNotification::new(
             CONNECTION_EXIT,
-            serde_json::json!({
-                "session_id": session_id,
-                "exit_code": exit_code,
+            to_params(&ConnectionExitNotification {
+                session_id: session_id.to_owned(),
+                exit_code,
             }),
         );
         self.notification_tx.send(notification).map_err(|e| {
@@ -73,10 +78,10 @@ impl OutputSink for JsonRpcOutputSink {
 
     fn send_error(&self, session_id: &str, message: &str) -> Result<(), SessionError> {
         let notification = JsonRpcNotification::new(
-            "connection.error",
-            serde_json::json!({
-                "session_id": session_id,
-                "message": message,
+            CONNECTION_ERROR,
+            to_params(&ConnectionErrorNotification {
+                session_id: session_id.to_owned(),
+                message: message.to_owned(),
             }),
         );
         self.notification_tx.send(notification).map_err(|e| {
@@ -87,6 +92,14 @@ impl OutputSink for JsonRpcOutputSink {
         })?;
         Ok(())
     }
+}
+
+/// Serialize a notification DTO into JSON-RPC params.
+///
+/// The DTOs are plain string/number structs, so serialization cannot fail; the
+/// `Null` fallback only exists to avoid a panic path.
+pub(crate) fn to_params<T: serde::Serialize>(dto: &T) -> serde_json::Value {
+    serde_json::to_value(dto).unwrap_or(serde_json::Value::Null)
 }
 
 #[cfg(test)]
@@ -196,5 +209,53 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let sink: Box<dyn OutputSink> = Box::new(JsonRpcOutputSink::new(tx));
         sink.send_output("s1", b"data".to_vec()).unwrap();
+    }
+
+    // -- #3759: wire byte-identity with the legacy `json!` builders ----------
+
+    /// Serialize a notification exactly as the transport writes it (one line).
+    fn wire(n: &JsonRpcNotification) -> String {
+        serde_json::to_string(n).unwrap()
+    }
+
+    /// The legacy hand-built notification line for `method` + `params`.
+    fn legacy_wire(method: &str, params: serde_json::Value) -> String {
+        wire(&JsonRpcNotification::new(method, params))
+    }
+
+    #[test]
+    fn output_sink_wire_is_byte_identical_to_legacy_json() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = JsonRpcOutputSink::new(tx);
+        let b64 = base64::engine::general_purpose::STANDARD;
+
+        // Multi-chunk output with a session id that needs JSON escaping.
+        let data: Vec<u8> = (0..65536 + 7).map(|i| (i % 251) as u8).collect();
+        sink.send_output("s\"1 é", data.clone()).unwrap();
+        for chunk in data.chunks(65536) {
+            let n = rx.try_recv().unwrap();
+            let legacy = serde_json::json!({
+                "session_id": "s\"1 é",
+                "data": b64.encode(chunk),
+            });
+            assert_eq!(wire(&n), legacy_wire(CONNECTION_OUTPUT, legacy));
+        }
+        assert!(rx.try_recv().is_err());
+
+        for code in [Some(0), Some(-2), None] {
+            sink.send_exit("s1", code).unwrap();
+            let legacy = serde_json::json!({ "session_id": "s1", "exit_code": code });
+            assert_eq!(
+                wire(&rx.try_recv().unwrap()),
+                legacy_wire(CONNECTION_EXIT, legacy)
+            );
+        }
+
+        sink.send_error("s1", "read \"failed\"\n").unwrap();
+        let legacy = serde_json::json!({ "session_id": "s1", "message": "read \"failed\"\n" });
+        assert_eq!(
+            wire(&rx.try_recv().unwrap()),
+            legacy_wire("connection.error", legacy)
+        );
     }
 }

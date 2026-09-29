@@ -60,7 +60,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use base64::Engine;
-use serde_json::json;
 use tokio::sync::Mutex;
 use tracing::debug;
 
@@ -68,6 +67,10 @@ use termihub_core::backends::ssh::agent_forward::AGENT_FORWARD_CHUNK_SIZE;
 
 use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
+use crate::protocol::methods::{
+    AgentForwardCloseParams, AgentForwardDataParams, AgentForwardOpenParams,
+};
+use crate::transport::to_params;
 
 /// Both directions: a forwarded ssh-agent stream ended.
 pub use crate::protocol::methods::AGENT_FORWARD_CLOSE;
@@ -370,7 +373,12 @@ impl AgentForwardRelay {
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
         self.streams.lock().await.insert(stream_id.clone(), tx);
-        self.notify(AGENT_FORWARD_OPEN, json!({ "stream_id": stream_id }));
+        self.notify(
+            AGENT_FORWARD_OPEN,
+            to_params(&AgentForwardOpenParams {
+                stream_id: stream_id.clone(),
+            }),
+        );
 
         tokio::spawn(write_socket(write_half, rx));
 
@@ -391,10 +399,15 @@ impl AgentForwardRelay {
             match read_half.read(&mut buf).await {
                 Ok(0) => break,
                 Ok(n) => {
-                    let encoded = b64.encode(&buf[..n]);
+                    // `into_params` moves the encoded bytes into the params
+                    // object: no more allocations than the old `json!` (#3759).
                     self.notify(
                         AGENT_FORWARD_DATA,
-                        json!({ "stream_id": stream_id, "data": encoded }),
+                        AgentForwardDataParams {
+                            stream_id: stream_id.clone(),
+                            data: b64.encode(&buf[..n]),
+                        }
+                        .into_params(),
                     );
                 }
                 Err(e) => {
@@ -405,7 +418,10 @@ impl AgentForwardRelay {
         }
         self.streams.lock().await.remove(&stream_id);
         self.tcp_readers.lock().await.remove(&stream_id);
-        self.notify(AGENT_FORWARD_CLOSE, json!({ "stream_id": stream_id }));
+        self.notify(
+            AGENT_FORWARD_CLOSE,
+            to_params(&AgentForwardCloseParams { stream_id }),
+        );
     }
 }
 
@@ -504,6 +520,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn test_relay() -> (
         Arc<AgentForwardRelay>,
@@ -674,6 +691,15 @@ mod tests {
         assert_eq!(open.method, AGENT_FORWARD_OPEN);
         let stream_id = open.params["stream_id"].as_str().unwrap().to_string();
         assert!(stream_id.starts_with(&stream_prefix(&session_id)));
+        // #3759: byte-identical to the legacy `json!` builder.
+        assert_eq!(
+            serde_json::to_string(&open).unwrap(),
+            serde_json::to_string(&JsonRpcNotification::new(
+                AGENT_FORWARD_OPEN,
+                json!({ "stream_id": stream_id })
+            ))
+            .unwrap()
+        );
 
         let data = rx.recv().await.expect("data notification");
         assert_eq!(data.method, AGENT_FORWARD_DATA);
@@ -933,6 +959,15 @@ mod tests {
         assert_eq!(open.method, AGENT_FORWARD_OPEN);
         let stream_id = open.params["stream_id"].as_str().unwrap().to_string();
         assert!(stream_id.starts_with(&stream_prefix(&session_id)));
+        // #3759: byte-identical to the legacy `json!` builder.
+        assert_eq!(
+            serde_json::to_string(&open).unwrap(),
+            serde_json::to_string(&JsonRpcNotification::new(
+                AGENT_FORWARD_OPEN,
+                json!({ "stream_id": stream_id })
+            ))
+            .unwrap()
+        );
 
         let data = rx.recv().await.expect("data notification");
         assert_eq!(data.method, AGENT_FORWARD_DATA);
@@ -1007,5 +1042,52 @@ mod tests {
             relay.streams.lock().await.is_empty(),
             "session's streams dropped on teardown"
         );
+    }
+
+    /// #3759: the relay's `agent.forward.data` / `agent.forward.close`
+    /// notifications stay byte-identical to the legacy `json!` builders.
+    #[tokio::test]
+    async fn tcp_stream_wire_is_byte_identical_to_legacy_json() {
+        use tokio::io::AsyncWriteExt;
+
+        let wire = |method: &str, params: serde_json::Value| {
+            serde_json::to_string(&JsonRpcNotification::new(method, params)).unwrap()
+        };
+        let target = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = target.local_addr().unwrap().port();
+        let (relay, mut rx) = test_relay();
+        relay
+            .connect_tcp("gfx#\"w\"", "127.0.0.1", port)
+            .await
+            .unwrap();
+        let (mut server, _) = target.accept().await.unwrap();
+
+        let payload: Vec<u8> = (0..=255u8).collect();
+        server.write_all(&payload).await.unwrap();
+        server.flush().await.unwrap();
+        drop(server);
+
+        // Reads may split the payload; compare every data notification.
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let mut received = Vec::new();
+        loop {
+            let n = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .expect("notification in time")
+                .expect("channel open");
+            let actual = serde_json::to_string(&n).unwrap();
+            if n.method == AGENT_FORWARD_DATA {
+                let data = n.params["data"].as_str().unwrap().to_owned();
+                received.extend(b64.decode(&data).unwrap());
+                let legacy = json!({ "stream_id": "gfx#\"w\"", "data": data });
+                assert_eq!(actual, wire(AGENT_FORWARD_DATA, legacy));
+            } else {
+                assert_eq!(n.method, AGENT_FORWARD_CLOSE);
+                let legacy = json!({ "stream_id": "gfx#\"w\"" });
+                assert_eq!(actual, wire(AGENT_FORWARD_CLOSE, legacy));
+                break;
+            }
+        }
+        assert_eq!(received, payload);
     }
 }

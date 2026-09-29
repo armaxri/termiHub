@@ -13,6 +13,7 @@ import { frontendError, frontendLog } from "@/utils/frontendLog";
 import { readConfigBoolean, readConfigString } from "@/utils/connectionConfigFields";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
+import { resolveGraphicalSettings } from "@/utils/graphicalSecret";
 import {
   SECOND_FACTOR_FAILED_MESSAGE,
   isAuthFailure,
@@ -122,6 +123,28 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
         : isTerminalLess
           ? ("file-browser" as const)
           : undefined;
+
+      // A remote-desktop connection saved with "Save password" (#3818) takes its
+      // password from the credential store — or asks once, with the prompt's
+      // Save box keeping it. Without the option the connect is unchanged: a VNC
+      // server may need no password at all.
+      if (isGraphical && readConfigBoolean(connection.config, "savePassword") === true) {
+        const resolved = await resolveGraphicalSettings({
+          credentialId: connection.id,
+          sourceFile: connection.sourceFile ?? null,
+          settings: cfg as Record<string, unknown>,
+          requestPassword,
+        });
+        if (resolved.status === "canceled") {
+          toast.info("Connect canceled");
+          return;
+        }
+        openTab({ ...config, config: resolved.settings } as typeof config, {
+          terminalOptions: connection.terminalOptions,
+          contentType,
+        });
+        return;
+      }
 
       // Connections with authMethod and password support credential store resolution
       if (cfg.authMethod && cfg.host) {
