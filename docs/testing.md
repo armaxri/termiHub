@@ -5012,6 +5012,20 @@ against an **installed release build** (`./scripts/build.sh`), not `./scripts/de
 3. Confirm your open tabs/state are untouched and the config/session files are
    **not** duplicated or reset (single writer, so no clobber).
 
+**Second launch forwards `--workspace` to the running instance (installed release, #3101).**
+
+Argument parsing and forwarding are unit-tested (`utils::single_instance::forward_tests`,
+`src/utils/cliWorkspace.test.ts`); the two-process round trip is manual.
+
+1. With the release build running, save a workspace named `Demo`.
+2. Launch the binary again with `--workspace Demo` (e.g.
+   `/Applications/termiHub.app/Contents/MacOS/termiHub --workspace Demo`). Confirm
+   no second window opens and the running window comes to the front and opens `Demo`.
+3. Repeat with `--workspace-file <path to a workspace JSON>` → the workspace is
+   imported and opened in the running window.
+4. Repeat with an unknown flag (`--bogus`) → the window just comes to the front;
+   the Log Viewer shows `ignoring unsupported second-launch arguments`.
+
 **Portable mode in two folders both run (no lock).**
 
 1. Make two separate portable copies (each in its own folder containing a `data/`

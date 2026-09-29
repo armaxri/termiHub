@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_cli::CliExt;
 
@@ -141,25 +143,31 @@ pub fn get_cli_workspace(
     if let Some(arg) = matches.args.get("workspace-file") {
         if let serde_json::Value::String(path) = &arg.value {
             if !path.is_empty() {
-                let content = std::fs::read_to_string(path).map_err(|e| {
-                    TerminalError::WorkspaceError(format!(
-                        "Cannot read workspace file '{path}': {e}"
-                    ))
-                })?;
-                let definition: WorkspaceDefinition =
-                    serde_json::from_str(&content).map_err(|e| {
-                        TerminalError::WorkspaceError(format!(
-                            "Invalid workspace file '{path}': {e}"
-                        ))
-                    })?;
-                let name = definition.name.clone();
-                manager.save_workspace(definition)?;
-                return Ok(Some(name));
+                return load_workspace_file(Path::new(path), &manager).map(Some);
             }
         }
     }
 
     Ok(None)
+}
+
+/// Read a `--workspace-file` JSON definition, save it as a workspace, and return
+/// its name. Shared by the startup CLI path ([`get_cli_workspace`]) and the
+/// second-launch forwarding path (`utils::single_instance`, #3101).
+pub fn load_workspace_file(
+    path: &Path,
+    manager: &WorkspaceManager,
+) -> Result<String, TerminalError> {
+    let shown = path.display();
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        TerminalError::WorkspaceError(format!("Cannot read workspace file '{shown}': {e}"))
+    })?;
+    let definition: WorkspaceDefinition = serde_json::from_str(&content).map_err(|e| {
+        TerminalError::WorkspaceError(format!("Invalid workspace file '{shown}': {e}"))
+    })?;
+    let name = definition.name.clone();
+    manager.save_workspace(definition)?;
+    Ok(name)
 }
 
 /// The saved connections workspace references resolve against: the main store
