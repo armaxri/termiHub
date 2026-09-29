@@ -2189,6 +2189,20 @@ STREAM` and `MDTM` are supported, and `SIZE` + `MDTM` fingerprint the remote
   persists its source endpoint (`remoteSource`: session reference + path) and
   relaunches by re-attaching both sessions; the source is checked against the
   persisted size and mtime like any other relaunch.
+  After a restart the original session id is gone, so each SFTP/FTP record
+  (and each end of a remote-to-remote copy) also keeps `savedConnectionId`: the
+  id of the saved connection its session was opened for, which the frontend
+  names in `create_connection` and the session manager binds to the session
+  (#3876). A relaunch then prefers a live session — the original, or one the
+  user reopened for the same saved connection — and otherwise resolves the
+  connection's password or key passphrase from the **unlocked** credential
+  store under its existing store key (the jump-host resolver's rule, so named
+  credentials and per-file scopes apply) and connects unattended. It never
+  prompts: a locked store or a secret that is not stored keeps the row
+  **paused** with "Needs credentials — open the connection to resume"; opening
+  the connection or unlocking the store and clicking **Resume** continues it.
+  The secret lives only in the relaunch's in-memory settings, never in
+  `transfers.json`.
 - **Desktop and agent** — the `ftp` cargo feature (on by default) registers the backend in both
   `src-tauri/src/session/registry.rs::build_desktop_registry()` and the agent's
   `agent/src/registry.rs::build_registry()` (PARITY-003), so an agent-hosted FTP connection uses
