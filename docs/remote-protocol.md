@@ -2,9 +2,9 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.16.0
+**Version**: 0.18.0
 **Status**: Draft
-**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425
+**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751
 
 ---
 
@@ -288,6 +288,9 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                          |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.18.0          | 0.18.0        | Yes                                                                                                                                  |
+| 0.18.0          | 0.9.0–0.17.0  | Yes (no `connect_failure` in `connection.create` errors — an agent-hosted connect failure shows no per-backend hint)                 |
+| 0.17.0          | 0.18.0        | Yes (`error.data.connect_failure` ignored)                                                                                           |
 | 0.17.0          | 0.17.0        | Yes                                                                                                                                  |
 | 0.17.0          | 0.9.0–0.16.0  | Yes (no `agent.forward.connect` — a VNC/RDP connection under the agent fails with "update the agent")                                |
 | 0.16.0          | 0.17.0        | Yes (new method ignored)                                                                                                             |
@@ -336,6 +339,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                           |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                 |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                  |
+
+**0.18.0 (additive, minor)** — a failed [`connection.create`](#connectioncreate) (`-32003`) may carry the optional `error.data.connect_failure` (#3751): the typed category of a connect that failed inside the agent — `timeout`, `agent_auth_failed`, `not_found`, `permission_denied` or `busy` (core `ConnectFailureKind`). It matters most for **agent-hosted SSH and serial sessions**, which connect in a session daemon: the daemon reports the category (and its human message) to the worker, which relays it here. The desktop maps it to the same IPC error code as a direct connection, so the connection overlay shows the matching hint (a busy or missing serial port, an SSH timeout, a missing SSH agent). The error `code` and `message` are unchanged, so a pre-0.18.0 desktop ignores the member; a pre-0.18.0 agent omits it and the desktop keeps its generic remote error. A desktop must ignore a `connect_failure` value it does not recognize.
 
 **0.17.0 (additive, minor)** — adds [`agent.forward.connect`](#agentforwardconnect) (#3241): a **desktop-initiated** TCP stream from the agent host to a `host:port` target, relayed with the existing [`agent.forward.data`](#agentforwarddata) / [`agent.forward.close`](#agentforwardclose) methods and notifications, plus error code `-32028`. It carries VNC/RDP connections hosted under an agent: the desktop keeps running the VNC/RDP backend and only its TCP transport rides the agent. Negotiation is by **method-not-found fallback**: a pre-0.17.0 agent answers `-32601` and the desktop reports that the agent must be updated. A pre-0.17.0 desktop never calls the method.
 
@@ -557,9 +562,33 @@ For serial sessions:
 
 **Errors:**
 
-- `-32003` Session creation failed
+- `-32003` Session creation failed. From 0.18.0 the error may carry `data.connect_failure` — the typed connect-failure category (see below)
 - `-32004` Session limit reached
 - `-32005` Invalid configuration
+
+**Typed connect failure (0.18.0, #3751):** when the connect failed for a known reason — including inside the session daemon of an agent-hosted SSH or serial session — the `-32003` error adds `data`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32003,
+    "message": "Spawn failed: Serial port '/dev/ttyUSB0' is already in use by another application",
+    "data": { "connect_failure": "busy" }
+  },
+  "id": 5
+}
+```
+
+| `connect_failure`   | Meaning                                                        |
+| ------------------- | -------------------------------------------------------------- |
+| `timeout`           | The connect or handshake did not finish within its deadline    |
+| `agent_auth_failed` | SSH authentication through the SSH agent failed                |
+| `not_found`         | The target does not exist (e.g. an unplugged serial port)      |
+| `permission_denied` | The OS denied access to the target (e.g. a serial port)        |
+| `busy`              | The target is held by another application (e.g. a serial port) |
+
+The member is optional: absent for an untyped failure and from agents older than 0.18.0. Clients must ignore a value they do not recognize.
 
 ---
 

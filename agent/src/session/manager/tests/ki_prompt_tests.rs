@@ -167,3 +167,129 @@ fn untyped_backend_failures_stay_backend_failed() {
     )));
     assert!(matches!(err, SessionCreateError::AuthCancelled(_)));
 }
+
+// ── Classified connect failures through a daemon launch (#3751) ─────
+
+/// Stands in for a session daemon whose connect fails for a typed reason: it
+/// reports the failure to the exported connect-report endpoint the way the
+/// real daemon does, then "exits".
+struct FailingClassifiedLauncher {
+    error: fn() -> SessionError,
+    saw: Arc<std::sync::Mutex<Vec<(bool, bool)>>>,
+}
+
+#[async_trait::async_trait]
+impl DaemonLauncher for FailingClassifiedLauncher {
+    async fn launch(
+        &self,
+        _session_id: &str,
+        _type_id: &str,
+        _settings: &serde_json::Value,
+        _notification_tx: NotificationSender,
+        _buffer_size_bytes: usize,
+        extras: LaunchExtras,
+    ) -> Result<SessionBackend, anyhow::Error> {
+        self.saw.lock().unwrap().push((
+            extras.ki_prompt.is_some(),
+            extras.connect_report_endpoint.is_some(),
+        ));
+        if let Some(endpoint) = extras.connect_report_endpoint.as_deref() {
+            report_connect_failure(endpoint, &(self.error)()).await;
+        }
+        Err(anyhow::anyhow!(
+            "Daemon exited before its endpoint was ready"
+        ))
+    }
+}
+
+async fn create_failing(
+    type_id: &str,
+    settings: serde_json::Value,
+    error: fn() -> SessionError,
+) -> (SessionCreateError, Vec<(bool, bool)>) {
+    let saw = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let launcher = FailingClassifiedLauncher {
+        error,
+        saw: saw.clone(),
+    };
+    // No prompt-capable desktop: the failure report must still get through.
+    let mgr =
+        SessionManager::with_launcher(test_notification_tx(), test_registry(), Arc::new(launcher))
+            .with_ki_prompt_hub(KiPromptHub::new());
+    let err = mgr
+        .create(type_id, "t".into(), settings, None)
+        .await
+        .unwrap_err();
+    let saw = saw.lock().unwrap().clone();
+    (err, saw)
+}
+
+#[tokio::test]
+async fn busy_serial_daemon_is_a_typed_connect_failure() {
+    use termihub_core::errors::ConnectFailureKind;
+    let (err, saw) = create_failing(
+        "serial",
+        serde_json::json!({ "port": "/dev/ttyUSB0" }),
+        || {
+            SessionError::classified(
+                ConnectFailureKind::Busy,
+                "Serial port '/dev/ttyUSB0' is already in use by another application",
+            )
+        },
+    )
+    .await;
+    // A serial daemon gets the failure-report endpoint but never the prompter.
+    assert_eq!(saw, vec![(false, true)]);
+    match err {
+        SessionCreateError::ConnectFailed(ref f) => {
+            assert_eq!(f.kind, ConnectFailureKind::Busy);
+            assert!(f.message.contains("already in use"), "{}", f.message);
+        }
+        other => panic!("expected ConnectFailed, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn ssh_daemon_timeout_is_a_typed_connect_failure() {
+    use termihub_core::errors::ConnectFailureKind;
+    let (err, _) = create_failing("ssh", SSH(), || {
+        SessionError::classified(ConnectFailureKind::Timeout, "Connection timed out")
+    })
+    .await;
+    assert!(
+        matches!(err, SessionCreateError::ConnectFailed(ref f) if f.kind == ConnectFailureKind::Timeout),
+        "{err:?}"
+    );
+}
+
+/// A daemon failure without a typed reason keeps today's generic error.
+#[tokio::test]
+async fn untyped_daemon_failure_stays_backend_failed() {
+    let (err, _) = create_failing(
+        "serial",
+        serde_json::json!({ "port": "/dev/ttyUSB0" }),
+        || SessionError::SpawnFailed("weird".into()),
+    )
+    .await;
+    assert!(
+        matches!(err, SessionCreateError::BackendFailed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn classified_backend_failures_become_connect_failed() {
+    use crate::ki_prompt::relay::ClassifiedConnectFailure;
+    use termihub_core::errors::ConnectFailureKind;
+    let err = SessionCreateError::from_backend(anyhow::Error::new(ClassifiedConnectFailure {
+        kind: ConnectFailureKind::NotFound,
+        message: "Spawn failed: Serial port '/dev/x' not found".into(),
+    }));
+    assert!(
+        matches!(err, SessionCreateError::ConnectFailed(ref f) if f.kind == ConnectFailureKind::NotFound)
+    );
+    assert_eq!(
+        err.to_string(),
+        "Backend failed: Spawn failed: Serial port '/dev/x' not found"
+    );
+}

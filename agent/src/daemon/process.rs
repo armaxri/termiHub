@@ -221,10 +221,16 @@ async fn run_daemon_session(config: DaemonConfig) -> anyhow::Result<()> {
     // endpoint, i.e. when a prompt-capable desktop is attached (#3375).
     let ki_relay_endpoint = crate::ki_prompt::relay::install_daemon_prompter_from_env();
 
+    // Where to report a failed connect: exported for every launch (#3751),
+    // falling back to the prompt relay endpoint.
+    let report_endpoint =
+        crate::ki_prompt::relay::connect_report_endpoint_from_env(ki_relay_endpoint.as_deref());
+
     if let Err(e) = connection.connect(config.settings.clone()).await {
         // Tell the worker *why* when the desktop must see the reason typed (a
-        // cancelled prompt, a rejected one-time code); it cannot read our exit.
-        if let Some(endpoint) = ki_relay_endpoint.as_deref() {
+        // cancelled prompt, a rejected one-time code, a classified connect
+        // failure such as a busy serial port); it cannot read our exit.
+        if let Some(endpoint) = report_endpoint.as_deref() {
             crate::ki_prompt::relay::report_connect_failure(endpoint, &e).await;
         }
         return Err(anyhow::anyhow!("Failed to connect: {e}"));
