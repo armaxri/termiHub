@@ -577,6 +577,200 @@ async fn tight_16bpp_gradient_filter_reconstructs_pixels() {
     );
 }
 
+// termiHub fork (#3545): at 32 bpp with 8-bit channels a TPIXEL is 3 bytes
+// (R, G, B) and the decoder expands it to the negotiated layout — the format's
+// shifts, byte order and an opaque alpha lane — for every filter alike.
+
+/// `PixelFormat::rgba()` with the big-endian flag set: value
+/// `a << 24 | b << 16 | g << 8 | r`, sent most significant byte first.
+fn pf_rgba_be() -> PixelFormat {
+    let mut pf = PixelFormat::rgba();
+    pf.big_endian_flag = 1;
+    pf
+}
+
+/// `PixelFormat::bgra()` (value `a << 24 | r << 16 | g << 8 | b`), big-endian.
+fn pf_bgra_be() -> PixelFormat {
+    let mut pf = PixelFormat::bgra();
+    pf.big_endian_flag = 1;
+    pf
+}
+
+/// Every `RawImage` payload in emission order.
+fn raw_images(events: &[VncEvent]) -> Vec<Vec<u8>> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            VncEvent::RawImage(_, data) => Some(data.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Run `bytes` + a trailing Bell under `pf` and return the emitted images,
+/// asserting the stream stayed in sync.
+async fn tight_images(mut bytes: Vec<u8>, pf: &PixelFormat) -> Vec<Vec<u8>> {
+    bytes.push(BELL);
+    let (result, events) = run(&bytes, pf).await;
+    assert!(is_eof(&result), "{result:?}");
+    assert!(has_bell(&events), "stream desynchronised");
+    raw_images(&events)
+}
+
+#[tokio::test]
+async fn tight_24bit_fill_honours_the_format_byte_order() {
+    let fill = || {
+        let mut bytes = fb_update(1);
+        bytes.extend(rect(0, 0, 2, 1, TIGHT));
+        bytes.push(0x80); // fill
+        bytes.extend_from_slice(&[10, 20, 30]);
+        bytes
+    };
+    // RGBA little-endian: memory order R, G, B, A.
+    let le = tight_images(fill(), &PixelFormat::rgba()).await;
+    assert_eq!(le, vec![[10, 20, 30, 255].repeat(2)]);
+    // RGBA big-endian: A, B, G, R.
+    let be = tight_images(fill(), &pf_rgba_be()).await;
+    assert_eq!(be, vec![[255, 30, 20, 10].repeat(2)]);
+    // BGRA big-endian (red shift 16, blue shift 0): A, R, G, B.
+    let bgra_be = tight_images(fill(), &pf_bgra_be()).await;
+    assert_eq!(bgra_be, vec![[255, 10, 20, 30].repeat(2)]);
+}
+
+#[tokio::test]
+async fn tight_24bit_copy_filter_honours_the_format_byte_order() {
+    let copy = || {
+        let mut bytes = fb_update(1);
+        bytes.extend(rect(0, 0, 2, 1, TIGHT));
+        bytes.push(0x00); // basic, stream 0, copy filter
+        bytes.extend_from_slice(&[1, 2, 3, 4, 5, 6]); // < 12 bytes: uncompressed
+        bytes
+    };
+    let le = tight_images(copy(), &PixelFormat::rgba()).await;
+    assert_eq!(le, vec![vec![1, 2, 3, 255, 4, 5, 6, 255]]);
+    let be = tight_images(copy(), &pf_rgba_be()).await;
+    assert_eq!(be, vec![vec![255, 3, 2, 1, 255, 6, 5, 4]]);
+}
+
+#[tokio::test]
+async fn tight_24bit_palette_honours_the_format_byte_order() {
+    let palette = || {
+        let mut bytes = fb_update(2);
+        // Three colours: byte indexes.
+        bytes.extend(rect(0, 0, 3, 1, TIGHT));
+        bytes.push(0x40); // basic, stream 0, explicit filter
+        bytes.push(1); // palette
+        bytes.push(2); // 3 colours
+        bytes.extend_from_slice(&[255, 0, 0, 0, 255, 0, 0, 0, 255]);
+        bytes.extend_from_slice(&[2, 0, 1]);
+        // Two colours: bit-packed, rows byte-padded.
+        bytes.extend(rect(0, 0, 3, 1, TIGHT));
+        bytes.push(0x40);
+        bytes.push(1);
+        bytes.push(1); // 2 colours
+        bytes.extend_from_slice(&[0, 0, 0, 1, 2, 3]);
+        bytes.push(0b1010_0000);
+        bytes
+    };
+    let le = tight_images(palette(), &PixelFormat::rgba()).await;
+    assert_eq!(
+        le,
+        vec![
+            vec![0, 0, 255, 255, 255, 0, 0, 255, 0, 255, 0, 255],
+            vec![1, 2, 3, 255, 0, 0, 0, 255, 1, 2, 3, 255],
+        ]
+    );
+    let be = tight_images(palette(), &pf_rgba_be()).await;
+    assert_eq!(
+        be,
+        vec![
+            vec![255, 255, 0, 0, 255, 0, 0, 255, 255, 0, 255, 0],
+            vec![255, 3, 2, 1, 255, 0, 0, 0, 255, 3, 2, 1],
+        ]
+    );
+}
+
+/// A 2x2 gradient-filtered rect of 24-bit TPIXELs, hand-encoded.
+///
+/// Target pixels (R, G, B), row-major:
+/// `(100, 50, 200) (110, 44, 0)` / `(250, 50, 100) (4, 50, 7)`.
+///
+/// Each wire TPIXEL is, per channel, `(value - prediction) mod 256` with the
+/// prediction `clamp(up + left - up_left, 0, 255)` (zero outside the rect):
+/// - (0,0): prediction 0 → `[100, 50, 200]`.
+/// - (1,0): prediction = left `(100, 50, 200)` → `[10, 250, 56]`.
+/// - (0,1): prediction = up `(100, 50, 200)` → `[150, 0, 156]`.
+/// - (1,1): up `(110, 44, 0)` + left `(250, 50, 100)` - up_left
+///   `(100, 50, 200)` = `(260, 44, -100)`, clamped to `(255, 44, 0)`
+///   → `[5, 6, 7]` (exercising both clamp ends and the red wrap-around).
+fn gradient_24bit_rect() -> Vec<u8> {
+    let wire = [100, 50, 200, 10, 250, 56, 150, 0, 156, 5, 6, 7];
+    // 12 bytes is not below the 12-byte threshold, so it is zlib-compressed.
+    let compressed = zlib(&wire);
+    assert!(compressed.len() < 128);
+    let mut bytes = fb_update(1);
+    bytes.extend(rect(0, 0, 2, 2, TIGHT));
+    bytes.push(0x40); // basic, stream 0, explicit filter
+    bytes.push(2); // gradient
+    bytes.push(compressed.len() as u8);
+    bytes.extend_from_slice(&compressed);
+    bytes
+}
+
+#[tokio::test]
+async fn tight_24bit_gradient_reconstructs_pixels_with_an_opaque_alpha_lane() {
+    let le = tight_images(gradient_24bit_rect(), &PixelFormat::rgba()).await;
+    assert_eq!(
+        le,
+        vec![vec![
+            100, 50, 200, 255, 110, 44, 0, 255, //
+            250, 50, 100, 255, 4, 50, 7, 255,
+        ]]
+    );
+}
+
+#[tokio::test]
+async fn tight_24bit_gradient_honours_the_format_byte_order() {
+    let be = tight_images(gradient_24bit_rect(), &pf_rgba_be()).await;
+    assert_eq!(
+        be,
+        vec![vec![
+            255, 200, 50, 100, 255, 0, 44, 110, //
+            255, 100, 50, 250, 255, 7, 50, 4,
+        ]]
+    );
+    let bgra_be = tight_images(gradient_24bit_rect(), &pf_bgra_be()).await;
+    assert_eq!(
+        bgra_be,
+        vec![vec![
+            255, 100, 50, 200, 255, 110, 44, 0, //
+            255, 250, 50, 100, 255, 4, 50, 7,
+        ]]
+    );
+}
+
+#[tokio::test]
+async fn tight_24bit_filters_agree_on_the_alpha_lane() {
+    // The same colour through fill, copy, palette and gradient must decode to
+    // identical pixels (upstream's gradient path left alpha at 0).
+    let mut bytes = fb_update(4);
+    bytes.extend(rect(0, 0, 1, 1, TIGHT));
+    bytes.push(0x80);
+    bytes.extend_from_slice(&[9, 8, 7]);
+    bytes.extend(rect(0, 0, 1, 1, TIGHT));
+    bytes.push(0x00);
+    bytes.extend_from_slice(&[9, 8, 7]);
+    bytes.extend(rect(0, 0, 1, 1, TIGHT));
+    bytes.extend_from_slice(&[0x40, 1, 0, 9, 8, 7, 0]);
+    bytes.extend(rect(0, 0, 1, 1, TIGHT));
+    bytes.extend_from_slice(&[0x40, 2, 9, 8, 7]);
+    for pf in [PixelFormat::rgba(), pf_rgba_be()] {
+        let images = tight_images(bytes.clone(), &pf).await;
+        assert_eq!(images.len(), 4);
+        assert!(images.iter().all(|i| *i == images[0]), "{images:?}");
+    }
+}
+
 #[tokio::test]
 async fn tight_palette_index_out_of_range_is_invalid_data() {
     let mut bytes = fb_update(1);
