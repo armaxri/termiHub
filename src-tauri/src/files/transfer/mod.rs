@@ -109,12 +109,19 @@ pub fn app_progress_sink(app: AppHandle) -> ProgressSink {
         // unavailable (e.g. a headless test app). The teardown flag lets a quit
         // cancel-all leave in-flight records intact instead of erasing them.
         if let Some(pm) = app.try_state::<TransferPersistenceManager>() {
+            // The source mtime the executor fingerprinted (#3572) lives on the
+            // live handle, not in the wire event; persist it with the offset.
+            let source_mtime = app
+                .try_state::<TransferRegistry>()
+                .and_then(|registry| registry.get(&progress.transfer_id))
+                .and_then(|handle| handle.source_mtime());
             pm.note_progress(
                 &progress.transfer_id,
                 PersistedTransferStatus::from(progress.state),
                 progress.transferred,
                 progress.total,
                 is_queue_teardown(),
+                source_mtime,
             );
         }
         if let Err(e) = app.emit(TRANSFER_PROGRESS_EVENT, progress) {

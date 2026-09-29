@@ -568,6 +568,10 @@ fn spawn_relaunch<F, Fut>(
         registry.resume(&record.transfer_id);
         return;
     };
+    // Seed the persisted source mtime (#3572): the executor compares it (with
+    // the persisted total) against the source it finds, so a source rewritten
+    // to the same size while the app was closed restarts from zero.
+    handle.set_source_mtime(record.source_mtime);
 
     let sink = super::app_progress_sink(app_handle.clone());
     // Not app-owned (#3105): a transfer; cancelled explicitly via `TransferRegistry::cancel_all`.
@@ -616,6 +620,7 @@ mod tests {
             docker: None,
             group_id: None,
             folder_paste_id: None,
+            source_mtime: None,
         }
     }
 

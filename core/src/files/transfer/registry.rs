@@ -84,6 +84,12 @@ struct HandleControl {
     total: u64,
     speed: u64,
     attempt: u32,
+    /// Modification time of the source when the bytes now at the destination
+    /// were read (#3572), in the backend's own unit. Seeded from the persisted
+    /// checkpoint on a relaunch and refreshed by the executor whenever it
+    /// (re)fingerprints the source; persisted with the resume offset so a
+    /// relaunch can detect a same-size rewrite. `None` when unknown.
+    source_mtime: Option<u64>,
 }
 
 /// Shared control handle for one rich (queued) transfer.
@@ -180,6 +186,18 @@ impl TransferHandle {
     /// Await any control signal (promotion, resume/retry, or cancel).
     pub async fn wait_for_signal(&self) {
         self.notify.notified().await;
+    }
+
+    /// Record the source's modification time at the current baseline (#3572).
+    pub fn set_source_mtime(&self, mtime: Option<u64>) {
+        self.lock().source_mtime = mtime;
+    }
+
+    /// The source's modification time at the current baseline, when known
+    /// (#3572). Not part of the wire snapshot: it only feeds the persisted
+    /// checkpoint.
+    pub fn source_mtime(&self) -> Option<u64> {
+        self.lock().source_mtime
     }
 
     /// A point-in-time serialisable view of this transfer.
@@ -371,6 +389,7 @@ impl TransferRegistry {
                 total,
                 speed: 0,
                 attempt: 0,
+                source_mtime: None,
             }),
             notify: Notify::new(),
             max_attempts: super::state::MAX_RETRIES,
@@ -421,6 +440,7 @@ impl TransferRegistry {
                 total,
                 speed: 0,
                 attempt: 0,
+                source_mtime: None,
             }),
             notify: Notify::new(),
             max_attempts: super::state::MAX_RETRIES,
@@ -593,6 +613,21 @@ impl TransferRegistry {
 mod tests {
     use super::*;
     use crate::files::transfer::state::MAX_RETRIES;
+
+    // --- Source mtime (#3572) ---
+
+    #[test]
+    fn source_mtime_defaults_to_none_and_is_settable() {
+        let reg = TransferRegistry::new();
+        let h = enq(&reg, "t1", "s1");
+        assert_eq!(h.source_mtime(), None);
+        h.set_source_mtime(Some(1_700_000_000));
+        assert_eq!(h.source_mtime(), Some(1_700_000_000));
+        let fresh = reg
+            .enqueue_if_absent("t2", "s1", TransferDirection::Upload, "f", "/f", 0)
+            .expect("new id");
+        assert_eq!(fresh.source_mtime(), None);
+    }
 
     // --- Cancel / drop semantics ---
 
