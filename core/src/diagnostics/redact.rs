@@ -94,22 +94,36 @@ impl RedactionContext {
     /// Gather the context from the running process: `$HOME`/`%USERPROFILE%`,
     /// `$USER`/`%USERNAME%`, and the machine's host name (plus `COMPUTERNAME`).
     pub fn from_environment() -> Self {
+        Self::from_lookup(
+            &|name| std::env::var(name).ok(),
+            gethostname::gethostname().to_str(),
+        )
+    }
+
+    /// Pure core of [`from_environment`](Self::from_environment), reading
+    /// variables through `lookup` and taking the machine host name as input.
+    ///
+    /// Tests pass their own values instead of mutating the process-global
+    /// environment: `HOME` in particular is read by concurrently running tests
+    /// (tilde expansion in the local file browser), which a temporary override
+    /// made fail intermittently (#2805).
+    fn from_lookup(lookup: &dyn Fn(&str) -> Option<String>, machine_host: Option<&str>) -> Self {
         let mut ctx = Self::default();
         for var in ["HOME", "USERPROFILE"] {
-            if let Ok(v) = std::env::var(var) {
+            if let Some(v) = lookup(var) {
                 push_unique(&mut ctx.home_dirs, v);
             }
         }
         for var in ["USER", "USERNAME", "LOGNAME"] {
-            if let Ok(v) = std::env::var(var) {
+            if let Some(v) = lookup(var) {
                 push_unique(&mut ctx.usernames, v);
             }
         }
-        if let Some(h) = gethostname::gethostname().to_str() {
+        if let Some(h) = machine_host {
             push_unique(&mut ctx.hostnames, h.to_string());
         }
         for var in ["COMPUTERNAME", "HOSTNAME"] {
-            if let Ok(v) = std::env::var(var) {
+            if let Some(v) = lookup(var) {
                 push_unique(&mut ctx.hostnames, v);
             }
         }
