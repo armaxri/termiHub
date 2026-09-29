@@ -422,10 +422,7 @@ pub async fn run_docker_transfer(
         }
         (None, TransferDirection::Upload) => 0,
     };
-    let offset = rehydrate_start_offset(start_offset, handle.snapshot().total, baseline);
-    if offset != start_offset {
-        info!(transfer_id = %handle.transfer_id, start_offset, "Docker source changed since the checkpoint; restarting from zero");
-    }
+    let offset = rehydrate_start_offset(start_offset, &handle, baseline, BACKEND);
     handle.set_metrics(offset, total, 0);
     emit(&handle, &sink, TransferPhase::Transferring, None, None);
 
