@@ -2,8 +2,15 @@
 
 /**
  * A persistent named broadcast group (PROD-061, #3443).
+ *
+ * Fields are declared in key order: groups used to round-trip through the
+ * (sorted) `extra` map, so this order keeps existing files byte-identical.
  */
 export type BroadcastGroup = { 
+/**
+ * Saved-connection ids that belong to the group.
+ */
+connectionIds: Array<string>, 
 /**
  * Stable group id.
  */
@@ -11,8 +18,4 @@ id: string,
 /**
  * User-visible group name (unique, case-insensitive).
  */
-name: string, 
-/**
- * Saved-connection ids that belong to the group.
- */
-connectionIds: Array<string>, };
+name: string, };

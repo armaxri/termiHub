@@ -286,17 +286,20 @@ settings_union! {
 }
 
 /// A persistent named broadcast group (PROD-061, #3443).
+///
+/// Fields are declared in key order: groups used to round-trip through the
+/// (sorted) `extra` map, so this order keeps existing files byte-identical.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct BroadcastGroup {
+    /// Saved-connection ids that belong to the group.
+    pub connection_ids: Vec<String>,
     /// Stable group id.
     pub id: String,
     /// User-visible group name (unique, case-insensitive).
     pub name: String,
-    /// Saved-connection ids that belong to the group.
-    pub connection_ids: Vec<String>,
 }
 
 /// Application-wide settings persisted to disk.
@@ -997,7 +1000,10 @@ mod tests {
         let settings: AppSettings = serde_json::from_str(json).unwrap();
         assert_eq!(settings.default_user.as_deref(), Some("admin"));
         assert_eq!(settings.font_size, Some(16));
-        assert_eq!(settings.cursor_style.map(SettingsUnion::as_str), Some("underline"));
+        assert_eq!(
+            settings.cursor_style.map(SettingsUnion::as_str),
+            Some("underline")
+        );
         assert_eq!(settings.cursor_blink, Some(false));
         assert_eq!(settings.scrollback_buffer, Some(10000));
         assert_eq!(settings.default_horizontal_scrolling, Some(true));
@@ -1086,7 +1092,9 @@ mod tests {
         assert!(json.contains("restoreLastSessionMode"));
         let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(
-            deserialized.restore_last_session_mode.map(SettingsUnion::as_str),
+            deserialized
+                .restore_last_session_mode
+                .map(SettingsUnion::as_str),
             Some("ask")
         );
 
@@ -1287,7 +1295,12 @@ mod tests {
             let json = serde_json::to_string(&settings).unwrap();
             let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
 
-            assert_eq!(deserialized.credential_storage_mode.map(SettingsUnion::as_str), Some(*mode));
+            assert_eq!(
+                deserialized
+                    .credential_storage_mode
+                    .map(SettingsUnion::as_str),
+                Some(*mode)
+            );
             assert_eq!(deserialized.credential_auto_lock_minutes, Some(30));
         }
     }
@@ -1332,7 +1345,10 @@ mod tests {
             let json = serde_json::to_string(&settings).unwrap();
             let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
 
-            assert_eq!(deserialized.right_click_behavior.map(SettingsUnion::as_str), Some(*mode));
+            assert_eq!(
+                deserialized.right_click_behavior.map(SettingsUnion::as_str),
+                Some(*mode)
+            );
         }
     }
 
@@ -1501,7 +1517,10 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
         assert!(json.contains("fileLogLevel"));
         let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.file_log_level.map(SettingsUnion::as_str), Some("debug"));
+        assert_eq!(
+            deserialized.file_log_level.map(SettingsUnion::as_str),
+            Some("debug")
+        );
 
         // A legacy file without the key deserializes to None.
         let legacy = r#"{"version":"1","externalConnectionFiles":[]}"#;
@@ -1777,6 +1796,159 @@ mod tests {
             .map(|(o, n)| super::super::id_changes::ConnectionIdChange::new(*o, *n))
             .collect();
         ConnectionIdRemap::new(&changes)
+    }
+
+    // ── Legacy settings.json byte-compatibility (#3802) ─────────────────────
+    //
+    // The fixtures were written by the pre-#3802 backend (plain-`String`
+    // unions, broadcast groups and the two terminal toggles in the flattened
+    // `extra` map). Loading and re-saving them must reproduce the file byte for
+    // byte, so promoting fields / typing unions is invisible on disk.
+    // (`fileLanguageMappings` is a `HashMap`, so the fixture keeps it to one
+    // entry: its multi-key order was never deterministic.)
+
+    const LEGACY_FULL: &str = include_str!("testdata/settings_legacy_full.json");
+    const LEGACY_DEFAULTS: &str = include_str!("testdata/settings_legacy_defaults.json");
+    const LEGACY_UNKNOWN_KEYS: &str = include_str!("testdata/settings_legacy_unknown_keys.json");
+
+    /// Load `raw` through the real storage path and return the re-saved file.
+    fn load_and_resave(raw: &str) -> (AppSettings, String) {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        std::fs::write(&storage.file_path, raw).unwrap();
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        storage.save(&loaded.data).unwrap();
+        let saved = std::fs::read_to_string(&storage.file_path).unwrap();
+        (loaded.data, saved)
+    }
+
+    #[test]
+    fn legacy_full_settings_round_trip_byte_identical() {
+        let (settings, saved) = load_and_resave(LEGACY_FULL);
+        assert_eq!(saved, LEGACY_FULL.trim_end());
+
+        // The formerly-untyped values now land in typed fields…
+        assert_eq!(settings.cursor_style, Some(CursorStyle::Bar));
+        assert_eq!(
+            settings.restore_last_session_mode,
+            Some(RestoreLastSessionMode::Always)
+        );
+        assert_eq!(
+            settings.credential_storage_mode,
+            Some(CredentialStorageMode::OsKeychain)
+        );
+        assert_eq!(
+            settings.right_click_behavior,
+            Some(RightClickBehavior::QuickAction)
+        );
+        assert_eq!(settings.default_line_ending, Some(LineEnding::Crlf));
+        assert_eq!(settings.file_log_level, Some(FileLogLevel::Debug));
+        assert_eq!(settings.terminal_command_decorations, Some(false));
+        assert_eq!(settings.terminal_inline_images, Some(true));
+        assert_eq!(
+            settings.broadcast_groups,
+            Some(vec![BroadcastGroup {
+                connection_ids: vec!["Work/web-1".into(), "Work/web-2".into()],
+                id: "g1".into(),
+                name: "Web".into(),
+            }])
+        );
+        // …and nothing is left behind in the catch-all.
+        assert!(settings.extra.is_empty(), "{:?}", settings.extra);
+    }
+
+    #[test]
+    fn legacy_default_settings_round_trip_byte_identical() {
+        let (_, saved) = load_and_resave(LEGACY_DEFAULTS);
+        assert_eq!(saved, LEGACY_DEFAULTS.trim_end());
+        // A fresh default serializes to the same bytes the old backend wrote.
+        assert_eq!(
+            serde_json::to_string_pretty(&AppSettings::default()).unwrap(),
+            LEGACY_DEFAULTS.trim_end()
+        );
+    }
+
+    #[test]
+    fn legacy_minimal_settings_save_as_old_backend_did() {
+        let (_, saved) = load_and_resave(r#"{"version":"1","externalConnectionFiles":[]}"#);
+        assert_eq!(saved, LEGACY_DEFAULTS.trim_end());
+    }
+
+    #[test]
+    fn legacy_unknown_keys_round_trip_semantically() {
+        // Unknown keys still round-trip through `extra`. The only on-disk change
+        // is key order: an unknown key sorting *before* a promoted key
+        // (`aFutureKey` < `broadcastGroups`) is now written after it.
+        let (settings, saved) = load_and_resave(LEGACY_UNKNOWN_KEYS);
+        let before: serde_json::Value = serde_json::from_str(LEGACY_UNKNOWN_KEYS).unwrap();
+        let after: serde_json::Value = serde_json::from_str(&saved).unwrap();
+        assert_eq!(before, after);
+        assert_eq!(
+            settings.extra.keys().collect::<Vec<_>>(),
+            vec!["aFutureKey", "zFutureKey"]
+        );
+        assert_eq!(settings.terminal_inline_images, Some(false));
+    }
+
+    #[test]
+    fn out_of_shape_typed_values_fall_back_instead_of_resetting() {
+        // An unknown union string (e.g. written by a newer build) or a malformed
+        // broadcast group must not fail the load — that would back up and reset
+        // every setting. The bad value resolves to unset; the rest survives.
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        std::fs::write(
+            &storage.file_path,
+            r#"{
+                "version": "1",
+                "externalConnectionFiles": [],
+                "fontSize": 17,
+                "cursorStyle": "beam",
+                "restoreLastSessionMode": 3,
+                "credentialStorageMode": "cloud",
+                "rightClickBehavior": null,
+                "defaultLineEnding": "lf",
+                "fileLogLevel": "verbose",
+                "broadcastGroups": [{ "id": "g1" }],
+                "terminalCommandDecorations": "yes",
+                "terminalInlineImages": false
+            }"#,
+        )
+        .unwrap();
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let settings = loaded.data;
+        assert_eq!(settings.font_size, Some(17));
+        assert_eq!(settings.cursor_style, None);
+        assert_eq!(settings.restore_last_session_mode, None);
+        assert_eq!(settings.credential_storage_mode, None);
+        assert_eq!(settings.right_click_behavior, None);
+        assert_eq!(settings.default_line_ending, Some(LineEnding::Lf));
+        assert_eq!(settings.file_log_level, None);
+        assert_eq!(settings.broadcast_groups, None);
+        assert_eq!(settings.terminal_command_decorations, None);
+        assert_eq!(settings.terminal_inline_images, Some(false));
+    }
+
+    #[test]
+    fn settings_unions_parse_and_print_their_wire_strings() {
+        for level in crate::utils::file_log::SELECTABLE_FILE_LOG_LEVELS {
+            let parsed = FileLogLevel::parse(level).expect(level);
+            assert_eq!(parsed.as_str(), *level);
+            assert_eq!(serde_json::to_value(parsed).unwrap(), *level);
+        }
+        assert_eq!(FileLogLevel::parse("verbose"), None);
+        for mode in ["master_password", "os_keychain", "none"] {
+            let parsed = CredentialStorageMode::parse(mode).unwrap();
+            assert_eq!(parsed.as_str(), mode);
+            // Stays in step with the credential store's own string form.
+            assert_eq!(
+                crate::credential::types::StorageMode::from_settings_str(Some(mode))
+                    .to_settings_str(),
+                mode
+            );
+        }
     }
 
     #[test]

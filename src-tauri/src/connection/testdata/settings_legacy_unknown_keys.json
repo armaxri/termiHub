@@ -1,0 +1,50 @@
+{
+  "version": "1",
+  "externalConnectionFiles": [],
+  "powerMonitoringEnabled": true,
+  "fileBrowserEnabled": true,
+  "confirmCloseTabOnShortcut": true,
+  "confirmCloseAttachedTab": true,
+  "askOpenSavedFileInTab": true,
+  "warnLargePortScan": true,
+  "warnLargePingSweep": true,
+  "defaultShellIntegration": true,
+  "defaultX11Forwarding": true,
+  "stopXServerWhenIdle": true,
+  "restoreLastSessionOnStartup": true,
+  "sessionHistoryEnabled": true,
+  "sessionHistoryLimit": 50,
+  "showRecentSessions": true,
+  "networkToolHistoryEnabled": true,
+  "updates": {
+    "autoCheck": true
+  },
+  "shellIntegration": {
+    "entries": [],
+    "fallback": "picker",
+    "openInNewWindow": false,
+    "registered": false,
+    "linuxFileManagers": {
+      "nautilus": false,
+      "kde": false,
+      "thunar": false
+    },
+    "firstLaunchBannerDismissed": false
+  },
+  "workflowLocalProcessEnabled": false,
+  "workflowLocalProcessAllowlist": [],
+  "aFutureKey": 1,
+  "broadcastGroups": [
+    {
+      "connectionIds": [
+        "a"
+      ],
+      "id": "g1",
+      "name": "Web"
+    }
+  ],
+  "terminalInlineImages": false,
+  "zFutureKey": {
+    "nested": true
+  }
+}
