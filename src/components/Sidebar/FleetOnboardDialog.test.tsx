@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { FleetOnboardDialog } from "./FleetOnboardDialog";
@@ -95,9 +96,9 @@ describe("FleetOnboardDialog", () => {
     container.remove();
   });
 
-  function renderWith(connections: SavedConnection[], rows: InventoryHost[]) {
+  async function renderWith(connections: SavedConnection[], rows: InventoryHost[]) {
     seedConnectionsRegion({ connections, folders: [] });
-    act(() =>
+    await act(async () =>
       root.render(
         React.createElement(TooltipProvider, {
           delayDuration: 0,
@@ -110,10 +111,11 @@ describe("FleetOnboardDialog", () => {
         })
       )
     );
+    await flushAsync();
   }
 
-  it("builds one connection per row from the picked template and bulk-adds them", () => {
-    renderWith(
+  it("builds one connection per row from the picked template and bulk-adds them", async () => {
+    await renderWith(
       [sshConnection("prod-template")],
       [
         { host: "web1.internal", label: "Web 1" },
@@ -134,8 +136,8 @@ describe("FleetOnboardDialog", () => {
     expect(built[1].config.config.host).toBe("web2.internal");
   });
 
-  it("shows an empty state and does not bulk-add when no template connection exists", () => {
-    renderWith([], [{ host: "web1.internal", label: "Web 1" }]);
+  it("shows an empty state and does not bulk-add when no template connection exists", async () => {
+    await renderWith([], [{ host: "web1.internal", label: "Web 1" }]);
 
     expect(q("fleet-onboard-no-templates")).not.toBeNull();
     // The import button is disabled with no template.
@@ -143,8 +145,8 @@ describe("FleetOnboardDialog", () => {
     expect(bulkAddConnections).not.toHaveBeenCalled();
   });
 
-  it("skips hosts already present in the target folder", () => {
-    renderWith(
+  it("skips hosts already present in the target folder", async () => {
+    await renderWith(
       [
         sshConnection("prod-template"),
         {
@@ -166,8 +168,8 @@ describe("FleetOnboardDialog", () => {
     expect(built[0].config.config.host).toBe("web2.internal");
   });
 
-  it("does not pre-select a template: Add stays disabled until the user picks one", () => {
-    renderWith(
+  it("does not pre-select a template: Add stays disabled until the user picks one", async () => {
+    await renderWith(
       [sshConnection("alpha"), sshConnection("beta")],
       [{ host: "web1.internal", label: "Web 1" }]
     );
@@ -182,7 +184,7 @@ describe("FleetOnboardDialog", () => {
     expect(bulkAddConnections).toHaveBeenCalledTimes(1);
   });
 
-  it("offers only host-based connection types as templates", () => {
+  it("offers only host-based connection types as templates", async () => {
     useAppStore.setState({
       connectionTypes: [
         typeInfo("ssh", ["host", "port", "username"]),
@@ -191,7 +193,7 @@ describe("FleetOnboardDialog", () => {
         typeInfo("local", ["shell"]),
       ],
     });
-    renderWith(
+    await renderWith(
       [
         sshConnection("ssh-box"),
         { id: "tel", name: "tel-box", folderId: null, config: { type: "telnet", config: {} } },
@@ -214,19 +216,19 @@ describe("FleetOnboardDialog", () => {
     expect(labels.some((l) => l.includes("local-box"))).toBe(false);
   });
 
-  it("shows the empty state when no host-based template exists", () => {
+  it("shows the empty state when no host-based template exists", async () => {
     useAppStore.setState({ connectionTypes: [typeInfo("local", ["shell"])] });
-    renderWith(
+    await renderWith(
       [{ id: "loc", name: "local-box", folderId: null, config: { type: "local", config: {} } }],
       [{ host: "web1.internal", label: "Web 1" }]
     );
     expect(q("fleet-onboard-no-templates")).not.toBeNull();
   });
 
-  it("keeps the picked template when the connections projection changes while open", () => {
+  it("keeps the picked template when the connections projection changes while open", async () => {
     const alpha = sshConnection("alpha", { username: "alpha-user" });
     const beta = sshConnection("beta", { username: "beta-user" });
-    renderWith([alpha, beta], [{ host: "web1.internal", label: "Web 1" }]);
+    await renderWith([alpha, beta], [{ host: "web1.internal", label: "Web 1" }]);
 
     pickTemplate("beta");
     expect(isDisabled("fleet-onboard-import")).toBe(false);

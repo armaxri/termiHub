@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 
 vi.mock("@/services/embeddedServerApi", () => ({
   listNetworkInterfaces: vi.fn(() =>
@@ -17,10 +18,11 @@ import type { EmbeddedServerConfig } from "@/types/embeddedServer";
 let container: HTMLDivElement;
 let root: Root;
 
-function render(ui: React.ReactElement) {
-  act(() => {
+async function render(ui: React.ReactElement) {
+  await act(async () => {
     root.render(ui);
   });
+  await flushAsync();
 }
 
 function typeInto(el: HTMLInputElement, value: string) {
@@ -51,13 +53,13 @@ describe("EmbeddedServerDialog", () => {
     vi.clearAllMocks();
   });
 
-  it("renders nothing when closed", () => {
-    render(<EmbeddedServerDialog {...baseProps} open={false} />);
+  it("renders nothing when closed", async () => {
+    await render(<EmbeddedServerDialog {...baseProps} open={false} />);
     expect(document.querySelector('[data-testid="server-dialog-name"]')).toBeNull();
   });
 
-  it("renders through the Modal primitive with a token'd name Input and Select bind-host", () => {
-    render(<EmbeddedServerDialog {...baseProps} />);
+  it("renders through the Modal primitive with a token'd name Input and Select bind-host", async () => {
+    await render(<EmbeddedServerDialog {...baseProps} />);
     expect(document.querySelector(".ui-modal")).toBeTruthy();
     const name = document.querySelector('[data-testid="server-dialog-name"]') as HTMLInputElement;
     expect(name.classList.contains("ui-input")).toBe(true);
@@ -73,7 +75,9 @@ describe("EmbeddedServerDialog", () => {
     // keeps it open (covered by EmbeddedServerSidebar's feedback tests).
     const onSave = vi.fn((_config: EmbeddedServerConfig) => Promise.resolve(true));
     const onOpenChange = vi.fn();
-    render(<EmbeddedServerDialog {...baseProps} onSave={onSave} onOpenChange={onOpenChange} />);
+    await render(
+      <EmbeddedServerDialog {...baseProps} onSave={onSave} onOpenChange={onOpenChange} />
+    );
 
     const saveBtn = document.querySelector(
       '[data-testid="server-dialog-save"]'
@@ -105,8 +109,8 @@ describe("EmbeddedServerDialog", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it("selecting the 0.0.0.0 bind address opens the LAN security warning", () => {
-    render(<EmbeddedServerDialog {...baseProps} />);
+  it("selecting the 0.0.0.0 bind address opens the LAN security warning", async () => {
+    await render(<EmbeddedServerDialog {...baseProps} />);
     const bind = document.querySelector(
       '[data-testid="server-dialog-bind-host"]'
     ) as HTMLButtonElement;
@@ -138,8 +142,8 @@ describe("EmbeddedServerDialog", () => {
     expect(bind.getAttribute("data-value")).toBe("127.0.0.1");
   });
 
-  it("renders the port as a token'd number input defaulting to the protocol port", () => {
-    render(<EmbeddedServerDialog {...baseProps} />);
+  it("renders the port as a token'd number input defaulting to the protocol port", async () => {
+    await render(<EmbeddedServerDialog {...baseProps} />);
     const port = document.querySelector('[data-testid="server-dialog-port"]') as HTMLInputElement;
     expect(port.type).toBe("number");
     expect(port.classList.contains("ui-input")).toBe(true);
@@ -148,7 +152,7 @@ describe("EmbeddedServerDialog", () => {
 
   it("editing the port carries the new number into the saved config", async () => {
     const onSave = vi.fn((_config: EmbeddedServerConfig) => Promise.resolve(true));
-    render(<EmbeddedServerDialog {...baseProps} onSave={onSave} />);
+    await render(<EmbeddedServerDialog {...baseProps} onSave={onSave} />);
 
     typeInto(
       document.querySelector('[data-testid="server-dialog-name"]') as HTMLInputElement,
@@ -172,8 +176,8 @@ describe("EmbeddedServerDialog", () => {
     expect(onSave.mock.calls[0][0]).toMatchObject({ port: 9000 });
   });
 
-  it("clearing the port keeps it blank and blocks Save (#1453)", () => {
-    render(<EmbeddedServerDialog {...baseProps} />);
+  it("clearing the port keeps it blank and blocks Save (#1453)", async () => {
+    await render(<EmbeddedServerDialog {...baseProps} />);
 
     typeInto(
       document.querySelector('[data-testid="server-dialog-name"]') as HTMLInputElement,
@@ -197,7 +201,7 @@ describe("EmbeddedServerDialog", () => {
     expect(saveBtn.disabled).toBe(true);
   });
 
-  it("populates its fields from an existing config when editing", () => {
+  it("populates its fields from an existing config when editing", async () => {
     const existing: EmbeddedServerConfig = {
       id: "srv-1",
       name: "Docs Share",
@@ -209,7 +213,7 @@ describe("EmbeddedServerDialog", () => {
       readOnly: true,
       directoryListing: false,
     };
-    render(<EmbeddedServerDialog {...baseProps} config={existing} />);
+    await render(<EmbeddedServerDialog {...baseProps} config={existing} />);
 
     expect(
       (document.querySelector('[data-testid="server-dialog-name"]') as HTMLInputElement).value
@@ -228,7 +232,7 @@ describe("EmbeddedServerDialog", () => {
 
   it("HTTP auth is off by default, so the saved config carries no httpAuth (PROD-0035)", async () => {
     const onSave = vi.fn((_config: EmbeddedServerConfig) => Promise.resolve(true));
-    render(<EmbeddedServerDialog {...baseProps} onSave={onSave} />);
+    await render(<EmbeddedServerDialog {...baseProps} onSave={onSave} />);
 
     // The auth section renders for HTTP, but the credential fields stay hidden
     // until it is enabled.
@@ -254,7 +258,7 @@ describe("EmbeddedServerDialog", () => {
 
   it("enabling HTTP auth and entering credentials saves httpAuth (PROD-0035)", async () => {
     const onSave = vi.fn((_config: EmbeddedServerConfig) => Promise.resolve(true));
-    render(<EmbeddedServerDialog {...baseProps} onSave={onSave} />);
+    await render(<EmbeddedServerDialog {...baseProps} onSave={onSave} />);
 
     typeInto(
       document.querySelector('[data-testid="server-dialog-name"]') as HTMLInputElement,
@@ -291,7 +295,7 @@ describe("EmbeddedServerDialog", () => {
     });
   });
 
-  it("populates HTTP auth fields from an existing config (PROD-0035)", () => {
+  it("populates HTTP auth fields from an existing config (PROD-0035)", async () => {
     const existing: EmbeddedServerConfig = {
       id: "srv-3",
       name: "Secured",
@@ -304,7 +308,7 @@ describe("EmbeddedServerDialog", () => {
       directoryListing: true,
       httpAuth: { username: "ops", password: "hunter2" },
     };
-    render(<EmbeddedServerDialog {...baseProps} config={existing} />);
+    await render(<EmbeddedServerDialog {...baseProps} config={existing} />);
 
     const user = document.querySelector(
       '[data-testid="server-dialog-http-username"]'
@@ -316,7 +320,7 @@ describe("EmbeddedServerDialog", () => {
     expect(pass.value).toBe("hunter2");
   });
 
-  it("editing a server with a saved password shows a keep-it hint in the blank field (#3514)", () => {
+  it("editing a server with a saved password shows a keep-it hint in the blank field (#3514)", async () => {
     const existing: EmbeddedServerConfig = {
       id: "srv-4",
       name: "Uploads",
@@ -329,7 +333,7 @@ describe("EmbeddedServerDialog", () => {
       // The backend never sends a stored password back to the UI.
       ftpAuth: { type: "credentials", username: "ops", password: "" },
     };
-    render(<EmbeddedServerDialog {...baseProps} config={existing} />);
+    await render(<EmbeddedServerDialog {...baseProps} config={existing} />);
 
     const pass = document.querySelector(
       '[data-testid="server-dialog-ftp-password"]'
@@ -338,8 +342,8 @@ describe("EmbeddedServerDialog", () => {
     expect(pass.placeholder).toMatch(/leave blank to keep/i);
   });
 
-  it("a new server's password field has no keep-it hint (#3514)", () => {
-    render(<EmbeddedServerDialog {...baseProps} />);
+  it("a new server's password field has no keep-it hint (#3514)", async () => {
+    await render(<EmbeddedServerDialog {...baseProps} />);
     act(() => {
       (
         document.querySelector('[data-testid="server-dialog-http-auth-enable"]') as HTMLElement
@@ -351,8 +355,8 @@ describe("EmbeddedServerDialog", () => {
     expect(pass.placeholder).toBe("");
   });
 
-  it("switching protocol away from HTTP hides the auth section (PROD-0035)", () => {
-    render(<EmbeddedServerDialog {...baseProps} />);
+  it("switching protocol away from HTTP hides the auth section (PROD-0035)", async () => {
+    await render(<EmbeddedServerDialog {...baseProps} />);
     expect(document.querySelector('[data-testid="server-dialog-http-auth-enable"]')).toBeTruthy();
 
     act(() => {
@@ -362,8 +366,8 @@ describe("EmbeddedServerDialog", () => {
     expect(document.querySelector('[data-testid="server-dialog-http-auth-enable"]')).toBeNull();
   });
 
-  it("a whitespace-only name is treated as empty and blocks Save", () => {
-    render(<EmbeddedServerDialog {...baseProps} />);
+  it("a whitespace-only name is treated as empty and blocks Save", async () => {
+    await render(<EmbeddedServerDialog {...baseProps} />);
     typeInto(
       document.querySelector('[data-testid="server-dialog-name"]') as HTMLInputElement,
       "   "
@@ -390,7 +394,7 @@ describe("EmbeddedServerDialog", () => {
       directoryListing: true,
     };
     const onSave = vi.fn((_config: EmbeddedServerConfig) => Promise.resolve(true));
-    render(<EmbeddedServerDialog {...baseProps} config={existing} onSave={onSave} />);
+    await render(<EmbeddedServerDialog {...baseProps} config={existing} onSave={onSave} />);
 
     await act(async () => {
       (document.querySelector('[data-testid="server-dialog-save"]') as HTMLButtonElement).click();

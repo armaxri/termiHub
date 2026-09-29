@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { getAllLeaves } from "@/utils/panelTree";
@@ -47,6 +48,7 @@ async function render() {
   await act(async () => {
     root.render(React.createElement(CommandPalette));
   });
+  await flushAsync();
 }
 
 /** Update the store while the palette is mounted, flushing the re-render in `act()`. */
