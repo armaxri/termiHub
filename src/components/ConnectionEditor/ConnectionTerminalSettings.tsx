@@ -4,7 +4,7 @@ import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { TerminalOptions, LineEnding } from "@/types/terminal";
 import type { ConnectionHighlightingOverride, HighlightRule } from "@/types/syntaxHighlighting";
 import { DEFAULT_LINE_ENDING, LINE_ENDING_OPTIONS, lineEndingLabel } from "@/utils/lineEndings";
-import { Button, Checkbox, Input, NumberInput, Select, Toggle } from "@/components/ui";
+import { Button, Checkbox, Field, Input, NumberInput, Select, Toggle } from "@/components/ui";
 import { CustomRuleEditor } from "@/components/Settings/CustomRuleEditor";
 import { SettingsField } from "@/components/Settings/SettingsField";
 import {
@@ -100,9 +100,11 @@ function ConnectionAdditionalRules({ options, onChange }: ConnectionTerminalSett
   const editingRule = editor?.mode === "edit" ? rules.find((r) => r.id === editor.id) : undefined;
 
   return (
-    <div className="settings-form__field">
-      <div className="connection-additional-rules__header">
-        <span className="settings-form__label">Additional rules for this connection</span>
+    <Field
+      variant="settings"
+      className="connection-additional-rules"
+      label="Additional rules for this connection"
+      labelAccessory={
         <Button
           variant="ghost"
           size="sm"
@@ -113,101 +115,106 @@ function ConnectionAdditionalRules({ options, onChange }: ConnectionTerminalSett
         >
           Add Rule
         </Button>
-      </div>
-      <span className="settings-form__hint">
-        Extra highlight rules applied only to this connection, after the global rules. They can add
-        patterns but never remove global rules.
-      </span>
-
-      {rules.length === 0 && editor?.mode !== "new" ? (
-        <span
-          className="connection-additional-rules__empty"
-          data-testid="connection-additional-rules-empty"
-        >
-          No connection-specific rules yet. Add one to highlight patterns for this connection only.
-        </span>
-      ) : null}
-
-      {rules.map((rule, index) => {
-        const isEditing = editor?.mode === "edit" && editor.id === rule.id;
-        if (isEditing) return null;
-        return (
-          <div
-            className="connection-additional-rule"
-            key={rule.id}
-            data-testid={`connection-additional-rule-${rule.id}`}
+      }
+      hint={
+        "Extra highlight rules applied only to this connection, after the global rules. " +
+        "They can add patterns but never remove global rules."
+      }
+      hintPosition="afterLabel"
+    >
+      {/* Fragment: the rule list is a composite whose controls name themselves. */}
+      <>
+        {rules.length === 0 && editor?.mode !== "new" ? (
+          <span
+            className="connection-additional-rules__empty"
+            data-testid="connection-additional-rules-empty"
           >
-            <Checkbox
-              checked={rule.enabled}
-              onCheckedChange={(checked) =>
-                setRules(updateCustomRule(rules, { ...rule, enabled: checked }))
-              }
-              disabled={editor !== null}
-              aria-label={`Enable ${rule.name}`}
-              data-testid={`connection-additional-rule-enabled-${rule.id}`}
-            />
-            <span
-              className="connection-additional-rule__swatch"
-              style={{ backgroundColor: rule.style.color }}
-              aria-hidden="true"
-            />
-            <span className="connection-additional-rule__name">{rule.name}</span>
-            <code className="connection-additional-rule__pattern">{rule.pattern}</code>
-            <div className="connection-additional-rule__actions">
-              <Button
-                variant="ghost"
-                size="sm"
-                iconOnly
-                icon={<ChevronUp size={14} />}
-                aria-label={`Move ${rule.name} up`}
-                disabled={editor !== null || index === 0}
-                onClick={() => setRules(moveCustomRule(rules, index, index - 1))}
-                data-testid={`connection-additional-rule-up-${rule.id}`}
-              />
-              <Button
-                variant="ghost"
-                size="sm"
-                iconOnly
-                icon={<ChevronDown size={14} />}
-                aria-label={`Move ${rule.name} down`}
-                disabled={editor !== null || index === rules.length - 1}
-                onClick={() => setRules(moveCustomRule(rules, index, index + 1))}
-                data-testid={`connection-additional-rule-down-${rule.id}`}
-              />
-              <Button
-                variant="ghost"
-                size="sm"
-                iconOnly
-                icon={<Pencil size={14} />}
-                aria-label={`Edit ${rule.name}`}
-                disabled={editor !== null}
-                onClick={() => setEditor({ mode: "edit", id: rule.id })}
-                data-testid={`connection-additional-rule-edit-${rule.id}`}
-              />
-              <Button
-                variant="ghost"
-                size="sm"
-                iconOnly
-                icon={<Trash2 size={14} />}
-                aria-label={`Delete ${rule.name}`}
-                disabled={editor !== null}
-                onClick={() => setRules(removeCustomRule(rules, rule.id))}
-                data-testid={`connection-additional-rule-delete-${rule.id}`}
-              />
-            </div>
-          </div>
-        );
-      })}
+            No connection-specific rules yet. Add one to highlight patterns for this connection
+            only.
+          </span>
+        ) : null}
 
-      {editor !== null ? (
-        <CustomRuleEditor
-          rule={editingRule}
-          config={globalConfig}
-          onSave={handleSave}
-          onCancel={() => setEditor(null)}
-        />
-      ) : null}
-    </div>
+        {rules.map((rule, index) => {
+          const isEditing = editor?.mode === "edit" && editor.id === rule.id;
+          if (isEditing) return null;
+          return (
+            <div
+              className="connection-additional-rule"
+              key={rule.id}
+              data-testid={`connection-additional-rule-${rule.id}`}
+            >
+              <Checkbox
+                checked={rule.enabled}
+                onCheckedChange={(checked) =>
+                  setRules(updateCustomRule(rules, { ...rule, enabled: checked }))
+                }
+                disabled={editor !== null}
+                aria-label={`Enable ${rule.name}`}
+                data-testid={`connection-additional-rule-enabled-${rule.id}`}
+              />
+              <span
+                className="connection-additional-rule__swatch"
+                style={{ backgroundColor: rule.style.color }}
+                aria-hidden="true"
+              />
+              <span className="connection-additional-rule__name">{rule.name}</span>
+              <code className="connection-additional-rule__pattern">{rule.pattern}</code>
+              <div className="connection-additional-rule__actions">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  icon={<ChevronUp size={14} />}
+                  aria-label={`Move ${rule.name} up`}
+                  disabled={editor !== null || index === 0}
+                  onClick={() => setRules(moveCustomRule(rules, index, index - 1))}
+                  data-testid={`connection-additional-rule-up-${rule.id}`}
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  icon={<ChevronDown size={14} />}
+                  aria-label={`Move ${rule.name} down`}
+                  disabled={editor !== null || index === rules.length - 1}
+                  onClick={() => setRules(moveCustomRule(rules, index, index + 1))}
+                  data-testid={`connection-additional-rule-down-${rule.id}`}
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  icon={<Pencil size={14} />}
+                  aria-label={`Edit ${rule.name}`}
+                  disabled={editor !== null}
+                  onClick={() => setEditor({ mode: "edit", id: rule.id })}
+                  data-testid={`connection-additional-rule-edit-${rule.id}`}
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  icon={<Trash2 size={14} />}
+                  aria-label={`Delete ${rule.name}`}
+                  disabled={editor !== null}
+                  onClick={() => setRules(removeCustomRule(rules, rule.id))}
+                  data-testid={`connection-additional-rule-delete-${rule.id}`}
+                />
+              </div>
+            </div>
+          );
+        })}
+
+        {editor !== null ? (
+          <CustomRuleEditor
+            rule={editingRule}
+            config={globalConfig}
+            onSave={handleSave}
+            onCancel={() => setEditor(null)}
+          />
+        ) : null}
+      </>
+    </Field>
   );
 }
 
