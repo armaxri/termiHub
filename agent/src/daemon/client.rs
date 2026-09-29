@@ -17,6 +17,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use crate::daemon::files_rpc::{DaemonFileBrowser, FileChannel};
+use crate::daemon::heartbeat::{self, Heartbeat};
 use crate::daemon::monitoring_rpc::{DaemonMonitoringProvider, MonitoringChannel};
 use crate::daemon::process_rpc::{DaemonProcessManager, ProcessChannel};
 use crate::daemon::protocol::{self, *};
@@ -865,6 +866,12 @@ async fn connect_and_start_reader(
         INTENT_TAKEOVER
     };
     protocol::write_frame_async(&mut writer, MSG_ATTACH_INTENT, &[intent]).await?;
+    // #3140: tell the daemon this worker answers heartbeat probes, so it may
+    // reap us if we wedge. A pre-#3140 daemon ignores the unknown frame (its
+    // attach-intent read has already consumed the frame before it).
+    protocol::write_frame_async(&mut writer, MSG_AGENT_CAPABILITIES, &[CAP_HEARTBEAT]).await?;
+    // The daemon's optional-feature flags; stays 0 for a pre-#3210 daemon.
+    let mut daemon_flags = 0u8;
 
     let alive = Arc::new(AtomicBool::new(true));
 
@@ -894,7 +901,8 @@ async fn connect_and_start_reader(
                 // #3210 / #3871: the daemon's optional features, sent just
                 // before Ready.
                 MSG_CAPABILITIES => {
-                    features.apply_capabilities(frame.payload.first().copied().unwrap_or(0));
+                    daemon_flags = frame.payload.first().copied().unwrap_or(0);
+                    features.apply_capabilities(daemon_flags);
                 }
                 MSG_EXITED => {
                     let code = protocol::decode_exit_code(&frame.payload).unwrap_or(-1);
@@ -933,6 +941,9 @@ async fn connect_and_start_reader(
     // reader always clears *this* connection's writer (SM-003).
     *eviction.writer.lock().await = Some(writer);
 
+    // #3140: arm heartbeat reaping only if the daemon answers probes.
+    let heartbeat = heartbeat::negotiated(daemon_flags);
+
     // Start the background reader task
     let alive_clone = alive.clone();
     let session_id_owned = session_id.to_string();
@@ -961,6 +972,10 @@ async fn connect_and_start_reader(
                 on_exit,
                 Some(&eviction),
                 Some(&features),
+                HeartbeatLink {
+                    writer: Some(&eviction.writer),
+                    negotiated: heartbeat,
+                },
             ) => false,
         };
         stopped.then_some(reader)
@@ -991,6 +1006,7 @@ async fn reader_loop(
         on_exit,
         None,
         None,
+        HeartbeatLink::default(),
     )
     .await;
 }
@@ -1006,16 +1022,50 @@ async fn reader_loop_with_heartbeat(
     alive: &AtomicBool,
     on_exit: ExitHookSlot,
 ) {
-    let _ = (writer, negotiated);
-    reader_loop(
-        reader,
+    let mut reader = reader;
+    reader_loop_inner(
+        &mut reader,
         "sess",
         notification_tx,
         alive,
         Arc::new(Mutex::new(None)),
         on_exit,
+        None,
+        None,
+        HeartbeatLink {
+            writer: Some(&writer),
+            negotiated,
+        },
     )
     .await;
+}
+
+/// How the reader takes part in the session heartbeat (#3140).
+#[derive(Clone, Copy, Default)]
+struct HeartbeatLink<'a> {
+    /// The connection's writer, for pings and pongs. `None` only in tests that
+    /// exercise the reader alone; probes are then not answered.
+    writer: Option<&'a DaemonWriterHandle>,
+    /// Whether the daemon advertised [`CAP_HEARTBEAT`]: only then is a silent
+    /// daemon pinged and, if it stays silent, failed.
+    negotiated: bool,
+}
+
+impl HeartbeatLink<'_> {
+    /// Send an empty heartbeat frame on its own task, so the reader never
+    /// blocks on the writer lock (which an input write may be holding).
+    fn send(&self, msg_type: u8) {
+        let Some(writer) = self.writer.cloned() else {
+            return;
+        };
+        tokio::spawn(async move {
+            if let Some(w) = writer.lock().await.as_mut() {
+                if let Err(e) = write_frame_timed(w, msg_type, &[]).await {
+                    debug!("Heartbeat frame 0x{msg_type:02x} not sent: {e:#}");
+                }
+            }
+        });
+    }
 }
 
 /// The reader loop proper. `eviction` receives an [`MSG_EVICTED`] frame (SM-003);
@@ -1033,6 +1083,7 @@ async fn reader_loop_inner(
     on_exit: ExitHookSlot,
     eviction: Option<&EvictionSink>,
     features: Option<&FeatureChannels>,
+    heartbeat: HeartbeatLink<'_>,
 ) {
     read_frames(
         reader,
@@ -1043,6 +1094,7 @@ async fn reader_loop_inner(
         on_exit,
         eviction,
         features,
+        heartbeat,
     )
     .await;
     if let Some(features) = features {
@@ -1061,14 +1113,22 @@ async fn read_frames(
     on_exit: ExitHookSlot,
     eviction: Option<&EvictionSink>,
     features: Option<&FeatureChannels>,
+    heartbeat: HeartbeatLink<'_>,
 ) {
+    let mut watchdog = heartbeat.negotiated.then(Heartbeat::new);
     loop {
         // Steady-state reads use the mid-frame timeout (#3015): a peer that
         // begins a frame and then wedges must fail the session (so reconnect /
         // redrive takes over) instead of parking this reader task forever. The
-        // wait for a frame's first byte stays unbounded, so an idle-but-alive
-        // session — no output for hours — is never torn down.
-        match protocol::read_session_frame_timeout(reader).await {
+        // wait for a frame's first byte has no timeout of its own; instead, when
+        // the daemon answers heartbeats, a silent daemon is pinged and failed
+        // only if it stays silent through every probe (#3140) — an idle-but-
+        // alive session answers and is never torn down.
+        let next = heartbeat::read_frame_with_heartbeat(reader, watchdog.as_mut(), || {
+            heartbeat.send(MSG_PING);
+        })
+        .await;
+        match next {
             Ok(Some(frame)) => match frame.msg_type {
                 MSG_OUTPUT => {
                     send_output_notification(notification_tx, session_id, &frame.payload);
@@ -1122,6 +1182,11 @@ async fn read_frames(
                     // Duplicate ready — ignore
                     debug!("Got additional Ready frame for session {session_id}");
                 }
+                // #3140: a pong only proves liveness, which its arrival already
+                // recorded; it never reaches the terminal.
+                MSG_PONG => {}
+                // #3140: the daemon is probing us — answer, with no side effect.
+                MSG_DAEMON_PING => heartbeat.send(MSG_AGENT_PONG),
                 MSG_EVICTED => {
                     // SM-003 (single-attach): another worker (another desktop) took
                     // this session over. The session is still alive on the daemon,
@@ -1392,6 +1457,7 @@ mod tests {
                 on_exit,
                 Some(&sink),
                 None,
+                HeartbeatLink::default(),
             ),
         )
         .await

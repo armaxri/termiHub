@@ -18,6 +18,7 @@ use tracing::{debug, info, warn, Instrument};
 use crate::daemon::files_rpc::{
     self, FileFrame, FileJob, FileRequest, FileResponse, UploadStep, Uploads,
 };
+use crate::daemon::heartbeat::{self, Heartbeat};
 use crate::daemon::monitoring_rpc::{
     self, MonitorCommand, MonitoringEvent, MonitoringOp, MonitoringRequest,
 };
@@ -736,7 +737,13 @@ async fn daemon_loop(
                         let step = uploads.append(&payload);
                         route_file_step(step, connection_gen, file_job_tx.as_ref(), &file_event_tx);
                     }
-                    Some(AgentCommand::Ping) | Some(AgentCommand::Probe) => {}
+                    Some(AgentCommand::Ping) => {
+                        send_heartbeat_frame(&mut agent_writer, &mut reader_task, MSG_PONG).await;
+                    }
+                    Some(AgentCommand::Probe) => {
+                        send_heartbeat_frame(&mut agent_writer, &mut reader_task, MSG_DAEMON_PING)
+                            .await;
+                    }
                     Some(AgentCommand::Disconnected(gen)) => {
                         if gen == connection_gen {
                             info!("Agent disconnected");
@@ -771,7 +778,29 @@ fn capability_flags(processes: bool, monitoring: bool, files: bool) -> u8 {
     if files {
         flags |= CAP_FILES;
     }
-    flags
+    // Every daemon answers heartbeat probes, whatever its backend (#3140).
+    flags | CAP_HEARTBEAT
+}
+
+/// Send an empty heartbeat frame (#3140) — a pong for the agent's ping, or a
+/// probe of a silent agent — to the attached agent, dropping the connection if
+/// the write fails like every other write to it.
+async fn send_heartbeat_frame(
+    agent_writer: &mut Option<BoxedWriter>,
+    reader_task: &mut Option<tokio::task::JoinHandle<()>>,
+    msg_type: u8,
+) {
+    let Some(writer) = agent_writer.as_mut() else {
+        return;
+    };
+    if protocol::write_frame_async(writer, msg_type, &[])
+        .await
+        .is_err()
+    {
+        debug!("Agent connection lost on heartbeat frame 0x{msg_type:02x}");
+        *agent_writer = None;
+        abort_reader(reader_task);
+    }
 }
 
 /// A refusal of file request `id` with `error`.
@@ -906,13 +935,24 @@ async fn notify_evicted(agent_writer: &mut Option<BoxedWriter>) {
 /// accepted; it is included in `Disconnected` so the main loop can ignore
 /// stale disconnects from previous connections.
 async fn agent_reader_loop(mut reader: BoxedReader, tx: mpsc::Sender<AgentCommand>, gen: u64) {
+    // Armed once the agent advertises heartbeat support (#3140); a
+    // pre-heartbeat agent never does, so it is never probed or reaped.
+    let mut watchdog: Option<Heartbeat> = None;
     loop {
         // Steady-state reads use the mid-frame timeout (#3015): an agent that
         // begins a frame and then wedges must be dropped (Disconnected) rather
         // than pinning this reader task and leaving the daemon holding a stale
-        // writer. The first-byte wait stays unbounded, so an idle agent that
-        // simply is not typing is never disconnected.
-        match protocol::read_session_frame_timeout(&mut reader).await {
+        // writer. The first-byte wait has no timeout of its own, so an idle
+        // agent that simply is not typing is never disconnected; a heartbeat
+        // agent that goes silent is probed, and dropped only if it answers none
+        // of the probes (#3140).
+        let next = heartbeat::read_frame_with_heartbeat(&mut reader, watchdog.as_mut(), || {
+            // Never block the reader on the main loop: a full queue means the
+            // agent is sending plenty, and the next deadline probes again.
+            let _ = tx.try_send(AgentCommand::Probe);
+        })
+        .await;
+        match next {
             Ok(Some(frame)) => {
                 let cmd = match frame.msg_type {
                     MSG_INPUT => AgentCommand::Input(frame.payload),
@@ -954,6 +994,17 @@ async fn agent_reader_loop(mut reader: BoxedReader, tx: mpsc::Sender<AgentComman
                     // time. On the fast path (no writer was attached) it is read
                     // here as the first frame instead — ignore it.
                     MSG_ATTACH_INTENT => continue,
+                    // #3140: the agent's optional features, sent after its intent.
+                    MSG_AGENT_CAPABILITIES => {
+                        let flags = frame.payload.first().copied().unwrap_or(0);
+                        if heartbeat::negotiated(flags) && watchdog.is_none() {
+                            watchdog = Some(Heartbeat::new());
+                        }
+                        continue;
+                    }
+                    MSG_PING => AgentCommand::Ping,
+                    // A pong only proves liveness, which its arrival recorded.
+                    MSG_AGENT_PONG => continue,
                     other => {
                         debug!("Unknown frame type from agent: 0x{other:02x}");
                         continue;
@@ -969,7 +1020,11 @@ async fn agent_reader_loop(mut reader: BoxedReader, tx: mpsc::Sender<AgentComman
                 return;
             }
             Err(e) => {
-                debug!("Agent frame read error: {e}");
+                if e.kind() == std::io::ErrorKind::TimedOut {
+                    warn!("Dropping a wedged agent connection: {e}");
+                } else {
+                    debug!("Agent frame read error: {e}");
+                }
                 let _ = tx.send(AgentCommand::Disconnected(gen)).await;
                 return;
             }

@@ -30,11 +30,15 @@
 //! [`MSG_DAEMON_PING`]: super::protocol::MSG_DAEMON_PING
 
 use std::io;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
-use tokio::io::AsyncRead;
+use tokio::io::{AsyncRead, ReadBuf};
+use tokio::time::Instant;
 
-use super::protocol::{self, Frame};
+use super::protocol::{self, Frame, CAP_HEARTBEAT};
 
 /// Receive silence after which a probe is sent, and the spacing between probes
 /// while the silence lasts.
@@ -64,28 +68,109 @@ pub const HEARTBEAT_REAP_BOUND: Duration =
 /// **peer** advertised. This side always answers probes, so support is
 /// negotiated exactly when the peer advertised [`CAP_HEARTBEAT`] too.
 pub fn negotiated(peer_flags: u8) -> bool {
-    let _ = peer_flags;
-    unimplemented!("#3140")
+    peer_flags & CAP_HEARTBEAT != 0
 }
 
 /// Per-connection heartbeat state: when a byte last arrived, and how many probes
 /// have gone unanswered since.
 #[derive(Debug)]
 pub struct Heartbeat {
-    _private: (),
+    /// Reference point for [`last_rx`](Self::last_rx).
+    base: Instant,
+    /// When a byte last arrived, as nanoseconds after `base`. Atomic so the
+    /// reader wrapper can stamp it while the watchdog holds `&mut self` fields.
+    last_rx: AtomicU64,
+    /// The silence the watchdog is currently counting probes against.
+    watch: Watch,
 }
 
 impl Heartbeat {
     /// Fresh state for a newly-negotiated connection: the peer counts as having
     /// just been heard from.
     pub fn new() -> Self {
-        unimplemented!("#3140")
+        let base = Instant::now();
+        Self {
+            base,
+            last_rx: AtomicU64::new(0),
+            watch: Watch {
+                since: base,
+                missed: 0,
+            },
+        }
     }
 }
 
 impl Default for Heartbeat {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// What the watchdog decided at a deadline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Verdict {
+    /// Something arrived since the silence began: start counting afresh.
+    Alive,
+    /// Another interval of silence: send a probe.
+    Probe,
+    /// Every probe went unanswered: the peer is wedged.
+    Dead,
+}
+
+/// Counts probes against one stretch of silence.
+#[derive(Debug)]
+struct Watch {
+    /// When the silence being counted began (the last byte received).
+    since: Instant,
+    /// Probes sent since `since` without anything arriving.
+    missed: u32,
+}
+
+impl Watch {
+    /// When the next probe (or the reap) is due.
+    fn deadline(&self) -> Instant {
+        self.since + HEARTBEAT_INTERVAL * (self.missed + 1)
+    }
+
+    /// Decide at the deadline, given when a byte last arrived.
+    fn on_deadline(&mut self, last_rx: Instant) -> Verdict {
+        if last_rx > self.since {
+            self.since = last_rx;
+            self.missed = 0;
+            return Verdict::Alive;
+        }
+        self.missed += 1;
+        if self.missed > HEARTBEAT_MAX_MISSED {
+            Verdict::Dead
+        } else {
+            Verdict::Probe
+        }
+    }
+}
+
+/// An [`AsyncRead`] that stamps every received byte as liveness.
+///
+/// Byte-level rather than frame-level so a large frame still in transit — a
+/// 16 MiB buffer replay arriving over tens of seconds — keeps its peer alive.
+struct ActivityReader<'a, R: ?Sized> {
+    inner: &'a mut R,
+    base: Instant,
+    last_rx: &'a AtomicU64,
+}
+
+impl<R: AsyncRead + Unpin + ?Sized> AsyncRead for ActivityReader<'_, R> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let before = buf.filled().len();
+        let poll = Pin::new(&mut *self.inner).poll_read(cx, buf);
+        if matches!(poll, Poll::Ready(Ok(()))) && buf.filled().len() > before {
+            let nanos = u64::try_from(self.base.elapsed().as_nanos()).unwrap_or(u64::MAX);
+            self.last_rx.store(nanos, Ordering::Relaxed);
+        }
+        poll
     }
 }
 
@@ -103,14 +188,52 @@ impl Default for Heartbeat {
 pub async fn read_frame_with_heartbeat<R, F>(
     reader: &mut R,
     heartbeat: Option<&mut Heartbeat>,
-    send_ping: F,
+    mut send_ping: F,
 ) -> io::Result<Option<Frame>>
 where
     R: AsyncRead + Unpin + ?Sized,
     F: FnMut(),
 {
-    let _ = (heartbeat, send_ping);
-    protocol::read_session_frame_timeout(reader).await
+    let Some(Heartbeat {
+        base,
+        last_rx,
+        watch,
+    }) = heartbeat
+    else {
+        return protocol::read_session_frame_timeout(reader).await;
+    };
+    let base = *base;
+    let last_rx: &AtomicU64 = last_rx;
+    let mut tracked = ActivityReader {
+        inner: reader,
+        base,
+        last_rx,
+    };
+    let read = protocol::read_session_frame_timeout(&mut tracked);
+    tokio::pin!(read);
+    loop {
+        tokio::select! {
+            // A frame (or its bytes) wins a tie with the deadline.
+            biased;
+            result = &mut read => return result,
+            () = tokio::time::sleep_until(watch.deadline()) => {
+                let last = base + Duration::from_nanos(last_rx.load(Ordering::Relaxed));
+                match watch.on_deadline(last) {
+                    Verdict::Alive => {}
+                    Verdict::Probe => send_ping(),
+                    Verdict::Dead => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            format!(
+                                "peer missed {HEARTBEAT_MAX_MISSED} heartbeats \
+                                 ({HEARTBEAT_REAP_BOUND:?} of silence)"
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
