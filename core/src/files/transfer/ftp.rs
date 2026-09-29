@@ -360,3 +360,7 @@ pub async fn run_ftp_transfer(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "ftp_tests.rs"]
+mod tests;

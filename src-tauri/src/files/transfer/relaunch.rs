@@ -621,6 +621,7 @@ mod tests {
             group_id: None,
             folder_paste_id: None,
             source_mtime: None,
+            remote_source: None,
         }
     }
 
@@ -734,10 +735,62 @@ mod tests {
         );
     }
 
+    /// A remote-to-remote copy that persisted its source endpoint (#3206)
+    /// relaunches from both sessions, from the persisted checkpoint.
     #[test]
-    fn plan_for_a_remote_to_remote_copy_is_unsupported() {
-        // A remote→remote copy persists no local endpoint and never persisted its
-        // source, so it cannot relaunch — it must Fail honestly, not hang.
+    fn plan_for_a_remote_to_remote_copy_relaunches_from_both_endpoints() {
+        let mut rec = record("r2r", None);
+        rec.session_id = "sess-dst".to_string();
+        rec.remote_path = "/dst/data.csv".to_string();
+        rec.remote_source = Some(crate::files::transfer::persist::PersistedRemoteSource {
+            session_id: "sess-src".to_string(),
+            path: "/src/data.csv".to_string(),
+        });
+        assert_eq!(
+            plan_from_record(&rec),
+            RelaunchPlan::RemoteCopy {
+                src_session_id: "sess-src".to_string(),
+                src_path: "/src/data.csv".to_string(),
+                dst_session_id: "sess-dst".to_string(),
+                dst_path: "/dst/data.csv".to_string(),
+                offset: 4096,
+                total: 8192,
+            }
+        );
+    }
+
+    /// A remote-to-remote record rehydrated from the persisted queue plans a
+    /// two-session relaunch.
+    #[test]
+    fn decide_resume_relaunches_a_rehydrated_remote_copy() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let registry = TransferRegistry::new();
+        let persist = TransferPersistenceManager::new_test(dir.path());
+        persist.record_registration(
+            "r2r",
+            "sess-dst",
+            TransferDirection::Upload,
+            "data.csv",
+            "/dst/data.csv",
+            None,
+            0,
+        );
+        persist.record_remote_source("r2r", "sess-src", "/src/data.csv");
+
+        match decide_resume("r2r", &registry, &persist) {
+            ResumeDecision::Relaunch(rec) => assert!(matches!(
+                plan_from_record(&rec),
+                RelaunchPlan::RemoteCopy { ref src_session_id, ref src_path, .. }
+                    if src_session_id == "sess-src" && src_path == "/src/data.csv"
+            )),
+            other => panic!("expected Relaunch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plan_for_a_legacy_remote_to_remote_copy_is_unsupported() {
+        // A remote→remote copy persisted before #3206 kept no local endpoint and
+        // no source, so it cannot relaunch — it must Fail honestly, not hang.
         match plan_from_record(&record("t1", None)) {
             RelaunchPlan::Unsupported { reason } => {
                 assert!(

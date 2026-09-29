@@ -12,6 +12,8 @@
 
 mod file_browser;
 mod listing_parser;
+#[cfg(test)]
+pub(crate) mod mock_server;
 pub(crate) mod reconnect;
 mod transfer;
 
