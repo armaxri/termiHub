@@ -1,6 +1,8 @@
 // ts-rs-generated DTO (audit DUP-030). Imported here so this module can both
 // re-export it (below) and reference it locally in the interfaces further down.
 import type { ConnectionConfig } from "./generated/ConnectionConfig";
+import type { BroadcastGroup } from "./generated/BroadcastGroup";
+import type { LineEnding } from "./generated/LineEnding";
 
 export type SessionId = string;
 
@@ -213,7 +215,8 @@ export interface AgentErrorMeta {
  * - `lf`   — line feed (`\n`), typical Unix
  * - `crlf` — carriage return + line feed (`\r\n`), Windows-style
  */
-export type LineEnding = "cr" | "lf" | "crlf";
+// Generated from the Rust settings `LineEnding` via ts-rs (#3802).
+export type { LineEnding };
 
 /**
  * Why a terminal session ended, used to tailor the disconnect overlay (#1121).
@@ -329,14 +332,9 @@ export type BroadcastScope = "all" | "panel" | "custom";
  * tabs (local shells, spawned containers) have no saved connection and cannot be
  * group members; the picker says so rather than guessing by title.
  */
-export interface BroadcastGroup {
-  /** Stable group id. */
-  id: string;
-  /** User-visible group name (unique, case-insensitive). */
-  name: string;
-  /** Saved-connection ids that belong to the group. */
-  connectionIds: string[];
-}
+// Generated from the Rust `BroadcastGroup` (`src-tauri/src/connection/settings.rs`)
+// via ts-rs (#3802).
+export type { BroadcastGroup };
 
 /**
  * Broadcast-input state (#1955). When {@link BroadcastState.broadcastActive} is

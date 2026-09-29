@@ -19,7 +19,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::Layer;
 
-use crate::connection::settings::SettingsStorage;
+use crate::connection::settings::{SettingsStorage, SettingsUnion};
 use crate::utils::file_log::{self, FileLogReloadHandle};
 use crate::utils::log_capture::{
     create_log_buffer, default_env_filter, LogCaptureLayer, SharedLogBuffer,
@@ -67,10 +67,11 @@ pub(crate) fn init_tracing() -> TracingInit {
     // standalone resolver detects portable mode itself. `TERMIHUB_FILE_LOG` still
     // wins at startup (handled inside `file_env_filter_with`); an absent or
     // unreadable settings file simply leaves the level at the INFO default.
-    let persisted_file_log_level: Option<String> = SettingsStorage::new_standalone()
+    let persisted_file_log_level: Option<&str> = SettingsStorage::new_standalone()
         .ok()
         .and_then(|s| s.load_with_recovery().ok())
-        .and_then(|r| r.data.file_log_level);
+        .and_then(|r| r.data.file_log_level)
+        .map(|level| level.as_str());
 
     let (file_layer, file_reload_handle, file_log_status) =
         match file_log::RotatingLogFile::with_defaults() {
@@ -78,7 +79,7 @@ pub(crate) fn init_tracing() -> TracingInit {
                 // Reloadable per-layer filter so the Settings control can change
                 // the file verbosity live, without a restart (OBS-009).
                 let (filter, handle) = tracing_subscriber::reload::Layer::new(
-                    file_log::file_env_filter_with(persisted_file_log_level.as_deref()),
+                    file_log::file_env_filter_with(persisted_file_log_level),
                 );
                 let layer = tracing_subscriber::fmt::layer()
                     // No terminal on the other end of a file: escape codes would

@@ -320,7 +320,9 @@ pub(crate) fn init_credentials_and_connections(
         }
     };
 
-    let storage_mode = StorageMode::from_settings_str(settings.credential_storage_mode.as_deref());
+    use crate::connection::settings::SettingsUnion;
+    let storage_mode =
+        StorageMode::from_settings_str(settings.credential_storage_mode.map(|mode| mode.as_str()));
     info!(
         mode = storage_mode.to_settings_str(),
         "Initializing credential store"
@@ -1227,8 +1229,11 @@ fn restore_active_workspace(
         return;
     };
     let settings = connections.get_settings();
+    use crate::connection::settings::SettingsUnion;
     let restore_settings = termihub_core::restore_mode::AppSettings {
-        restore_last_session_mode: settings.restore_last_session_mode,
+        restore_last_session_mode: settings
+            .restore_last_session_mode
+            .map(|mode| mode.as_str().to_string()),
         restore_last_session_on_startup: Some(settings.restore_last_session_on_startup),
     };
     if termihub_core::restore_mode::resolve_restore_mode(&restore_settings)
