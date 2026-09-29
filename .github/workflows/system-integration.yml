@@ -45,18 +45,37 @@ on:
         type: choice
         options: [both, develop, main]
         default: both
+  # Release gate (#3652): release-candidate.yml calls this lane to grade ONE exact
+  # commit (the release candidate), instead of the develop/main branch tips. The
+  # Release workflow then requires that candidate run to be green on the tag's sha.
+  workflow_call:
+    inputs:
+      ref:
+        description: "Full 40-char commit sha to grade"
+        type: string
+        required: true
 
 # Key concurrency on the trigger so the daily-develop and weekly-main runs (which
 # overlap on Wednesday) do not cancel each other, while a redundant re-fire of the
 # same trigger still cancels the older in-flight run.
+# A release-candidate call keys on its sha, so it neither cancels nor is
+# cancelled by the nightly/manual runs.
 concurrency:
-  group: system-integration-${{ github.event.schedule || github.event.inputs.branch || github.ref }}
+  group: system-integration-${{ inputs.ref && format('rc-{0}', inputs.ref) || github.event.schedule || github.event.inputs.branch || github.ref }}
   cancel-in-progress: true
+
+# Least-privilege token (CI-010). Every job checks out (its matrix branch),
+# builds the app/agent, runs the integration lane, and uploads failure artifacts
+# via the artifact API — none comment on a PR, publish check runs, or push — so a
+# read-only token is sufficient for this scheduled/dispatch lane.
+permissions:
+  contents: read
 
 jobs:
   # Resolve which branch(es) this run grades from the trigger: the daily cron →
   # develop, the Wednesday cron → main, a manual dispatch → the chosen input
-  # (default both). Emitted as a JSON array the matrix below expands over.
+  # (default both), a release-candidate call → its exact sha. Emitted as a JSON
+  # array the matrix below expands over (each entry is a checkout ref).
   setup:
     runs-on: ubuntu-latest
     outputs:
@@ -64,22 +83,57 @@ jobs:
     steps:
       - id: pick
         shell: bash
+        env:
+          # Set only when called via workflow_call (release-candidate.yml). In a
+          # called workflow github.event_name is the CALLER's event, so this must
+          # be checked first.
+          RC_REF: ${{ inputs.ref }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
+          if [ -n "${RC_REF}" ]; then
+            # Only a full sha is accepted: it is what the release gate keys on,
+            # and it keeps the JSON below injection-free.
+            if ! [[ "${RC_REF}" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::inputs.ref must be a full 40-char commit sha, got '${RC_REF}'"
+              exit 1
+            fi
+            branches="[\"${RC_REF}\"]"
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
             case "${{ github.event.schedule }}" in
-              "5 5 * * 3") echo 'branches=["main"]' >> "$GITHUB_OUTPUT" ;;
-              *) echo 'branches=["develop"]' >> "$GITHUB_OUTPUT" ;;
+              "5 5 * * 3") branches='["main"]' ;;
+              *) branches='["develop"]' ;;
             esac
           else
             case "${{ github.event.inputs.branch }}" in
-              develop) echo 'branches=["develop"]' >> "$GITHUB_OUTPUT" ;;
-              main) echo 'branches=["main"]' >> "$GITHUB_OUTPUT" ;;
-              *) echo 'branches=["main","develop"]' >> "$GITHUB_OUTPUT" ;;
+              develop) branches='["develop"]' ;;
+              main) branches='["main"]' ;;
+              *) branches='["main","develop"]' ;;
             esac
           fi
 
+          # Transitional guard: skip grading `main` while main predates #3669.
+          # The legs build the app via scripts/internal/build-system-test-app.sh
+          # from the CHECKED-OUT tree (and use composite actions such as
+          # setup-rust/setup-uv that only exist there once main catches up with
+          # develop). Until the next develop -> main release merge brings that
+          # script to main, a `main` leg cannot build the test-bridge app and
+          # would only fail red every week. Drop `main` with a visible notice
+          # instead; the guard is a no-op as soon as main carries the script, so
+          # it needs no follow-up edit (it can be deleted after that release).
+          if jq -e 'index("main")' <<<"$branches" >/dev/null; then
+            if ! gh api "repos/${REPO}/contents/scripts/internal/build-system-test-app.sh?ref=main" \
+                --silent 2>/dev/null; then
+              echo "::notice title=main grade skipped::main has no scripts/internal/build-system-test-app.sh yet (pre-#3669); skipping the main grade until develop is released to main."
+              branches="$(jq -c 'map(select(. != "main"))' <<<"$branches")"
+            fi
+          fi
+          echo "branches=${branches}" >> "$GITHUB_OUTPUT"
+
   system-integration:
     needs: setup
+    # Empty when the only requested branch was skipped (see setup's guard).
+    if: needs.setup.outputs.branches != '[]'
     name: System-Test Harness (integration lane, ${{ matrix.os }} · ${{ matrix.branch }})
     runs-on: ${{ matrix.os }}
     # The lane builds the app (debug) and launches it once per suite against live
@@ -111,26 +165,42 @@ jobs:
       WEBKIT_DISABLE_COMPOSITING_MODE: "1"
       NO_AT_BRIDGE: "1"
 
+      # #2646: force fully-software GL for the WebKitGTK web-content process. The
+      # userns sysctl (step below) alone did NOT restore launch — the app still
+      # boots and pins its window but the webview never runs the in-app bridge
+      # client ("no app connected to the bridge"), and its log shows libEGL DRI3
+      # errors, i.e. the web process is dying on GL/EGL init under Xvfb. Route all
+      # GL through Mesa's llvmpipe software rasteriser (needs libgl1-mesa-dri,
+      # installed below) so no real GPU/DRI3 device is required. Linux/Mesa-only —
+      # inert on macOS (WKWebView) and Windows (WebView2), like the knobs above.
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      GALLIUM_DRIVER: "llvmpipe"
+
+      # #2646 diagnostics: make the web-process lifecycle and GLib/GTK warnings
+      # visible in the captured app log so a launch failure names its real cause
+      # instead of timing out silently. Also inert off-Linux; cheap to keep.
+      WEBKIT_DEBUG: "Process"
+      G_MESSAGES_DEBUG: "all"
+
       # Un-skip the automated agent-reconnect UI grade
-      # (test_agent_reconnect_ui.py, #2574) on the macOS leg. That suite carries a
-      # skip-guard (#2631): on CI it stays skipped unless TERMIHUB_LIVE_AGENT=1,
-      # because it needs a live app->agent SSH connect rather than merely an sshd
-      # binary. Nothing extra has to be *installed* to un-skip it — the runner
-      # already has everything the grade needs: its harness (LocalAgentSshd) stands
-      # up its own throwaway loopback sshd from the macOS /usr/sbin/sshd, and the
-      # release termihub-agent it deploys is built by the "Build the agent
-      # (release)" step above. A live connect over exactly this path was already
-      # observed on the macOS runner (the failure that motivated #2579 was a harness
-      # region-read bug since fixed in #2628, not a missing agent), so flipping the
-      # opt-in is all that is required. Scoped to macOS via the matrix expression
-      # (empty string elsewhere = still skipped): the macOS GUI lane is the grade's
-      # home (#2618/#2579), and Windows loopback sshd is unreliable. (#2579, #2618,
-      # #2626 cat B)
-      TERMIHUB_LIVE_AGENT: ${{ matrix.os == 'macos-latest' && '1' || '' }}
+      # (test_agent_reconnect_ui.py, #2574) on the macOS AND Linux legs. That suite
+      # carries a skip-guard (#2631): on CI it stays skipped unless
+      # TERMIHUB_LIVE_AGENT=1, because it needs a live app->agent SSH connect rather
+      # than merely an sshd binary. Nothing extra has to be *installed* to un-skip
+      # it — each runner already has everything the grade needs: its harness
+      # (LocalAgentSshd) stands up its own throwaway loopback sshd from the runner's
+      # /usr/sbin/sshd, and the release termihub-agent it deploys is built by the
+      # "Build the agent (release)" step above.
+      # Linux enable (#2669, the intent of the closed #2634): with the headless app
+      # launch restored (#2646) the ubuntu leg now connects to the test bridge, so
+      # the reconnect grade can run there too (loopback /usr/sbin/sshd + release
+      # agent are both present). Windows stays skipped — its loopback sshd is
+      # unreliable. (#2579, #2618, #2626 cat B, #2634, #2646, #2669)
+      TERMIHUB_LIVE_AGENT: ${{ (matrix.os == 'macos-latest' || matrix.os == 'ubuntu-latest') && '1' || '' }}
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           # Grade the branch this matrix leg targets (main or develop), not just
           # the default branch the scheduled run fires from.
@@ -140,23 +210,21 @@ jobs:
         uses: ./.github/actions/setup-pnpm
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '22'
           cache: 'pnpm'
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/setup-rust
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v6
+        # uv version comes from .github/uv-version (#1552, WA-CI-017).
+        uses: ./.github/actions/setup-uv
         with:
-          # Pin uv itself (issue #1552): "latest" resolves through the GitHub
-          # Releases API, which flakes and fast-fails unrelated to the run.
-          version: '0.11.29'
           python-version: '3.12'
           enable-cache: true
           cache-dependency-glob: tests/system/uv.lock
@@ -178,8 +246,30 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
+            libgl1-mesa-dri \
+            dbus-x11 \
             xvfb \
             socat
+
+      - name: Relax AppArmor unprivileged-userns restriction (#2646)
+        # ubuntu-24.04 ships an AppArmor policy that blocks unprivileged user
+        # namespaces (kernel.apparmor_restrict_unprivileged_userns=1). WebKitGTK
+        # 2.44+ launches its web/network processes inside a bubblewrap sandbox that
+        # needs an unprivileged userns; with the kernel blocking it the web-content
+        # process never spawns, so the webview loads no page and the in-app bridge
+        # client never connects — every integration test then errored in
+        # class-fixture setup with "no app connected to the bridge within 30.0s"
+        # (the backend booted and pinned its window, but the page never ran). Relax
+        # the restriction so the sandbox userns can be created. Runner-local and
+        # CI-only; guarded so it is a clean no-op on kernels without the knob.
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          else
+            echo "kernel.apparmor_restrict_unprivileged_userns absent; nothing to relax"
+          fi
 
       - name: Install serial fixture dependency (socat)
         # macOS only: socat backs the virtual serial-port suites the same way it
@@ -201,14 +291,19 @@ jobs:
         # debug bundle (target/debug/…) when no release build is present. Debug
         # builds far faster than release, which is what we want for a nightly.
         #
-        # --config src-tauri/tauri.test.conf.json re-adds the loopback ws:// the
-        # bridge's in-app client needs: the production CSP no longer allows any
-        # ws:// in connect-src (#2059), and the overlay restores it for test
-        # builds only. Everything else in the CSP (script-src, style-src, …) is
-        # identical to production, so this lane still exercises the shipped
-        # rendering-relevant policy — including the CSP-violation assertion in
-        # test_csp.py.
-        run: pnpm tauri build --debug --config src-tauri/tauri.test.conf.json
+        # The build recipe lives in scripts/internal/build-system-test-app.sh,
+        # in the checked-out tree, NOT in this file (#3664). A scheduled run uses
+        # the workflow file on the default branch but checks out the graded
+        # branch, so a recipe copied into this file drifts from the code it
+        # builds. That happened: main's copy kept building develop without
+        # --features test-bridge / VITE_TEST_BRIDGE=1 (SEC-005), and every suite
+        # failed with "no app connected to the bridge" for two weeks. The script
+        # header explains each flag (test bridge, mock-remote-desktop, CSP).
+        #
+        # shell: bash — the recipe is a bash script, and the Windows runner's
+        # default shell is pwsh (Git Bash runs it there).
+        shell: bash
+        run: scripts/internal/build-system-test-app.sh --debug
 
       - name: Bring up the Docker fixtures
         # Linux only. Pre-build and start the profile-less SSH/telnet fixtures so
@@ -228,8 +323,36 @@ jobs:
         # — surface rot). Xvfb gives the app a display; the harness owns launching
         # the app and driving the fixtures. Suites whose fixtures are unavailable
         # skip cleanly rather than error.
+        #
+        # dbus-run-session (#2646): the app inherits this process's environment,
+        # and on startup WebKitGTK/GTK asks the xdg-desktop-portal for an inhibit
+        # proxy over the D-Bus *session* bus. A headless runner has no session bus,
+        # so StartServiceByName for org.freedesktop.portal.Desktop blocks for the
+        # full ~25s D-Bus timeout — which alone eats the 30s bridge-connect budget
+        # ("no app connected within 30s"). Running under a throwaway session bus
+        # makes that call fail fast instead of hanging, so the bridge connects.
+        #
+        # --reruns 2 --reruns-delay 1 (#2698, lowered from 4 per CI-002): bounded
+        # auto-retries absorb the residual hosted-CI environmental flakiness on
+        # interaction-heavy tests (WKWebView occlusion / WebView2 contention / Xvfb
+        # render-timing) — the real bugs are already fixed. `--reruns` re-runs ONLY
+        # tests that FAILED, so a deterministic regression still fails after its
+        # retries; but an INTERMITTENT one can pass on rerun and never red the lane,
+        # so the retry budget is kept as low as the residual infra flake allows (2,
+        # the documented policy value) rather than the old 4.
+        #
+        # `-k "not (...)"` (CI-002): the display-critical grades
+        # (test_agent_reconnect_ui — the sole automated reconnect grade — and
+        # test_layout_scrollback_ui) are EXCLUDED from this retried bulk lane and
+        # run only in the dedicated `display-grades` job below at --reruns 0, so an
+        # intermittent reconnect regression reds that job on first failure instead
+        # of being retried away here. `display-grades` runs the same two grades on
+        # all three OSes with identical env, so nothing is lost by excluding them.
+        # `-r aR` adds RERUN lines to the short summary so persistent flakes stay
+        # visible for tracking.
+        # Per-PR CI (code-quality.yml → Run Tests) deliberately does NOT get this.
         if: runner.os == 'Linux'
-        run: xvfb-run -a ./tests/system/pytest.sh -m integration -v --durations=25
+        run: xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui)" -v --durations=25 --reruns 2 --reruns-delay 1 -r aR
 
       - name: Run the integration lane (macOS/Windows, native display)
         # No Xvfb — the runner has a real (or headless-native) display and drives
@@ -238,9 +361,65 @@ jobs:
         # and UI integration suites run natively. This is the coverage the bridge
         # newly unlocks on macOS, where `tauri-driver` never had a WKWebView
         # driver. Run under Git Bash on Windows so pytest.sh executes as written.
+        #
+        # Sharded with pytest-xdist (#2639): once the #2626 harness fixes let the
+        # ~82 previously-fast-failing suites actually run their real
+        # connection/terminal flows, the serial macOS lane overflowed the 120-min
+        # ceiling (cancelled at ~43%), so the suites are fanned across xdist
+        # workers. `--dist loadscope` groups by test class so each class-scoped app
+        # fixture stays on a single worker — one app launch per class, exactly as
+        # serial, just fanned across workers. The Docker-fixture suites still
+        # self-skip per worker. Linux keeps running serially (above): its fixtures
+        # publish fixed host ports (2201/2203/…) that parallel workers would
+        # contend for.
+        #
+        # Worker count is a FIXED per-OS cap, not `-n auto` (#2660). Each worker
+        # launches a full Tauri app, so `-n auto` (one worker per core) over-
+        # subscribed the ~3-core macos-latest runner: 3–4 concurrent apps thrashed
+        # CPU/memory and the 30s per-op UI waits timed out under load — run
+        # 33999534618 lost 9 previously-passing tests to `timed out waiting for …`
+        # while still taking ~110 of the 120 min.
+        #
+        # Both parallel runners now cap at 2 workers (#2690). The original cap
+        # followed a "cores − 1" rule (macOS ~3 cores → 2; Windows ~4 → 3), but
+        # that counted one worker as ~one core of load. It is not: each worker
+        # runs a full webview app, and on Windows that app is WebView2 — a
+        # *multi-process* tree (an msedgewebview2.exe browser process plus GPU,
+        # utility and per-frame renderer processes), so 3 Windows workers put far
+        # more than 3 cores of contention on the ~4-core runner. The result was a
+        # churning ~10–14 failures per nightly, a *different* set each run, all
+        # `timed out waiting for …` / `command timed out` — pure contention, not
+        # real bugs (the app/bridge/config are isolated per worker: OS-assigned
+        # free bridge port + a distinct mkdtemp config & WebView2 user-data dir).
+        # Windows has huge time headroom to spend on the extra worker — its whole
+        # test step runs in ~6 min against the 120-min ceiling (most fixture
+        # suites self-skip with no Linux Docker), so dropping 3→2 costs a few
+        # minutes and removes the over-subscription. macOS stays at 2.
+        # Re-tune if a runner's core count changes or a lane over-subscribes.
+        #
+        # TERMIHUB_WAIT_SCALE multiplies every harness wait/command budget under
+        # this contention (#2690): even at 2 workers macOS still shed a *few*
+        # flaky `timed out waiting …` failures run-to-run, so the two facets are
+        # fixed together — right-size the workers AND give the shared readiness
+        # primitives headroom, so a slow-but-fine op is not read as a failure.
+        # Passing ops return immediately, so a scale up costs wall-time only on a
+        # (now rare) genuine failure. Serial/local runs leave it unset (1.0).
         if: runner.os != 'Linux'
         shell: bash
-        run: ./tests/system/pytest.sh -m integration -v --durations=25
+        env:
+          TERMIHUB_XDIST_WORKERS: '2'
+          TERMIHUB_WAIT_SCALE: '2'
+        #
+        # --reruns 2 --reruns-delay 1 (#2698, lowered from 4 per CI-002): same
+        # bounded auto-retries as the Linux step. rerunfailures composes with xdist
+        # — a failed test is re-scheduled on its worker up to 2 times — and with
+        # TERMIHUB_WAIT_SCALE above, so a contention-timeout flake gets both more
+        # per-op headroom and a retry, while a deterministic regression still fails
+        # after all retries. The display-critical grades are likewise excluded here
+        # via `-k "not (...)"` and run only in the `display-grades` job at
+        # --reruns 0 (see the Linux step's comment). `-r aR` surfaces RERUN lines in
+        # the summary. Not applied to per-PR CI.
+        run: ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui)" -n "$TERMIHUB_XDIST_WORKERS" --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR
 
       - name: Dump container logs on failure
         # Linux only — the other legs bring up no containers.
@@ -249,7 +428,7 @@ jobs:
 
       - name: Upload failure artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: system-integration-artifacts-${{ matrix.os }}
           path: tests/system/artifacts/
@@ -260,3 +439,238 @@ jobs:
         # Linux only — nothing was brought up on the other legs.
         if: always() && runner.os == 'Linux'
         run: docker compose -f tests/docker/docker-compose.yml --profile all down -v
+
+  # Fast display-critical grades, split into their own job (#2639) so they ALWAYS
+  # report an independent pass/fail even when the bulk `system-integration` lane
+  # above is slow: a job-level timeout *cancels* the whole job, erasing the signal
+  # from any grade that happened to run inside it, so only a separate job with its
+  # own timeout guarantees these two always surface a green/red check. It runs
+  # just the two grades (`-k`), needs no Docker fixtures, and so finishes well
+  # inside its own budget. As of CI-002 this job is the SOLE home of these two
+  # grades and runs them at --reruns 0: the bulk lane excludes them (`-k "not
+  # (...)"`) so an intermittent reconnect regression reds this job on first failure
+  # rather than being retried away. It grades test_agent_reconnect_ui on Linux too
+  # — #2669, the intent of the closed #2634. If a grade proves genuinely flaky here,
+  # quarantine that specific test with a deterministic-fix tracker (the repo's
+  # quarantine-not-retry rule), never re-add a blanket rerun.
+  display-grades:
+    needs: setup
+    # Empty when the only requested branch was skipped (see setup's guard).
+    if: needs.setup.outputs.branches != '[]'
+    name: Display-critical grades (${{ matrix.os }} · ${{ matrix.branch }})
+    runs-on: ${{ matrix.os }}
+    # Only the app+agent build plus two short grades — a fraction of the bulk
+    # lane, but generous enough to absorb a slow debug build.
+    timeout-minutes: 90
+
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: ${{ fromJSON(needs.setup.outputs.branches) }}
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    env:
+      # Same webkit2gtk-only knobs as the bulk lane (Linux WebKitGTK under Xvfb;
+      # harmless no-ops on macOS/Windows).
+      WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+      WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+      NO_AT_BRIDGE: "1"
+
+      # #2646: same software-GL + webkit diagnostics as the bulk lane above (see
+      # its comment). Needs libgl1-mesa-dri (installed below). Inert off-Linux.
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      GALLIUM_DRIVER: "llvmpipe"
+      WEBKIT_DEBUG: "Process"
+      G_MESSAGES_DEBUG: "all"
+
+      # Mirror the bulk lane's gating for test_agent_reconnect_ui EXACTLY: opt-in
+      # on macOS AND Linux (skip-guarded on Windows, whose loopback sshd is
+      # unreliable). The Linux enable (#2669, intent of the closed #2634) is now
+      # live in the bulk lane above; keep this expression identical to it.
+      TERMIHUB_LIVE_AGENT: ${{ (matrix.os == 'macos-latest' || matrix.os == 'ubuntu-latest') && '1' || '' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ matrix.branch }}
+
+      - name: Setup pnpm
+        uses: ./.github/actions/setup-pnpm
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Setup uv
+        # uv version comes from .github/uv-version (#1552, WA-CI-017).
+        uses: ./.github/actions/setup-uv
+        with:
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: tests/system/uv.lock
+
+      - name: Install system dependencies (Tauri + headless display)
+        # Linux only: Tauri webview build deps + xvfb to give the app a display.
+        # No socat/Docker — these two grades need neither.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libgl1-mesa-dri \
+            dbus-x11 \
+            xvfb
+
+      - name: Relax AppArmor unprivileged-userns restriction (#2646)
+        # Same WebKitGTK-2.44+/ubuntu-24.04 sandbox fix as the bulk lane above: the
+        # blocked unprivileged userns stops the webview's web-content process from
+        # spawning, so the app boots but the bridge never connects. Relax it before
+        # launching the app under Xvfb. Guarded no-op on kernels without the knob.
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          else
+            echo "kernel.apparmor_restrict_unprivileged_userns absent; nothing to relax"
+          fi
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the agent (release)
+        # test_agent_reconnect_ui deploys target/release/termihub-agent via its
+        # loopback LocalAgentSshd; build it so the grade runs instead of skipping.
+        run: cargo build --release -p termihub-agent
+
+      - name: Build the desktop app (debug)
+        # Same debug test-app build as the bulk lane: the shared recipe script
+        # (test bridge + mock-remote-desktop), under bash on every OS. See the
+        # bulk lane's note (#3664).
+        shell: bash
+        run: scripts/internal/build-system-test-app.sh --debug
+
+      - name: Run the display-critical grades (Linux, headless via Xvfb)
+        # dbus-run-session (#2646): same headless-portal hang fix as the bulk lane
+        # — a throwaway session bus makes the startup xdg-desktop-portal call fail
+        # fast instead of blocking ~25s and eating the bridge-connect budget.
+        #
+        # --reruns 0 -r aR (CI-002): these display-critical grades are the honest,
+        # first-failure gate — test_agent_reconnect_ui is the SOLE automated grade
+        # of the safety-critical reconnect path, made deterministic by the in-process
+        # sever (#2573/#2576), so it must not be retried: an intermittent regression
+        # (a reconnect race, a timing-dependent failure) has to red the lane, not be
+        # masked by a rerun. `-r aR` keeps the failure summary visible. If a grade
+        # proves genuinely flaky, quarantine that specific test + file a
+        # deterministic-fix tracker — never re-add a blanket rerun.
+        if: runner.os == 'Linux'
+        run: >-
+          xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration
+          -k "test_agent_reconnect_ui or test_layout_scrollback_ui" -v
+          --reruns 0 -r aR
+
+      - name: Run the display-critical grades (macOS/Windows, native display)
+        # No fixtures needed, so no xdist — the two suites run quickly serially.
+        # Carry the same TERMIHUB_WAIT_SCALE headroom as the bulk lane (#2690):
+        # these grades share the harness readiness primitives, and a busy runner
+        # can still starve the webview JS thread even for a serial suite.
+        if: runner.os != 'Linux'
+        shell: bash
+        env:
+          TERMIHUB_WAIT_SCALE: '2'
+        run: >-
+          ./tests/system/pytest.sh -m integration
+          -k "test_agent_reconnect_ui or test_layout_scrollback_ui" -v
+          --reruns 0 -r aR
+
+      - name: Upload failure artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: display-grades-artifacts-${{ matrix.os }}
+          path: tests/system/artifacts/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Agent-crate Docker integration tests (TIN-008). The agent's Rust
+  # Docker/real-daemon integration suites — agent/tests/docker_integration.rs
+  # (4 tests), agent/tests/docker_deferred_update_integration.rs (1 test), and
+  # the Docker case in agent/tests/self_update_integration.rs
+  # (active_docker_session_is_never_interrupted) — each carry a `#[ignore]`, so
+  # the per-PR `cargo test --workspace` gate (code-quality.yml → Run Tests) never
+  # runs them: real-daemon tests are slow and must not flake the fast merge gate,
+  # exactly like the Docker-fixture caveat in the header. Before this lane existed
+  # they leaked into the per-PR ubuntu leg (its runner has Docker) while
+  # self-skipping INVISIBLY on the macOS leg and never running deterministically
+  # anywhere. This nightly job is the one place they EXECUTE against a real daemon.
+  #
+  # The suites also keep a `docker_available()` self-skip as a safety net for a
+  # host with no Docker — but a self-skip is silent, so this job first asserts the
+  # daemon is reachable (`docker info`), failing loudly if it is not, then runs the
+  # suites with `-- --ignored`, which un-ignores EXACTLY those Docker tests (the
+  # three files carry no other `#[ignore]`; the 5 non-Docker self_update tests are
+  # filtered out under `--ignored`, so only the 6 Docker tests run). GitHub's
+  # ubuntu runner ships a running Docker daemon and the tests pull alpine:latest on
+  # demand, so the self-skip guard passes and they run for real. Linux-only: the
+  # macOS/Windows runners have no usable Linux Docker daemon (see the header note),
+  # and the suites are `#![cfg(unix)]`. Kept out of the per-PR gate on purpose.
+  agent-docker-integration:
+    needs: setup
+    # Empty when the only requested branch was skipped (see setup's guard).
+    if: needs.setup.outputs.branches != '[]'
+    name: Agent Docker integration (${{ matrix.branch }})
+    runs-on: ubuntu-latest
+    # Only a cargo build + six short real-daemon tests; generous enough for a
+    # cold cache and the alpine image pulls.
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: ${{ fromJSON(needs.setup.outputs.branches) }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ matrix.branch }}
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Verify the Docker daemon is reachable
+        # Fail loudly if Docker is unavailable rather than letting the suites
+        # self-skip to a false green — a silent skip is the blind spot this lane
+        # exists to close (TIN-008).
+        run: docker info
+
+      - name: Run the agent Docker integration suites (real daemon, --ignored)
+        # `--ignored` runs exactly the `#[ignore]`d Docker tests across the three
+        # binaries; the non-Docker self_update tests are filtered out. The
+        # `docker_available()` guard passes because the daemon is up (asserted
+        # above), so the tests exercise real containers.
+        run: >-
+          cargo test -p termihub-agent
+          --test docker_integration
+          --test docker_deferred_update_integration
+          --test self_update_integration
+          -- --ignored --nocapture
