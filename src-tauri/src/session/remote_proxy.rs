@@ -194,6 +194,18 @@ impl RemoteProxy {
     }
 }
 
+/// Map a failed agent `connection.create` to the core error the connect
+/// returns. A rejected credential stays the typed [`SessionError::AuthFailed`]
+/// (#3089) so the session manager folds the terminal `authFailed` state for an
+/// agent tab just as for a direct one; every other failure keeps its
+/// stringified `SpawnFailed` form (and any `[thub-code:*]` marker in it).
+fn create_error_to_session_error(e: TerminalError) -> SessionError {
+    match e {
+        TerminalError::AuthFailed(_) => SessionError::AuthFailed,
+        other => SessionError::SpawnFailed(other.to_string()),
+    }
+}
+
 /// How a [`RemoteProxy::reconnect_existing`] re-attach resolved (#3404).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReattachOutcome {
@@ -552,7 +564,7 @@ impl RemoteProxy {
         })
         .await
         .map_err(|e| SessionError::SpawnFailed(format!("spawn_blocking join: {e}")))?
-        .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
+        .map_err(create_error_to_session_error)?;
 
         let remote_sid = session_info.session_id.clone();
 

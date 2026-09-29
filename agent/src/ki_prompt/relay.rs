@@ -202,7 +202,7 @@ impl RelayFailure {
                 ..Self::default()
             });
         }
-        let connect_failure = error.connect_failure_kind()?;
+        let connect_failure = relayed_connect_failure_kind(error)?;
         Some(Self {
             kind: None,
             connect_failure: Some(connect_failure),
@@ -220,6 +220,18 @@ impl RelayFailure {
             kind,
             message: self.message.unwrap_or_else(|| kind.code().to_string()),
         }))
+    }
+}
+
+/// The connect-failure kind an agent relays to the desktop for `error`: its
+/// classified kind (#3751), or `auth_failed` for a genuine credential rejection
+/// (#3089) — both decided from the typed error, never from message text. A
+/// hop-labelled jump-host failure is `SpawnFailed`/classified by then, so a
+/// bastion's rejection is never relayed as the target's.
+pub fn relayed_connect_failure_kind(error: &SessionError) -> Option<ConnectFailureKind> {
+    match error {
+        SessionError::AuthFailed => Some(ConnectFailureKind::AuthFailed),
+        other => other.connect_failure_kind(),
     }
 }
 

@@ -142,7 +142,8 @@ pub const LISTEN_AUTH_REJECTED: i64 = -32029;
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SessionCreateErrorData {
     /// The failure category, as its stable slug (`timeout`,
-    /// `agent_auth_failed`, `not_found`, `permission_denied`, `busy`).
+    /// `agent_auth_failed`, `not_found`, `permission_denied`, `busy`, and from
+    /// 0.19.0 `auth_failed`, #3089).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connect_failure: Option<crate::errors::ConnectFailureKind>,
 }

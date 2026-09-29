@@ -126,7 +126,11 @@ use termihub_core::monitoring::{LocalProcessManager, ProcessError, ProcessManage
 /// `connection.create` error (#3751): the typed connect-failure kind of an
 /// agent-hosted session, so the desktop shows the matching hint. An older agent
 /// omits it (generic error); an older desktop ignores it.
-const AGENT_PROTOCOL_VERSION: &str = "0.18.0";
+/// Bumped to 0.19.0 for the `auth_failed` value of that `data.connect_failure`
+/// (#3089): an agent-hosted session whose server rejected the credentials, so
+/// the desktop stops and offers credential re-entry instead of retrying. An
+/// older desktop does not know the value and ignores it (generic error).
+const AGENT_PROTOCOL_VERSION: &str = "0.19.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///

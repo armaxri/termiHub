@@ -364,6 +364,31 @@ impl SessionLifecycleStore {
         }
     }
 
+    /// A **user-initiated retry** (e.g. after re-entering credentials, #3089) was
+    /// **rejected by authentication**. Folds the same terminal
+    /// [`SessionStatus::AuthFailed`] as [`connect_auth_failed`](Self::connect_auth_failed),
+    /// but only while the entry is `Connecting` — the status the client's
+    /// `session.connect` gives that retry. A backend redrive attempt is
+    /// `Reconnecting` instead, and is left to
+    /// [`reconnect_auth_failed`](Self::reconnect_auth_failed), which also stops
+    /// the loop and triggers its give-up secret scrub. Unknown ids stay a no-op.
+    pub fn retry_auth_failed(&self, session_id: &str, error: Option<String>) {
+        let mut inner = self.lock();
+        let Some(entry) = inner.sessions.get_mut(session_id) else {
+            return;
+        };
+        if entry.status != SessionStatus::Connecting {
+            return;
+        }
+        entry.status = SessionStatus::AuthFailed;
+        entry.reconnect = INITIAL_RECONNECT_STATE;
+        entry.end_reason = Some(EndReason::Error);
+        entry.error = error;
+        entry.reconnect_error = None;
+        entry.backend_session_id = None;
+        inner.dirty.insert(session_id.to_string());
+    }
+
     /// A reconnect attempt was **rejected by authentication** (SM-005). Unlike
     /// [`reconnect_failed`](Self::reconnect_failed) — whose transient failure arms
     /// the next backoff window until the attempt budget is exhausted — an auth

@@ -187,6 +187,9 @@ impl IpcErrorCode {
             K::NotFound => Self::NotFound,
             K::PermissionDenied => Self::PermissionDenied,
             K::Busy => Self::Busy,
+            // An agent-hosted credential rejection (#3089) is the same
+            // `auth_failed` category as a direct one.
+            K::AuthFailed => Self::AuthFailed,
         }
     }
 }

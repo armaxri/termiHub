@@ -67,7 +67,8 @@ pub fn with_code(code: &str, message: impl std::fmt::Display) -> String {
 ///
 /// Serializes as its [`code`](Self::code) slug, which is how an agent carries
 /// the kind of an agent-hosted connect failure to the desktop in the
-/// `connection.create` error `data` (protocol 0.18.0, #3751).
+/// `connection.create` error `data` (protocol 0.18.0, #3751; `auth_failed`
+/// from 0.19.0, #3089).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectFailureKind {
@@ -83,16 +84,24 @@ pub enum ConnectFailureKind {
     PermissionDenied,
     /// The target exists but is held by another application.
     Busy,
+    /// The remote genuinely rejected the credentials (#3089). Only an agent
+    /// relays this kind — for a [`SessionError::AuthFailed`] inside an
+    /// agent-hosted session — so the desktop folds the same terminal
+    /// `authFailed` state as for a direct connection. Never derived from
+    /// [`SessionError::connect_failure_kind`], which keeps `AuthFailed` a
+    /// variant of its own on the direct path.
+    AuthFailed,
 }
 
 impl ConnectFailureKind {
     /// Every kind, for consumers that map a wire slug back to its kind.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Timeout,
         Self::AgentAuthFailed,
         Self::NotFound,
         Self::PermissionDenied,
         Self::Busy,
+        Self::AuthFailed,
     ];
 
     /// The stable machine slug for this kind, as carried in the
@@ -105,6 +114,7 @@ impl ConnectFailureKind {
             Self::NotFound => "not_found",
             Self::PermissionDenied => "permission_denied",
             Self::Busy => "busy",
+            Self::AuthFailed => "auth_failed",
         }
     }
 

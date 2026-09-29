@@ -2,9 +2,9 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.18.0
+**Version**: 0.19.0
 **Status**: Draft
-**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751
+**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089
 
 ---
 
@@ -288,6 +288,9 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                          |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.19.0          | 0.19.0        | Yes                                                                                                                                  |
+| 0.19.0          | 0.9.0–0.18.0  | Yes (no `auth_failed` connect failure — an agent-hosted credential rejection stays a generic remote error)                           |
+| 0.18.0          | 0.19.0        | Yes (`connect_failure: "auth_failed"` is unknown and ignored — generic remote error)                                                 |
 | 0.18.0          | 0.18.0        | Yes                                                                                                                                  |
 | 0.18.0          | 0.9.0–0.17.0  | Yes (no `connect_failure` in `connection.create` errors — an agent-hosted connect failure shows no per-backend hint)                 |
 | 0.17.0          | 0.18.0        | Yes (`error.data.connect_failure` ignored)                                                                                           |
@@ -339,6 +342,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                           |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                 |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                  |
+
+**0.19.0 (additive, minor)** — adds the `auth_failed` value of the optional `error.data.connect_failure` of a failed [`connection.create`](#connectioncreate) (#3089): the SSH server of an agent-hosted session genuinely rejected the credentials (wrong password or passphrase, refused key). The agent derives it from the typed core `SessionError::AuthFailed` — in-process or reported by the session daemon — never from message text; a jump-host hop's rejection is not relayed as the target's. The desktop maps it to the same typed auth failure as a direct connection, so the tab lands in the terminal `authFailed` state and offers credential re-entry instead of retrying a doomed login. A pre-0.19.0 desktop does not recognize the value and ignores it; a pre-0.19.0 agent never sends it and the desktop keeps its generic remote error.
 
 **0.18.0 (additive, minor)** — a failed [`connection.create`](#connectioncreate) (`-32003`) may carry the optional `error.data.connect_failure` (#3751): the typed category of a connect that failed inside the agent — `timeout`, `agent_auth_failed`, `not_found`, `permission_denied` or `busy` (core `ConnectFailureKind`). It matters most for **agent-hosted SSH and serial sessions**, which connect in a session daemon: the daemon reports the category (and its human message) to the worker, which relays it here. The desktop maps it to the same IPC error code as a direct connection, so the connection overlay shows the matching hint (a busy or missing serial port, an SSH timeout, a missing SSH agent). The error `code` and `message` are unchanged, so a pre-0.18.0 desktop ignores the member; a pre-0.18.0 agent omits it and the desktop keeps its generic remote error. A desktop must ignore a `connect_failure` value it does not recognize.
 
@@ -587,6 +592,7 @@ For serial sessions:
 | `not_found`         | The target does not exist (e.g. an unplugged serial port)      |
 | `permission_denied` | The OS denied access to the target (e.g. a serial port)        |
 | `busy`              | The target is held by another application (e.g. a serial port) |
+| `auth_failed`       | The server rejected the credentials (0.19.0, #3089)            |
 
 The member is optional: absent for an untyped failure and from agents older than 0.18.0. Clients must ignore a value they do not recognize.
 

@@ -183,7 +183,8 @@ pub trait EventEmitter: Clone + Send + Sync + 'static {
     /// connect token by the caller); a **reconnect attempt** (`retryCount > 0`,
     /// owned by the client reconnect loop + the backend timer #2203, whose
     /// give-up is not yet source-foldable); and an **agent** connect (the frontend
-    /// silently auto-retries it without an intent).
+    /// silently auto-retries it without an intent) — except a rejected credential,
+    /// which is terminal on every path (#3089).
     ///
     /// `auth_failed` classifies the failure at the source from the typed core error
     /// (`SessionError::AuthFailed`) **before** it is stringified (SM-005): a genuine
@@ -191,6 +192,15 @@ pub trait EventEmitter: Clone + Send + Sync + 'static {
     /// instead of the transient `Failed`, so the frontend surfaces "fix credentials
     /// & reconnect" rather than a generic connect error.
     fn fold_connect_failed(&self, _tab_id: &str, _error: &str, _auth_failed: bool) {}
+
+    /// Fold a **user-initiated retry** (`retryCount > 0`, e.g. after the user
+    /// re-entered credentials, #3089) that the server rejected by
+    /// authentication, keyed by the tab id. The fold is guarded on the region
+    /// being `connecting` (the client's `session.connect` for that retry), so a
+    /// backend redrive attempt — `reconnecting`, whose own
+    /// `reconnect_auth_failed` fold stops the loop and scrubs its secrets — is
+    /// never pre-empted. Lands the tab back on the terminal `authFailed` state.
+    fn fold_retry_auth_failed(&self, _tab_id: &str, _error: &str) {}
 }
 
 impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
@@ -262,6 +272,13 @@ impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
             } else {
                 store.connect_failed(tab_id, Some(error.to_string()))
             }
+        });
+    }
+
+    fn fold_retry_auth_failed(&self, tab_id: &str, error: &str) {
+        use crate::session_projection::projection::fold_session_transition;
+        fold_session_transition(self, |store| {
+            store.retry_auth_failed(tab_id, Some(error.to_string()))
         });
     }
 }
@@ -630,6 +647,19 @@ fn tab_id_from_connect_id(connect_id: &str) -> Option<String> {
 fn initial_connect_failed_tab_id(connect_id: Option<&str>) -> Option<String> {
     let (tab_id, retry) = connect_id?.rsplit_once(':')?;
     (retry == "0" && !tab_id.is_empty()).then(|| tab_id.to_string())
+}
+
+/// Fold a connect the server rejected by authentication (SM-005, #3089): the
+/// initial attempt (`:0`) folds the terminal `authFailed` directly; a later
+/// attempt uses the retry fold, which only applies while the region shows that
+/// user retry `connecting` (never over a backend redrive). A connect without a
+/// tab-form `connect_id` carries no tab and folds nothing.
+fn fold_auth_rejection<E: EventEmitter>(emitter: &E, connect_id: Option<&str>, error: &str) {
+    if let Some(tab_id) = initial_connect_failed_tab_id(connect_id) {
+        emitter.fold_connect_failed(&tab_id, error, true);
+    } else if let Some(tab_id) = connect_id.and_then(tab_id_from_connect_id) {
+        emitter.fold_retry_auth_failed(&tab_id, error);
+    }
 }
 
 impl SessionManager {
@@ -1052,12 +1082,22 @@ impl SessionManager {
                 });
                 // Scoped to the connect id so an OTP prompt it raises is owned
                 // by this tab and cancelled when the tab closes (#3437).
-                with_prompt_owner(
+                if let Err(e) = with_prompt_owner(
                     connect_id,
                     proxy.connect_cancellable(remote_settings, cancel_token.clone()),
                 )
                 .await
-                .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
+                {
+                    // An agent connect otherwise auto-retries client-side without a
+                    // source fold, but a rejected credential (typed across the proxy
+                    // since #3089) is terminal: fold `authFailed` so the tab stops
+                    // and offers credential re-entry, exactly like a direct tab.
+                    if matches!(e, termihub_core::errors::SessionError::AuthFailed) {
+                        fold_auth_rejection(&emitter, connect_id, &e.to_string());
+                        return Err(TerminalError::from_session_spawn(e));
+                    }
+                    return Err(TerminalError::SpawnFailed(e.to_string()));
+                }
                 let remote_sid = proxy.remote_session_id();
                 (Box::new(proxy), remote_sid)
             } else {
@@ -1093,14 +1133,15 @@ impl SessionManager {
                         .is_some_and(CancellationToken::is_cancelled)
                         || matches!(e, termihub_core::errors::SessionError::AuthCancelled);
                     if !cancelled {
-                        if let Some(tab_id) = initial_connect_failed_tab_id(connect_id) {
-                            // Classify the auth rejection from the typed core error
-                            // BEFORE it is stringified (SM-005 / I18N-001): a genuine
-                            // `AuthFailed` folds the non-retryable terminal state, not
-                            // a transient `Failed`. Non-auth failures are unchanged.
-                            let auth_failed =
-                                matches!(e, termihub_core::errors::SessionError::AuthFailed);
-                            emitter.fold_connect_failed(&tab_id, &e.to_string(), auth_failed);
+                        // Classify the auth rejection from the typed core error
+                        // BEFORE it is stringified (SM-005 / I18N-001): a genuine
+                        // `AuthFailed` folds the non-retryable terminal state, not
+                        // a transient `Failed` — on a user retry too (#3089).
+                        // Non-auth failures are unchanged (initial attempt only).
+                        if matches!(e, termihub_core::errors::SessionError::AuthFailed) {
+                            fold_auth_rejection(&emitter, connect_id, &e.to_string());
+                        } else if let Some(tab_id) = initial_connect_failed_tab_id(connect_id) {
+                            emitter.fold_connect_failed(&tab_id, &e.to_string(), false);
                         }
                     }
                     // Preserve a genuine auth rejection as the typed `AuthFailed`
