@@ -238,8 +238,13 @@ jobs pass the gate. The job summary of `Detect Changed Areas` shows
 - **Use it only when the change cannot alter compiled or runtime behaviour:**
   formatting, renames with no logic change, comments, docs, and text that is
   never executed. Authors and agents alike may use it under that rule.
-- **Never use it** for test changes, behaviour fixes, dependency bumps or CI
-  changes. When in doubt, leave it off.
+- **Never use it** for test changes, behaviour fixes or dependency bumps. When in
+  doubt, leave it off.
+- **CI changes are enforced, not just forbidden:** if the PR changes any
+  `.github/` file or the change-detection and gate scripts
+  (`scripts/internal/ci-changes*`, `rust-comment-diff*`, `ci-rust-tests.sh`,
+  `pr-gate*`), the classifier ignores the tag, prints a notice saying so and
+  runs every lane.
 
 **Required checks.** The intended branch protection is committed in
 [`.github/branch-protection.json`](../.github/branch-protection.json); see

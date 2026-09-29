@@ -49,7 +49,9 @@
  * rustdoc and gate jobs still run on their area flags. Only the head commit
  * counts, so pushing a later untagged commit re-enables everything. Push,
  * schedule and dispatch runs ignore the tag, so a wrong tag is caught after
- * merge. Any doubt (no head sha, git error) keeps the tests on.
+ * merge. Any doubt (no head sha, git error) keeps the tests on. The tag is
+ * IGNORED (with a notice) when the PR changes CI itself: any `.github/` file or
+ * the change-detection / gate scripts (see skipTestsBlockers).
  *
  * Usage:
  *   git diff --name-only HEAD^1 HEAD | node scripts/internal/ci-changes.mjs \
@@ -338,6 +340,45 @@ export function skipTestsRequested({ eventName, headSha, git = runGit }) {
   }
 }
 
+// CI plumbing a [skip-tests] PR may not touch: a change here could itself break
+// the lanes the tag would skip, so the tag is ignored and everything runs.
+const SKIP_TESTS_BLOCKING_SCRIPTS =
+  /^scripts\/internal\/(ci-changes[^/]*|rust-comment-diff[^/]*|ci-rust-tests\.sh|pr-gate[^/]*)$/;
+
+/**
+ * The changed paths that forbid honouring `[skip-tests]`: any `.github/` file
+ * and the change-detection / test-driver / gate scripts under scripts/internal.
+ * @param {string[]} paths - repo-relative changed paths.
+ * @returns {string[]} normalised blocking paths (empty: the tag may apply).
+ */
+export function skipTestsBlockers(paths) {
+  return paths
+    .map(normalise)
+    .filter((path) => path.startsWith(".github/") || SKIP_TESTS_BLOCKING_SCRIPTS.test(path));
+}
+
+/**
+ * Resolve the tag for a PR run: requested on the head commit AND no CI change.
+ * @param {{ eventName?: string, headSha?: string, paths: string[],
+ *   git?: (args: string[]) => string }} options
+ * @returns {{ skip: boolean, requested: boolean, blockedBy: string[] }}
+ */
+export function resolveSkipTests({ eventName, headSha, paths, git = runGit }) {
+  const requested = skipTestsRequested({ eventName, headSha, git });
+  const blockedBy = requested ? skipTestsBlockers(paths) : [];
+  return { skip: requested && blockedBy.length === 0, requested, blockedBy };
+}
+
+/**
+ * The notice printed when `[skip-tests]` was requested but a CI change blocks it.
+ * @param {string[]} blockedBy
+ */
+export function skipTestsIgnoredNote(blockedBy) {
+  const shown = blockedBy.slice(0, 5).join(", ");
+  const more = blockedBy.length > 5 ? ` (+${blockedBy.length - 5} more)` : "";
+  return `${SKIP_TESTS_TAG} ignored: this PR changes CI (${shown}${more}); running every lane`;
+}
+
 /**
  * The job-summary note printed when `[skip-tests]` skipped the tests.
  * @param {string} headSha
@@ -381,7 +422,15 @@ if (isMainModule(import.meta.url)) {
       process.stderr.write(`changed: ${path}${tag}\n`);
     }
     const headSha = argValue("--head-sha");
-    const skipTests = skipTestsRequested({ eventName: argValue("--event"), headSha });
+    const resolved = resolveSkipTests({ eventName: argValue("--event"), headSha, paths });
+    const skipTests = resolved.skip;
+    if (resolved.requested && !skipTests) {
+      const note = skipTestsIgnoredNote(resolved.blockedBy);
+      process.stderr.write(`::notice title=${SKIP_TESTS_TAG}::${note}\n`);
+      if (process.env.GITHUB_STEP_SUMMARY) {
+        appendFileSync(process.env.GITHUB_STEP_SUMMARY, `> [!WARNING]\n> **${note}**\n`);
+      }
+    }
     if (skipTests) {
       const note = skipTestsNote(headSha);
       process.stderr.write(`::notice title=${SKIP_TESTS_TAG}::${note}\n`);

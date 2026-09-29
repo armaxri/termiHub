@@ -14,6 +14,9 @@ import {
   hasSkipTestsTag,
   skipTestsRequested,
   skipTestsNote,
+  skipTestsBlockers,
+  resolveSkipTests,
+  skipTestsIgnoredNote,
   SKIP_TESTS_TAG,
 } from "./ci-changes.mjs";
 
@@ -297,6 +300,39 @@ describe("[skip-tests] tag (#3915)", () => {
     expect(skipTestsRequested({ eventName: "pull_request", headSha: OLDER, git })).toBe(false);
   });
 
+  it("is ignored when the PR changes CI itself (.github or detection/gate scripts)", () => {
+    const git = fakeGit({ [HEAD]: "style: reflow [skip-tests]\n" });
+    const blocking = [
+      ".github/workflows/code-quality.yml",
+      ".github/actions/detect-changes/action.yml",
+      "scripts/internal/ci-changes.mjs",
+      "scripts/internal/ci-changes.test.mjs",
+      "scripts/internal/rust-comment-diff.mjs",
+      "scripts/internal/rust-comment-diff.test.mjs",
+      "scripts/internal/ci-rust-tests.sh",
+      "scripts/internal/pr-gate.mjs",
+      "scripts/internal/pr-gate.test.mjs",
+    ];
+    for (const path of blocking) {
+      const paths = ["core/src/lib.rs", path];
+      expect(skipTestsBlockers(paths)).toEqual([path]);
+      expect(resolveSkipTests({ eventName: "pull_request", headSha: HEAD, paths, git })).toEqual({
+        skip: false,
+        requested: true,
+        blockedBy: [path],
+      });
+    }
+    // Other scripts/internal helpers and ordinary code do not block it.
+    const paths = ["core/src/lib.rs", "scripts/internal/bundle-size.mjs", "docs/a.md"];
+    expect(skipTestsBlockers(paths)).toEqual([]);
+    expect(resolveSkipTests({ eventName: "pull_request", headSha: HEAD, paths, git }).skip).toBe(
+      true
+    );
+    expect(skipTestsIgnoredNote([".github/x.yml"])).toBe(
+      "[skip-tests] ignored: this PR changes CI (.github/x.yml); running every lane"
+    );
+  });
+
   it("names the sha in the job-summary note", () => {
     expect(skipTestsNote(HEAD)).toBe(`tests skipped by [skip-tests] on ${HEAD}`);
   });
@@ -377,6 +413,30 @@ describe("[skip-tests] tag (#3915)", () => {
         expect(out).toContain("tests=true\n");
         expect(out).toContain('test_matrix=["ubuntu-latest","windows-latest"]\n');
         expect(summary).toBe("");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("ignores the tag, with a notice, when the PR changes CI", () => {
+      const dir = makePr(["style: reflow [skip-tests]"]);
+      try {
+        const summary = path.join(dir, "summary.md");
+        writeFileSync(summary, "");
+        const res = spawnSync(
+          process.execPath,
+          [SCRIPT, "--event", "pull_request", "--head-sha", "HEAD^2"],
+          {
+            cwd: dir,
+            input: "core/src/lib.rs\n.github/workflows/build.yml\n",
+            encoding: "utf8",
+            env: { ...process.env, GITHUB_STEP_SUMMARY: summary },
+          }
+        );
+        expect(res.status).toBe(0);
+        expect(res.stdout).toContain("tests=true\n");
+        expect(res.stderr).toContain("[skip-tests] ignored: this PR changes CI");
+        expect(readFileSync(summary, "utf8")).toContain("[skip-tests] ignored");
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
