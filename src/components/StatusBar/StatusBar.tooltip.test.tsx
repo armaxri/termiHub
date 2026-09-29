@@ -29,6 +29,7 @@ import { TooltipProvider } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { StatusBar } from "./StatusBar";
 import type { EditorStatus, EditorActions } from "@/types/terminal";
+import { flushAsync } from "@/test/flushAsync";
 
 // Stub the unrelated status-bar children so the tests isolate the triggers.
 vi.mock("@/components/CredentialStoreIndicator", () => ({ CredentialStoreIndicator: () => null }));
@@ -79,14 +80,15 @@ describe("StatusBar — dropdown-trigger tooltip adoption (#1163)", () => {
     container.remove();
   });
 
-  function renderStatusBar() {
-    act(() =>
-      root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)))
-    );
+  async function renderStatusBar() {
+    await act(async () => {
+      root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)));
+    });
+    await flushAsync();
   }
 
-  it("keeps the indent trigger testid and drops its bare title after Tooltip adoption", () => {
-    renderStatusBar();
+  it("keeps the indent trigger testid and drops its bare title after Tooltip adoption", async () => {
+    await renderStatusBar();
     const trigger = container.querySelector('[data-testid="status-bar-tab-size"]');
     expect(trigger).not.toBeNull();
     // The action hint now lives in the shared Tooltip, not a bare title attribute.
@@ -95,16 +97,16 @@ describe("StatusBar — dropdown-trigger tooltip adoption (#1163)", () => {
     expect(trigger!.textContent).toContain("Spaces: 2");
   });
 
-  it("keeps the language trigger testid and drops its bare title after Tooltip adoption", () => {
-    renderStatusBar();
+  it("keeps the language trigger testid and drops its bare title after Tooltip adoption", async () => {
+    await renderStatusBar();
     const trigger = container.querySelector('[data-testid="status-bar-language"]');
     expect(trigger).not.toBeNull();
     expect(trigger!.hasAttribute("title")).toBe(false);
     expect(trigger!.textContent).toContain("TypeScript");
   });
 
-  it("opens the indent menu on click (Tooltip -> DropdownMenu.Trigger composition works)", () => {
-    renderStatusBar();
+  it("opens the indent menu on click (Tooltip -> DropdownMenu.Trigger composition works)", async () => {
+    await renderStatusBar();
     const trigger = container.querySelector<HTMLButtonElement>(
       '[data-testid="status-bar-tab-size"]'
     );

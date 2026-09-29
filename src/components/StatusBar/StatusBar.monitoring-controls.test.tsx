@@ -24,6 +24,7 @@ import {
   type FakeMonitorTransport,
 } from "@/test/systemMonitorHarness";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+import { flushAsync } from "@/test/flushAsync";
 
 vi.mock("@/components/CredentialStoreIndicator", () => ({ CredentialStoreIndicator: () => null }));
 vi.mock("./PortableBadge", () => ({ PortableBadge: () => null }));
@@ -164,13 +165,14 @@ describe("StatusBar — monitoring controls (#1233)", () => {
     teardownMonitors();
   });
 
-  function renderStatusBar() {
-    act(() =>
-      root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)))
-    );
+  async function renderStatusBar() {
+    await act(async () => {
+      root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)));
+    });
+    await flushAsync();
   }
 
-  it("shows a Cancel affordance while connecting and calls cancelMonitoring", () => {
+  it("shows a Cancel affordance while connecting and calls cancelMonitoring", async () => {
     const cancelMonitoring = vi.fn(() => Promise.resolve());
     const SESSION = "sess-connecting";
     // A remote-session tab surfaces the Connecting + Cancel affordance without
@@ -178,7 +180,7 @@ describe("StatusBar — monitoring controls (#1233)", () => {
     primeRemoteSessionTab(SESSION);
     useAppStore.setState({ cancelMonitoring });
     setActiveMonitor({ loading: true, status: "connecting" }, SESSION);
-    renderStatusBar();
+    await renderStatusBar();
 
     const cancel = container.querySelector('[data-testid="monitoring-cancel-btn"]');
     expect(cancel).not.toBeNull();
@@ -189,7 +191,7 @@ describe("StatusBar — monitoring controls (#1233)", () => {
     expect(cancelMonitoring).toHaveBeenCalledWith(SESSION);
   });
 
-  it("renders a neutral Paused badge and dims the stats when paused", () => {
+  it("renders a neutral Paused badge and dims the stats when paused", async () => {
     setActiveMonitor({
       monitorSessionId: "sess-1",
       stats: makeStats(),
@@ -197,7 +199,7 @@ describe("StatusBar — monitoring controls (#1233)", () => {
       status: "paused",
       paused: true,
     });
-    renderStatusBar();
+    await renderStatusBar();
 
     const badge = container.querySelector('[data-testid="monitoring-paused"]');
     expect(badge).not.toBeNull();
@@ -208,7 +210,7 @@ describe("StatusBar — monitoring controls (#1233)", () => {
     expect(cpu!.className).toContain("monitoring-status__stat--stale");
   });
 
-  it("shows the link problem, not Paused, when a paused monitor drops (#3730)", () => {
+  it("shows the link problem, not Paused, when a paused monitor drops (#3730)", async () => {
     setActiveMonitor({
       monitorSessionId: "sess-1",
       stats: makeStats(),
@@ -216,7 +218,7 @@ describe("StatusBar — monitoring controls (#1233)", () => {
       status: "reconnecting",
       paused: true,
     });
-    renderStatusBar();
+    await renderStatusBar();
 
     // One badge at a time: reconnecting outranks the user's pause.
     expect(container.querySelector('[data-testid="monitoring-reconnecting"]')).not.toBeNull();
@@ -226,14 +228,14 @@ describe("StatusBar — monitoring controls (#1233)", () => {
     expect(cpu!.className).toContain("monitoring-status__stat--stale");
   });
 
-  it("shows an inline Retry affordance when the monitor is offline", () => {
+  it("shows an inline Retry affordance when the monitor is offline", async () => {
     setActiveMonitor({
       monitorSessionId: "sess-1",
       stats: makeStats(),
       sampleCount: 3,
       status: "offline",
     });
-    renderStatusBar();
+    await renderStatusBar();
 
     const retry = container.querySelector('[data-testid="monitoring-retry-btn"]');
     expect(retry).not.toBeNull();
@@ -247,7 +249,7 @@ describe("StatusBar — monitoring controls (#1233)", () => {
     [null, "Offline — connection lost"],
   ] as const)(
     "names the offline reason on the Retry affordance (%s, #3301)",
-    (statusReason, label) => {
+    async (statusReason, label) => {
       setActiveMonitor({
         monitorSessionId: "sess-1",
         stats: makeStats(),
@@ -255,7 +257,7 @@ describe("StatusBar — monitoring controls (#1233)", () => {
         status: "offline",
         statusReason,
       });
-      renderStatusBar();
+      await renderStatusBar();
 
       const retry = container.querySelector('[data-testid="monitoring-retry-btn"]');
       expect(retry).not.toBeNull();
@@ -265,14 +267,14 @@ describe("StatusBar — monitoring controls (#1233)", () => {
     }
   );
 
-  it("does not render Paused / Retry affordances while live", () => {
+  it("does not render Paused / Retry affordances while live", async () => {
     setActiveMonitor({
       monitorSessionId: "sess-1",
       stats: makeStats(),
       sampleCount: 3,
       status: "live",
     });
-    renderStatusBar();
+    await renderStatusBar();
 
     expect(container.querySelector('[data-testid="monitoring-paused"]')).toBeNull();
     expect(container.querySelector('[data-testid="monitoring-retry-btn"]')).toBeNull();

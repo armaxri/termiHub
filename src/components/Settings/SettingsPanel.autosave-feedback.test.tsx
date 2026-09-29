@@ -50,7 +50,18 @@ const TAB_ID = "test-settings-tab";
 let container: HTMLDivElement;
 let root: Root;
 
-function render() {
+/**
+ * Flush pending promise callbacks inside `act()`. Microtask-only (no
+ * `setImmediate`), so it works under fake timers and arms no timer.
+ */
+async function settle() {
+  await act(async () => {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  });
+}
+
+/** Mount the panel and let its async mount-time hooks (key scan, subscriptions) settle. */
+async function render() {
   act(() => {
     root.render(
       <TooltipProvider delayDuration={0}>
@@ -58,6 +69,7 @@ function render() {
       </TooltipProvider>
     );
   });
+  await settle();
 }
 
 function ackEl(): HTMLElement | null {
@@ -99,7 +111,7 @@ describe("SettingsPanel — auto-save feedback (#1342)", () => {
   });
 
   it("shows a transient 'Saved' acknowledgment after a debounced auto-save", async () => {
-    render();
+    await render();
 
     // No acknowledgment before any change.
     expect(ackEl()?.textContent ?? "").not.toContain("Saved");
@@ -132,7 +144,7 @@ describe("SettingsPanel — auto-save feedback (#1342)", () => {
     const setPendingCloseRequest = vi.fn();
     useAppStore.setState({ closeTab, setPendingCloseRequest });
 
-    render();
+    await render();
 
     act(() => {
       useAppStore.setState({ pendingCloseRequest: { tabId: TAB_ID, panelId: "panel-1" } });
@@ -158,11 +170,11 @@ describe("SettingsPanel — auto-save feedback (#1342)", () => {
       });
     }
 
-    it("coalesces rapid edits into one save after 300ms, then acks", () => {
+    it("coalesces rapid edits into one save after 300ms, then acks", async () => {
       const updateSettings = vi.fn();
       const setEditorDirty = vi.fn();
       useAppStore.setState({ updateSettings, setEditorDirty });
-      render();
+      await render();
 
       toggleShellIntegration(); // true → false (dirty)
       act(() => {
@@ -186,10 +198,10 @@ describe("SettingsPanel — auto-save feedback (#1342)", () => {
       expect(ackEl()?.textContent ?? "").toContain("Saved");
     });
 
-    it("reverting to the saved value cancels the pending save", () => {
+    it("reverting to the saved value cancels the pending save", async () => {
       const updateSettings = vi.fn();
       useAppStore.setState({ updateSettings });
-      render();
+      await render();
 
       toggleShellIntegration();
       toggleShellIntegration();
@@ -199,11 +211,11 @@ describe("SettingsPanel — auto-save feedback (#1342)", () => {
       expect(updateSettings).not.toHaveBeenCalled();
     });
 
-    it("flushes the last pending change on unmount without a dirty-flag write or ack", () => {
+    it("flushes the last pending change on unmount without a dirty-flag write or ack", async () => {
       const updateSettings = vi.fn();
       const setEditorDirty = vi.fn();
       useAppStore.setState({ updateSettings, setEditorDirty });
-      render();
+      await render();
 
       toggleShellIntegration();
       expect(setEditorDirty).toHaveBeenCalledTimes(1);
@@ -230,13 +242,13 @@ describe("SettingsPanel — auto-save feedback (#1342)", () => {
       root = createRoot(container);
     });
 
-    it("a close request flushes the pending change without an ack", () => {
+    it("a close request flushes the pending change without an ack", async () => {
       const updateSettings = vi.fn();
       const setEditorDirty = vi.fn();
       const closeTab = vi.fn();
       const setPendingCloseRequest = vi.fn();
       useAppStore.setState({ updateSettings, setEditorDirty, closeTab, setPendingCloseRequest });
-      render();
+      await render();
 
       toggleShellIntegration();
       act(() => {

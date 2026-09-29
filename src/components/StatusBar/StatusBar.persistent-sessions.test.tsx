@@ -14,6 +14,7 @@ import { useAppStore } from "@/store/appStore";
 import { TooltipProvider } from "@/components/ui";
 import { StatusBar } from "./StatusBar";
 import type { PersistentRunState, PersistentSessionEntry } from "@/types/connection";
+import { flushAsync } from "@/test/flushAsync";
 
 function renderStatusBar(root: Root) {
   root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)));
@@ -45,7 +46,7 @@ describe("StatusBar — persistent-session count segment", () => {
 
   const query = () => container.querySelector('[data-testid="persistent-sessions-indicator"]');
 
-  it("is hidden when no persistent sessions are running", () => {
+  it("is hidden when no persistent sessions are running", async () => {
     setSessions({
       a: entry("a", "stopped"),
       b: entry("b", "starting"),
@@ -53,11 +54,12 @@ describe("StatusBar — persistent-session count segment", () => {
     });
 
     act(() => renderStatusBar(root));
+    await flushAsync();
 
     expect(query()).toBeNull();
   });
 
-  it("counts only running and attached sessions", () => {
+  it("counts only running and attached sessions", async () => {
     setSessions({
       a: entry("a", "running"),
       b: entry("b", "attached"),
@@ -68,6 +70,7 @@ describe("StatusBar — persistent-session count segment", () => {
     });
 
     act(() => renderStatusBar(root));
+    await flushAsync();
 
     const item = query();
     expect(item).not.toBeNull();
@@ -75,10 +78,11 @@ describe("StatusBar — persistent-session count segment", () => {
     expect(item!.getAttribute("aria-label")).toContain("2 background sessions running");
   });
 
-  it("uses the singular label for a single running session", () => {
+  it("uses the singular label for a single running session", async () => {
     setSessions({ a: entry("a", "running") });
 
     act(() => renderStatusBar(root));
+    await flushAsync();
 
     const item = query();
     expect(item).not.toBeNull();
@@ -87,11 +91,12 @@ describe("StatusBar — persistent-session count segment", () => {
     expect(item!.getAttribute("aria-label")).not.toContain("sessions");
   });
 
-  it("opens the Connections sidebar when clicked", () => {
+  it("opens the Connections sidebar when clicked", async () => {
     useAppStore.setState({ sidebarView: "services" });
     setSessions({ a: entry("a", "running") });
 
     act(() => renderStatusBar(root));
+    await flushAsync();
 
     act(() => {
       query()!.dispatchEvent(new MouseEvent("click", { bubbles: true }));

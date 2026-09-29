@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { seedLayoutState } from "@/test/layoutState";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
@@ -42,14 +43,15 @@ let container: HTMLDivElement;
 let root: Root;
 let saveTunnel: (config: TunnelConfig) => Promise<void>;
 
-function render() {
-  act(() => {
+async function render() {
+  await act(async () => {
     root.render(
       <TooltipProvider>
         <TunnelEditor tabId={TAB_ID} meta={{ tunnelId: null }} isVisible={true} />
       </TooltipProvider>
     );
   });
+  await flushAsync();
 }
 
 function q(testid: string): HTMLElement {
@@ -109,7 +111,7 @@ describe("TunnelEditor — form migration (UISF-011)", () => {
   });
 
   it("submits a valid local config with the SSH connection and default forward", async () => {
-    render();
+    await render();
     setValue(q("tunnel-editor-name") as HTMLInputElement, "Local DB");
     click(q("tunnel-editor-save"));
     await flush();
@@ -124,7 +126,7 @@ describe("TunnelEditor — form migration (UISF-011)", () => {
   });
 
   it("switching to dynamic resets the config to the dynamic defaults on submit", async () => {
-    render();
+    await render();
     setValue(q("tunnel-editor-name") as HTMLInputElement, "SOCKS");
     click(q("tunnel-type-dynamic"));
     click(q("tunnel-editor-save"));
@@ -137,7 +139,7 @@ describe("TunnelEditor — form migration (UISF-011)", () => {
   });
 
   it("switching to remote submits the remote-forward defaults", async () => {
-    render();
+    await render();
     setValue(q("tunnel-editor-name") as HTMLInputElement, "Reverse");
     click(q("tunnel-type-remote"));
     click(q("tunnel-editor-save"));
@@ -150,7 +152,7 @@ describe("TunnelEditor — form migration (UISF-011)", () => {
   });
 
   it("persists an edited local port through Save", async () => {
-    render();
+    await render();
     setValue(q("tunnel-editor-name") as HTMLInputElement, "Edited");
     setValue(q("tunnel-editor-local-port") as HTMLInputElement, "9999");
     click(q("tunnel-editor-save"));
@@ -162,8 +164,8 @@ describe("TunnelEditor — form migration (UISF-011)", () => {
     }
   });
 
-  it("blocks Save while a forwarding host is blank", () => {
-    render();
+  it("blocks Save while a forwarding host is blank", async () => {
+    await render();
     setValue(q("tunnel-editor-name") as HTMLInputElement, "Bad host");
     // Name is valid, so Save is enabled until the host is cleared.
     expect((q("tunnel-editor-save") as HTMLButtonElement).disabled).toBe(false);

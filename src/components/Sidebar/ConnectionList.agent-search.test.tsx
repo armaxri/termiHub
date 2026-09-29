@@ -13,6 +13,7 @@ import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarn
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
+import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
@@ -85,8 +86,8 @@ const baseSettings = {
 let container: HTMLDivElement;
 let root: Root;
 
-function render() {
-  act(() => {
+async function render() {
+  await act(async () => {
     root.render(
       React.createElement(TooltipProvider, {
         delayDuration: 0,
@@ -94,6 +95,7 @@ function render() {
       })
     );
   });
+  await flushAsync();
 }
 
 function typeInto(input: HTMLInputElement, value: string) {
@@ -125,14 +127,14 @@ describe("ConnectionList — Remote Agents search by agent name (#2485)", () => 
     container.remove();
   });
 
-  it("surfaces an agent whose label matches the query and hides the rest", () => {
+  it("surfaces an agent whose label matches the query and hides the rest", async () => {
     seedAgentsRegion({
       remoteAgents: [
         makeAgent({ id: "agent-dev0", name: "Dev Agent (dev0)" }),
         makeAgent({ id: "agent-prod", name: "Prod Agent" }),
       ],
     });
-    render();
+    await render();
 
     typeInto(agentFilterInput(), "dev0");
 
@@ -140,14 +142,14 @@ describe("ConnectionList — Remote Agents search by agent name (#2485)", () => 
     expect(container.querySelector('[data-testid="agent-node-agent-prod"]')).toBeNull();
   });
 
-  it("matches the agent label case-insensitively", () => {
+  it("matches the agent label case-insensitively", async () => {
     seedAgentsRegion({
       remoteAgents: [
         makeAgent({ id: "agent-dev0", name: "Dev Agent (dev0)" }),
         makeAgent({ id: "agent-prod", name: "Prod Agent" }),
       ],
     });
-    render();
+    await render();
 
     typeInto(agentFilterInput(), "DEV0");
 
@@ -155,11 +157,11 @@ describe("ConnectionList — Remote Agents search by agent name (#2485)", () => 
     expect(container.querySelector('[data-testid="agent-node-agent-prod"]')).toBeNull();
   });
 
-  it("shows the full tree (no content filter) for an agent surfaced by a name match", () => {
+  it("shows the full tree (no content filter) for an agent surfaced by a name match", async () => {
     seedAgentsRegion({
       remoteAgents: [makeAgent({ id: "agent-dev0", name: "Dev Agent (dev0)" })],
     });
-    render();
+    await render();
 
     typeInto(agentFilterInput(), "dev0");
 
@@ -168,7 +170,7 @@ describe("ConnectionList — Remote Agents search by agent name (#2485)", () => 
     expect(node?.getAttribute("data-filter-query")).toBe("");
   });
 
-  it("still surfaces an agent by a matching child connection (definition) name", () => {
+  it("still surfaces an agent by a matching child connection (definition) name", async () => {
     seedAgentsRegion({
       remoteAgents: [
         makeAgent({ id: "agent-a", name: "Alpha" }),
@@ -179,7 +181,7 @@ describe("ConnectionList — Remote Agents search by agent name (#2485)", () => 
         "agent-b": [makeDef({ id: "def-b", name: "unrelated" })],
       },
     });
-    render();
+    await render();
 
     typeInto(agentFilterInput(), "dev0");
 
@@ -191,14 +193,14 @@ describe("ConnectionList — Remote Agents search by agent name (#2485)", () => 
     expect(container.querySelector('[data-testid="agent-node-agent-b"]')).toBeNull();
   });
 
-  it("shows an empty state when no agent matches the query", () => {
+  it("shows an empty state when no agent matches the query", async () => {
     seedAgentsRegion({
       remoteAgents: [
         makeAgent({ id: "agent-dev0", name: "Dev Agent (dev0)" }),
         makeAgent({ id: "agent-prod", name: "Prod Agent" }),
       ],
     });
-    render();
+    await render();
 
     typeInto(agentFilterInput(), "zzz-nothing");
 
@@ -207,14 +209,14 @@ describe("ConnectionList — Remote Agents search by agent name (#2485)", () => 
     expect(container.querySelector('[data-testid="remote-agents-empty"]')).not.toBeNull();
   });
 
-  it("renders all agents when the query is empty", () => {
+  it("renders all agents when the query is empty", async () => {
     seedAgentsRegion({
       remoteAgents: [
         makeAgent({ id: "agent-dev0", name: "Dev Agent (dev0)" }),
         makeAgent({ id: "agent-prod", name: "Prod Agent" }),
       ],
     });
-    render();
+    await render();
 
     expect(container.querySelector('[data-testid="agent-node-agent-dev0"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="agent-node-agent-prod"]')).not.toBeNull();

@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { seedLayoutState } from "@/test/layoutState";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
@@ -81,14 +82,15 @@ function seedAgent(connectionState: "connected" | "disconnected") {
   seedAgentsRegion({ remoteAgents: [agent] });
 }
 
-function render(tunnelId: string | null) {
-  act(() => {
+async function render(tunnelId: string | null) {
+  await act(async () => {
     root.render(
       <TooltipProvider>
         <TunnelEditor tabId={TAB_ID} meta={{ tunnelId }} isVisible={true} />
       </TooltipProvider>
     );
   });
+  await flushAsync();
 }
 
 function q(testid: string): HTMLElement | null {
@@ -124,25 +126,25 @@ describe("TunnelEditor — chain a hop (#2597)", () => {
     vi.clearAllMocks();
   });
 
-  it("offers 'Chain a hop' beside Widen bind when the host agent is online", () => {
+  it("offers 'Chain a hop' beside Widen bind when the host agent is online", async () => {
     seedAgent("connected");
-    render("tun-agent");
+    await render("tun-agent");
     const chain = q("tunnel-editor-chain-hop") as HTMLButtonElement | null;
     expect(chain).not.toBeNull();
     expect(chain!.disabled).toBe(false);
     expect(q("tunnel-editor-widen-bind")).not.toBeNull();
   });
 
-  it("disables 'Chain a hop' while the host agent is offline", () => {
+  it("disables 'Chain a hop' while the host agent is offline", async () => {
     seedAgent("disconnected");
-    render("tun-agent");
+    await render("tun-agent");
     expect((q("tunnel-editor-chain-hop") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("shows 'Chained ✓ · reveal' once a companion exists", () => {
+  it("shows 'Chained ✓ · reveal' once a companion exists", async () => {
     seedAgent("connected");
     useAppStore.setState({ tunnels: [AGENT_TUNNEL, COMPANION] });
-    render("tun-agent");
+    await render("tun-agent");
     expect(q("tunnel-editor-chain-hop")).toBeNull();
     const reveal = q("tunnel-editor-chain-reveal");
     expect(reveal).not.toBeNull();
@@ -152,7 +154,7 @@ describe("TunnelEditor — chain a hop (#2597)", () => {
 
   it("Create & link persists the parent then the linked companion", async () => {
     seedAgent("connected");
-    render("tun-agent");
+    await render("tun-agent");
     await act(async () => (q("tunnel-editor-chain-hop") as HTMLButtonElement).click());
     // Preview is open with a defaulted SSH-via; confirm it.
     expect(q("tunnel-chain-preview")).not.toBeNull();

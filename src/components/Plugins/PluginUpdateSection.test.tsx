@@ -132,13 +132,17 @@ function render(
   offer?: PluginIndexEntryView,
   plugin: InstalledPlugin = PLUGIN
 ) {
-  usePluginUpdateStore.setState({
-    entries: entry ? { demo: entry } : {},
-    checkingAll: false,
-    lastCheckedAt: null,
-    indexOffers: offer ? { demo: offer } : {},
-    checkingIndex: false,
-    indexError: null,
+  // Re-rendering an already-mounted section updates its store subscription, so
+  // the seed goes inside act() too.
+  act(() => {
+    usePluginUpdateStore.setState({
+      entries: entry ? { demo: entry } : {},
+      checkingAll: false,
+      lastCheckedAt: null,
+      indexOffers: offer ? { demo: offer } : {},
+      checkingIndex: false,
+      indexError: null,
+    });
   });
   act(() => root.render(withTooltip(React.createElement(PluginUpdateSection, { plugin }))));
 }

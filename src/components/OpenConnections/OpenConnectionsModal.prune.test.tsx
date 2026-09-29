@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { TooltipProvider } from "@/components/ui";
 
@@ -73,7 +74,7 @@ describe("OpenConnectionsModal — Prune dead agents footer action", () => {
     container.remove();
   });
 
-  function render() {
+  async function render() {
     act(() => {
       root.render(
         <TooltipProvider delayDuration={0}>
@@ -81,6 +82,7 @@ describe("OpenConnectionsModal — Prune dead agents footer action", () => {
         </TooltipProvider>
       );
     });
+    await flushAsync();
   }
 
   function pruneButton(): HTMLButtonElement {
@@ -89,15 +91,15 @@ describe("OpenConnectionsModal — Prune dead agents footer action", () => {
     ) as HTMLButtonElement;
   }
 
-  it("renders a Prune dead agents footer action", () => {
-    render();
+  it("renders a Prune dead agents footer action", async () => {
+    await render();
     expect(pruneButton()).toBeTruthy();
     expect(pruneButton().textContent).toContain("Prune dead agents");
   });
 
   it("calls pruneDeadAgents and reports the swept count", async () => {
     pruneDeadAgents.mockResolvedValueOnce(["dead-1", "dead-2"]);
-    render();
+    await render();
 
     await act(async () => {
       pruneButton().click();
@@ -111,7 +113,7 @@ describe("OpenConnectionsModal — Prune dead agents footer action", () => {
 
   it("reports when there were no dead agents to prune", async () => {
     pruneDeadAgents.mockResolvedValueOnce([]);
-    render();
+    await render();
 
     await act(async () => {
       pruneButton().click();
@@ -123,7 +125,7 @@ describe("OpenConnectionsModal — Prune dead agents footer action", () => {
 
   it("surfaces a failure as an error toast", async () => {
     pruneDeadAgents.mockRejectedValueOnce(new Error("boom"));
-    render();
+    await render();
 
     await act(async () => {
       pruneButton().click();

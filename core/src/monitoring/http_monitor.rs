@@ -406,8 +406,23 @@ impl HttpMonitorService {
     }
 
     /// The most recent check result, if any.
+    ///
+    /// Cached by the poll loop itself, so it stays available for listing while
+    /// the monitor idles unobserved — it never depends on a live subscriber.
     pub fn last_result(&self) -> Option<HttpCheckResult> {
         self.last_result.lock().ok().and_then(|g| g.clone())
+    }
+
+    /// How many observers currently hold this monitor's event channel — the
+    /// input to the poll loop's observer gate (PERF-008, #2811).
+    ///
+    /// While this is zero a running monitor idles (no HTTP checks); a check
+    /// resumes on the next interval tick once an observer subscribes. A host
+    /// bridge that forwards results to a user-visible consumer (the desktop's
+    /// up/down notifications and check history, or the agent's `service.status`
+    /// slot) counts as an observer for as long as it is subscribed.
+    pub fn observer_count(&self) -> usize {
+        self.events.subscriber_count()
     }
 
     /// Test-only: construct a service in the `Running` state with `config` but
@@ -901,7 +916,15 @@ async fn run_monitor(
 /// subscribed to the monitor's events (PERF-008): with no listener the check is
 /// pure waste — no result would reach anyone — so an unobserved monitor does no
 /// network work until something subscribes. The loop still wakes each interval to
-/// re-evaluate, so a monitor resumes checking as soon as a subscriber appears.
+/// re-evaluate, so a monitor resumes checking within one base interval of a
+/// subscriber appearing, and the cached `last_result` stays listed meanwhile.
+///
+/// "Observed" is decided by the host, not by whether a UI panel is open (#2811):
+/// the desktop bridge stays subscribed for a started monitor's whole lifetime
+/// because it feeds consumers that work with the Network Tools UI closed — the
+/// app-wide up/down notifications and the backend check history. So a monitor the
+/// user started keeps checking in the background by design; the gate idles only a
+/// channel with no bridge at all.
 fn should_check(paused: bool, subscriber_count: usize) -> bool {
     !paused && subscriber_count > 0
 }
@@ -1480,6 +1503,80 @@ mod tests {
         assert!(
             !calls.lock().unwrap().is_empty(),
             "checks must resume once a subscriber is present"
+        );
+    }
+
+    #[test]
+    fn observer_count_tracks_event_subscribers() {
+        // The gate's input is exposed so a host can assert what it observes.
+        let svc = HttpMonitorService::stopped_with(sample_config());
+        assert_eq!(svc.observer_count(), 0);
+        let rx = svc.subscribe_events();
+        assert_eq!(svc.observer_count(), 1);
+        drop(rx);
+        assert_eq!(svc.observer_count(), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn poll_loop_idles_while_unobserved_keeps_last_result_and_resumes_promptly() {
+        // The full observer-gate lifecycle of a *running* monitor (#2811):
+        // observed → checks; observer gone → zero checks, last result still
+        // cached for listing; observed again → a check within one interval.
+        let interval = Duration::from_secs(1);
+        let cancel = CancellationToken::new();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let last_result = Arc::new(Mutex::new(None));
+        let events = EventChannel::new();
+        let subscribe_handle = events.clone();
+        let rx = events.subscribe();
+        let handle = tokio::spawn(poll_loop(
+            "m".into(),
+            interval,
+            non_stopping_checker(cancel.clone(), Arc::clone(&calls)),
+            events,
+            cancel.clone(),
+            Arc::new(AtomicBool::new(false)),
+            Arc::clone(&last_result),
+        ));
+
+        // Observed: checks at t=0, 1, 2.
+        tokio::time::sleep(interval * 5 / 2).await;
+        let observed_checks = calls.lock().unwrap().len();
+        assert_eq!(
+            observed_checks, 3,
+            "an observed monitor checks every interval"
+        );
+        assert!(last_result.lock().unwrap().is_some());
+
+        // The observer goes away: several intervals pass with no check at all.
+        drop(rx);
+        tokio::time::sleep(interval * 5).await;
+        assert_eq!(
+            calls.lock().unwrap().len(),
+            observed_checks,
+            "no HTTP check may fire while the running monitor is unobserved"
+        );
+        assert!(
+            last_result.lock().unwrap().as_ref().is_some_and(|r| r.ok),
+            "the last result must stay cached (listable) while idle"
+        );
+
+        // Observed again: the next tick (at most one interval away) checks.
+        let _rx = subscribe_handle.subscribe();
+        let resubscribed_at = tokio::time::Instant::now();
+        tokio::time::sleep(interval).await;
+        cancel.cancel();
+        handle.await.unwrap();
+
+        let calls = calls.lock().unwrap();
+        assert_eq!(
+            calls.len(),
+            observed_checks + 1,
+            "exactly one resumed check"
+        );
+        assert!(
+            calls[observed_checks].duration_since(resubscribed_at) <= interval,
+            "checks must resume within one interval of an observer returning"
         );
     }
 

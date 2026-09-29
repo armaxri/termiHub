@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
+import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { RecentSessionsSidebar } from "./RecentSessionsSidebar";
 import { withTooltip } from "@/test/tooltip";
@@ -108,42 +109,43 @@ describe("RecentSessionsSidebar", () => {
     container.remove();
   });
 
-  function render() {
-    act(() => root.render(withTooltip(<RecentSessionsSidebar />)));
+  async function render() {
+    await act(async () => root.render(withTooltip(<RecentSessionsSidebar />)));
+    await flushAsync();
   }
 
-  it("shows the empty state when there is no history", () => {
-    render();
+  it("shows the empty state when there is no history", async () => {
+    await render();
     expect(query("recent-sessions-empty")).not.toBeNull();
     expect(query("recent-sessions-list")).toBeNull();
   });
 
-  it("renders a row per history entry", () => {
+  it("renders a row per history entry", async () => {
     useAppStore.setState({ sessionHistory: entries });
-    render();
+    await render();
     expect(query("recent-sessions-list")).not.toBeNull();
     expect(query("recent-session-ssh:admin@prod:22")).not.toBeNull();
     expect(query("recent-session-serial:/dev/ttyUSB0:115200")).not.toBeNull();
     expect(query("recent-session-name-ssh:admin@prod:22")?.textContent).toBe("admin@prod");
   });
 
-  it("filters the list by the search query", () => {
+  it("filters the list by the search query", async () => {
     useAppStore.setState({ sessionHistory: entries });
-    render();
+    await render();
     type("recent-sessions-search", "ttyusb");
     expect(query("recent-session-serial:/dev/ttyUSB0:115200")).not.toBeNull();
     expect(query("recent-session-ssh:admin@prod:22")).toBeNull();
   });
 
-  it("shows a no-results state when nothing matches", () => {
+  it("shows a no-results state when nothing matches", async () => {
     useAppStore.setState({ sessionHistory: entries });
-    render();
+    await render();
     type("recent-sessions-search", "nonexistent");
     expect(query("recent-sessions-no-results")).not.toBeNull();
   });
 
-  it("opens an SSH tab from the quick-connect bar", () => {
-    render();
+  it("opens an SSH tab from the quick-connect bar", async () => {
+    await render();
     type("quick-connect-input", "me@example.com:2200");
     act(() => (query("quick-connect-submit") as HTMLButtonElement).click());
     expect(addTab).toHaveBeenCalledTimes(1);
@@ -155,17 +157,17 @@ describe("RecentSessionsSidebar", () => {
     });
   });
 
-  it("shows an error toast for an invalid quick-connect entry", () => {
-    render();
+  it("shows an error toast for an invalid quick-connect entry", async () => {
+    await render();
     type("quick-connect-input", "user@");
     act(() => (query("quick-connect-submit") as HTMLButtonElement).click());
     expect(addTab).not.toHaveBeenCalled();
     expect(toastError).toHaveBeenCalled();
   });
 
-  it("reconnects on the row Connect action", () => {
+  it("reconnects on the row Connect action", async () => {
     useAppStore.setState({ sessionHistory: entries });
-    render();
+    await render();
     act(() => (query("recent-session-connect-ssh:admin@prod:22") as HTMLButtonElement).click());
     expect(addTab).toHaveBeenCalledTimes(1);
     expect(addTab.mock.calls[0][1]).toBe("ssh");
@@ -173,7 +175,7 @@ describe("RecentSessionsSidebar", () => {
 
   it("opens the session in a new panel from the context menu", async () => {
     useAppStore.setState({ sessionHistory: entries });
-    render();
+    await render();
 
     // Open the row's context menu, then invoke "Connect in New Panel".
     const row = query("recent-session-serial:/dev/ttyUSB0:115200")!;
@@ -200,17 +202,17 @@ describe("RecentSessionsSidebar", () => {
     expect(addTab.mock.calls[0][1]).toBe("serial");
   });
 
-  it("toggles pin via the row action", () => {
+  it("toggles pin via the row action", async () => {
     useAppStore.setState({ sessionHistory: entries });
-    render();
+    await render();
     // The pinned SSH row's action unpins it.
     act(() => (query("recent-session-pin-ssh:admin@prod:22") as HTMLButtonElement).click());
     expect(pinHistoryEntry).toHaveBeenCalledWith("ssh:admin@prod:22", false);
   });
 
-  it("removes an entry via the row action", () => {
+  it("removes an entry via the row action", async () => {
     useAppStore.setState({ sessionHistory: entries });
-    render();
+    await render();
     act(() =>
       (query("recent-session-remove-serial:/dev/ttyUSB0:115200") as HTMLButtonElement).click()
     );

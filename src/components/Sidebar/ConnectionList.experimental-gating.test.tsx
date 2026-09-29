@@ -10,6 +10,7 @@
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
+import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
@@ -78,7 +79,7 @@ const RD_CONN: SavedConnection = {
 let container: HTMLDivElement;
 let root: Root;
 
-function render(experimentalFeaturesEnabled: boolean) {
+async function render(experimentalFeaturesEnabled: boolean) {
   const initial = useAppStore.getInitialState();
   useAppStore.setState({
     ...initial,
@@ -86,13 +87,14 @@ function render(experimentalFeaturesEnabled: boolean) {
   });
   seedSettings({ experimentalFeaturesEnabled });
   seedConnectionsRegion({ connections: [SSH_CONN, RD_CONN] });
-  act(() => {
+  await act(async () => {
     root.render(
       <TooltipProvider delayDuration={0}>
         <ConnectionList />
       </TooltipProvider>
     );
   });
+  await flushAsync();
 }
 
 function row(id: string): HTMLElement | null {
@@ -117,14 +119,14 @@ setupSettingsRegion();
 setupConnectionsRegion();
 
 describe("ConnectionList — experimental remote-desktop gating", () => {
-  it("hides graphical remote-desktop connections when the flag is off", () => {
-    render(false);
+  it("hides graphical remote-desktop connections when the flag is off", async () => {
+    await render(false);
     expect(row("ssh-1")).not.toBeNull();
     expect(row("rd-1")).toBeNull();
   });
 
-  it("shows graphical remote-desktop connections when the flag is on", () => {
-    render(true);
+  it("shows graphical remote-desktop connections when the flag is on", async () => {
+    await render(true);
     expect(row("ssh-1")).not.toBeNull();
     expect(row("rd-1")).not.toBeNull();
   });

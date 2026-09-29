@@ -80,8 +80,10 @@ describe("PluginDetailPanel (#1997)", () => {
     render();
     expect(container.querySelector('[data-testid="plugin-update"]')).toBeNull();
 
-    useAppStore.setState({
-      plugins: [plugin("active", { updateUrl: "https://example.com/k8s/update.json" })],
+    act(() => {
+      useAppStore.setState({
+        plugins: [plugin("active", { updateUrl: "https://example.com/k8s/update.json" })],
+      });
     });
     render();
     expect(container.querySelector('[data-testid="plugin-update"]')).not.toBeNull();
@@ -116,7 +118,9 @@ describe("PluginDetailPanel (#1997)", () => {
     });
     render();
     expect(container.querySelector('[data-testid="plugin-update-index-available"]')).not.toBeNull();
-    usePluginUpdateStore.setState({ indexOffers: {} });
+    act(() => {
+      usePluginUpdateStore.setState({ indexOffers: {} });
+    });
   });
 
   it("renders identity, extension points, and permissions", () => {
@@ -136,7 +140,7 @@ describe("PluginDetailPanel (#1997)", () => {
     expect(text).toContain("create and manage terminal sessions");
   });
 
-  it("shows Disable for an enabled plugin and dispatches it", () => {
+  it("shows Disable for an enabled plugin and dispatches it", async () => {
     const disablePlugin = vi.fn(() => Promise.resolve());
     useAppStore.setState({ plugins: [plugin("active")], disablePlugin });
     render();
@@ -144,22 +148,26 @@ describe("PluginDetailPanel (#1997)", () => {
     const btn = container.querySelector('[data-testid="plugin-action-disable"]');
     expect(btn).not.toBeNull();
     expect(container.querySelector('[data-testid="plugin-action-enable"]')).toBeNull();
-    act(() => btn!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await act(async () => {
+      btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
     expect(disablePlugin).toHaveBeenCalledWith("k8s");
   });
 
-  it("shows Enable for a disabled plugin and dispatches it", () => {
+  it("shows Enable for a disabled plugin and dispatches it", async () => {
     const enablePlugin = vi.fn(() => Promise.resolve());
     useAppStore.setState({ plugins: [plugin("disabled")], enablePlugin });
     render();
 
     const btn = container.querySelector('[data-testid="plugin-action-enable"]');
     expect(btn).not.toBeNull();
-    act(() => btn!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await act(async () => {
+      btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
     expect(enablePlugin).toHaveBeenCalledWith("k8s");
   });
 
-  it("shows Retry and the error callout for a failed plugin", () => {
+  it("shows Retry and the error callout for a failed plugin", async () => {
     const enablePlugin = vi.fn(() => Promise.resolve());
     useAppStore.setState({ plugins: [plugin("error")], enablePlugin });
     render();
@@ -169,7 +177,9 @@ describe("PluginDetailPanel (#1997)", () => {
     );
     const btn = container.querySelector('[data-testid="plugin-action-retry"]');
     expect(btn).not.toBeNull();
-    act(() => btn!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await act(async () => {
+      btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
     expect(enablePlugin).toHaveBeenCalledWith("k8s");
   });
 
@@ -189,7 +199,7 @@ describe("PluginDetailPanel (#1997)", () => {
     expect(container.querySelector('[data-testid="plugin-action-settings"]')).not.toBeNull();
   });
 
-  it("deep-links the Settings… action into the Plugins settings category for this plugin", () => {
+  it("deep-links the Settings… action into the Plugins settings category for this plugin", async () => {
     const openSettingsTab = vi.fn();
     useAppStore.setState({
       plugins: [
@@ -200,7 +210,9 @@ describe("PluginDetailPanel (#1997)", () => {
     render();
 
     const btn = container.querySelector('[data-testid="plugin-action-settings"]');
-    act(() => btn!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await act(async () => {
+      btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
     expect(openSettingsTab).toHaveBeenCalledWith({ category: "plugins", pluginId: "k8s" });
   });
 
