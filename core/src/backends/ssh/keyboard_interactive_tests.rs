@@ -400,3 +400,74 @@ fn answer_debug_is_redacted() {
     let s = format!("{a:?}");
     assert!(!s.contains("topsecret"), "{s}");
 }
+
+// ── Unattended connects (#3527) ───────────────────────────────────
+
+/// An unattended connect never prompts: an OTP round fails fast with the typed
+/// `InteractionRequired`, and the prompter is never shown anything.
+#[tokio::test]
+async fn unattended_otp_round_is_refused_without_prompting() {
+    let rounds = vec![Round::new(
+        vec![("Verification code: ", false)],
+        vec!["123"],
+    )];
+    let (mut session, observed) = connect(script(rounds)).await;
+    let prompter = ScriptedPrompter::new(vec![Some(vec!["123"])]);
+
+    let err = crate::backends::ssh::unattended::run_unattended(run_keyboard_interactive(
+        &mut session,
+        &ctx(Some("hunter2")),
+        KiMode::Explicit,
+        Some(&prompter),
+    ))
+    .await
+    .expect_err("refused");
+
+    assert_eq!(
+        err.connect_failure_kind(),
+        Some(crate::errors::ConnectFailureKind::InteractionRequired),
+        "got {err:?}"
+    );
+    assert!(prompter.seen().is_empty(), "no prompt may be shown");
+    assert!(observed.lock().unwrap().responses.is_empty());
+}
+
+/// A password fallback round the saved password can answer still succeeds
+/// unattended — only a round that would need the user is refused.
+#[tokio::test]
+async fn unattended_saved_password_round_is_still_auto_answered() {
+    let rounds = vec![Round::new(vec![("Password: ", false)], vec!["hunter2"])];
+    let (mut session, _observed) = connect(script(rounds)).await;
+    let prompter = ScriptedPrompter::new(vec![]);
+
+    crate::backends::ssh::unattended::run_unattended(run_keyboard_interactive(
+        &mut session,
+        &ctx(Some("hunter2")),
+        KiMode::PasswordFallback,
+        Some(&prompter),
+    ))
+    .await
+    .expect("authenticated with the saved password");
+    assert!(prompter.seen().is_empty());
+}
+
+/// Without a prompter (headless), an unattended connect is still refused with
+/// the typed kind rather than the untyped "no prompt is available" error.
+#[tokio::test]
+async fn unattended_refusal_is_typed_even_without_a_prompter() {
+    let rounds = vec![Round::new(vec![("Token: ", false)], vec!["1"])];
+    let (mut session, _observed) = connect(script(rounds)).await;
+
+    let err = crate::backends::ssh::unattended::run_unattended(run_keyboard_interactive(
+        &mut session,
+        &ctx(None),
+        KiMode::SecondFactor,
+        None,
+    ))
+    .await
+    .expect_err("refused");
+    assert_eq!(
+        err.connect_failure_kind(),
+        Some(crate::errors::ConnectFailureKind::InteractionRequired)
+    );
+}

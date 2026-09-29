@@ -13,6 +13,7 @@ vi.mock("@/services/scheduleApi", () => ({
   onSchedulesChanged: vi.fn(() => Promise.resolve(() => {})),
 }));
 vi.mock("@/store/scheduledRuns", () => ({ executeScheduledRun: mocks.executeScheduledRun }));
+vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ label: "main" }) }));
 
 import { handleScheduleFire } from "./useScheduledRuns";
 import type { ScheduleFire } from "@/types/schedule";
@@ -38,8 +39,29 @@ describe("handleScheduleFire (PROD-043)", () => {
     mocks.reportScheduleRun.mockResolvedValue(undefined);
     await handleScheduleFire(fire);
     expect(mocks.ackScheduleRun).toHaveBeenCalledWith("tok");
-    expect(mocks.executeScheduledRun).toHaveBeenCalledWith(fire, expect.any(Object));
+    expect(mocks.executeScheduledRun).toHaveBeenCalledWith(fire, expect.any(Object), {
+      connectMissing: false,
+    });
     expect(mocks.reportScheduleRun).toHaveBeenCalledWith("tok", report);
+  });
+
+  it("connects missing targets only in the window the fire names (#3527)", async () => {
+    mocks.executeScheduledRun.mockResolvedValue({ outcome: "completed", targetsRun: 1 });
+    mocks.reportScheduleRun.mockResolvedValue(undefined);
+
+    await handleScheduleFire({ ...fire, connectWindow: "main" });
+    expect(mocks.executeScheduledRun).toHaveBeenLastCalledWith(
+      expect.objectContaining({ connectWindow: "main" }),
+      expect.any(Object),
+      { connectMissing: true }
+    );
+
+    await handleScheduleFire({ ...fire, connectWindow: "aux-1" });
+    expect(mocks.executeScheduledRun).toHaveBeenLastCalledWith(
+      expect.objectContaining({ connectWindow: "aux-1" }),
+      expect.any(Object),
+      { connectMissing: false }
+    );
   });
 
   it("swallows a failed report (logged, never thrown)", async () => {
