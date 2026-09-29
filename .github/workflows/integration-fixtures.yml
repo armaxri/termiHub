@@ -167,6 +167,22 @@ jobs:
           sudo apt-get install -y libasound2-dev
           ./scripts/build-rdp-sidecar.sh
 
+      - name: Build the Docker fixture images
+        # Bounded retry (#2768): the image builds fetch from Ubuntu/Debian apt
+        # mirrors, and a transient mirror outage used to red unrelated PRs. The
+        # Dockerfiles already retry apt itself; this retries the whole build up to
+        # 3 times (cached layers make a retry cheap) before failing the job.
+        run: |
+          for attempt in 1 2 3; do
+            docker compose -f tests/docker/docker-compose.yml \
+              --profile stress --profile fault --profile network \
+              --profile ftp --profile vnc --profile rdp \
+              build && exit 0
+            echo "::warning::fixture image build failed (attempt $attempt/3)"
+            sleep $((attempt * 15))
+          done
+          exit 1
+
       - name: Bring up the Docker fixtures
         # `--wait` blocks until every container is healthy — viable because the
         # healthchecks were fixed to probe via bash /dev/tcp instead of an

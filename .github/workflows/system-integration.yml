@@ -328,8 +328,16 @@ jobs:
         # need them — the agent image must be staged by the harness first. The
         # macOS/Windows runners have no usable Linux Docker daemon, so their
         # fixture-backed suites self-skip instead (see the header note).
+        # Bounded retry (#2768): a transient apt-mirror outage during the image
+        # build is retried up to 3 times (cached layers make a retry cheap).
         if: runner.os == 'Linux'
         run: |
+          for attempt in 1 2 3; do
+            docker compose -f tests/docker/docker-compose.yml build && break
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            echo "::warning::fixture image build failed (attempt $attempt/3)"
+            sleep $((attempt * 15))
+          done
           docker compose -f tests/docker/docker-compose.yml up -d --build
 
       - name: Run the integration lane (Linux, headless via Xvfb)
