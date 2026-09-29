@@ -153,6 +153,10 @@ jobs:
           workspaces: |
             . -> target
             rdp-sidecar -> target
+          # Reader/writer split (#3328): this lane also runs on PRs (path filter);
+          # those restore the develop/main cache but never save, so PR caches
+          # don't evict the shared ones. Nightly/dispatch runs on main write it.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Build the RDP sidecar
         # core/tests/rdp.rs drives the real `termihub-rdp-helper` (#3609). It is
@@ -311,6 +315,9 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Reader/writer split (#3328); see the fixture job above.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Run the native-sshd SSH/SFTP suites
         # bash on every OS (Git Bash on Windows, where the fixture script hands

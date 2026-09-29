@@ -159,7 +159,7 @@ jobs:
 
       - name: Get version from tag
         id: get_version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
       - name: Generate changelog
         id: changelog
@@ -408,7 +408,8 @@ jobs:
           mkdir "$MOUNT"
 
           hdiutil attach "$DMG" -mountpoint "$MOUNT" -nobrowse -quiet
-          APP_NAME=$(ls "$MOUNT" | grep '\.app$' | head -n 1)
+          APP_PATH=$(find "$MOUNT" -mindepth 1 -maxdepth 1 -name '*.app' | head -n 1)
+          APP_NAME=$(basename "$APP_PATH")
           ditto "$MOUNT/$APP_NAME" "$WORKDIR/$APP_NAME"
           hdiutil detach "$MOUNT" -quiet
 
@@ -472,7 +473,7 @@ jobs:
         shell: bash
         run: |
           # Find the built installer/bundle
-          ARTIFACT=$(find target/${{ matrix.rust_target }}/release/bundle/${{ matrix.bundle_path }} -name "*${{ matrix.file_ext }}" | head -n 1)
+          ARTIFACT=$(find "target/${{ matrix.rust_target }}/release/bundle/${{ matrix.bundle_path }}" -name "*${{ matrix.file_ext }}" | head -n 1)
 
           if [ -z "$ARTIFACT" ]; then
             echo "Error: No artifact found!"
@@ -483,8 +484,8 @@ jobs:
           FILENAME="termiHub-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}${{ matrix.file_ext }}"
           mv "$ARTIFACT" "$FILENAME"
 
-          echo "artifact_path=$FILENAME" >> $GITHUB_OUTPUT
-          echo "artifact_name=$FILENAME" >> $GITHUB_OUTPUT
+          echo "artifact_path=$FILENAME" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=$FILENAME" >> "$GITHUB_OUTPUT"
 
       - name: Upload release asset
         run: gh release upload "v${{ needs.create-release.outputs.version }}" "${{ steps.find_artifact.outputs.artifact_path }}"
