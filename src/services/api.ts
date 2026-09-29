@@ -2520,9 +2520,11 @@ export async function listProcesses(sessionId: string): Promise<ProcessInfo[]> {
 /**
  * Terminate a process on the session's host (PROD-0028).
  *
- * Targets the exact `pid` with `signal` (SIGTERM or SIGKILL only). Rejects with a
- * typed, human-readable error on failure (no such process, permission denied,
- * unsupported backend) — never silently.
+ * Targets the exact `pid` with `signal` (one of the named {@link KillSignal}s,
+ * #3209). Rejects with a typed, human-readable error on failure (no such
+ * process, permission denied, unsupported backend, or a signal the host cannot
+ * deliver — e.g. anything but TERM/KILL for a Windows local process) — never
+ * silently.
  */
 export async function killProcess(
   sessionId: string,

@@ -1,28 +1,33 @@
 #!/usr/bin/env node
-// Advisory bundle-size report for the built frontend `dist/` (audit finding
-// TOOL-013). Measures the total on-disk size of the Vite build output and
-// compares it against a GENEROUS budget picked well above the current build so
-// it only speaks up on a large regression, never on normal growth.
+// Frontend bundle-size budget for the built `dist/` (audit findings TOOL-013,
+// CI-012; #3757). Measures the total on-disk size of the Vite build output and
+// compares it against a GENEROUS budget picked well above the current build, so
+// only a large regression trips it, never normal growth.
 //
-// This is REPORT-ONLY: it always exits 0. It never gates the build — the CI
-// step that runs it is additionally `continue-on-error`. A red bundle-size
-// check would be misleading; a large regression instead shows up as a loud
-// "OVER BUDGET" line in the CI step summary for a human to weigh.
+// Over budget, it prints an `::error` annotation and exits 1. The CI job that
+// runs it is post-merge only (#3325), so an over-budget bundle reds develop's
+// push run of Code Quality, which the coordinator watches, instead of blocking
+// a PR. Within budget, it exits 0. A missing `dist/` also exits 0: the build
+// failure that caused it is owned by the real build lanes.
 //
-// Run `pnpm build` first so `dist/` exists; then `pnpm size`.
+// Usage:
+//   pnpm build && pnpm size
+//   node scripts/internal/bundle-size.mjs [--dist <dir>] [--budget-mib <n>]
+// `--dist` and `--budget-mib` exist for tests and dry runs of the alarm path.
 import { readdirSync, statSync, existsSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMainModule } from "./is-main-module.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const distDir = join(repoRoot, "dist");
+const MIB = 1024 * 1024;
 
 // Budget: current dist is ~34 MiB (measured 2026-09-19). 48 MiB sits ~40% above
 // that, so routine additions stay green and only a large regression trips it.
-const BUDGET_BYTES = 48 * 1024 * 1024;
+export const BUDGET_BYTES = 48 * MIB;
 
 /** Recursively sum the byte size of every file under `dir`. */
-function dirSize(dir) {
+export function dirSize(dir) {
   let total = 0;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
@@ -36,26 +41,82 @@ function dirSize(dir) {
 }
 
 function mib(bytes) {
-  return (bytes / (1024 * 1024)).toFixed(2);
+  return (bytes / MIB).toFixed(2);
 }
 
-if (!existsSync(distDir)) {
-  console.log("dist/ not found — run `pnpm build` first. Skipping bundle-size report (advisory).");
-  process.exit(0);
+/**
+ * Grade a measured size against the budget.
+ * @param {number} total bytes in dist/
+ * @param {number} budget budget in bytes
+ * @returns {{ok: boolean, lines: string[], annotation: string | null}}
+ */
+export function evaluate(total, budget) {
+  const ok = total <= budget;
+  const lines = [
+    "## Bundle size",
+    "",
+    `dist/ total: ${mib(total)} MiB`,
+    `budget:      ${mib(budget)} MiB`,
+    ok
+      ? `status:      OK (${mib(budget - total)} MiB headroom)`
+      : `status:      OVER BUDGET by ${mib(total - budget)} MiB — find the size regression`,
+  ];
+  const annotation = ok
+    ? null
+    : `::error title=Bundle over budget::dist/ is ${mib(total)} MiB, over the ` +
+      `${mib(budget)} MiB budget by ${mib(total - budget)} MiB. Find the size ` +
+      "regression, or raise BUDGET_BYTES in scripts/internal/bundle-size.mjs if the " +
+      "growth is intended.";
+  return { ok, lines, annotation };
 }
 
-const total = dirSize(distDir);
-const overBudget = total > BUDGET_BYTES;
+/** Parse `--dist <dir>` and `--budget-mib <n>`. */
+export function parseArgs(argv) {
+  const opts = { dist: join(repoRoot, "dist"), budget: BUDGET_BYTES };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    const value = argv[i + 1];
+    if (arg === "--dist" && value !== undefined) {
+      opts.dist = resolve(value);
+      i++;
+    } else if (arg === "--budget-mib" && value !== undefined) {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) throw new Error(`invalid --budget-mib: ${value}`);
+      opts.budget = n * MIB;
+      i++;
+    } else {
+      throw new Error(`unknown or incomplete argument: ${arg}`);
+    }
+  }
+  return opts;
+}
 
-console.log("## Bundle size (advisory)");
-console.log("");
-console.log(`dist/ total: ${mib(total)} MiB`);
-console.log(`budget:      ${mib(BUDGET_BYTES)} MiB`);
-console.log(
-  overBudget
-    ? `status:      OVER BUDGET by ${mib(total - BUDGET_BYTES)} MiB — review for a size regression (advisory, non-blocking)`
-    : `status:      OK (${mib(BUDGET_BYTES - total)} MiB headroom)`
-);
+/**
+ * CLI entry. The report goes to stdout (CI appends it to the step summary);
+ * the `::error` annotation goes to stderr so it reaches the log, where the
+ * runner turns it into an annotation.
+ * @returns {number} exit code
+ */
+export function main(argv) {
+  let opts;
+  try {
+    opts = parseArgs(argv);
+  } catch (err) {
+    console.error(err.message);
+    return 2;
+  }
+  if (!existsSync(opts.dist)) {
+    console.log(
+      `${opts.dist} not found — run \`pnpm build\` first. Skipping the bundle-size check.`
+    );
+    return 0;
+  }
+  const { ok, lines, annotation } = evaluate(dirSize(opts.dist), opts.budget);
+  for (const line of lines) console.log(line);
+  if (annotation) console.error(annotation);
+  return ok ? 0 : 1;
+}
 
-// Always succeed: advisory report, never a gate.
-process.exit(0);
+if (isMainModule(import.meta.url)) {
+  process.exit(main(process.argv.slice(2)));
+}

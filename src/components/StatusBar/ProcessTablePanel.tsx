@@ -4,11 +4,23 @@ import { Modal } from "@/components/ui/Modal";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { RadioGroup } from "@/components/ui/RadioGroup";
+import { Select, SelectItem } from "@/components/ui/Select";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { toast } from "@/components/ui/Toast";
 import { listProcesses, killProcess } from "@/services/api";
 import type { KillSignal, ProcessInfo } from "@/types/monitoring";
+import { t, tf } from "@/i18n/catalog";
 import { frontendLog } from "@/utils/frontendLog";
+import { getPlatform } from "@/utils/platform";
+import {
+  DEFAULT_KILL_SIGNAL,
+  KILL_SIGNALS,
+  isDestructiveSignal,
+  isSignalAvailable,
+  isTerminateOnlyHost,
+  signalName,
+  signalOptionLabel,
+} from "./killSignals";
 import "./StatusBar.css";
 
 /** Props for {@link ProcessTablePanel}. */
@@ -21,6 +33,12 @@ export interface ProcessTablePanelProps {
   host: string | null;
   /** Terminal session id whose host's processes are listed / killed. */
   sessionId: string;
+  /**
+   * Connection type of the monitored session (e.g. `"local"`, `"ssh"`), or
+   * `null` when unknown. A local session on a Windows desktop can only
+   * terminate processes, so the signal menu is limited there (#3209).
+   */
+  connectionType?: string | null;
 }
 
 /** Auto-refresh cadence while the table is visible (ms) — a separate, on-demand
@@ -30,25 +48,29 @@ const PROCESS_REFRESH_INTERVAL_MS = 5000;
 /** Which column the table is sorted by. */
 type SortKey = "cpu" | "mem";
 
-/** Human-readable signal label for a {@link KillSignal}. */
-function signalLabel(signal: KillSignal): string {
-  return signal === "kill" ? "SIGKILL" : "SIGTERM";
-}
-
 /**
  * The process table (PROD-0028): the top processes on the active session's host
  * by CPU, with a mandatory-confirm kill action.
  *
  * Reads on open and auto-refreshes every {@link PROCESS_REFRESH_INTERVAL_MS}
  * **only while open** — the interval is torn down when the panel closes, so it
- * never competes with the always-on 2s stats sampling. A kill is never fired by
+ * never competes with the always-on 2s stats sampling. A signal is never sent by
  * a refresh: it requires an explicit {@link ConfirmDialog} confirmation that
- * shows the exact pid + process name and the chosen signal (SIGTERM/SIGKILL).
+ * shows the exact pid + process name and the chosen signal. The row's kill
+ * button preselects SIGTERM; the dialog's signal menu offers the full common
+ * set (#3209), with an explicit warning for the destructive SIGKILL / SIGSTOP
+ * and only terminate/kill for a local session on Windows.
  *
  * Composed from the shared {@link Modal}, {@link Button}, {@link ConfirmDialog},
- * and {@link RadioGroup} primitives.
+ * {@link Select}, and {@link Tooltip} primitives.
  */
-export function ProcessTablePanel({ open, onOpenChange, host, sessionId }: ProcessTablePanelProps) {
+export function ProcessTablePanel({
+  open,
+  onOpenChange,
+  host,
+  sessionId,
+  connectionType = null,
+}: ProcessTablePanelProps) {
   const [processes, setProcesses] = useState<ProcessInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +79,8 @@ export function ProcessTablePanel({ open, onOpenChange, host, sessionId }: Proce
   // The process pending kill confirmation (`null` when no confirm is open). The
   // kill never fires until the ConfirmDialog is explicitly confirmed.
   const [killTarget, setKillTarget] = useState<ProcessInfo | null>(null);
-  const [killSignal, setKillSignal] = useState<KillSignal>("term");
+  const [killSignal, setKillSignal] = useState<KillSignal>(DEFAULT_KILL_SIGNAL);
+  const terminateOnly = isTerminateOnlyHost(connectionType, getPlatform());
 
   const refresh = useCallback(
     async (initial: boolean) => {
@@ -112,7 +135,7 @@ export function ProcessTablePanel({ open, onOpenChange, host, sessionId }: Proce
     const { pid, name } = killTarget;
     const signal = killSignal;
     await killProcess(sessionId, pid, signal);
-    toast.success(`Sent ${signalLabel(signal)} to ${name} (pid ${pid})`);
+    toast.success(tf("process.kill.sent", { signal: signalName(signal), name, pid }));
     setKillTarget(null);
     // Reflect the kill promptly rather than waiting for the next tick.
     void refresh(false);
@@ -220,7 +243,7 @@ export function ProcessTablePanel({ open, onOpenChange, host, sessionId }: Proce
                       aria-label={`Kill ${p.name} (pid ${p.pid})`}
                       icon={<Skull size={14} />}
                       onClick={() => {
-                        setKillSignal("term");
+                        setKillSignal(DEFAULT_KILL_SIGNAL);
                         setKillTarget(p);
                       }}
                       data-testid={`process-kill-${p.pid}`}
@@ -236,29 +259,63 @@ export function ProcessTablePanel({ open, onOpenChange, host, sessionId }: Proce
       <ConfirmDialog
         open={killTarget !== null}
         variant="danger"
-        title="Kill process?"
+        title={t("process.kill.title")}
         icon={<Skull size={18} />}
         message={
           killTarget
-            ? `Send ${signalLabel(killSignal)} to “${killTarget.name}” (pid ${killTarget.pid})? This cannot be undone.`
+            ? tf("process.kill.message", {
+                signal: signalName(killSignal),
+                name: killTarget.name,
+                pid: killTarget.pid,
+              })
             : ""
         }
-        confirmLabel={killTarget ? `Send ${signalLabel(killSignal)}` : "Kill"}
+        confirmLabel={tf("process.kill.confirm", { signal: signalName(killSignal) })}
         testIdBase="confirm-kill-process"
         onConfirm={confirmKill}
         onCancel={() => setKillTarget(null)}
       >
-        <RadioGroup
-          value={killSignal}
-          onValueChange={(v) => setKillSignal(v as KillSignal)}
-          orientation="horizontal"
-          aria-label="Signal"
-          options={[
-            { value: "term", label: "SIGTERM (graceful)" },
-            { value: "kill", label: "SIGKILL (force)" },
-          ]}
-          data-testid="confirm-kill-process-signal"
-        />
+        <div className="process-kill-signal">
+          <Tooltip content={t("process.kill.windowsOnly")} side="top" disabled={!terminateOnly}>
+            <Select
+              value={killSignal}
+              onChange={(v) => setKillSignal(v as KillSignal)}
+              aria-label={t("process.kill.signalLabel")}
+              data-testid="confirm-kill-process-signal"
+            >
+              {KILL_SIGNALS.map((signal) => (
+                <SelectItem
+                  key={signal}
+                  value={signal}
+                  disabled={!isSignalAvailable(signal, terminateOnly)}
+                >
+                  {signalOptionLabel(signal)}
+                </SelectItem>
+              ))}
+            </Select>
+          </Tooltip>
+          {terminateOnly && (
+            <p
+              className="process-kill-signal__hint"
+              data-testid="confirm-kill-process-windows-hint"
+            >
+              {t("process.kill.windowsOnly")}
+            </p>
+          )}
+          {isDestructiveSignal(killSignal) && (
+            <p
+              className="process-kill-signal__warning"
+              role="alert"
+              data-testid="confirm-kill-process-destructive"
+            >
+              {t(
+                killSignal === "kill"
+                  ? "process.kill.destructive.kill"
+                  : "process.kill.destructive.stop"
+              )}
+            </p>
+          )}
+        </div>
       </ConfirmDialog>
     </>
   );
