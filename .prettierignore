@@ -17,3 +17,7 @@ tests/system/testid-catalog.md
 # Prettier-formatted; the CI staleness gate compares them byte-for-byte, so
 # reformatting them by hand would fight the generator.
 src/types/generated/
+
+# Byte-exact legacy settings.json fixtures (written by serde_json's pretty
+# printer); the round-trip tests compare them byte-for-byte.
+src-tauri/src/connection/testdata/

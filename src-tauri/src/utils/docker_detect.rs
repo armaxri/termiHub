@@ -1,8 +1,13 @@
-use std::process::Command;
+//! Docker / Podman availability and image probes.
+//!
+//! Every probe spawns through [`no_window_command`] so the GUI-subsystem app
+//! never flashes a console window on Windows (#3814).
+
+use termihub_core::util::no_window::no_window_command;
 
 /// Check if Docker is available and running.
 pub fn is_docker_available() -> bool {
-    Command::new("docker")
+    no_window_command("docker")
         .args(["info"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -15,7 +20,7 @@ pub fn is_docker_available() -> bool {
 ///
 /// Filters out images with `<none>` repository or tag.
 pub fn list_docker_images() -> Vec<String> {
-    let output = Command::new("docker")
+    let output = no_window_command("docker")
         .args(["images", "--format", "{{.Repository}}:{{.Tag}}"])
         .output();
 
@@ -31,7 +36,7 @@ pub fn list_docker_images() -> Vec<String> {
 
 /// Check if Podman is available and running.
 pub fn is_podman_available() -> bool {
-    Command::new("podman")
+    no_window_command("podman")
         .args(["info"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -44,7 +49,7 @@ pub fn is_podman_available() -> bool {
 ///
 /// Filters out images with `<none>` repository or tag.
 pub fn list_podman_images() -> Vec<String> {
-    let output = Command::new("podman")
+    let output = no_window_command("podman")
         .args(["images", "--format", "{{.Repository}}:{{.Tag}}"])
         .output();
 

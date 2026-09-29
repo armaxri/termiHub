@@ -5,6 +5,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::{debug, info, warn};
 
 use crate::connection::manager::ConnectionManager;
+use crate::connection::settings::{CredentialStorageMode, SettingsUnion};
 use crate::credential::named::NamedCredentialRegistry;
 use crate::credential::types::{build_status_info, CredentialStoreStatusInfo};
 use crate::credential::{
@@ -526,7 +527,7 @@ pub async fn switch_credential_store(
 
     // Persist the new mode to settings so it survives app restarts.
     let mut settings = connection_manager.get_settings();
-    settings.credential_storage_mode = Some(target_mode.to_settings_str().to_string());
+    settings.credential_storage_mode = CredentialStorageMode::parse(target_mode.to_settings_str());
     if let Err(e) = connection_manager.save_settings(settings) {
         warn!(
             "Failed to persist credential storage mode to settings: {}",

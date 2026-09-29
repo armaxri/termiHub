@@ -17,34 +17,53 @@ use termihub_core::protocol::methods::{
 /// from the agent (with typeId, displayName, icon, schema, capabilities).
 /// We store them as raw JSON values so the desktop acts as a pass-through
 /// to the frontend without needing to parse the nested structure.
+///
+/// The TypeScript DTO is generated from this struct via ts-rs (audit DUP-030,
+/// #3802). `#[serde(default)]` fields are emitted optional because older
+/// agents omit them; `connectionTypes` is typed as the generated
+/// `ConnectionTypeInfo` the entries carry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCapabilities {
+    #[cfg_attr(
+        test,
+        ts(type = "Array<import(\"./ConnectionTypeInfo\").ConnectionTypeInfo>")
+    )]
     pub connection_types: Vec<Value>,
     pub max_sessions: u32,
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
     pub available_shells: Vec<String>,
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
     pub available_serial_ports: Vec<String>,
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub docker_available: bool,
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
     pub available_docker_images: Vec<String>,
     /// Whether the remote system supports `/proc`-based monitoring.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub monitoring_supported: bool,
     /// Whether the agent streams tool runs (`tool.start` / `tool.cancel` with
     /// `tool.event` / `tool.done` notifications, #3353). `false` for older agents,
     /// which only offer the collect-and-return `tool.run`.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub tool_streaming: bool,
     /// Whether the agent serves an agent-hosted embedded server's access log
     /// and detailed stats (`embedded_server.activity`, #3453). `false` for older
     /// agents, whose hosted servers show "not supported by this agent version".
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub embedded_server_activity: bool,
     /// Agent binary version string, e.g. "1.4.2".
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<String>", optional))]
     pub agent_version: String,
 }
 

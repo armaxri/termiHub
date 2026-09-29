@@ -1,0 +1,150 @@
+{
+  "version": "1",
+  "externalConnectionFiles": [
+    {
+      "path": "/home/me/team.json",
+      "enabled": true
+    }
+  ],
+  "defaultUser": "admin",
+  "defaultSshKeyPath": "~/.ssh/id_ed25519",
+  "defaultShell": "zsh",
+  "theme": "custom:ocean",
+  "customThemes": [
+    {
+      "baseTheme": "dark",
+      "colors": {
+        "bg": "#001122"
+      },
+      "id": "ocean",
+      "name": "Ocean"
+    }
+  ],
+  "fontFamily": "JetBrains Mono",
+  "fontSize": 13,
+  "lineHeight": 1.25,
+  "defaultHorizontalScrolling": false,
+  "scrollbackBuffer": 5000,
+  "cursorStyle": "bar",
+  "cursorBlink": true,
+  "screenReaderMode": false,
+  "powerMonitoringEnabled": false,
+  "fileBrowserEnabled": true,
+  "confirmCloseTabOnShortcut": false,
+  "confirmCloseLiveSession": false,
+  "confirmCloseAttachedTab": false,
+  "askOpenSavedFileInTab": false,
+  "warnLargePortScan": false,
+  "warnLargePingSweep": true,
+  "defaultShellIntegration": false,
+  "defaultX11Forwarding": false,
+  "provideXServerAutomatically": true,
+  "stopXServerWhenIdle": false,
+  "restoreLastSessionOnStartup": true,
+  "restoreLastSessionMode": "always",
+  "sessionHistoryEnabled": true,
+  "sessionHistoryLimit": 120,
+  "showRecentSessions": false,
+  "networkToolHistoryEnabled": false,
+  "layout": {
+    "activityBarPosition": "left",
+    "sidebarPosition": "right",
+    "sidebarVisible": true,
+    "statusBarVisible": false,
+    "hiddenActivityBarViews": [
+      "workflows"
+    ],
+    "sidebarView": "files",
+    "sidebarCollapsed": false,
+    "showHiddenFiles": true
+  },
+  "credentialStorageMode": "os_keychain",
+  "credentialAutoLockMinutes": 15,
+  "rightClickBehavior": "quickAction",
+  "defaultLineEnding": "crlf",
+  "keybindingOverrides": [
+    {
+      "action": "new-tab",
+      "key": "Ctrl+Alt+T"
+    }
+  ],
+  "terminalKeyPassthrough": false,
+  "editorShortcutDelegation": true,
+  "fileLanguageMappings": {
+    "Jenkinsfile": "groovy"
+  },
+  "installedLanguagePackages": [
+    "zig",
+    "astro"
+  ],
+  "customLanguageGrammars": [
+    {
+      "id": "my-lang",
+      "name": "My Lang",
+      "grammar": {
+        "patterns": [],
+        "scopeName": "source.my"
+      }
+    }
+  ],
+  "experimentalFeaturesEnabled": true,
+  "frontendPluginsEnabled": false,
+  "pluginUpdateCheckEnabled": true,
+  "pluginIndexUrl": "https://plugins.example.com/index.json",
+  "updates": {
+    "autoCheck": false,
+    "lastCheckTime": "2026-09-01T10:00:00Z",
+    "skippedVersion": "0.2.0"
+  },
+  "serialPortScanPrefixes": [
+    {
+      "prefix": "ttyUSB",
+      "enabled": true,
+      "builtIn": true
+    },
+    {
+      "prefix": "ttyXR",
+      "enabled": false,
+      "builtIn": false
+    }
+  ],
+  "shellIntegration": {
+    "entries": [],
+    "fallback": "systemDefaultShell",
+    "openInNewWindow": true,
+    "registered": false,
+    "linuxFileManagers": {
+      "nautilus": true,
+      "kde": false,
+      "thunar": false
+    },
+    "firstLaunchBannerDismissed": true
+  },
+  "syntaxHighlighting": {
+    "enabled": true,
+    "rules": [
+      {
+        "color": "red",
+        "pattern": "ERROR"
+      }
+    ]
+  },
+  "workflowLocalProcessEnabled": true,
+  "workflowLocalProcessAllowlist": [
+    "/usr/bin/make"
+  ],
+  "fileLogLevel": "debug",
+  "showCrashReportNotice": false,
+  "broadcastGroups": [
+    {
+      "connectionIds": [
+        "Work/web-1",
+        "Work/web-2"
+      ],
+      "id": "g1",
+      "name": "Web"
+    }
+  ],
+  "terminalCommandDecorations": false,
+  "terminalInlineImages": true
+}

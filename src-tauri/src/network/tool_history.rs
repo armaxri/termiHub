@@ -18,6 +18,8 @@ use crate::run_location::RunLocation;
 /// The network tool a run belongs to. The kebab-case names are exactly the
 /// frontend `NetworkTool` ids, so the JSON shape matches the TypeScript type.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "kebab-case")]
 pub enum NetworkHistoryTool {
     /// ICMP/TCP ping.
@@ -39,6 +41,8 @@ pub enum NetworkHistoryTool {
 /// The terminal state a recorded run ended in. Mirrors the frontend
 /// `DiagnosticStatus` terminal values.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "kebab-case")]
 pub enum NetworkRunStatus {
     /// The run finished normally.
@@ -52,20 +56,26 @@ pub enum NetworkRunStatus {
 /// A run's results as a plain table — the same columns the tool's CSV export
 /// uses — so the history view renders and exports every tool the same way.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkRunResult {
     /// Column headers.
     pub columns: Vec<String>,
     /// Row cells (strings, numbers, booleans or null), one inner vec per row.
+    #[cfg_attr(test, ts(type = "Array<Array<import(\"../network\").NetworkRunCell>>"))]
     pub rows: Vec<Vec<serde_json::Value>>,
     /// How many rows the run actually produced. Larger than `rows.len()` when
     /// the stored rows were trimmed to the per-run size cap.
     #[serde(default)]
+    #[cfg_attr(test, ts(type = "number"))]
     pub total_rows: u64,
 }
 
 /// One recorded, finished network-tool run.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkToolRun {
     /// Unique identifier for this record.
@@ -75,6 +85,7 @@ pub struct NetworkToolRun {
     /// The tool's input parameters (host, ports, interval, …) — opaque to the
     /// backend, used by the frontend to show and re-run the invocation.
     #[serde(default)]
+    #[cfg_attr(test, ts(type = "Record<string, string | number | boolean | null>"))]
     pub params: serde_json::Map<String, serde_json::Value>,
     /// Where the tool ran: this computer or a named agent.
     #[serde(default)]
@@ -90,10 +101,12 @@ pub struct NetworkToolRun {
     pub summary: String,
     /// Failure reason for an [`NetworkRunStatus::Error`] run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub error: Option<String>,
     /// The (possibly trimmed) result table; absent for tools with no rows
     /// (Wake-on-LAN) or a run that failed before producing any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub result: Option<NetworkRunResult>,
 }
 
