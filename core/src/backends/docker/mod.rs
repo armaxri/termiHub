@@ -217,6 +217,15 @@ impl Docker {
     }
 }
 
+impl Docker {
+    /// Full id of the container backing the active session, or `None` while
+    /// disconnected. Lets a caller address the exact container this session
+    /// created or attached to (e.g. a test's guaranteed cleanup, #3888).
+    pub fn container_id(&self) -> Option<&str> {
+        self.state.as_ref().map(|s| s.container_id.as_str())
+    }
+}
+
 impl Default for Docker {
     fn default() -> Self {
         Self::new()
@@ -262,7 +271,15 @@ fn podman_socket_uri() -> Option<String> {
 ///   which never happened in practice.)
 /// - `Podman`: connects directly to the Podman socket and verifies it is
 ///   reachable.
-async fn connect_to_runtime(runtime: &ContainerRuntime) -> Result<bollard::Docker, SessionError> {
+///
+/// Public so anything that must observe *the same daemon a session reaches* —
+/// notably the live integration tests (#3888) — resolves the endpoint through
+/// this one function instead of re-deriving it (a bare
+/// `connect_with_local_defaults()` ignores the Docker CLI context and, on a
+/// multi-runtime host, silently reaches a different daemon).
+pub async fn connect_to_runtime(
+    runtime: &ContainerRuntime,
+) -> Result<bollard::Docker, SessionError> {
     match runtime {
         ContainerRuntime::Docker => connect_docker().await,
         ContainerRuntime::Auto => connect_auto().await,
@@ -396,10 +413,60 @@ fn connect_via_uri(uri: &str) -> Result<bollard::Docker, SessionError> {
         )));
     }
 
-    // Fall back to local defaults for other URI schemes (e.g. http)
-    bollard::Docker::connect_with_local_defaults().map_err(|e| {
-        SessionError::SpawnFailed(format!("Failed to connect to container runtime: {e}"))
-    })
+    let docker_host = std::env::var("DOCKER_HOST").ok();
+    match non_socket_transport(uri, docker_host.as_deref()) {
+        NonSocketTransport::Http => {
+            bollard::Docker::connect_with_http(uri, 120, bollard::API_DEFAULT_VERSION).map_err(
+                |e| {
+                    SessionError::SpawnFailed(format!(
+                        "Failed to connect to container runtime at {uri}: {e}"
+                    ))
+                },
+            )
+        }
+        NonSocketTransport::LocalDefaults => bollard::Docker::connect_with_local_defaults()
+            .map_err(|e| {
+                SessionError::SpawnFailed(format!("Failed to connect to container runtime: {e}"))
+            }),
+        NonSocketTransport::Unsupported => Err(SessionError::SpawnFailed(format!(
+            "Unsupported container endpoint {uri}: only unix://, npipe://, tcp:// and http:// \
+             endpoints are supported. Switch the Docker CLI context (`docker context use`) or \
+             set DOCKER_HOST to a supported endpoint."
+        ))),
+    }
+}
+
+/// How [`connect_via_uri`] reaches an endpoint that is not a Unix socket or
+/// named pipe.
+#[derive(Debug, PartialEq, Eq)]
+enum NonSocketTransport {
+    /// Plain-HTTP Docker API (`tcp://` / `http://`), connected to **this** URI.
+    Http,
+    /// The URI *is* `$DOCKER_HOST`, which bollard's local defaults read
+    /// themselves (including its TLS handling) — so they reach the same daemon.
+    LocalDefaults,
+    /// No transport can reach this URI.
+    Unsupported,
+}
+
+/// Pure transport decision for a non-socket endpoint URI (#3888).
+///
+/// The old code sent every such URI to `connect_with_local_defaults()`. That
+/// only reaches the right daemon when the URI came from `$DOCKER_HOST`: a
+/// `tcp://` endpoint resolved from the active **Docker CLI context** (or an
+/// `ssh://` `CONTAINER_HOST`) silently landed on the platform default socket —
+/// on a multi-runtime macOS host, a different daemon (Podman). Now a
+/// `tcp://`/`http://` URI is connected to directly, `$DOCKER_HOST` keeps
+/// bollard's own handling, and anything else fails loudly instead of quietly
+/// reaching another daemon.
+fn non_socket_transport(uri: &str, docker_host: Option<&str>) -> NonSocketTransport {
+    if docker_host.is_some_and(|host| host == uri) {
+        return NonSocketTransport::LocalDefaults;
+    }
+    if uri.starts_with("tcp://") || uri.starts_with("http://") {
+        return NonSocketTransport::Http;
+    }
+    NonSocketTransport::Unsupported
 }
 
 /// Parse settings JSON into a `DockerConfig`.
@@ -1394,6 +1461,50 @@ impl ConnectionType for Docker {
 
 #[cfg(test)]
 mod tests {
+    // --- Non-socket endpoint transport (`non_socket_transport`, #3888) -------
+
+    #[test]
+    fn context_tcp_endpoint_connects_to_that_endpoint() {
+        // A tcp:// endpoint from the active Docker CLI context (no DOCKER_HOST)
+        // must be reached directly, never via the platform default socket.
+        assert_eq!(
+            non_socket_transport("tcp://192.0.2.10:2375", None),
+            NonSocketTransport::Http
+        );
+        assert_eq!(
+            non_socket_transport("http://192.0.2.10:2375", Some("unix:///x.sock")),
+            NonSocketTransport::Http
+        );
+    }
+
+    #[test]
+    fn docker_host_endpoint_keeps_bollard_local_defaults() {
+        // bollard's local defaults read DOCKER_HOST themselves (incl. TLS), so
+        // an endpoint that *is* DOCKER_HOST reaches the same daemon that way.
+        assert_eq!(
+            non_socket_transport("tcp://192.0.2.10:2376", Some("tcp://192.0.2.10:2376")),
+            NonSocketTransport::LocalDefaults
+        );
+        assert_eq!(
+            non_socket_transport("ssh://user@host", Some("ssh://user@host")),
+            NonSocketTransport::LocalDefaults
+        );
+    }
+
+    #[test]
+    fn unreachable_scheme_fails_instead_of_using_default_socket() {
+        // An ssh:// context/CONTAINER_HOST endpoint used to fall through to the
+        // platform default socket — silently a different daemon.
+        assert_eq!(
+            non_socket_transport("ssh://user@host", None),
+            NonSocketTransport::Unsupported
+        );
+        assert_eq!(
+            non_socket_transport("ssh://user@host", Some("tcp://other:2375")),
+            NonSocketTransport::Unsupported
+        );
+    }
+
     use super::*;
     use crate::config::ContainerRuntime;
     use crate::connection::validate_settings;

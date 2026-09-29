@@ -9,31 +9,27 @@
 //!
 //! The session execs `python3` (the only interactive binary the
 //! `gcr.io/distroless/python3-debian12` image ships) into an already-running
-//! container. Requires a reachable daemon — the same one bollard resolves
-//! (`DOCKER_HOST`, else `/var/run/docker.sock`), see `docker_spawn.rs` for why
-//! the `docker` CLI is not used — and pulls the image on first run. Skips
-//! gracefully when either is unavailable, so it is safe in CI without Docker.
+//! container. Requires a reachable daemon — resolved through the backend's own
+//! `connect_to_runtime`, so the fixture container lands on the daemon the
+//! session reaches (see `support/container.rs`, #3888) — and pulls the image on
+//! first run. Skips gracefully when either is unavailable, so it is safe in CI
+//! without Docker. The fixture container is removed even when an assertion
+//! panics.
+
+mod support;
 
 use std::time::Duration;
 
-use bollard::container::{
-    Config, CreateContainerOptions, RemoveContainerOptions, StartContainerOptions,
-};
+use bollard::container::{Config, CreateContainerOptions, StartContainerOptions};
 use bollard::image::CreateImageOptions;
 use futures_util::StreamExt;
+use support::container::{runtime_client, CleanupGuard};
 use termihub_core::backends::docker::Docker;
 use termihub_core::connection::ConnectionType;
 use termihub_core::monitoring::{StatsMetric, StatsSource};
 
 const DISTROLESS: &str = "gcr.io/distroless/python3-debian12:latest";
 const ALPINE: &str = "alpine:3";
-
-/// A reachable client for the daemon the backend's `Auto` runtime reaches.
-async fn observation_client() -> Option<bollard::Docker> {
-    let client = bollard::Docker::connect_with_local_defaults().ok()?;
-    client.ping().await.ok()?;
-    Some(client)
-}
 
 /// Make sure `image` is present, pulling it if needed.
 async fn ensure_image(client: &bollard::Docker, image: &str) -> bool {
@@ -54,12 +50,20 @@ async fn ensure_image(client: &bollard::Docker, image: &str) -> bool {
 }
 
 /// Start a long-lived container of `image` running `cmd`; return its name.
-async fn start_container(client: &bollard::Docker, image: &str, cmd: Vec<&str>) -> Option<String> {
+/// The name is registered with `cleanup` before creation, so even a
+/// created-but-not-started container is removed.
+async fn start_container(
+    client: &bollard::Docker,
+    cleanup: &mut CleanupGuard,
+    image: &str,
+    cmd: Vec<&str>,
+) -> Option<String> {
     let name = format!(
         "termihub-mon-fallback-{}-{}",
         std::process::id(),
         image.len()
     );
+    cleanup.container(&name);
     let config = Config {
         image: Some(image),
         cmd: Some(cmd),
@@ -77,14 +81,6 @@ async fn start_container(client: &bollard::Docker, image: &str, cmd: Vec<&str>) 
     Some(name)
 }
 
-async fn remove(client: &bollard::Docker, name: &str) {
-    let options = RemoveContainerOptions {
-        force: true,
-        ..Default::default()
-    };
-    let _ = client.remove_container(name, Some(options)).await;
-}
-
 /// Start a container of `image`, open an existing-container session exec-ing
 /// `shell`, and return two monitoring samples — or `None` to skip when no
 /// usable daemon/image is available.
@@ -93,7 +89,7 @@ async fn sample_container(
     cmd: Vec<&str>,
     shell: &str,
 ) -> Option<Vec<termihub_core::monitoring::SystemStats>> {
-    let Some(client) = observation_client().await else {
+    let Some(client) = runtime_client().await else {
         eprintln!("SKIPPED: no reachable container daemon (docker stats fallback, #3202)");
         return None;
     };
@@ -101,7 +97,8 @@ async fn sample_container(
         eprintln!("SKIPPED: could not pull {image} (docker stats fallback, #3202)");
         return None;
     }
-    let Some(name) = start_container(&client, image, cmd).await else {
+    let mut cleanup = CleanupGuard::default();
+    let Some(name) = start_container(&client, &mut cleanup, image, cmd).await else {
         eprintln!("SKIPPED: could not start a {image} container (#3202)");
         return None;
     };
@@ -112,17 +109,10 @@ async fn sample_container(
         "existingContainer": name,
         "shell": shell,
     });
+    // The fixture container and the session share one endpoint resolution, so
+    // a failure here is real (no more "backend reached a different daemon").
     if let Err(e) = docker.connect(settings).await {
-        remove(&client, &name).await;
-        // Without `DOCKER_HOST`, bollard's local default socket and the Docker
-        // CLI context the backend resolves can be different daemons (Podman vs
-        // Docker Desktop on macOS): the container then is not found there.
-        let msg = e.to_string();
-        if msg.contains("not found") {
-            eprintln!("SKIPPED: backend reached a different daemon ({msg}); set DOCKER_HOST");
-            return None;
-        }
-        panic!("connect to the {image} container failed: {msg}");
+        panic!("connect to the {image} container failed: {e}");
     }
 
     let provider = docker.monitoring().expect("monitoring provider");
@@ -138,7 +128,7 @@ async fn sample_container(
         provider.unsubscribe().await.expect("unsubscribe");
     }
     let _ = docker.disconnect().await;
-    remove(&client, &name).await;
+    drop(cleanup);
     Some(samples)
 }
 
