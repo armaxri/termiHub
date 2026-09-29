@@ -167,6 +167,16 @@ fn lock_is_released_when_the_holder_crashes() {
     child.kill().unwrap();
     child.wait().unwrap();
 
-    // The OS released the lock with the dead process.
-    acquire(dir.path()).expect("lock is free once the holder crashed");
+    // The OS released the lock with the dead process. Windows documents the
+    // release after termination as prompt but not synchronous, so poll briefly.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match acquire(dir.path()) {
+            Ok(_) => break,
+            Err(DataDirLockError::Held { .. }) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => panic!("lock not released after the holder crashed: {e}"),
+        }
+    }
 }

@@ -17,8 +17,9 @@
 //!   folders use *different* `data/` directories and legitimately do not clobber
 //!   one another. A global lock keyed on the bundle id would wrongly block them,
 //!   so [`should_enforce_single_instance`] returns `false` for portable mode even
-//!   in a release build. (The narrow residual — two portable copies sharing one
-//!   `data/` dir — is left for a dedicated data-dir file lock.)
+//!   in a release build. The narrow residual — the same portable folder launched
+//!   twice, sharing one `data/` dir — is closed by the per-directory OS lock in
+//!   [`super::data_dir_lock`] (#3100).
 
 use std::path::{Path, PathBuf};
 

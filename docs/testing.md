@@ -5033,6 +5033,20 @@ Argument parsing and forwarding are unit-tested (`utils::single_instance::forwar
 2. Confirm **both instances run simultaneously** (they use separate `data/` dirs
    and legitimately do not clobber, so single-instance must **not** block them).
 
+**Same portable folder launched twice is refused (portable, #3100).**
+
+The lock itself — acquire, contention, per-folder scoping, and release when a
+holder process is killed — is unit-tested (`utils::data_dir_lock::tests`); the
+dialog is manual.
+
+1. In one portable folder (containing a `data/` directory), launch termiHub.
+   Confirm `data/.termihub.lock` exists.
+2. Launch the **same** portable copy again. Confirm an error dialog
+   "termiHub is already running" names the `data/` folder, and after **OK** the
+   second process exits without opening a window; the first is untouched.
+3. Force-quit the first instance (Activity Monitor / Task Manager / `kill -9`),
+   then launch again → it starts normally (the stale lock file does not block).
+
 **Dev builds are not locked.**
 
 1. From two checkouts, launch `./scripts/dev.sh` in each. Confirm **both run** —

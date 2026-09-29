@@ -489,6 +489,13 @@ pub fn run() -> anyhow::Result<()> {
         (Ok(()), None) => unreachable!("the writer opened, so a log path resolves"),
     }
 
+    // Portable mode: take the exclusive lock on the `data/` dir before any store
+    // is built, so the same portable folder cannot run twice and clobber its own
+    // config/session files (#3100). A contended lock shows an error and exits
+    // here; the OS releases the lock when this process exits or crashes. Bound
+    // for the whole of `run()` (the builder below runs the app to completion).
+    let _data_dir_lock = utils::data_dir_lock::lock_portable_data_dir_or_exit();
+
     // Durable panic reporting (OBS-002). Installed right after the subscriber is
     // live so a crash lands in the ring buffer and the synchronous file sink
     // before the process unwinds — the highest-value post-mortem event, which
