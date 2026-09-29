@@ -66,7 +66,8 @@ use crate::service::AgentServiceRegistry;
 use crate::session::agent_forward::ClientForwardStreams;
 use crate::session::definitions::{Connection, ConnectionStoreApi, Folder};
 use crate::session::manager::{
-    DeferredUpdateError, DeferredUpdateOutcome, SessionCreateError, SessionManagerApi, MAX_SESSIONS,
+    DeferredUpdateError, DeferredUpdateOutcome, SessionCreateError, SessionManagerApi,
+    SessionProcessError, MAX_SESSIONS,
 };
 use crate::tunnel::AgentTunnelRegistry;
 use crate::update::{
@@ -130,7 +131,11 @@ use termihub_core::monitoring::{LocalProcessManager, ProcessError, ProcessManage
 /// (#3089): an agent-hosted session whose server rejected the credentials, so
 /// the desktop stops and offers credential re-entry instead of retrying. An
 /// older desktop does not know the value and ignores it (generic error).
-const AGENT_PROTOCOL_VERSION: &str = "0.19.0";
+/// Bumped to 0.20.0 for the additive `capabilities.sessionProcesses` flag
+/// (#3210): `connection.processes.*` now serve agent-hosted SSH, Docker and WSL
+/// sessions. An older agent omits the flag and the desktop tells the user to
+/// update it; an older desktop ignores the flag.
+const AGENT_PROTOCOL_VERSION: &str = "0.20.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -897,6 +902,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 tool_streaming,
                 keyboard_interactive_prompts: ki_prompts,
                 embedded_server_activity: true,
+                session_processes: true,
             },
         })
     })?;
@@ -1559,14 +1565,18 @@ async fn resolve_file_browser(
     }
 }
 
-/// Resolve the [`ProcessManager`] for a process operation (PROD-0028).
+/// Resolve the [`ProcessManager`] for a process operation (PROD-0028, #3210).
 ///
-/// Mirrors [`resolve_file_browser`]'s current limitation: the agent supports
-/// process listing / kill for its own host (local / shell sessions and the
-/// `connection_id == None` self case) via [`LocalProcessManager`]. Agent-hosted
-/// SSH/Docker/WSL sessions are not yet reachable as `ConnectionType` here, so
-/// they return [`errors::PROCESS_NOT_SUPPORTED`] — the same scope the file
-/// browser has. Extending this to remote agent sessions is a follow-up.
+/// - No `connection_id`: the agent host itself.
+/// - A session of this client: that session's own context, via
+///   [`SessionManagerApi::session_process_manager`] — the agent host for a
+///   local session, the remote host / container / distribution for an SSH,
+///   Docker or WSL session. The session must be running and held by this
+///   client: one it detached from or another desktop took over is refused with
+///   [`errors::SESSION_HELD_BY_OTHER`], so a client can never reach processes
+///   through a session id that is not its own.
+/// - Otherwise a saved local/shell connection resolves to the agent host; any
+///   other id is not found (it never falls back to the agent host).
 async fn resolve_process_manager(
     session_manager: &Arc<dyn SessionManagerApi>,
     connection_store: &Arc<dyn ConnectionStoreApi>,
@@ -1577,14 +1587,24 @@ async fn resolve_process_manager(
         Some(id) => id,
     };
 
-    if let Some(type_id) = session_manager.get_session_type_id(&id).await {
-        return match normalize_type_id(&type_id) {
-            "local" => Ok(Arc::new(LocalProcessManager::new())),
-            other => Err(rpc_err(
-                errors::PROCESS_NOT_SUPPORTED,
-                format!("Process management is not yet supported for '{other}' sessions"),
-            )),
-        };
+    match session_manager.session_process_manager(&id).await {
+        Ok(manager) => return Ok(manager),
+        Err(SessionProcessError::Unknown) => {}
+        Err(SessionProcessError::Exited) => {
+            return Err(rpc_err(
+                errors::SESSION_NOT_RUNNING,
+                format!("Session {id} is not running"),
+            ))
+        }
+        Err(SessionProcessError::HeldElsewhere) => {
+            return Err(rpc_err(
+                errors::SESSION_HELD_BY_OTHER,
+                format!("Session {id} is not held by this client; attach it first"),
+            ))
+        }
+        Err(SessionProcessError::Unsupported(message)) => {
+            return Err(rpc_err(errors::PROCESS_NOT_SUPPORTED, message))
+        }
     }
 
     let connection = connection_store.get(&id).await.ok_or_else(|| {
@@ -1598,7 +1618,7 @@ async fn resolve_process_manager(
         "local" | "shell" => Ok(Arc::new(LocalProcessManager::new())),
         other => Err(rpc_err(
             errors::PROCESS_NOT_SUPPORTED,
-            format!("Process management is not yet supported for '{other}' connections"),
+            format!("Process management needs an open session for '{other}' connections"),
         )),
     }
 }
@@ -3560,10 +3580,11 @@ mod tests {
     /// `docker.list_containers`, 0.15.0 adds its Compose fields, 0.16.0 the
     /// `connection.create` `correlation_id`, 0.17.0 `agent.forward.connect`,
     /// 0.18.0 the `connection.create` error's `data.connect_failure`, and
-    /// 0.19.0 its `auth_failed` kind (#3089).
+    /// 0.19.0 its `auth_failed` kind (#3089), and 0.20.0 the
+    /// `sessionProcesses` capability (#3210).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.19.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.20.0");
     }
 
     // ── agent.forward.connect (desktop port forward, #3241) ────────
@@ -6132,6 +6153,23 @@ mod tests {
                 .map(|s| s.type_id.clone())
         }
 
+        async fn session_process_manager(
+            &self,
+            session_id: &str,
+        ) -> Result<
+            Arc<dyn ProcessManager + Send + Sync>,
+            crate::session::manager::SessionProcessError,
+        > {
+            use crate::session::manager::SessionProcessError;
+            match self.get_session_type_id(session_id).await.as_deref() {
+                None => Err(SessionProcessError::Unknown),
+                Some("local" | "shell") => Ok(Arc::new(LocalProcessManager::new())),
+                Some(other) => Err(SessionProcessError::Unsupported(format!(
+                    "no processes for '{other}' in the mock"
+                ))),
+            }
+        }
+
         async fn close(&self, session_id: &str) -> bool {
             let mut sessions = self.sessions.lock().await;
             let before = sessions.len();
@@ -6447,4 +6485,7 @@ mod tests {
 
     /// `connection.create` correlation id on the session's log span (#3085).
     mod correlation_tests;
+
+    /// `connection.processes.*` for agent-hosted sessions (#3210).
+    mod process_tests;
 }

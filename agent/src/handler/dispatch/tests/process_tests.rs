@@ -98,7 +98,7 @@ impl SessionManagerApi for ProcessSessionManager {
             .unwrap()
             .get(session_id)
             .cloned()
-            .unwrap_or(Err(SessionProcessError::NotFound))
+            .unwrap_or(Err(SessionProcessError::Unknown))
     }
     async fn close(&self, _session_id: &str) -> bool {
         false
@@ -270,7 +270,7 @@ async fn an_unknown_signal_name_is_invalid_params() {
 #[tokio::test]
 async fn a_session_held_by_another_client_is_refused() {
     let sessions = ProcessSessionManager::new();
-    sessions.script("theirs", Err(SessionProcessError::NotHeld));
+    sessions.script("theirs", Err(SessionProcessError::HeldElsewhere));
     let handler = handler_with(sessions).await;
 
     let list = dispatch(
@@ -280,7 +280,11 @@ async fn a_session_held_by_another_client_is_refused() {
         2,
     )
     .await;
-    assert_eq!(list["error"]["code"], errors::SESSION_HELD_BY_OTHER, "{list}");
+    assert_eq!(
+        list["error"]["code"],
+        errors::SESSION_HELD_BY_OTHER,
+        "{list}"
+    );
 
     let kill = dispatch(
         &handler,
@@ -289,13 +293,17 @@ async fn a_session_held_by_another_client_is_refused() {
         3,
     )
     .await;
-    assert_eq!(kill["error"]["code"], errors::SESSION_HELD_BY_OTHER, "{kill}");
+    assert_eq!(
+        kill["error"]["code"],
+        errors::SESSION_HELD_BY_OTHER,
+        "{kill}"
+    );
 }
 
 #[tokio::test]
 async fn an_exited_session_is_not_running() {
     let sessions = ProcessSessionManager::new();
-    sessions.script("gone", Err(SessionProcessError::NotRunning));
+    sessions.script("gone", Err(SessionProcessError::Exited));
     let handler = handler_with(sessions).await;
     let r = dispatch(
         &handler,
@@ -312,7 +320,7 @@ async fn a_backend_without_processes_is_not_supported() {
     let sessions = ProcessSessionManager::new();
     sessions.script(
         "serial",
-        Err(SessionProcessError::NotSupported("no processes".into())),
+        Err(SessionProcessError::Unsupported("no processes".into())),
     );
     let handler = handler_with(sessions).await;
     let r = dispatch(

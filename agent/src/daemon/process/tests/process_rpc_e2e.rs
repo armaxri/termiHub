@@ -36,7 +36,9 @@ impl ProcessManager for FakeProcesses {
 
     async fn kill_process(&self, pid: u32, signal: KillSignal) -> Result<(), ProcessError> {
         if pid == 1 {
-            return Err(ProcessError::PermissionDenied("operation not permitted".into()));
+            return Err(ProcessError::PermissionDenied(
+                "operation not permitted".into(),
+            ));
         }
         self.kills.lock().unwrap().push((pid, signal));
         Ok(())

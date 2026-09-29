@@ -286,6 +286,12 @@ pub struct Capabilities {
     /// [`EMBEDDED_SERVER_CLEAR_ACTIVITY`] (#3453). Absent (read as `false`) on
     /// older agents, whose hosted servers show no log on the desktop.
     pub embedded_server_activity: bool,
+    /// Whether [`CONNECTION_PROCESSES_LIST`] / [`CONNECTION_PROCESSES_KILL`]
+    /// serve agent-hosted SSH, Docker and WSL sessions — listing and killing
+    /// inside that session's remote host or container through its own backend
+    /// (protocol 0.20.0, #3210). Absent (read as `false`) on older agents,
+    /// which manage processes of local sessions only.
+    pub session_processes: bool,
 }
 
 /// One prompt of a [`KbdInteractivePromptNotification`] round.

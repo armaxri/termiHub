@@ -30,6 +30,7 @@ use crate::session::types::{
 use crate::transport::JsonRpcOutputSink;
 use termihub_core::buffer::DEFAULT_BUFFER_CAPACITY;
 use termihub_core::connection::{ConnectionTypeRegistry, OutputReceiver};
+use termihub_core::monitoring::{LocalProcessManager, ProcessManager};
 use termihub_core::session::pump::{run_output_pump, PumpEnd, PumpOptions};
 use termihub_core::session::registry::{Reservations, Sessions};
 use termihub_core::session::traits::OutputSink;
@@ -115,6 +116,19 @@ pub trait SessionManagerApi: Send + Sync + 'static {
     /// Return the type ID for an active session.
     async fn get_session_type_id(&self, session_id: &str) -> Option<String>;
 
+    /// The process manager for a session this worker holds (#3210).
+    ///
+    /// A list / kill only ever targets the session's own context: a local
+    /// session the agent host, an SSH / Docker / WSL session its remote host,
+    /// container or distribution (through the backend's own process manager,
+    /// reached via the session daemon). Refused unless the session exists, is
+    /// running and is held by this worker — never detached, and never taken
+    /// over by another desktop (single-attach, SM-003).
+    async fn session_process_manager(
+        &self,
+        session_id: &str,
+    ) -> Result<Arc<dyn ProcessManager + Send + Sync>, SessionProcessError>;
+
     /// Close a session; returns `true` if found and removed.
     async fn close(&self, session_id: &str) -> bool;
 
@@ -178,6 +192,20 @@ pub trait SessionManagerApi: Send + Sync + 'static {
         host: &str,
         port: u16,
     ) -> Result<(), String>;
+}
+
+/// Why [`SessionManagerApi::session_process_manager`] refused a session (#3210).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionProcessError {
+    /// This worker has no session with that id.
+    Unknown,
+    /// The session's backend has exited.
+    Exited,
+    /// The session exists but this worker does not hold it: it is detached,
+    /// or another desktop took it over.
+    HeldElsewhere,
+    /// The session's backend cannot list or kill processes; the text says why.
+    Unsupported(String),
 }
 
 /// Errors that can occur during session creation.
@@ -1325,6 +1353,56 @@ impl SessionManager {
         sessions.get(session_id).map(|s| s.type_id.clone())
     }
 
+    /// See [`SessionManagerApi::session_process_manager`] (#3210).
+    ///
+    /// The returned handle is cloned out under the `sessions` lock and used
+    /// after it is released, so a slow list / kill never blocks other sessions.
+    pub async fn session_process_manager(
+        &self,
+        session_id: &str,
+    ) -> Result<Arc<dyn ProcessManager + Send + Sync>, SessionProcessError> {
+        let mut sessions = self.sessions.lock().await;
+        settle_exited(&mut sessions);
+        let info = sessions
+            .get(session_id)
+            .ok_or(SessionProcessError::Unknown)?;
+        if info.status != SessionStatus::Running {
+            return Err(SessionProcessError::Exited);
+        }
+        if let SessionBackend::Daemon(client) = &info.backend {
+            if client.is_evicted() {
+                return Err(SessionProcessError::HeldElsewhere);
+            }
+        }
+        if !info.attached {
+            return Err(SessionProcessError::HeldElsewhere);
+        }
+        // A local session runs on the agent host itself, so its processes are
+        // the agent host's (as before #3210, and independent of the daemon's age).
+        if matches!(info.type_id.as_str(), "local" | "shell") {
+            return Ok(Arc::new(LocalProcessManager::new()));
+        }
+        let unsupported = || {
+            format!(
+                "Process management is not supported for '{}' sessions",
+                info.type_id
+            )
+        };
+        match &info.backend {
+            SessionBackend::Daemon(client) => client.process_manager().ok_or_else(|| {
+                SessionProcessError::Unsupported(format!(
+                    "{}, or the session was started by an older agent — reopen it",
+                    unsupported()
+                ))
+            }),
+            SessionBackend::InProcess { connection, .. } => connection
+                .process_manager()
+                .ok_or_else(|| SessionProcessError::Unsupported(unsupported())),
+            #[cfg(test)]
+            SessionBackend::Stub { .. } => Err(SessionProcessError::Unsupported(unsupported())),
+        }
+    }
+
     /// Close (remove) a session by ID.
     ///
     /// Disconnects the backend before removing the session.
@@ -2209,6 +2287,13 @@ impl SessionManagerApi for SessionManager {
 
     async fn get_session_type_id(&self, session_id: &str) -> Option<String> {
         SessionManager::get_session_type_id(self, session_id).await
+    }
+
+    async fn session_process_manager(
+        &self,
+        session_id: &str,
+    ) -> Result<Arc<dyn ProcessManager + Send + Sync>, SessionProcessError> {
+        SessionManager::session_process_manager(self, session_id).await
     }
 
     async fn close(&self, session_id: &str) -> bool {
@@ -4783,4 +4868,7 @@ mod tests {
 
     /// The desktop's correlation id reaches the daemon launch (#3782).
     mod correlation_tests;
+
+    /// Resolving a held session's process manager (#3210).
+    mod process_tests;
 }

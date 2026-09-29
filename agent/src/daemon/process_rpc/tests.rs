@@ -244,8 +244,7 @@ fn support_flag_defaults_off() {
 /// A manager whose daemon connection is gone fails honestly instead of hanging.
 #[tokio::test]
 async fn a_detached_writer_fails_list_and_kill() {
-    let writer: crate::daemon::client::DaemonWriterHandle =
-        Arc::new(tokio::sync::Mutex::new(None));
+    let writer: crate::daemon::client::DaemonWriterHandle = Arc::new(tokio::sync::Mutex::new(None));
     let manager = DaemonProcessManager::new(writer, Arc::new(ProcessChannel::default()));
     assert!(matches!(
         manager.list_processes().await,

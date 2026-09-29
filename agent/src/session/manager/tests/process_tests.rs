@@ -42,7 +42,7 @@ async fn an_unknown_session_is_not_found() {
     let mgr = manager();
     assert!(matches!(
         mgr.session_process_manager("no-such-session").await,
-        Err(SessionProcessError::NotFound)
+        Err(SessionProcessError::Unknown)
     ));
 }
 
@@ -55,14 +55,14 @@ async fn a_session_not_attached_by_this_worker_is_not_held() {
     let s = mgr.create("ssh", "t".into(), ssh(), None).await.unwrap();
     assert!(matches!(
         mgr.session_process_manager(&s.id).await,
-        Err(SessionProcessError::NotHeld)
+        Err(SessionProcessError::HeldElsewhere)
     ));
 
     mgr.attach(&s.id).await.unwrap();
     mgr.detach(&s.id).await.unwrap();
     assert!(matches!(
         mgr.session_process_manager(&s.id).await,
-        Err(SessionProcessError::NotHeld)
+        Err(SessionProcessError::HeldElsewhere)
     ));
 }
 
@@ -87,7 +87,7 @@ async fn an_attached_session_without_a_process_backend_is_not_supported() {
     mgr.attach(&s.id).await.unwrap();
     assert!(matches!(
         mgr.session_process_manager(&s.id).await,
-        Err(SessionProcessError::NotSupported(_))
+        Err(SessionProcessError::Unsupported(_))
     ));
 }
 
@@ -105,6 +105,6 @@ async fn an_exited_session_is_not_running() {
         .status = SessionStatus::Exited;
     assert!(matches!(
         mgr.session_process_manager(&s.id).await,
-        Err(SessionProcessError::NotRunning)
+        Err(SessionProcessError::Exited)
     ));
 }

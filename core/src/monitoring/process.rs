@@ -291,6 +291,13 @@ pub enum ProcessError {
     /// Killing failed for a reason other than the specific cases above.
     #[error("failed to kill process {pid}: {message}")]
     KillFailed { pid: u32, message: String },
+
+    /// The session runs on a remote agent too old to manage processes in it:
+    /// an agent-hosted SSH / Docker / WSL session on an agent that predates
+    /// protocol 0.20.0 (#3210). The fix is on the user's side — update the
+    /// agent — so the UI shows that instead of a generic failure.
+    #[error("this session's agent is too old to manage its processes; update the agent")]
+    AgentOutdated,
 }
 
 impl ProcessError {
@@ -305,6 +312,7 @@ impl ProcessError {
             ProcessError::ListFailed(_) => "process_list_failed",
             ProcessError::UnsupportedSignal { .. } => "process_signal_not_supported",
             ProcessError::KillFailed { .. } => "process_kill_failed",
+            ProcessError::AgentOutdated => "process_agent_outdated",
         }
     }
 }
@@ -977,10 +985,7 @@ garbage line with too few
             .code(),
             "process_kill_failed"
         );
-        assert_eq!(
-            ProcessError::AgentOutdated.code(),
-            "process_agent_outdated"
-        );
+        assert_eq!(ProcessError::AgentOutdated.code(), "process_agent_outdated");
     }
 
     /// An agent too old to serve agent-hosted sessions (#3210) crosses the IPC

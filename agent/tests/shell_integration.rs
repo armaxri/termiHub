@@ -38,6 +38,8 @@ const MSG_EXITED: u8 = 0x83;
 #[expect(dead_code, reason = "kept so the frame-type table is complete")]
 const MSG_ERROR: u8 = 0x84;
 const MSG_READY: u8 = 0x85;
+/// Optional-feature flags a daemon sends before Ready (#3210).
+const MSG_CAPABILITIES: u8 = 0x88;
 
 const HEADER_SIZE: usize = 5;
 
@@ -253,7 +255,8 @@ async fn connect_and_handshake(
 
     let mut replay_data = Vec::new();
 
-    // The daemon sends BufferReplay followed by Ready on each new connection.
+    // The daemon sends BufferReplay, its capabilities (#3210), then Ready on
+    // each new connection.
     loop {
         let frame = frame_reader
             .next_frame(Duration::from_secs(5))
@@ -268,6 +271,7 @@ async fn connect_and_handshake(
             MSG_READY => {
                 break;
             }
+            MSG_CAPABILITIES => {}
             other => {
                 panic!("Unexpected frame type during handshake: 0x{other:02x}");
             }
