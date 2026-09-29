@@ -611,6 +611,19 @@ impl From<drag::DragResult> for DragOutResult {
     }
 }
 
+/// The `file://` URIs a Linux (GTK) drag-out advertises for `paths`, one per
+/// path, in order.
+///
+/// The `drag` crate's GTK backend builds these as `file://{path}` without any
+/// percent-encoding (#3492).
+#[cfg(unix)]
+pub fn drag_out_uris(paths: &[PathBuf]) -> Vec<String> {
+    paths
+        .iter()
+        .map(|path| format!("file://{}", path.display()))
+        .collect()
+}
+
 /// The drag preview image: the app's 32px icon, embedded so no file lookup can
 /// fail at drag time.
 const DRAG_PREVIEW_PNG: &[u8] = include_bytes!("../../icons/32x32.png");
@@ -1214,6 +1227,65 @@ mod tests {
         assert_eq!(
             DragOutResult::from(drag::DragResult::Cancel),
             DragOutResult::Cancelled
+        );
+    }
+
+    #[cfg(unix)]
+    fn uri(path: &str) -> String {
+        drag_out_uris(&[PathBuf::from(path)]).remove(0)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn drag_out_uris_keep_plain_paths_readable() {
+        assert_eq!(uri("/tmp/dir/a.txt"), "file:///tmp/dir/a.txt");
+        assert_eq!(uri("/tmp/a-b_c.d~e"), "file:///tmp/a-b_c.d~e");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn drag_out_uris_percent_encode_spaces() {
+        assert_eq!(uri("/tmp/my dir/a b.txt"), "file:///tmp/my%20dir/a%20b.txt");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn drag_out_uris_percent_encode_percent_hash_and_question_mark() {
+        // `%` must be encoded first-class, or `100%.txt` would read as a bad escape;
+        // `#` and `?` would otherwise start a URI fragment / query.
+        assert_eq!(uri("/tmp/100%.txt"), "file:///tmp/100%25.txt");
+        assert_eq!(uri("/tmp/#x.txt"), "file:///tmp/%23x.txt");
+        assert_eq!(uri("/tmp/what?.txt"), "file:///tmp/what%3F.txt");
+        assert_eq!(uri("/tmp/%20.txt"), "file:///tmp/%2520.txt");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn drag_out_uris_percent_encode_unicode_as_utf8_bytes() {
+        // `ü` is U+00FC = UTF-8 C3 BC; `日` is U+65E5 = E6 97 A5.
+        assert_eq!(uri("/tmp/ümlaut.txt"), "file:///tmp/%C3%BCmlaut.txt");
+        assert_eq!(uri("/tmp/日.txt"), "file:///tmp/%E6%97%A5.txt");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn drag_out_uris_encode_raw_non_utf8_bytes_losslessly() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let path = PathBuf::from(OsStr::from_bytes(b"/tmp/bad\xff.bin"));
+        assert_eq!(
+            drag_out_uris(&[path]),
+            vec!["file:///tmp/bad%FF.bin".to_string()]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn drag_out_uris_map_every_path_in_order() {
+        let paths = vec![PathBuf::from("/tmp/a b"), PathBuf::from("/tmp/c")];
+        assert_eq!(
+            drag_out_uris(&paths),
+            vec!["file:///tmp/a%20b".to_string(), "file:///tmp/c".to_string()]
         );
     }
 }
