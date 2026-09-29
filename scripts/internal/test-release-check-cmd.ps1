@@ -55,6 +55,16 @@ Set-Location $RepoRoot
 
 $script:Failures = 0
 
+# Run release-check.cmd, streaming each line as it arrives (so a hung or
+# timed-out build still leaves its log) and collecting it for the assertions.
+function Invoke-Raw([string]$Arguments) {
+    Write-Host ""
+    Write-Host ">>>>> release-check.cmd $Arguments"
+    $lines = & cmd.exe /d /c "scripts\release-check.cmd $Arguments" 2>&1 |
+        ForEach-Object { $line = "$_"; Write-Host $line; $line }
+    return [pscustomobject]@{ Code = $LASTEXITCODE; Text = ($lines -join "`n") }
+}
+
 function Invoke-ReleaseCheck {
     param([string]$Section, [hashtable]$Env = @{}, [string[]]$Unset = @())
     $saved = @{}
@@ -64,13 +74,10 @@ function Invoke-ReleaseCheck {
     try {
         foreach ($name in $Unset) { [Environment]::SetEnvironmentVariable($name, $null) }
         foreach ($name in $Env.Keys) { [Environment]::SetEnvironmentVariable($name, $Env[$name]) }
-        $lines = & cmd.exe /d /c "scripts\release-check.cmd --only $Section" 2>&1 |
-            ForEach-Object { "$_" }
-        $code = $LASTEXITCODE
+        return Invoke-Raw "--only $Section"
     } finally {
         foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
     }
-    return [pscustomobject]@{ Code = $code; Text = ($lines -join "`n") }
 }
 
 function Assert-Result {
@@ -81,9 +88,7 @@ function Assert-Result {
         [string[]]$Expect = @(),
         [string[]]$Reject = @()
     )
-    Write-Host ""
     Write-Host "----- $Name (exit $($Result.Code)) -----"
-    Write-Host $Result.Text
     $problems = @()
     if ($Result.Code -ne $ExpectCode) {
         $problems += "exit code $($Result.Code), expected $ExpectCode"
@@ -119,8 +124,7 @@ if ($RealBundle) {
         -Reject @('FAIL:')
 } else {
     # -------------------------------------------------------------------- usage
-    $r = & cmd.exe /d /c 'scripts\release-check.cmd --only bogus' 2>&1 | ForEach-Object { "$_" }
-    Assert-Result 'usage: unknown --only section' ([pscustomobject]@{ Code = $LASTEXITCODE; Text = ($r -join "`n") }) 2 `
+    Assert-Result 'usage: unknown --only section' (Invoke-Raw '--only bogus') 2 `
         -Expect @('error: --only needs one of: integration, markers, bundle')
 
     # ----------------------------------------------------------------- versions
@@ -129,15 +133,12 @@ if ($RealBundle) {
     # '  tauri (' is the drift checker's per-crate line ("ok" or, without
     # node_modules, "skip"): proof it ran rather than exiting 0 silently.
     $version = (Get-Content -Raw package.json | ConvertFrom-Json).version
-    $r = & cmd.exe /d /c 'scripts\release-check.cmd --versions-only' 2>&1 | ForEach-Object { "$_" }
-    Assert-Result 'versions-only' ([pscustomobject]@{ Code = $LASTEXITCODE; Text = ($r -join "`n") }) 0 `
+    Assert-Result 'versions-only' (Invoke-Raw '--versions-only') 0 `
         -Expect @("PASS: All 5 files agree on version $version", '  tauri (', 'RESULT: version checks passed') `
         -Reject @('FAIL:')
-    $r = & cmd.exe /d /c "scripts\release-check.cmd --versions-only --expect-version v$version" 2>&1 | ForEach-Object { "$_" }
-    Assert-Result 'versions-only --expect-version v<ver>' ([pscustomobject]@{ Code = $LASTEXITCODE; Text = ($r -join "`n") }) 0 `
+    Assert-Result 'versions-only --expect-version v<ver>' (Invoke-Raw "--versions-only --expect-version v$version") 0 `
         -Expect @("matches the expected version $version", 'RESULT: version checks passed') -Reject @('FAIL:')
-    $r = & cmd.exe /d /c 'scripts\release-check.cmd --versions-only --expect-version 0.0.0-harness' 2>&1 | ForEach-Object { "$_" }
-    Assert-Result 'versions-only --expect-version mismatch' ([pscustomobject]@{ Code = $LASTEXITCODE; Text = ($r -join "`n") }) 1 `
+    Assert-Result 'versions-only --expect-version mismatch' (Invoke-Raw '--versions-only --expect-version 0.0.0-harness') 1 `
         -Expect @("does not match the expected version '0.0.0-harness'", 'RESULT: version checks FAILED')
 
     # ------------------------------------------------------------------ markers
