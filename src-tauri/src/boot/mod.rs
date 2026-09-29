@@ -1261,41 +1261,6 @@ fn restore_active_workspace(
     });
 }
 
-pub(crate) fn handle_cli_list_workspaces(app: &tauri::App) {
-    // Handle --list-workspaces CLI flag: print workspace list and exit
-    {
-        use tauri_plugin_cli::CliExt;
-        if let Ok(matches) = app.cli().matches() {
-            if let Some(arg) = matches.args.get("list-workspaces") {
-                if arg.occurrences > 0 {
-                    if let Some(mgr) = app.try_state::<workspace::manager::WorkspaceManager>() {
-                        match mgr.get_workspaces() {
-                            Ok(workspaces) if workspaces.is_empty() => {
-                                println!("No workspaces configured.");
-                            }
-                            Ok(workspaces) => {
-                                for ws in &workspaces {
-                                    let desc = ws.description.as_deref().unwrap_or("");
-                                    println!(
-                                        "{}\t{}\t{} tab(s)\t{}",
-                                        ws.id, ws.name, ws.connection_count, desc
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("Error listing workspaces: {e}");
-                            }
-                        }
-                    } else {
-                        eprintln!("Workspace manager not available.");
-                    }
-                    std::process::exit(0);
-                }
-            }
-        }
-    }
-}
-
 pub(crate) fn init_spawn_ipc(app: &tauri::App, pending_spawn: Option<crate::spawn::SpawnRequest>) {
     // Start the spawn IPC rendezvous server (#1364). It accepts
     // SpawnRequests from `termiHub spawn` invocations by other processes
