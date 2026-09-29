@@ -35,6 +35,7 @@ import {
   sessionMkdir,
   sessionReadFile,
   sessionRenameFile,
+  sessionSupportsRemoteCopy,
   sessionSupportsTransferQueue,
   sessionUpload,
   sessionWriteFile,
@@ -77,8 +78,9 @@ export function startSessionUpload(
 }
 
 /**
- * Stream a file between two SFTP-backed sessions as ONE tracked transfer,
- * seeding a single queue row keyed on the destination (PROD-0013).
+ * Stream a file between two sessions (SFTP or Docker at either end) as ONE
+ * tracked transfer, seeding a single queue row keyed on the destination
+ * (PROD-0013, #3586).
  */
 export function startSessionRemoteCopy(
   srcSession: string,
@@ -105,9 +107,11 @@ export interface PasteTransport {
   sourceMode: "local" | "session";
   srcSession: string | null;
   destSession: string;
-  /** The source session is SFTP-backed. */
-  srcSftp: boolean;
-  /** The destination session is SFTP-backed. */
+  /** The source session can stream a remote copy (SFTP or Docker, #3586). */
+  srcRemoteCopy: boolean;
+  /** The destination session can stream a remote copy (SFTP or Docker). */
+  destRemoteCopy: boolean;
+  /** The destination session is SFTP-backed (server-side folder copy). */
   destSftp: boolean;
   /** The destination session drives the rich transfer queue (SFTP/FTP/Docker). */
   destQueueCapable: boolean;
@@ -147,13 +151,13 @@ export async function pasteFileLeg(
       await sessionRenameFile(t.destSession, srcPath, destPath);
       return false;
     }
-    // Cross-session or copy. When BOTH endpoints are SFTP-backed, stream the
+    // Cross-session or copy. When BOTH endpoints can stream (SFTP or Docker),
     // copy directly source→destination through the desktop as ONE tracked
-    // transfer — no local temp file (PROD-0013). A byte-based endpoint
-    // (Docker/FTP/agent) has no SFTP channel, so it keeps the read/write
-    // fallback below.
+    // transfer — no local temp file, no whole-file round trip (PROD-0013,
+    // #3586). An FTP or agent endpoint has no streaming reader/writer for a
+    // remote copy, so it keeps the read/write fallback below.
     let tracked: boolean;
-    if (t.destSftp && t.srcSftp) {
+    if (t.srcRemoteCopy && t.destRemoteCopy) {
       await startSessionRemoteCopy(src, srcPath, t.destSession, destPath, t.pasteId);
       tracked = true;
     } else {
@@ -357,6 +361,14 @@ async function probeSftp(sessionId: string): Promise<boolean> {
 }
 
 /**
+ * Whether a session can be an end of a streamed remote copy (#3586); a failed
+ * probe means it cannot.
+ */
+export async function probeRemoteCopy(sessionId: string): Promise<boolean> {
+  return sessionSupportsRemoteCopy(sessionId).catch(() => false);
+}
+
+/**
  * Continue an interrupted folder paste (#3630): resolve both endpoints to
  * their live sessions and paste the folder again in continue mode, copying
  * only the files the destination does not yet hold completely. Recorded like
@@ -369,9 +381,10 @@ export async function retryInterruptedFolderPaste(paste: InterruptedFolderPaste)
   const local = !paste.source.sessionId;
   const srcSession = local ? null : resolveLiveSession(paste.source);
   if (!local && !srcSession) throw new FolderPasteEndpointUnavailable(paste.source);
-  const [destSftp, srcSftp, destQueueCapable] = await Promise.all([
+  const [destSftp, destRemoteCopy, srcRemoteCopy, destQueueCapable] = await Promise.all([
     probeSftp(destSession),
-    srcSession ? probeSftp(srcSession) : Promise.resolve(false),
+    probeRemoteCopy(destSession),
+    srcSession ? probeRemoteCopy(srcSession) : Promise.resolve(false),
     sessionSupportsTransferQueue(destSession).catch(() => false),
   ]);
   const t: PasteTransport = {
@@ -379,7 +392,8 @@ export async function retryInterruptedFolderPaste(paste: InterruptedFolderPaste)
     sourceMode: local ? "local" : "session",
     srcSession,
     destSession,
-    srcSftp,
+    srcRemoteCopy,
+    destRemoteCopy,
     destSftp,
     destQueueCapable,
     continueExisting: true,
