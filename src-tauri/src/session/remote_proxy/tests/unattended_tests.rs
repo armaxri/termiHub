@@ -31,26 +31,33 @@ async fn unattended_connect_on_a_new_agent_sends_the_flag() {
 
 #[tokio::test]
 async fn unattended_connect_on_an_old_agent_is_refused_as_agent_outdated() {
-    for caps in [Some(false), None] {
-        let mock = mock_agent(caps);
-        let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
-        let err = run_unattended(proxy.connect(ssh_settings()))
-            .await
-            .expect_err("an old agent is never asked to connect unattended");
-        let text = err.to_string();
-        assert!(
-            text.contains("[thub-code:agent_outdated]"),
-            "{caps:?}: {text}"
-        );
-        assert!(
-            text.contains(AGENT_TOO_OLD_FOR_UNATTENDED),
-            "{caps:?}: {text}"
-        );
-        assert!(
-            mock.created_sessions.lock().unwrap().is_empty(),
-            "{caps:?}: nothing was created on the agent"
-        );
-    }
+    let mock = mock_agent(Some(false));
+    let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
+    let err = run_unattended(proxy.connect(ssh_settings()))
+        .await
+        .expect_err("an old agent is never asked to connect unattended");
+    let text = err.to_string();
+    assert!(text.contains("[thub-code:agent_outdated]"), "{text}");
+    assert!(text.contains(AGENT_TOO_OLD_FOR_UNATTENDED), "{text}");
+    assert!(
+        mock.created_sessions.lock().unwrap().is_empty(),
+        "nothing was created on the agent"
+    );
+}
+
+/// With no capabilities known the agent is not connected: refused plainly,
+/// never as "too old", and nothing is sent.
+#[tokio::test]
+async fn unattended_connect_on_a_disconnected_agent_is_refused() {
+    let mock = mock_agent(None);
+    let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
+    let err = run_unattended(proxy.connect(ssh_settings()))
+        .await
+        .expect_err("refused");
+    let text = err.to_string();
+    assert!(text.contains("not connected"), "{text}");
+    assert!(!text.contains("agent_outdated"), "{text}");
+    assert!(mock.created_sessions.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
