@@ -5,7 +5,7 @@
 //! credentials or key auth, and a host key that is already trusted. Whenever
 //! the attended flow would ask the user — an unknown or changed host key, a
 //! keyboard-interactive / one-time-code round — the unattended connect fails
-//! fast with a typed [`ConnectFailureKind`](crate::errors::ConnectFailureKind)
+//! fast with a typed [`ConnectFailureKind`]
 //! instead:
 //!
 //! - an untrusted host key → [`HostKeyUntrusted`](crate::errors::ConnectFailureKind::HostKeyUntrusted);
