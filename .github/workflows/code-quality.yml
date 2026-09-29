@@ -1111,7 +1111,11 @@ jobs:
       - name: Checkout gate script
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          sparse-checkout: scripts/internal/pr-gate.mjs
+          # Keep this list in sync with pr-gate.mjs's local imports: it runs from
+          # this sparse tree, so a missing helper fails the gate (ERR_MODULE_NOT_FOUND).
+          sparse-checkout: |
+            scripts/internal/pr-gate.mjs
+            scripts/internal/is-main-module.mjs
           sparse-checkout-cone-mode: false
 
       - name: Evaluate needed jobs
