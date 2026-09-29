@@ -10,8 +10,8 @@ evidence:
   - src/test/setup.ts:216
   - src/services/api.test.ts:6
   - src/services/api.test.ts:93
-status: partial
-resolution: "#3088, #3830 — every IPC DTO type is now generated from Rust (tsc catches field renames at compile time). Remaining: runtime wire-contract tests - golden fixtures captured from Rust serde round-trips decoded by the TS layer instead of hand-typed invoke mocks"
+status: fixed
+resolution: "#3830, #3838 — all IPC DTO types generated from Rust (#3830) + wire-contract golden fixtures serialized from real Rust command return types with a CI staleness gate, fed as invoke responses to the api.ts wrappers with exact key-set assertions; serde-only changes invisible to tsc now fail tests (#3838)"
 ---
 
 ## What
