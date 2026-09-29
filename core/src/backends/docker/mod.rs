@@ -36,9 +36,11 @@ use crate::files::FileBrowser;
 use crate::monitoring::{
     ExecMonitoringProvider, ExecProcessManager, MonitoringProvider, ProcessManager,
 };
-use crate::session::docker::validate_docker_config;
+use crate::session::docker::{parse_compose_target, validate_docker_config};
 
-pub use self::list::{list_containers, summarize_containers, ContainerInfo};
+pub use self::list::{
+    list_containers, pick_compose_container, summarize_containers, ContainerInfo,
+};
 pub use self::reattach::{
     check_reattach_identity, reattach_transfer_target, short_container_id, ReattachError,
 };
@@ -478,6 +480,7 @@ fn parse_docker_settings(settings: &serde_json::Value) -> DockerConfig {
         runtime,
         container_mode,
         existing_container: opt_str("existingContainer"),
+        compose_service: opt_str("composeService"),
         image: str_field("image"),
         shell: opt_str("shell"),
         cols: 80,
@@ -652,6 +655,10 @@ impl ConnectionType for Docker {
                                         value: "existing".to_string(),
                                         label: "Existing (running) container".to_string(),
                                     },
+                                    SelectOption {
+                                        value: "compose".to_string(),
+                                        label: "Compose service".to_string(),
+                                    },
                                 ],
                             },
                             required: false,
@@ -683,6 +690,31 @@ impl ConnectionType for Docker {
                             visible_when: Some(Condition {
                                 field: "containerMode".to_string(),
                                 equals: serde_json::json!("existing"),
+                            }),
+                        },
+                        SettingsField {
+                            key: "composeService".to_string(),
+                            label: "Compose Service".to_string(),
+                            description: Some(
+                                "Docker Compose service as project/service. Connects to the \
+                                 service's running container, so a recreate or scale change \
+                                 does not break the connection; with several replicas the \
+                                 lowest-numbered running one is used"
+                                    .to_string(),
+                            ),
+                            help_text: None,
+                            // The container picker, in service mode: it offers the
+                            // listed Compose services and stores `project/service`
+                            // (#3784).
+                            field_type: FieldType::DockerContainer,
+                            required: true,
+                            default: None,
+                            placeholder: Some("my-project/web".to_string()),
+                            supports_env_expansion: true,
+                            supports_tilde_expansion: false,
+                            visible_when: Some(Condition {
+                                field: "containerMode".to_string(),
+                                equals: serde_json::json!("compose"),
                             }),
                         },
                         SettingsField {
@@ -1065,6 +1097,22 @@ impl ConnectionType for Docker {
                 // Prefer the resolved full ID; fall back to the user-given name.
                 let container_id = info.id.unwrap_or(name);
                 debug!(container_id = %container_id, "Existing container ready");
+
+                (container_id, false)
+            }
+            ContainerMode::Compose => {
+                // Resolve the Compose service to its running container by label
+                // (#3784). Like `Existing`, the container belongs to the user and
+                // is never created, stopped or removed by us. Validation has
+                // already checked the `project/service` shape.
+                let target = parse_compose_target(config.compose_service.as_deref().unwrap_or(""))?;
+                info!(service = %target, "Resolving Compose service container");
+                let container_id = super::race_connect(
+                    cancel.clone(),
+                    list::resolve_compose_container(&client, &target),
+                )
+                .await?;
+                debug!(container_id = %container_id, service = %target, "Compose container ready");
 
                 (container_id, false)
             }
@@ -1458,6 +1506,7 @@ mod tests {
             vec![
                 "containerMode",
                 "existingContainer",
+                "composeService",
                 "image",
                 "shell",
                 "workingDirectory",
@@ -1479,9 +1528,10 @@ mod tests {
         assert!(!mode.required);
         assert_eq!(mode.default, Some(serde_json::json!("new")));
         if let FieldType::Select { ref options } = mode.field_type {
-            assert_eq!(options.len(), 2);
+            assert_eq!(options.len(), 3);
             assert_eq!(options[0].value, "new");
             assert_eq!(options[1].value, "existing");
+            assert_eq!(options[2].value, "compose");
         } else {
             panic!("expected Select field type for containerMode");
         }
@@ -1505,6 +1555,41 @@ mod tests {
             .expect("existingContainer is conditionally visible");
         assert_eq!(cond.field, "containerMode");
         assert_eq!(cond.equals, serde_json::json!("existing"));
+    }
+
+    #[test]
+    fn schema_compose_service_field_only_visible_for_compose_mode() {
+        let docker = Docker::new();
+        let schema = docker.settings_schema();
+        let field = schema.groups[0]
+            .fields
+            .iter()
+            .find(|f| f.key == "composeService")
+            .expect("composeService field present");
+        assert!(matches!(field.field_type, FieldType::DockerContainer));
+        assert!(field.required);
+        let cond = field.visible_when.as_ref().expect("conditionally visible");
+        assert_eq!(cond.field, "containerMode");
+        assert_eq!(cond.equals, serde_json::json!("compose"));
+    }
+
+    #[test]
+    fn validation_compose_mode_requires_compose_service() {
+        let docker = Docker::new();
+        let schema = docker.settings_schema();
+        let errors = validate_settings(&schema, &serde_json::json!({ "containerMode": "compose" }));
+        assert!(
+            errors.iter().any(|e| e.field == "composeService"),
+            "expected composeService required error: {errors:?}"
+        );
+        let errors = validate_settings(
+            &schema,
+            &serde_json::json!({ "containerMode": "existing", "existingContainer": "x" }),
+        );
+        assert!(
+            !errors.iter().any(|e| e.field == "composeService"),
+            "{errors:?}"
+        );
     }
 
     #[test]
@@ -1870,6 +1955,23 @@ mod tests {
     }
 
     #[test]
+    fn parse_compose_service_settings() {
+        let settings = serde_json::json!({
+            "containerMode": "compose",
+            "composeService": "shop/web",
+        });
+        let config = parse_docker_settings(&settings);
+        assert_eq!(config.container_mode, ContainerMode::Compose);
+        assert_eq!(config.compose_service.as_deref(), Some("shop/web"));
+
+        // Absent / empty is None, and other modes are unaffected.
+        let config = parse_docker_settings(&serde_json::json!({ "image": "alpine" }));
+        assert!(config.compose_service.is_none());
+        let config = parse_docker_settings(&serde_json::json!({ "composeService": "" }));
+        assert!(config.compose_service.is_none());
+    }
+
+    #[test]
     fn parse_empty_existing_container_is_none() {
         let settings = serde_json::json!({
             "containerMode": "existing",
@@ -2068,6 +2170,24 @@ mod tests {
             "expected InvalidConfig, got {result:?}"
         );
         assert!(!docker.is_connected());
+    }
+
+    /// #3784: a malformed Compose target fails validation up front, before any
+    /// runtime contact, with the typed `InvalidConfig` error.
+    #[tokio::test]
+    async fn connect_compose_mode_with_malformed_target_fails_before_runtime() {
+        for settings in [
+            serde_json::json!({ "containerMode": "compose" }),
+            serde_json::json!({ "containerMode": "compose", "composeService": "web" }),
+        ] {
+            let mut docker = Docker::new();
+            let result = docker.connect(settings).await;
+            assert!(
+                matches!(&result, Err(SessionError::InvalidConfig(m)) if m.contains("Compose service")),
+                "expected InvalidConfig, got {result:?}"
+            );
+            assert!(!docker.is_connected());
+        }
     }
 
     /// PROD-016: disconnecting a session that exec'd into a user-owned existing

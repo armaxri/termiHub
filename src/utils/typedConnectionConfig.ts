@@ -112,11 +112,15 @@ export interface DockerConnectionConfigFields {
   /**
    * How the session gets its container: `"new"` (default) creates and runs a
    * fresh container from `image`; `"existing"` execs into the already-running
-   * container named by `existingContainer` (PROD-016).
+   * container named by `existingContainer` (PROD-016); `"compose"` execs into
+   * the running container of the Compose service named by `composeService`
+   * (#3784).
    */
-  containerMode?: "new" | "existing";
+  containerMode?: "new" | "existing" | "compose";
   /** Name or ID of the running container to exec into when `containerMode` is `"existing"`. */
   existingContainer?: string;
+  /** Compose service as `project/service` when `containerMode` is `"compose"` (#3784). */
+  composeService?: string;
   image?: string;
   shell?: string;
   runtime?: string;

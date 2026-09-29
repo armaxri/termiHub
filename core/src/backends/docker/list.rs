@@ -20,7 +20,8 @@ use bollard::container::ListContainersOptions;
 use serde::{Deserialize, Serialize};
 
 use crate::config::ContainerRuntime;
-use crate::errors::SessionError;
+use crate::errors::{ConnectFailureKind, SessionError};
+use crate::session::docker::ComposeTarget;
 
 /// One container as shown in the connection-editor picker.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,6 +76,131 @@ pub fn compose_labels(
             .map(str::to_string)
     };
     (get(COMPOSE_PROJECT_LABEL), get(COMPOSE_SERVICE_LABEL))
+}
+
+/// Label Docker Compose stamps with a container's replica number (`1`, `2`, …).
+pub const COMPOSE_CONTAINER_NUMBER_LABEL: &str = "com.docker.compose.container-number";
+
+/// Pick the container a Compose-service target connects to (#3784).
+///
+/// Only containers whose `com.docker.compose.project` and
+/// `com.docker.compose.service` labels equal the target are considered;
+/// containers without Compose labels never match. Of those, only running
+/// ones qualify. When the service is scaled to several running replicas the
+/// one with the **lowest** `com.docker.compose.container-number` wins
+/// (a missing or non-numeric number sorts last), then the name, then the ID —
+/// so the choice is deterministic and stable across reconnects.
+///
+/// Returns the chosen container's ID.
+///
+/// # Errors
+///
+/// A [`ConnectFailureKind::NotFound`] failure when no container belongs to the
+/// service, or when none of its containers is running.
+pub fn pick_compose_container(
+    raw: &[bollard::models::ContainerSummary],
+    target: &ComposeTarget,
+) -> Result<String, SessionError> {
+    let members: Vec<&bollard::models::ContainerSummary> = raw
+        .iter()
+        .filter(|c| c.id.as_deref().is_some_and(|id| !id.is_empty()))
+        .filter(|c| {
+            let (project, service) = compose_labels(c.labels.as_ref());
+            project.as_deref() == Some(target.project.as_str())
+                && service.as_deref() == Some(target.service.as_str())
+        })
+        .collect();
+    if members.is_empty() {
+        return Err(SessionError::classified(
+            ConnectFailureKind::NotFound,
+            format!("No container belongs to Compose service '{target}'"),
+        ));
+    }
+    let replica = |c: &bollard::models::ContainerSummary| -> u64 {
+        c.labels
+            .as_ref()
+            .and_then(|l| l.get(COMPOSE_CONTAINER_NUMBER_LABEL))
+            .and_then(|n| n.trim().parse::<u64>().ok())
+            .unwrap_or(u64::MAX)
+    };
+    let name = |c: &bollard::models::ContainerSummary| -> String {
+        c.names
+            .as_ref()
+            .and_then(|n| n.first())
+            .map(|n| n.trim_start_matches('/').to_string())
+            .unwrap_or_default()
+    };
+    members
+        .iter()
+        .filter(|c| {
+            c.state
+                .as_deref()
+                .is_some_and(|s| s.eq_ignore_ascii_case("running"))
+        })
+        .min_by(|a, b| {
+            replica(a)
+                .cmp(&replica(b))
+                .then_with(|| name(a).cmp(&name(b)))
+                .then_with(|| a.id.cmp(&b.id))
+        })
+        .and_then(|c| c.id.clone())
+        .ok_or_else(|| {
+            SessionError::classified(
+                ConnectFailureKind::NotFound,
+                format!(
+                    "Compose service '{target}' has no running container ({} stopped)",
+                    members.len()
+                ),
+            )
+        })
+}
+
+/// The container listing a Compose-service resolution needs (#3784) — a seam
+/// so the connect path's resolution is testable without a live daemon.
+#[async_trait::async_trait]
+pub(crate) trait ContainerLister: Sync {
+    /// List every container (running or not) matching the daemon-side
+    /// `label` filters.
+    async fn list_by_labels(
+        &self,
+        labels: Vec<String>,
+    ) -> Result<Vec<bollard::models::ContainerSummary>, SessionError>;
+}
+
+#[async_trait::async_trait]
+impl ContainerLister for bollard::Docker {
+    async fn list_by_labels(
+        &self,
+        labels: Vec<String>,
+    ) -> Result<Vec<bollard::models::ContainerSummary>, SessionError> {
+        let mut filters = HashMap::new();
+        filters.insert("label".to_string(), labels);
+        self.list_containers(Some(ListContainersOptions::<String> {
+            all: true,
+            filters,
+            ..Default::default()
+        }))
+        .await
+        .map_err(|e| SessionError::SpawnFailed(format!("Failed to list containers: {e}")))
+    }
+}
+
+/// Resolve a Compose-service target to its running container's ID (#3784).
+///
+/// Asks the daemon for the service's containers by label, then applies
+/// [`pick_compose_container`] (which re-checks the labels, so a daemon that
+/// ignores the filter still resolves correctly).
+pub(crate) async fn resolve_compose_container(
+    lister: &dyn ContainerLister,
+    target: &ComposeTarget,
+) -> Result<String, SessionError> {
+    let raw = lister
+        .list_by_labels(vec![
+            format!("{COMPOSE_PROJECT_LABEL}={}", target.project),
+            format!("{COMPOSE_SERVICE_LABEL}={}", target.service),
+        ])
+        .await?;
+    pick_compose_container(&raw, target)
 }
 
 /// Wire form for the agent's `docker.list_containers` result (#3424).
@@ -422,5 +548,162 @@ mod tests {
         assert_eq!(info.compose_project, None);
         assert_eq!(info.compose_service, None);
         assert_eq!(info.name, "web");
+    }
+
+    // --- Compose-service resolution (#3784) ---
+
+    fn target(project: &str, service: &str) -> ComposeTarget {
+        ComposeTarget {
+            project: project.into(),
+            service: service.into(),
+        }
+    }
+
+    fn replica(
+        id: &str,
+        project: &str,
+        service: &str,
+        number: &str,
+        state: &str,
+    ) -> ContainerSummary {
+        let mut c = summary(id, &[&format!("/{project}-{service}-{number}")], state);
+        c.labels = Some(labels(&[
+            (COMPOSE_PROJECT_LABEL, project),
+            (COMPOSE_SERVICE_LABEL, service),
+            (COMPOSE_CONTAINER_NUMBER_LABEL, number),
+        ]));
+        c
+    }
+
+    fn not_found(err: SessionError) -> String {
+        assert_eq!(
+            err.connect_failure_kind(),
+            Some(ConnectFailureKind::NotFound),
+            "{err}"
+        );
+        err.to_string()
+    }
+
+    #[test]
+    fn compose_single_running_match() {
+        let raw = vec![
+            summary("plain", &["/web"], "running"),
+            replica("other", "shop", "db", "1", "running"),
+            replica("web1", "shop", "web", "1", "running"),
+        ];
+        assert_eq!(
+            pick_compose_container(&raw, &target("shop", "web")).unwrap(),
+            "web1"
+        );
+    }
+
+    #[test]
+    fn compose_multiple_replicas_pick_lowest_running_number() {
+        let raw = vec![
+            replica("r10", "shop", "web", "10", "running"),
+            replica("r1", "shop", "web", "1", "exited"),
+            replica("r3", "shop", "web", "3", "running"),
+            replica("r2", "shop", "web", "2", "running"),
+        ];
+        // #1 is stopped; of the running ones #2 is the lowest — numerically,
+        // not lexically (10 > 2).
+        assert_eq!(
+            pick_compose_container(&raw, &target("shop", "web")).unwrap(),
+            "r2"
+        );
+        // Order of the listing does not matter.
+        let mut reversed = raw.clone();
+        reversed.reverse();
+        assert_eq!(
+            pick_compose_container(&reversed, &target("shop", "web")).unwrap(),
+            "r2"
+        );
+    }
+
+    #[test]
+    fn compose_missing_number_sorts_last() {
+        let mut unnumbered = replica("u", "shop", "web", "x", "running");
+        unnumbered
+            .labels
+            .as_mut()
+            .unwrap()
+            .remove(COMPOSE_CONTAINER_NUMBER_LABEL);
+        let raw = vec![unnumbered, replica("r5", "shop", "web", "5", "running")];
+        assert_eq!(
+            pick_compose_container(&raw, &target("shop", "web")).unwrap(),
+            "r5"
+        );
+    }
+
+    #[test]
+    fn compose_none_running_is_not_found() {
+        let raw = vec![
+            replica("r1", "shop", "web", "1", "exited"),
+            replica("r2", "shop", "web", "2", "paused"),
+        ];
+        let msg = not_found(pick_compose_container(&raw, &target("shop", "web")).unwrap_err());
+        assert!(
+            msg.contains("shop/web") && msg.contains("no running container"),
+            "{msg}"
+        );
+        assert!(msg.contains("2 stopped"), "{msg}");
+    }
+
+    #[test]
+    fn compose_no_member_is_not_found() {
+        // Containers not started by Compose (no labels) never match, nor does
+        // the same service name in another project.
+        let raw = vec![
+            summary("plain", &["/web"], "running"),
+            replica("x", "other", "web", "1", "running"),
+        ];
+        let msg = not_found(pick_compose_container(&raw, &target("shop", "web")).unwrap_err());
+        assert!(
+            msg.contains("No container belongs to Compose service 'shop/web'"),
+            "{msg}"
+        );
+        let msg = not_found(pick_compose_container(&[], &target("shop", "web")).unwrap_err());
+        assert!(msg.contains("shop/web"), "{msg}");
+    }
+
+    struct FakeLister {
+        raw: Vec<ContainerSummary>,
+        seen: std::sync::Mutex<Vec<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ContainerLister for FakeLister {
+        async fn list_by_labels(
+            &self,
+            labels: Vec<String>,
+        ) -> Result<Vec<ContainerSummary>, SessionError> {
+            self.seen.lock().unwrap().push(labels);
+            Ok(self.raw.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_filters_by_compose_labels_and_picks() {
+        let lister = FakeLister {
+            // The fake ignores the filter, as an old daemon might: the pick
+            // still re-checks the labels.
+            raw: vec![
+                replica("db", "shop", "db", "1", "running"),
+                replica("w2", "shop", "web", "2", "running"),
+                replica("w1", "shop", "web", "1", "running"),
+            ],
+            seen: std::sync::Mutex::new(Vec::new()),
+        };
+        let id = resolve_compose_container(&lister, &target("shop", "web"))
+            .await
+            .unwrap();
+        assert_eq!(id, "w1");
+        assert_eq!(
+            *lister.seen.lock().unwrap(),
+            vec![vec![
+                "com.docker.compose.project=shop".to_string(),
+                "com.docker.compose.service=web".to_string(),
+            ]]
+        );
     }
 }
