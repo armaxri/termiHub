@@ -14,7 +14,8 @@ export type SettingsCategory =
   | "editor"
   | "plugins"
   | "backup"
-  | "portable";
+  | "portable"
+  | "updates";
 
 export interface CategoryDefinition {
   id: SettingsCategory;
@@ -46,8 +47,17 @@ export const CATEGORIES: CategoryDefinition[] = [
   { id: "plugins", label: "Plugins" },
   { id: "backup", label: "Backup & Restore" },
   { id: "portable", label: "Portable Mode" },
+  { id: "updates", label: "Updates" },
 ];
 
+/**
+ * The Settings search index. Search is driven entirely by this list: a category
+ * is mounted in search mode only when one of its entries matches, and a gated
+ * panel shows a field only when that field's id is matched. To make a new
+ * settings section searchable, give its category an entry here (and render it
+ * from `SETTINGS_SECTIONS` in `SettingsPanel`); `settingsRegistryCoverage.test.ts`
+ * fails if a navigable category or a `show()`-gated field has no entry.
+ */
 export const SETTINGS_REGISTRY: SettingDefinition[] = [
   {
     id: "defaultUser",
@@ -849,6 +859,66 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     description: "Export or import configuration between installed and portable mode",
     category: "portable",
     keywords: ["export", "import", "migrate", "copy", "transfer", "backup", "portable"],
+  },
+  {
+    id: "externalConnectionFiles",
+    label: "External Connection Files",
+    description:
+      "Load shared connection configs from external JSON files, e.g. from a git repository",
+    category: "external-files",
+    keywords: [
+      "external",
+      "connection file",
+      "json",
+      "shared connections",
+      "git",
+      "team",
+      "import",
+      "reload",
+    ],
+  },
+  {
+    id: "powerMonitoring",
+    label: "Power Monitoring",
+    description: "Monitor CPU, memory, and power events via SSH agent connections",
+    category: "external-files",
+    keywords: ["power", "monitoring", "cpu", "memory", "agent", "ssh", "advanced"],
+  },
+  {
+    id: "fileBrowser",
+    label: "File Browser",
+    description: "Enable the SFTP file browser for SSH agent sessions",
+    category: "external-files",
+    keywords: ["file browser", "sftp", "files", "agent", "ssh", "advanced"],
+  },
+  {
+    id: "trustedPublishers",
+    label: "Trusted Publishers",
+    description: "Publisher keys termiHub trusts to sign plugins",
+    category: "plugins",
+    keywords: [
+      "trusted publisher",
+      "publisher",
+      "signing key",
+      "signature",
+      "verified",
+      "plugin",
+      "revoke",
+    ],
+  },
+  {
+    id: "updateAutoCheck",
+    label: "Auto-check for Updates",
+    description: "Check for app updates on startup and every 24 hours while running",
+    category: "updates",
+    keywords: ["update", "updates", "auto-check", "auto check", "automatic", "startup", "release"],
+  },
+  {
+    id: "updateStatus",
+    label: "Update Status",
+    description: "Current and latest version, last check time, and Check Now",
+    category: "updates",
+    keywords: ["update", "updates", "version", "check now", "build", "download", "latest"],
   },
 ];
 
