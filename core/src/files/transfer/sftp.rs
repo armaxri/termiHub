@@ -46,9 +46,6 @@ use crate::files::copy::CopyPhase;
 /// Log label for the shared attempt orchestration.
 const BACKEND: &str = "SFTP";
 
-/// Log label for a remote-to-remote copy (PROD-0013).
-const REMOTE_COPY_BACKEND: &str = "SFTP remote-to-remote";
-
 /// Core-internal error type for the SFTP transfer executor (DUP-026 slice 2b).
 ///
 /// It never escapes: all three public executors return `()`, and this type only
@@ -62,26 +59,8 @@ enum SftpTransferError {
     Ssh(String),
 }
 
-/// Resume protocol for SFTP transfers (PROD-0012).
-///
-/// **Maintainer default: [`DEFAULT_RESUME_MODE`] = [`ResumeMode::Resume`].**
-/// A resumed transfer byte-verifies the destination and continues from the
-/// offset; if the server rejects the seek/append open it transparently restarts
-/// from zero and surfaces which path was taken. Flip [`DEFAULT_RESUME_MODE`] to
-/// [`ResumeMode::RestartOnly`] to always restart from zero (never attempt an
-/// offset-resume) — e.g. against a server known to mishandle random-access I/O.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ResumeMode {
-    /// Byte-verified offset-resume with automatic restart-from-zero fallback.
-    #[default]
-    Resume,
-    /// Always restart from byte zero on resume/retry.
-    RestartOnly,
-}
-
-/// The maintainer-selectable default resume protocol (PROD-0012). See
-/// [`ResumeMode`].
-pub const DEFAULT_RESUME_MODE: ResumeMode = ResumeMode::Resume;
+/// The resume protocol (PROD-0012), shared with the remote→remote copy.
+pub use super::remote_copy::{ResumeMode, DEFAULT_RESUME_MODE};
 
 /// Map a chunked-copy phase error to a [`SftpTransferError`], preserving the text.
 fn copy_error(phase: CopyPhase, e: std::io::Error) -> SftpTransferError {
@@ -423,213 +402,13 @@ pub async fn run_sftp_transfer(
     .await;
 }
 
-/// Best-effort removal of a partial destination on cancel/failure of a
-/// remote→remote copy (PROD-0013). Mirrors the Upload arm of [`cleanup_partial`]
-/// but resolves the destination through its own browser.
-async fn cleanup_remote_partial(dst_browser: &Arc<SftpFileBrowser>, dst_path: &str) {
-    match dst_browser.open_dedicated_channel().await {
-        Ok(ch) => {
-            if let Err(e) = ch.remove_file(dst_path).await {
-                debug!(error = %e, "could not remove partial remote-to-remote copy (best-effort)");
-            }
-        }
-        Err(e) => {
-            debug!(error = %e, "could not open channel to clean partial remote-to-remote copy")
-        }
-    }
-}
-
-/// Run one remote→remote copy attempt on fresh dedicated channels, resuming from
-/// `offset`: read the source remote file (seeked to `offset`) and stream it
-/// straight to the destination remote file — no local staging file (PROD-0013).
-///
-/// A non-zero `offset` whose source read or destination append is rejected by
-/// the server yields [`AttemptOutcome::ResumeRejected`] so the caller restarts
-/// from zero, exactly like [`download_attempt`] / [`upload_attempt`].
-async fn remote_copy_attempt<P, S>(
-    src_channel: &SftpTransferChannel,
-    dst_channel: &SftpTransferChannel,
-    src_path: &str,
-    dst_path: &str,
-    offset: u64,
-    on_progress: P,
-    should_stop: S,
-) -> Result<AttemptOutcome, SftpTransferError>
-where
-    P: FnMut(u64) + Send,
-    S: Fn() -> Option<StopReason> + Send,
-{
-    // Source read (seeked). A rejected non-zero offset → restart from zero.
-    let mut src = match src_channel.open_read_at(src_path, offset).await {
-        Ok(r) => r,
-        Err(e) if offset > 0 => {
-            warn!(offset, error = %e, "SFTP server rejected resume read; restarting from zero");
-            return Ok(AttemptOutcome::ResumeRejected);
-        }
-        Err(e) => return Err(SftpTransferError::Ssh(format!("open source file: {e}"))),
-    };
-
-    // Destination write: append (no truncate) at the byte-verified offset, or a
-    // truncating create for a fresh transfer.
-    let mut dst = if offset > 0 {
-        match dst_channel.open_write_at(dst_path, offset).await {
-            Ok(w) => w,
-            Err(e) => {
-                warn!(offset, error = %e, "SFTP server rejected resume append; restarting from zero");
-                return Ok(AttemptOutcome::ResumeRejected);
-            }
-        }
-    } else {
-        dst_channel
-            .create_write(dst_path)
-            .await
-            .map_err(|e| SftpTransferError::Ssh(format!("create destination file: {e}")))?
-    };
-
-    let outcome = run_chunked_copy(
-        &mut src,
-        &mut dst,
-        CHUNK_SIZE,
-        offset,
-        should_stop,
-        on_progress,
-        copy_error,
-    )
-    .await?;
-    settle_writer(&mut dst, &outcome).await;
-    Ok(map_copy_outcome(outcome))
-}
-
-/// Run attempts (with auto-retry/backoff) for one Active stint of a remote→remote
-/// copy. The remote→remote counterpart of [`run_attempts`]: it opens a fresh
-/// dedicated channel on **both** the source and destination browsers per attempt
-/// and re-verifies the resume point (source fingerprint + destination size) on
-/// those channels before every attempt.
-#[allow(clippy::too_many_arguments)]
-async fn run_remote_attempts(
-    src_browser: &Arc<SftpFileBrowser>,
-    dst_browser: &Arc<SftpFileBrowser>,
-    src_path: &str,
-    dst_path: &str,
-    cursor: &mut ResumeCursor,
-    handle: &Arc<TransferHandle>,
-    sink: &ProgressSink,
-    resume_mode: ResumeMode,
-) -> AttemptsResult {
-    let mut attempt = 0u32;
-    loop {
-        if handle.is_cancelled() {
-            handle.transition(TransferEvent::Cancel);
-            return AttemptsResult::Cancelled;
-        }
-        attempt += 1;
-        handle.set_attempt(attempt);
-
-        // Open a fresh dedicated channel per attempt on each end, so a broken
-        // channel is re-established on retry and browsing stays live meanwhile.
-        let src_channel = match src_browser.open_dedicated_channel().await {
-            Ok(c) => c,
-            Err(e) => {
-                let e = SftpTransferError::Ssh(format!("open source SFTP transfer channel: {e}"));
-                if let Some(outcome) =
-                    handle_attempt_error(handle, sink, attempt, &e, BACKEND).await
-                {
-                    return outcome;
-                }
-                continue;
-            }
-        };
-        let dst_channel = match dst_browser.open_dedicated_channel().await {
-            Ok(c) => c,
-            Err(e) => {
-                let e =
-                    SftpTransferError::Ssh(format!("open destination SFTP transfer channel: {e}"));
-                if let Some(outcome) =
-                    handle_attempt_error(handle, sink, attempt, &e, BACKEND).await
-                {
-                    return outcome;
-                }
-                continue;
-            }
-        };
-
-        // Re-verify the resume point on this attempt's channels (PARITY-004).
-        if resume_mode == ResumeMode::RestartOnly {
-            cursor.offset = 0;
-        } else {
-            let current = src_channel.remote_fingerprint(src_path).await;
-            let present = if cursor.offset > 0 {
-                dst_channel.remote_file_size(dst_path).await
-            } else {
-                None
-            };
-            apply_resume_gate(cursor, handle, sink, current, present, BACKEND);
-        }
-
-        let progress = Arc::new(AtomicU64::new(cursor.offset));
-        let mut reporter = ProgressReporter::new(
-            handle.clone(),
-            sink.clone(),
-            cursor.total,
-            progress.clone(),
-            cursor.offset,
-        );
-        let stop_handle = handle.clone();
-        let attempt_fut = remote_copy_attempt(
-            &src_channel,
-            &dst_channel,
-            src_path,
-            dst_path,
-            cursor.offset,
-            |t| reporter.report(t),
-            move || stop_reason(&stop_handle),
-        );
-        let result = guard_stall(
-            attempt_fut,
-            &progress,
-            handle,
-            STALL_TIMEOUT,
-            SftpTransferError::Ssh,
-        )
-        .await;
-        cursor.offset = progress.load(Ordering::Relaxed);
-
-        if let Some(outcome) = settle_attempt(
-            result,
-            cursor,
-            &mut attempt,
-            handle,
-            sink,
-            BACKEND,
-            "server",
-        )
-        .await
-        {
-            return outcome;
-        }
-    }
-}
-
 /// Drive a queued **remote→remote** SFTP copy to a terminal state on the rich
-/// queue model, emitting `transfer-progress` throughout (product feature
-/// PROD-0013).
+/// queue model (product feature PROD-0013).
 ///
-/// Streams the source session's file directly into the destination session's
-/// file **through the desktop** — no local staging file — as ONE tracked
-/// transfer. The counterpart of [`run_sftp_transfer`]: it shares the same slot
-/// orchestration, throttled progress + ETA, pause/resume, auto-retry with
-/// backoff, and byte-verified offset resume, so the generic
-/// `transfer_pause`/`resume`/`retry`/`cancel` commands work for it too. Progress
-/// is measured on the write (destination) side; cancel removes the partial
-/// destination. A server-side host-to-host copy (SCP/rsync) is a deferred
-/// alternative — this default reaches everywhere both hosts are reachable from
-/// the desktop.
-///
-/// `start_offset` is `0` for a fresh copy and the persisted `resume_offset`
-/// for a copy **relaunched** after an app restart (#3206). As for
-/// [`run_sftp_transfer`], the checkpoint is kept only while the source still
-/// matches the persisted size and mtime, and the destination is byte-verified
-/// before the first append.
+/// A thin wrapper over the generic
+/// [`run_remote_copy`](super::remote_copy::run_remote_copy) with an SFTP session
+/// at both ends (#3586) — the same executor that also streams to and from Docker
+/// sessions. See there for pause/resume, cancel, retry and the resume checks.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_sftp_remote_copy(
     src_browser: Arc<SftpFileBrowser>,
@@ -642,66 +421,17 @@ pub async fn run_sftp_remote_copy(
     resume_mode: ResumeMode,
     start_offset: u64,
 ) {
-    // Establish the source identity + total up front so progress/ETA are
-    // meaningful and a later resume can detect a changed source (PARITY-004).
-    let baseline = match src_browser.open_dedicated_channel().await {
-        Ok(ch) => ch.remote_fingerprint(&src_path).await,
-        Err(_) => None,
-    };
-    let total = match baseline {
-        Some(fp) => fp.size,
-        None => src_browser.remote_size(&src_path).await,
-    };
-    // A rehydrated copy's handle was registered with its persisted total.
-    let offset = rehydrate_start_offset(start_offset, &handle, baseline, REMOTE_COPY_BACKEND);
-    handle.set_metrics(offset, total, 0);
-    emit(&handle, &sink, TransferPhase::Transferring, None, None);
-
-    let cursor = ResumeCursor {
-        offset,
-        total,
-        baseline,
-    };
-    let (src_browser, dst_browser, src_path, dst_path, handle, sink) = (
-        &src_browser,
-        &dst_browser,
-        &src_path,
-        &dst_path,
-        &handle,
-        &sink,
-    );
-    drive_transfer(
+    use super::remote_copy::{run_remote_copy, RemoteCopyEndpoint};
+    run_remote_copy(
+        RemoteCopyEndpoint::Sftp(src_browser),
+        RemoteCopyEndpoint::Sftp(dst_browser),
+        src_path,
+        dst_path,
         handle,
-        &registry,
+        registry,
         sink,
-        REMOTE_COPY_BACKEND,
-        cursor,
-        |mut cursor| async move {
-            let result = run_remote_attempts(
-                src_browser,
-                dst_browser,
-                src_path,
-                dst_path,
-                &mut cursor,
-                handle,
-                sink,
-                resume_mode,
-            )
-            .await;
-            (result, cursor)
-        },
-        || cleanup_remote_partial(dst_browser, dst_path),
+        resume_mode,
+        start_offset,
     )
     .await;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn resume_mode_default_is_resume() {
-        assert_eq!(ResumeMode::default(), ResumeMode::Resume);
-        assert_eq!(DEFAULT_RESUME_MODE, ResumeMode::Resume);
-    }
 }
