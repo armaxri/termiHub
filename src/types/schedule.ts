@@ -21,6 +21,7 @@ export type { SchedulerState } from "./generated/SchedulerState";
 export type { ScheduleInput } from "./generated/ScheduleInput";
 export type { ScheduleFire } from "./generated/ScheduleFire";
 export type { WindowRunReport } from "./generated/WindowRunReport";
+export type { RunCoverage } from "./generated/RunCoverage";
 
 /** Every weekday in display order (Monday first). */
 export const SCHEDULE_WEEKDAYS: readonly ScheduleWeekday[] = [

@@ -8,11 +8,17 @@
  * refused with the reason instead. The run then includes the tabs it opened,
  * and closes exactly those tabs when it ends, successfully or not. Tabs that
  * were already open are never touched.
+ *
+ * A target connected in **another** window is not connected again (#3878):
+ * every window acknowledges the fire with the targets it runs on itself, and
+ * the connect window asks the backend for those ({@link awaitRunCoverage})
+ * before connecting, so each target runs once — in the window holding it.
  */
 import { t, tf } from "@/i18n/catalog";
 import { closeTerminal } from "@/services/api";
 import { isTerminalReady } from "@/services/macroPlayback";
 import type { SavedConnection } from "@/types/connection";
+import type { RunCoverage } from "@/types/schedule";
 import type { ConnectSavedConnectionResult } from "@/utils/connectSavedConnection";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
@@ -55,8 +61,8 @@ export interface MissingTargetsResult {
   skipped: string[];
 }
 
-/** The connection ids among `connectionIds` with no connected tab here. */
-function unconnectedIds(state: AppState, connectionIds: readonly string[]): string[] {
+/** The saved-connection ids with a connected terminal tab in this window. */
+function connectedHere(state: AppState): Set<string | undefined> {
   const live = collectLiveTabs(state);
   const connectedTabs = new Set(
     filterConnectedTerminalTabIds(
@@ -64,10 +70,54 @@ function unconnectedIds(state: AppState, connectionIds: readonly string[]): stri
       live.map((tab) => tab.id)
     )
   );
-  const connected = new Set(
-    live.filter((tab) => connectedTabs.has(tab.id)).map((tab) => tab.connectionId)
-  );
+  return new Set(live.filter((tab) => connectedTabs.has(tab.id)).map((tab) => tab.connectionId));
+}
+
+/** The connection ids among `connectionIds` with no connected tab here. */
+function unconnectedIds(state: AppState, connectionIds: readonly string[]): string[] {
+  const connected = connectedHere(state);
   return [...new Set(connectionIds)].filter((id) => !connected.has(id));
+}
+
+/** The connection ids among `connectionIds` with a connected tab here (#3878). */
+export function connectedIds(state: AppState, connectionIds: readonly string[]): string[] {
+  const connected = connectedHere(state);
+  return [...new Set(connectionIds)].filter((id) => connected.has(id));
+}
+
+/** How long the connect window waits for the other windows to acknowledge. */
+const COVERAGE_TIMEOUT_MS = 5_000;
+
+/** How often the connect window asks again while they have not. */
+const COVERAGE_POLL_MS = 50;
+
+/**
+ * The targets the run's other windows run on themselves (#3878): asks
+ * `fetchCoverage` until every other window acknowledged the fire, or the
+ * timeout passes (then with what is known — a window that never acknowledges
+ * is dropped from the run anyway). A failed query covers nothing, so the run
+ * falls back to connecting what is not connected here.
+ */
+export async function awaitRunCoverage(
+  fetchCoverage: () => Promise<RunCoverage>,
+  { timeoutMs = COVERAGE_TIMEOUT_MS, pollMs = COVERAGE_POLL_MS } = {}
+): Promise<string[]> {
+  const deadline = Date.now() + timeoutMs;
+  try {
+    for (;;) {
+      const coverage = await fetchCoverage();
+      if (coverage.settled || Date.now() >= deadline) {
+        if (!coverage.settled) {
+          frontendLog("schedules", "not every window acknowledged the run; connecting anyway");
+        }
+        return coverage.connectedElsewhere;
+      }
+      await delay(pollMs);
+    }
+  } catch (err) {
+    frontendLog("schedules", `run coverage query failed: ${errorMessage(err)}`);
+    return [];
+  }
 }
 
 /** Resolve after `ms`. */

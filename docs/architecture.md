@@ -910,6 +910,54 @@ monitoring status bar shows exactly one badge, by precedence: **Offline** (with 
 over **Reconnecting…** over **Stale** over **Paused** — a link problem always outranks a
 user pause. Reconnecting, Stale and Paused dim the frozen numbers.
 
+### System-Monitor History Retention (#3204)
+
+The shared `system-monitors` region retains a bounded ring of recent `SystemStats`
+samples per live monitor (`history: { <key>: MonitorHistorySample[] }`, each sample
+being `{ sampleCount, stats }`). A newly-opened window or a remounted status bar
+therefore draws the existing metric history from its first snapshot instead of
+starting an empty client-side window. The ring covers every sample the collector
+folds — local, SSH, Docker-stats (`source` / `unavailableMetrics`, #3202) and
+agent-hosted sessions (#3874) all reach `SystemMonitorStore::stats` through the same
+collector task.
+
+- **Lifecycle.** `monitor.open` (a connect or reconnect) starts an empty ring — the
+  sample count restarts, so a reconnect is not graphed as continuous. `monitor.close`
+  drops the ring (the last-known `statsCache` entry is kept, as before). A sample for
+  a key with no live entry is not retained, so rings exist only for live monitors.
+- **Append-only wire traffic.** A sample is published as one
+  `add /history/<key>/<index>`, plus one `remove /history/<key>/0` per eviction once
+  the ring is full. The ring is resent whole only on open/replace. The store drains
+  an append as just the new tail (`HistoryDelta::Append`); drains still happen under
+  the region lock (`publish_delta`, the #3788/#3792 pattern), so appends land in
+  order. A debug cross-check keeps `monitors` / `statsCache` byte-identical to the
+  whole-region diff and checks the `history` ops by replaying them onto the old view.
+  An append that does not fit the held ring (a dirty-tracking bug) resyncs the whole
+  region instead of tearing the ring.
+- **Client.** `useMonitorHistory` derives the sparkline series from the region ring
+  when present and falls back to its client-side rolling window otherwise.
+
+**Bound and memory cost.** `MONITOR_HISTORY_CAPACITY = 90` samples per monitor. This
+equals the client window it replaces (`MONITOR_HISTORY_CAP`): three minutes at the
+default 2 s cadence, and exactly the points the sparklines draw. The cost is
+`samples x bytes/sample x live monitors`. Per sample (JSON and struct sizes measured;
+the `Value` size estimated from `serde_json`'s map layout, ~65 B per field):
+
+| Held as                                   | 8 cores | 64 cores |
+| ----------------------------------------- | ------- | -------- |
+| Serialized JSON (wire, one append)        | ~0.6 KB | ~1.2 KB  |
+| Typed `MonitorHistorySample` in the store | ~0.4 KB | ~0.9 KB  |
+| `serde_json::Value` in the region view    | ~2.1 KB | ~3.9 KB  |
+| Backend total                             | ~2.5 KB | ~4.8 KB  |
+| **Backend per monitor (x 90)**            | ~225 KB | ~430 KB  |
+| **Backend, 20 live monitors**             | ~4.5 MB | ~8.6 MB  |
+
+Each subscribed window also holds a JS copy of the ring, roughly 1–2 KB per sample,
+or ~0.1–0.2 MB per monitor. The bound is fixed rather than a user setting: the cost is
+small and scales only with live monitors, and the UI draws exactly this many points.
+Steady-state wire cost per sample is one sample (~0.6 KB) plus a ~20-byte eviction
+op. Resending the ring would cost ~54 KB.
+
 ### Graphical Backend Parity: VNC Has No Audio (PROD-020)
 
 The two graphical backends share the framebuffer, input, clipboard and auto-reconnect
@@ -1636,7 +1684,7 @@ sequenceDiagram
     L->>M: tick(now, Local, open windows)
     M-->>L: fires (due, enabled, not paused, not overlapping)
     L->>W: schedule-fire {token, action, targets}
-    W->>M: ack_schedule_run(token)
+    W->>M: ack_schedule_run(token, targets it runs on itself)
     W->>W: open + connected tabs of the target connections only
     W->>M: report_schedule_run(token, outcome)
     M->>M: all windows reported -> record lastResult + history
@@ -1683,7 +1731,10 @@ sequenceDiagram
   only), where an untrusted host key fails fast as `ConnectFailureKind::HostKeyUntrusted` and a
   keyboard-interactive round the saved password cannot answer as `InteractionRequired`. Each
   refused target is recorded in the attempt with its reason. Turning the option on needs a fresh
-  confirmation.
+  confirmation. A target connected in **another** window is not connected again (#3878): every
+  window acknowledges the fire with the target connections it runs on itself, and the connect
+  window asks `schedule_run_coverage` (waiting briefly until every other window acknowledged)
+  and skips those, so each target runs once per fire, in the window that holds it.
 - **Macro run history** (`src-tauri/src/macros/history*.rs`, #3543) — every started macro
   playback (manual, command palette, a workflow's `run-macro` step, scheduled) is recorded
   fire-and-forget in `macro-runs.json`: macro id + name, start/end, outcome, steps played,

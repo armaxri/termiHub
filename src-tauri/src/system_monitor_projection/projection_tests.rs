@@ -28,7 +28,7 @@ use crate::projection::{
 use crate::system_monitor_projection::projection::{
     fold_monitor_transition, publish_monitors, SYSTEM_MONITORS_REGION,
 };
-use crate::system_monitor_projection::store::SystemMonitorStore;
+use crate::system_monitor_projection::store::{SystemMonitorStore, MONITOR_HISTORY_CAPACITY};
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -145,7 +145,12 @@ fn registry_for(store: Arc<SystemMonitorStore>) -> HandlerRegistry {
                 )
             })?,
         };
-        s.replace(monitors, stats_cache);
+        let history = match intent.payload.get("history") {
+            None | Some(Value::Null) => std::collections::HashMap::new(),
+            Some(value) => serde_json::from_value(value.clone())
+                .map_err(|e| ("bad_payload".to_string(), format!("invalid history: {e}")))?,
+        };
+        s.replace(monitors, stats_cache, history);
         Ok(publish_monitors(projector, &s))
     });
 
@@ -371,7 +376,11 @@ fn replace_mirrors_a_whole_snapshot_in_one_diff_and_converges() {
 
     let ack = dispatcher.dispatch(intent(
         "monitor.replace",
-        json!({ "monitors": view["monitors"], "statsCache": view["statsCache"] }),
+        json!({
+            "monitors": view["monitors"],
+            "statsCache": view["statsCache"],
+            "history": view["history"],
+        }),
     ));
     assert_eq!(ack.status, IntentStatus::Accepted);
 
@@ -832,8 +841,207 @@ fn incremental_publish_replace_matches_the_whole_region_diff() {
     let mirror = source.snapshot();
     let monitors = serde_json::from_value(mirror["monitors"].clone()).unwrap();
     let stats_cache = serde_json::from_value(mirror["statsCache"].clone()).unwrap();
-    store.replace(monitors, stats_cache);
+    let history = serde_json::from_value(mirror["history"].clone()).unwrap();
+    store.replace(monitors, stats_cache, history);
 
     assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "replace");
     assert_eq!(prev, source.snapshot(), "region mirrors the replace source");
+}
+
+// ── History ring (#3204) ─────────────────────────────────────────────────────
+
+/// A seeded region with one live monitor `s1` and one subscriber, the seed's
+/// dirty set already drained.
+fn history_region(store: &Arc<SystemMonitorStore>) -> (Arc<Projector>, Arc<VecSink>, ClientCache) {
+    store.open("s1", Some("host-a".to_string()), None);
+    store.opened("s1");
+    let projector = Arc::new(Projector::new());
+    projector.register_region(SYSTEM_MONITORS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    let snap = projector.subscribe(SYSTEM_MONITORS_REGION, "sub", "A", sink.clone());
+    assert!(publish_monitors(&projector, store).is_empty());
+    (projector, sink, ClientCache::from_snapshot(&snap))
+}
+
+/// Every op of a diff that touches the history ring.
+fn history_ops(diff: &DiffFrame) -> Vec<&DiffOp> {
+    diff.ops
+        .iter()
+        .filter(|op| match op {
+            DiffOp::Add { path, .. } | DiffOp::Replace { path, .. } | DiffOp::Remove { path } => {
+                path.starts_with("/history")
+            }
+            DiffOp::Semantic { .. } => false,
+        })
+        .collect()
+}
+
+#[test]
+fn a_new_subscriber_gets_the_retained_history_in_its_snapshot() {
+    // The issue's "done when": a newly-opened window (a fresh subscriber) sees
+    // the existing history immediately, not an empty client-side window.
+    let store = Arc::new(SystemMonitorStore::new());
+    let (projector, _sink, _cache) = history_region(&store);
+    for cpu in 1..=5 {
+        store.stats("s1", stats("host-a", f64::from(cpu)));
+        publish_monitors(&projector, &store);
+    }
+
+    let late = Arc::new(VecSink::new());
+    let snap = projector.subscribe(SYSTEM_MONITORS_REGION, "late", "B", late);
+    let ring = snap.view["history"]["s1"]
+        .as_array()
+        .expect("the snapshot carries the ring");
+    let cpus: Vec<f64> = ring
+        .iter()
+        .map(|s| s["stats"]["cpuUsagePercent"].as_f64().unwrap())
+        .collect();
+    assert_eq!(cpus, vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+    assert_eq!(ring[4]["sampleCount"], json!(5));
+    assert_eq!(snap.view, store.snapshot());
+}
+
+#[test]
+fn a_sample_appends_one_entry_without_resending_the_ring() {
+    let store = Arc::new(SystemMonitorStore::new());
+    let (projector, sink, mut cache) = history_region(&store);
+    // Fill the ring to its bound, then keep sampling: steady state evicts one.
+    for cpu in 0..MONITOR_HISTORY_CAPACITY {
+        store.stats("s1", stats("host-a", cpu as f64));
+        publish_monitors(&projector, &store);
+    }
+    let before = sink.diffs().len();
+
+    store.stats("s1", stats("host-a", 999.0));
+    publish_monitors(&projector, &store);
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), before + 1, "one diff for one sample");
+    let diff = diffs.last().unwrap();
+
+    // Exactly one eviction at the head and one append at the tail.
+    let ops = history_ops(diff);
+    assert_eq!(ops.len(), 2, "evict + append only: {ops:?}");
+    assert_eq!(
+        ops[0],
+        &DiffOp::Remove {
+            path: "/history/s1/0".to_string()
+        }
+    );
+    match ops[1] {
+        DiffOp::Add { path, value } => {
+            assert_eq!(
+                path,
+                &format!("/history/s1/{}", MONITOR_HISTORY_CAPACITY - 1)
+            );
+            assert_eq!(value["stats"]["cpuUsagePercent"], json!(999.0));
+        }
+        other => panic!("expected an append, got {other:?}"),
+    }
+
+    // Size: the history part of the diff is one sample, not the ring.
+    let one_sample = serde_json::to_string(&store.history("s1").last().cloned().unwrap())
+        .unwrap()
+        .len();
+    let ring = serde_json::to_string(&store.snapshot()["history"]["s1"])
+        .unwrap()
+        .len();
+    let history_bytes: usize = ops
+        .iter()
+        .map(|op| serde_json::to_string(op).unwrap().len())
+        .sum();
+    assert!(
+        history_bytes < 2 * one_sample,
+        "history ops ({history_bytes} B) must cost ~one sample ({one_sample} B)"
+    );
+    assert!(
+        history_bytes * 20 < ring,
+        "history ops ({history_bytes} B) must not approach the ring ({ring} B)"
+    );
+
+    // And the client cache, fed only diffs, converges on the store.
+    for diff in &sink.diffs() {
+        cache.apply(diff);
+    }
+    assert_eq!(cache.view, store.snapshot());
+}
+
+#[test]
+fn a_sample_below_the_bound_is_a_single_append_matching_the_whole_region_diff() {
+    // Below the bound nothing is evicted, so the append is exactly what the
+    // whole-region differ would emit (`add /history/<key>/<len>`).
+    let store = Arc::new(SystemMonitorStore::new());
+    let (projector, sink, _cache) = history_region(&store);
+    let mut prev = store.snapshot();
+    store.stats("s1", stats("host-a", 1.0));
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "first-sample");
+    store.stats("s1", stats("host-a", 2.0));
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "second-sample");
+    let diff = sink.diffs().pop().unwrap();
+    let ops = history_ops(&diff);
+    assert_eq!(ops.len(), 1);
+    assert!(matches!(ops[0], DiffOp::Add { path, .. } if path == "/history/s1/1"));
+}
+
+#[test]
+fn reopen_and_close_publish_the_ring_whole_once() {
+    let store = Arc::new(SystemMonitorStore::new());
+    let (projector, sink, mut cache) = history_region(&store);
+    for cpu in 1..=3 {
+        store.stats("s1", stats("host-a", f64::from(cpu)));
+        publish_monitors(&projector, &store);
+    }
+
+    // A reconnect resets the ring with one `replace` (not one op per sample).
+    store.open("s1", Some("host-a".to_string()), None);
+    publish_monitors(&projector, &store);
+    let diff = sink.diffs().pop().unwrap();
+    assert_eq!(
+        history_ops(&diff),
+        vec![&DiffOp::Replace {
+            path: "/history/s1".to_string(),
+            value: json!([]),
+        }]
+    );
+
+    // A close removes it.
+    store.close("s1");
+    publish_monitors(&projector, &store);
+    let diff = sink.diffs().pop().unwrap();
+    assert_eq!(
+        history_ops(&diff),
+        vec![&DiffOp::Remove {
+            path: "/history/s1".to_string(),
+        }]
+    );
+
+    for diff in &sink.diffs() {
+        cache.apply(diff);
+    }
+    assert_eq!(cache.view, store.snapshot());
+}
+
+#[test]
+fn history_keys_are_escaped_as_json_pointer_tokens() {
+    // Monitor keys are session ids today, but the ring path must stay a valid
+    // RFC 6901 pointer for any key.
+    let store = Arc::new(SystemMonitorStore::new());
+    let projector = Arc::new(Projector::new());
+    projector.register_region(SYSTEM_MONITORS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    let snap = projector.subscribe(SYSTEM_MONITORS_REGION, "sub", "A", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+
+    store.open("a/b~c", None, None);
+    publish_monitors(&projector, &store);
+    store.stats("a/b~c", stats("h", 1.0));
+    publish_monitors(&projector, &store);
+    let diff = sink.diffs().pop().unwrap();
+    assert!(matches!(
+        history_ops(&diff).as_slice(),
+        [DiffOp::Add { path, .. }] if path == "/history/a~1b~0c/0"
+    ));
+    for diff in &sink.diffs() {
+        cache.apply(diff);
+    }
+    assert_eq!(cache.view, store.snapshot());
 }

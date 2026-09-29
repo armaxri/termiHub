@@ -58,7 +58,7 @@ impl ScheduleSink for RecordingSink {
     }
     fn fire(&self, fire: &ScheduleFire) {
         if let Some(m) = self.manager.lock().unwrap().as_ref() {
-            m.ack(&fire.token, "main");
+            m.ack(&fire.token, "main", &[]);
         }
         self.fires.lock().unwrap().push(fire.clone());
     }

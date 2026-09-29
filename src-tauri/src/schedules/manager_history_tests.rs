@@ -22,7 +22,7 @@ fn skips_no_longer_overwrite_each_other() {
     let m = enabled_manager(&dir, MissedRunPolicy::Skip);
     let w = windows(&["main"]);
     let token = m.tick_all(t(10, 10), &Utc, &w).fires[0].token.clone();
-    m.ack(&token, "main");
+    m.ack(&token, "main", &[]);
     // Previous run still in flight → a logged skip.
     m.tick_all(t(10, 20), &Utc, &w);
     m.report(&token, "main", skip_report("None connected"), t(10, 21))

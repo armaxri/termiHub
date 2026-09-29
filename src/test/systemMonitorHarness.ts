@@ -100,7 +100,11 @@ export class FakeMonitorTransport implements Transport {
 
   /** Seed the region view directly (test setup), fanning a snapshot. */
   seed(view: SystemMonitorsView): void {
-    this.view = { monitors: { ...view.monitors }, statsCache: { ...view.statsCache } };
+    this.view = {
+      monitors: { ...view.monitors },
+      statsCache: { ...view.statsCache },
+      ...(view.history ? { history: { ...view.history } } : {}),
+    };
     this.bump();
   }
 

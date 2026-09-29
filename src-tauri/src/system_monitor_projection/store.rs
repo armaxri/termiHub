@@ -26,7 +26,7 @@
 //! and frontend code dispatches the `monitor.*` transitions; the former `appStore`
 //! monitoring reducers were removed.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
@@ -37,6 +37,34 @@ use termihub_core::monitoring::{MonitorStatus, MonitorStatusReason, SystemStats}
 /// Default monitoring refresh interval in milliseconds — mirrors the frontend
 /// `DEFAULT_MONITORING_INTERVAL_MS` (#1233).
 pub const DEFAULT_MONITORING_INTERVAL_MS: u64 = 2000;
+
+/// Samples retained per monitor in the `history` ring of the region (#3204).
+///
+/// Equal to the client-side rolling window it replaces (`MONITOR_HISTORY_CAP` in
+/// `src/store/useMonitorHistory.ts`): 90 samples is three minutes at the default
+/// 2 s cadence. The memory cost is `samples x bytes/sample x live monitors` — see
+/// "System-monitor history retention" in `docs/architecture.md` for the
+/// calculation (roughly 0.2-0.5 MB per monitor, a few MB at a realistic twenty
+/// monitors). Fixed rather than user-configurable: the cost is small and
+/// bounded by the live monitors, and the UI draws exactly this many points.
+pub const MONITOR_HISTORY_CAPACITY: usize = 90;
+
+/// One retained sample in a monitor's history ring (#3204): the full
+/// [`SystemStats`] the collector produced (including its `source` and
+/// `unavailableMetrics`, #3202) plus its ordinal on the current connection.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct MonitorHistorySample {
+    /// The monitor's `sampleCount` once this sample was folded in (1-based on
+    /// the current connection). Lets a consumer tell the priming first sample —
+    /// whose CPU and network rates have no prior delta — from the rest.
+    pub sample_count: u32,
+    /// The sample itself.
+    #[cfg_attr(test, ts(type = "import(\"./SystemStats\").SystemStats"))]
+    pub stats: SystemStats,
+}
 
 /// The authoritative record for one monitored host/session — the render-ready
 /// projection of the frontend `MonitoringEntry`. Keyed in the store by the owning
@@ -132,6 +160,107 @@ struct Inner {
     dirty_monitors: HashSet<String>,
     /// Keys of `stats_cache` touched since the last drain (PERF-006).
     dirty_cache: HashSet<String>,
+    /// The bounded per-monitor history ring (#3204), oldest first. Only live
+    /// monitors (keys of `monitors`) carry one, so its memory is bounded by
+    /// `live monitors x capacity`.
+    history: HashMap<String, VecDeque<MonitorHistorySample>>,
+    /// How each ring changed since the last drain (#3204). Unlike the two
+    /// maps above, a ring is not re-serialized whole on every sample: an
+    /// [`HistoryDirty::Append`] drains to just the new samples.
+    dirty_history: HashMap<String, HistoryDirty>,
+}
+
+/// How one history ring changed since the last drain (#3204).
+#[derive(Clone, Copy, Debug)]
+enum HistoryDirty {
+    /// The ring was created, replaced, cleared or removed: republish it whole.
+    Reset,
+    /// Only samples were pushed: `evicted` from the front of the ring as last
+    /// drained, then `appended` at the back.
+    Append { evicted: usize, appended: usize },
+}
+
+impl Inner {
+    /// Replace (or with `None`, remove) one ring and mark it for a whole
+    /// republish.
+    fn reset_history(&mut self, key: &str, ring: Option<VecDeque<MonitorHistorySample>>) {
+        match ring {
+            Some(ring) => {
+                self.history.insert(key.to_string(), ring);
+            }
+            None => {
+                self.history.remove(key);
+            }
+        }
+        self.dirty_history
+            .insert(key.to_string(), HistoryDirty::Reset);
+    }
+
+    /// Push one sample onto a key's ring, evicting from the front past
+    /// `capacity`, and record the append for the next drain.
+    fn push_history(&mut self, key: &str, sample: MonitorHistorySample, capacity: usize) {
+        if capacity == 0 {
+            return;
+        }
+        if !self.history.contains_key(key) {
+            // First sample on a ring that does not exist yet (e.g. a monitor
+            // mirrored in by `replace`): publish the new ring whole.
+            self.reset_history(key, Some(VecDeque::with_capacity(capacity)));
+        }
+        let Some(ring) = self.history.get_mut(key) else {
+            return;
+        };
+        let mut evicted = 0;
+        while ring.len() >= capacity {
+            ring.pop_front();
+            evicted += 1;
+        }
+        ring.push_back(sample);
+
+        let next = match self.dirty_history.get(key).copied() {
+            None => HistoryDirty::Append {
+                evicted,
+                appended: 1,
+            },
+            Some(HistoryDirty::Reset) => HistoryDirty::Reset,
+            Some(HistoryDirty::Append {
+                evicted: e,
+                appended: a,
+            }) => {
+                // More pushes than the ring holds since the last drain means
+                // some appended samples were evicted again before anyone saw
+                // them; a whole republish is then both simpler and smaller.
+                if a + 1 > capacity {
+                    HistoryDirty::Reset
+                } else {
+                    HistoryDirty::Append {
+                        evicted: e + evicted,
+                        appended: a + 1,
+                    }
+                }
+            }
+        };
+        self.dirty_history.insert(key.to_string(), next);
+    }
+}
+
+/// How one history ring moved since the previous drain — the history part of a
+/// [`RegionDelta`] (#3204). Appends are deliberately *not* a whole-ring value:
+/// the region emits one `remove` per eviction and one `add` per new sample, so a
+/// steady-state sample costs one sample on the wire, never the ring.
+#[derive(Debug)]
+pub enum HistoryDelta {
+    /// Republish the whole ring: `Some(serialized ring)`, or `None` once the
+    /// ring is gone (its monitor closed).
+    Reset(Option<Value>),
+    /// Remove `evicted` samples from the front of the ring as last published,
+    /// then append `appended` (serialized [`MonitorHistorySample`]s) starting at
+    /// index `start` (the ring's length after the evictions).
+    Append {
+        evicted: usize,
+        start: usize,
+        appended: Vec<Value>,
+    },
 }
 
 /// A serialized description of the region entries touched since the previous
@@ -145,24 +274,50 @@ pub struct RegionDelta {
     pub monitors: Vec<(String, Option<Value>)>,
     /// `(key, Some(serialized SystemStats) | None-if-removed)`.
     pub stats_cache: Vec<(String, Option<Value>)>,
+    /// `(key, how its history ring moved)`, sorted by key (#3204).
+    pub history: Vec<(String, HistoryDelta)>,
 }
 
 /// The system-monitor authority. Owns one [`MonitorEntry`] per monitored
 /// host/session, keyed by `MonitorKey`, plus the last-known stats cache. The
 /// single shared `system-monitors` region projects this state.
-#[derive(Default)]
 pub struct SystemMonitorStore {
     inner: Mutex<Inner>,
+    /// Samples retained per monitor ring (#3204).
+    history_capacity: usize,
+}
+
+impl Default for SystemMonitorStore {
+    fn default() -> Self {
+        Self::with_history_capacity(MONITOR_HISTORY_CAPACITY)
+    }
 }
 
 impl SystemMonitorStore {
-    /// A store with no monitors yet.
+    /// A store with no monitors yet, retaining [`MONITOR_HISTORY_CAPACITY`]
+    /// samples per monitor.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// A store retaining `capacity` history samples per monitor (tests use a
+    /// small ring to exercise eviction; `0` disables history).
+    pub fn with_history_capacity(capacity: usize) -> Self {
+        Self {
+            inner: Mutex::new(Inner::default()),
+            history_capacity: capacity,
+        }
+    }
+
+    /// Samples retained per monitor ring (test / diagnostics helper).
+    #[cfg(test)]
+    pub fn history_capacity(&self) -> usize {
+        self.history_capacity
+    }
+
     /// The render-ready view model for the whole region:
-    /// `{ "monitors": { "<key>": MonitorEntry, ... }, "statsCache": { … } }`.
+    /// `{ "history": { "<key>": [MonitorHistorySample] }, "monitors": { "<key>":
+    /// MonitorEntry, ... }, "statsCache": { … } }`.
     ///
     /// Pure with respect to monitor state (never mutates), so the projector can
     /// safely diff two consecutive snapshots.
@@ -183,6 +338,9 @@ impl SystemMonitorStore {
         entry.interval_ms = interval_ms.unwrap_or(DEFAULT_MONITORING_INTERVAL_MS);
         inner.monitors.insert(key.to_string(), entry);
         inner.dirty_monitors.insert(key.to_string());
+        // A (re)connect is a fresh session — its `sampleCount` restarts at 0 —
+        // so the history ring restarts too rather than graphing across the gap.
+        inner.reset_history(key, Some(VecDeque::new()));
     }
 
     /// `monitor.opened` — the provider subscription is live. Settles the entry:
@@ -215,17 +373,27 @@ impl SystemMonitorStore {
     }
 
     /// `monitor.stats` — a stats sample arrived. Updates the entry's stats,
-    /// increments the sample count, and refreshes the last-known cache so a later
-    /// reconnect shows the value instantly. A no-op for an unknown key.
+    /// increments the sample count, refreshes the last-known cache so a later
+    /// reconnect shows the value instantly, and appends the sample to the
+    /// monitor's bounded history ring (#3204). For an unknown key only the cache
+    /// is refreshed — history is retained for live monitors only.
     pub fn stats(&self, key: &str, stats: SystemStats) {
         let mut inner = self.lock();
         inner.stats_cache.insert(key.to_string(), stats.clone());
         inner.dirty_cache.insert(key.to_string());
+        let mut retained = None;
         if let Some(entry) = inner.monitors.get_mut(key) {
-            entry.stats = Some(stats);
             entry.sample_count = entry.sample_count.saturating_add(1);
+            retained = Some(MonitorHistorySample {
+                sample_count: entry.sample_count,
+                stats: stats.clone(),
+            });
+            entry.stats = Some(stats);
         }
         inner.dirty_monitors.insert(key.to_string());
+        if let Some(sample) = retained {
+            inner.push_history(key, sample, self.history_capacity);
+        }
     }
 
     /// `monitor.status` — an observable collector-loop status update arrived,
@@ -279,17 +447,23 @@ impl SystemMonitorStore {
         inner.dirty_monitors.insert(key.to_string());
     }
 
-    /// `monitor.close` — disconnect one monitor and drop its entry. The stats
-    /// cache is retained so a later reconnect can prime instantly (mirrors
-    /// `disconnectMonitoring`, which keeps the cache). Idempotent.
+    /// `monitor.close` — disconnect one monitor and drop its entry and history
+    /// ring. The stats cache is retained so a later reconnect can prime
+    /// instantly (mirrors `disconnectMonitoring`, which keeps the cache).
+    /// Idempotent.
     pub fn close(&self, key: &str) {
         let mut inner = self.lock();
         inner.monitors.remove(key);
         inner.dirty_monitors.insert(key.to_string());
+        if inner.history.contains_key(key) {
+            inner.reset_history(key, None);
+        }
     }
 
-    /// `monitor.replace` — overwrite the whole monitor map and stats cache with a
-    /// caller-supplied snapshot. Used by the frontend to keep the shared region a
+    /// `monitor.replace` — overwrite the whole monitor map, stats cache and
+    /// history rings with a caller-supplied snapshot. A ring is kept only for a
+    /// key present in `monitors` and only its newest samples up to the capacity,
+    /// so a replace cannot exceed the history bound. Used by the frontend to keep the shared region a
     /// faithful copy of the monitoring slice — the analog of the layout bridge's
     /// `layout.replace` seed. This store is authoritative (the former `appStore`
     /// reducers were removed, #2283). Idempotent server-side: replacing with the
@@ -298,6 +472,7 @@ impl SystemMonitorStore {
         &self,
         monitors: HashMap<String, MonitorEntry>,
         stats_cache: HashMap<String, SystemStats>,
+        history: HashMap<String, Vec<MonitorHistorySample>>,
     ) {
         let mut inner = self.lock();
         // Mark every key that could differ dirty: the old set (removals /
@@ -310,6 +485,19 @@ impl SystemMonitorStore {
         let old_cache: Vec<String> = inner.stats_cache.keys().cloned().collect();
         inner.dirty_cache.extend(old_cache);
         inner.dirty_cache.extend(stats_cache.keys().cloned());
+        let old_rings: Vec<String> = inner.history.keys().cloned().collect();
+        for key in old_rings {
+            inner.reset_history(&key, None);
+        }
+        let capacity = self.history_capacity;
+        for (key, samples) in history {
+            if capacity == 0 || !monitors.contains_key(&key) {
+                continue;
+            }
+            let skip = samples.len().saturating_sub(capacity);
+            let ring: VecDeque<_> = samples.into_iter().skip(skip).collect();
+            inner.reset_history(&key, Some(ring));
+        }
         inner.monitors = monitors;
         inner.stats_cache = stats_cache;
     }
@@ -346,6 +534,17 @@ impl SystemMonitorStore {
         self.lock().monitors.get(key).cloned()
     }
 
+    /// Read one monitor's retained history ring, oldest first (empty when it
+    /// has none) — test / diagnostics helper.
+    #[cfg(test)]
+    pub fn history(&self, key: &str) -> Vec<MonitorHistorySample> {
+        self.lock()
+            .history
+            .get(key)
+            .map(|ring| ring.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
     /// Read the cached last-known stats for a key (test / diagnostics helper).
     #[cfg(test)]
     pub fn cached_stats(&self, key: &str) -> Option<SystemStats> {
@@ -374,7 +573,17 @@ fn snapshot_of(inner: &Inner) -> Value {
             cache.insert(key.clone(), value);
         }
     }
-    json!({ "monitors": Value::Object(monitors), "statsCache": Value::Object(cache) })
+    let mut history = Map::with_capacity(inner.history.len());
+    for (key, ring) in &inner.history {
+        if let Ok(value) = serde_json::to_value(ring) {
+            history.insert(key.clone(), value);
+        }
+    }
+    json!({
+        "history": Value::Object(history),
+        "monitors": Value::Object(monitors),
+        "statsCache": Value::Object(cache),
+    })
 }
 
 /// Drain the locked store's dirty sets into a [`RegionDelta`] (see
@@ -402,9 +611,53 @@ fn drain_delta_of(inner: &mut Inner) -> RegionDelta {
             (key, value)
         })
         .collect();
+    let mut history_keys: Vec<(String, HistoryDirty)> = inner.dirty_history.drain().collect();
+    history_keys.sort_by(|a, b| a.0.cmp(&b.0));
+    let history = history_keys
+        .into_iter()
+        .map(|(key, dirty)| {
+            let delta = history_delta_of(inner.history.get(&key), dirty);
+            (key, delta)
+        })
+        .collect();
     RegionDelta {
         monitors,
         stats_cache,
+        history,
+    }
+}
+
+/// Serialize how one ring moved since the last drain: the whole ring for a
+/// reset, or only the appended tail for an append (#3204). A serialization
+/// failure degrades to a whole-ring reset, which is always correct.
+fn history_delta_of(
+    ring: Option<&VecDeque<MonitorHistorySample>>,
+    dirty: HistoryDirty,
+) -> HistoryDelta {
+    let Some(ring) = ring else {
+        return HistoryDelta::Reset(None);
+    };
+    let whole = || HistoryDelta::Reset(serde_json::to_value(ring).ok());
+    match dirty {
+        HistoryDirty::Reset => whole(),
+        HistoryDirty::Append { evicted, appended } => {
+            let Some(start) = ring.len().checked_sub(appended) else {
+                return whole();
+            };
+            let values: Option<Vec<Value>> = ring
+                .iter()
+                .skip(start)
+                .map(|sample| serde_json::to_value(sample).ok())
+                .collect();
+            match values {
+                Some(appended) => HistoryDelta::Append {
+                    evicted,
+                    start,
+                    appended,
+                },
+                None => whole(),
+            }
+        }
     }
 }
 

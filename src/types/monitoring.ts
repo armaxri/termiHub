@@ -2,7 +2,9 @@
 // (audit DUP-030, ts-rs rollout #3088): `SystemStats`, `MonitorStatus`,
 // `MonitorStatusReason`, `ProcessInfo` and `KillSignal` from core
 // `core/src/monitoring/`, and `MonitoringEntry` from the projection record in
-// `src-tauri/src/system_monitor_projection/store.rs`.
+// `src-tauri/src/system_monitor_projection/store.rs` (as is the history-ring
+// `MonitorHistorySample`, #3204).
+export type { MonitorHistorySample } from "./generated/MonitorHistorySample";
 export type { MonitorStatus } from "./generated/MonitorStatus";
 export type { MonitorStatusReason } from "./generated/MonitorStatusReason";
 export type { MonitoringEntry } from "./generated/MonitoringEntry";

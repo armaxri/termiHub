@@ -43,6 +43,21 @@ pub struct ScheduleFire {
     pub connect_window: Option<String>,
 }
 
+/// What the other windows of a fired run connect (#3878): the answer to the
+/// fire's `connectWindow` asking which targets it must not connect again.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct RunCoverage {
+    /// `true` once every other window of the run acknowledged it (so
+    /// `connected_elsewhere` is complete), or when the run is unknown.
+    pub settled: bool,
+    /// Target connection ids another window of the run has connected and
+    /// runs on itself, sorted and deduplicated.
+    pub connected_elsewhere: Vec<String>,
+}
+
 /// One window's report of a fired run.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
