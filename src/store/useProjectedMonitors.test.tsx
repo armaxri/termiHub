@@ -52,7 +52,15 @@ afterEach(() => {
   setMonitorTransportForTest(null);
 });
 
-const flush = () => act(async () => await Promise.resolve());
+/**
+ * Wait (inside `act`) until the shared region subscription has adopted its
+ * snapshot and the hook's post-subscribe `setView` has committed. Deterministic:
+ * it awaits the actual subscription promise rather than counting microtask hops.
+ */
+const subscribed = () =>
+  act(async () => {
+    await ensureMonitorsSubscribed();
+  });
 
 describe("useProjectedMonitors", () => {
   it("renders the region view once subscribed", async () => {
@@ -62,8 +70,7 @@ describe("useProjectedMonitors", () => {
     transport.seed(view);
 
     const hook = renderHook();
-    await flush();
-    await flush();
+    await subscribed();
 
     expect(hook.get().monitors.s1.stats?.cpuUsagePercent).toBe(21);
     expect(hook.get()).toEqual(view);
@@ -72,24 +79,25 @@ describe("useProjectedMonitors", () => {
 
   it("updates when the region advances after mount", async () => {
     const hook = renderHook();
-    await flush();
+    await subscribed();
     expect(hook.get().monitors.s1).toBeUndefined();
 
-    transport.seed(monitorsView([fakeMonitor("s2", { host: "host-b" })]));
-    await flush();
+    // The region diff fans out to the hook's listener synchronously, so the
+    // resulting `setView` must happen inside `act` for React to commit it before
+    // the assertion. Outside `act` it lands on React's scheduler (a macrotask)
+    // and a loaded runner could assert before it ran (#3868).
+    act(() => transport.seed(monitorsView([fakeMonitor("s2", { host: "host-b" })])));
 
-    expect(hook.get().monitors.s2.host).toBe("host-b");
+    expect(hook.get().monitors.s2?.host).toBe("host-b");
     hook.unmount();
   });
 
   it("reflects a client-dispatched intent that folds into the region", async () => {
     transport.seed(monitorsView([fakeMonitor("s1", { paused: false })]));
     const hook = renderHook();
-    await flush();
-    await flush();
+    await subscribed();
     expect(hook.get().monitors.s1.paused).toBe(false);
 
-    await ensureMonitorsSubscribed();
     await act(async () => {
       await dispatchMonitorIntent("monitor.setPaused", { key: "s1", paused: true });
     });
