@@ -1515,6 +1515,30 @@ fn capabilities_without_tool_streaming_default_to_false() {
 }
 
 #[test]
+fn capabilities_without_session_processes_default_to_false() {
+    // A pre-0.20.0 agent's `initialize` lacks `sessionProcesses` (#3210) → the
+    // desktop tells the user to update the agent instead of listing processes
+    // of an agent-hosted SSH/Docker/WSL session.
+    let caps: AgentCapabilities = serde_json::from_value(json!({
+        "connectionTypes": [],
+        "maxSessions": 5,
+    }))
+    .unwrap();
+    assert!(!caps.session_processes);
+    let caps: AgentCapabilities = serde_json::from_value(json!({
+        "connectionTypes": [],
+        "maxSessions": 5,
+        "sessionProcesses": true,
+    }))
+    .unwrap();
+    assert!(caps.session_processes);
+    assert_eq!(
+        serde_json::to_value(&caps).unwrap()["sessionProcesses"],
+        json!(true)
+    );
+}
+
+#[test]
 fn capabilities_without_embedded_server_activity_default_to_false() {
     // An older agent's `initialize` lacks `embeddedServerActivity` (#3453) →
     // the desktop never calls `embedded_server.activity` on it.

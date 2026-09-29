@@ -977,5 +977,20 @@ garbage line with too few
             .code(),
             "process_kill_failed"
         );
+        assert_eq!(
+            ProcessError::AgentOutdated.code(),
+            "process_agent_outdated"
+        );
+    }
+
+    /// An agent too old to serve agent-hosted sessions (#3210) crosses the IPC
+    /// boundary with its own stable code and a message telling the user to
+    /// update the agent — never the generic "not supported" text.
+    #[test]
+    fn agent_outdated_serializes_with_an_update_the_agent_message() {
+        let json = serde_json::to_value(ProcessError::AgentOutdated).unwrap();
+        assert_eq!(json["code"], "process_agent_outdated");
+        let message = json["message"].as_str().unwrap();
+        assert!(message.contains("update the agent"), "{message}");
     }
 }

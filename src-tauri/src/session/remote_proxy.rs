@@ -1608,6 +1608,9 @@ mod tests {
         sent_requests: Mutex<Vec<(String, serde_json::Value)>>,
         /// Records remote_session_id for every register_monitoring_output call.
         registered_monitoring_hosts: Mutex<Vec<String>>,
+        /// When set, `get_capabilities` reports an agent with this
+        /// `session_processes` flag (#3210); `None` reports no capabilities.
+        session_processes: Option<bool>,
     }
 
     impl MockAgentRpcClient {
@@ -1618,6 +1621,7 @@ mod tests {
                 send_request_result: None,
                 sent_requests: Mutex::new(Vec::new()),
                 registered_monitoring_hosts: Mutex::new(Vec::new()),
+                session_processes: None,
             }
         }
 
@@ -1628,6 +1632,7 @@ mod tests {
                 send_request_result: Some(capabilities_result),
                 sent_requests: Mutex::new(Vec::new()),
                 registered_monitoring_hosts: Mutex::new(Vec::new()),
+                session_processes: None,
             }
         }
     }
@@ -1669,7 +1674,14 @@ mod tests {
         }
 
         fn get_capabilities(&self, _agent_id: &str) -> Option<AgentCapabilities> {
-            None
+            let session_processes = self.session_processes?;
+            let mut caps: AgentCapabilities = serde_json::from_value(json!({
+                "connectionTypes": [],
+                "maxSessions": 10,
+            }))
+            .expect("minimal capabilities parse");
+            caps.session_processes = session_processes;
+            Some(caps)
         }
 
         fn shutdown_agent(
@@ -3848,6 +3860,9 @@ mod tests {
             handle.await.expect("driver ends when raw channel closes");
         }
     }
+
+    /// Agent-hosted process list + kill routing and the old-agent fallback (#3210).
+    mod process_tests;
 
     /// #3408: a process RPC is "not supported" by the agent's code (surfaced as
     /// `AgentUnsupported`), never by message text.
