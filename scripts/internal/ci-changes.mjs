@@ -31,16 +31,29 @@
  *   workflows GitHub Actions workflows (actionlint, #3327). Only a .github/
  *             change sets it, and any .github/ change already turns EVERY area
  *             on (fail-open), so it is off exactly when no CI plumbing changed.
+ *   rustdoc   workspace Rust sources changed at all, code or comments: gates
+ *             `cargo fmt --check` + the Rustdoc (-D warnings) job (#3903). Always
+ *             a superset of `rust`.
+ *
+ * Comment-only Rust changes (#3903). With `--base <rev> --head <rev>`, each
+ * changed workspace `.rs` file whose changed lines are ALL whole-line `//`
+ * comments (see rust-comment-diff.mjs) sets only `rustdoc`, not `rust`/`agent`,
+ * so a doc-comment fix skips the Rust test, cross-build, live and fixture lanes.
+ * Any doubt (git error, new/renamed file, code line, doctest, ts-rs file) keeps
+ * the file's full Rust classification.
  *
  * Usage:
- *   git diff --name-only HEAD^1 HEAD | node scripts/internal/ci-changes.mjs
+ *   git diff --name-only HEAD^1 HEAD | node scripts/internal/ci-changes.mjs \
+ *     [--base HEAD^1 --head HEAD]
  *   node scripts/internal/ci-changes.mjs --all
  * Prints `key=value` lines suitable for appending to $GITHUB_OUTPUT, including
  * `test_matrix` — the JSON OS list for the "Run Tests" matrix on a PR.
  */
 
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { isMainModule } from "./is-main-module.mjs";
+import { isCommentOnlyChange } from "./rust-comment-diff.mjs";
 
 export const AREAS = [
   "rust",
@@ -52,6 +65,7 @@ export const AREAS = [
   "deps",
   "agent",
   "workflows",
+  "rustdoc",
 ];
 
 /** Every OS the "Run Tests" matrix knows about (the post-merge set). */
@@ -173,16 +187,37 @@ function locationAreas(path) {
   return ALL;
 }
 
+const normalise = (raw) => raw.trim().replace(/\\/g, "/");
+
+/**
+ * Whether a path is a workspace Rust source whose comment-only change may be
+ * narrowed to the rustdoc area (#3903): a `.rs` file that maps to exactly the
+ * `rust` area (not ts-rs output, not the sidecar, not a CI file).
+ * @param {string} path - normalised repo-relative path.
+ */
+export function isNarrowableRustSource(path) {
+  if (!path.endsWith(".rs")) return false;
+  const areas = locationAreas(path);
+  return areas !== ALL && areas.length === 1 && areas[0] === "rust";
+}
+
 /**
  * Classify a list of changed paths into area flags.
  * @param {string[]} paths - repo-relative changed paths.
+ * @param {{ commentOnly?: Set<string> }} [options] - `commentOnly`: normalised
+ *   paths of workspace `.rs` files whose change touches only comment lines.
  * @returns {Record<string, boolean>} one boolean per entry of AREAS.
  */
-export function classify(paths) {
+export function classify(paths, { commentOnly = new Set() } = {}) {
   const flags = Object.fromEntries(AREAS.map((area) => [area, false]));
   for (const raw of paths) {
-    const path = raw.trim().replace(/\\/g, "/");
+    const path = normalise(raw);
     if (path.length === 0) continue;
+
+    if (commentOnly.has(path) && isNarrowableRustSource(path)) {
+      flags.rustdoc = true;
+      continue;
+    }
 
     const areas = locationAreas(path);
     if (areas === ALL) return allAreas();
@@ -199,7 +234,43 @@ export function classify(paths) {
       flags.agent = true;
     }
   }
+  if (flags.rust) flags.rustdoc = true;
   return flags;
+}
+
+/**
+ * Find the workspace `.rs` files among `paths` whose change between two
+ * revisions touches only comment lines. Any git failure for a file leaves it
+ * out (fail-open: it keeps its full Rust classification).
+ * @param {string[]} paths
+ * @param {string} base
+ * @param {string} head
+ * @param {(args: string[]) => string} [git] - runs git, returns stdout; throws on failure.
+ * @returns {Set<string>}
+ */
+export function findCommentOnlyRust(paths, base, head, git = runGit) {
+  const found = new Set();
+  for (const raw of paths) {
+    const path = normalise(raw);
+    if (!isNarrowableRustSource(path)) continue;
+    try {
+      const diff = git(["diff", "--no-renames", "--no-ext-diff", "-U0", base, head, "--", path]);
+      const oldSource = git(["show", `${base}:${path}`]);
+      const newSource = git(["show", `${head}:${path}`]);
+      if (isCommentOnlyChange(oldSource, newSource, diff)) found.add(path);
+    } catch {
+      // Fail-open: this file keeps its full Rust classification.
+    }
+  }
+  return found;
+}
+
+function runGit(args) {
+  return execFileSync("git", args, {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 }
 
 /** @returns {Record<string, boolean>} every area on. */
@@ -242,8 +313,18 @@ if (isMainModule(import.meta.url)) {
     process.stdout.write(formatOutputs(allAreas(), false));
   } else {
     const paths = readFileSync(0, "utf8").split("\n");
-    const flags = classify(paths);
-    for (const path of paths.filter((p) => p.trim())) process.stderr.write(`changed: ${path}\n`);
+    const argValue = (name) => {
+      const at = process.argv.indexOf(name);
+      return at === -1 ? undefined : process.argv[at + 1];
+    };
+    const base = argValue("--base");
+    const head = argValue("--head");
+    const commentOnly = base && head ? findCommentOnlyRust(paths, base, head) : new Set();
+    const flags = classify(paths, { commentOnly });
+    for (const path of paths.filter((p) => p.trim())) {
+      const tag = commentOnly.has(normalise(path)) ? " (comment-only Rust)" : "";
+      process.stderr.write(`changed: ${path}${tag}\n`);
+    }
     process.stdout.write(formatOutputs(flags, true));
   }
 }
