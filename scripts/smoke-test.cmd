@@ -44,7 +44,7 @@ echo.
 echo --- Check 1: Launch app ---
 
 start "" "%APP_PATH%"
-timeout /t 5 /nobreak >nul
+call :sleep 5
 
 REM Find the PID
 for /f "tokens=2" %%p in ('tasklist /fi "imagename eq termihub.exe" /nh 2^>nul ^| findstr /i "termihub"') do (
@@ -54,7 +54,7 @@ for /f "tokens=2" %%p in ('tasklist /fi "imagename eq termihub.exe" /nh 2^>nul ^
 :got_pid
 
 if defined APP_PID (
-    echo   PASS: App launched (PID: %APP_PID%)
+    echo   PASS: App launched ^(PID: %APP_PID%^)
     set /a PASSED+=1
 ) else (
     echo   FAIL: App exited prematurely
@@ -65,7 +65,7 @@ if defined APP_PID (
 echo.
 echo --- Check 2: Verify process is stable ---
 
-timeout /t 5 /nobreak >nul
+call :sleep 5
 
 tasklist /fi "pid eq %APP_PID%" /nh 2>nul | findstr /i "termihub" >nul
 if %errorlevel%==0 (
@@ -87,7 +87,7 @@ echo.
 echo --- Check 7: Close app ---
 
 taskkill /pid %APP_PID% >nul 2>&1
-timeout /t 3 /nobreak >nul
+call :sleep 3
 
 tasklist /fi "pid eq %APP_PID%" /nh 2>nul | findstr /i "termihub" >nul
 if %errorlevel%==0 (
@@ -106,7 +106,7 @@ REM === WebDriver flow ===
 
 REM Start tauri-driver in background
 start /b "" tauri-driver >nul 2>&1
-timeout /t 2 /nobreak >nul
+call :sleep 2
 
 REM Resolve absolute path
 for %%A in ("%APP_PATH%") do set "ABS_APP_PATH=%%~fA"
@@ -125,7 +125,7 @@ for /f "tokens=2 delims=:," %%s in ('echo %SESSION_RESPONSE% ^| findstr /r "sess
 :got_session
 
 if defined SESSION_ID (
-    echo   PASS: App launched (session: %SESSION_ID:~0,8%...)
+    echo   PASS: App launched ^(session: %SESSION_ID:~0,8%...^)
     set /a PASSED+=1
 ) else (
     echo   FAIL: Failed to create WebDriver session
@@ -135,7 +135,7 @@ if defined SESSION_ID (
 
 echo.
 echo --- Check 2: Verify window (activity bar visible) ---
-timeout /t 5 /nobreak >nul
+call :sleep 5
 
 REM Try to find activity bar element
 for /f "delims=" %%r in ('curl -s -X POST "%WD_URL%/session/%SESSION_ID%/element" -H "Content-Type: application/json" -d "{\"using\": \"css selector\", \"value\": \"[data-testid='activity-bar-connections']\"}" 2^>nul') do set "ELEM_RESPONSE=%%r"
@@ -146,7 +146,7 @@ if %errorlevel%==0 (
     set /a PASSED+=1
 ) else (
     echo %ELEM_RESPONSE% | findstr /c:"ELEMENT" >nul 2>&1
-    if %errorlevel%==0 (
+    if not errorlevel 1 (
         echo   PASS: Activity bar is visible
         set /a PASSED+=1
     ) else (
@@ -172,7 +172,7 @@ echo.
 echo --- Check 7: Close app ---
 curl -s -X DELETE "%WD_URL%/session/%SESSION_ID%" >nul 2>&1
 set SESSION_ID=
-timeout /t 2 /nobreak >nul
+call :sleep 2
 echo   PASS: App closed via WebDriver session delete
 set /a PASSED+=1
 
@@ -196,6 +196,14 @@ if %FAILED% gtr 0 (
     echo   RESULT: OK
 )
 
+exit /b 0
+
+REM Wait N seconds (the argument). Not timeout.exe: it refuses to run when stdin is
+REM redirected (CI, release-check.cmd under a harness) with "Input redirection
+REM is not supported" and returns at once. ping waits ~1 s between echoes.
+:sleep
+set /a _SLEEP_PINGS=%~1+1
+ping -n %_SLEEP_PINGS% 127.0.0.1 >nul
 exit /b 0
 
 :usage
