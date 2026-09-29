@@ -62,7 +62,7 @@ fn opt(value: &str, label: &str) -> SelectOption {
 /// list of groups so a backend can append its protocol-specific group in the
 /// natural position.
 ///
-/// Groups: **Connection** (host, port, username, password + save-to-store),
+/// Groups: **Connection** (host, port, username, password + save password),
 /// **Display** (scale mode), **Features** (view only, clipboard sync,
 /// auto-reconnect).
 ///
@@ -101,7 +101,13 @@ pub fn shared_field_base(default_port: u16) -> Vec<SettingsGroup> {
                     description: Some(
                         "Save the password to the credential store for reuse".to_string(),
                     ),
-                    ..field("saveToStore", "Save to store", FieldType::Boolean)
+                    // The key every other connection type uses, so the desktop
+                    // routes the password into the credential store (#3818).
+                    ..field(
+                        super::save_password::SAVE_PASSWORD_KEY,
+                        "Save password",
+                        FieldType::Boolean,
+                    )
                 },
             ],
         },

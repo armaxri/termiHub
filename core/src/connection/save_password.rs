@@ -33,15 +33,20 @@ pub const LEGACY_SAVE_TO_STORE_KEY: &str = "saveToStore";
 ///
 /// Returns `true` when the bag was changed.
 pub fn normalize_save_password(settings: &mut Value) -> bool {
-    let _ = settings;
-    false
-}
-
-/// Whether a connection settings bag opts into keeping its password in the
-/// credential store (either key, for a bag not normalized yet).
-pub fn save_password_enabled(settings: &Value) -> bool {
-    let _ = settings;
-    false
+    let Some(map) = settings.as_object_mut() else {
+        return false;
+    };
+    let Some(legacy) = map.remove(LEGACY_SAVE_TO_STORE_KEY) else {
+        return false;
+    };
+    let current = map.get(SAVE_PASSWORD_KEY).and_then(Value::as_bool);
+    let merged = match (current, legacy.as_bool()) {
+        (Some(true), _) | (_, Some(true)) => Value::Bool(true),
+        (Some(false), _) => Value::Bool(false),
+        (None, _) => legacy,
+    };
+    map.insert(SAVE_PASSWORD_KEY.to_string(), merged);
+    true
 }
 
 #[cfg(test)]
@@ -83,14 +88,5 @@ mod tests {
         let mut v = json!(null);
         assert!(!normalize_save_password(&mut v));
         assert_eq!(v, json!(null));
-    }
-
-    #[test]
-    fn enabled_reads_either_key() {
-        assert!(save_password_enabled(&json!({ "savePassword": true })));
-        assert!(save_password_enabled(&json!({ "saveToStore": true })));
-        assert!(!save_password_enabled(&json!({ "savePassword": false })));
-        assert!(!save_password_enabled(&json!({})));
-        assert!(!save_password_enabled(&json!({ "savePassword": "yes" })));
     }
 }

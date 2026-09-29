@@ -69,8 +69,10 @@ pub fn auto_reconnect_enabled(settings: &Value) -> bool {
 
 /// `#[serde(with = "...")]` module for a connection settings bag field
 /// (`serde_json::Value`): serializes unchanged and applies
-/// [`normalize_auto_reconnect`] on deserialize, so the legacy key is accepted on
-/// read (the serde-alias equivalent for an opaque bag).
+/// [`normalize_auto_reconnect`] and
+/// [`normalize_save_password`](crate::connection::save_password::normalize_save_password)
+/// on deserialize, so the legacy keys are accepted on read (the serde-alias
+/// equivalent for an opaque bag).
 pub mod settings_bag {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_json::Value;
@@ -80,10 +82,11 @@ pub mod settings_bag {
         value.serialize(serializer)
     }
 
-    /// Deserialize the bag, rewriting the legacy reconnect key.
+    /// Deserialize the bag, rewriting the legacy reconnect and save keys.
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Value, D::Error> {
         let mut value = Value::deserialize(deserializer)?;
         super::normalize_auto_reconnect(&mut value);
+        crate::connection::save_password::normalize_save_password(&mut value);
         Ok(value)
     }
 }
@@ -101,13 +104,14 @@ pub mod optional_settings_bag {
         value.serialize(serializer)
     }
 
-    /// Deserialize the optional bag, rewriting the legacy reconnect key.
+    /// Deserialize the optional bag, rewriting the legacy reconnect and save keys.
     pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Option<Value>, D::Error> {
         let mut value = Option::<Value>::deserialize(deserializer)?;
         if let Some(v) = value.as_mut() {
             super::normalize_auto_reconnect(v);
+            crate::connection::save_password::normalize_save_password(v);
         }
         Ok(value)
     }

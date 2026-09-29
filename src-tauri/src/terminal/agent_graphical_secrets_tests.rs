@@ -314,7 +314,11 @@ fn a_listed_legacy_save_flag_is_shown_as_the_unified_flag() {
     // A definition saved with the old `saveToStore` option and no password
     // needs no agent rewrite, but the editor must show it as "Save password".
     let store = RecordingStore::default();
-    let defs = vec![info("def-old", "vnc", json!({ "host": "h", "saveToStore": true }))];
+    let defs = vec![info(
+        "def-old",
+        "vnc",
+        json!({ "host": "h", "saveToStore": true }),
+    )];
 
     let out = migrate_definitions(&store, AGENT, defs, |_| {
         panic!("a definition without a password is not rewritten")

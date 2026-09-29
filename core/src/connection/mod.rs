@@ -31,9 +31,6 @@ pub use auto_reconnect::{
     auto_reconnect_enabled, normalize_auto_reconnect, AUTO_RECONNECT_DEFAULT, AUTO_RECONNECT_KEY,
     LEGACY_RESILIENT_RECONNECT_KEY,
 };
-pub use save_password::{
-    normalize_save_password, save_password_enabled, LEGACY_SAVE_TO_STORE_KEY, SAVE_PASSWORD_KEY,
-};
 pub use clipboard_image::{
     check_clipboard_image_size, ClipboardImage, ClipboardImageInfo, ClipboardImageViolation,
     MAX_CLIPBOARD_IMAGE_BYTES, MAX_CLIPBOARD_IMAGE_DIMENSION,
@@ -61,6 +58,7 @@ pub use plugin_type_id::{
 pub use registry::{
     register_core_backends, ConnectionFactory, ConnectionTypeInfo, ConnectionTypeRegistry,
 };
+pub use save_password::{normalize_save_password, LEGACY_SAVE_TO_STORE_KEY, SAVE_PASSWORD_KEY};
 pub use schema::*;
 pub use validation::{validate_settings, ValidationError};
 

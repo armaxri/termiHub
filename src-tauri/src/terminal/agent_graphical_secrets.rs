@@ -7,8 +7,9 @@
 //!
 //! - **Save / update** — the `password` is removed from the definition before
 //!   it is sent to the agent. When the definition opts into storing it
-//!   (`saveToStore`, or `savePassword` for parity with the other connection
-//!   types) it is written to the desktop credential store under
+//!   (`savePassword`, the one save option of every connection type; the
+//!   legacy `saveToStore` key is read as it, #3818) it is written to the
+//!   desktop credential store under
 //!   [`credential_key`]; otherwise it is only used for the connect that follows
 //!   and prompted for next time.
 //! - **Connect** — the frontend resolves the secret from the desktop store
@@ -26,6 +27,7 @@
 //! Secrets are never logged: only agent and definition ids are.
 
 use serde_json::Value;
+use termihub_core::connection::save_password::{normalize_save_password, SAVE_PASSWORD_KEY};
 use termihub_core::protocol::methods::{ConnectionCreateParams, ConnectionUpdateParams};
 use tracing::{debug, info, warn};
 use zeroize::Zeroizing;
@@ -43,12 +45,6 @@ const TUNNELLED_GRAPHICAL_TYPES: [&str; 2] = ["vnc", "rdp"];
 
 /// The settings key holding the VNC/RDP password.
 const PASSWORD_KEY: &str = "password";
-
-/// The graphical schema's "save to the credential store" option.
-const SAVE_TO_STORE_KEY: &str = "saveToStore";
-
-/// The other connection types' equivalent of [`SAVE_TO_STORE_KEY`].
-const SAVE_PASSWORD_KEY: &str = "savePassword";
 
 /// Whether `session_type` is a graphical type run here and tunnelled through
 /// the agent.
@@ -79,17 +75,19 @@ fn take_secret(config: &mut Value) -> Option<Zeroizing<String>> {
     }
 }
 
-/// Whether `config` opts into keeping its password in the credential store.
-fn wants_saved(config: &Value) -> bool {
-    [SAVE_TO_STORE_KEY, SAVE_PASSWORD_KEY]
-        .iter()
-        .any(|k| config.get(*k).and_then(Value::as_bool) == Some(true))
+/// Whether `config` opts into keeping its password in the credential store,
+/// rewriting a legacy `saveToStore` flag to `savePassword` first (#3818).
+fn wants_saved(config: &mut Value) -> bool {
+    normalize_save_password(config);
+    config.get(SAVE_PASSWORD_KEY).and_then(Value::as_bool) == Some(true)
 }
 
-/// Drop any password from a definition before it is handed to the frontend.
+/// Drop any password from a definition before it is handed to the frontend,
+/// and show a legacy save flag as the unified one.
 fn scrub(def: &mut AgentDefinitionInfo) {
     if is_tunnelled_graphical(&def.session_type) {
         drop(take_secret(&mut def.config));
+        normalize_save_password(&mut def.config);
     }
 }
 
@@ -126,7 +124,7 @@ where
         return save(params);
     }
     let secret = take_secret(&mut params.config);
-    let keep = wants_saved(&params.config);
+    let keep = wants_saved(&mut params.config);
     let mut saved = save(params)?;
     if let (Some(secret), true) = (secret, keep) {
         store_secret(store, agent_id, &saved.id, &secret);
@@ -199,6 +197,8 @@ where
             if !is_tunnelled_graphical(&def.session_type) {
                 return def;
             }
+            // Show a legacy save flag as the unified one, whatever happens next.
+            normalize_save_password(&mut def.config);
             let Some(secret) = take_secret(&mut def.config) else {
                 return def;
             };
@@ -216,7 +216,7 @@ where
                         return def;
                     }
                     if let Some(obj) = def.config.as_object_mut() {
-                        obj.insert(SAVE_TO_STORE_KEY.to_string(), Value::Bool(true));
+                        obj.insert(SAVE_PASSWORD_KEY.to_string(), Value::Bool(true));
                     }
                     true
                 }
