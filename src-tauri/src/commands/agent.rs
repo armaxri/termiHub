@@ -11,9 +11,11 @@ use crate::agents_projection::store::{
 };
 use crate::connection::config::AgentSettings;
 use crate::connection::manager::ConnectionManager;
+use crate::credential::CredentialManager;
 use crate::session::manager::SessionManager;
 use crate::terminal::agent_cancel::AgentDeployCancellation;
 use crate::terminal::agent_deploy::{AgentDeployConfig, AgentDeployResult, AgentProbeResult};
+use crate::terminal::agent_graphical_secrets;
 use crate::terminal::agent_manager::{
     AgentCapabilities, AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo,
     AgentFolderInfo, AgentHostSessionsResult, AgentRpcClient, AgentSessionInfo,
@@ -561,13 +563,24 @@ pub async fn list_agent_definitions(
     agent_id: String,
     app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+    credentials: State<'_, Arc<CredentialManager>>,
 ) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
     debug!(agent_id, "Listing agent definitions");
     let manager = agent_manager.inner().clone();
+    let store = credentials.inner().clone();
     let aid = agent_id.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || manager.list_definitions(&aid))
-        .await
-        .unwrap_or_else(|e| Err(blocking_join_error(e)));
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let definitions = manager.list_definitions(&aid)?;
+        // Move legacy VNC/RDP passwords off the agent host (#3803).
+        Ok(agent_graphical_secrets::migrate_definitions(
+            store.as_ref(),
+            &aid,
+            definitions,
+            |params| manager.update_definition(&aid, params),
+        ))
+    })
+    .await
+    .unwrap_or_else(|e| Err(blocking_join_error(e)));
     // Server-authority fold (#2388): mirror the saved-definition snapshot into the
     // shared store at the source.
     if let Ok(definitions) = &result {
@@ -588,15 +601,21 @@ pub async fn save_agent_definition(
     definition: Value,
     app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+    credentials: State<'_, Arc<CredentialManager>>,
 ) -> Result<AgentDefinitionInfo, TerminalError> {
     debug!(agent_id, "Saving agent definition");
     let definition: ConnectionCreateParams = decode_agent_params(CONNECTIONS_CREATE, definition)?;
     let manager = agent_manager.inner().clone();
+    let store = credentials.inner().clone();
     let aid = agent_id.clone();
-    let result =
-        tauri::async_runtime::spawn_blocking(move || manager.save_definition(&aid, definition))
-            .await
-            .unwrap_or_else(|e| Err(blocking_join_error(e)));
+    // A VNC/RDP password stays on this computer, never on the agent (#3803).
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        agent_graphical_secrets::save_definition(store.as_ref(), &aid, definition, |params| {
+            manager.save_definition(&aid, params)
+        })
+    })
+    .await
+    .unwrap_or_else(|e| Err(blocking_join_error(e)));
     // Server-authority fold (#2388): upsert the saved definition into the shared
     // store at the source.
     if let Ok(info) = &result {
@@ -617,15 +636,21 @@ pub async fn delete_agent_definition(
     definition_id: String,
     app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+    credentials: State<'_, Arc<CredentialManager>>,
 ) -> Result<(), TerminalError> {
     info!(agent_id, definition_id, "Deleting agent definition");
     let manager = agent_manager.inner().clone();
+    let store = credentials.inner().clone();
     let aid = agent_id.clone();
     let did = definition_id.clone();
-    let result =
-        tauri::async_runtime::spawn_blocking(move || manager.delete_definition(&aid, &did))
-            .await
-            .unwrap_or_else(|e| Err(blocking_join_error(e)));
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        manager.delete_definition(&aid, &did)?;
+        // Drop the desktop copy of a VNC/RDP password with it (#3803).
+        agent_graphical_secrets::forget_definition(store.as_ref(), &aid, &did);
+        Ok(())
+    })
+    .await
+    .unwrap_or_else(|e| Err(blocking_join_error(e)));
     // Server-authority fold (#2388): drop the deleted definition from the shared
     // store at the source.
     if result.is_ok() {
@@ -644,14 +669,25 @@ pub async fn list_agent_connections(
     agent_id: String,
     app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+    credentials: State<'_, Arc<CredentialManager>>,
 ) -> Result<AgentConnectionsData, TerminalError> {
     debug!(agent_id, "Listing agent connections and folders");
     let manager = agent_manager.inner().clone();
+    let store = credentials.inner().clone();
     let aid = agent_id.clone();
-    let result =
-        tauri::async_runtime::spawn_blocking(move || manager.list_connections_and_folders(&aid))
-            .await
-            .unwrap_or_else(|e| Err(blocking_join_error(e)));
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut data = manager.list_connections_and_folders(&aid)?;
+        // Move legacy VNC/RDP passwords off the agent host (#3803).
+        data.connections = agent_graphical_secrets::migrate_definitions(
+            store.as_ref(),
+            &aid,
+            std::mem::take(&mut data.connections),
+            |params| manager.update_definition(&aid, params),
+        );
+        Ok(data)
+    })
+    .await
+    .unwrap_or_else(|e| Err(blocking_join_error(e)));
     // Server-authority fold (#2388): mirror the saved connections + folders
     // snapshot into the shared store at the source (definitions and folders slices
     // only; the live-session slice is left to `list_agent_sessions`).
@@ -675,15 +711,21 @@ pub async fn update_agent_definition(
     params: Value,
     app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+    credentials: State<'_, Arc<CredentialManager>>,
 ) -> Result<AgentDefinitionInfo, TerminalError> {
     debug!(agent_id, "Updating agent definition");
     let params: ConnectionUpdateParams = decode_agent_params(CONNECTIONS_UPDATE, params)?;
     let manager = agent_manager.inner().clone();
+    let store = credentials.inner().clone();
     let aid = agent_id.clone();
-    let result =
-        tauri::async_runtime::spawn_blocking(move || manager.update_definition(&aid, params))
-            .await
-            .unwrap_or_else(|e| Err(blocking_join_error(e)));
+    // A VNC/RDP password stays on this computer, never on the agent (#3803).
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        agent_graphical_secrets::update_definition(store.as_ref(), &aid, params, |params| {
+            manager.update_definition(&aid, params)
+        })
+    })
+    .await
+    .unwrap_or_else(|e| Err(blocking_join_error(e)));
     // Server-authority fold (#2388): replace the updated definition in the shared
     // store at the source.
     if let Ok(info) = &result {
