@@ -253,6 +253,11 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # `cargo tree -i` is clean off Linux. No extra system-library build dependency
 # beyond the WebKitGTK headers Tauri/wry already require on Linux.
 webkit2gtk = "2.0"
+# GTK3 bindings for the Linux native drag-out (#3492): `files::drag_out` hooks the
+# window's `drag-data-get` to replace the `drag` crate's unencoded `file://` URIs
+# with percent-encoded ones. Same 0.18 line Tauri/wry already pull (one instance,
+# so `Window::gtk_window()`'s type matches); no new system-library dependency.
+gtk = "0.18"
 # (`percent-encoding` — used here on Linux to encode staged temp paths into
 # `file://` URIs for the clipboard sidecar — is declared once in the top-level
 # `[dependencies]` so it is available on every platform, see #2251.)

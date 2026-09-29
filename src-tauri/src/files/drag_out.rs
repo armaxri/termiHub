@@ -612,16 +612,59 @@ impl From<drag::DragResult> for DragOutResult {
 }
 
 /// The `file://` URIs a Linux (GTK) drag-out advertises for `paths`, one per
-/// path, in order.
+/// path, in order, each percent-encoded (RFC 8089 / RFC 3986).
 ///
-/// The `drag` crate's GTK backend builds these as `file://{path}` without any
-/// percent-encoding (#3492).
+/// The `drag` crate's GTK backend (2.1.1) builds these as `file://{path}` with
+/// no encoding, so `a b.txt`, `100%.txt`, `#x.txt` or `ümlaut.txt` reach the
+/// file manager as invalid URIs (#3492). [`start_native_drag`] overrides the
+/// crate's payload with these. Unix-only because the encoding works on the raw
+/// path bytes; it is compiled on macOS too so the tests run there.
 #[cfg(unix)]
 pub fn drag_out_uris(paths: &[PathBuf]) -> Vec<String> {
     paths
         .iter()
-        .map(|path| format!("file://{}", path.display()))
+        .map(|path| crate::utils::file_uri::path_to_file_uri(path))
         .collect()
+}
+
+/// Linux-only: replaces the `drag` crate's unencoded `text/uri-list` payload
+/// with [`drag_out_uris`] for the duration of one drag (#3492).
+#[cfg(target_os = "linux")]
+mod gtk_uri_fix {
+    use std::sync::{Arc, Mutex};
+
+    use gtk::glib::thread_guard::ThreadGuard;
+    use gtk::glib::{ObjectExt, SignalHandlerId};
+    use gtk::prelude::WidgetExt;
+
+    /// The window plus our `drag-data-get` handler, disconnected when the drag
+    /// ends. GTK objects are main-thread-only; the guard makes the handle `Send`
+    /// for the crate's `Send` callback, which GTK always invokes on the main
+    /// thread (where the handle is created, used and dropped).
+    pub type Slot = Arc<Mutex<Option<ThreadGuard<(gtk::ApplicationWindow, SignalHandlerId)>>>>;
+
+    /// Connect a `drag-data-get` handler that sets the percent-encoded `uris`.
+    ///
+    /// Must run **after** `drag::start_drag`: GTK runs handlers in connection
+    /// order, so ours runs after the crate's and its `set_uris` wins.
+    pub fn install(window: &gtk::ApplicationWindow, uris: Vec<String>, slot: &Slot) {
+        let id = window.connect_drag_data_get(move |_, _, data, _, _| {
+            let uris: Vec<&str> = uris.iter().map(String::as_str).collect();
+            data.set_uris(&uris);
+        });
+        if let Ok(mut slot) = slot.lock() {
+            *slot = Some(ThreadGuard::new((window.clone(), id)));
+        }
+    }
+
+    /// Disconnect the handler installed by [`install`], if any. Idempotent.
+    pub fn remove(slot: &Slot) {
+        let taken = slot.lock().ok().and_then(|mut s| s.take());
+        if let Some(guard) = taken {
+            let (window, id) = guard.into_inner();
+            window.disconnect(id);
+        }
+    }
 }
 
 /// The drag preview image: the app's 32px icon, embedded so no file lookup can
@@ -636,23 +679,53 @@ pub fn start_native_drag<R: tauri::Runtime>(
     on_done: impl Fn(DragOutResult) + Send + 'static,
 ) -> Result<(), String> {
     #[cfg(target_os = "linux")]
-    let raw_window = window.gtk_window().map_err(|e| e.to_string())?;
-    #[cfg(target_os = "linux")]
-    let raw_window = &raw_window;
-    #[cfg(not(target_os = "linux"))]
-    let raw_window = window;
+    {
+        use gtk::prelude::WidgetExt;
 
-    drag::start_drag(
-        raw_window,
-        drag::DragItem::Files(paths),
-        drag::Image::Raw(DRAG_PREVIEW_PNG.to_vec()),
-        move |result, _cursor| on_done(result.into()),
-        drag::Options {
-            skip_animatation_on_cancel_or_failure: false,
-            mode: drag::DragMode::Copy,
-        },
-    )
-    .map_err(|e| e.to_string())
+        let gtk_window = window.gtk_window().map_err(|e| e.to_string())?;
+        let uris = drag_out_uris(&paths);
+        let slot = gtk_uri_fix::Slot::default();
+        let done_slot = slot.clone();
+        let started = drag::start_drag(
+            &gtk_window,
+            drag::DragItem::Files(paths),
+            drag::Image::Raw(DRAG_PREVIEW_PNG.to_vec()),
+            move |result, _cursor| {
+                gtk_uri_fix::remove(&done_slot);
+                on_done(result.into());
+            },
+            drag_options(),
+        );
+        if started.is_ok() {
+            // The crate unsets the window's drag source when the drag ends
+            // (drop-performed / drag-failed), so a finished drag leaves no GTK
+            // drag source behind to hijack later in-window drags.
+            gtk_uri_fix::install(&gtk_window, uris, &slot);
+        } else {
+            // A failed start leaves the drag source the crate already set.
+            gtk_window.drag_source_unset();
+        }
+        started.map_err(|e| e.to_string())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        drag::start_drag(
+            window,
+            drag::DragItem::Files(paths),
+            drag::Image::Raw(DRAG_PREVIEW_PNG.to_vec()),
+            move |result, _cursor| on_done(result.into()),
+            drag_options(),
+        )
+        .map_err(|e| e.to_string())
+    }
+}
+
+fn drag_options() -> drag::Options {
+    drag::Options {
+        skip_animatation_on_cancel_or_failure: false,
+        mode: drag::DragMode::Copy,
+    }
 }
 
 #[cfg(test)]
