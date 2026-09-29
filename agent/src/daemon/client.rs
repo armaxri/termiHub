@@ -16,6 +16,7 @@ use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
+use crate::daemon::process_rpc::{DaemonProcessManager, ProcessChannel};
 use crate::daemon::protocol::{self, *};
 use crate::daemon::transport::{self, BoxedReader, BoxedWriter};
 use crate::io::transport::NotificationSender;
@@ -57,7 +58,7 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Preserves the caller's serialization (it is invoked while the `writer` mutex
 /// guard is held, exactly as before), but a stalled socket can no longer hold
 /// the lock forever: on timeout it returns an error and the write is abandoned.
-async fn write_frame_timed(
+pub(crate) async fn write_frame_timed(
     writer: &mut BoxedWriter,
     msg_type: u8,
     payload: &[u8],
@@ -189,6 +190,9 @@ pub struct DaemonClient {
     /// Hook the reader runs when this session's backend exits on its own,
     /// installed via [`set_exit_hook`](Self::set_exit_hook) (#2381).
     on_exit: ExitHookSlot,
+    /// Process list / kill requests to the daemon and whether the daemon
+    /// serves them (#3210).
+    processes: Arc<ProcessChannel>,
 }
 
 impl DaemonClient {
@@ -263,6 +267,7 @@ impl DaemonClient {
         let on_exit: ExitHookSlot = Arc::new(OnceLock::new());
         let writer: DaemonWriterHandle = Arc::new(Mutex::new(None));
         let evicted = Arc::new(AtomicBool::new(false));
+        let processes = Arc::new(ProcessChannel::default());
 
         let (reader_task, alive) = connect_and_start_reader(
             &endpoint,
@@ -278,6 +283,7 @@ impl DaemonClient {
                 writer: writer.clone(),
                 evicted: evicted.clone(),
             },
+            processes.clone(),
         )
         .await?;
 
@@ -291,6 +297,7 @@ impl DaemonClient {
             notification_tx,
             pending_buffer_reply,
             on_exit,
+            processes,
         })
     }
 
@@ -426,6 +433,7 @@ impl DaemonClient {
                     writer: self.writer.clone(),
                     evicted: self.evicted.clone(),
                 },
+                self.processes.clone(),
             )
             .await;
             match connected {
@@ -533,6 +541,23 @@ impl DaemonClient {
 
     pub fn is_alive(&self) -> bool {
         self.alive.load(Ordering::SeqCst)
+    }
+
+    /// The session backend's process manager, reached through the daemon
+    /// (#3210) — `None` when this worker does not currently hold the session
+    /// (evicted, or the daemon is gone) or when the daemon does not serve
+    /// process requests (its backend has no process manager, or it was started
+    /// by an agent that predates them).
+    pub fn process_manager(
+        &self,
+    ) -> Option<Arc<dyn termihub_core::monitoring::ProcessManager + Send + Sync>> {
+        if self.is_evicted() || !self.is_alive() || !self.processes.supported() {
+            return None;
+        }
+        Some(Arc::new(DaemonProcessManager::new(
+            self.writer.clone(),
+            self.processes.clone(),
+        )))
     }
 
     /// Get the transport endpoint (socket path on unix, pipe name on windows).
@@ -738,7 +763,13 @@ async fn connect_and_start_reader(
     on_exit: ExitHookSlot,
     mode: ConnectMode,
     eviction: EvictionSink,
+    processes: Arc<ProcessChannel>,
 ) -> Result<(ReaderTask, Arc<AtomicBool>), anyhow::Error> {
+    // A new connection re-learns what the daemon serves; requests sent over the
+    // previous connection will never be answered (#3210).
+    processes.set_supported(false);
+    processes.fail_all();
+
     // Recovery targets an already-bound daemon and must fast-fail a dead-but-
     // lingering socket rather than pay the long spawn-path connect timeout (#2476).
     let (mut reader, mut writer) = if mode.fast_fail {
@@ -784,6 +815,11 @@ async fn connect_and_start_reader(
                 }
                 MSG_READY => {
                     break;
+                }
+                // #3210: the daemon's optional features, sent just before Ready.
+                MSG_CAPABILITIES => {
+                    let flags = frame.payload.first().copied().unwrap_or(0);
+                    processes.set_supported(flags & CAP_PROCESSES != 0);
                 }
                 MSG_EXITED => {
                     let code = protocol::decode_exit_code(&frame.payload).unwrap_or(-1);
@@ -849,6 +885,7 @@ async fn connect_and_start_reader(
                 pending_buffer_reply,
                 on_exit,
                 Some(&eviction),
+                Some(&processes),
             ) => false,
         };
         stopped.then_some(reader)
@@ -878,11 +915,15 @@ async fn reader_loop(
         pending_buffer_reply,
         on_exit,
         None,
+        None,
     )
     .await;
 }
 
-/// The reader loop proper. `eviction` receives an [`MSG_EVICTED`] frame (SM-003).
+/// The reader loop proper. `eviction` receives an [`MSG_EVICTED`] frame (SM-003);
+/// `processes` receives [`MSG_PROCESS_RESPONSE`] replies and is failed when the
+/// loop ends, so no process request waits on a connection that is gone (#3210).
+#[allow(clippy::too_many_arguments)]
 async fn reader_loop_inner(
     reader: &mut BoxedReader,
     session_id: &str,
@@ -891,6 +932,35 @@ async fn reader_loop_inner(
     pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
     on_exit: ExitHookSlot,
     eviction: Option<&EvictionSink>,
+    processes: Option<&Arc<ProcessChannel>>,
+) {
+    read_frames(
+        reader,
+        session_id,
+        notification_tx,
+        alive,
+        pending_buffer_reply,
+        on_exit,
+        eviction,
+        processes,
+    )
+    .await;
+    if let Some(processes) = processes {
+        processes.fail_all();
+    }
+}
+
+/// The frame loop of [`reader_loop_inner`]; returns when the connection ends.
+#[allow(clippy::too_many_arguments)]
+async fn read_frames(
+    reader: &mut BoxedReader,
+    session_id: &str,
+    notification_tx: &NotificationSender,
+    alive: &AtomicBool,
+    pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
+    on_exit: ExitHookSlot,
+    eviction: Option<&EvictionSink>,
+    processes: Option<&Arc<ProcessChannel>>,
 ) {
     loop {
         // Steady-state reads use the mid-frame timeout (#3015): a peer that
@@ -967,6 +1037,11 @@ async fn reader_loop_inner(
                     let _ = notification_tx
                         .send(evicted_notification(session_id, EVICTED_REASON_TAKEOVER));
                     return;
+                }
+                MSG_PROCESS_RESPONSE => {
+                    if let Some(processes) = processes {
+                        processes.deliver(&frame.payload);
+                    }
                 }
                 other => {
                     debug!("Unknown frame type from daemon: 0x{other:02x}");
@@ -1198,6 +1273,7 @@ mod tests {
                 Arc::new(Mutex::new(None)),
                 on_exit,
                 Some(&sink),
+                None,
             ),
         )
         .await
@@ -1540,6 +1616,7 @@ mod tests {
             notification_tx: make_notification_tx(),
             pending_buffer_reply: Arc::new(Mutex::new(None)),
             on_exit: Arc::new(OnceLock::new()),
+            processes: Arc::new(ProcessChannel::default()),
         }
     }
 

@@ -291,6 +291,13 @@ pub enum ProcessError {
     /// Killing failed for a reason other than the specific cases above.
     #[error("failed to kill process {pid}: {message}")]
     KillFailed { pid: u32, message: String },
+
+    /// The session runs on a remote agent too old to manage processes in it:
+    /// an agent-hosted SSH / Docker / WSL session on an agent that predates
+    /// protocol 0.20.0 (#3210). The fix is on the user's side — update the
+    /// agent — so the UI shows that instead of a generic failure.
+    #[error("this session's agent is too old to manage its processes; update the agent")]
+    AgentOutdated,
 }
 
 impl ProcessError {
@@ -305,6 +312,7 @@ impl ProcessError {
             ProcessError::ListFailed(_) => "process_list_failed",
             ProcessError::UnsupportedSignal { .. } => "process_signal_not_supported",
             ProcessError::KillFailed { .. } => "process_kill_failed",
+            ProcessError::AgentOutdated => "process_agent_outdated",
         }
     }
 }
@@ -977,5 +985,17 @@ garbage line with too few
             .code(),
             "process_kill_failed"
         );
+        assert_eq!(ProcessError::AgentOutdated.code(), "process_agent_outdated");
+    }
+
+    /// An agent too old to serve agent-hosted sessions (#3210) crosses the IPC
+    /// boundary with its own stable code and a message telling the user to
+    /// update the agent — never the generic "not supported" text.
+    #[test]
+    fn agent_outdated_serializes_with_an_update_the_agent_message() {
+        let json = serde_json::to_value(ProcessError::AgentOutdated).unwrap();
+        assert_eq!(json["code"], "process_agent_outdated");
+        let message = json["message"].as_str().unwrap();
+        assert!(message.contains("update the agent"), "{message}");
     }
 }

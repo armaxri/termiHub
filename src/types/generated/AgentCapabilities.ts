@@ -31,6 +31,12 @@ toolStreaming?: boolean,
  */
 embeddedServerActivity?: boolean, 
 /**
+ * Whether the agent lists / kills processes inside agent-hosted SSH,
+ * Docker and WSL sessions (protocol 0.20.0, #3210). `false` for older
+ * agents, whose such sessions show "update the agent" in the process table.
+ */
+sessionProcesses?: boolean, 
+/**
  * Agent binary version string, e.g. "1.4.2".
  */
 agentVersion?: string, };

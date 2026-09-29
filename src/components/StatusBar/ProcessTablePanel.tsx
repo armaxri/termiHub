@@ -11,6 +11,7 @@ import { listProcesses, killProcess } from "@/services/api";
 import type { KillSignal, ProcessInfo } from "@/types/monitoring";
 import { t, tf } from "@/i18n/catalog";
 import { frontendLog } from "@/utils/frontendLog";
+import { parseBackendError } from "@/utils/backendErrorCode";
 import { getPlatform } from "@/utils/platform";
 import {
   DEFAULT_KILL_SIGNAL,
@@ -49,6 +50,12 @@ const PROCESS_REFRESH_INTERVAL_MS = 5000;
 type SortKey = "cpu" | "mem";
 
 /**
+ * Backend code for a session on a remote agent too old to manage its
+ * processes (#3210) — the fix is updating the agent, not retrying.
+ */
+const AGENT_OUTDATED_CODE = "process_agent_outdated";
+
+/**
  * The process table (PROD-0028): the top processes on the active session's host
  * by CPU, with a mandatory-confirm kill action.
  *
@@ -74,6 +81,9 @@ export function ProcessTablePanel({
   const [processes, setProcesses] = useState<ProcessInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The session's agent must be updated before its processes can be listed
+  // (#3210). Terminal for this panel: no retry, no background refresh.
+  const [agentOutdated, setAgentOutdated] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("cpu");
   const [sortDesc, setSortDesc] = useState(true);
   // The process pending kill confirmation (`null` when no confirm is open). The
@@ -89,9 +99,14 @@ export function ProcessTablePanel({
         const list = await listProcesses(sessionId);
         setProcesses(list);
         setError(null);
+        setAgentOutdated(false);
       } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
+        const { code, message } = parseBackendError(e);
         frontendLog("process_table", `list_processes failed: ${message}`);
+        if (code === AGENT_OUTDATED_CODE) {
+          setAgentOutdated(true);
+          return;
+        }
         setError(message);
         // Surface the failure on the first (user-triggered) load; a background
         // refresh failure updates the inline error without a toast spam.
@@ -108,9 +123,12 @@ export function ProcessTablePanel({
   useEffect(() => {
     if (!open) return;
     void refresh(true);
+  }, [open, refresh]);
+  useEffect(() => {
+    if (!open || agentOutdated) return;
     const id = window.setInterval(() => void refresh(false), PROCESS_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(id);
-  }, [open, refresh]);
+  }, [open, agentOutdated, refresh]);
 
   const sorted = useMemo(() => {
     const value = (p: ProcessInfo) => (sortKey === "cpu" ? p.cpuPercent : p.memoryPercent);
@@ -151,7 +169,13 @@ export function ProcessTablePanel({
         size="lg"
         data-testid="monitoring-processes-panel"
       >
-        {loading && processes.length === 0 ? (
+        {agentOutdated ? (
+          <EmptyState
+            title="Update the agent"
+            description="This session runs on a remote agent that is too old to list or stop its processes. Update the agent on this host to manage them."
+            data-testid="monitoring-processes-agent-outdated"
+          />
+        ) : loading && processes.length === 0 ? (
           <EmptyState
             loading
             title="Loading processes…"
