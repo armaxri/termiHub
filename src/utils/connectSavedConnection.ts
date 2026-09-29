@@ -21,11 +21,17 @@
  * step may ask the user anything. Every point where the attended flow would
  * prompt fails fast instead and returns a `refused` result with the reason:
  * a missing password or key passphrase, a locked credential store, a stored
- * credential the server rejects (kept — only a user decides it is stale), an
- * agent-hosted or non-terminal connection. The connect itself always runs
- * first (`createTerminal` with the backend's never-prompt flag), so an
- * untrusted host key or a keyboard-interactive round comes back as its typed
- * code and is refused too; only then is the tab opened, on the live session.
+ * credential the server rejects (kept — only a user decides it is stale), a
+ * non-terminal connection. The connect itself always runs first
+ * (`createTerminal` with the backend's never-prompt flag), so an untrusted
+ * host key or a keyboard-interactive round comes back as its typed code and is
+ * refused too; only then is the tab opened, on the live session.
+ *
+ * An **agent-hosted** target (#3877) is connected unattended by the agent
+ * itself, so it needs an agent that supports it (`unattendedConnect`,
+ * protocol 0.23.0): on an older agent, or one that is not connected, it is
+ * refused with that reason. The agent resolves the target's key on its own
+ * host and refuses a missing passphrase typed, like the prompts above.
  *
  * This module contains no UI of its own: callers render the shared
  * `PasswordPrompt` / `UnlockDialog` that the attended flow drives through the
@@ -39,6 +45,7 @@ import {
   removeCredential,
   storeCredential,
 } from "@/services/api";
+import { currentAgentsView } from "@/store/agentsBridge";
 import { useAppStore, type AddTabOptions } from "@/store/appStore";
 import type { SavedConnection } from "@/types/connection";
 import type { ConnectionConfig } from "@/types/terminal";
@@ -93,6 +100,8 @@ function unattendedFailure(err: unknown): ConnectSavedConnectionResult {
       return { status: "refused", reason: t("schedule.connect.skip.interactive") };
     case "auth_failed":
       return { status: "refused", reason: t("schedule.connect.skip.credentialRejected") };
+    case "agent_outdated":
+      return { status: "refused", reason: t("schedule.connect.skip.agentTooOld") };
     case "cancelled":
       return { status: "refused", reason: t("schedule.connect.skip.cancelled") };
     default:
@@ -101,6 +110,21 @@ function unattendedFailure(err: unknown): ConnectSavedConnectionResult {
         reason: tf("schedule.connect.skip.failed", { error: backendErrorMessage(err) }),
       };
   }
+}
+
+/**
+ * Why an agent-hosted target cannot be connected unattended on its agent
+ * (#3877), or `null` when the agent is connected and new enough.
+ */
+function unattendedAgentRefusal(agentId: string | undefined): string | null {
+  const agent = currentAgentsView().remoteAgents.find((a) => a.id === agentId);
+  if (agent?.connectionState !== "connected" || !agent.capabilities) {
+    return t("schedule.connect.skip.agentDisconnected");
+  }
+  if (agent.capabilities.unattendedConnect !== true) {
+    return t("schedule.connect.skip.agentTooOld");
+  }
+  return null;
 }
 
 /**
@@ -128,10 +152,12 @@ export async function connectSavedConnection(
   let config = connection.config;
   const cfg = config.config;
 
-  // An agent relays its own prompts, which the never-prompt connect cannot
-  // reach, so an agent-hosted connection is never connected unattended.
-  if (unattended && config.type === "remote-session") {
-    return { status: "refused", reason: t("schedule.connect.skip.agentHosted") };
+  // An agent-hosted target is connected unattended by its agent, which must
+  // support it (#3877); an older or disconnected agent is never asked.
+  const agentHosted = config.type === "remote-session";
+  if (unattended && agentHosted) {
+    const refusal = unattendedAgentRefusal(readConfigString(config, "agentId"));
+    if (refusal) return { status: "refused", reason: refusal };
   }
 
   // UX-011: the credential-aware path below can run several slow steps —
@@ -252,7 +278,9 @@ export async function connectSavedConnection(
     // off, and an unencrypted key must never prompt. If the file can't be
     // read, default to "encrypted" so an encrypted key never fails silently.
     let keyEncrypted = false;
-    if (authMethod === "key") {
+    // Unattended, an agent-hosted target's key lives on the agent host: the
+    // agent reports a missing passphrase itself, typed (#3877).
+    if (authMethod === "key" && !(unattended && agentHosted)) {
       keyEncrypted = await isSshKeyEncrypted(
         readConfigString(connection.config, "keyPath") ?? ""
       ).catch(() => true);

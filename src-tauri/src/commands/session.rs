@@ -55,8 +55,10 @@ use crate::workspace::settings::apply_session_defaults;
 /// `unattended` marks a connect with nobody at the keyboard — a scheduled run
 /// connecting a saved target (#3527). It must never prompt: an untrusted host
 /// key or a keyboard-interactive round fails fast with the typed
-/// `host_key_untrusted` / `interaction_required` code instead of asking. It is
-/// direct-only (an agent relays its own prompts). Defaults to `false`.
+/// `host_key_untrusted` / `interaction_required` code instead of asking. An
+/// agent-hosted connect carries the flag to the agent, which then never relays
+/// a prompt (#3877); an agent older than protocol 0.23.0 cannot honor it and is
+/// refused with the `agent_outdated` code. Defaults to `false`.
 ///
 /// `saved_connection_id` names the saved connection the session is opened for
 /// (#3876), absent for an unsaved configuration. The session is bound to it so
@@ -83,13 +85,6 @@ pub async fn create_connection(
 ) -> Result<String, TerminalError> {
     let unattended = unattended.unwrap_or(false);
     info!(type_id, agent_id = ?agent_id, spawned = ?spawned, unattended, "Creating connection");
-    // An agent relays its own prompts, which the unattended scope cannot reach:
-    // an unattended connect is direct-only (#3527).
-    if unattended && agent_id.is_some() {
-        return Err(TerminalError::SpawnFailed(
-            "An agent-hosted connection cannot be connected unattended".to_string(),
-        ));
-    }
     // Expand any saved-connection jump-host references to inline hops before the
     // settings reach core (which only connects with inline hops) — #940.
     conn_manager

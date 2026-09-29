@@ -238,7 +238,16 @@ async fn run_daemon_session(config: DaemonConfig) -> anyhow::Result<()> {
     let report_endpoint =
         crate::ki_prompt::relay::connect_report_endpoint_from_env(ki_relay_endpoint.as_deref());
 
-    if let Err(e) = connection.connect(config.settings.clone()).await {
+    // A launch for an unattended connect (#3877) connects in the never-prompt
+    // scope: every point that would ask the desktop fails fast, typed.
+    let unattended = crate::session::unattended::from_env();
+    if let Err(e) = crate::session::unattended::connect(
+        connection.as_mut(),
+        config.settings.clone(),
+        unattended,
+    )
+    .await
+    {
         // Tell the worker *why* when the desktop must see the reason typed (a
         // cancelled prompt, a rejected one-time code, a classified connect
         // failure such as a busy serial port); it cannot read our exit.

@@ -322,6 +322,7 @@ fn capabilities_round_trip_serialization() {
         session_processes: false,
         session_monitoring: false,
         session_files: false,
+        unattended_connect: false,
         agent_version: String::new(),
         available_shells: vec!["/bin/sh".to_string()],
         available_serial_ports: vec!["/dev/ttyS0".to_string()],
@@ -878,6 +879,7 @@ fn make_agent_connection_with_tx(command_tx: UnboundedSender<AgentIoCommand>) ->
             session_processes: false,
             session_monitoring: false,
             session_files: false,
+            unattended_connect: false,
             agent_version: String::new(),
         },
         ki_activity: crate::terminal::agent_ki_prompt::AgentPromptActivity::new(),
@@ -1019,6 +1021,7 @@ fn make_wedged_agent_connection() -> (AgentConnection, tokio::task::JoinHandle<(
             session_processes: false,
             session_monitoring: false,
             session_files: false,
+            unattended_connect: false,
             agent_version: String::new(),
         },
         ki_activity: crate::terminal::agent_ki_prompt::AgentPromptActivity::new(),
@@ -2243,15 +2246,47 @@ fn handle_notification_routes_connection_output_via_the_dto() {
 /// when given one, and keeps the pre-0.16.0 wire shape when not.
 #[test]
 fn session_create_params_carry_the_correlation_id_only_when_set() {
-    let with = session_create_params("ssh", json!({}), None, None, Some("desk-sid")).unwrap();
+    let with =
+        session_create_params("ssh", json!({}), None, None, Some("desk-sid"), false).unwrap();
     assert_eq!(with["correlation_id"], "desk-sid");
 
-    let without =
-        session_create_params("local", json!({}), Some("Build"), Some("def-1"), None).unwrap();
+    let without = session_create_params(
+        "local",
+        json!({}),
+        Some("Build"),
+        Some("def-1"),
+        None,
+        false,
+    )
+    .unwrap();
     assert_eq!(
         without,
         json!({"type": "local", "config": {}, "title": "Build", "definition_id": "def-1"})
     );
+}
+
+/// #3877: `connection.create` carries `unattended: true` only for an
+/// unattended connect; an attended one keeps the legacy wire shape.
+#[test]
+fn session_create_params_carry_the_unattended_flag_only_when_set() {
+    let unattended = session_create_params("ssh", json!({}), None, None, None, true).unwrap();
+    assert_eq!(unattended["unattended"], true);
+    let attended = session_create_params("ssh", json!({}), None, None, None, false).unwrap();
+    assert!(attended.get("unattended").is_none(), "{attended}");
+}
+
+/// #3877: an agent older than protocol 0.23.0 omits `unattendedConnect`, which
+/// reads as "cannot connect unattended".
+#[test]
+fn capabilities_without_unattended_connect_default_to_false() {
+    let old: AgentCapabilities =
+        serde_json::from_value(json!({"connectionTypes": [], "maxSessions": 20})).unwrap();
+    assert!(!old.unattended_connect);
+    let new: AgentCapabilities = serde_json::from_value(
+        json!({"connectionTypes": [], "maxSessions": 20, "unattendedConnect": true}),
+    )
+    .unwrap();
+    assert!(new.unattended_connect);
 }
 
 /// ARCH-002 slice 9 (#3772) ordering pin: `connection.output` chunks routed

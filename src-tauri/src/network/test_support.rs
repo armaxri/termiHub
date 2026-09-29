@@ -121,6 +121,7 @@ impl AgentRpcClient for FakeAgent {
             session_processes: false,
             session_monitoring: false,
             session_files: false,
+            unattended_connect: false,
             agent_version: "0.8.1".to_string(),
         })
     }

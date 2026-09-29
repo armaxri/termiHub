@@ -258,9 +258,22 @@ where
             let expanded = expand_config_value(key_path_str);
             let key_path = PathBuf::from(&expanded);
             let passphrase = config.password.as_deref();
+            // Unattended (#3877), an empty stored passphrase is no passphrase:
+            // an encrypted key then fails fast instead of trying `""`.
+            let unattended = super::unattended::is_unattended();
+            let passphrase = if unattended {
+                passphrase.filter(|p| !p.is_empty())
+            } else {
+                passphrase
+            };
 
             let key_pair = match russh::keys::load_secret_key(&key_path, passphrase) {
                 Ok(key) => key,
+                // An unattended connect never asks for the passphrase an
+                // encrypted key needs (#3877).
+                Err(russh::keys::Error::KeyIsEncrypted) if unattended => {
+                    return Err(super::unattended::passphrase_required(key_path_str));
+                }
                 // russh 0.61 can't load passphrase-protected legacy-PEM EC keys
                 // (its PKCS#5 path assumes RSA); fall back to our own loader.
                 Err(orig) => load_legacy_pem_ec_key(&key_path, passphrase, orig)?,
@@ -286,6 +299,11 @@ where
         _ => {
             // Default: password auth.
             let password = config.password.as_deref().unwrap_or("");
+            // An unattended connect never asks for a missing password (#3877):
+            // fail fast, typed, without sending an empty one.
+            if password.is_empty() && super::unattended::is_unattended() {
+                return Err(super::unattended::password_required(&config.host));
+            }
             session
                 .authenticate_password(&config.username, password)
                 .await
