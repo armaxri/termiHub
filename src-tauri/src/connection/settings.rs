@@ -150,19 +150,28 @@ impl Default for UpdateSettings {
     }
 }
 
-/// Deserialize an optional settings field leniently: a value of the wrong shape
-/// (e.g. an out-of-range union string written by a newer build, or a malformed
-/// broadcast group) resolves to `None` — the frontend default — instead of
-/// failing the whole `settings.json` load, which would back the file up and
-/// reset *every* setting. Mirrors the frontend's "invalid value → default"
-/// guards (#3802).
-fn lenient<'de, D, T>(deserializer: D) -> std::result::Result<Option<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: serde::de::DeserializeOwned,
-{
-    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
-    Ok(value.and_then(|v| serde_json::from_value(v).ok()))
+/// `#[serde(with = "lenient")]` for an optional settings field: serializes as
+/// usual, but deserializes leniently — a value of the wrong shape (e.g. an
+/// out-of-range union string written by a newer build, or a malformed broadcast
+/// group) resolves to `None`, the frontend default, instead of failing the whole
+/// `settings.json` load, which would back the file up and reset *every*
+/// setting. Mirrors the frontend's "invalid value → default" guards (#3802).
+mod lenient {
+    use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<T: Serialize, S: Serializer>(
+        value: &Option<T>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        value.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, T: DeserializeOwned, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<T>, D::Error> {
+        let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+        Ok(value.and_then(|v| serde_json::from_value(v).ok()))
+    }
 }
 
 /// A settings string union modelled as a Rust enum with a stable wire string.
@@ -371,12 +380,8 @@ pub struct AppSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub scrollback_buffer: Option<u32>,
-    #[serde(
-        default,
-        deserialize_with = "lenient",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[cfg_attr(test, ts(optional))]
+    #[serde(default, with = "lenient", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(as = "Option<CursorStyle>", optional))]
     pub cursor_style: Option<CursorStyle>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
@@ -466,12 +471,8 @@ pub struct AppSettings {
     /// (`false` → `"never"`, otherwise the frontend default `"ask"`). The
     /// frontend owns the resolution (`resolveRestoreMode`); the backend only
     /// persists the chosen value.
-    #[serde(
-        default,
-        deserialize_with = "lenient",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[cfg_attr(test, ts(optional))]
+    #[serde(default, with = "lenient", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(as = "Option<RestoreLastSessionMode>", optional))]
     pub restore_last_session_mode: Option<RestoreLastSessionMode>,
     /// When true (default), every terminal session opened is recorded to the
     /// browsable session history (`session-history.json`). Turning it off stops
@@ -500,33 +501,21 @@ pub struct AppSettings {
     #[cfg_attr(test, ts(optional))]
     pub layout: Option<LayoutConfig>,
     /// Credential storage mode: "master_password" or "none".
-    #[serde(
-        default,
-        deserialize_with = "lenient",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[cfg_attr(test, ts(optional))]
+    #[serde(default, with = "lenient", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(as = "Option<CredentialStorageMode>", optional))]
     pub credential_storage_mode: Option<CredentialStorageMode>,
     /// Auto-lock timeout in minutes for master password mode. None = never.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub credential_auto_lock_minutes: Option<u32>,
     /// Right-click behavior: "contextMenu" or "quickAction". None = platform default.
-    #[serde(
-        default,
-        deserialize_with = "lenient",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[cfg_attr(test, ts(optional))]
+    #[serde(default, with = "lenient", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(as = "Option<RightClickBehavior>", optional))]
     pub right_click_behavior: Option<RightClickBehavior>,
     /// Default line ending sent on Enter and used to normalize pasted text:
     /// "cr", "lf", or "crlf". None = frontend default ("lf").
-    #[serde(
-        default,
-        deserialize_with = "lenient",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[cfg_attr(test, ts(optional))]
+    #[serde(default, with = "lenient", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(as = "Option<LineEnding>", optional))]
     pub default_line_ending: Option<LineEnding>,
     /// User-customized keybinding overrides.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -636,12 +625,8 @@ pub struct AppSettings {
     /// built-in default (INFO). The backend only persists it; it is applied to
     /// `termihub.log` at startup and live via the `set_file_log_level` command.
     /// The `TERMIHUB_FILE_LOG` env var overrides it at startup.
-    #[serde(
-        default,
-        deserialize_with = "lenient",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[cfg_attr(test, ts(optional))]
+    #[serde(default, with = "lenient", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(as = "Option<FileLogLevel>", optional))]
     pub file_log_level: Option<FileLogLevel>,
     /// Show the next-start notice after a crash (OBS-010). `None` → shown (the
     /// default); the notice's "Don't show again" persists `false`. Owned by the
@@ -654,30 +639,18 @@ pub struct AppSettings {
     ///
     /// The three promoted fields sit last, in key order, so a file that held
     /// them in the (sorted) catch-all serializes byte-identically.
-    #[serde(
-        default,
-        deserialize_with = "lenient",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[cfg_attr(test, ts(optional))]
+    #[serde(default, with = "lenient", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(as = "Option<Vec<BroadcastGroup>>", optional))]
     pub broadcast_groups: Option<Vec<BroadcastGroup>>,
     /// Show a success/failure mark in the terminal gutter next to each finished
     /// command (OSC 133, #3415). `None` → the frontend default (on).
-    #[serde(
-        default,
-        deserialize_with = "lenient",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[cfg_attr(test, ts(optional))]
+    #[serde(default, with = "lenient", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub terminal_command_decorations: Option<bool>,
     /// Render inline images (SIXEL / iTerm2) in the terminal (PROD-057).
     /// `None` → the frontend default (on).
-    #[serde(
-        default,
-        deserialize_with = "lenient",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[cfg_attr(test, ts(optional))]
+    #[serde(default, with = "lenient", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub terminal_inline_images: Option<bool>,
     /// Forward-compatibility catch-all (#2311).
     ///
