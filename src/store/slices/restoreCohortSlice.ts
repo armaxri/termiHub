@@ -20,7 +20,7 @@ import { frontendLog } from "@/utils/frontendLog";
  * cohort-collecting restore/launch paths that call {@link
  * RestoreCohortSlice.beginRestoreCohort} stay in the root store (they rebuild the
  * tab trees), and `reclaimSession` stays there because the takeover audit
- * (`src/services/takeoverAudit.test.ts`, #3395) pins `apiReclaimSession(` to
+ * (`src/services/takeoverAudit.test.ts`, #3395) pins the reclaim API call to
  * `store/appStore.ts`.
  */
 export interface RestoreCohortSlice {
