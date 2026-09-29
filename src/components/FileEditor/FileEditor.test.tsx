@@ -104,7 +104,6 @@ function editContent(value: string): void {
 
 describe("FileEditor — save error handling (#969)", () => {
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -116,7 +115,6 @@ describe("FileEditor — save error handling (#969)", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   it("surfaces a permission-denied save failure and keeps the buffer dirty", async () => {
@@ -212,7 +210,6 @@ describe("FileEditor — save error handling (#969)", () => {
 
 describe("FileEditor — close while in error state (#971)", () => {
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -224,7 +221,6 @@ describe("FileEditor — close while in error state (#971)", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   it("clears the dirty flag when the file fails to load, so the tab is closable", async () => {
@@ -276,7 +272,6 @@ describe("FileEditor — read-only badge + banner (#1325)", () => {
   };
 
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -288,7 +283,6 @@ describe("FileEditor — read-only badge + banner (#1325)", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   function mockWritability(result: "writable" | "readOnly" | "unknown"): void {
@@ -369,7 +363,6 @@ describe("FileEditor — elevated (sudo) edit mode (#1329)", () => {
   };
 
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -381,7 +374,6 @@ describe("FileEditor — elevated (sudo) edit mode (#1329)", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   /** Query portalled (Radix) dialog content from the whole document. */
@@ -646,7 +638,6 @@ describe("FileEditor — sudo host label from the session (#2424 / #2426)", () =
   }
 
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -658,7 +649,6 @@ describe("FileEditor — sudo host label from the session (#2424 / #2426)", () =
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   function docQuery(testId: string): HTMLElement | null {
@@ -842,7 +832,6 @@ describe("FileEditor — sudo host label from the session (#2424 / #2426)", () =
 
 describe("FileEditor — toolbar composes shared UI primitives (#1358)", () => {
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -854,7 +843,6 @@ describe("FileEditor — toolbar composes shared UI primitives (#1358)", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   it("renders the Save action as a shared Button primitive", async () => {
@@ -900,7 +888,6 @@ describe("FileEditor — SFTP-only read-only fallback (#1330)", () => {
   };
 
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -912,7 +899,6 @@ describe("FileEditor — SFTP-only read-only fallback (#1330)", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   /** Query portalled (Radix) dialog content from the whole document. */
@@ -1085,7 +1071,6 @@ describe("FileEditor — session-layer backed tabs (#1557)", () => {
   };
 
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -1097,7 +1082,6 @@ describe("FileEditor — session-layer backed tabs (#1557)", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   it("reads the file through session_read_file and never touches the SFTP path", async () => {
@@ -1250,7 +1234,6 @@ describe("FileEditor — SFTP-backed session tab reaches SFTP parity (#2420)", (
   };
 
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -1262,7 +1245,6 @@ describe("FileEditor — SFTP-backed session tab reaches SFTP parity (#2420)", (
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   function docQuery(testId: string): HTMLElement | null {
@@ -1467,7 +1449,6 @@ describe("FileEditor — FTP writability hint + editing limits (PROD-015)", () =
   };
 
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -1479,7 +1460,6 @@ describe("FileEditor — FTP writability hint + editing limits (PROD-015)", () =
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   /** Mock a byte-based (non-SFTP) FTP session whose stat reports `writable`. */

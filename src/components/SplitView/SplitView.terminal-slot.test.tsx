@@ -40,7 +40,6 @@ let root: Root;
 let rafCallback: FrameRequestCallback | null;
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -63,7 +62,6 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
   vi.unstubAllGlobals();
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
 });
 
 describe("TerminalSlot RAF-path adoption (FEC-012)", () => {

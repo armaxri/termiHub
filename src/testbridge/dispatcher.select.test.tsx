@@ -159,7 +159,11 @@ describe("dispatchCommand select against the Select primitive", () => {
       root.render(<Select data-testid="sel" value="local" onChange={() => {}} options={OPTIONS} />);
     });
 
-    const res = await dispatchCommand({ action: "select", testId: "sel", value: "telnet" }, deps());
-    expect(res.ok).toBe(false);
+    // Opening the Radix listbox updates React state, so drive it inside act().
+    let res: Awaited<ReturnType<typeof dispatchCommand>> | undefined;
+    await act(async () => {
+      res = await dispatchCommand({ action: "select", testId: "sel", value: "telnet" }, deps());
+    });
+    expect(res?.ok).toBe(false);
   });
 });

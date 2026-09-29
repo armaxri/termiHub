@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { WorkflowSidebar } from "./WorkflowSidebar";
 import { withTooltip } from "@/test/tooltip";
 import type { Workflow } from "@/types/workflow";
@@ -125,37 +126,38 @@ describe("WorkflowSidebar", () => {
     container.remove();
   });
 
-  function render() {
-    act(() => {
+  async function render() {
+    await act(async () => {
       root.render(withTooltip(<WorkflowSidebar />));
     });
+    await flushAsync();
   }
 
-  it("shows the empty message when no workflows exist", () => {
-    render();
+  it("shows the empty message when no workflows exist", async () => {
+    await render();
     expect(query("workflow-empty-message")).not.toBeNull();
     expect(query("workflow-list")).toBeNull();
   });
 
-  it("renders a row for each workflow", () => {
+  it("renders a row for each workflow", async () => {
     useAppStore.setState({ workflows: sampleWorkflows });
-    render();
+    await render();
     expect(query("workflow-list")).not.toBeNull();
     expect(query("workflow-item-workflow-1")).not.toBeNull();
     expect(query("workflow-item-workflow-2")).not.toBeNull();
     expect(query("workflow-name-workflow-1")?.textContent).toBe("Prod login");
   });
 
-  it("marks on-connect-triggered workflows", () => {
+  it("marks on-connect-triggered workflows", async () => {
     useAppStore.setState({ workflows: sampleWorkflows });
-    render();
+    await render();
     expect(query("workflow-on-connect-workflow-2")).not.toBeNull();
     expect(query("workflow-on-connect-workflow-1")).toBeNull();
   });
 
-  it("filters the list by the search query across name/description/tags", () => {
+  it("filters the list by the search query across name/description/tags", async () => {
     useAppStore.setState({ workflows: sampleWorkflows });
-    render();
+    await render();
 
     setSearch("banner");
     expect(query("workflow-item-workflow-2")).not.toBeNull();
@@ -166,23 +168,23 @@ describe("WorkflowSidebar", () => {
     expect(query("workflow-item-workflow-2")).toBeNull();
   });
 
-  it("shows a no-results state when the query matches nothing", () => {
+  it("shows a no-results state when the query matches nothing", async () => {
     useAppStore.setState({ workflows: sampleWorkflows });
-    render();
+    await render();
     setSearch("nonexistent");
     expect(query("workflow-no-results")).not.toBeNull();
     expect(query("workflow-list")).toBeNull();
   });
 
-  it("runs a workflow when its Run action is clicked", () => {
+  it("runs a workflow when its Run action is clicked", async () => {
     const runWorkflow = vi.fn().mockResolvedValue(undefined);
     useAppStore.setState({ workflows: sampleWorkflows, runWorkflow });
-    render();
+    await render();
     act(() => (query("workflow-run-workflow-1") as HTMLButtonElement).click());
     expect(runWorkflow).toHaveBeenCalledWith("workflow-1");
   });
 
-  it("runs a workflow on terminals chosen in the Run on… picker (PROD-047)", () => {
+  it("runs a workflow on terminals chosen in the Run on… picker (PROD-047)", async () => {
     const runWorkflow = vi.fn().mockResolvedValue(undefined);
     const tab = (id: string, title: string): TerminalTab => ({
       id,
@@ -202,7 +204,7 @@ describe("WorkflowSidebar", () => {
     };
     seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
     useAppStore.setState({ workflows: sampleWorkflows, runWorkflow });
-    render();
+    await render();
 
     act(() => (query("workflow-run-on-workflow-1") as HTMLButtonElement).click());
     // The active terminal is preselected; add the second one and run.
@@ -213,7 +215,7 @@ describe("WorkflowSidebar", () => {
     expect(runWorkflow).toHaveBeenCalledWith("workflow-1", { targetTabIds: ["tab-a", "tab-b"] });
   });
 
-  it("shows a stop affordance for the running workflow and cancels on click", () => {
+  it("shows a stop affordance for the running workflow and cancels on click", async () => {
     const cancelWorkflowRun = vi.fn();
     useAppStore.setState({ workflows: sampleWorkflows, cancelWorkflowRun });
     // The running badge is projected — drive it through the region view.
@@ -228,14 +230,14 @@ describe("WorkflowSidebar", () => {
       },
       output: null,
     });
-    render();
+    await render();
     expect(query("workflow-stop-workflow-1")).not.toBeNull();
     expect(query("workflow-run-workflow-1")).toBeNull();
     act(() => (query("workflow-stop-workflow-1") as HTMLButtonElement).click());
     expect(cancelWorkflowRun).toHaveBeenCalledTimes(1);
   });
 
-  it("lists each concurrent target's progress with its own stop (#3418)", () => {
+  it("lists each concurrent target's progress with its own stop (#3418)", async () => {
     const cancelWorkflowRun = vi.fn();
     useAppStore.setState({ workflows: sampleWorkflows, cancelWorkflowRun });
     const target = (runId: string, label: string, completed: number) => ({
@@ -252,7 +254,7 @@ describe("WorkflowSidebar", () => {
       runs: [target("r1", "web-1", 1), target("r2", "db-2", 2)],
       output: null,
     });
-    render();
+    await render();
     const list = query("workflow-targets-workflow-1");
     expect(list).not.toBeNull();
     expect(query("workflow-target-r1")?.textContent).toContain("web-1");
@@ -267,7 +269,7 @@ describe("WorkflowSidebar", () => {
     expect(cancelWorkflowRun).toHaveBeenLastCalledWith();
   });
 
-  it("shows no per-target list for a single run", () => {
+  it("shows no per-target list for a single run", async () => {
     useAppStore.setState({ workflows: sampleWorkflows });
     setWorkflowRunViewForTest({
       run: {
@@ -280,7 +282,7 @@ describe("WorkflowSidebar", () => {
       },
       output: null,
     });
-    render();
+    await render();
     expect(query("workflow-stop-workflow-1")).not.toBeNull();
     expect(query("workflow-targets-workflow-1")).toBeNull();
   });
@@ -288,7 +290,7 @@ describe("WorkflowSidebar", () => {
   it("duplicates a workflow through the backend and reports success", async () => {
     const saveWorkflowToBackend = vi.fn().mockResolvedValue(undefined);
     useAppStore.setState({ workflows: sampleWorkflows, saveWorkflowToBackend });
-    render();
+    await render();
 
     act(() => (query("workflow-duplicate-workflow-1") as HTMLButtonElement).click());
     await flush();
@@ -301,10 +303,10 @@ describe("WorkflowSidebar", () => {
     expect(toastSuccess).toHaveBeenCalledTimes(1);
   });
 
-  it("asks for confirmation before deleting and does not delete on click alone", () => {
+  it("asks for confirmation before deleting and does not delete on click alone", async () => {
     const deleteWorkflowFromBackend = vi.fn().mockResolvedValue(undefined);
     useAppStore.setState({ workflows: [sampleWorkflows[0]], deleteWorkflowFromBackend });
-    render();
+    await render();
 
     expect(query("confirm-delete-dialog")).toBeNull();
     act(() => (query("workflow-delete-workflow-1") as HTMLButtonElement).click());
@@ -316,7 +318,7 @@ describe("WorkflowSidebar", () => {
     dialogSave.mockResolvedValue("/tmp/workflows.json");
     fsWriteTextFile.mockResolvedValue(undefined);
     useAppStore.setState({ workflows: sampleWorkflows });
-    render();
+    await render();
 
     act(() => (query("workflow-export-all-btn") as HTMLButtonElement).click());
     await flush();
@@ -337,7 +339,7 @@ describe("WorkflowSidebar", () => {
       .fn()
       .mockResolvedValue({ imported: 2, workflowsWithLocalProcess: 0, localProcessSteps: 0 });
     useAppStore.setState({ importWorkflows });
-    render();
+    await render();
 
     act(() => (query("workflow-import-btn") as HTMLButtonElement).click());
     await flush();
@@ -357,7 +359,7 @@ describe("WorkflowSidebar", () => {
       .fn()
       .mockResolvedValue({ imported: 1, workflowsWithLocalProcess: 1, localProcessSteps: 2 });
     useAppStore.setState({ importWorkflows });
-    render();
+    await render();
 
     act(() => (query("workflow-import-btn") as HTMLButtonElement).click());
     await flush();
@@ -376,7 +378,7 @@ describe("WorkflowSidebar", () => {
     fsReadTextFile.mockResolvedValue("{}");
     const importWorkflows = vi.fn().mockRejectedValue(new Error("Invalid workflow file"));
     useAppStore.setState({ importWorkflows });
-    render();
+    await render();
 
     act(() => (query("workflow-import-btn") as HTMLButtonElement).click());
     await flush();
@@ -385,9 +387,9 @@ describe("WorkflowSidebar", () => {
     expect(String(toastError.mock.calls[0][0])).toMatch(/Failed to import workflows/);
   });
 
-  it("opens the editor prefilled when editing a workflow", () => {
+  it("opens the editor prefilled when editing a workflow", async () => {
     useAppStore.setState({ workflows: sampleWorkflows });
-    render();
+    await render();
     expect(query("workflow-editor-dialog")).toBeNull();
     act(() => (query("workflow-edit-workflow-1") as HTMLButtonElement).click());
     expect(query("workflow-editor-dialog")).not.toBeNull();

@@ -109,7 +109,6 @@ async function flush() {
 
 describe("FileEditor — safe Monaco link opener (SEC-012)", () => {
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -124,7 +123,6 @@ describe("FileEditor — safe Monaco link opener (SEC-012)", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   it("registers a link opener on mount when Monaco exposes the API", async () => {

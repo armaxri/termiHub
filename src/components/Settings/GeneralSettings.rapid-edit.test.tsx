@@ -72,7 +72,6 @@ function setValue(el: HTMLInputElement, value: string) {
 
 describe("GeneralSettings — rapid back-to-back edits (#2680)", () => {
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -83,7 +82,6 @@ describe("GeneralSettings — rapid back-to-back edits (#2680)", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   it("keeps both fields when two edits fire before a re-render", () => {

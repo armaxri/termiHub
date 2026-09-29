@@ -53,11 +53,25 @@ function el<T extends HTMLElement>(testId: string): T {
 
 function fill(testId: string, value: string) {
   const input = el<HTMLInputElement>(testId);
-  Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(
-    input,
-    value
-  );
-  input.dispatchEvent(new Event("input", { bubbles: true }));
+  act(() => {
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(
+      input,
+      value
+    );
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+/**
+ * Resolve a {@link deferred} gate inside `act()` and let the component's
+ * post-await continuation (dialog reset, toast) settle there, instead of it
+ * landing after the test has finished.
+ */
+async function release<T>(gate: { resolve: (value: T) => void }, value: T) {
+  await act(async () => {
+    gate.resolve(value);
+  });
+  await flush();
 }
 
 function isPending(button: HTMLButtonElement): boolean {
@@ -132,7 +146,7 @@ describe("SecuritySettings — submit lifecycle parity (#1469)", () => {
     await fireClick("master-password-confirm-btn");
 
     expect(isPending(el<HTMLButtonElement>("master-password-confirm-btn"))).toBe(true);
-    gate.resolve({
+    await release(gate, {
       status: "success",
       migratedCount: 0,
       failedCount: 0,
@@ -157,7 +171,7 @@ describe("SecuritySettings — submit lifecycle parity (#1469)", () => {
       expect.objectContaining({ newMode: "master_password", masterPassword: "supersecret1" })
     );
     expect(isPending(el<HTMLButtonElement>("master-password-confirm-btn"))).toBe(true);
-    gate.resolve({
+    await release(gate, {
       status: "success",
       migratedCount: 0,
       failedCount: 0,
@@ -178,7 +192,7 @@ describe("SecuritySettings — submit lifecycle parity (#1469)", () => {
     await fireClick("change-master-password-confirm-btn");
 
     expect(isPending(el<HTMLButtonElement>("change-master-password-confirm-btn"))).toBe(true);
-    gate.resolve(undefined);
+    await release(gate, undefined);
   });
 
   it("change-password: Enter drives the SAME pending affordance", async () => {
@@ -195,6 +209,6 @@ describe("SecuritySettings — submit lifecycle parity (#1469)", () => {
       expect.objectContaining({ currentPassword: "oldsecret1", newPassword: "newsecret1" })
     );
     expect(isPending(el<HTMLButtonElement>("change-master-password-confirm-btn"))).toBe(true);
-    gate.resolve(undefined);
+    await release(gate, undefined);
   });
 });

@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { TooltipProvider } from "@/components/ui";
 import type { EmbeddedServerConfig, ServerState, ServerStatus } from "@/types/embeddedServer";
@@ -103,17 +104,18 @@ describe("OpenConnectionsModal — Embedded Servers section", () => {
     container.remove();
   });
 
-  function renderModal() {
-    act(() => {
+  async function renderModal() {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <OpenConnectionsModal open={true} onOpenChange={() => {}} />
         </TooltipProvider>
       );
     });
+    await flushAsync();
   }
 
-  it("renders a row per running embedded server from the store", () => {
+  it("renders a row per running embedded server from the store", async () => {
     useAppStore.setState({
       embeddedServers: [config("s1", "Docs HTTP", "http"), config("s2", "Files FTP", "ftp")],
       embeddedServerStates: {
@@ -122,7 +124,7 @@ describe("OpenConnectionsModal — Embedded Servers section", () => {
       },
     });
 
-    renderModal();
+    await renderModal();
 
     const titles = serverRows().map((r) => r.querySelector(".oc-row__title")?.textContent);
     expect(titles.some((t) => t?.includes("Docs HTTP"))).toBe(true);
@@ -139,7 +141,7 @@ describe("OpenConnectionsModal — Embedded Servers section", () => {
       embeddedServerStates: { s1: serverState("s1", "running") },
     });
 
-    renderModal();
+    await renderModal();
 
     const killBtn = serverRows()[0]?.querySelector("button") as HTMLButtonElement;
     await act(async () => {
@@ -158,7 +160,7 @@ describe("OpenConnectionsModal — Embedded Servers section", () => {
       },
     });
 
-    renderModal();
+    await renderModal();
 
     const killAll = serverSection()?.querySelector(".oc-section__kill-all") as HTMLButtonElement;
     await act(async () => {
@@ -178,13 +180,13 @@ describe("OpenConnectionsModal — Embedded Servers section", () => {
     expect(stopEmbeddedServer).toHaveBeenCalledWith("s2");
   });
 
-  it("renders no Embedded Servers section when no server is running", () => {
+  it("renders no Embedded Servers section when no server is running", async () => {
     useAppStore.setState({
       embeddedServers: [config("s1", "Docs HTTP", "http")],
       embeddedServerStates: { s1: serverState("s1", "stopped") },
     });
 
-    renderModal();
+    await renderModal();
     expect(serverSection()).toBeNull();
   });
 });

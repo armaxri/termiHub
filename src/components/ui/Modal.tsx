@@ -94,6 +94,11 @@ export function Modal({
           ref={setContentEl}
           className={size === "lg" ? "ui-modal ui-modal--lg" : "ui-modal"}
           data-testid={rest["data-testid"]}
+          // With no `description`, opt out of `aria-describedby` explicitly
+          // (Radix's documented pattern) instead of pointing it at a
+          // Description element that is never rendered, which also makes
+          // Radix log a missing-Description warning on every open (#3356).
+          {...(description ? {} : { "aria-describedby": undefined })}
           onKeyDown={
             onKeyDown
               ? (e) => {

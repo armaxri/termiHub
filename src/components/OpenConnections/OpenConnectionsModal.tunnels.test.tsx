@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { TooltipProvider } from "@/components/ui";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
@@ -108,24 +109,25 @@ describe("OpenConnectionsModal — SSH Tunnels section (live store source)", () 
     container.remove();
   });
 
-  function renderModal() {
-    act(() => {
+  async function renderModal() {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <OpenConnectionsModal open={true} onOpenChange={() => {}} />
         </TooltipProvider>
       );
     });
+    await flushAsync();
   }
 
-  it("renders tunnels from the store's live tunnelStates, not the one-shot fetch", () => {
+  it("renders tunnels from the store's live tunnelStates, not the one-shot fetch", async () => {
     // Store holds a connected tunnel; the one-shot fetch returns nothing.
     useAppStore.setState({
       tunnels: [tunnelConfig("t1", "web-forward")],
       tunnelStates: { t1: tunnelState("t1", "connected") },
     });
 
-    renderModal();
+    await renderModal();
 
     const titles = Array.from(document.querySelectorAll(".oc-row__title")).map(
       (t) => t.textContent
@@ -133,13 +135,13 @@ describe("OpenConnectionsModal — SSH Tunnels section (live store source)", () 
     expect(titles.some((t) => t?.includes("web-forward"))).toBe(true);
   });
 
-  it("reflects a store tunnelStates change without re-opening the modal", () => {
+  it("reflects a store tunnelStates change without re-opening the modal", async () => {
     useAppStore.setState({
       tunnels: [tunnelConfig("t1", "web-forward")],
       tunnelStates: {},
     });
 
-    renderModal();
+    await renderModal();
 
     // Nothing connected yet → no tunnel rows.
     expect(tunnelRows()).toHaveLength(0);

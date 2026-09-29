@@ -142,7 +142,6 @@ setupAgentsRegion();
 
 describe("ConnectionEditor — shared named credential (#3557)", () => {
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -168,7 +167,6 @@ describe("ConnectionEditor — shared named credential (#3557)", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   it("shows the picker and hides the connection's own password fields", async () => {

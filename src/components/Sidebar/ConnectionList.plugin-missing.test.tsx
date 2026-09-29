@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
@@ -62,9 +63,9 @@ describe("ConnectionList — missing-plugin marker", () => {
     vi.restoreAllMocks();
   });
 
-  function render(connections: SavedConnection[]) {
+  async function render(connections: SavedConnection[]) {
     seedConnectionsRegion({ connections });
-    act(() =>
+    await act(async () =>
       root.render(
         React.createElement(TooltipProvider, {
           delayDuration: 0,
@@ -72,15 +73,16 @@ describe("ConnectionList — missing-plugin marker", () => {
         })
       )
     );
+    await flushAsync();
   }
 
   const badge = (id: string) =>
     container.querySelector(`[data-testid="connection-plugin-missing-${id}"]`);
   const row = (id: string) => container.querySelector(`[data-testid="connection-item-${id}"]`);
 
-  it("marks a connection whose plugin is not installed, naming the plugin", () => {
+  it("marks a connection whose plugin is not installed, naming the plugin", async () => {
     useAppStore.setState({ plugins: [], pluginsLoaded: true });
-    render([conn("kube", "plugin:acme:k8s"), conn("shell", "local")]);
+    await render([conn("kube", "plugin:acme:k8s"), conn("shell", "local")]);
 
     expect(badge("kube")?.getAttribute("aria-label")).toBe("Plugin 'acme' is not installed");
     expect(badge("kube")?.getAttribute("data-reason")).toBe("not-installed");
@@ -91,27 +93,27 @@ describe("ConnectionList — missing-plugin marker", () => {
     expect(row("shell")?.className).not.toContain("--unavailable");
   });
 
-  it("distinguishes a disabled plugin from a missing one", () => {
+  it("distinguishes a disabled plugin from a missing one", async () => {
     useAppStore.setState({
       plugins: [backendPlugin("acme", "k8s", "disabled", "Acme K8s")],
       pluginsLoaded: true,
     });
-    render([conn("kube", "plugin:acme:k8s")]);
+    await render([conn("kube", "plugin:acme:k8s")]);
     expect(badge("kube")?.getAttribute("aria-label")).toBe("Plugin 'Acme K8s' is disabled");
   });
 
-  it("shows no marker before the plugin list has loaded", () => {
+  it("shows no marker before the plugin list has loaded", async () => {
     useAppStore.setState({ plugins: [], pluginsLoaded: false });
-    render([conn("kube", "plugin:acme:k8s")]);
+    await render([conn("kube", "plugin:acme:k8s")]);
     expect(badge("kube")).toBeNull();
   });
 
-  it("clears the marker live when the plugin becomes active", () => {
+  it("clears the marker live when the plugin becomes active", async () => {
     useAppStore.setState({
       plugins: [backendPlugin("acme", "k8s", "installed")],
       pluginsLoaded: true,
     });
-    render([conn("kube", "plugin:acme:k8s")]);
+    await render([conn("kube", "plugin:acme:k8s")]);
     expect(badge("kube")?.getAttribute("data-reason")).toBe("not-loaded");
 
     act(() => useAppStore.setState({ plugins: [backendPlugin("acme", "k8s", "active")] }));
@@ -127,7 +129,7 @@ describe("ConnectionList — missing-plugin marker", () => {
       pluginsLoaded: true,
       addTab: addTab as unknown as ReturnType<typeof useAppStore.getState>["addTab"],
     });
-    render([conn("kube", "plugin:acme:k8s")]);
+    await render([conn("kube", "plugin:acme:k8s")]);
 
     const connectBtn = container.querySelector(
       '[data-testid="connection-connect-kube"]'
@@ -150,33 +152,33 @@ describe("ConnectionList — missing-plugin marker", () => {
     ) as HTMLElement | null;
   }
 
-  it("offers the Plugins sidebar to install a missing plugin", () => {
+  it("offers the Plugins sidebar to install a missing plugin", async () => {
     const setSidebarView = vi.fn();
     useAppStore.setState({ plugins: [], pluginsLoaded: true, setSidebarView });
-    render([conn("kube", "plugin:acme:k8s")]);
+    await render([conn("kube", "plugin:acme:k8s")]);
     const item = openMenu("kube");
     expect(item?.textContent).toContain("Install Plugin 'acme'");
     act(() => item!.click());
     expect(setSidebarView).toHaveBeenCalledWith("plugins");
   });
 
-  it("opens an installed plugin's detail to enable or trust it", () => {
+  it("opens an installed plugin's detail to enable or trust it", async () => {
     const selectPlugin = vi.fn();
     useAppStore.setState({
       plugins: [backendPlugin("acme", "k8s", "disabled", "Acme K8s")],
       pluginsLoaded: true,
       selectPlugin,
     });
-    render([conn("kube", "plugin:acme:k8s")]);
+    await render([conn("kube", "plugin:acme:k8s")]);
     const item = openMenu("kube");
     expect(item?.textContent).toContain("Manage Plugin 'Acme K8s'");
     act(() => item!.click());
     expect(selectPlugin).toHaveBeenCalledWith("acme");
   });
 
-  it("offers no plugin shortcut for an available connection", () => {
+  it("offers no plugin shortcut for an available connection", async () => {
     useAppStore.setState({ plugins: [backendPlugin("acme", "k8s")], pluginsLoaded: true });
-    render([conn("kube", "plugin:acme:k8s")]);
+    await render([conn("kube", "plugin:acme:k8s")]);
     expect(openMenu("kube")).toBeNull();
   });
 });
