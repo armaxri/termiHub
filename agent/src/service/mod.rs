@@ -16,17 +16,29 @@
 //! checks while something subscribes to its events (the core observer gate,
 //! PERF-008). A permanent drain would keep an agent-hosted monitor checking
 //! while no desktop is connected, with every result but the last discarded. So
-//! the registry tracks whether a client is attached:
-//! [`detach_client`](AgentServiceRegistry::detach_client) drops the drain of every
-//! service that idles when unobserved, which idles its poll loop while keeping
-//! the last result for `service.status`;
+//! the registry counts the attached clients:
+//! [`detach_client`](AgentServiceRegistry::detach_client) of the last one drops the
+//! drain of every service that idles when unobserved, which idles its poll loop
+//! while keeping the last result for `service.status`;
 //! [`attach_client`](AgentServiceRegistry::attach_client) re-subscribes, and the
 //! loop checks again within one interval. Embedded servers keep their drain:
 //! they serve clients whether or not a desktop watches.
 //!
+//! # Shared across a listener's connections (#3910)
+//!
+//! A `--listen` agent builds one handler per connection but passes all of them
+//! the same registry, like its `SessionManager`. A service one connection
+//! started is therefore still hosted, and reachable, from the next: it can be
+//! queried, stopped, or started again. A start for an instance id that is
+//! already hosted with the same config is idempotent, since a restarted desktop
+//! re-sends the starts it remembers; with a changed config it replaces the
+//! instance. Several clients can be attached at once, so "attached" means at
+//! least one.
+//!
 //! [`ServerState`]: termihub_core::embedded_servers::config::ServerState
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use serde_json::Value;
@@ -42,6 +54,10 @@ use tokio::task::JoinHandle;
 /// A running embedded-server instance on the agent.
 struct RunningService {
     service: Box<dyn Service>,
+    /// Service type and config it was started with, so a repeated identical
+    /// start is recognised as idempotent (#3910).
+    service_id: String,
+    config: Value,
     /// Latest status payload emitted on the service's `EventChannel` (the
     /// `ServerState` JSON), captured by `bridge`.
     latest: Arc<StdMutex<Option<Value>>>,
@@ -99,6 +115,9 @@ pub struct ServiceStatusSnapshot {
 pub struct AgentServiceRegistry {
     factories: ServiceRegistry,
     running: Mutex<HashMap<String, RunningService>>,
+    /// Clients currently attached (#3896, #3910). Only changed while holding
+    /// `running`, so it always agrees with which drains are live.
+    attached_clients: AtomicUsize,
 }
 
 impl AgentServiceRegistry {
@@ -108,7 +127,16 @@ impl AgentServiceRegistry {
         Self {
             factories,
             running: Mutex::new(HashMap::new()),
+            attached_clients: AtomicUsize::new(0),
         }
+    }
+
+    /// Build the registry with every service type the agent can host: the
+    /// embedded HTTP/FTP/TFTP servers (#2192) and the HTTP monitor (#2592).
+    pub fn with_builtin_services() -> Self {
+        let mut factories = termihub_core::embedded_servers::build_service_registry();
+        termihub_core::monitoring::http_monitor::register_http_monitor(&mut factories);
+        Self::new(factories)
     }
 
     /// The server types available to host, for `service.list`.
@@ -118,8 +146,12 @@ impl AgentServiceRegistry {
 
     /// Start service type `service_id` as instance `instance_id` with `config`.
     ///
-    /// Rejects a duplicate `instance_id` and an unknown `service_id`. Returns the
-    /// service's status once started, plus the latest status payload seen so far.
+    /// If `instance_id` is already hosted and running with the same
+    /// `service_id` and `config`, this is idempotent (#3910): the instance keeps
+    /// running (a paused monitor resumes) and its status is returned. Otherwise
+    /// a hosted instance with that id is stopped and replaced. Rejects an
+    /// unknown `service_id`. Returns the service's status once started, plus the
+    /// latest status payload seen so far.
     pub async fn start(
         &self,
         instance_id: &str,
@@ -127,10 +159,25 @@ impl AgentServiceRegistry {
         config: Value,
     ) -> Result<ServiceStatusSnapshot, ServiceError> {
         let mut running = self.running.lock().await;
-        if running.contains_key(instance_id) {
-            return Err(ServiceError::StartFailed(format!(
-                "service instance '{instance_id}' is already running"
-            )));
+        if let Some(rs) = running.get_mut(instance_id) {
+            if rs.service_id == service_id
+                && rs.config == config
+                && rs.service.status() == ServiceStatus::Running
+            {
+                // A start means "running": undo an in-place pause (#2607).
+                rs.service.resume().await?;
+                if rs.bridge.is_none() {
+                    rs.bridge = Some(spawn_bridge(rs.service.as_ref(), &rs.latest));
+                }
+                return Ok(ServiceStatusSnapshot {
+                    status: rs.service.status(),
+                    state: rs.latest.lock().ok().and_then(|s| s.clone()),
+                });
+            }
+        }
+        if let Some(mut stale) = running.remove(instance_id) {
+            let _ = stale.service.stop().await;
+            stale.drop_bridge().await;
         }
 
         let mut service = self.factories.create(service_id)?;
@@ -141,7 +188,7 @@ impl AgentServiceRegistry {
         let latest = Arc::new(StdMutex::new(None));
         let bridge = spawn_bridge(service.as_ref(), &latest);
 
-        if let Err(e) = service.start(config).await {
+        if let Err(e) = service.start(config.clone()).await {
             bridge.abort();
             return Err(e);
         }
@@ -152,6 +199,8 @@ impl AgentServiceRegistry {
             instance_id.to_string(),
             RunningService {
                 service,
+                service_id: service_id.to_string(),
+                config,
                 latest,
                 bridge: Some(bridge),
                 idles_when_unobserved: idles_when_unobserved(service_id),
@@ -271,14 +320,25 @@ impl AgentServiceRegistry {
         }
     }
 
-    /// The client has gone (#3896): idle every hosted service that does no work
-    /// while unobserved, by dropping its event drain.
+    /// A client has gone (#3896). Once no client is attached any more (#3910),
+    /// idle every hosted service that does no work while unobserved, by dropping
+    /// its event drain.
     ///
     /// Its poll loop then makes no checks, while `status` keeps reporting the
     /// last result drained before the detach. Services that serve regardless (the
-    /// embedded servers) are untouched. Idempotent.
+    /// embedded servers) are untouched. Call once per
+    /// [`attach_client`](Self::attach_client); extra calls do not underflow the
+    /// count.
     pub async fn detach_client(&self) {
         let mut running = self.running.lock().await;
+        let remaining = self
+            .attached_clients
+            .load(Ordering::SeqCst)
+            .saturating_sub(1);
+        self.attached_clients.store(remaining, Ordering::SeqCst);
+        if remaining > 0 {
+            return;
+        }
         for rs in running.values_mut() {
             if rs.idles_when_unobserved {
                 rs.drop_bridge().await;
@@ -286,14 +346,15 @@ impl AgentServiceRegistry {
         }
     }
 
-    /// A client has attached (#3896): re-subscribe every service idled by
-    /// [`detach_client`](Self::detach_client).
+    /// A client has attached (#3896): count it (#3910) and re-subscribe every
+    /// service idled by [`detach_client`](Self::detach_client).
     ///
     /// The core poll loop re-evaluates its observer gate every interval, so an
     /// idled monitor checks again within one interval; until then `status`
-    /// reports the last cached result. Idempotent.
+    /// reports the last cached result.
     pub async fn attach_client(&self) {
         let mut running = self.running.lock().await;
+        self.attached_clients.fetch_add(1, Ordering::SeqCst);
         for rs in running.values_mut() {
             if rs.bridge.is_none() {
                 rs.bridge = Some(spawn_bridge(rs.service.as_ref(), &rs.latest));

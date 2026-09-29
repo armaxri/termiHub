@@ -194,6 +194,10 @@ struct HandlerState {
     /// server factories (#2192); the `service.*` methods start/stop/status
     /// instances through it, and `agent.shutdown` tears them all down.
     service_registry: Arc<AgentServiceRegistry>,
+    /// Whether this connection is counted as attached in `service_registry`
+    /// (#3910). Shared with [`AgentHandler::services_attached`] so `initialize`
+    /// attaches once and disconnect detaches only what it attached.
+    services_attached: Arc<AtomicBool>,
     /// Tunnels currently forwarding on this agent, keyed by tunnel id (S3,
     /// #2185). Populated by `tunnel.start`, drained by `tunnel.stop` /
     /// `agent.shutdown`; `tunnel.status` reads live stats from it.
@@ -259,6 +263,8 @@ pub struct AgentHandler {
     /// can idle its hosted monitors (#3896), and so tests can read a hosted
     /// server's bound address (a server started on port `0`, #3533).
     service_registry: Arc<AgentServiceRegistry>,
+    /// Shared with [`HandlerState::services_attached`] (#3910).
+    services_attached: Arc<AtomicBool>,
     /// Shared with [`HandlerState::crash_dir`]; see [`with_crash_dir`](Self::with_crash_dir).
     #[cfg_attr(
         not(test),
@@ -274,26 +280,43 @@ pub struct AgentHandler {
 }
 
 impl AgentHandler {
+    /// Build a handler with its own registry of hosted services.
+    ///
+    /// Right for `--stdio`, where the process serves one client and exits with
+    /// it. A `--listen` agent shares one registry across its connections via
+    /// [`with_service_registry`](Self::with_service_registry) instead (#3910).
     pub fn new(
         session_manager: Arc<dyn SessionManagerApi>,
         connection_store: Arc<dyn ConnectionStoreApi>,
         monitoring_manager: Arc<dyn MonitoringManagerApi>,
+    ) -> anyhow::Result<Self> {
+        Self::with_service_registry(
+            session_manager,
+            connection_store,
+            monitoring_manager,
+            Arc::new(AgentServiceRegistry::with_builtin_services()),
+        )
+    }
+
+    /// Build a handler whose hosted services live in `service_registry`.
+    ///
+    /// A `--listen` agent passes every connection's handler the same registry,
+    /// the way it shares its `SessionManager`, so a service one connection
+    /// started stays reachable from the next (#3910).
+    pub fn with_service_registry(
+        session_manager: Arc<dyn SessionManagerApi>,
+        connection_store: Arc<dyn ConnectionStoreApi>,
+        monitoring_manager: Arc<dyn MonitoringManagerApi>,
+        service_registry: Arc<AgentServiceRegistry>,
     ) -> anyhow::Result<Self> {
         let shutdown_flag = Arc::new(AtomicBool::new(false));
         let client_registry = Arc::new(ConnectionRegistry::new());
         let client_id = uuid::Uuid::new_v4().to_string();
         let registry_client: Arc<OnceLock<Arc<RegistryClient>>> = Arc::new(OnceLock::new());
 
-        // Built-in tool set, shared and stateless; the service registry is
-        // populated with the embedded HTTP/FTP/TFTP server factories (#2192) plus
-        // the HTTP-monitor factory (#2592), so an agent can host either from the
-        // same `service.*` dispatch. Both are constructed here so
-        // `AgentHandler::new`'s public signature is unchanged — the registries are
-        // self-contained infrastructure, exactly like the shutdown flag.
+        // Built-in tool set, shared and stateless.
         let tool_registry = Arc::new(ToolRegistry::with_builtin_network_tools());
-        let mut service_factories = termihub_core::embedded_servers::build_service_registry();
-        termihub_core::monitoring::http_monitor::register_http_monitor(&mut service_factories);
-        let service_registry = Arc::new(AgentServiceRegistry::new(service_factories));
+        let services_attached = Arc::new(AtomicBool::new(false));
         let tunnel_registry = Arc::new(AgentTunnelRegistry::new());
         let tool_runs = ToolRunManager::new(RunLimits::default());
         let ki_binding = KiBinding::new();
@@ -314,6 +337,7 @@ impl AgentHandler {
             shutdown_flag: shutdown_flag.clone(),
             tool_registry,
             service_registry: service_registry.clone(),
+            services_attached: services_attached.clone(),
             tunnel_registry,
             tool_runs: tool_runs.clone(),
             ki_binding: ki_binding.clone(),
@@ -336,6 +360,7 @@ impl AgentHandler {
             ki_binding,
             forward_streams,
             service_registry,
+            services_attached,
             crash_dir,
             update_auth,
         })
@@ -440,8 +465,12 @@ impl AgentHandler {
         self.ki_binding.detach();
         // Its port forwards (#3241) end with it, releasing their targets.
         self.forward_streams.close_all();
-        // Nobody reads its hosted monitors' results any more: idle them (#3896).
-        self.service_registry.detach_client().await;
+        // This client no longer reads its hosted monitors' results. Once no
+        // client is attached, they idle (#3896, #3910). Only a client that
+        // attached in `initialize` is counted, and only once.
+        if self.services_attached.swap(false, Ordering::SeqCst) {
+            self.service_registry.detach_client().await;
+        }
         self.client_registry.remove(&self.client_id);
         if let Some(registry) = self.registry() {
             registry.deregister();
@@ -864,13 +893,18 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 s.tool_runs.is_available(),
                 s.ki_binding.is_wired(),
                 update_auth_token_path,
-                s.service_registry.clone(),
+                // Count this connection as attached once, even across a repeated
+                // `initialize` (#3910).
+                (!s.services_attached.swap(true, Ordering::SeqCst))
+                    .then(|| s.service_registry.clone()),
             )
         };
 
-        // A client is attached again: resume any hosted monitor idled while none
-        // was (#3896).
-        service_registry.attach_client().await;
+        // A client is attached: resume any hosted monitor idled while none was
+        // (#3896).
+        if let Some(service_registry) = service_registry {
+            service_registry.attach_client().await;
+        }
 
         // Diagnostic step-trace for #2480: the local repro proves the registry
         // path never blocks `initialize` (fresh spawn, fd-clean daemon, and even
@@ -5729,9 +5763,6 @@ mod tests {
         assert!(ids.contains(&"http_monitor"), "{result}");
     }
 
-    /// End-to-end: the desktop starts an HTTP monitor on the agent over
-    /// `service.start`, the monitor polls a target from the agent's vantage, and
-    /// `service.status` streams the check result back before `service.stop` tears
     /// #3896: a client disconnect idles the hosted monitor (its events are no
     /// longer drained) and a later `initialize` resumes it.
     #[tokio::test]
@@ -5778,6 +5809,9 @@ mod tests {
         handler.service_registry.stop_all().await;
     }
 
+    /// End-to-end: the desktop starts an HTTP monitor on the agent over
+    /// `service.start`, the monitor polls a target from the agent's vantage, and
+    /// `service.status` streams the check result back before `service.stop` tears
     /// it down (#2592). This is the agent-RPC path the desktop routing exercises.
     #[tokio::test(flavor = "multi_thread")]
     async fn service_start_hosts_an_http_monitor_and_streams_a_check() {

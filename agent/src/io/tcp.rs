@@ -14,6 +14,7 @@ use crate::monitoring::{MonitoringManager, MonitoringManagerApi};
 use crate::protocol::messages::JsonRpcNotification;
 use crate::registry::build_registry;
 use crate::registry_daemon::client::{RegistryClient, RegistryConfig};
+use crate::service::AgentServiceRegistry;
 use crate::session::definitions::{ConnectionStore, ConnectionStoreApi};
 use crate::session::manager::SessionManager;
 
@@ -26,9 +27,10 @@ const AUTH_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 /// Run the NDJSON transport loop over a TCP listener.
 ///
 /// Binds to `addr`, accepts one client at a time, and runs the
-/// JSON-RPC transport loop for each connection. The `SessionManager`
-/// and notification channel are shared across connections so sessions
-/// persist when a client disconnects and reconnects.
+/// JSON-RPC transport loop for each connection. The `SessionManager`, the
+/// hosted-service registry and the notification channel are shared across
+/// connections, so sessions and agent-hosted services (#3910) persist when a
+/// client disconnects and reconnects.
 ///
 /// The accept loop exits when the cancellation token is triggered.
 pub async fn run_tcp_listener(
@@ -62,6 +64,11 @@ pub async fn run_tcp_listener(
         registry_tx,
         shutdown.child_token(),
     ));
+
+    // Agent-hosted services (embedded servers, HTTP monitors) are host state
+    // too: one registry for every connection, so a service one client started
+    // stays reachable from the next instead of being orphaned (#3910).
+    let service_registry = Arc::new(AgentServiceRegistry::with_builtin_services());
 
     // Ensure default shell connection exists on first run
     connection_store.ensure_default_shell().await;
@@ -188,10 +195,11 @@ pub async fn run_tcp_listener(
                 // As with accept(), a failure to build the per-connection
                 // handler must not kill the listener — drop this client and keep
                 // serving the rest.
-                let handler = match AgentHandler::new(
+                let handler = match AgentHandler::with_service_registry(
                     session_manager.clone(),
                     connection_store.clone() as Arc<dyn ConnectionStoreApi>,
                     monitoring_manager.clone() as Arc<dyn MonitoringManagerApi>,
+                    service_registry.clone(),
                 ) {
                     Ok(handler) => handler
                         .with_registry_client(registry_client.clone())
@@ -234,9 +242,10 @@ pub async fn run_tcp_listener(
         }
     }
 
-    // Agent shutting down: stop monitoring and close all sessions
-    info!("Shutting down — stopping monitoring and closing all sessions");
+    // Agent shutting down: stop monitoring, hosted services and all sessions
+    info!("Shutting down — stopping monitoring, hosted services and all sessions");
     monitoring_manager.shutdown().await;
+    service_registry.stop_all().await;
     session_manager.close_all().await;
 
     // Best-effort hygiene: remove the per-instance token file. A stale file is
