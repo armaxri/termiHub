@@ -114,6 +114,28 @@ const en = {
   "credentialSwitch.removed.failed":
     "Switch failed, nothing changed: none of your {credentials} could be removed. {previous} is still active.",
   "credentialSwitch.remaining.title": "Still stored in {previous}:",
+
+  // ── Process kill signal menu (ProcessTablePanel, #3209) ─────────────────
+  "process.signal.term": "SIGTERM — terminate (graceful)",
+  "process.signal.kill": "SIGKILL — kill (force)",
+  "process.signal.int": "SIGINT — interrupt",
+  "process.signal.hup": "SIGHUP — hang up / reload",
+  "process.signal.quit": "SIGQUIT — quit",
+  "process.signal.stop": "SIGSTOP — pause",
+  "process.signal.cont": "SIGCONT — resume",
+  "process.signal.usr1": "SIGUSR1 — user-defined 1",
+  "process.signal.usr2": "SIGUSR2 — user-defined 2",
+  "process.kill.title": "Send signal to process?",
+  "process.kill.message": "Send {signal} to “{name}” (pid {pid})?",
+  "process.kill.signalLabel": "Signal",
+  "process.kill.confirm": "Send {signal}",
+  "process.kill.destructive.kill":
+    "SIGKILL ends the process at once. It cannot clean up or save its work, and this cannot be undone.",
+  "process.kill.destructive.stop":
+    "SIGSTOP pauses the process until it receives SIGCONT. It cannot catch or ignore the signal.",
+  "process.kill.windowsOnly":
+    "Windows has no POSIX signals, so a local process can only be terminated. SIGTERM and SIGKILL both end it; the other signals are not available.",
+  "process.kill.sent": "Sent {signal} to {name} (pid {pid})",
 } as const;
 
 /** A stable id naming one catalog message. */

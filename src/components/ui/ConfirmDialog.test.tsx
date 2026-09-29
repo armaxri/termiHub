@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { Select } from "./Select";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -391,5 +392,34 @@ describe("ConfirmDialog", () => {
       ).click();
     });
     expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+  // #3209: Enter on a Select in the body opens/chooses in the picker; it must
+  // not also confirm the (possibly destructive) dialog.
+  it("does not confirm when Enter is pressed on a select in the body", () => {
+    const onConfirm = vi.fn();
+    render(
+      <ConfirmDialog open title="T" message="M" onConfirm={onConfirm} onCancel={vi.fn()}>
+        <Select
+          value="a"
+          onChange={vi.fn()}
+          options={[
+            { value: "a", label: "A" },
+            { value: "b", label: "B" },
+          ]}
+          data-testid="body-select"
+        />
+      </ConfirmDialog>
+    );
+    const trigger = document.querySelector('[data-testid="body-select"]') as HTMLButtonElement;
+    act(() => trigger.focus());
+    act(() => {
+      trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(onConfirm).not.toHaveBeenCalled();
+    const option = document.querySelector('[role="option"]') as HTMLElement;
+    act(() => {
+      option.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 });

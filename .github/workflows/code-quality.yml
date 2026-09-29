@@ -289,6 +289,16 @@ jobs:
       - name: Run Clippy on Windows (linter)
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+      # #3319: the workspace lint above runs with --all-features, so feature
+      # unification masks gate bugs in core's Windows-only `wsl` feature — core
+      # can compile only because src-tauri turns on another feature for it.
+      # Before #3314, `wsl` alone failed with E0433 (`backends` not compiled).
+      # Lint core with just `wsl` so such a gap fails here. It mirrors the
+      # per-feature isolation step in `rust-quality` (#1499, #3318). That step
+      # runs on Linux, where `wsl` code is `cfg(windows)`-gated out.
+      - name: Core clippy with wsl feature in isolation (guards #3314, #3319)
+        run: cargo clippy -p termihub-core --no-default-features --features wsl --all-targets -- -D warnings
+
   # RDP Sidecar Quality + Supply-Chain Checks (PKG-013)
   #
   # The RDP sidecar (`termihub-rdp-helper`, #1747) is a workspace-EXCLUDED crate
@@ -442,25 +452,25 @@ jobs:
         continue-on-error: true
         run: pnpm knip || true
 
-  # Advisory frontend bundle-size budget (audit finding TOOL-013).
+  # Frontend bundle-size budget (audit findings TOOL-013, CI-012; #3757).
   #
-  # Builds the frontend and reports the total on-disk size of dist/ against a
-  # generous budget (see scripts/internal/bundle-size.mjs), so a large size
-  # regression is visible in the run log without gating a release. This is
-  # REPORT-ONLY: the whole job is `continue-on-error` and every step is too, so
-  # it can never red a PR — a red "Bundle Size" check would be misleading. The
-  # size script itself always exits 0; a build failure here is caught by the
-  # real build/test lanes, not by this advisory job.
+  # Builds the frontend and grades the total on-disk size of dist/ against a
+  # generous budget (see scripts/internal/bundle-size.mjs), so only a large size
+  # regression trips it. Over budget, the size step prints an `::error`
+  # annotation and exits 1, which reds this job and so develop's post-merge
+  # Code Quality run. That red run is the alarm: post-merge runs are watched
+  # (docs/contributing.md, "Post-merge lane").
   #
-  # POST-MERGE ONLY (#3325): advisory, so it does not spend a PR runner slot; the
-  # develop/main push run reports the size trend.
+  # POST-MERGE ONLY (#3325), and not a PR gate (pr-gate.mjs GATE_EXCLUDED): a
+  # Vite build costs a PR runner slot, and the size check is not a
+  # correctness gate. The budget is ~40% above the current build, so one PR
+  # can hardly trip it alone; the develop run names the push that did. The
+  # install/build steps stay `continue-on-error`: build failures are owned by
+  # the real build/test lanes, and a missing dist/ makes the size step skip.
   bundle-size:
-    name: Bundle Size (advisory)
+    name: Bundle Size
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request'
-    # advisory: a size trend, not a correctness gate. Forcing function: none yet;
-    # #3757 tracks making an over-budget bundle red the post-merge run.
-    continue-on-error: true
 
     steps:
       - name: Checkout code
@@ -477,17 +487,18 @@ jobs:
 
       - name: Install dependencies
         # advisory: install failures are gated by the real build/test lanes.
+        # Forcing function: those lanes.
         continue-on-error: true
         run: pnpm install --frozen-lockfile
 
       - name: Build frontend
         # advisory: build failures are gated by the real build/test lanes.
+        # Forcing function: those lanes.
         continue-on-error: true
         run: pnpm build
 
-      - name: Report bundle size (advisory)
-        # advisory: see the job comment; #3757 adds the forcing function.
-        continue-on-error: true
+      # Not continue-on-error: over budget, this step fails the job (#3757).
+      - name: Check bundle size against budget
         run: pnpm size >> "$GITHUB_STEP_SUMMARY"
 
   # Rustdoc intra-doc link gate (#3812). Plain `cargo doc` only warns on broken
