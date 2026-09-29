@@ -39,6 +39,7 @@ fn remote_copy(id: &str, src: &str, dst: &str) -> PersistedTransfer {
             session_id: "sess-src".to_string(),
             path: "/src/data.csv".to_string(),
             saved_connection_id: Some(src.to_string()),
+            container_id: None,
         }),
         ..record(id, Some(dst))
     }
