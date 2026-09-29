@@ -62,6 +62,7 @@ jobs:
         working-directory: core
         run: |
           for i in 1 2 3 4 5; do
+            echo "warm repeat $i"
             ../out/core-tests.exe --exact --nocapture \
               backends::local_shell::tests::windows_powershell_spawn_echo_resize_teardown
           done
@@ -69,4 +70,5 @@ jobs:
         if: ${{ !cancelled() }}
         shell: bash
         working-directory: core
-        run: ../out/core-tests.exe --test-threads=2 backends::local_shell::
+        run: |
+          ../out/core-tests.exe --test-threads=2 backends::local_shell::
