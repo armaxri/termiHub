@@ -15,7 +15,7 @@ use std::sync::Mutex;
 use super::*;
 use crate::backends::ftp::mock_server::{MockFtpOptions, MockFtpServer, MockTransfer};
 use crate::backends::ftp::FtpServerCaps;
-use crate::files::transfer::{TransferDirection, TransferStateTag, CHUNK_SIZE};
+use crate::files::transfer::{TransferDirection, TransferProgress, TransferStateTag, CHUNK_SIZE};
 
 const REMOTE: &str = "/pub/data.bin";
 /// `MDTM` timestamp of the source, and the same instant in Unix seconds.
@@ -206,7 +206,11 @@ async fn download_relaunch_resumes_via_rest_when_rest_and_mdtm_are_supported() {
         vec![retr(offset as u64)],
         "resumed from the checkpoint via REST, never from zero"
     );
-    assert_eq!(handle.source_mtime(), Some(MTIME_SECS), "MDTM → Unix seconds");
+    assert_eq!(
+        handle.source_mtime(),
+        Some(MTIME_SECS),
+        "MDTM → Unix seconds"
+    );
 }
 
 /// Same size but a new MDTM: the source was rewritten while the app was
@@ -359,15 +363,8 @@ async fn download_relaunch_restarts_when_rest_is_rejected() {
 #[tokio::test]
 async fn fresh_download_records_the_source_mtime() {
     let data = content(CHUNK_SIZE + 9);
-    let (server, landed, handle, _events) = relaunch_download(
-        MockFtpOptions::default(),
-        &data,
-        MTIME,
-        &[],
-        0,
-        None,
-    )
-    .await;
+    let (server, landed, handle, _events) =
+        relaunch_download(MockFtpOptions::default(), &data, MTIME, &[], 0, None).await;
 
     assert_eq!(landed, data);
     assert_eq!(server.transfers(), vec![retr(0)]);

@@ -245,7 +245,9 @@ async fn serve(
                 };
                 reply(&mut w, "150 opening data connection").await?;
                 let (mut conn, _) = listener.accept().await?;
-                let start = usize::try_from(offset).unwrap_or(usize::MAX).min(data.len());
+                let start = usize::try_from(offset)
+                    .unwrap_or(usize::MAX)
+                    .min(data.len());
                 let _ = conn.write_all(&data[start..]).await;
                 let _ = conn.shutdown().await;
                 drop(conn);
