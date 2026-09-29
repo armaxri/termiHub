@@ -30,7 +30,7 @@ import { afterAll, afterEach } from "vitest";
 
 /**
  * Max bytes of console output one test file may emit across all its tests.
- * The noisiest file measured ~0.1 MB after the #3356 cleanup; the budget
+ * The noisiest file measured ~0.17 MB after the #3356 cleanup; the budget
  * leaves ~2x headroom for timing-dependent warnings on a loaded runner.
  */
 export const CONSOLE_BYTES_PER_FILE_BUDGET = 512 * 1024;
