@@ -784,4 +784,23 @@ mod tests {
             before
         );
     }
+
+    // ── On-disk byte-compatibility (ts-rs rollout, #3088) ──────────────────
+    //
+    // A `last-session.json` in the format this backend has always written must
+    // load and re-save byte for byte (unknown keys included), so generating the
+    // TS `LastSession` from this struct is invisible on disk.
+    #[test]
+    fn legacy_last_session_file_round_trips_byte_identical() {
+        const LEGACY: &str = include_str!("testdata/last_session_legacy.json");
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        fs::write(dir.path().join(FILE_NAME), LEGACY).unwrap();
+        let session = storage.load().unwrap().expect("session loads");
+        assert_eq!(session.active_group_index, 1);
+        assert_eq!(session.active_workspace_id.as_deref(), Some("ws-1"));
+        storage.save(&session).unwrap();
+        let saved = fs::read_to_string(dir.path().join(FILE_NAME)).unwrap();
+        assert_eq!(saved, LEGACY.trim_end());
+    }
 }

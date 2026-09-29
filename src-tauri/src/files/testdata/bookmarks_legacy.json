@@ -1,0 +1,23 @@
+{
+  "version": "1",
+  "bookmarks": [
+    {
+      "id": "b1",
+      "scope": "local",
+      "path": "/home/me/src",
+      "name": "src",
+      "createdAt": "2026-09-01T10:00:00Z"
+    },
+    {
+      "id": "b2",
+      "scope": "connection:Work/web-1",
+      "path": "/var/log",
+      "name": "logs",
+      "createdAt": ""
+    }
+  ],
+  "futureKey": [
+    1,
+    2
+  ]
+}

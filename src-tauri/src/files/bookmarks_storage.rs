@@ -128,4 +128,23 @@ mod tests {
         assert!(storage.save(&sample_store()).is_err());
         assert_eq!(fs::read_to_string(&storage.file_path).unwrap(), newer);
     }
+
+    // ── On-disk byte-compatibility (ts-rs rollout, #3088) ──────────────────
+    //
+    // A bookmarks file in the format this backend has always written must load
+    // and re-save byte for byte (unknown keys included), so generating the TS
+    // `FileBookmark` from this struct is invisible on disk.
+    #[test]
+    fn legacy_bookmarks_file_round_trips_byte_identical() {
+        const LEGACY: &str = include_str!("testdata/bookmarks_legacy.json");
+        let dir = TempDir::new().unwrap();
+        let storage = FileBookmarkStorage::new_test(dir.path());
+        fs::write(&storage.file_path, LEGACY).unwrap();
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(loaded.data.bookmarks.len(), 2);
+        storage.save(&loaded.data).unwrap();
+        let saved = fs::read_to_string(&storage.file_path).unwrap();
+        assert_eq!(saved, LEGACY.trim_end());
+    }
 }

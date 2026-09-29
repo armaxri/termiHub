@@ -1,0 +1,69 @@
+{
+  "version": "1",
+  "tabGroups": [
+    {
+      "name": "Main",
+      "color": "#ff6b6b",
+      "layout": {
+        "type": "split",
+        "direction": "horizontal",
+        "children": [
+          {
+            "type": "leaf",
+            "tabs": [
+              {
+                "connectionRef": "Work/web-1",
+                "title": "web",
+                "initialCommand": "htop"
+              }
+            ]
+          },
+          {
+            "type": "leaf",
+            "tabs": [
+              {
+                "agentRef": {
+                  "agentId": "agent-1",
+                  "definitionId": "def-1"
+                }
+              },
+              {
+                "inlineConfig": {
+                  "config": {
+                    "shell": "zsh"
+                  },
+                  "type": "local"
+                }
+              }
+            ]
+          }
+        ],
+        "sizes": [
+          40.0,
+          60.0
+        ]
+      }
+    },
+    {
+      "name": "Second",
+      "layout": {
+        "type": "leaf",
+        "tabs": []
+      },
+      "windowId": "win-a"
+    }
+  ],
+  "activeGroupIndex": 1,
+  "windows": [
+    {
+      "id": "main"
+    },
+    {
+      "id": "win-a"
+    }
+  ],
+  "activeWorkspaceId": "ws-1",
+  "futureKey": {
+    "kept": true
+  }
+}
