@@ -64,31 +64,6 @@ if (typeof Element !== "undefined") {
         dispatchEvent: () => false,
       }) as unknown as MediaQueryList;
   }
-
-  // @tanstack/react-virtual resets its `isScrolling` flag either from the native
-  // `scrollend` event (when the environment advertises `onscrollend` and the
-  // virtualizer opts in via `useScrollendEvent`) or, as a fallback, from a 150ms
-  // debounced `setTimeout` that its cleanup never clears. That leaked timer fires
-  // after a virtualized list (the FileBrowser) unmounts and — once jsdom has torn
-  // the environment down between test files — throws an unhandled "window is not
-  // defined" that fails the whole run.
-  //
-  // The unclear-on-unmount timer is a bug inside the `@tanstack/virtual-core`
-  // dependency (`observeOffset`'s cleanup removes the scroll listener but never
-  // clears the fallback debounce), not our code — see follow-up issue and the
-  // regression test in `src/test/virtualListSize.test.tsx`, which asserts the
-  // scrollend path leaves `vi.getTimerCount() === 0` while the debounce fallback
-  // leaks one timer. jsdom does not implement `onscrollend`, so advertise it here
-  // — at module load, because `virtual-core` captures `"onscrollend" in window`
-  // in a top-level `const` when it first loads — to steer the virtualizer onto
-  // the timer-free scrollend path (it opts in via `useScrollendEvent: true`),
-  // leaving nothing pending past teardown. This shim must stay global; the
-  // per-test sizing/scroll helpers moved to `src/test/virtualListSize.ts` as an
-  // explicit opt-in (audit finding MOCK-008), but this one is load-time-bound.
-  if (typeof window !== "undefined" && !("onscrollend" in window)) {
-    (window as unknown as { onscrollend: ((this: Window, ev: Event) => void) | null }).onscrollend =
-      null;
-  }
 }
 
 // Mock monaco-editor so tests don't need a browser environment.

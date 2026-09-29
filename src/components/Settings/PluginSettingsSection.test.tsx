@@ -165,4 +165,94 @@ describe("PluginSettingsSection (#2000)", () => {
     await render();
     expect(query("plugin-settings-empty")).not.toBeNull();
   });
+
+  describe("per-plugin debounced saves (#3022)", () => {
+    function twoPlugins(
+      updatePluginSettings: (id: string, settings: Record<string, unknown>) => Promise<void>
+    ) {
+      useAppStore.setState({
+        plugins: [
+          plugin("alpha", { namespace: { type: "string", default: "a", description: "" } }),
+          plugin("beta", { region: { type: "string", default: "b", description: "" } }),
+        ],
+        getPluginSettings: vi.fn(() => Promise.resolve({})),
+        updatePluginSettings,
+      });
+    }
+
+    it("coalesces saves per plugin independently", async () => {
+      const updatePluginSettings = vi.fn(() => Promise.resolve());
+      twoPlugins(updatePluginSettings);
+      await render();
+      vi.useFakeTimers();
+
+      const ns = query("field-namespace") as HTMLInputElement;
+      const region = query("field-region") as HTMLInputElement;
+
+      act(() => setNativeValue(ns, "one"));
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      // Editing beta must neither delay nor drop alpha's pending save.
+      act(() => setNativeValue(region, "eu"));
+      act(() => setNativeValue(ns, "two"));
+      act(() => {
+        vi.advanceTimersByTime(299);
+      });
+      expect(updatePluginSettings).not.toHaveBeenCalled();
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(updatePluginSettings).toHaveBeenCalledTimes(2);
+      expect(updatePluginSettings).toHaveBeenCalledWith(
+        "alpha",
+        expect.objectContaining({ namespace: "two" })
+      );
+      expect(updatePluginSettings).toHaveBeenCalledWith(
+        "beta",
+        expect.objectContaining({ region: "eu" })
+      );
+    });
+
+    it("re-arming one plugin's save does not delay another's", async () => {
+      const updatePluginSettings = vi.fn(() => Promise.resolve());
+      twoPlugins(updatePluginSettings);
+      await render();
+      vi.useFakeTimers();
+
+      act(() => setNativeValue(query("field-namespace") as HTMLInputElement, "x"));
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      act(() => setNativeValue(query("field-region") as HTMLInputElement, "us"));
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      expect(updatePluginSettings).toHaveBeenCalledTimes(1);
+      expect(updatePluginSettings).toHaveBeenLastCalledWith(
+        "alpha",
+        expect.objectContaining({ namespace: "x" })
+      );
+    });
+
+    it("cancels (does not flush) pending saves on unmount", async () => {
+      const updatePluginSettings = vi.fn(() => Promise.resolve());
+      twoPlugins(updatePluginSettings);
+      await render();
+      vi.useFakeTimers();
+
+      act(() => setNativeValue(query("field-namespace") as HTMLInputElement, "x"));
+      act(() => setNativeValue(query("field-region") as HTMLInputElement, "y"));
+      act(() => root.unmount());
+      expect(vi.getTimerCount()).toBe(0);
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(updatePluginSettings).not.toHaveBeenCalled();
+
+      root = createRoot(container);
+      vi.useRealTimers();
+    });
+  });
 });
