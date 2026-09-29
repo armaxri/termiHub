@@ -1,8 +1,10 @@
 # termiHub full-stack audit — 2026-09
 
+> **Final status (2026-09-29):** see [`FINAL-SUMMARY.md`](./FINAL-SUMMARY.md) — 621 of 668 findings fixed; what is open, deferred and won't-fix, with reasons.
+
 A comprehensive, multi-angle pre-release audit of termiHub. The goal is to surface
 **every gap, defect, and — especially — every workaround**, so the app can be fixed and
-released *without workarounds*.
+released _without workarounds_.
 
 The audit is run by a team of expert agents, each covering one angle. Every distinct
 finding is captured as **one markdown file** so findings can be triaged, assigned, and
@@ -25,12 +27,12 @@ Every finding file starts with YAML frontmatter, then prose:
 
 ```markdown
 ---
-id: <ANGLE>-<NNN>          # e.g. SEC-014
+id: <ANGLE>-<NNN> # e.g. SEC-014
 title: <short imperative title>
 angle: <angle name>
 severity: critical | high | medium | low | info
 category: bug | missing-feature | workaround | ux | ui | a11y | arch | perf | security | test-gap | tooling | docs | reliability | i18n | packaging | supply-chain
-is_workaround: true | false   # true if this is a temporary hack / stopgap / disabled check to remove before release
+is_workaround: true | false # true if this is a temporary hack / stopgap / disabled check to remove before release
 subsystem: <path or area, e.g. core/backends/ssh>
 evidence:
   - path/to/file.ext:LINE
@@ -38,15 +40,19 @@ status: open
 ---
 
 ## What
+
 Concise statement of the finding.
 
 ## Why it matters
+
 Impact — user-facing, correctness, security, release-blocking, etc.
 
 ## Evidence
+
 Concrete pointers (file:line), quoted snippets, reproduction where relevant.
 
 ## Recommendation
+
 How to fix it properly. For workarounds: what the workaround is, why it exists, and
 what the real fix that lets us delete it looks like.
 ```
