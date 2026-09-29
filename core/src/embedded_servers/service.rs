@@ -436,8 +436,7 @@ impl EmbeddedServerService {
     }
 
     /// The address the running server's listener actually bound, or `None` when
-    /// it is not running or the server type cannot report it (FTP, whose
-    /// listener is bound inside libunftp).
+    /// it is not running.
     ///
     /// For a config with port `0` this is how a caller learns the OS-assigned
     /// port (#3533).
@@ -1061,6 +1060,23 @@ mod tests {
         let cleared = svc.activity_snapshot(None);
         assert!(cleared.entries.is_empty());
         assert_eq!(cleared.epoch, stopped.epoch + 1);
+        svc.shutdown();
+    }
+
+    #[test]
+    fn ftp_port_zero_reports_real_local_addr() {
+        // FTP owns the socket it confirms, so like HTTP/TFTP it must report the
+        // OS-assigned port for a port-0 config (#3549).
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut cfg = http_config(0);
+        cfg.server_type = ServerType::Ftp;
+        cfg.root_directory = dir.path().to_string_lossy().into_owned();
+
+        let mut svc = EmbeddedServerService::new(ServerType::Ftp);
+        svc.start_with(cfg).expect("start");
+        let addr = svc.local_addr().expect("FTP must report its bound address");
+        assert_ne!(addr.port(), 0);
+        std::net::TcpStream::connect(addr).expect("connect to the reported port");
         svc.shutdown();
     }
 

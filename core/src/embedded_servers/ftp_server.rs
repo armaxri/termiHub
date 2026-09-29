@@ -37,9 +37,10 @@ use super::shutdown::ShutdownSignal;
 ///
 /// Internally this creates a single-threaded tokio runtime so that the async
 /// libunftp server can run inside the OS thread that the `EmbeddedServerManager`
-/// already spawned. `ready` is signalled exactly once once the control port is
-/// confirmed bindable (or if binding fails), so the manager only reports
-/// `Running` after the bind is confirmed (GAP G3, #1145).
+/// already spawned. `ready` is signalled exactly once, with the control
+/// listener's real bound address once it is bound (or with the error if binding
+/// fails), so the manager only reports `Running` for a socket the server
+/// actually serves on (GAP G3 #1145, #3549).
 pub fn start_ftp_server(
     config: &EmbeddedServerConfig,
     shutdown: ShutdownSignal,
@@ -61,22 +62,23 @@ pub fn start_ftp_server(
     rt.block_on(run_ftp_server(config, shutdown, stats, ready))
 }
 
-async fn run_ftp_server(
-    config: &EmbeddedServerConfig,
-    shutdown: ShutdownSignal,
-    stats: Arc<AtomicServerStats>,
-    ready: BindSignal,
-) -> Result<()> {
-    let root: PathBuf = config.root_directory.clone().into();
-    let addr = format!("{}:{}", config.bind_host, config.port);
-    let read_only = config.read_only;
+/// The concrete libunftp server type this module builds.
+type FtpServer = libunftp::Server<MaybeReadOnlyFilesystem, FtpUser>;
 
-    let root_for_factory = root.clone();
+/// Build a libunftp server for `config`. `Server::service` consumes the server,
+/// so the accept loop builds one per control connection (cheap: every field is
+/// an `Arc` or small value).
+fn build_server(
+    config: &EmbeddedServerConfig,
+    stats: &Arc<AtomicServerStats>,
+) -> Result<FtpServer> {
+    let root: PathBuf = config.root_directory.clone().into();
+    let read_only = config.read_only;
     let activity = Arc::clone(&stats.activity);
     let activity_for_factory = Arc::clone(&activity);
-    let server = match ServerBuilder::with_authenticator(
+    ServerBuilder::with_authenticator(
         Box::new(move || MaybeReadOnlyFilesystem {
-            inner: Filesystem::new(root_for_factory.clone()),
+            inner: Filesystem::new(root.clone()),
             read_only,
             activity: Arc::clone(&activity_for_factory),
         }),
@@ -85,53 +87,86 @@ async fn run_ftp_server(
     .passive_ports(49152..65535)
     .greeting("termiHub FTP Server ready.")
     .notify_data(StatsTracker {
-        stats: Arc::clone(&stats),
+        stats: Arc::clone(stats),
     })
     .notify_presence(StatsTracker {
-        stats: Arc::clone(&stats),
+        stats: Arc::clone(stats),
     })
     .build()
     .context("Failed to build libunftp server")
-    {
-        Ok(server) => server,
-        Err(e) => {
-            ready.fail(&e.to_string());
-            return Err(e);
-        }
-    };
+}
 
-    // libunftp binds the control port inside `listen`, with no bound-callback.
-    // Probe-bind the control port ourselves so we can confirm (or fail) the
-    // bind before reporting Running; drop the probe immediately so libunftp can
-    // take the port (GAP G3, #1145).
-    match tokio::net::TcpListener::bind(&addr).await {
-        Ok(probe) => {
-            drop(probe);
-            // libunftp owns the real listener, so its bound address is not
-            // observable here (see `EmbeddedServerService::local_addr`).
-            ready.confirm(None);
-        }
+async fn run_ftp_server(
+    config: &EmbeddedServerConfig,
+    shutdown: ShutdownSignal,
+    stats: Arc<AtomicServerStats>,
+    ready: BindSignal,
+) -> Result<()> {
+    let addr = format!("{}:{}", config.bind_host, config.port);
+
+    // Validate the server configuration before binding, so a bad config fails
+    // the start instead of every later connection.
+    if let Err(e) = build_server(config, &stats) {
+        ready.fail(&e.to_string());
+        return Err(e);
+    }
+
+    // Bind the control port once and keep the listener: the socket confirmed
+    // here is the one the server serves on, so there is no probe-then-rebind
+    // window another process could win, and a port-0 config reports the port
+    // it actually got (GAP G3 #1145, #3549). libunftp's `listen` can only bind
+    // an address itself, so we run the accept loop and hand each connection to
+    // `Server::service`.
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(listener) => listener,
         Err(e) => {
             let msg = format!("Failed to bind FTP server to {addr}: {e}");
             ready.fail(&msg);
             return Err(anyhow::anyhow!(msg));
         }
-    }
+    };
+    let local_addr = listener.local_addr().ok();
+    ready.confirm(local_addr);
 
-    tracing::info!(addr, "FTP server listening (libunftp)");
+    tracing::info!(?local_addr, "FTP server listening (libunftp)");
 
-    tokio::select! {
-        result = server.listen(&addr) => {
-            result.map_err(|e| anyhow::anyhow!("FTP server error: {e}"))?;
-        }
-        // Event-driven: park until the signal fires, then drop the listener at
-        // once — no fixed-interval poll (WA-RS-001 / CORE-001).
-        _ = shutdown.wait() => {
-            tracing::info!("FTP server shutting down");
+    loop {
+        tokio::select! {
+            accepted = listener.accept() => match accepted {
+                Ok((stream, peer)) => serve_connection(config, &stats, stream, peer),
+                Err(e) => tracing::warn!(error = %e, "FTP accept failed"),
+            },
+            // Event-driven: park until the signal fires, then drop the listener
+            // at once — no fixed-interval poll (WA-RS-001 / CORE-001).
+            _ = shutdown.wait() => {
+                tracing::info!("FTP server shutting down");
+                break;
+            }
         }
     }
 
     Ok(())
+}
+
+/// Spawn a control-channel task for one accepted FTP connection.
+fn serve_connection(
+    config: &EmbeddedServerConfig,
+    stats: &Arc<AtomicServerStats>,
+    stream: tokio::net::TcpStream,
+    peer: std::net::SocketAddr,
+) {
+    let server = match build_server(config, stats) {
+        Ok(server) => server,
+        Err(e) => {
+            tracing::warn!(%peer, error = %e, "FTP server build failed; dropping connection");
+            return;
+        }
+    };
+    tokio::spawn(async move {
+        if let Err(e) = server.service(stream).await {
+            tracing::warn!(%peer, error = ?e, "FTP control connection failed");
+        }
+    });
 }
 
 // ─── Session user ─────────────────────────────────────────────────────────────
@@ -666,6 +701,140 @@ mod tests {
             "server did not stop promptly after the shutdown signal ({:?})",
             start.elapsed()
         );
+    }
+
+    // ── Bound-port reporting (#3549) ──────────────────────────────────────────
+
+    /// Start a real FTP server thread for `config` and wait for its bind
+    /// confirmation. Returns the confirmed address, the shutdown signal and the
+    /// thread handle.
+    fn start_confirmed(
+        config: EmbeddedServerConfig,
+    ) -> (
+        Option<std::net::SocketAddr>,
+        ShutdownSignal,
+        std::thread::JoinHandle<Result<()>>,
+    ) {
+        use crate::embedded_servers::service::BindSignal;
+        use std::time::Duration;
+
+        let shutdown = ShutdownSignal::new();
+        let (ready, ready_rx) = BindSignal::for_test();
+        let server_shutdown = shutdown.clone();
+        let handle = std::thread::spawn(move || {
+            start_ftp_server(&config, server_shutdown, AtomicServerStats::new(), ready)
+        });
+        let bind = ready_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("server should confirm its bind")
+            .expect("bind should succeed");
+        (bind, shutdown, handle)
+    }
+
+    /// A port-0 config must confirm the OS-assigned port the server actually
+    /// serves on, and a client connecting to it must get the FTP greeting.
+    #[test]
+    fn port_zero_confirms_real_bound_port_and_serves_on_it() {
+        use std::io::{BufRead, BufReader};
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (addr, shutdown, handle) = start_confirmed(ftp_test_config(dir.path()));
+
+        let addr = addr.expect("FTP must report its real bound address");
+        assert_ne!(addr.port(), 0, "reported port must be the OS-assigned one");
+        assert!(
+            addr.ip().is_loopback(),
+            "bound to the configured host: {addr}"
+        );
+
+        let stream = std::net::TcpStream::connect(addr).expect("connect to reported port");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("read timeout");
+        let mut greeting = String::new();
+        BufReader::new(stream)
+            .read_line(&mut greeting)
+            .expect("read greeting");
+        assert!(
+            greeting.starts_with("220"),
+            "expected FTP greeting on the reported port, got {greeting:?}"
+        );
+
+        shutdown.trigger();
+        handle.join().expect("no panic").expect("clean exit");
+    }
+
+    /// No TOCTOU window: at the moment the bind is confirmed, the server already
+    /// owns the socket, so a competing bind of the same address must fail.
+    #[test]
+    fn confirmed_port_is_already_held_by_the_server() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (addr, shutdown, handle) = start_confirmed(ftp_test_config(dir.path()));
+        let addr = addr.expect("FTP must report its real bound address");
+
+        let competitor = std::net::TcpListener::bind(addr);
+        assert!(
+            competitor.is_err(),
+            "the confirmed port {addr} must already be held by the FTP server"
+        );
+
+        shutdown.trigger();
+        handle.join().expect("no panic").expect("clean exit");
+    }
+
+    /// Concurrent starts on the same fixed port: exactly one may confirm, the
+    /// other must fail its bind rather than report a server it never serves.
+    #[test]
+    fn concurrent_starts_on_same_port_confirm_at_most_one() {
+        use crate::embedded_servers::service::BindSignal;
+        use std::time::Duration;
+
+        // Reserve a concrete port number, then release it for the race.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("bind")
+            .local_addr()
+            .expect("addr")
+            .port();
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let mut runs = Vec::new();
+        for _ in 0..2 {
+            let mut config = ftp_test_config(dir.path());
+            config.port = port;
+            let shutdown = ShutdownSignal::new();
+            let (ready, ready_rx) = BindSignal::for_test();
+            let server_shutdown = shutdown.clone();
+            let barrier = Arc::clone(&barrier);
+            let handle = std::thread::spawn(move || {
+                barrier.wait();
+                start_ftp_server(&config, server_shutdown, AtomicServerStats::new(), ready)
+            });
+            runs.push((shutdown, ready_rx, handle));
+        }
+
+        let outcomes: Vec<_> = runs
+            .iter()
+            .map(|(_, rx, _)| rx.recv_timeout(Duration::from_secs(5)).expect("signal"))
+            .collect();
+        let confirmed = outcomes.iter().filter(|o| o.is_ok()).count();
+        assert!(
+            confirmed <= 1,
+            "two servers confirmed the same port {port}: {outcomes:?}"
+        );
+        for outcome in outcomes.iter().flatten() {
+            assert_eq!(
+                outcome.map(|a| a.port()),
+                Some(port),
+                "a confirmed server must report the port it serves on"
+            );
+        }
+
+        for (shutdown, _, handle) in runs {
+            shutdown.trigger();
+            let _ = handle.join().expect("no panic");
+        }
     }
 
     // ── FtpAuthenticator ──────────────────────────────────────────────────────
