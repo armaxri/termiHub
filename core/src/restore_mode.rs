@@ -197,6 +197,9 @@ pub enum RestoreLastSessionMode {
 
 /// How a stored tab connects, selecting the reachability check to run.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "RestoreTargetKind"))]
 #[serde(rename_all = "lowercase")]
 pub enum TargetKind {
     /// TCP host target (SSH/telnet) — network-probed.
@@ -211,21 +214,27 @@ pub enum TargetKind {
 
 /// The connection target derived from a stored tab, driving the reachability probe.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct RestoreTabTarget {
     /// How the tab connects.
     pub kind: TargetKind,
     /// Target host for `host` targets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub host: Option<String>,
     /// Target TCP port for `host` targets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "number"))]
     pub port: Option<i64>,
     /// Serial device path for `serial` targets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub device: Option<String>,
     /// Remote agent id for `agent` targets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub agent_id: Option<String>,
 }
 
@@ -235,6 +244,8 @@ pub struct RestoreTabTarget {
 /// never by [`summarize_last_session`], so they are absent in this port's output
 /// (matching the TS summary output shape exactly).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct RestoreTabInfo {
     /// Human-readable tab title.
@@ -243,17 +254,25 @@ pub struct RestoreTabInfo {
     pub type_label: String,
     /// The probe target derived from the stored tab.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub target: Option<RestoreTabTarget>,
     /// Reachability of `target`, set once the probe resolves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        test,
+        ts(optional, type = "\"reachable\" | \"unreachable\" | \"unknown\"")
+    )]
     pub reachability: Option<String>,
     /// Reason shown beside the warning icon when unreachable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub unreachable_reason: Option<String>,
 }
 
 /// Summary of a stored last session for the restore dialog.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct RestorePrompt {
     /// Total number of restorable tabs across all groups.

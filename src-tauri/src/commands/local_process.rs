@@ -60,11 +60,15 @@ const LOCAL_PROCESS_OUTPUT_QUEUE_CAP: usize = 1024;
 
 /// One streamed line of local-process output.
 #[derive(Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "LocalProcessOutputChunk"))]
 #[serde(rename_all = "camelCase")]
 struct LocalProcessOutputEvent {
     /// The run id this output belongs to.
     run_id: String,
     /// Which stream produced the line: `"stdout"` or `"stderr"`.
+    #[cfg_attr(test, ts(type = "\"stdout\" | \"stderr\""))]
     stream: String,
     /// The line of text (without its trailing newline).
     line: String,
@@ -72,6 +76,8 @@ struct LocalProcessOutputEvent {
 
 /// The terminal outcome of a local-process execution, returned to the runner.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct LocalProcessOutcome {
     /// The process exit code, or `None` when the process was killed (cancelled or

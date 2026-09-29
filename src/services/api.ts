@@ -8,7 +8,6 @@ import {
   ConnectionConfig,
   RemoteAgentConfig,
   LogEntry,
-  TerminalOptions,
   LineEnding,
 } from "@/types/terminal";
 import { XServerConsentDecision, XServerStatusReport } from "@/types/xserver";
@@ -51,19 +50,59 @@ import type {
 } from "@/types/diagnostics";
 import type { SpawnRequestPayload } from "@/services/events";
 import { base64ToBytes, bytesToBase64 } from "@/services/events";
+import type { AgentBinarySource } from "@/types/generated/AgentBinarySource";
+import type { AgentConnectResult } from "@/types/generated/AgentConnectResult";
+import type { AgentConnectionsData } from "@/types/generated/AgentConnectionsData";
+import type { AgentCoordinatedUpdateResult } from "@/types/generated/AgentCoordinatedUpdateResult";
+import type { AgentDeferredUpdateResult } from "@/types/generated/AgentDeferredUpdateResult";
+import type { AgentDefinitionInfo } from "@/types/generated/AgentDefinitionInfo";
+import type { AgentDeployConfig } from "@/types/generated/AgentDeployConfig";
+import type { AgentDeployResult } from "@/types/generated/AgentDeployResult";
+import type { AgentDockerContainersResult } from "@/types/generated/AgentDockerContainersResult";
+import type { AgentFolderInfo } from "@/types/generated/AgentFolderInfo";
+import type { AgentHostSessionInfo } from "@/types/generated/AgentHostSessionInfo";
+import type { AgentHostSessionsResult } from "@/types/generated/AgentHostSessionsResult";
+import type { AgentProbeResult } from "@/types/generated/AgentProbeResult";
+import type { AgentSessionInfo } from "@/types/generated/AgentSessionInfo";
+import type { AgentSetupConfig } from "@/types/generated/AgentSetupConfig";
+import type { AgentSetupResult } from "@/types/generated/AgentSetupResult";
+import type { AppInfo } from "@/types/generated/AppInfo";
+import type { ConnectedHost } from "@/types/generated/ConnectedHost";
+import type { ConnectionCreateParams } from "@/types/generated/ConnectionCreateParams";
+import type { ConnectionData } from "@/types/generated/ConnectionData";
+import type { ConnectionImportResult } from "@/types/generated/ConnectionImportResult";
+import type { ConnectionUpdateParams } from "@/types/generated/ConnectionUpdateParams";
+import type { ContainerSpawn } from "@/types/generated/ContainerSpawn";
+import type { DockerContainerInfo } from "@/types/generated/DockerContainerInfo";
+import type { DragOutResult } from "@/types/generated/DragOutResult";
+import type { DragOutSessionEntry } from "@/types/generated/DragOutSessionEntry";
+import type { DragOutStagingDir } from "@/types/generated/DragOutStagingDir";
+import type { DragOutStagingEntry } from "@/types/generated/DragOutStagingEntry";
+import type { ElevatedWriteResult } from "@/types/generated/ElevatedWriteResult";
+import type { FolderPasteEndpoint } from "@/types/generated/FolderPasteEndpoint";
+import type { FolderPasteOperation } from "@/types/generated/FolderPasteOperation";
+import type { FolderUpdateParams } from "@/types/generated/FolderUpdateParams";
+import type { ImportError } from "@/types/generated/ImportError";
 import type { ImportPreview } from "@/types/generated/ImportPreview";
 import type { ImportResult } from "@/types/generated/ImportResult";
-import type { ConnectionImportResult } from "@/types/generated/ConnectionImportResult";
-import type { ConnectionCreateParams } from "@/types/generated/ConnectionCreateParams";
-import type { ConnectionUpdateParams } from "@/types/generated/ConnectionUpdateParams";
-import type { FolderUpdateParams } from "@/types/generated/FolderUpdateParams";
-import type { DockerContainerInfo } from "@/types/generated/DockerContainerInfo";
-import type { AgentDockerContainersResult } from "@/types/generated/AgentDockerContainersResult";
+import type { InterruptedFolderPaste } from "@/types/generated/InterruptedFolderPaste";
+import type { LocalCopyStarted } from "@/types/generated/LocalCopyStarted";
+import type { LocalSessionInfo } from "@/types/generated/LocalSessionInfo";
+import type { PersistentSessionSummary } from "@/types/generated/PersistentSessionSummary";
+import type { QueuedLocalCopy } from "@/types/generated/QueuedLocalCopy";
+import type { RdpTrustedHost } from "@/types/generated/RdpTrustedHost";
+import type { RemoteArchInfo } from "@/types/generated/RemoteArchInfo";
+import type { SavedRemoteAgent } from "@/types/generated/SavedRemoteAgent";
+import type { SessionLogStatus } from "@/types/generated/SessionLogStatus";
+import type { ShellSpawn } from "@/types/generated/ShellSpawn";
+import type { SpawnOptions } from "@/types/generated/SpawnOptions";
+import type { SshKeyValidation } from "@/types/generated/SshKeyValidation";
+import type { SshTrustedHost } from "@/types/generated/SshTrustedHost";
 import type { TransferPhase } from "@/types/generated/TransferPhase";
-import type { TransferQueueState } from "@/types/generated/TransferQueueState";
 import type { TransferProgress } from "@/types/generated/TransferProgress";
+import type { TransferQueueState } from "@/types/generated/TransferQueueState";
 import type { TransferSnapshot } from "@/types/generated/TransferSnapshot";
-import type { AgentConnectResult } from "@/types/generated/AgentConnectResult";
+import type { UnlockCredentialStoreError } from "@/types/generated/UnlockCredentialStoreError";
 import type { ContainerRuntime, SpawnTarget } from "@/types/spawn";
 import type {
   TabHandoffRecord,
@@ -93,7 +132,6 @@ import {
   InventoryHost,
   FileEntry,
   Writability,
-  ExternalFileError,
   AppSettings,
   ShellIntegrationStatus,
   ShellIntegrationSettings,
@@ -108,6 +146,48 @@ import {
 } from "@/types/connection";
 
 export type { ConnectionTypeInfo };
+
+// Command DTOs generated from their Rust source via ts-rs (#3088, audit DUP-030/AGT-028).
+export type {
+  AgentBinarySource,
+  AgentConnectionsData,
+  AgentCoordinatedUpdateResult,
+  AgentDeferredUpdateResult,
+  AgentDefinitionInfo,
+  AgentDeployConfig,
+  AgentDeployResult,
+  AgentFolderInfo,
+  AgentHostSessionInfo,
+  AgentHostSessionsResult,
+  AgentProbeResult,
+  AgentSessionInfo,
+  AgentSetupConfig,
+  AgentSetupResult,
+  AppInfo,
+  ConnectedHost,
+  ContainerSpawn,
+  DragOutResult,
+  DragOutSessionEntry,
+  DragOutStagingDir,
+  DragOutStagingEntry,
+  ElevatedWriteResult,
+  FolderPasteEndpoint,
+  FolderPasteOperation,
+  ImportError,
+  InterruptedFolderPaste,
+  LocalSessionInfo,
+  PersistentSessionSummary,
+  QueuedLocalCopy,
+  RdpTrustedHost,
+  RemoteArchInfo,
+  SavedRemoteAgent,
+  SessionLogStatus,
+  ShellSpawn,
+  SpawnOptions,
+  SshKeyValidation,
+  SshTrustedHost,
+  UnlockCredentialStoreError,
+};
 
 // --- Terminal / session commands ---
 
@@ -322,21 +402,6 @@ export async function createTerminal(
 }
 
 /**
- * A resolved directory-mount container spawn (#1372/#1446). Mirrors the Rust
- * `ContainerSpawn`: the camelCase Docker backend `settings` to open the session
- * with, a `"… (Spawned)"` tab `title`, and `spawned: true` so the frontend can
- * badge and track it separately from configured Docker connections.
- */
-export interface ContainerSpawn {
-  /** Docker backend settings (camelCase) for the spawned session. */
-  settings: Record<string, unknown>;
-  /** Display title carrying the "Spawned" marker for the tab badge. */
-  title: string;
-  /** Always `true` — distinguishes spawned containers from saved connections. */
-  spawned: boolean;
-}
-
-/**
  * Resolve a directory-mount container spawn into Docker session settings
  * (#1446/#1447). Given a spawn `location` (and optional triggering `entryId` +
  * image / mount overrides), returns the Docker settings + tab title used to open
@@ -362,36 +427,6 @@ export async function resolveContainerSpawn(
     containerMount,
     runtime: runtime ?? null,
   });
-}
-
-/**
- * A resolved local/WSL/SSH shell spawn (#1365, SI-2). Mirrors the Rust
- * `ShellSpawn`: the camelCase local-shell backend `settings` (with the resolved
- * target as `startingDirectory`) to open the session with, a `"… (Spawned)"` tab
- * `title`, `spawned: true` so it is tracked separately from saved connections,
- * and `missing: true` when the requested path did not exist and the home
- * directory was substituted.
- */
-export interface ShellSpawn {
-  /**
-   * Backend session type to open: `"local"` shell, `"wsl"` distribution, or
-   * `"ssh"` saved connection (#1511). Absent on legacy payloads → treated as
-   * `"local"`.
-   */
-  type?: "local" | "wsl" | "ssh";
-  /** Backend settings (camelCase) for the spawned session. */
-  settings: Record<string, unknown>;
-  /** Display title carrying the "Spawned" marker for the tab badge. */
-  title: string;
-  /** Always `true` — distinguishes spawned shells from saved connections. */
-  spawned: boolean;
-  /** `true` when the requested path was missing and home was substituted. */
-  missing: boolean;
-  /**
-   * For an SSH spawn: absolute path to `cd` into once the session connects
-   * (SSH cannot set a start cwd at spawn). Absent for local/WSL spawns. (#1511)
-   */
-  cdPath?: string;
 }
 
 /**
@@ -576,27 +611,6 @@ export async function replaySessionScrollback(sessionId: string): Promise<Uint8A
 }
 
 /**
- * The spawn targets available on this host (SI-3, #1366). Mirrors the Rust
- * `SpawnOptions`: every list is "what exists right now", so the Session Picker
- * renders a section per non-empty group. `wslDistros` is always empty off
- * Windows, and an image list is only populated when its runtime is available.
- */
-export interface SpawnOptions {
-  /** Local shells detected on this host (e.g. `"bash"`, `"zsh"`). */
-  shells: string[];
-  /** Installed WSL distributions. Always empty off Windows. */
-  wslDistros: string[];
-  /** Whether a usable Docker daemon responded. */
-  dockerAvailable: boolean;
-  /** Local Docker images (`repository:tag`). Empty unless `dockerAvailable`. */
-  dockerImages: string[];
-  /** Whether a usable Podman runtime responded. */
-  podmanAvailable: boolean;
-  /** Local Podman images (`repository:tag`). Empty unless `podmanAvailable`. */
-  podmanImages: string[];
-}
-
-/**
  * Enumerate the spawn targets the Session Picker can offer (SI-3, #1366).
  * Called when the picker opens so it reflects the host's live state — shells,
  * WSL distributions and the images of whichever container runtimes respond.
@@ -619,14 +633,6 @@ export async function setSessionLineEnding(
   lineEnding: LineEnding
 ): Promise<void> {
   await invoke("set_session_line_ending", { sessionId, lineEnding });
-}
-
-/** Status of a session's output-to-file logging (#1960). */
-export interface SessionLogStatus {
-  /** Absolute path of the active transcript file. */
-  path: string;
-  /** Whether each line is prefixed with a timestamp. */
-  timestamps: boolean;
 }
 
 /**
@@ -892,12 +898,6 @@ export async function remoteDesktopDisconnect(sessionId: SessionId): Promise<voi
   await invoke("remote_desktop_disconnect", { sessionId });
 }
 
-/** One remembered RDP host and the certificate fingerprints trusted for it (#1784). */
-export interface RdpTrustedHost {
-  host: string;
-  fingerprints: string[];
-}
-
 /**
  * List remembered RDP hosts and their trusted certificate fingerprints (#1784).
  *
@@ -916,12 +916,6 @@ export async function rdpTrustList(): Promise<RdpTrustedHost[]> {
  */
 export async function rdpTrustForget(host: string, fingerprint?: string): Promise<boolean> {
   return await invoke<boolean>("rdp_trust_forget", { host, fingerprint: fingerprint ?? null });
-}
-
-/** One remembered SSH host and the host-key fingerprints trusted for it (#1968). */
-export interface SshTrustedHost {
-  host: string;
-  fingerprints: string[];
 }
 
 /**
@@ -945,13 +939,6 @@ export async function sshTrustForget(host: string, fingerprint?: string): Promis
 }
 
 // --- Persistent session commands ---
-
-/** Summary of a persistent session returned by the backend. */
-export interface PersistentSessionSummary {
-  connectionId: string;
-  sessionId: string;
-  attachedTabCount: number;
-}
 
 /**
  * Start a persistent background session for a saved connection.
@@ -1036,24 +1023,6 @@ export async function getAgentSessionBuffer(sessionId: string): Promise<Uint8Arr
   return base64ToBytes(b64);
 }
 
-/** Info about a local session managed by the desktop. */
-export interface LocalSessionInfo {
-  id: string;
-  title: string;
-  connectionType: string;
-  alive: boolean;
-  agentId?: string;
-  /**
-   * `true` when the session was opened via the CLI/context-menu spawn path
-   * (#1446, #1466) — a container with no saved connection id. This is the
-   * authoritative backend marker the Open Connections panel groups from, so a
-   * spawned container stays under "Spawned Containers" even after its owning
-   * tab (and the frontend-only `spawned` tab flag) is gone. Absent for
-   * sessions created before this field existed → treated as `false`.
-   */
-  spawned?: boolean;
-}
-
 /** List all active local sessions (includes remote proxy sessions). */
 export async function listLocalSessions(): Promise<LocalSessionInfo[]> {
   return await invoke<LocalSessionInfo[]>("list_local_sessions");
@@ -1124,13 +1093,6 @@ export async function xServerConnectConsentReply(
 /** Check whether the SSH agent is running, stopped, or not installed. */
 export async function checkSshAgentStatus(): Promise<string> {
   return await invoke<string>("check_ssh_agent_status");
-}
-
-/** Result of validating an SSH key file path. */
-export interface SshKeyValidation {
-  status: "valid" | "warning" | "error";
-  message: string;
-  keyType: string;
 }
 
 /** Validate an SSH key file path and return a user-facing hint. */
@@ -1208,21 +1170,6 @@ export async function listPodmanImages(): Promise<string[]> {
 
 // --- Connection persistence commands ---
 
-/** Saved remote agent (persisted form, no ephemeral state). */
-export interface SavedRemoteAgent {
-  id: string;
-  name: string;
-  config: RemoteAgentConfig;
-  agentSettings: AgentSettings;
-}
-
-interface ConnectionData {
-  connections: SavedConnection[];
-  folders: ConnectionFolder[];
-  agents: SavedRemoteAgent[];
-  externalErrors: ExternalFileError[];
-}
-
 /** Load all saved connections and folders from disk */
 export async function loadConnectionsAndFolders(): Promise<ConnectionData> {
   return await invoke<ConnectionData>("load_connections_and_folders");
@@ -1295,21 +1242,6 @@ export async function importConnections(json: string): Promise<number> {
 // truth via ts-rs and re-exported here so existing consumers keep importing them
 // from `@/services/api` (DUP-030).
 export type { ImportPreview, ImportResult, ConnectionImportResult };
-
-/**
- * Structured failure from {@link importConnectionsWithCredentials}, mirroring
- * the backend `ImportError`. The promise rejects with one of these shapes.
- *
- * - `wrongPassword` — the decryption password was wrong; safe to re-prompt.
- * - `other` — any other failure, with a display-ready `message`.
- *
- * Callers branch on the stable `kind` rather than parsing `message`, so the
- * classification survives localization or a reword of the backend text
- * (I18N-010).
- */
-export type ImportError =
-  | { kind: "wrongPassword"; message: string }
-  | { kind: "other"; message: string };
 
 /** Type guard: whether a caught rejection is a structured {@link ImportError}. */
 export function isImportError(err: unknown): err is ImportError {
@@ -1631,31 +1563,6 @@ export async function transferRetry(transferId: string): Promise<boolean> {
 
 // --- Folder-paste manifests (#3630) ---
 
-/** Whether a folder paste copies or moves its folder. */
-export type FolderPasteOperation = "copy" | "cut";
-
-/**
- * One side of a folder paste: the local disk (no `sessionId`) or a session's
- * file system. `connectionId` (the saved connection the session was opened
- * from) is what a Retry after a restart uses to find the reconnected session;
- * `label` is a display name for the notice.
- */
-export interface FolderPasteEndpoint {
-  sessionId?: string | null;
-  connectionId?: string | null;
-  label?: string | null;
-  path: string;
-}
-
-/** A folder paste a previous run never finished (#3630). */
-export interface InterruptedFolderPaste {
-  id: string;
-  operation: FolderPasteOperation;
-  source: FolderPasteEndpoint;
-  destination: FolderPasteEndpoint;
-  startedAtMs: number;
-}
-
 /**
  * Record a folder paste that is about to be copied file by file and resolve
  * its manifest id (#3630). End it with {@link folderPasteEnd} once every file
@@ -1745,25 +1652,6 @@ export async function localListDir(path: string): Promise<FileEntry[]> {
   return await invoke<FileEntry[]>("local_list_dir", { path });
 }
 
-/** A private staging directory for a remote drag-out and each entry's target path. */
-export interface DragOutStagingDir {
-  dir: string;
-  paths: string[];
-}
-
-/** How a native drag-out ended. */
-export type DragOutResult = "dropped" | "cancelled";
-
-/**
- * One entry of a drag-out staging tree (#3491): its name segments relative to
- * the dragged selection (`["logs", "a.txt"]`) and whether it is a folder. A
- * one-segment entry is a dragged row itself.
- */
-export interface DragOutStagingEntry {
-  segments: string[];
-  isDirectory: boolean;
-}
-
 /**
  * Create a private (`0700`) staging directory for a remote drag-out (#3457) and
  * return the local target path for each entry, in order. Folders (and every
@@ -1774,13 +1662,6 @@ export async function dragOutCreateStaging(
   entries: DragOutStagingEntry[]
 ): Promise<DragOutStagingDir> {
   return await invoke<DragOutStagingDir>("drag_out_create_staging", { entries });
-}
-
-/** A dragged row of a byte-based session, as {@link dragOutStageSession} takes it. */
-export interface DragOutSessionEntry {
-  path: string;
-  name: string;
-  isDirectory: boolean;
 }
 
 /**
@@ -1815,21 +1696,6 @@ export async function dragOutStart(paths: string[]): Promise<DragOutResult> {
  * their Transfer Queue rows are keyed on this instead.
  */
 export const LOCAL_TRANSFER_SESSION = "local";
-
-/** One file a local copy runs through the transfer queue (Rust `QueuedLocalCopy`). */
-export interface QueuedLocalCopy {
-  transferId: string;
-  /** The file being copied — its queue row's name and path. */
-  srcPath: string;
-}
-
-/** What `local_copy_start` started (Rust `LocalCopyStarted`, #3605). */
-interface LocalCopyStarted {
-  /** Files copied in the background; empty when everything was copied directly. */
-  queued: QueuedLocalCopy[];
-  /** A folder's special files (sockets, FIFOs, devices) that were not copied. */
-  skipped: string[];
-}
 
 /**
  * Copy a file or directory on the local filesystem, through the transfer queue
@@ -2031,19 +1897,6 @@ export async function watchLocalDir(watchId: string, path: string): Promise<void
 export async function unwatchLocalDir(watchId: string): Promise<void> {
   await invoke("unwatch_local_dir", { watchId });
 }
-
-/**
- * Outcome of a privilege-elevated (`sudo`) remote write.
- *
- * - `success` — the destination was rewritten with root privileges.
- * - `incorrectPassword` — the sudo password was rejected; safe to re-prompt.
- * - `other` — any other failure (sudo missing, not in sudoers, requiretty, a
- *   write error), with a `message` suitable for display.
- */
-export type ElevatedWriteResult =
-  | { kind: "success" }
-  | { kind: "incorrectPassword" }
-  | { kind: "other"; message: string };
 
 // --- Session-based file browsing commands ---
 // These work with any connection type that has file browser capability
@@ -2353,50 +2206,6 @@ export async function vscodeOpenLocal(path: string): Promise<void> {
 
 // --- Agent commands ---
 
-/** Info about a remote session on an agent. */
-export interface AgentSessionInfo {
-  sessionId: string;
-  title: string;
-  type: string;
-  status: string;
-  attached: boolean;
-  /**
-   * ID of the saved connection definition this session was created from,
-   * when known. Lets the UI re-link an active session to its source
-   * definition (e.g. to derive the persistent connectionId for reattach
-   * via the existing scrollback-replay path).
-   */
-  definitionId?: string;
-}
-
-/** Info about a saved connection definition on an agent. */
-export interface AgentDefinitionInfo {
-  id: string;
-  name: string;
-  sessionType: string;
-  config: Record<string, unknown>;
-  persistent: boolean;
-  folderId: string | null;
-  terminalOptions?: TerminalOptions;
-  icon?: string;
-  /** Source file path on the remote host, or undefined for the primary store. */
-  sourceFile?: string;
-}
-
-/** Info about a folder on an agent. */
-export interface AgentFolderInfo {
-  id: string;
-  name: string;
-  parentId: string | null;
-  isExpanded: boolean;
-}
-
-/** Combined connections and folders from an agent. */
-export interface AgentConnectionsData {
-  connections: AgentDefinitionInfo[];
-  folders: AgentFolderInfo[];
-}
-
 /** Connect to a remote agent via SSH. Returns capabilities. */
 export async function connectAgent(
   agentId: string,
@@ -2415,18 +2224,6 @@ export async function applyAgentSettings(agentId: string, settings: AgentSetting
   await invoke("apply_agent_settings", { agentId, settings });
 }
 
-/** Outcome of a deferred agent-update request (#1352). */
-export interface AgentDeferredUpdateResult {
-  /**
-   * `true` when the agent was idle and applied the update immediately (the
-   * connection is expected to drop as the binary swaps); `false` when the
-   * update was deferred until the last of `activeSessions` disconnects.
-   */
-  applied: boolean;
-  /** Number of active sessions the update will wait on when `applied` is false. */
-  activeSessions: number;
-}
-
 /**
  * Request a deferred agent update. Omit `binaryPath` to apply the agent's
  * already-staged pending update (the banner case). When the agent is idle it
@@ -2443,27 +2240,6 @@ export async function requestAgentDeferredUpdate(
     binaryPath,
     version,
   });
-}
-
-/** Outcome of a coordinated agent-update request (#1602 / #1351, SI-5). */
-export interface AgentCoordinatedUpdateResult {
-  /**
-   * `true` when the agent was idle and applied the update immediately (the
-   * connection is expected to drop as the binary swaps); `false` when the update
-   * was deferred until the last of `activeSessions` disconnects.
-   */
-  applied: boolean;
-  /** Number of active sessions the update will wait on when `applied` is false. */
-  activeSessions: number;
-  /** How many *other* connected hosts were sent the `agent.update_pending` notice. */
-  notifiedClients: number;
-  /**
-   * `true` when every notified host disconnected inside the window (or there was
-   * nobody to notify); `false` when the window closed with hosts still attached.
-   */
-  allAcked: boolean;
-  /** Hosts still attached when the coordination window closed. Empty on success. */
-  remainingClients: string[];
 }
 
 /**
@@ -2531,26 +2307,7 @@ export async function listAgentSessions(agentId: string): Promise<AgentSessionIn
  * (`"self"`), nobody — it runs unattached (`"none"`), or another desktop
  * (`"other"`; opening it is an explicit takeover).
  */
-export type AgentSessionHolder = "self" | "none" | "other";
-
-/** A session running on an agent host, with who controls it (#3369). */
-export interface AgentHostSessionInfo {
-  sessionId: string;
-  title: string;
-  type: string;
-  status: string;
-  createdAt: string;
-  lastActivity: string;
-  holder: AgentSessionHolder;
-  definitionId?: string | null;
-}
-
-/** Result of {@link listAgentHostSessions}. */
-export interface AgentHostSessionsResult {
-  /** `false` when the agent predates the listing (update the agent to use it). */
-  supported: boolean;
-  sessions: AgentHostSessionInfo[];
-}
+export type AgentSessionHolder = AgentHostSessionInfo["holder"];
 
 /**
  * List every session running on an agent's host — including ones another
@@ -2633,46 +2390,6 @@ export async function deleteAgentFolder(agentId: string, folderId: string): Prom
 
 // --- Agent setup commands ---
 
-/** Source for the agent binary during setup. */
-export type AgentBinarySource =
-  | { type: "githubDownload" }
-  | { type: "branchBuild"; branch: string }
-  | { type: "localFile"; path: string };
-
-/** Configuration for setting up a remote agent. */
-export interface AgentSetupConfig {
-  binarySource: AgentBinarySource;
-  /** Raw `uname -s` output detected before the dialog opened (e.g. `"Linux"`, `"Darwin"`). */
-  remoteOs: string;
-  /** Raw `uname -m` output detected before the dialog opened. */
-  remoteArch: string;
-  remotePath?: string;
-  installService: boolean;
-}
-
-/** Remote host architecture info, returned before the setup dialog opens. */
-export interface RemoteArchInfo {
-  /** Raw `uname -m` output, e.g. `"aarch64"`. */
-  arch: string;
-  /** Raw `uname -s` output, e.g. `"Linux"`. */
-  os: string;
-  /** Artifact suffix for binary filenames, e.g. `"linux-arm64"`. Null if unsupported. */
-  archSuffix: string | null;
-  /** Base download URL without the arch suffix (ends with `"termihub-agent-"`).
-   *  Append any supported arch suffix to build the full URL for that arch. */
-  downloadBaseUrl: string;
-  /** Pre-computed GitHub download URL for the detected arch. Null if arch is unsupported. */
-  downloadUrl: string | null;
-  /** The git branch this desktop app was built from, if it is a feature-branch build.
-   *  Null for main/develop/release builds. Used to pre-fill the branch build option. */
-  buildBranch: string | null;
-}
-
-/** Result of initiating the agent setup flow. */
-export interface AgentSetupResult {
-  sessionId: string;
-}
-
 /**
  * Detect the remote host's architecture before opening the setup dialog.
  * Establishes a temporary SSH connection and runs `uname -m` / `uname -s`.
@@ -2704,80 +2421,6 @@ export async function cancelAgentSetup(agentId: string): Promise<boolean> {
 }
 
 // --- Agent deployment commands ---
-
-/** Result of probing a remote host for the agent binary. */
-export interface AgentProbeResult {
-  found: boolean;
-  version: string | null;
-  remoteArch: string;
-  remoteOs: string;
-  compatible: boolean;
-}
-
-/** Configuration for deploying the agent to a remote host. */
-export interface AgentDeployConfig {
-  remotePath?: string;
-}
-
-/** A host (other than this desktop) connected to the agent when an update is
- * requested. Surfaced in the Update dialog's connected-host warning (#1349). */
-export interface ConnectedHost {
-  /** Agent-assigned id for this client connection. */
-  clientId: string;
-  /** Client name reported in `initialize` (e.g. `"termihub-desktop"`). */
-  client: string;
-  /** Client version reported in `initialize`. */
-  clientVersion: string;
-  /** ISO 8601 timestamp of when the host connected to the agent. */
-  connectedSince: string;
-}
-
-/**
- * Result of deploying or updating the agent on a remote host.
- *
- * Discriminated on `kind`:
- * - `deployed` — the normal outcome of a deploy or immediate update.
- * - `otherHostsConnected` — the connected-host guard blocked an unforced
- *   immediate update because other hosts are attached; the desktop shows the
- *   warning and may retry via {@link updateAgentForce}.
- * - `coordinated` — a coordinated-strategy update (#1616) was dispatched on a
- *   Unix host: the binary was staged and handed to `agent.request_update`, which
- *   notified every other connected host and let the agent self-apply. Windows
- *   coordinated updates fall back to the immediate path and return `deployed`.
- */
-export type AgentDeployResult =
-  | {
-      kind: "deployed";
-      success: boolean;
-      installedVersion: string | null;
-      /**
-       * Absolute path the agent was installed to on the remote host. On Windows
-       * this is the resolved `%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe`
-       * location, which differs from the POSIX default. May be omitted.
-       */
-      installedPath?: string | null;
-    }
-  | {
-      kind: "otherHostsConnected";
-      hosts: ConnectedHost[];
-    }
-  | {
-      kind: "coordinated";
-      /**
-       * `true` when the agent was idle and applied immediately (the connection
-       * is expected to drop as the binary swaps); `false` when deferred until the
-       * last of `activeSessions` disconnects.
-       */
-      applied: boolean;
-      /** Sessions the update will wait on when `applied` is false. */
-      activeSessions: number;
-      /** How many *other* connected hosts were sent the `update_pending` notice. */
-      notifiedClients: number;
-      /** `true` when every notified host disconnected inside the window. */
-      allAcked: boolean;
-      /** Hosts still attached when the coordination window closed. */
-      remainingClients: string[];
-    };
 
 /** Probe a remote host for an existing agent binary. */
 export async function probeRemoteAgent(
@@ -2954,18 +2597,6 @@ export async function clearLogs(): Promise<void> {
 /** Get the current credential store status. */
 export async function getCredentialStoreStatus(): Promise<CredentialStoreStatusInfo> {
   return await invoke<CredentialStoreStatusInfo>("get_credential_store_status");
-}
-
-/**
- * Error thrown by {@link unlockCredentialStore} when unlock fails.
- *
- * `corrupted` is `true` when the credentials file is unreadable/corrupt (G8,
- * #1144), so the UI can offer a "reset store" recovery instead of an endless
- * wrong-password loop.
- */
-export interface UnlockCredentialStoreError {
-  message: string;
-  corrupted: boolean;
 }
 
 /** Unlock the master password credential store. */
@@ -3187,6 +2818,9 @@ export async function restartAfterBackupRestore(): Promise<void> {
  * A credential kind the frontend can store/resolve/remove. Mirrors the backend
  * `CredentialType` string forms. `sudo_password` (#1327) backs the elevated
  * edit mode's opt-in persistence (#1329).
+ *
+ * Deliberately hand-written (#3088): these are the `Display` / `parse_credential_type`
+ * string forms the commands take as a plain `String`, not the enum's serde form.
  */
 export type CredentialType = "password" | "key_passphrase" | "sudo_password";
 
@@ -3287,17 +2921,6 @@ export async function importConfigFromPortable(
 }
 
 // ─── App info ──────────────────────────────────────────────────────────────
-
-export interface AppInfo {
-  /** Running version string, including `-dev` suffix for dev builds. */
-  version: string;
-  /** Short git commit hash embedded at build time. */
-  gitHash: string;
-  /** Whether this is a development (non-production) build. */
-  isDev: boolean;
-  /** Git branch this binary was built from (e.g. `"main"`, `"develop"`, `"unknown"`). */
-  buildBranch: string;
-}
 
 /** Return build-time info: version (with `-dev` suffix in dev builds), git hash, and dev flag. */
 export async function getAppInfo(): Promise<AppInfo> {

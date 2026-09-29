@@ -174,3 +174,90 @@ async fn dropping_the_relay_removes_its_endpoint() {
     drop(relay);
     assert!(!std::path::Path::new(&path).exists());
 }
+
+// ── Classified connect failures (#3751) ─────────────────────────────
+
+/// The classified core failures a session daemon's connect can end in — serial
+/// not-found / permission / busy and SSH timeout / agent-auth — each with the
+/// message the daemon reports alongside the kind.
+fn classified_failures() -> Vec<SessionError> {
+    use termihub_core::errors::ConnectFailureKind as K;
+    vec![
+        SessionError::classified(K::NotFound, "Serial port '/dev/ttyX' not found"),
+        SessionError::classified(K::PermissionDenied, "Permission denied on '/dev/ttyX'"),
+        SessionError::classified(
+            K::Busy,
+            "Serial port '/dev/ttyX' is already in use by another application",
+        ),
+        SessionError::classified(K::Timeout, "Connection timed out"),
+        SessionError::classified(K::AgentAuthFailed, "SSH agent not reachable"),
+    ]
+}
+
+#[test]
+fn daemon_classifies_each_connect_failure_kind() {
+    for error in classified_failures() {
+        let report = RelayFailure::from_session_error(&error).expect("typed report");
+        assert_eq!(report.kind, None);
+        assert_eq!(report.connect_failure, error.connect_failure_kind());
+        assert_eq!(report.message.as_deref(), Some(error.to_string().as_str()));
+    }
+    // Prompt outcomes keep their own member; untyped failures send nothing.
+    assert_eq!(
+        RelayFailure::from_session_error(&SessionError::AuthCancelled),
+        Some(RelayFailure {
+            kind: Some(KiFailureKind::AuthCancelled),
+            ..RelayFailure::default()
+        })
+    );
+    assert_eq!(
+        RelayFailure::from_session_error(&SessionError::SpawnFailed("x".into())),
+        None
+    );
+}
+
+#[tokio::test]
+async fn classified_failures_reach_the_worker_as_typed_errors() {
+    for error in classified_failures() {
+        let (_hub, _rx, relay) = relay().await;
+        report_connect_failure(relay.endpoint(), &error).await;
+        assert_eq!(relay.failure(), None, "not a prompt outcome");
+        let typed = relay.failure_error().expect("typed failure recorded");
+        let classified = typed
+            .downcast_ref::<ClassifiedConnectFailure>()
+            .expect("a classified connect failure");
+        assert_eq!(Some(classified.kind), error.connect_failure_kind());
+        assert_eq!(classified.message, error.to_string());
+    }
+}
+
+/// A report in the pre-#3751 shape still parses. One naming a kind this build
+/// does not know is rejected, so the worker keeps the generic failure.
+#[test]
+fn relay_failure_parses_old_and_unknown_shapes() {
+    let old: RelayFailure = serde_json::from_str(r#"{"kind":"auth_cancelled"}"#).unwrap();
+    assert_eq!(old.kind, Some(KiFailureKind::AuthCancelled));
+    assert!(serde_json::from_str::<RelayFailure>(r#"{"connect_failure":"nope"}"#).is_err());
+    assert!(RelayFailure::default().into_error().is_none());
+}
+
+/// End to end through a real core backend: an agent-hosted serial session on
+/// a port that does not exist fails with `NotFound`, and the daemon's report
+/// carries it to the worker.
+#[cfg(unix)]
+#[tokio::test]
+async fn real_serial_not_found_is_reported_typed() {
+    use termihub_core::errors::ConnectFailureKind;
+    let mut connection = crate::registry::build_registry()
+        .create("serial")
+        .expect("serial backend");
+    let error = connection
+        .connect(serde_json::json!({ "port": "/dev/__termihub_no_such_port__" }))
+        .await
+        .expect_err("the port does not exist");
+    let (_hub, _rx, relay) = relay().await;
+    report_connect_failure(relay.endpoint(), &error).await;
+    let typed = relay.failure_error().expect("typed failure recorded");
+    let classified = typed.downcast_ref::<ClassifiedConnectFailure>().unwrap();
+    assert_eq!(classified.kind, ConnectFailureKind::NotFound);
+}

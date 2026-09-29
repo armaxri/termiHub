@@ -130,6 +130,39 @@ pub const FORWARD_CONNECT_FAILED: i64 = -32028;
 /// sending it (AGT-002, #3745).
 pub const LISTEN_AUTH_REJECTED: i64 = -32029;
 
+/// Optional structured `data` of a [`SESSION_CREATION_FAILED`] error from
+/// `connection.create` (protocol 0.18.0, #3751).
+///
+/// Carries the typed [`ConnectFailureKind`](crate::errors::ConnectFailureKind)
+/// of a connect that failed inside the agent — notably an agent-hosted SSH or
+/// serial session whose session daemon could not connect — so the desktop can
+/// show the same per-backend hint as for a direct connection. Purely additive:
+/// an older agent sends no `data` (the desktop keeps its generic remote error),
+/// and an older desktop ignores the member.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionCreateErrorData {
+    /// The failure category, as its stable slug (`timeout`,
+    /// `agent_auth_failed`, `not_found`, `permission_denied`, `busy`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connect_failure: Option<crate::errors::ConnectFailureKind>,
+}
+
+impl SessionCreateErrorData {
+    /// Read the connect-failure kind from a JSON-RPC error `data` value.
+    ///
+    /// Tolerant by design: absent data, a different shape, or a kind slug this
+    /// build does not know (sent by a newer agent) all yield `None`, so the
+    /// caller falls back to the unclassified error.
+    pub fn connect_failure_from(
+        data: Option<&serde_json::Value>,
+    ) -> Option<crate::errors::ConnectFailureKind> {
+        data?
+            .get("connect_failure")?
+            .as_str()
+            .and_then(crate::errors::ConnectFailureKind::from_code)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,5 +306,39 @@ mod tests {
                 "Application code {code} should be in -32099..-32000"
             );
         }
+    }
+
+    /// The error data round-trips the kind under `connect_failure`, omits it
+    /// when absent, and parses tolerantly (#3751).
+    #[test]
+    fn session_create_error_data_carries_the_kind_tolerantly() {
+        use crate::errors::ConnectFailureKind;
+        let data = SessionCreateErrorData {
+            connect_failure: Some(ConnectFailureKind::Busy),
+        };
+        let json = serde_json::to_value(&data).expect("serialize");
+        assert_eq!(json, serde_json::json!({ "connect_failure": "busy" }));
+        assert_eq!(
+            SessionCreateErrorData::connect_failure_from(Some(&json)),
+            Some(ConnectFailureKind::Busy)
+        );
+
+        let empty = serde_json::to_value(SessionCreateErrorData::default()).expect("serialize");
+        assert_eq!(empty, serde_json::json!({}));
+        assert_eq!(
+            SessionCreateErrorData::connect_failure_from(Some(&empty)),
+            None
+        );
+        assert_eq!(SessionCreateErrorData::connect_failure_from(None), None);
+        let unknown = serde_json::json!({ "connect_failure": "from_the_future" });
+        assert_eq!(
+            SessionCreateErrorData::connect_failure_from(Some(&unknown)),
+            None
+        );
+        let other_shape = serde_json::json!({ "session_id": "s1" });
+        assert_eq!(
+            SessionCreateErrorData::connect_failure_from(Some(&other_shape)),
+            None
+        );
     }
 }

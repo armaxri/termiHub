@@ -3,7 +3,11 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { TerminalConnectionOverlay } from "./TerminalConnectionOverlay";
 import { useAppStore } from "@/store/appStore";
-import type { ConnectionErrorKind } from "@/utils/connectionErrorHints";
+import {
+  connectionErrorKindFromCode,
+  type ConnectionErrorKind,
+} from "@/utils/connectionErrorHints";
+import { parseBackendError } from "@/utils/backendErrorCode";
 import {
   connecting,
   flushSessionRegion,
@@ -570,6 +574,47 @@ describe("TerminalConnectionOverlay — failed state", () => {
     const ssh = renderFailure("Agent auth failed: connection timed out", undefined, "ssh");
     expect(ssh).not.toContain("SSH Agent not running");
     expect(ssh).not.toContain("before the SSH session was established");
+  });
+
+  // #3751: an agent-hosted session's failure arrives as the agent's IPC
+  // envelope. From a 0.18.0+ agent its `code` carries the typed kind, and the
+  // tab's inner session type (read from the remote config) picks the family.
+  it("shows the matching hint for an agent-hosted session's typed failure", () => {
+    // SplitView passes the remote config's inner `sessionType` (`readSessionType`).
+    const sessionType = "serial";
+    const failure = (code: string) =>
+      parseBackendError({
+        code,
+        message: "Remote agent error: Spawn failed: Serial port '/dev/ttyUSB0' failed",
+        details: null,
+      });
+    const busy = failure("busy");
+    expect(
+      renderFailure(busy.message, connectionErrorKindFromCode(busy.code), sessionType)
+    ).toContain("already in use by another application");
+    const missing = failure("not_found");
+    expect(
+      renderFailure(missing.message, connectionErrorKindFromCode(missing.code), sessionType)
+    ).toContain("Serial port not found");
+    const timeout = failure("timeout");
+    expect(
+      renderFailure(timeout.message, connectionErrorKindFromCode(timeout.code), "ssh")
+    ).toContain("before the SSH session was established");
+  });
+
+  // An older agent sends no kind: the envelope code stays `remote_error` and
+  // the overlay shows the message without a hint, exactly as before.
+  it("shows no hint for an agent-hosted failure from an older agent", () => {
+    const old = parseBackendError({
+      code: "remote_error",
+      message: "Remote agent error: Daemon exited before its endpoint was ready",
+      details: null,
+    });
+    const text = renderFailure(old.message, connectionErrorKindFromCode(old.code), "serial");
+    expect(text).toContain("Daemon exited before its endpoint was ready");
+    expect(text).not.toContain("already in use by another application");
+    expect(text).not.toContain("Serial port not found");
+    expect(text).not.toContain("dialout");
   });
 
   it("Retry button calls retryTerminalSpawn", () => {

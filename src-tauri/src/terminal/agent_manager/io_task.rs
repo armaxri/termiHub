@@ -409,9 +409,18 @@ pub(super) async fn agent_io_task<R: Runtime>(
                                             let _ = tx.send(Ok(result));
                                         }
                                     }
-                                    Ok(jsonrpc::JsonRpcMessage::Error { id, code, message }) => {
+                                    Ok(jsonrpc::JsonRpcMessage::Error {
+                                        id,
+                                        code,
+                                        message,
+                                        data,
+                                    }) => {
                                         if let Some(tx) = pending_responses.remove(&id) {
-                                            let _ = tx.send(Err(AgentRpcFailure { code, message }));
+                                            let _ = tx.send(Err(AgentRpcFailure::from_error_response(
+                                                code,
+                                                message,
+                                                data.as_ref(),
+                                            )));
                                         }
                                     }
                                     Ok(jsonrpc::JsonRpcMessage::Notification { method, params }) => {

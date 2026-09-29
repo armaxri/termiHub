@@ -98,6 +98,9 @@ pub struct AgentConnectResult {
 /// and re-serialised to camelCase for the Tauri IPC layer that ferries it to
 /// the React frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename_all = "camelCase"))]
 #[serde(rename_all(serialize = "camelCase"))]
 pub struct AgentSessionInfo {
     pub session_id: String,
@@ -110,30 +113,42 @@ pub struct AgentSessionInfo {
     /// when known. Lets the desktop re-link an active agent session to its
     /// source definition (e.g. to derive the persistent connectionId for reattach).
     #[serde(default)]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub definition_id: Option<String>,
 }
 
 /// Info about a saved connection definition on the agent.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentDefinitionInfo {
     pub id: String,
     pub name: String,
     pub session_type: String,
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
     pub config: Value,
     pub persistent: bool,
     pub folder_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        test,
+        ts(as = "Option<crate::connection::config::TerminalOptions>", optional)
+    )]
     pub terminal_options: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub icon: Option<String>,
     /// Source file path on the remote host, or `None` for the primary store.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub source_file: Option<String>,
 }
 
 /// Info about a folder on the agent.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentFolderInfo {
     pub id: String,
@@ -144,6 +159,8 @@ pub struct AgentFolderInfo {
 
 /// Combined connections and folders data from an agent.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct AgentConnectionsData {
     pub connections: Vec<AgentDefinitionInfo>,
     pub folders: Vec<AgentFolderInfo>,
@@ -221,6 +238,8 @@ impl From<SessionListEntry> for AgentSessionInfo {
 /// `connection.list_host_sessions` entry, re-serialised to camelCase for the
 /// frontend.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentHostSessionInfo {
     pub session_id: String,
@@ -232,6 +251,7 @@ pub struct AgentHostSessionInfo {
     pub last_activity: String,
     /// `"self"` (this desktop), `"none"` (running unattached) or `"other"`
     /// (another desktop holds it; opening it is a takeover).
+    #[cfg_attr(test, ts(type = "\"self\" | \"none\" | \"other\""))]
     pub holder: String,
     pub definition_id: Option<String>,
 }
@@ -257,6 +277,8 @@ impl From<HostSessionEntry> for AgentHostSessionInfo {
 /// (it answered "method not found"); the UI then disables the entry point with
 /// a reason instead of showing an empty list.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentHostSessionsResult {
     pub supported: bool,

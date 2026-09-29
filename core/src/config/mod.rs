@@ -245,6 +245,8 @@ impl Default for SerialConfig {
 
 /// Container runtime selection for Docker/Podman sessions.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum ContainerRuntime {
     /// Automatically detect Docker or Podman.
