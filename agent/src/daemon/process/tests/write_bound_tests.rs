@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::io::{AsyncReadExt, DuplexStream, ReadHalf, WriteHalf};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream, ReadHalf, WriteHalf};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
@@ -17,8 +17,8 @@ use tokio::time::Instant;
 use super::super::{daemon_loop, WorkerAcceptor};
 use super::recovery_guard::FakeConnection;
 use crate::daemon::protocol::{
-    self, INTENT_RECOVERY, INTENT_TAKEOVER, MSG_ATTACH_INTENT, MSG_BUFFER_REPLAY, MSG_CAPABILITIES,
-    MSG_DETACH, MSG_ERROR, MSG_KILL, MSG_OUTPUT, MSG_READY,
+    self, INTENT_RECOVERY, INTENT_TAKEOVER, MSG_AGENT_CAPABILITIES, MSG_ATTACH_INTENT,
+    MSG_BUFFER_REPLAY, MSG_CAPABILITIES, MSG_DETACH, MSG_ERROR, MSG_KILL, MSG_OUTPUT, MSG_READY,
 };
 use crate::daemon::transport::{BoxedReader, BoxedWriter};
 use crate::daemon::worker_sink::WRITE_STALL_TIMEOUT;
@@ -362,4 +362,57 @@ async fn a_takeover_and_kill_are_served_while_the_worker_is_wedged() {
         .await
         .expect("the evicted worker's connection is closed")
         .unwrap();
+}
+
+/// A refused recovery connect stays open until the refused worker hangs up, so
+/// the frames a real worker writes right after its intent (its capabilities)
+/// never hit a closed connection before it has read the refusal. On Windows a
+/// write to a pipe the daemon already closed fails with os error 232 ("The pipe
+/// is being closed") instead of surfacing the typed refusal.
+#[tokio::test(start_paused = true)]
+async fn a_refused_worker_can_finish_its_handshake_writes_and_read_the_refusal() {
+    let daemon = spawn_daemon();
+    let mut holder = Worker::connect(&daemon, INTENT_TAKEOVER).await;
+    assert_eq!(holder.handshake().await, Some(Attach::Ready(Vec::new())));
+
+    let mut refused = Worker::connect(&daemon, INTENT_RECOVERY).await;
+    assert_eq!(refused.handshake().await, Some(Attach::Refused));
+    // Let the daemon side settle, as a slow worker would.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    protocol::write_frame_async(
+        &mut refused.writer,
+        MSG_AGENT_CAPABILITIES,
+        &[protocol::CAP_HEARTBEAT],
+    )
+    .await
+    .expect("the refused connection is still open for the worker's handshake writes");
+
+    // Once the worker hangs up its side, the daemon closes the connection.
+    refused.writer.shutdown().await.unwrap();
+    let mut rest = Vec::new();
+    tokio::time::timeout(PROMPT, refused.reader.read_to_end(&mut rest))
+        .await
+        .expect("the daemon closes the refused connection after the worker hangs up")
+        .unwrap();
+    daemon.task.abort();
+}
+
+/// A refused worker that never hangs up cannot hold its connection open: the
+/// daemon closes it after [`REFUSAL_LINGER`](super::super::REFUSAL_LINGER).
+#[tokio::test(start_paused = true)]
+async fn a_refused_worker_that_never_hangs_up_is_closed_after_the_linger() {
+    let daemon = spawn_daemon();
+    let mut holder = Worker::connect(&daemon, INTENT_TAKEOVER).await;
+    assert_eq!(holder.handshake().await, Some(Attach::Ready(Vec::new())));
+
+    let mut refused = Worker::connect(&daemon, INTENT_RECOVERY).await;
+    let start = Instant::now();
+    assert_eq!(refused.handshake().await, Some(Attach::Refused));
+    let mut rest = Vec::new();
+    tokio::time::timeout(PROMPT * 2, refused.reader.read_to_end(&mut rest))
+        .await
+        .expect("the refused connection is closed within the linger bound")
+        .unwrap();
+    assert!(start.elapsed() <= super::super::REFUSAL_LINGER + Duration::from_millis(10));
+    daemon.task.abort();
 }
