@@ -25,6 +25,10 @@ pub mod process;
 // Enabled whenever either of those backends is compiled.
 #[cfg(any(feature = "docker", feature = "wsl"))]
 pub mod exec_provider;
+// Container-engine stats fallback for targets with no readable `/proc`
+// (distroless containers, #3202), consumed by the exec provider.
+#[cfg(any(feature = "docker", feature = "wsl"))]
+pub mod container_stats;
 pub mod parser;
 pub mod provider;
 pub mod status;
@@ -37,6 +41,11 @@ pub use local_process::LocalProcessManager;
 #[cfg(feature = "local-shell")]
 pub use local_provider::LocalMonitoringProvider;
 
+#[cfg(any(feature = "docker", feature = "wsl"))]
+pub use container_stats::{
+    container_cpu_percent, ContainerCpuCounters, ContainerStatsSample, ContainerStatsSource,
+    ContainerStatsTrackers,
+};
 #[cfg(any(feature = "docker", feature = "wsl"))]
 pub use exec_provider::{ExecMonitoringProvider, ProcStatsSource};
 
@@ -59,7 +68,7 @@ pub use status::{
     DEFAULT_BACKOFF_BASE, DEFAULT_COLLECT_TIMEOUT, DEFAULT_MAX_RECONNECT_ATTEMPTS,
     DEFAULT_STALE_THRESHOLD, PRE_LIVE_FAILURE_LIMIT_FACTOR,
 };
-pub use types::{CpuCounters, NetCounters, SystemStats};
+pub use types::{BlockIoCounters, CpuCounters, NetCounters, StatsMetric, StatsSource, SystemStats};
 
 use crate::errors::CoreError;
 use std::time::Instant;

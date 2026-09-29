@@ -667,6 +667,7 @@ mod tests {
             net_rx_bytes_per_sec: 128.0,
             net_tx_bytes_per_sec: 64.0,
             per_core_cpu_percent: vec![40.0, 60.0],
+            ..Default::default()
         }
     }
 

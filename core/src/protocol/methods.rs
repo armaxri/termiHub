@@ -3323,6 +3323,7 @@ mod tests {
                 net_rx_bytes_per_sec: 1024.0,
                 net_tx_bytes_per_sec: 2048.0,
                 per_core_cpu_percent: vec![50.0, 90.0],
+                ..Default::default()
             },
         );
         let v = serde_json::to_value(&data).unwrap();
