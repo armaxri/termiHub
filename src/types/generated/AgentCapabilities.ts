@@ -37,6 +37,12 @@ embeddedServerActivity?: boolean,
  */
 sessionProcesses?: boolean, 
 /**
+ * Whether the agent monitors agent-hosted SSH, Docker and WSL sessions
+ * through their own backends (protocol 0.21.0, #3871). `false` for older
+ * agents, whose such sessions show "update the agent" in the status bar.
+ */
+sessionMonitoring?: boolean, 
+/**
  * Agent binary version string, e.g. "1.4.2".
  */
 agentVersion?: string, };

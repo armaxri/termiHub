@@ -2,9 +2,9 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.20.0
+**Version**: 0.21.0
 **Status**: Draft
-**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089, #3210
+**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089, #3210, #3871
 
 ---
 
@@ -169,7 +169,7 @@ Persistent (reconnectable) sessions run in a detached session-daemon process. Th
 | Access control | `0o700` on the socket dir + socket       | Per-user DACL (`GENERIC_ALL` to the user SID + `LocalSystem`)      |
 | Daemon spawn   | Orphaned child (agent never waits on it) | `DETACHED_PROCESS \| CREATE_NEW_PROCESS_GROUP \| CREATE_NO_WINDOW` |
 
-Both restrict the endpoint to the current user, and neither exposes a TCP port. The frame protocol is append-only: since 0.20.0 (#3210) a daemon whose backend can manage processes sends a capabilities frame before its ready frame, and then answers process list / kill request frames from the worker that holds the session — replies go only to that connection. A worker ignores unknown frames and a daemon started by an older agent sends no capabilities frame, so mixed versions keep working (process management of such a session reports "not supported"). The daemon's binary frame protocol (`[type: 1B][length: 4B BE][payload]`) and the 1 MiB output ring buffer are identical on both platforms, so reconnect-with-scrollback-replay behaves the same. The `daemon_socket` field persisted in the agent's `state.json` therefore holds a named-pipe name on Windows and a socket path on unix.
+Both restrict the endpoint to the current user, and neither exposes a TCP port. The frame protocol is append-only: since 0.20.0 (#3210) a daemon whose backend can manage processes sends a capabilities frame before its ready frame, and then answers process list / kill request frames from the worker that holds the session — replies go only to that connection. A worker ignores unknown frames and a daemon started by an older agent sends no capabilities frame, so mixed versions keep working (process management of such a session reports "not supported"). Since 0.21.0 (#3871) the capabilities frame also says whether the daemon's backend has a monitoring provider; the worker that holds the session then sends monitoring request frames (subscribe, unsubscribe, set interval, pause), and the daemon answers each one and streams the provider's samples and status transitions back in monitoring event frames — to that connection only. The daemon stops the provider as soon as that connection no longer holds the session (detach, drop, takeover) or the session ends. The daemon's binary frame protocol (`[type: 1B][length: 4B BE][payload]`) and the 1 MiB output ring buffer are identical on both platforms, so reconnect-with-scrollback-replay behaves the same. The `daemon_socket` field persisted in the agent's `state.json` therefore holds a named-pipe name on Windows and a socket path on unix.
 
 ### Default Shell and Local Shell Spawning
 
@@ -288,6 +288,9 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                          |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.21.0          | 0.21.0        | Yes                                                                                                                                  |
+| 0.21.0          | 0.9.0–0.20.0  | Yes (no `sessionMonitoring` — the status bar of an agent-hosted SSH/Docker/WSL session says to update the agent)                     |
+| 0.20.0          | 0.21.0        | Yes (`sessionMonitoring` ignored)                                                                                                    |
 | 0.20.0          | 0.20.0        | Yes                                                                                                                                  |
 | 0.20.0          | 0.9.0–0.19.0  | Yes (no `sessionProcesses` — the process table of an agent-hosted SSH/Docker/WSL session says to update the agent)                   |
 | 0.19.0          | 0.20.0        | Yes (`sessionProcesses` ignored)                                                                                                     |
@@ -345,6 +348,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                           |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                 |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                  |
+
+**0.21.0 (additive, minor)** — [`connection.monitoring.subscribe`](#connectionmonitoringsubscribe) now accepts an **agent-hosted SSH, Docker or WSL session id** as `host` (#3871), and the `initialize` result gains `capabilities.sessionMonitoring: true` to say so. For such a host the agent subscribes the **session backend's own monitoring provider** — the SSH exec loop on the remote host, the container's `/proc` exec (falling back to the Docker Engine stats API for distroless containers, so samples may carry `source: "dockerStats"`), or the WSL distribution's exec — running in the session daemon (see [Session-Daemon Transport](#session-daemon-transport-named-pipe-vs-unix-socket)), and streams its samples and status transitions as the usual [`connection.monitoring.data`](#connectionmonitoringdata) / [`connection.monitoring.status`](#connectionmonitoringstatus) notifications keyed by the session id. The session must be running and **held by the requesting client**, exactly as for `connection.processes.*`: otherwise the call fails with `-32023` (held elsewhere) or `-32006` (not running). Closing or detaching the session, or losing the hold on it, stops its monitor; a stream that ends on its own is reported `offline`. Negotiation is by **capability**: a pre-0.21.0 agent omits the flag and cannot monitor such a session, so the desktop does not subscribe and the status bar says the agent must be updated. A session started by an older agent's session daemon answers `-32014` until it is reopened. `"self"` and saved SSH connection ids behave as before. A pre-0.21.0 desktop ignores the flag.
 
 **0.20.0 (additive, minor)** — [`connection.processes.list`](#connectionprocesseslist) / [`connection.processes.kill`](#connectionprocesseskill) now serve **agent-hosted SSH, Docker and WSL sessions** (#3210), and the `initialize` result gains `capabilities.sessionProcesses: true` to say so. With `connection_id` set to such a session's id, the agent lists or signals processes **inside that session's own context** — the remote SSH host, the container, or the WSL distribution — through the session backend's own process manager (reached through the session daemon, see [Session-Daemon Transport](#session-daemon-transport-named-pipe-vs-unix-socket)); it never falls back to the agent host. The session must be running and **held by the requesting client** (attached, not taken over): otherwise the call fails with `-32023` (held elsewhere) or `-32006` (not running). Negotiation is by **capability**: a pre-0.20.0 agent omits the flag and answers `-32020` for such sessions, so the desktop does not call it and the process table says the agent must be updated. A session started by an older agent's session daemon keeps answering `-32020` until it is reopened. A pre-0.20.0 desktop ignores the flag.
 
@@ -466,6 +471,7 @@ On a successful `initialize`, the agent records the client (`client`, `client_ve
 | `capabilities.keyboardInteractivePrompts` | `boolean`              | The agent relays SSH keyboard-interactive prompts to a desktop that advertised them (0.10.0+; absent = `false`)                                                                          |
 | `capabilities.embeddedServerActivity`     | `boolean`              | The agent serves an agent-hosted embedded server's access log — [`embedded_server.activity`](#embedded_serveractivity) (0.11.0+; absent = `false`)                                       |
 | `capabilities.sessionProcesses`           | `boolean`              | [`connection.processes.*`](#connectionprocesseslist) serve agent-hosted SSH, Docker and WSL sessions, not only local ones (0.20.0+; absent = `false`)                                    |
+| `capabilities.sessionMonitoring`          | `boolean`              | [`connection.monitoring.subscribe`](#connectionmonitoringsubscribe) accepts an agent-hosted SSH, Docker or WSL session id (0.21.0+; absent = `false`)                                    |
 
 > **Field-casing note.** The `initialize` **params** are serialized in `camelCase`
 > (`protocolVersion`, `clientVersion`), matching the agent's `InitializeParams` — a field sent in
@@ -2102,10 +2108,10 @@ Start periodic system monitoring for a host. The agent will send `connection.mon
 }
 ```
 
-| Param         | Type      | Required | Description                                                                   |
-| ------------- | --------- | -------- | ----------------------------------------------------------------------------- |
-| `host`        | `string`  | Yes      | `"self"` for the agent's own host, or a connection ID for a remote SSH target |
-| `interval_ms` | `integer` | No       | Collection interval in milliseconds (default: 2000, minimum: 500)             |
+| Param         | Type      | Required | Description                                                                                                         |
+| ------------- | --------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
+| `host`        | `string`  | Yes      | `"self"` for the agent's own host, an agent-hosted session ID (0.21.0+), or a connection ID for a remote SSH target |
+| `interval_ms` | `integer` | No       | Collection interval in milliseconds (default: 2000, minimum: 500)                                                   |
 
 **Response:**
 
@@ -2119,13 +2125,19 @@ Start periodic system monitoring for a host. The agent will send `connection.mon
 
 **Errors:**
 
+- `-32006` Session not running (`host` is a session of this client that has exited)
 - `-32008` Connection not found (when `host` is a connection ID that doesn't exist)
-- `-32014` Monitoring error (SSH connection failed, unsupported connection type, etc.)
+- `-32014` Monitoring error (SSH connection failed, unsupported connection type, a container with no
+  readable `/proc` and no Docker stats, a session started by an older agent's daemon, etc.)
+- `-32023` Session held by other (`host` is a session this client detached from or another desktop
+  holds)
 
 **Notes:**
 
 - Subscribing to a host that is already subscribed replaces the existing subscription
-- Remote monitoring (`host` = connection ID) only supports SSH connections
+- `host` is resolved in order: `"self"`; a session of this client (a local session means `"self"`;
+  an SSH, Docker or WSL session is monitored through its own backend, 0.21.0+, #3871); otherwise a
+  saved connection ID, which only supports SSH connections
 - CPU usage is computed from `/proc/stat` deltas — the first notification returns 0% CPU
 
 ---

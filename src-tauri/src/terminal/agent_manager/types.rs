@@ -67,6 +67,12 @@ pub struct AgentCapabilities {
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub session_processes: bool,
+    /// Whether the agent monitors agent-hosted SSH, Docker and WSL sessions
+    /// through their own backends (protocol 0.21.0, #3871). `false` for older
+    /// agents, whose such sessions show "update the agent" in the status bar.
+    #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub session_monitoring: bool,
     /// Agent binary version string, e.g. "1.4.2".
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<String>", optional))]

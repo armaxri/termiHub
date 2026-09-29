@@ -56,7 +56,9 @@ pub struct Wsl {
     /// System-monitoring provider, created on connect (#3182). Reads `/proc`
     /// inside the distribution via `wsl.exe -d <distro>` through the shared
     /// exec-based provider.
-    monitoring_provider: Option<ExecMonitoringProvider>,
+    /// Shared (`Arc`) so [`monitoring_handle`](ConnectionType::monitoring_handle)
+    /// can hand it out — the agent's session daemon runs it (#3871).
+    monitoring_provider: Option<Arc<ExecMonitoringProvider>>,
     /// Process manager (list / kill via `wsl.exe -d <distro>`), created on
     /// connect (PROD-0028).
     process_manager: Option<Arc<ExecProcessManager>>,
@@ -1205,7 +1207,7 @@ impl ConnectionType for Wsl {
 
         // Create the system-monitoring provider (#3182): reads `/proc` inside the
         // distribution via `wsl.exe -d <distro>`.
-        self.monitoring_provider = Some(wsl_monitoring_provider(distribution.clone()));
+        self.monitoring_provider = Some(Arc::new(wsl_monitoring_provider(distribution.clone())));
         self.process_manager = Some(Arc::new(wsl_process_manager(distribution.clone())));
 
         // Spawn the setup task when shell integration is enabled.  It watches
@@ -1311,7 +1313,13 @@ impl ConnectionType for Wsl {
     fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
         self.monitoring_provider
             .as_ref()
-            .map(|p| p as &dyn MonitoringProvider)
+            .map(|p| p.as_ref() as &dyn MonitoringProvider)
+    }
+
+    fn monitoring_handle(&self) -> Option<Arc<dyn MonitoringProvider + Send + Sync>> {
+        self.monitoring_provider
+            .as_ref()
+            .map(|p| p.clone() as Arc<dyn MonitoringProvider + Send + Sync>)
     }
 
     fn file_browser(&self) -> Option<&dyn FileBrowser> {
