@@ -14,8 +14,8 @@ host: string,
 /**
  * Round-trip time in milliseconds for the reply.
  */
-latencyMs?: number, 
+latencyMs?: number | null, 
 /**
  * Best-effort reverse-DNS hostname for the address, if resolvable.
  */
-hostname?: string, };
+hostname?: string | null, };
