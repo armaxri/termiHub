@@ -46,9 +46,16 @@ fn main() {
     println!("cargo:rustc-env=TERMIHUB_TARGET_TRIPLE={target}");
 
     let staged = staged_helper_path();
-    // Re-run when the staged binary appears/changes (rerun-if-changed on a
-    // not-yet-existing path fires once it is created).
-    println!("cargo:rerun-if-changed={}", staged.display());
+    // Re-run when the staged binary appears or changes. Watch the staging
+    // DIRECTORY, not the file: cargo treats a `rerun-if-changed` path that does
+    // not exist as permanently stale, so watching the (normally absent) staged
+    // file re-ran this script -- and recompiled termihub-core and every crate
+    // above it -- on every cargo invocation (#3909). The directory is kept in
+    // git by a placeholder (`src-tauri/binaries/.gitkeep`), and cargo scans a
+    // watched directory's files, so staging a helper into it still re-runs this.
+    if let Some(dir) = staged.parent() {
+        println!("cargo:rerun-if-changed={}", dir.display());
+    }
 
     if let Some(digest) = resolve_digest(&staged) {
         println!("cargo:rustc-env=TERMIHUB_RDP_HELPER_SHA256={digest}");
