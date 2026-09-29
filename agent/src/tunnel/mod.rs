@@ -22,6 +22,7 @@
 //! `docs/concepts/future/stateless-ui-agent-tunnel-endpoints.html`).
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -94,18 +95,33 @@ struct PreparedForward {
 }
 
 impl PreparedForward {
-    /// A `-L`/`-D` forward whose listen socket is bound on this agent, with the
-    /// reachability classified from the bind host.
+    /// A local (`-L`) forward whose listen socket is bound on this agent.
+    fn local(forwarder: LocalForwarder, session: Option<Arc<SshSession>>, host: &str) -> Self {
+        let listen = forwarder.local_addr();
+        Self::agent_listener(ActiveForwarder::Local(forwarder), listen, session, host)
+    }
+
+    /// A dynamic (`-D`, SOCKS5) forward whose listen socket is bound on this
+    /// agent.
+    fn dynamic(forwarder: DynamicForwarder, session: Option<Arc<SshSession>>, host: &str) -> Self {
+        let listen = forwarder.local_addr();
+        Self::agent_listener(ActiveForwarder::Dynamic(forwarder), listen, session, host)
+    }
+
+    /// Shared shape of an agent-side listener: report the address the socket
+    /// actually bound — for a port-0 config the OS-assigned port, not the
+    /// configured `0` (#3550) — with reachability classified from the
+    /// configured bind host.
     fn agent_listener(
         forwarder: ActiveForwarder,
+        listen: SocketAddr,
         session: Option<Arc<SshSession>>,
         local_host: &str,
-        local_port: u16,
     ) -> Self {
         Self {
             forwarder,
             session,
-            bound_address: format!("{local_host}:{local_port}"),
+            bound_address: listen.to_string(),
             reachable_from: classify_reachability(local_host),
         }
     }
@@ -203,11 +219,10 @@ impl AgentTunnelRegistry {
             let session = Arc::new(session);
             let forwarder = LocalForwarder::start(forward, Arc::clone(&session))
                 .context("failed to bind agent-hosted local forwarder")?;
-            Ok(PreparedForward::agent_listener(
-                ActiveForwarder::Local(forwarder),
+            Ok(PreparedForward::local(
+                forwarder,
                 Some(session),
                 &forward.local_host,
-                forward.local_port,
             ))
         })
         .await
@@ -272,11 +287,10 @@ impl AgentTunnelRegistry {
             let session = Arc::new(session);
             let forwarder = DynamicForwarder::start(forward, Arc::clone(&session))
                 .context("failed to bind agent-hosted dynamic (SOCKS5) forwarder")?;
-            Ok(PreparedForward::agent_listener(
-                ActiveForwarder::Dynamic(forwarder),
+            Ok(PreparedForward::dynamic(
+                forwarder,
                 Some(session),
                 &forward.local_host,
-                forward.local_port,
             ))
         })
         .await
@@ -316,21 +330,6 @@ impl AgentTunnelRegistry {
 mod tests {
     use super::*;
     use termihub_core::tunnel::config::LocalForwardConfig;
-
-    /// The address an agent-hosted `-L`/`-D` forward's listen socket actually
-    /// bound. Lets a test configure port `0` and learn the OS-assigned port,
-    /// instead of reserving one by binding and dropping it first (#3533).
-    async fn agent_listen_addr(
-        registry: &AgentTunnelRegistry,
-        tunnel_id: &str,
-    ) -> std::net::SocketAddr {
-        let tunnels = registry.tunnels.lock().await;
-        match &tunnels.get(tunnel_id).expect("tunnel running").forwarder {
-            ActiveForwarder::Local(f) => f.local_addr(),
-            ActiveForwarder::Dynamic(f) => f.local_addr(),
-            ActiveForwarder::Remote(_) => panic!("a -R forward listens on the SSH server"),
-        }
-    }
 
     fn loopback_forward(port: u16) -> LocalForwardConfig {
         LocalForwardConfig {
@@ -378,12 +377,7 @@ mod tests {
 
         let forward = loopback_forward(0);
         let forwarder = LocalForwarder::start_with_opener(&forward, EchoOpener).expect("bind");
-        let prepared = PreparedForward::agent_listener(
-            ActiveForwarder::Local(forwarder),
-            None,
-            &forward.local_host,
-            forward.local_port,
-        );
+        let prepared = PreparedForward::local(forwarder, None, &forward.local_host);
 
         let port = reported_port(&prepared.bound_address);
         assert_ne!(port, 0, "reported {:?}", prepared.bound_address);
@@ -408,12 +402,7 @@ mod tests {
             local_port: 0,
         };
         let forwarder = DynamicForwarder::start_with_opener(&forward, EchoOpener).expect("bind");
-        let prepared = PreparedForward::agent_listener(
-            ActiveForwarder::Dynamic(forwarder),
-            None,
-            &forward.local_host,
-            forward.local_port,
-        );
+        let prepared = PreparedForward::dynamic(forwarder, None, &forward.local_host);
 
         let port = reported_port(&prepared.bound_address);
         assert_ne!(port, 0, "reported {:?}", prepared.bound_address);
@@ -446,12 +435,7 @@ mod tests {
         let bound: Vec<_> = [a, b].into_iter().filter_map(Result::ok).collect();
         assert!(bound.len() <= 1, "two forwarders bound port {port}");
         for forwarder in bound {
-            let prepared = PreparedForward::agent_listener(
-                ActiveForwarder::Local(forwarder),
-                None,
-                &forward.local_host,
-                forward.local_port,
-            );
+            let prepared = PreparedForward::local(forwarder, None, &forward.local_host);
             assert_eq!(reported_port(&prepared.bound_address), port);
         }
     }
@@ -558,7 +542,7 @@ mod tests {
             .await
             .expect("agent-hosted local forward should start");
         assert_eq!(outcome.reachable_from, ReachableFrom::AgentOnly);
-        let listen_port = agent_listen_addr(&registry, "t-http").await.port();
+        let listen_port = reported_port(&outcome.bound_address);
         assert_ne!(listen_port, 0, "the forwarder must bind a real port");
         assert_eq!(registry.active_count().await, 1);
         assert!(registry.status("t-http").await.is_some());
@@ -805,7 +789,7 @@ mod tests {
             ReachableFrom::AgentOnly,
             "a loopback SOCKS bind is reachable only from the agent"
         );
-        let listen_port = agent_listen_addr(&registry, "t-socks").await.port();
+        let listen_port = reported_port(&outcome.bound_address);
         assert_ne!(listen_port, 0, "the forwarder must bind a real port");
         assert_eq!(registry.active_count().await, 1);
 
