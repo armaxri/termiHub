@@ -197,6 +197,14 @@ export function failed(
 }
 
 /**
+ * A terminal, non-retryable `authFailed` projected lifecycle (SM-005): the server
+ * rejected the credentials. Drives the credential re-entry overlay (#3089).
+ */
+export function authFailed(error = "Authentication failed"): ProjectedSessionLifecycle {
+  return { status: "authFailed", reconnect: idleReconnect(), endReason: "error", error };
+}
+
+/**
  * A terminal `sessionLost` projected lifecycle (#2512): a resilient agent tab
  * re-established its transport but the live agent session could not be recovered.
  * Carries the backend "why" message; the reconnect loop is idle and there is no

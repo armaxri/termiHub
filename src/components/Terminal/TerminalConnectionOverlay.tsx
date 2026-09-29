@@ -9,6 +9,7 @@ import { useElapsed } from "@/hooks/useElapsed";
 import { getPlatform } from "@/utils/platform";
 import { backendFamilyFromSessionType, connectionErrorHint } from "@/utils/connectionErrorHints";
 import { formatElapsed } from "@/utils/formatters";
+import { CredentialReentry } from "./CredentialReentry";
 import "./TerminalConnectionOverlay.css";
 
 interface TerminalConnectionOverlayProps {
@@ -403,6 +404,9 @@ export function TerminalConnectionOverlay({
           ) : (
             <p className="terminal-connection-overlay__hint-text">{hint.text}</p>
           ))}
+        {/* The server rejected the credentials (typed `auth_failed` kind):
+            offer to enter new ones inline and reconnect (#3089). */}
+        {errorKind === "auth" && <CredentialReentry tabId={tabId} />}
       </ContentOverlay>
     </div>
   );

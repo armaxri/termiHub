@@ -200,6 +200,13 @@ export interface LayoutSlice {
   /** Update the backend session ID on a tab (called after the terminal session is created). */
   setTabSessionId: (tabId: string, sessionId: string | null) => void;
 
+  /**
+   * Replace a tab's connection config in place (#3089) — e.g. with credentials
+   * the user re-entered after an auth rejection, so the next connect of the
+   * tab uses them. Content-only; a no-op for an unknown tab.
+   */
+  setTabConnectionConfig: (tabId: string, config: ConnectionConfig) => void;
+
   /** Clear a tab's one-shot scrollback-replay flag after a re-parent (#1900). */
   clearPendingScrollbackReplay: (tabId: string) => void;
 
@@ -361,6 +368,10 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
           void get().startConnectionTunnels(connectedTab.connectionId);
         }
       }
+    },
+
+    setTabConnectionConfig: (tabId, config) => {
+      set((raw) => ({ tabContent: patchTabContentEntry(raw.tabContent, tabId, { config }) }));
     },
 
     addTab: (title, connectionType, config, options) => {

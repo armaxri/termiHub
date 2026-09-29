@@ -41,7 +41,7 @@ import {
   isShellReservedKey,
 } from "@/services/keybindings";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
-import { backendErrorMessage, parseBackendError } from "@/utils/backendErrorCode";
+import { backendErrorMessage, isAuthFailure, parseBackendError } from "@/utils/backendErrorCode";
 import { connectionErrorKindFromCode } from "@/utils/connectionErrorHints";
 import {
   sandboxHasParsers,
@@ -786,7 +786,17 @@ export function Terminal({
                   agentState,
                   attempt,
                   maxAttempts: MAX_AGENT_SPAWN_ATTEMPTS,
+                  authFailed: isAuthFailure(err),
                 });
+
+                if (action.kind === "authFailed") {
+                  // The agent-hosted server rejected the credentials (#3089):
+                  // stop here with the typed auth error, so the overlay offers
+                  // credential re-entry instead of retrying a doomed login.
+                  useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
+                  setClassifiedSpawnError(tabId, err);
+                  return;
+                }
 
                 if (action.kind === "waitForAgent") {
                   // Park tab; TerminalView wakes it via retryTerminalSpawn

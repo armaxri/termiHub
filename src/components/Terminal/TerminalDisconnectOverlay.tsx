@@ -14,6 +14,7 @@ import { useProjectedSessionLifecycle, useSessionAutoReconnect } from "@/store/u
 import { Button, ContentOverlay, Tooltip } from "@/components/ui";
 import type { TerminalExitInfo } from "@/types/terminal";
 import { RECONNECTING_HEADING, reconnectAttemptLabel } from "@/utils/reconnectStatus";
+import { CredentialReentry } from "./CredentialReentry";
 import "./TerminalDisconnectOverlay.css";
 
 interface TerminalDisconnectOverlayProps {
@@ -370,6 +371,9 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
           >
             <span className="terminal-disconnect-overlay__error-text">{disconnectError}</span>
           </div>
+          {/* A rejected credential (SM-005): offer to enter a new one inline
+              rather than only re-sending the rejected one (#3089). */}
+          {isAuthFailed && <CredentialReentry tabId={tabId} />}
         </ContentOverlay>
       </div>
     );

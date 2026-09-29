@@ -144,8 +144,12 @@ export function resolveEstablishmentPlan(input: EstablishmentPlanInput): Establi
  *                               number this retry advances the tab to.
  * - `giveUp`                  — the bounded retries are exhausted; surface a
  *                               disconnect-with-error instead of spinning forever.
+ * - `authFailed`              — the agent-hosted session's server rejected the
+ *                               credentials (#3089): terminal, never retried —
+ *                               the overlay offers credential re-entry instead.
  */
 export type AgentSpawnAction =
+  | { kind: "authFailed" }
   | { kind: "waitForAgent" }
   | { kind: "reconnectAgentThenWait" }
   | { kind: "giveUp" }
@@ -167,6 +171,12 @@ export interface AgentSpawnActionInput {
   attempt: number;
   /** Maximum number of bounded retries (= `MAX_AGENT_SPAWN_ATTEMPTS`). */
   maxAttempts: number;
+  /**
+   * Whether the failure is a typed credential rejection (the `auth_failed`
+   * backend code, never message text — I18N-001). Retrying the same
+   * credentials can never succeed (#3089).
+   */
+  authFailed?: boolean;
 }
 
 /**
@@ -181,7 +191,12 @@ export interface AgentSpawnActionInput {
  * @returns the chosen {@link AgentSpawnAction}
  */
 export function resolveAgentSpawnAction(input: AgentSpawnActionInput): AgentSpawnAction {
-  const { agentState, attempt, maxAttempts } = input;
+  const { agentState, attempt, maxAttempts, authFailed } = input;
+
+  // A rejected credential is terminal whatever the transport state (#3089).
+  if (authFailed) {
+    return { kind: "authFailed" };
+  }
 
   // The agent transport is still (re)connecting — park and wait for "connected".
   if (agentState === "connecting" || agentState === "reconnecting") {

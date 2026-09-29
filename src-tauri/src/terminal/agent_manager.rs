@@ -195,6 +195,12 @@ impl AgentRpcFailure {
             // the same hint as for a direct connection. The marker is stripped
             // from the displayed message.
             _ => match self.connect_failure {
+                // The agent-hosted session's server rejected the credentials
+                // (0.19.0, #3089): the same typed auth failure as a direct
+                // connection, so the tab folds `authFailed` and offers re-entry.
+                Some(termihub_core::errors::ConnectFailureKind::AuthFailed) => {
+                    TerminalError::AuthFailed(self.message)
+                }
                 Some(kind) => TerminalError::RemoteError(crate::utils::errors::with_code(
                     kind.code(),
                     self.message,

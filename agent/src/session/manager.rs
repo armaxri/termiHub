@@ -19,8 +19,8 @@ use tracing::{debug, info, warn};
 
 use crate::io::transport::NotificationSender;
 use crate::ki_prompt::relay::{
-    ClassifiedConnectFailure, KiConnectFailure, KiFailureKind, KiRelaySession,
-    CONNECT_REPORT_ENDPOINT_ENV, KI_PROMPT_ENDPOINT_ENV,
+    relayed_connect_failure_kind, ClassifiedConnectFailure, KiConnectFailure, KiFailureKind,
+    KiRelaySession, CONNECT_REPORT_ENDPOINT_ENV, KI_PROMPT_ENDPOINT_ENV,
 };
 use crate::ki_prompt::{KiPromptHub, PromptActivity};
 use crate::session::agent_forward::AgentForwardRelay;
@@ -1131,11 +1131,12 @@ impl SessionManager {
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         connection.connect(settings.clone()).await.map_err(|e| {
-            // Keep a cancelled prompt / rejected one-time code (#3375) and a
-            // classified connect failure (#3751) typed.
+            // Keep a cancelled prompt / rejected one-time code (#3375), a
+            // classified connect failure (#3751) and a rejected credential
+            // (#3089) typed.
             match (
                 KiFailureKind::from_session_error(&e),
-                e.connect_failure_kind(),
+                relayed_connect_failure_kind(&e),
             ) {
                 (Some(kind), _) => anyhow::Error::new(KiConnectFailure(kind)),
                 (None, Some(kind)) => anyhow::Error::new(ClassifiedConnectFailure {
