@@ -14,7 +14,9 @@ import {
   localCopyStart,
   vscodeOpenLocal,
   LOCAL_TRANSFER_SESSION,
+  sessionDeleteFile,
 } from "@/services/api";
+import { copyPaneEntry, probePaneRemote } from "@/services/paneTransfer";
 import { FileEntry } from "@/types/connection";
 import {
   pickPathOrReport,
@@ -241,12 +243,14 @@ export function useLocalFileSystem() {
       const clipboard = options?.clipboard ?? currentFileBrowsersView().clipboard;
       if (!clipboard) return;
 
-      if (clipboard.sourceMode !== "local") {
-        // A session→local paste is not supported here (the remote source lives on
-        // the session transport, not the local disk); the session pane handles its
-        // own paste. The legacy sftp→local download path was retired with the
-        // standalone SFTP browser (#2422). Say so instead of doing nothing.
-        toast.error("Pasting remote items into a local folder is not supported");
+      // A remote (session) clipboard is downloaded through the same local ↔
+      // session engine as the dual-pane transfer view (#3563). Its session is
+      // the one the items were copied or cut in.
+      const srcSession = clipboard.sourceMode === "session" ? clipboard.terminalSessionId : null;
+      if (clipboard.sourceMode === "session" && !srcSession) {
+        toast.error(
+          "Cannot paste: the remote session these items came from is no longer connected"
+        );
         return;
       }
 
@@ -266,9 +270,18 @@ export function useLocalFileSystem() {
         `${verb} ${what}`,
         async () => {
           let tracked = false;
+          const remote = srcSession ? await probePaneRemote(srcSession) : null;
           for (const clipEntry of clipboard.entries) {
             const destPath = joinDirPath(destDir, clipEntry.name);
-            if (clipboard.operation === "cut") {
+            if (remote) {
+              // Session → local: queued download or byte round-trip, folders
+              // recreated and copied file by file. A cut removes each remote
+              // source only once it has fully landed locally.
+              tracked = (await copyPaneEntry("remote", clipEntry, destDir, remote)) || tracked;
+              if (clipboard.operation === "cut") {
+                await sessionDeleteFile(remote.sessionId, clipEntry.path);
+              }
+            } else if (clipboard.operation === "cut") {
               await localRename(clipEntry.path, destPath);
             } else {
               tracked = (await copyLocal(clipEntry.path, destPath)) || tracked;

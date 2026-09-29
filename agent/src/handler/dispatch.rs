@@ -255,15 +255,9 @@ pub struct AgentHandler {
     /// Desktop port-forward streams this connection opened (#3241), closed by
     /// [`deregister_client`](Self::deregister_client).
     forward_streams: Arc<ClientForwardStreams>,
-    /// Shared with [`HandlerState`] so tests can read a hosted server's bound
-    /// address (a server started on port `0`, #3533) without an RPC for it.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "read only by tests; production reads it via HandlerState"
-        )
-    )]
+    /// Shared with [`HandlerState`] so [`deregister_client`](Self::deregister_client)
+    /// can idle its hosted monitors (#3896), and so tests can read a hosted
+    /// server's bound address (a server started on port `0`, #3533).
     service_registry: Arc<AgentServiceRegistry>,
     /// Shared with [`HandlerState::crash_dir`]; see [`with_crash_dir`](Self::with_crash_dir).
     #[cfg_attr(
@@ -434,7 +428,11 @@ impl AgentHandler {
     /// killed outright and never gets here, the registry still drops the record
     /// when the socket closes (see `registry_daemon::process`), so a crash
     /// cannot leave a phantom client behind.
-    pub fn deregister_client(&self) {
+    ///
+    /// Hosted services that do no work while unobserved (the HTTP monitor) are
+    /// idled rather than left checking for nobody (#3896); they keep their last
+    /// result and resume when a client attaches again.
+    pub async fn deregister_client(&self) {
         // The client is gone: cancel its streaming tool runs so none outlives
         // the connection or notifies the next client (#3353).
         self.tool_runs.shutdown();
@@ -442,6 +440,8 @@ impl AgentHandler {
         self.ki_binding.detach();
         // Its port forwards (#3241) end with it, releasing their targets.
         self.forward_streams.close_all();
+        // Nobody reads its hosted monitors' results any more: idle them (#3896).
+        self.service_registry.detach_client().await;
         self.client_registry.remove(&self.client_id);
         if let Some(registry) = self.registry() {
             registry.deregister();
@@ -811,6 +811,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             tool_streaming,
             ki_prompts,
             update_auth_token_path,
+            service_registry,
         ) = {
             let mut s = ctx.lock().await;
             s.initialized = true;
@@ -863,8 +864,13 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 s.tool_runs.is_available(),
                 s.ki_binding.is_wired(),
                 update_auth_token_path,
+                s.service_registry.clone(),
             )
         };
+
+        // A client is attached again: resume any hosted monitor idled while none
+        // was (#3896).
+        service_registry.attach_client().await;
 
         // Diagnostic step-trace for #2480: the local repro proves the registry
         // path never blocks `initialize` (fresh spawn, fd-clean daemon, and even
@@ -3593,7 +3599,7 @@ mod tests {
         assert_eq!(handler.client_registry().len(), 1);
 
         // Simulates the transport loop calling deregister on disconnect.
-        handler.deregister_client();
+        handler.deregister_client().await;
 
         assert!(
             handler.client_registry().is_empty(),
@@ -3722,7 +3728,7 @@ mod tests {
         assert_eq!(handler.forward_streams.len(), 1);
         let (mut server, _) = target.accept().await.unwrap();
 
-        handler.deregister_client();
+        handler.deregister_client().await;
         let mut rest = Vec::new();
         let n = tokio::time::timeout(
             std::time::Duration::from_secs(5),
@@ -3883,7 +3889,7 @@ mod tests {
     async fn list_connections_empty_after_disconnect() {
         let handler = make_handler();
         init_handler(&handler).await;
-        handler.deregister_client();
+        handler.deregister_client().await;
 
         let result = dispatch(&handler, "agent.list_connections", json!({}), 2).await;
         let conns = result["result"]["connections"].as_array().unwrap();
@@ -5332,7 +5338,7 @@ mod tests {
     async fn deregister_client_disables_streaming() {
         let (handler, _rx) = make_streaming_handler();
         init_handler(&handler).await;
-        handler.deregister_client();
+        handler.deregister_client().await;
         let r = dispatch(
             &handler,
             "tool.start",
@@ -5726,6 +5732,52 @@ mod tests {
     /// End-to-end: the desktop starts an HTTP monitor on the agent over
     /// `service.start`, the monitor polls a target from the agent's vantage, and
     /// `service.status` streams the check result back before `service.stop` tears
+    /// #3896: a client disconnect idles the hosted monitor (its events are no
+    /// longer drained) and a later `initialize` resumes it.
+    #[tokio::test]
+    async fn disconnect_idles_hosted_monitor_and_initialize_resumes_it() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+        let start = dispatch(
+            &handler,
+            "service.start",
+            json!({
+                "instanceId": "mon-1",
+                "serviceId": "http_monitor",
+                "config": {
+                    "id": "mon-1",
+                    "url": "http://127.0.0.1:1/",
+                    "intervalMs": 60_000,
+                    "method": "GET",
+                    "expectedStatus": 200,
+                    "timeoutMs": 500
+                }
+            }),
+            2,
+        )
+        .await;
+        assert_eq!(start["result"]["status"]["state"], "running", "{start}");
+        assert_eq!(
+            handler.service_registry.is_observed("mon-1").await,
+            Some(true)
+        );
+
+        handler.deregister_client().await;
+        assert_eq!(
+            handler.service_registry.is_observed("mon-1").await,
+            Some(false),
+            "a disconnect must idle the hosted monitor"
+        );
+
+        init_handler(&handler).await;
+        assert_eq!(
+            handler.service_registry.is_observed("mon-1").await,
+            Some(true),
+            "initialize must resume the idled monitor"
+        );
+        handler.service_registry.stop_all().await;
+    }
+
     /// it down (#2592). This is the agent-RPC path the desktop routing exercises.
     #[tokio::test(flavor = "multi_thread")]
     async fn service_start_hosts_an_http_monitor_and_streams_a_check() {

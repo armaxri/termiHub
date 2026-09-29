@@ -127,7 +127,7 @@ async fn capable_desktop_attaches_and_disconnect_detaches() {
     dispatch(&handler, "initialize", capable_init_params(), 1).await;
     assert!(hub.is_available());
 
-    handler.deregister_client();
+    handler.deregister_client().await;
     assert!(!hub.is_available());
 }
 

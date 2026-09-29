@@ -154,11 +154,6 @@ export function useFileMoveTransfer({
       const clipboard = currentFileBrowsersView().clipboard;
       if (mode === "none" || (mode === "session" && !sessionId)) return;
       if (!clipboard || clipboard.entries.length === 0) return;
-      if (mode === "local" && clipboard.sourceMode !== "local") {
-        // Unsupported direction: the local paste explains that itself.
-        await pasteEntry();
-        return;
-      }
       const operation: FileTransferOperation = clipboard.operation === "cut" ? "move" : "copy";
       // The into-self / same-folder guards only make sense when the clipboard
       // lives on the same filesystem as this pane.

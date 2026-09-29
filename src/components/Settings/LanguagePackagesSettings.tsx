@@ -26,6 +26,19 @@ const languagePackageMatches: ListFilterMatcher<LanguagePackageInfo> = (pkg, que
 };
 
 /**
+ * Ids uninstalled during this app session. Their grammars stay loaded in Monaco
+ * until restart, so the Installed list keeps showing them with a "restart required"
+ * badge. Module-level (not component state) so the hint survives the settings
+ * panel being closed and reopened; it resets naturally on app restart.
+ */
+const pendingUninstallIds = new Set<string>();
+
+/** Test hook: forget every pending uninstall. */
+export function resetPendingLanguagePackageUninstalls(): void {
+  pendingUninstallIds.clear();
+}
+
+/**
  * Settings panel for installing additional Shiki language packages.
  *
  * Users can browse ~235 TextMate grammars bundled with Shiki (the same set
@@ -37,7 +50,9 @@ export function LanguagePackagesSettings({ visibleFields }: LanguagePackagesSett
   const settings = useProjectedSettings();
   const updateSettings = useAppStore((s) => s.updateSettings);
 
-  const [pendingUninstall, setPendingUninstall] = useState<Set<string>>(new Set());
+  const [pendingUninstall, setPendingUninstall] = useState<ReadonlySet<string>>(
+    () => new Set(pendingUninstallIds)
+  );
   const {
     query: searchQuery,
     setQuery: setSearchQuery,
@@ -56,6 +71,8 @@ export function LanguagePackagesSettings({ visibleFields }: LanguagePackagesSett
       const updated = [...(settings.installedLanguagePackages ?? []), id];
       updateSettings({ ...settings, installedLanguagePackages: updated });
       void registerAdditionalLanguagePackages([id]);
+      // Reinstalling cancels a pending uninstall: the grammar never left.
+      if (pendingUninstallIds.delete(id)) setPendingUninstall(new Set(pendingUninstallIds));
     },
     [settings, updateSettings]
   );
@@ -67,14 +84,16 @@ export function LanguagePackagesSettings({ visibleFields }: LanguagePackagesSett
         ...settings,
         installedLanguagePackages: updated.length > 0 ? updated : undefined,
       });
-      setPendingUninstall((prev) => new Set([...prev, id]));
+      pendingUninstallIds.add(id);
+      setPendingUninstall(new Set(pendingUninstallIds));
     },
     [settings, updateSettings]
   );
 
+  // Installed packages plus uninstalled-but-still-loaded ones (pending restart).
   const installedPackages = useMemo(
-    () => ALL_LANGUAGE_PACKAGES.filter((p) => installed.has(p.id)),
-    [installed]
+    () => ALL_LANGUAGE_PACKAGES.filter((p) => installed.has(p.id) || pendingUninstall.has(p.id)),
+    [installed, pendingUninstall]
   );
 
   return (
@@ -111,33 +130,45 @@ export function LanguagePackagesSettings({ visibleFields }: LanguagePackagesSett
               ))}
 
               {/* User-installed */}
-              {installedPackages.map((pkg) => (
-                <li key={pkg.id} className="settings-panel__file-item">
-                  <span className="settings-panel__file-path" style={{ fontFamily: "monospace" }}>
-                    {pkg.id}
-                  </span>
-                  <span
-                    className="settings-panel__file-path settings-panel__file-path--disabled"
-                    style={{ fontFamily: "monospace" }}
+              {installedPackages.map((pkg) => {
+                const awaitingRestart = !installed.has(pkg.id);
+                return (
+                  <li
+                    key={pkg.id}
+                    className="settings-panel__file-item"
+                    data-testid={`lang-pkg-installed-${pkg.id}`}
                   >
-                    {pkg.name}
-                  </span>
-                  {pendingUninstall.has(pkg.id) && (
-                    <span className="settings-panel__badge">restart required</span>
-                  )}
-                  <Tooltip content={`Uninstall ${pkg.name}`}>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      iconOnly
-                      icon={<PackageMinus size={14} />}
-                      onClick={() => handleUninstall(pkg.id)}
-                      aria-label={`Uninstall ${pkg.name}`}
-                      data-testid={`lang-pkg-uninstall-${pkg.id}`}
-                    />
-                  </Tooltip>
-                </li>
-              ))}
+                    <span className="settings-panel__file-path" style={{ fontFamily: "monospace" }}>
+                      {pkg.id}
+                    </span>
+                    <span
+                      className="settings-panel__file-path settings-panel__file-path--disabled"
+                      style={{ fontFamily: "monospace" }}
+                    >
+                      {pkg.name}
+                    </span>
+                    {awaitingRestart ? (
+                      <Tooltip content={`${pkg.name} is uninstalled and unloads after a restart`}>
+                        <span className="settings-panel__badge" tabIndex={0}>
+                          restart required
+                        </span>
+                      </Tooltip>
+                    ) : (
+                      <Tooltip content={`Uninstall ${pkg.name}`}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          iconOnly
+                          icon={<PackageMinus size={14} />}
+                          onClick={() => handleUninstall(pkg.id)}
+                          aria-label={`Uninstall ${pkg.name}`}
+                          data-testid={`lang-pkg-uninstall-${pkg.id}`}
+                        />
+                      </Tooltip>
+                    )}
+                  </li>
+                );
+              })}
 
               {installedPackages.length === 0 && (
                 <EmptyState variant="panel" title="No additional packages installed." />

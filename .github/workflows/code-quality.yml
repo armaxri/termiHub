@@ -435,6 +435,16 @@ jobs:
       - name: Check generated manual-inventory doc blocks
         run: python3 scripts/manual-inventory.py --check
 
+      # Version drift (CI-009, #3901): the five version sources (package.json,
+      # tauri.conf.json, src-tauri/core/agent Cargo.toml) must agree, and the
+      # installed @tauri-apps/* npm packages must match their Rust crates on
+      # major/minor. The same check gates release.yml (verify-version), so drift
+      # is caught on the PR that introduces it instead of when a tag is pushed.
+      # Every version source is in the frontend or rust area, both of which run
+      # this job. Sub-second; reuses the install above.
+      - name: Check version sources + Tauri npm/crate drift
+        run: scripts/release-check.sh --versions-only
+
       # Advisory unused-code report (audit findings TOOL-009 + TOOL-008 JS slice).
       # knip statically finds unused files, exports, and dependencies; knip.json
       # declares the real entrypoints (src/main.tsx, the vite/vitest configs, test
