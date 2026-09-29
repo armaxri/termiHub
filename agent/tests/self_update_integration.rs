@@ -84,13 +84,14 @@ const FAILED_APPLY_LOG: &str = "keeping it staged for retry";
 /// all CPU- and IO-bound work in an unoptimised build, so its wall time scales
 /// with host load. From the first poll to `staged` alone, measured on macOS
 /// with this suite's agents running in parallel: about 6 s at a load average
-/// near 40, and 25–28 s at a load average near 250. That was most of the old
-/// 30 s budget, so the swap never landed inside it (#3811). This is not a
+/// near 40, 25–28 s near 250, and 43 s near 450. At load ~450 the apply began
+/// only 63 s after the poll and had not finished swapping 120 s in. The old
+/// 30 s budget was already too short at load ~250 (#3811). This is not a
 /// queue that a longer timeout only postpones, like the first-exec check (see
 /// [`prewarm_first_exec`]). The work is finite and just runs slower, so the
-/// budget has to cover it. A passing run still returns as soon as the outcome
-/// is observed.
-const UPDATE_PIPELINE_TIMEOUT: Duration = Duration::from_secs(120);
+/// budget has to cover it. The value is a ceiling, not a wait: a passing run
+/// returns as soon as the outcome is observed.
+const UPDATE_PIPELINE_TIMEOUT: Duration = Duration::from_secs(240);
 
 // ── Binary + hashing helpers ────────────────────────────────────────────────
 
