@@ -17,6 +17,9 @@ pub enum JsonRpcMessage {
         id: u64,
         code: Option<i64>,
         message: String,
+        /// The error's optional structured `data`, e.g. the typed
+        /// connect-failure kind of a failed `connection.create` (0.18.0, #3751).
+        data: Option<Value>,
     },
     /// A server-initiated notification (no id).
     Notification { method: String, params: Value },
@@ -42,7 +45,13 @@ pub fn parse_message(line: &str) -> Result<JsonRpcMessage, String> {
                 .unwrap_or("Unknown error")
                 .to_string();
             let code = error_obj.get("code").and_then(Value::as_i64);
-            return Ok(JsonRpcMessage::Error { id, code, message });
+            let data = error_obj.get("data").filter(|d| !d.is_null()).cloned();
+            return Ok(JsonRpcMessage::Error {
+                id,
+                code,
+                message,
+                data,
+            });
         }
 
         let result = obj.get("result").cloned().unwrap_or(Value::Null);
@@ -123,10 +132,28 @@ mod tests {
         let line =
             r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found"},"id":2}"#;
         match parse_message(line).unwrap() {
-            JsonRpcMessage::Error { id, code, message } => {
+            JsonRpcMessage::Error {
+                id,
+                code,
+                message,
+                data,
+            } => {
                 assert_eq!(id, 2);
                 assert_eq!(code, Some(-32601));
                 assert_eq!(message, "Method not found");
+                assert_eq!(data, None);
+            }
+            _ => panic!("Expected Error"),
+        }
+    }
+
+    /// The optional error `data` (0.18.0, #3751) is kept for the caller.
+    #[test]
+    fn parse_error_keeps_data() {
+        let line = r#"{"jsonrpc":"2.0","error":{"code":-32003,"message":"Spawn failed: x","data":{"connect_failure":"busy"}},"id":3}"#;
+        match parse_message(line).unwrap() {
+            JsonRpcMessage::Error { data, .. } => {
+                assert_eq!(data, Some(serde_json::json!({ "connect_failure": "busy" })));
             }
             _ => panic!("Expected Error"),
         }
@@ -168,6 +195,7 @@ mod tests {
             id: 1,
             code: None,
             message: "bad params".into(),
+            data: None,
         };
         assert_eq!(
             classify_handshake_message(msg, 1),

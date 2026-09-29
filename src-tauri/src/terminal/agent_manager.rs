@@ -132,6 +132,10 @@ use state_events::{emit_agent_state, emit_agent_state_with_error};
 pub(crate) struct AgentRpcFailure {
     pub code: Option<i64>,
     pub message: String,
+    /// The typed connect-failure kind an agent (0.18.0+) sends in the error
+    /// `data` of a failed `connection.create` — e.g. an agent-hosted serial
+    /// port that is busy (#3751). `None` from an older agent or any other error.
+    pub connect_failure: Option<termihub_core::errors::ConnectFailureKind>,
 }
 
 impl From<String> for AgentRpcFailure {
@@ -139,11 +143,28 @@ impl From<String> for AgentRpcFailure {
         Self {
             code: None,
             message,
+            connect_failure: None,
         }
     }
 }
 
 impl AgentRpcFailure {
+    /// Build the failure from an agent JSON-RPC error response, reading the
+    /// optional connect-failure kind from its `data` (#3751). Tolerant: absent
+    /// or unrecognised data leaves the failure unclassified.
+    pub(crate) fn from_error_response(
+        code: Option<i64>,
+        message: String,
+        data: Option<&Value>,
+    ) -> Self {
+        Self {
+            code,
+            message,
+            connect_failure:
+                termihub_core::protocol::errors::SessionCreateErrorData::connect_failure_from(data),
+        }
+    }
+
     /// The typed desktop error for this failure. A plain attach refused because
     /// another desktop holds the session (`SESSION_HELD_BY_OTHER`, SM-003) maps
     /// to [`TerminalError::SessionHeldByPeer`]; an agent lacking the capability
@@ -169,7 +190,17 @@ impl AgentRpcFailure {
             Some(termihub_core::protocol::errors::SECOND_FACTOR_FAILED) => {
                 TerminalError::SecondFactorFailed
             }
-            _ => TerminalError::RemoteError(self.message),
+            // A typed connect failure of an agent-hosted session (#3751): tag
+            // the kind so the envelope `code` carries it and the overlay shows
+            // the same hint as for a direct connection. The marker is stripped
+            // from the displayed message.
+            _ => match self.connect_failure {
+                Some(kind) => TerminalError::RemoteError(crate::utils::errors::with_code(
+                    kind.code(),
+                    self.message,
+                )),
+                None => TerminalError::RemoteError(self.message),
+            },
         }
     }
 }

@@ -363,6 +363,7 @@ fn an_old_agents_method_not_found_means_unsupported() {
     let old = crate::terminal::agent_manager::AgentRpcFailure {
         code: Some(termihub_core::protocol::errors::METHOD_NOT_FOUND),
         message: "Method not found".into(),
+        connect_failure: None,
     }
     .into_terminal_error();
     assert_eq!(agent_call_error(old), AgentCallError::Unsupported);
