@@ -46,6 +46,9 @@ use crate::files::copy::CopyPhase;
 /// Log label for the shared attempt orchestration.
 const BACKEND: &str = "SFTP";
 
+/// Log label for a remote-to-remote copy (PROD-0013).
+const REMOTE_COPY_BACKEND: &str = "SFTP remote-to-remote";
+
 /// Core-internal error type for the SFTP transfer executor (DUP-026 slice 2b).
 ///
 /// It never escapes: all three public executors return `()`, and this type only
@@ -621,6 +624,12 @@ async fn run_remote_attempts(
 /// destination. A server-side host-to-host copy (SCP/rsync) is a deferred
 /// alternative — this default reaches everywhere both hosts are reachable from
 /// the desktop.
+///
+/// `start_offset` is `0` for a fresh copy and the persisted `resume_offset`
+/// for a copy **relaunched** after an app restart (#3206). As for
+/// [`run_sftp_transfer`], the checkpoint is kept only while the source still
+/// matches the persisted size and mtime, and the destination is byte-verified
+/// before the first append.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_sftp_remote_copy(
     src_browser: Arc<SftpFileBrowser>,
@@ -631,6 +640,7 @@ pub async fn run_sftp_remote_copy(
     registry: TransferRegistry,
     sink: ProgressSink,
     resume_mode: ResumeMode,
+    start_offset: u64,
 ) {
     // Establish the source identity + total up front so progress/ETA are
     // meaningful and a later resume can detect a changed source (PARITY-004).
@@ -642,11 +652,13 @@ pub async fn run_sftp_remote_copy(
         Some(fp) => fp.size,
         None => src_browser.remote_size(&src_path).await,
     };
-    handle.set_metrics(0, total, 0);
+    // A rehydrated copy's handle was registered with its persisted total.
+    let offset = rehydrate_start_offset(start_offset, &handle, baseline, REMOTE_COPY_BACKEND);
+    handle.set_metrics(offset, total, 0);
     emit(&handle, &sink, TransferPhase::Transferring, None, None);
 
     let cursor = ResumeCursor {
-        offset: 0,
+        offset,
         total,
         baseline,
     };
@@ -662,7 +674,7 @@ pub async fn run_sftp_remote_copy(
         handle,
         &registry,
         sink,
-        "SFTP remote-to-remote",
+        REMOTE_COPY_BACKEND,
         cursor,
         |mut cursor| async move {
             let result = run_remote_attempts(

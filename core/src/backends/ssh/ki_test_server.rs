@@ -170,11 +170,10 @@ impl russh::client::Handler for AcceptAnyKey {
     }
 }
 
-/// Start a scripted server and return a connected (unauthenticated) client
-/// handle plus the server's observations.
-pub(crate) async fn connect(
-    script: Script,
-) -> (russh::client::Handle<AcceptAnyKey>, Arc<Mutex<Observed>>) {
+/// Start a scripted server and return the client end of its byte stream (not
+/// yet handshaken) plus the server's observations — for tests that run the
+/// handshake with their own client handler (e.g. host-key checks, #3527).
+pub(crate) fn serve(script: Script) -> (tokio::io::DuplexStream, Arc<Mutex<Observed>>) {
     let key = russh::keys::PrivateKey::from(
         russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&[7u8; 32]),
     );
@@ -196,6 +195,15 @@ pub(crate) async fn connect(
             let _ = running.await;
         }
     });
+    (client_io, observed)
+}
+
+/// Start a scripted server and return a connected (unauthenticated) client
+/// handle plus the server's observations.
+pub(crate) async fn connect(
+    script: Script,
+) -> (russh::client::Handle<AcceptAnyKey>, Arc<Mutex<Observed>>) {
+    let (client_io, observed) = serve(script);
     let client = russh::client::connect_stream(
         Arc::new(russh::client::Config::default()),
         client_io,

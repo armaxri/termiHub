@@ -458,6 +458,7 @@ async fn remote_to_remote_copy_is_byte_exact() {
         registry.clone(),
         sink.as_sink(),
         ResumeMode::Resume,
+        0,
     )
     .await;
 
@@ -539,6 +540,7 @@ async fn remote_to_remote_cancel_removes_partial_destination() {
         registry,
         sink.as_sink(),
         ResumeMode::Resume,
+        0,
     )
     .await;
 
@@ -555,6 +557,113 @@ async fn remote_to_remote_cancel_removes_partial_destination() {
         None,
         "the partial destination must be removed on cancel"
     );
+}
+
+/// Relaunch a remote→remote copy after an app restart (#3206): the source is
+/// seeded, the destination holds a checkpointed prefix, and the handle carries
+/// the persisted total and source mtime (`mtime_skew` shifts the persisted
+/// mtime to simulate a source rewritten while the app was closed). Returns the
+/// recorded sink and the final destination bytes.
+async fn relaunch_remote_copy(
+    tag: &str,
+    content: &[u8],
+    partial: &[u8],
+    mtime_skew: u64,
+) -> (RecordingSink, Vec<u8>) {
+    let src_session = connect().await;
+    let dst_session = connect().await;
+    let src = format!(
+        "/home/testuser/termihub-3206-src-{tag}-{}.bin",
+        uuid::Uuid::new_v4()
+    );
+    let dst = format!(
+        "/home/testuser/termihub-3206-dst-{tag}-{}.bin",
+        uuid::Uuid::new_v4()
+    );
+    let seed = open_dedicated(src_session.clone()).await;
+    write_remote(&seed, &src, content).await;
+    let fingerprint = seed.remote_fingerprint(&src).await.expect("source stat");
+    let seed_dst = open_dedicated(dst_session.clone()).await;
+    write_remote(&seed_dst, &dst, partial).await;
+
+    let registry = TransferRegistry::new();
+    let handle = registry.enqueue(
+        "r2r-relaunch",
+        "dst",
+        TransferDirection::Upload,
+        "dst.bin",
+        &dst,
+        content.len() as u64,
+    );
+    handle.set_source_mtime(fingerprint.mtime.map(|m| m + mtime_skew));
+    let sink = RecordingSink::default();
+
+    run_sftp_remote_copy(
+        src_session.clone(),
+        dst_session.clone(),
+        src.clone(),
+        dst.clone(),
+        handle,
+        registry,
+        sink.as_sink(),
+        ResumeMode::Resume,
+        partial.len() as u64,
+    )
+    .await;
+
+    let got = dst_session.read_file(&dst).await.expect("destination");
+    let _ = open_dedicated(src_session).await.remove_file(&src).await;
+    let _ = open_dedicated(dst_session).await.remove_file(&dst).await;
+    (sink, got)
+}
+
+/// Bytes the first progress event of a relaunched copy reports — the offset
+/// the relaunch started from.
+fn first_transferred(sink: &RecordingSink) -> u64 {
+    sink.events
+        .lock()
+        .expect("sink mutex")
+        .first()
+        .map(|p| p.transferred)
+        .expect("a progress event")
+}
+
+/// A relaunched remote→remote copy whose source is unchanged (same size and
+/// mtime) resumes from the checkpoint and lands byte-exact (#3206).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn remote_to_remote_relaunch_resumes_from_the_checkpoint() {
+    let port = sftp_stress_port();
+    require_sftp_stress!(port);
+
+    let content = known_bytes(2 * 1024 * 1024);
+    let offset = 1024 * 1024;
+    let (sink, got) = relaunch_remote_copy("resume", &content, &content[..offset], 0).await;
+
+    assert_eq!(sink.terminal_phase(), Some(TransferPhase::Done));
+    assert!(got == content, "the resumed copy must be byte-exact");
+    assert_eq!(
+        first_transferred(&sink),
+        offset as u64,
+        "the relaunch starts from the checkpoint, not from zero"
+    );
+}
+
+/// A relaunched remote→remote copy whose source was rewritten to the same size
+/// while the app was closed (new mtime) restarts from zero instead of splicing
+/// two versions (#3206).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn remote_to_remote_relaunch_restarts_when_the_source_changed() {
+    let port = sftp_stress_port();
+    require_sftp_stress!(port);
+
+    let content = known_bytes(2 * 1024 * 1024);
+    let offset = 1024 * 1024;
+    let stale = vec![0xAA_u8; offset];
+    let (sink, got) = relaunch_remote_copy("restart", &content, &stale, 10).await;
+
+    assert_eq!(sink.terminal_phase(), Some(TransferPhase::Done));
+    assert!(got == content, "the new source, not a splice");
+    assert_eq!(first_transferred(&sink), 0, "restarted from zero");
 }
 
 // --- require_sftp_stress! gate logic (TBE-006) ---

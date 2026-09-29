@@ -1715,11 +1715,23 @@ sequenceDiagram
   frontend registered as listening (a due run is held while none has, e.g. during boot); a window
   that does not acknowledge a run within 60 s is dropped from it, and a run no window settles
   within 6 hours is closed as failed.
-- **Execution** (`src/store/scheduledRuns.ts`) — unattended: only already-connected tabs opened
-  from a target connection, no connecting, no prompts (a required parameter without a default or
-  an un-allowlisted local program makes it skip/fail), and never while another run or macro
-  playback is active in that window. Workflow runs and macro playbacks are recorded in their run
-  histories with the `scheduled` origin; the status bar shows "N schedules active".
+- **Execution** (`src/store/scheduledRuns.ts`) — unattended: only connected tabs opened from a
+  target connection, no prompts (a required parameter without a default or an un-allowlisted
+  local program makes it skip/fail), and never while another run or macro playback is active in
+  that window. Workflow runs and macro playbacks are recorded in their run histories with the
+  `scheduled` origin; the status bar shows "N schedules active".
+- **Connect if not connected** (#3527, opt-in per schedule, `connectIfNeeded`, default off) — the
+  fire names one `connectWindow` (the main window, else the first listening one). That window
+  connects each target with no connected terminal there through the shared saved-connection flow
+  (`src/utils/connectSavedConnection.ts`) in its **unattended** mode, runs on those tabs too, and
+  closes exactly the tabs it opened when the run ends (`src/store/scheduledConnect.ts`). The
+  unattended connect never prompts: a missing password or key passphrase, a locked credential
+  store or a rejected stored credential is refused in the frontend; the backend connect runs in
+  core's `run_unattended` scope (`create_connection` with `unattended: true`, direct connections
+  only), where an untrusted host key fails fast as `ConnectFailureKind::HostKeyUntrusted` and a
+  keyboard-interactive round the saved password cannot answer as `InteractionRequired`. Each
+  refused target is recorded in the attempt with its reason. Turning the option on needs a fresh
+  confirmation.
 - **Macro run history** (`src-tauri/src/macros/history*.rs`, #3543) — every started macro
   playback (manual, command palette, a workflow's `run-macro` step, scheduled) is recorded
   fire-and-forget in `macro-runs.json`: macro id + name, start/end, outcome, steps played,
@@ -2215,6 +2227,16 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
   file anyway — so the folder is reported as one unit. Drag-out
   staging downloads are never persisted: their directories are deleted at
   quit, and records under the staging root are pruned at startup (#3629).
+  A rehydrated **FTP** transfer relaunches like an SFTP one (#3206): its
+  session reference resolves to the live FTP session's connection settings,
+  so the password comes from that session, never from `transfers.json`. Before
+  every attempt the executor probes the server: `FEAT` says whether `REST
+STREAM` and `MDTM` are supported, and `SIZE` + `MDTM` fingerprint the remote
+  file. Without `REST STREAM` the transfer restarts from zero; without `MDTM`
+  a resume is checked against the size only. A **remote-to-remote** copy
+  persists its source endpoint (`remoteSource`: session reference + path) and
+  relaunches by re-attaching both sessions; the source is checked against the
+  persisted size and mtime like any other relaunch.
 - **Desktop and agent** — the `ftp` cargo feature (on by default) registers the backend in both
   `src-tauri/src/session/registry.rs::build_desktop_registry()` and the agent's
   `agent/src/registry.rs::build_registry()` (PARITY-003), so an agent-hosted FTP connection uses

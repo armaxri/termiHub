@@ -22,7 +22,10 @@ import {
   writeText as writeClipboard,
 } from "@tauri-apps/plugin-clipboard-manager";
 import { sendInput } from "@/services/api";
-import { registerTerminalInputInjector } from "@/services/macroPlayback";
+import {
+  registerTerminalInputInjector,
+  registerTerminalReadyProbe,
+} from "@/services/macroPlayback";
 import { SessionId } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
 import { currentBroadcastView } from "@/store/broadcastBridge";
@@ -542,7 +545,13 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
   // interactive typing, without holding a React ref. Cleared on unmount.
   useEffect(() => {
     registerTerminalInputInjector(sendInputToTerminal);
-    return () => registerTerminalInputInjector(null);
+    // A scheduled run waits on this before typing into a tab it just opened
+    // on a live session (#3527).
+    registerTerminalReadyProbe((tabId) => sessionRegistryRef.current.has(tabId));
+    return () => {
+      registerTerminalInputInjector(null);
+      registerTerminalReadyProbe(null);
+    };
   }, [sendInputToTerminal]);
 
   const registerSearchAddon = useCallback((tabId: string, addon: SearchAddon) => {

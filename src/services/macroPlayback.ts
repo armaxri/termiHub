@@ -179,3 +179,28 @@ export function registerTerminalInputInjector(fn: TerminalInputInjector | null):
 export function getTerminalInputInjector(): TerminalInputInjector | null {
   return terminalInputInjector;
 }
+
+/**
+ * Whether a terminal tab's session is attached and can take input through the
+ * injector. A tab opened on a live session (a scheduled run's unattended
+ * connect, #3527) needs a moment to mount before input can reach it.
+ */
+export type TerminalReadyProbe = (tabId: string) => boolean;
+
+let terminalReadyProbe: TerminalReadyProbe | null = null;
+
+/**
+ * Register (or clear, with `null`) the terminal-ready probe. The terminal
+ * registry provider registers it next to the input injector.
+ */
+export function registerTerminalReadyProbe(fn: TerminalReadyProbe | null): void {
+  terminalReadyProbe = fn;
+}
+
+/**
+ * Whether `tabId` can take input now. With no registry mounted (headless
+ * tests) there is nothing to wait for, so every tab counts as ready.
+ */
+export function isTerminalReady(tabId: string): boolean {
+  return terminalReadyProbe ? terminalReadyProbe(tabId) : true;
+}

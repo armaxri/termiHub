@@ -91,17 +91,28 @@ pub enum ConnectFailureKind {
     /// [`SessionError::connect_failure_kind`], which keeps `AuthFailed` a
     /// variant of its own on the direct path.
     AuthFailed,
+    /// An **unattended** connect (a scheduled run, #3527) was refused because
+    /// the server's host key is not already trusted — unknown, or changed. An
+    /// attended connect would have asked the user; an unattended one never
+    /// prompts.
+    HostKeyUntrusted,
+    /// An **unattended** connect (#3527) was refused because the server asked
+    /// for interactive input (a keyboard-interactive / one-time-code round the
+    /// saved password cannot answer). An attended connect would have prompted.
+    InteractionRequired,
 }
 
 impl ConnectFailureKind {
     /// Every kind, for consumers that map a wire slug back to its kind.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 8] = [
         Self::Timeout,
         Self::AgentAuthFailed,
         Self::NotFound,
         Self::PermissionDenied,
         Self::Busy,
         Self::AuthFailed,
+        Self::HostKeyUntrusted,
+        Self::InteractionRequired,
     ];
 
     /// The stable machine slug for this kind, as carried in the
@@ -115,6 +126,8 @@ impl ConnectFailureKind {
             Self::PermissionDenied => "permission_denied",
             Self::Busy => "busy",
             Self::AuthFailed => "auth_failed",
+            Self::HostKeyUntrusted => "host_key_untrusted",
+            Self::InteractionRequired => "interaction_required",
         }
     }
 
@@ -313,6 +326,15 @@ mod tests {
         assert_eq!(ConnectFailureKind::Busy.code(), "busy");
         // The same slug as the desktop's `IpcErrorCode::AuthFailed` (#3089).
         assert_eq!(ConnectFailureKind::AuthFailed.code(), "auth_failed");
+        // Unattended-connect refusals (#3527).
+        assert_eq!(
+            ConnectFailureKind::HostKeyUntrusted.code(),
+            "host_key_untrusted"
+        );
+        assert_eq!(
+            ConnectFailureKind::InteractionRequired.code(),
+            "interaction_required"
+        );
         assert_eq!(with_code("busy", "held"), "[thub-code:busy] held");
     }
 

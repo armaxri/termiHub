@@ -150,6 +150,13 @@ pub enum IpcErrorCode {
     /// The connect target exists but is held by another application (e.g. a
     /// serial port in use), from a core `ConnectFailureKind::Busy` (I18N-009).
     Busy,
+    /// An unattended connect (a scheduled run, #3527) was refused because the
+    /// server's host key is not already trusted. Nothing was rejected, so
+    /// nothing stored may be discarded.
+    HostKeyUntrusted,
+    /// An unattended connect (#3527) was refused because the server asked for
+    /// interactive input (a keyboard-interactive / one-time-code round).
+    InteractionRequired,
 }
 
 impl IpcErrorCode {
@@ -190,6 +197,8 @@ impl IpcErrorCode {
             // An agent-hosted credential rejection (#3089) is the same
             // `auth_failed` category as a direct one.
             K::AuthFailed => Self::AuthFailed,
+            K::HostKeyUntrusted => Self::HostKeyUntrusted,
+            K::InteractionRequired => Self::InteractionRequired,
         }
     }
 }
@@ -539,6 +548,16 @@ mod tests {
                 "permission_denied",
             ),
             (K::Busy, IpcErrorCode::Busy, "busy"),
+            (
+                K::HostKeyUntrusted,
+                IpcErrorCode::HostKeyUntrusted,
+                "host_key_untrusted",
+            ),
+            (
+                K::InteractionRequired,
+                IpcErrorCode::InteractionRequired,
+                "interaction_required",
+            ),
         ];
         for (kind, code, slug) in cases {
             let spawn = TerminalError::from_session_spawn(SessionError::classified(kind, "boom"));

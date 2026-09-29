@@ -63,6 +63,20 @@ fn settle_active(s: &mut Schedule, rt: &mut Runtime, ctx: &TickContext) -> bool 
     true
 }
 
+/// The label of the main app window, which connects a schedule's missing
+/// targets when it is listening (#3527).
+pub(super) const MAIN_WINDOW: &str = "main";
+
+/// The one window that connects a schedule's targets not connected there
+/// (#3527): the main window when it listens, else the first listening window
+/// in label order — deterministic, so a run never connects a target twice.
+pub(super) fn connect_window(audience: &BTreeSet<String>) -> Option<String> {
+    if audience.contains(MAIN_WINDOW) {
+        return Some(MAIN_WINDOW.to_string());
+    }
+    audience.iter().next().cloned()
+}
+
 /// Record a skipped due run.
 fn skip(s: &mut Schedule, now: DateTime<Utc>, msg: String, catch_up: bool) -> Step {
     tracing::info!("schedule {}: {msg}", s.id);
@@ -147,6 +161,10 @@ pub(super) fn step<Tz: TimeZone>(
             action: s.action.clone(),
             targets: s.targets.clone(),
             catch_up: missed,
+            connect_window: s
+                .connect_if_needed
+                .then(|| connect_window(&ctx.audience))
+                .flatten(),
         }),
         changed: true,
         dirty: true,

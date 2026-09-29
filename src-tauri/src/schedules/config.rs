@@ -190,11 +190,12 @@ pub struct ScheduleRunResult {
 
 /// A stored schedule.
 ///
-/// The user-editable part is `name`, `action`, `targets`, `rule` and
-/// `missed_runs`. Everything else is owned by the backend: a schedule is
-/// created **disabled**, is enabled only through `set_schedule_enabled` (the
-/// first enable must carry the user's confirmation of the targets), and loses
-/// its enabled state + confirmation whenever its action or targets change.
+/// The user-editable part is `name`, `action`, `targets`, `rule`,
+/// `missed_runs` and `connect_if_needed`. Everything else is owned by the
+/// backend: a schedule is created **disabled**, is enabled only through
+/// `set_schedule_enabled` (the first enable must carry the user's confirmation
+/// of the targets), and loses its enabled state + confirmation whenever its
+/// action or targets change, or it newly opts into connecting its targets.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
@@ -213,6 +214,14 @@ pub struct Schedule {
     /// Missed-run handling (default: skip).
     #[serde(default)]
     pub missed_runs: MissedRunPolicy,
+    /// "Connect if not connected" (#3527, opt-in, default off): a target saved
+    /// connection with no connected terminal is connected **unattended** first
+    /// — stored credentials / key auth and an already-trusted host key only,
+    /// never a prompt — and the tab it opened is closed after the run. A target
+    /// that would need input is skipped with the reason.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub connect_if_needed: bool,
     /// Whether the schedule fires. Always `false` for a new schedule.
     #[serde(default)]
     pub enabled: bool,

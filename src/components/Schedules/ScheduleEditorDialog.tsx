@@ -28,6 +28,7 @@ import {
   type ScheduleFormValues,
 } from "./scheduleForm";
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
+import { t } from "@/i18n/catalog";
 import { remapConnectionIdList } from "@/utils/connectionIdChanges";
 import "./Schedules.css";
 
@@ -407,9 +408,30 @@ export function ScheduleEditorDialog({
           </Field>
         )}
       />
+      <Controller
+        name="connectIfNeeded"
+        control={control}
+        render={({ field }) => (
+          <Field
+            label={t("schedule.connect.fieldLabel")}
+            htmlFor="schedule-editor-connect"
+            hint={t("schedule.connect.help")}
+          >
+            <div className="schedule-editor__connection">
+              <Checkbox
+                id="schedule-editor-connect"
+                checked={field.value}
+                onCheckedChange={field.onChange}
+                data-testid="schedule-editor-connect"
+              />
+              <label htmlFor="schedule-editor-connect">{t("schedule.connect.label")}</label>
+            </div>
+          </Field>
+        )}
+      />
       <p className="schedule-editor__note">
-        Runs only while termiHub is open, only on terminals that are already connected, and never
-        prompts. New schedules start disabled.
+        Runs only while termiHub is open and never prompts. Without “Connect if not connected” it
+        runs only on terminals that are already connected. New schedules start disabled.
       </p>
     </Modal>
   );

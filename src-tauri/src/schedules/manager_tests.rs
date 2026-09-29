@@ -30,7 +30,7 @@ pub(super) fn windows(labels: &[&str]) -> Vec<String> {
     labels.iter().map(|s| s.to_string()).collect()
 }
 
-fn input(id: &str, rule: ScheduleRule) -> ScheduleInput {
+pub(super) fn input(id: &str, rule: ScheduleRule) -> ScheduleInput {
     ScheduleInput {
         id: id.to_string(),
         name: "Health check".to_string(),
@@ -42,10 +42,11 @@ fn input(id: &str, rule: ScheduleRule) -> ScheduleInput {
         },
         rule,
         missed_runs: MissedRunPolicy::Skip,
+        connect_if_needed: false,
     }
 }
 
-fn every(m: u32) -> ScheduleRule {
+pub(super) fn every(m: u32) -> ScheduleRule {
     ScheduleRule::Interval { every_minutes: m }
 }
 
@@ -79,7 +80,7 @@ pub(super) fn enabled_manager(dir: &TempDir, policy: MissedRunPolicy) -> Schedul
     m
 }
 
-fn last_result(m: &ScheduleManager) -> ScheduleRunResult {
+pub(super) fn last_result(m: &ScheduleManager) -> ScheduleRunResult {
     m.state(t(0, 0), &Utc).unwrap().schedules[0]
         .schedule
         .last_result

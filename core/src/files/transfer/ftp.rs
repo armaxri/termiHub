@@ -8,164 +8,157 @@
 //! honour pause/resume and cancel, and drive the [`TransferHandle`] through its
 //! `Queued → Active → …` states. It never holds a browsing connection, so
 //! listing stays live while transfers run.
+//!
+//! **Resume (#3206).** The executor runs on the shared attempt orchestration of
+//! the other offset-resuming backends (`super::attempt`), so FTP resumes the
+//! same way SFTP, Docker and local copies do:
+//!
+//! - Before every attempt it probes the server ([`probe_remote_file`]): `FEAT`
+//!   says whether `REST STREAM` and `MDTM` are supported, `SIZE` + `MDTM` give
+//!   the remote file's fingerprint. The source must still match the fingerprint
+//!   captured when its bytes were read, and the destination must hold a prefix
+//!   we wrote — otherwise the attempt restarts from zero.
+//! - A server that does not advertise `REST STREAM` never gets a `REST`: the
+//!   transfer restarts from zero and says why. A server that does not answer
+//!   `FEAT` at all is tried, and a refused `REST` restarts from zero too.
+//! - Without `MDTM` only the size can be compared, so a resume is size-only.
+//! - A **rehydrated** transfer (relaunched after an app restart) starts from its
+//!   persisted checkpoint when the source still matches the persisted size and
+//!   mtime (#3572) — see [`rehydrate_start_offset`].
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
 
 use crate::backends::ftp::{
-    probe_remote_size, run_attempt, AttemptOutcome, FtpDirection, StopReason,
+    self, probe_remote_file, run_attempt, FtpDirection, FtpRemoteFile, FtpServerCaps,
 };
 use crate::config::FtpConfig;
-use tracing::{debug, info, warn};
+use crate::errors::SessionError;
+use tracing::{debug, info};
 
+use super::attempt::{
+    apply_resume_gate, drive_transfer, emit, guard_stall, handle_attempt_error, local_fingerprint,
+    local_size, rehydrate_start_offset, settle_attempt, stop_reason, AttemptOutcome,
+    AttemptsResult, ProgressReporter, ResumeCursor, StopReason, STALL_TIMEOUT,
+};
 use super::registry::{TransferHandle, TransferRegistry};
+use super::retry::SourceFingerprint;
 use super::state::TransferEvent;
-use super::{ProgressSink, ThroughputMeter, TransferPhase, TransferProgress, PROGRESS_THROTTLE};
+use super::{ProgressSink, TransferPhase};
 
-/// Result of running the retry loop for one Active stint.
-enum AttemptsResult {
-    Completed,
-    Cancelled,
-    Paused,
-    FailedPermanent,
+/// Log label for the shared attempt orchestration.
+const BACKEND: &str = "FTP";
+
+/// Error of one FTP attempt; its `Display` becomes the progress message.
+#[derive(Debug, thiserror::Error)]
+enum FtpTransferError {
+    /// The connection or the protocol failed.
+    #[error(transparent)]
+    Session(#[from] SessionError),
+    /// The stall watchdog gave up on an attempt that moved no data.
+    #[error("{0}")]
+    Stalled(String),
 }
 
-/// Map a live handle's control flags to a stop decision for the copy loop.
-fn stop_reason(handle: &TransferHandle) -> Option<StopReason> {
-    if handle.is_cancelled() {
-        Some(StopReason::Cancel)
-    } else if handle.take_pause_request() {
-        Some(StopReason::Pause)
-    } else {
-        None
+/// What one probe learnt about both ends of the transfer.
+struct Endpoints {
+    /// What the server advertised in `FEAT`.
+    caps: FtpServerCaps,
+    /// Fingerprint of the source (remote for a download, local for an upload).
+    source: Option<SourceFingerprint>,
+    /// Bytes present at the destination (local for a download, remote for an
+    /// upload).
+    present: Option<u64>,
+}
+
+/// Probe both ends of the transfer: the server (capabilities, remote size and
+/// mtime) over a throwaway connection, and the local file. Fails only when the
+/// server cannot be reached.
+async fn probe_endpoints(
+    config: &FtpConfig,
+    direction: FtpDirection,
+    remote_path: &str,
+    local_path: &str,
+) -> Result<Endpoints, SessionError> {
+    let FtpRemoteFile { caps, size, mtime } = probe_remote_file(config, remote_path).await?;
+    Ok(match direction {
+        FtpDirection::Download => Endpoints {
+            caps,
+            source: size.map(|size| SourceFingerprint { size, mtime }),
+            present: local_size(local_path).await,
+        },
+        FtpDirection::Upload => Endpoints {
+            caps,
+            source: local_fingerprint(local_path).await,
+            present: size,
+        },
+    })
+}
+
+/// Map the queue's stop decision onto the FTP primitive's.
+fn ftp_stop(reason: StopReason) -> ftp::StopReason {
+    match reason {
+        StopReason::Pause => ftp::StopReason::Pause,
+        StopReason::Cancel => ftp::StopReason::Cancel,
     }
 }
 
-/// Emit a `transfer-progress` event for `handle`'s current snapshot.
-fn emit(
+/// Map the FTP primitive's outcome onto the shared attempt vocabulary.
+fn attempt_outcome(outcome: ftp::AttemptOutcome) -> AttemptOutcome {
+    match outcome {
+        ftp::AttemptOutcome::Completed { transferred } => AttemptOutcome::Completed { transferred },
+        ftp::AttemptOutcome::Stopped {
+            transferred,
+            reason,
+        } => AttemptOutcome::Stopped {
+            transferred,
+            reason: match reason {
+                ftp::StopReason::Pause => StopReason::Pause,
+                ftp::StopReason::Cancel => StopReason::Cancel,
+            },
+        },
+        ftp::AttemptOutcome::ResumeRejected => AttemptOutcome::ResumeRejected,
+    }
+}
+
+/// Drop a non-zero resume offset the server cannot honour: it answered `FEAT`
+/// without `REST STREAM`, so the attempt restarts from zero instead of sending a
+/// `REST` it would refuse. Surfaced in the log and on the row.
+fn drop_unsupported_resume(
+    cursor: &mut ResumeCursor,
+    caps: FtpServerCaps,
     handle: &TransferHandle,
     sink: &ProgressSink,
-    phase: TransferPhase,
-    eta_secs: Option<u64>,
-    message: Option<String>,
 ) {
-    let snap = handle.snapshot();
-    sink(&TransferProgress::from_snapshot(
-        &snap, phase, eta_secs, message,
-    ));
-}
-
-/// Throttled progress reporter shared across chunks of one attempt.
-struct ProgressReporter {
-    handle: Arc<TransferHandle>,
-    sink: ProgressSink,
-    total: u64,
-    progress: Arc<AtomicU64>,
-    meter: ThroughputMeter,
-    last_emit: Instant,
-    last_sample: Instant,
-    last_bytes: u64,
-}
-
-impl ProgressReporter {
-    fn new(
-        handle: Arc<TransferHandle>,
-        sink: ProgressSink,
-        total: u64,
-        progress: Arc<AtomicU64>,
-        start_bytes: u64,
-    ) -> Self {
-        let now = Instant::now();
-        Self {
-            handle,
-            sink,
-            total,
-            progress,
-            meter: ThroughputMeter::default(),
-            last_emit: now,
-            last_sample: now,
-            last_bytes: start_bytes,
-        }
+    if cursor.offset == 0 || caps.may_resume() {
+        return;
     }
-
-    fn report(&mut self, transferred: u64) {
-        self.progress.store(transferred, Ordering::Relaxed);
-        let now = Instant::now();
-        let dt = now.saturating_duration_since(self.last_sample);
-        let delta = transferred.saturating_sub(self.last_bytes);
-        self.meter.record(delta, dt);
-        self.last_sample = now;
-        self.last_bytes = transferred;
-
-        let speed = self.meter.speed_bps();
-        self.handle.set_metrics(transferred, self.total, speed);
-
-        if now.saturating_duration_since(self.last_emit) >= PROGRESS_THROTTLE {
-            let eta = self.meter.eta_secs(self.total.saturating_sub(transferred));
-            emit(
-                &self.handle,
-                &self.sink,
-                TransferPhase::Transferring,
-                eta,
-                None,
-            );
-            self.last_emit = now;
-        }
-    }
-}
-
-/// Wait until a queued transfer is promoted to Active (returns `true`) or is
-/// cancelled while waiting (returns `false`).
-async fn wait_for_active(handle: &Arc<TransferHandle>, registry: &TransferRegistry) -> bool {
-    use super::scheduler::Admission;
-    if registry.request_slot(handle) == Admission::Run {
-        return true;
-    }
-    loop {
-        if handle.is_cancelled() {
-            return false;
-        }
-        if handle.state().is_active() {
-            return true;
-        }
-        handle.wait_for_signal().await;
-    }
-}
-
-/// Wait for a resume/retry request (returns `true`) or a cancel (returns
-/// `false`) on a paused/failed transfer.
-async fn wait_for_resume(handle: &Arc<TransferHandle>) -> bool {
-    loop {
-        if handle.is_cancelled() {
-            return false;
-        }
-        if handle.take_resume_request() {
-            return true;
-        }
-        handle.wait_for_signal().await;
-    }
-}
-
-/// Sleep for `delay`, returning `true` if the transfer was cancelled meanwhile.
-async fn cancellable_backoff(handle: &Arc<TransferHandle>, delay: std::time::Duration) -> bool {
-    tokio::select! {
-        _ = tokio::time::sleep(delay) => handle.is_cancelled(),
-        _ = handle.wait_for_signal() => handle.is_cancelled(),
-    }
+    info!(
+        backend = BACKEND,
+        transfer_id = %handle.transfer_id,
+        requested = cursor.offset,
+        "server does not advertise REST STREAM in FEAT; restarting from zero"
+    );
+    cursor.offset = 0;
+    emit(
+        handle,
+        sink,
+        TransferPhase::Transferring,
+        None,
+        Some("resume not supported by server; restarting from start".to_string()),
+    );
 }
 
 /// Run attempts (with auto-retry/backoff) for one Active stint. Keeps the slot
 /// across transient retries; returns once the transfer completes, is cancelled,
-/// is paused, or exhausts its retry budget.
-#[allow(clippy::too_many_arguments)]
+/// is paused, or exhausts its retry budget. Before every attempt the server is
+/// probed and the resume point re-verified.
 async fn run_attempts(
     config: &FtpConfig,
     direction: FtpDirection,
     remote_path: &str,
     local_path: &str,
-    offset: &mut u64,
-    total: u64,
+    cursor: &mut ResumeCursor,
     handle: &Arc<TransferHandle>,
     sink: &ProgressSink,
 ) -> AttemptsResult {
@@ -178,86 +171,74 @@ async fn run_attempts(
         attempt += 1;
         handle.set_attempt(attempt);
 
-        let progress = Arc::new(AtomicU64::new(*offset));
+        let endpoints = match probe_endpoints(config, direction, remote_path, local_path).await {
+            Ok(endpoints) => endpoints,
+            Err(e) => {
+                let e = FtpTransferError::Session(e);
+                if let Some(outcome) =
+                    handle_attempt_error(handle, sink, attempt, &e, BACKEND).await
+                {
+                    return outcome;
+                }
+                continue;
+            }
+        };
+        drop_unsupported_resume(cursor, endpoints.caps, handle, sink);
+        apply_resume_gate(
+            cursor,
+            handle,
+            sink,
+            endpoints.source,
+            endpoints.present,
+            BACKEND,
+        );
+
+        let progress = Arc::new(AtomicU64::new(cursor.offset));
         let mut reporter = ProgressReporter::new(
             handle.clone(),
             sink.clone(),
-            total,
+            cursor.total,
             progress.clone(),
-            *offset,
+            cursor.offset,
         );
         let stop_handle = handle.clone();
-        let result = run_attempt(
-            config,
-            direction,
-            remote_path,
-            local_path,
-            *offset,
-            |t| reporter.report(t),
-            move || stop_reason(&stop_handle),
+        let offset = cursor.offset;
+        let attempt_fut = async {
+            run_attempt(
+                config,
+                direction,
+                remote_path,
+                local_path,
+                offset,
+                |t| reporter.report(t),
+                move || stop_reason(&stop_handle).map(ftp_stop),
+            )
+            .await
+            .map(attempt_outcome)
+            .map_err(FtpTransferError::Session)
+        };
+        let result = guard_stall(
+            attempt_fut,
+            &progress,
+            handle,
+            STALL_TIMEOUT,
+            FtpTransferError::Stalled,
         )
         .await;
-        *offset = progress.load(Ordering::Relaxed);
+        cursor.offset = progress.load(Ordering::Relaxed);
 
-        match result {
-            Ok(AttemptOutcome::Completed { transferred }) => {
-                *offset = transferred;
-                handle.set_metrics(transferred, total.max(transferred), 0);
-                handle.transition(TransferEvent::Complete);
-                return AttemptsResult::Completed;
-            }
-            Ok(AttemptOutcome::Stopped {
-                transferred,
-                reason: StopReason::Cancel,
-            }) => {
-                *offset = transferred;
-                handle.transition(TransferEvent::Cancel);
-                return AttemptsResult::Cancelled;
-            }
-            Ok(AttemptOutcome::Stopped {
-                transferred,
-                reason: StopReason::Pause,
-            }) => {
-                *offset = transferred;
-                handle.transition(TransferEvent::Pause);
-                return AttemptsResult::Paused;
-            }
-            Err(e) => {
-                match super::backoff_delay(attempt) {
-                    Some(delay) => {
-                        // Transient failure: report `failed (n/max)` but keep the
-                        // row alive (legacy phase stays `transferring`), wait the
-                        // backoff, then retry from `offset` on the same slot.
-                        handle.transition(TransferEvent::Fail { attempt });
-                        warn!(transfer_id = %handle.transfer_id, attempt, error = %e, "FTP transfer attempt failed; retrying");
-                        emit(
-                            handle,
-                            sink,
-                            TransferPhase::Transferring,
-                            None,
-                            Some(e.to_string()),
-                        );
-                        if cancellable_backoff(handle, delay).await {
-                            handle.transition(TransferEvent::Cancel);
-                            return AttemptsResult::Cancelled;
-                        }
-                        handle.transition(TransferEvent::Retry);
-                        handle.transition(TransferEvent::Activate);
-                    }
-                    None => {
-                        handle.transition(TransferEvent::Fail { attempt });
-                        warn!(transfer_id = %handle.transfer_id, attempt, error = %e, "FTP transfer failed permanently");
-                        emit(
-                            handle,
-                            sink,
-                            TransferPhase::Error,
-                            None,
-                            Some(e.to_string()),
-                        );
-                        return AttemptsResult::FailedPermanent;
-                    }
-                }
-            }
+        if let Some(outcome) = settle_attempt(
+            result,
+            cursor,
+            &mut attempt,
+            handle,
+            sink,
+            BACKEND,
+            "server",
+        )
+        .await
+        {
+            return outcome;
         }
     }
 }
@@ -274,6 +255,14 @@ async fn cleanup_partial(direction: FtpDirection, local_path: &str) {
 /// Drive a queued FTP transfer to a terminal state, emitting `transfer-progress`
 /// throughout. Consumes the handle registered via
 /// [`TransferRegistry::enqueue`]; drops the registry entry on completion.
+///
+/// `start_offset` seeds the first Active stint's resume offset: `0` for a fresh
+/// transfer, the persisted `resume_offset` for a **rehydrated** transfer
+/// relaunched after an app restart (#3206). The checkpoint is kept only when the
+/// source still matches the persisted size and mtime (see
+/// [`rehydrate_start_offset`]) and the server supports `REST STREAM`; the
+/// destination is still byte-verified before the first append.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_ftp_transfer(
     config: FtpConfig,
     direction: FtpDirection,
@@ -282,81 +271,54 @@ pub async fn run_ftp_transfer(
     handle: Arc<TransferHandle>,
     registry: TransferRegistry,
     sink: ProgressSink,
+    start_offset: u64,
 ) {
-    // Establish the total up front so progress/ETA are meaningful.
-    let total = match direction {
-        FtpDirection::Download => probe_remote_size(&config, &remote_path).await.unwrap_or(0),
-        FtpDirection::Upload => tokio::fs::metadata(&local_path)
-            .await
-            .map(|m| m.len())
-            .unwrap_or(0),
+    // Establish the source identity + total up front so progress/ETA are
+    // meaningful and a later resume can detect a changed source.
+    let baseline = match probe_endpoints(&config, direction, &remote_path, &local_path).await {
+        Ok(endpoints) => endpoints.source,
+        Err(e) => {
+            debug!(error = %e, "FTP probe failed before the transfer; source unknown");
+            None
+        }
     };
-    handle.set_metrics(0, total, 0);
+    let total = baseline.map(|fp| fp.size).unwrap_or(0);
+    // A rehydrated transfer's handle was registered with its persisted total.
+    let offset = rehydrate_start_offset(start_offset, &handle, baseline, BACKEND);
+    handle.set_metrics(offset, total, 0);
     emit(&handle, &sink, TransferPhase::Transferring, None, None);
 
-    let mut offset = 0u64;
-    loop {
-        // Acquire (or re-acquire) a concurrency slot; the handle becomes Active.
-        if !wait_for_active(&handle, &registry).await {
-            handle.transition(TransferEvent::Cancel);
-            cleanup_partial(direction, &local_path).await;
-            emit(&handle, &sink, TransferPhase::Cancelled, None, None);
-            registry.drop_entry(&handle.transfer_id);
-            return;
-        }
-        emit(&handle, &sink, TransferPhase::Transferring, None, None);
-
-        match run_attempts(
-            &config,
-            direction,
-            &remote_path,
-            &local_path,
-            &mut offset,
-            total,
-            &handle,
-            &sink,
-        )
-        .await
-        {
-            AttemptsResult::Completed => {
-                info!(transfer_id = %handle.transfer_id, transferred = offset, "FTP transfer complete");
-                emit(&handle, &sink, TransferPhase::Done, None, None);
-                registry.drop_entry(&handle.transfer_id);
-                return;
-            }
-            AttemptsResult::Cancelled => {
-                info!(transfer_id = %handle.transfer_id, "FTP transfer cancelled");
-                cleanup_partial(direction, &local_path).await;
-                emit(&handle, &sink, TransferPhase::Cancelled, None, None);
-                registry.drop_entry(&handle.transfer_id);
-                return;
-            }
-            AttemptsResult::Paused => {
-                // Release the slot so a queued peer can run while paused.
-                registry.release_slot(&handle);
-                emit(&handle, &sink, TransferPhase::Transferring, None, None);
-                if !wait_for_resume(&handle).await {
-                    handle.transition(TransferEvent::Cancel);
-                    cleanup_partial(direction, &local_path).await;
-                    emit(&handle, &sink, TransferPhase::Cancelled, None, None);
-                    registry.drop_entry(&handle.transfer_id);
-                    return;
-                }
-                handle.transition(TransferEvent::Resume); // Paused → Queued
-            }
-            AttemptsResult::FailedPermanent => {
-                // Release the slot; keep the handle for a manual retry.
-                registry.release_slot(&handle);
-                if !wait_for_resume(&handle).await {
-                    handle.transition(TransferEvent::Cancel);
-                    cleanup_partial(direction, &local_path).await;
-                    emit(&handle, &sink, TransferPhase::Cancelled, None, None);
-                    registry.drop_entry(&handle.transfer_id);
-                    return;
-                }
-                handle.set_attempt(0);
-                handle.transition(TransferEvent::Retry); // Failed → Queued
-            }
-        }
-    }
+    let cursor = ResumeCursor {
+        offset,
+        total,
+        baseline,
+    };
+    let (config, remote_path, local_path, handle, sink) =
+        (&config, &remote_path, &local_path, &handle, &sink);
+    drive_transfer(
+        handle,
+        &registry,
+        sink,
+        BACKEND,
+        cursor,
+        |mut cursor| async move {
+            let result = run_attempts(
+                config,
+                direction,
+                remote_path,
+                local_path,
+                &mut cursor,
+                handle,
+                sink,
+            )
+            .await;
+            (result, cursor)
+        },
+        || cleanup_partial(direction, local_path),
+    )
+    .await;
 }
+
+#[cfg(test)]
+#[path = "ftp_tests.rs"]
+mod tests;

@@ -51,6 +51,12 @@ use crate::workspace::settings::apply_session_defaults;
 /// source can be folded server-side as `session.reconnect` (resilient) vs
 /// `session.dropped` (non-resilient) — converging with the client's
 /// `setTerminalExited` classification. Defaults to `false`.
+///
+/// `unattended` marks a connect with nobody at the keyboard — a scheduled run
+/// connecting a saved target (#3527). It must never prompt: an untrusted host
+/// key or a keyboard-interactive round fails fast with the typed
+/// `host_key_untrusted` / `interaction_required` code instead of asking. It is
+/// direct-only (an agent relays its own prompts). Defaults to `false`.
 // Tauri command: the argument list is the IPC surface (typed params + injected
 // State), so it cannot be collapsed into a struct without losing the command
 // binding — the arity lint does not apply here.
@@ -63,11 +69,20 @@ pub async fn create_connection(
     connect_id: Option<String>,
     spawned: Option<bool>,
     resilient_reconnect: Option<bool>,
+    unattended: Option<bool>,
     app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
     conn_manager: State<'_, ConnectionManager>,
 ) -> Result<String, TerminalError> {
-    info!(type_id, agent_id = ?agent_id, spawned = ?spawned, "Creating connection");
+    let unattended = unattended.unwrap_or(false);
+    info!(type_id, agent_id = ?agent_id, spawned = ?spawned, unattended, "Creating connection");
+    // An agent relays its own prompts, which the unattended scope cannot reach:
+    // an unattended connect is direct-only (#3527).
+    if unattended && agent_id.is_some() {
+        return Err(TerminalError::SpawnFailed(
+            "An agent-hosted connection cannot be connected unattended".to_string(),
+        ));
+    }
     // Expand any saved-connection jump-host references to inline hops before the
     // settings reach core (which only connects with inline hops) — #940.
     conn_manager
@@ -109,17 +124,20 @@ pub async fn create_connection(
         fold_session_transition(&app_handle, |store| store.connect(tab_id));
     }
 
-    let result = manager
-        .create_connection(
-            &type_id,
-            settings,
-            agent_id.as_deref(),
-            connect_id.as_deref(),
-            spawned.unwrap_or(false),
-            resilient_reconnect.unwrap_or(false),
-            app_handle.clone(),
-        )
-        .await;
+    let connect = manager.create_connection(
+        &type_id,
+        settings,
+        agent_id.as_deref(),
+        connect_id.as_deref(),
+        spawned.unwrap_or(false),
+        resilient_reconnect.unwrap_or(false),
+        app_handle.clone(),
+    );
+    let result = if unattended {
+        termihub_core::backends::ssh::unattended::run_unattended(connect).await
+    } else {
+        connect.await
+    };
 
     if let (Some(tab_id), Ok(session_id)) = (&initial_tab_id, &result) {
         // Also propagate the backend session id into the shared region (#2457):
@@ -934,6 +952,7 @@ fn spawn_session_transfer(
                     handle,
                     registry,
                     sink,
+                    0,
                 )
                 .await;
             });

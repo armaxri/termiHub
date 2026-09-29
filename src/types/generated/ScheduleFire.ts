@@ -30,4 +30,12 @@ targets: ScheduleTargets,
 /**
  * `true` when this is a catch-up for a missed slot.
  */
-catchUp: boolean, };
+catchUp: boolean, 
+/**
+ * For a schedule with "Connect if not connected" (#3527): the one window
+ * that connects the targets not connected there — unattended — before it
+ * runs, and closes the tabs it opened afterwards. Every other window runs
+ * on its connected terminals only. Absent when the schedule does not
+ * connect (every window runs on its connected terminals, as before).
+ */
+connectWindow?: string, };

@@ -110,6 +110,17 @@ describe("SchedulesSection (PROD-043)", () => {
     expect(setScheduleEnabled).toHaveBeenCalledWith("s1", true, true);
   });
 
+  it("the confirmation says a connecting schedule also connects the hosts (#3527)", () => {
+    render([view()]);
+    act(() => query("schedule-enable-s1")!.click());
+    expect(query("schedule-confirm-connects")).toBeNull();
+    act(() => query("schedule-enable-confirm-cancel")!.click());
+
+    render([view({ connectIfNeeded: true })]);
+    act(() => query("schedule-enable-s1")!.click());
+    expect(query("schedule-confirm-connects")!.textContent).toContain("never asking");
+  });
+
   it("cancelling the confirmation leaves the schedule disabled", () => {
     render([view()]);
     act(() => query("schedule-enable-s1")!.click());

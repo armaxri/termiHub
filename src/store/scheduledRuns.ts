@@ -9,9 +9,14 @@
  * - it only types into terminals that are already **open and connected** and
  *   were opened from one of the schedule's saved connections (or broadcast
  *   group members) — never the active tab, never a fuzzy match;
- * - it never connects, and never prompts: a workflow parameter without a usable
- *   default, or a local program that is not already allowlisted, makes the run
- *   skip / fail instead of asking;
+ * - it never prompts: a workflow parameter without a usable default, or a
+ *   local program that is not already allowlisted, makes the run skip / fail
+ *   instead of asking;
+ * - it connects nothing — unless the schedule opts into "Connect if not
+ *   connected" (#3527) and this is the fire's `connectWindow`: then the targets
+ *   with no connected terminal here are connected **unattended** first (never
+ *   prompting; a target that would need input is skipped with the reason), and
+ *   the tabs this opened are closed when the run ends, whatever its outcome;
  * - it never supersedes something the user started: if a workflow run (or a
  *   macro playback) is already in flight in this window, the run is skipped.
  *
@@ -38,6 +43,7 @@ import {
   type FanoutOutcome,
 } from "./slices/workflowFanout";
 import { newMacroRunId } from "./slices/macroRunHistory";
+import { closeRunTabs, connectMissingTargets, type UnattendedConnector } from "./scheduledConnect";
 import { activeWorkflowRunCount, runWorkflowOnTarget } from "./slices/workflowRunOnTarget";
 
 /** The store access a scheduled run needs. */
@@ -217,13 +223,51 @@ async function runScheduledMacro(
   }
 }
 
+/** Options of {@link executeScheduledRun}. */
+export interface ScheduledRunOptions {
+  /**
+   * Set when this window is the fire's `connectWindow` (#3527): the unattended
+   * connector to connect the targets not connected here with, before running.
+   */
+  connectMissing?: UnattendedConnector;
+  /** How long an opened tab may take to attach (a test seam). */
+  readyTimeoutMs?: number;
+}
+
+/** Fold the targets an unattended connect skipped into the window's report. */
+function withSkippedTargets(report: WindowRunReport, skipped: readonly string[]): WindowRunReport {
+  if (skipped.length === 0) return report;
+  const detail = skipped.join("; ");
+  if (report.outcome === "skipped" && report.targetsRun === 0) {
+    return { ...report, message: detail };
+  }
+  const message = report.message ? `${report.message}; ${detail}` : detail;
+  return { ...report, message };
+}
+
+/** Run the fire's action on `tabIds` in this window. */
+async function runAction(
+  fire: ScheduleFire,
+  tabIds: string[],
+  store: ScheduledRunStore
+): Promise<WindowRunReport> {
+  if (fire.action.kind === "workflow") {
+    const workflowId = fire.action.workflowId;
+    const workflow = store.getState().workflows.find((w) => w.id === workflowId);
+    if (!workflow) return skip("The workflow no longer exists");
+    return await runScheduledWorkflow(fire, workflow, tabIds, store);
+  }
+  return await runScheduledMacro(fire.action.macroId, tabIds, store);
+}
+
 /**
  * Execute a fired schedule in this window and return the report (without
  * sending it). Never throws: an unexpected error becomes a `failed` report.
  */
 export async function executeScheduledRun(
   fire: ScheduleFire,
-  store: ScheduledRunStore
+  store: ScheduledRunStore,
+  options: ScheduledRunOptions = {}
 ): Promise<WindowRunReport> {
   const busy = busyReason(store.getState());
   if (busy) return skip(busy);
@@ -231,14 +275,23 @@ export async function executeScheduledRun(
   try {
     const connectionIds = resolveTargetConnectionIds(fire.targets, currentBroadcastGroups());
     if (connectionIds === null) return skip("The broadcast group no longer exists");
-    const tabIds = targetTabIds(store.getState(), connectionIds);
-    if (fire.action.kind === "workflow") {
-      const workflowId = fire.action.workflowId;
-      const workflow = store.getState().workflows.find((w) => w.id === workflowId);
-      if (!workflow) return skip("The workflow no longer exists");
-      return await runScheduledWorkflow(fire, workflow, tabIds, store);
+    if (!options.connectMissing) {
+      return await runAction(fire, targetTabIds(store.getState(), connectionIds), store);
     }
-    return await runScheduledMacro(fire.action.macroId, tabIds, store);
+    const connected = await connectMissingTargets(
+      store.getState,
+      connectionIds,
+      options.connectMissing,
+      options.readyTimeoutMs
+    );
+    closeRunTabs(store.getState, connected.abandoned, false);
+    try {
+      const report = await runAction(fire, targetTabIds(store.getState(), connectionIds), store);
+      return withSkippedTargets(report, connected.skipped);
+    } finally {
+      // Tabs the run opened close whatever its outcome (#3527).
+      closeRunTabs(store.getState, connected.opened, true);
+    }
   } catch (err) {
     frontendLog("schedules", `scheduled run ${fire.scheduleId} failed: ${errorMessage(err)}`);
     return { outcome: "failed", message: errorMessage(err), targetsRun: 0 };

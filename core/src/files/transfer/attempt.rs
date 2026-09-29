@@ -58,8 +58,8 @@ pub(super) enum AttemptOutcome {
     /// executor (a local file can always be seeked), so it is unused when
     /// `local-transfer` is the only executor compiled in.
     #[cfg_attr(
-        not(any(test, feature = "ssh", feature = "docker")),
-        expect(dead_code, reason = "only the ssh/docker executors produce it")
+        not(any(test, feature = "ssh", feature = "docker", feature = "ftp")),
+        expect(dead_code, reason = "only the ssh/docker/ftp executors produce it")
     )]
     ResumeRejected,
 }
@@ -198,6 +198,13 @@ async fn cancellable_backoff(handle: &Arc<TransferHandle>, delay: Duration) -> b
 }
 
 /// Translate a [`ChunkedCopyOutcome`] into an [`AttemptOutcome`].
+#[cfg_attr(
+    not(any(feature = "ssh", feature = "docker", feature = "local-transfer")),
+    allow(
+        dead_code,
+        reason = "the FTP executor streams through its own primitive"
+    )
+)]
 pub(super) fn map_copy_outcome(outcome: ChunkedCopyOutcome<StopReason>) -> AttemptOutcome {
     match outcome {
         ChunkedCopyOutcome::Completed { transferred } => AttemptOutcome::Completed { transferred },
@@ -215,6 +222,13 @@ pub(super) fn map_copy_outcome(outcome: ChunkedCopyOutcome<StopReason>) -> Attem
 /// so the bytes counted as transferred have actually landed — pipelined writes
 /// are acknowledged asynchronously. A failure is harmless: the next attempt
 /// byte-verifies the destination anyway.
+#[cfg_attr(
+    not(any(feature = "ssh", feature = "docker", feature = "local-transfer")),
+    allow(
+        dead_code,
+        reason = "the FTP executor streams through its own primitive"
+    )
+)]
 pub(super) async fn settle_writer<W: tokio::io::AsyncWrite + Unpin>(
     writer: &mut W,
     outcome: &ChunkedCopyOutcome<StopReason>,
@@ -422,6 +436,13 @@ pub(super) async fn local_size(path: &str) -> Option<u64> {
 /// Open the local destination for a resumed download: the existing partial is
 /// opened for writing and the file pointer is seeked to `offset` so the copy
 /// appends rather than truncates. A zero offset creates/truncates the file.
+#[cfg_attr(
+    not(any(feature = "ssh", feature = "docker", feature = "local-transfer")),
+    allow(
+        dead_code,
+        reason = "the FTP executor streams through its own primitive"
+    )
+)]
 pub(super) async fn open_local_dest(
     local_path: &str,
     offset: u64,
@@ -440,6 +461,13 @@ pub(super) async fn open_local_dest(
 
 /// Open the local source for a resumed upload: the file is opened for reading
 /// and seeked to `offset` so only the not-yet-sent tail is streamed.
+#[cfg_attr(
+    not(any(feature = "ssh", feature = "docker", feature = "local-transfer")),
+    allow(
+        dead_code,
+        reason = "the FTP executor streams through its own primitive"
+    )
+)]
 pub(super) async fn open_local_read(
     local_path: &str,
     offset: u64,

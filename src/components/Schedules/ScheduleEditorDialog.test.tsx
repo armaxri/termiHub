@@ -101,6 +101,24 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
     });
   });
 
+  it("offers 'Connect if not connected', off by default, with its help text (#3527)", async () => {
+    const onSave = vi.fn();
+    render({ onSave });
+    const box = query("schedule-editor-connect")!;
+    expect(box.getAttribute("aria-checked")).toBe("false");
+    const text = query("schedule-editor-dialog")!.textContent ?? "";
+    expect(text).toContain("Connect if not connected");
+    expect(text).toContain("Tabs opened for the run close when it ends");
+    expect(text).toContain("tabs that were already open stay open");
+
+    setInput("schedule-editor-name", "Ping");
+    act(() => query("schedule-editor-connection-c1")!.click());
+    act(() => box.click());
+    expect(box.getAttribute("aria-checked")).toBe("true");
+    await act(async () => query("schedule-editor-save")!.click());
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ connectIfNeeded: true }));
+  });
+
   it("shows an inline error for an out-of-range interval", () => {
     render({});
     setInput("schedule-editor-every", "0");

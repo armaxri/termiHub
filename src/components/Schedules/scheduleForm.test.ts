@@ -163,3 +163,28 @@ describe("formatNextRun", () => {
     expect(formatNextRun("garbage", now)).toBe("");
   });
 });
+
+describe("connect if not connected (#3527)", () => {
+  const base: ScheduleInput = {
+    id: "s1",
+    name: "Health",
+    action: { kind: "workflow", workflowId: "wf" },
+    targets: { kind: "connections", connectionIds: ["c1"] },
+    rule: { kind: "interval", everyMinutes: 15 },
+    missedRuns: "skip",
+  };
+
+  it("is off by default and a schedule without it stays without it", () => {
+    expect(blankScheduleForm().connectIfNeeded).toBe(false);
+    const form = scheduleToForm(base);
+    expect(form.connectIfNeeded).toBe(false);
+    expect(formToScheduleInput("s1", form)).not.toHaveProperty("connectIfNeeded");
+  });
+
+  it("round-trips when on", () => {
+    const form = scheduleToForm({ ...base, connectIfNeeded: true });
+    expect(form.connectIfNeeded).toBe(true);
+    expect(issues(valid({ connectIfNeeded: true }))).toEqual([]);
+    expect(formToScheduleInput("s1", form).connectIfNeeded).toBe(true);
+  });
+});
