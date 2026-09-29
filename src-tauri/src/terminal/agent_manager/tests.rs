@@ -1730,6 +1730,59 @@ fn agent_hosted_connect_failure_kind_reaches_the_ipc_code() {
     }
 }
 
+/// An agent-hosted credential rejection (#3089): the exact error line a 0.19.0
+/// agent writes when its session's SSH server rejected the credentials maps to
+/// the typed [`TerminalError::AuthFailed`] — not a flattened remote error — so
+/// the tab folds the terminal `authFailed` state and the frontend offers
+/// credential re-entry, exactly as for a direct connection.
+#[test]
+fn agent_hosted_auth_rejection_is_the_typed_auth_failure() {
+    use crate::utils::errors::IpcErrorCode;
+    let line = json!({
+        "jsonrpc": "2.0",
+        "id": 9,
+        "error": {
+            "code": termihub_core::protocol::errors::SESSION_CREATION_FAILED,
+            "message": "Authentication failed",
+            "data": { "connect_failure": "auth_failed" },
+        },
+    })
+    .to_string();
+    let crate::terminal::jsonrpc::JsonRpcMessage::Error {
+        code: rpc_code,
+        message,
+        data,
+        ..
+    } = crate::terminal::jsonrpc::parse_message(&line).unwrap()
+    else {
+        panic!("expected an error response");
+    };
+    let err = AgentRpcFailure::from_error_response(rpc_code, message, data.as_ref())
+        .into_terminal_error();
+    assert!(matches!(err, TerminalError::AuthFailed(_)), "{err:?}");
+    assert_eq!(err.code(), IpcErrorCode::AuthFailed);
+    let envelope = serde_json::to_value(&err).unwrap();
+    assert_eq!(envelope["code"], "auth_failed");
+    assert_eq!(envelope["message"], "Authentication failed");
+}
+
+/// Old-agent fallback (#3089): a pre-0.19.0 agent sends the same rejection
+/// without `data`. Its message still says "Authentication failed", but the
+/// desktop never classifies by message text (I18N-001) — it stays a generic
+/// remote error rather than a (possibly wrong) credential rejection.
+#[test]
+fn old_agent_auth_rejection_without_data_stays_remote_error() {
+    use crate::utils::errors::IpcErrorCode;
+    let err = AgentRpcFailure::from_error_response(
+        Some(termihub_core::protocol::errors::SESSION_CREATION_FAILED),
+        "Backend failed: Connection failed: Authentication failed".into(),
+        None,
+    )
+    .into_terminal_error();
+    assert!(matches!(err, TerminalError::RemoteError(_)), "{err:?}");
+    assert_eq!(err.code(), IpcErrorCode::RemoteError);
+}
+
 /// An older agent sends no `data` (and a newer one may send a kind this build
 /// does not know): the failure keeps today's generic `remote_error`.
 #[test]

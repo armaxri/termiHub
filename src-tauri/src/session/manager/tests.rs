@@ -228,6 +228,8 @@ struct MockEventEmitter {
     /// Recorded `fold_connect_failed` calls as `(tab_id, error, auth_failed)`
     /// (#2439; `auth_failed` added for SM-005).
     connect_faileds: std::sync::Arc<std::sync::Mutex<Vec<(String, String, bool)>>>,
+    /// Recorded `fold_retry_auth_failed` calls as `(tab_id, error)` (#3089).
+    retry_auth_faileds: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
     fail_output: bool,
 }
 
@@ -260,6 +262,12 @@ impl EventEmitter for MockEventEmitter {
             error.to_string(),
             auth_failed,
         ));
+    }
+    fn fold_retry_auth_failed(&self, tab_id: &str, error: &str) {
+        self.retry_auth_faileds
+            .lock()
+            .unwrap()
+            .push((tab_id.to_string(), error.to_string()));
     }
 }
 
@@ -1388,6 +1396,10 @@ struct RetainAgent {
     outputs: std::sync::Mutex<Vec<OutputSender>>,
     /// The `correlation_id` every `connection.create` carried (#3085).
     correlation_ids: std::sync::Arc<std::sync::Mutex<Vec<Option<String>>>>,
+    /// When set, `connection.create` fails with a `SESSION_CREATION_FAILED`
+    /// error carrying this optional `data` — built through the real agent
+    /// error mapping, as the io task would (#3089).
+    create_error_data: Option<Option<Value>>,
 }
 
 type Recorded = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
@@ -1409,6 +1421,7 @@ impl RetainAgent {
                 retained: retained.clone(),
                 outputs: std::sync::Mutex::new(Vec::new()),
                 correlation_ids: Default::default(),
+                create_error_data: None,
             },
             retained,
             cleared,
@@ -1495,6 +1508,16 @@ impl AgentRpcClient for RetainAgent {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(correlation_id.map(str::to_string));
+        if let Some(data) = &self.create_error_data {
+            return Err(
+                crate::terminal::agent_manager::AgentRpcFailure::from_error_response(
+                    Some(termihub_core::protocol::errors::SESSION_CREATION_FAILED),
+                    "Authentication failed".into(),
+                    data.as_ref(),
+                )
+                .into_terminal_error(),
+            );
+        }
         self.create_session(agent_id, session_type, config, title, definition_id)
     }
     fn attach_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
@@ -4698,4 +4721,128 @@ async fn failed_create_releases_its_reservation() {
         0,
         "a failed create must not leak a slot"
     );
+}
+
+// ── Agent-hosted auth rejection (#3089) ──────────────────────────────
+
+/// A manager whose agent answers every `connection.create` with a rejected
+/// credential, carrying `data` (the 0.19.0 `connect_failure`, or `None` for an
+/// older agent).
+fn auth_rejecting_agent_manager(data: Option<Value>) -> SessionManager {
+    let mut registry = termihub_core::connection::ConnectionTypeRegistry::new();
+    registry.register(
+        "mock",
+        "Mock",
+        "mock",
+        Box::new(|| Box::new(MockConnection::default())),
+    );
+    let (mut agent, _retained, _cleared) = RetainAgent::recording();
+    agent.create_error_data = Some(data);
+    SessionManager::new(registry, Arc::new(agent))
+}
+
+/// End to end through the agent error path: the agent's typed `auth_failed`
+/// survives the remote proxy as `TerminalError::AuthFailed` (not a flattened
+/// `SpawnFailed`), and the initial connect folds the terminal `authFailed`
+/// state, so an agent tab stops instead of auto-retrying a doomed login.
+#[tokio::test]
+async fn agent_hosted_auth_rejection_arrives_typed_and_folds_auth_failed() {
+    let manager = auth_rejecting_agent_manager(Some(serde_json::json!({
+        "connect_failure": "auth_failed"
+    })));
+    let emitter = MockEventEmitter::new();
+    let result = manager
+        .create_connection(
+            "ssh",
+            serde_json::json!({ "host": "h", "authMethod": "password" }),
+            Some("agent-1"),
+            Some("tab-g:0"),
+            false,
+            false,
+            emitter.clone(),
+        )
+        .await;
+    let err = result.expect_err("the agent rejected the credentials");
+    assert!(matches!(err, TerminalError::AuthFailed(_)), "{err:?}");
+    assert_eq!(err.code(), crate::utils::errors::IpcErrorCode::AuthFailed);
+    let folds = emitter.connect_faileds.lock().unwrap().clone();
+    assert_eq!(folds.len(), 1, "{folds:?}");
+    assert_eq!(folds[0].0, "tab-g");
+    assert!(folds[0].2, "folded as the terminal auth rejection");
+}
+
+/// A user-initiated retry (`retryCount > 0`, e.g. after re-entering
+/// credentials) that is rejected again folds `authFailed` through the guarded
+/// retry fold, so the tab lands back on the re-entry overlay (#3089).
+#[tokio::test]
+async fn agent_hosted_auth_rejection_on_a_retry_uses_the_guarded_retry_fold() {
+    let manager = auth_rejecting_agent_manager(Some(serde_json::json!({
+        "connect_failure": "auth_failed"
+    })));
+    let emitter = MockEventEmitter::new();
+    let result = manager
+        .create_connection(
+            "ssh",
+            serde_json::json!({ "host": "h" }),
+            Some("agent-1"),
+            Some("tab-g:3"),
+            false,
+            false,
+            emitter.clone(),
+        )
+        .await;
+    assert!(matches!(result, Err(TerminalError::AuthFailed(_))));
+    assert!(emitter.connect_faileds.lock().unwrap().is_empty());
+    let retries = emitter.retry_auth_faileds.lock().unwrap().clone();
+    assert_eq!(retries.len(), 1, "{retries:?}");
+    assert_eq!(retries[0].0, "tab-g");
+}
+
+/// Old-agent fallback: a pre-0.19.0 agent sends no `connect_failure`, so the
+/// failure stays the untyped spawn error it always was — no `authFailed` fold
+/// and no credential-rejection code derived from the message text.
+#[tokio::test]
+async fn old_agent_auth_rejection_stays_an_untyped_spawn_failure() {
+    let manager = auth_rejecting_agent_manager(None);
+    let emitter = MockEventEmitter::new();
+    let result = manager
+        .create_connection(
+            "ssh",
+            serde_json::json!({ "host": "h" }),
+            Some("agent-1"),
+            Some("tab-o:0"),
+            false,
+            false,
+            emitter.clone(),
+        )
+        .await;
+    let err = result.expect_err("the agent rejected the credentials");
+    assert!(matches!(err, TerminalError::SpawnFailed(_)), "{err:?}");
+    assert_ne!(err.code(), crate::utils::errors::IpcErrorCode::AuthFailed);
+    assert!(emitter.connect_faileds.lock().unwrap().is_empty());
+    assert!(emitter.retry_auth_faileds.lock().unwrap().is_empty());
+}
+
+/// A **direct** retry rejected by authentication also uses the guarded retry
+/// fold (#3089); the initial-attempt fold is unchanged.
+#[tokio::test]
+async fn direct_auth_rejection_on_a_retry_uses_the_guarded_retry_fold() {
+    let manager = auth_failing_manager();
+    let emitter = MockEventEmitter::new();
+    let result = manager
+        .create_connection(
+            "auth-failing",
+            serde_json::json!({}),
+            None,
+            Some("tab-d:2"),
+            false,
+            false,
+            emitter.clone(),
+        )
+        .await;
+    assert!(matches!(result, Err(TerminalError::AuthFailed(_))));
+    assert!(emitter.connect_faileds.lock().unwrap().is_empty());
+    let retries = emitter.retry_auth_faileds.lock().unwrap().clone();
+    assert_eq!(retries.len(), 1, "{retries:?}");
+    assert_eq!(retries[0].0, "tab-d");
 }

@@ -238,6 +238,19 @@ function baseSpawnInput(overrides: Partial<AgentSpawnActionInput> = {}): AgentSp
 }
 
 describe("resolveAgentSpawnAction", () => {
+  // #3089: a rejected credential is terminal — retrying the same credentials
+  // can never succeed, so the tab stops (and offers re-entry) instead of
+  // burning the bounded retries, whatever the transport state or attempt.
+  it("authFailed → authFailed (never retried, regardless of state or attempt)", () => {
+    for (const agentState of [undefined, "connected", "connecting", "disconnected"] as const) {
+      for (const attempt of [0, 3, MAX_AGENT_SPAWN_ATTEMPTS]) {
+        expect(
+          resolveAgentSpawnAction(baseSpawnInput({ agentState, attempt, authFailed: true }))
+        ).toEqual<AgentSpawnAction>({ kind: "authFailed" });
+      }
+    }
+  });
+
   describe("agent transport state decides before the attempt count", () => {
     it("connecting → waitForAgent (regardless of attempt)", () => {
       for (const attempt of [0, 3, MAX_AGENT_SPAWN_ATTEMPTS, MAX_AGENT_SPAWN_ATTEMPTS + 10]) {

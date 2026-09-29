@@ -293,3 +293,21 @@ fn classified_backend_failures_become_connect_failed() {
         "Backend failed: Spawn failed: Serial port '/dev/x' not found"
     );
 }
+
+// ── Rejected credentials through a daemon launch (#3089) ────────────
+
+/// An agent-hosted SSH daemon whose server rejected the credentials reports
+/// it typed, so `connection.create` relays `auth_failed` and the desktop tab
+/// reaches the terminal `authFailed` state instead of retrying a doomed login.
+#[tokio::test]
+async fn ssh_daemon_auth_rejection_is_a_typed_auth_failure() {
+    use termihub_core::errors::ConnectFailureKind;
+    let (err, _) = create_failing("ssh", SSH(), || SessionError::AuthFailed).await;
+    match err {
+        SessionCreateError::ConnectFailed(ref f) => {
+            assert_eq!(f.kind, ConnectFailureKind::AuthFailed);
+            assert_eq!(f.message, "Authentication failed");
+        }
+        other => panic!("expected ConnectFailed(auth_failed), got {other:?}"),
+    }
+}

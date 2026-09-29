@@ -3555,10 +3555,11 @@ mod tests {
     /// 0.13.0 made the update RPCs require the auth token, 0.14.0 adds
     /// `docker.list_containers`, 0.15.0 adds its Compose fields, 0.16.0 the
     /// `connection.create` `correlation_id`, 0.17.0 `agent.forward.connect`,
-    /// and 0.18.0 the `connection.create` error's `data.connect_failure`.
+    /// 0.18.0 the `connection.create` error's `data.connect_failure`, and
+    /// 0.19.0 its `auth_failed` kind (#3089).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.18.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.19.0");
     }
 
     // ── agent.forward.connect (desktop port forward, #3241) ────────

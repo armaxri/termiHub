@@ -261,3 +261,41 @@ async fn real_serial_not_found_is_reported_typed() {
     let classified = typed.downcast_ref::<ClassifiedConnectFailure>().unwrap();
     assert_eq!(classified.kind, ConnectFailureKind::NotFound);
 }
+
+// ── Rejected credentials (#3089) ─────────────────────────────────────
+
+/// A rejected credential is relayed as the `auth_failed` kind, derived from
+/// the typed `SessionError::AuthFailed` (never from message text).
+#[test]
+fn daemon_relays_a_rejected_credential_as_auth_failed() {
+    use termihub_core::errors::ConnectFailureKind as K;
+    assert_eq!(
+        relayed_connect_failure_kind(&SessionError::AuthFailed),
+        Some(K::AuthFailed)
+    );
+    let report = RelayFailure::from_session_error(&SessionError::AuthFailed).expect("typed");
+    assert_eq!(report.kind, None);
+    assert_eq!(report.connect_failure, Some(K::AuthFailed));
+    assert_eq!(report.message.as_deref(), Some("Authentication failed"));
+    // A classified kind is passed through unchanged; untyped stays untyped.
+    assert_eq!(
+        relayed_connect_failure_kind(&SessionError::classified(K::Busy, "held")),
+        Some(K::Busy)
+    );
+    assert_eq!(
+        relayed_connect_failure_kind(&SessionError::SpawnFailed("x".into())),
+        None
+    );
+}
+
+#[tokio::test]
+async fn a_rejected_credential_reaches_the_worker_typed() {
+    use termihub_core::errors::ConnectFailureKind as K;
+    let (_hub, _rx, relay) = relay().await;
+    report_connect_failure(relay.endpoint(), &SessionError::AuthFailed).await;
+    let typed = relay.failure_error().expect("typed failure recorded");
+    let classified = typed
+        .downcast_ref::<ClassifiedConnectFailure>()
+        .expect("a classified connect failure");
+    assert_eq!(classified.kind, K::AuthFailed);
+}

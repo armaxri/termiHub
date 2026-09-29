@@ -116,6 +116,38 @@ fn connect_auth_failed_folds_terminal_authfailed_without_arming_a_loop() {
 }
 
 #[test]
+fn retry_auth_failed_folds_only_a_user_retry_that_is_connecting() {
+    // A user-initiated retry (#3089, e.g. after re-entering credentials) is
+    // `connecting` through the client's `session.connect`; its auth rejection
+    // folds terminal `AuthFailed` so the tab returns to the re-entry overlay.
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connect_auth_failed("s1", Some("first".to_string()));
+    store.connect("s1"); // the retry
+    store.retry_auth_failed("s1", Some("Authentication failed".to_string()));
+    let s = store.get("s1").unwrap();
+    assert_eq!(s.status, SessionStatus::AuthFailed);
+    assert_eq!(s.error.as_deref(), Some("Authentication failed"));
+    assert_eq!(s.reconnect.phase, ReconnectPhase::Idle);
+
+    // A backend redrive attempt is `reconnecting`: the guarded fold is a no-op,
+    // leaving the redrive's own `reconnect_auth_failed` (with its give-up
+    // secret scrub) in charge.
+    store.connect("s2");
+    store.connected("s2");
+    store.reconnect("s2");
+    store.reconnect_attempt("s2");
+    store.retry_auth_failed("s2", Some("x".to_string()));
+    let s = store.get("s2").unwrap();
+    assert_eq!(s.status, SessionStatus::Reconnecting);
+    assert_eq!(s.reconnect.phase, ReconnectPhase::Connecting);
+
+    // Unknown session: no entry is created.
+    store.retry_auth_failed("nope", None);
+    assert!(store.get("nope").is_none());
+}
+
+#[test]
 fn reconnect_auth_failed_mid_loop_stops_immediately_and_is_terminal() {
     // An auth rejection arriving mid-reconnect-loop stops the loop at once: the
     // tab folds terminal `AuthFailed` and does NOT arm the next backoff window

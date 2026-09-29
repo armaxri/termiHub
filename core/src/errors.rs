@@ -301,6 +301,8 @@ mod tests {
             "permission_denied"
         );
         assert_eq!(ConnectFailureKind::Busy.code(), "busy");
+        // The same slug as the desktop's `IpcErrorCode::AuthFailed` (#3089).
+        assert_eq!(ConnectFailureKind::AuthFailed.code(), "auth_failed");
         assert_eq!(with_code("busy", "held"), "[thub-code:busy] held");
     }
 
@@ -317,6 +319,15 @@ mod tests {
             assert_eq!(ConnectFailureKind::from_code(kind.code()), Some(kind));
         }
         assert_eq!(ConnectFailureKind::from_code("frobnicated"), None);
+    }
+
+    /// A rejected credential is relayable as a connect-failure kind (#3089),
+    /// but `connect_failure_kind` stays `None` for the bare `AuthFailed`: a
+    /// jump-host label must never turn a hop's rejection into the target's.
+    #[test]
+    fn auth_failed_is_a_relayable_kind_but_not_implied_by_the_variant() {
+        assert!(ConnectFailureKind::ALL.contains(&ConnectFailureKind::AuthFailed));
+        assert_eq!(SessionError::AuthFailed.connect_failure_kind(), None);
     }
 
     #[test]
