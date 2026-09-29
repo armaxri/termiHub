@@ -118,6 +118,7 @@ impl AgentRpcClient for FakeAgent {
             monitoring_supported: false,
             tool_streaming: self.streaming,
             embedded_server_activity: false,
+            session_processes: false,
             agent_version: "0.8.1".to_string(),
         })
     }

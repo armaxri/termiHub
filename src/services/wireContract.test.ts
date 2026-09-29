@@ -200,6 +200,7 @@ describe("wire contract: agent connect / definitions", () => {
       "embeddedServerActivity",
       "maxSessions",
       "monitoringSupported",
+      "sessionProcesses",
       "toolStreaming",
     ]);
     expect(result.capabilities.availableShells).toEqual([]);

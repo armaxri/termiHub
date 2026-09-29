@@ -649,18 +649,26 @@ impl RemoteProxy {
                     // A host that can be monitored can also have its processes
                     // listed/killed (PROD-0028). For a local agent session the
                     // "self"-hosted manager runs on the agent; the agent scopes
-                    // by the connection id it receives (None for local).
-                    // Agent-hosted SSH/Docker/WSL process support is a follow-up —
-                    // the agent returns NotSupported for those today.
-                    let process_connection_id = if session_type == "local" {
+                    // by the connection id it receives (None for local). An
+                    // SSH/Docker/WSL session is scoped to its remote session id,
+                    // which a 0.20.0+ agent (`sessionProcesses`, #3210) serves
+                    // through that session's own backend. On an older agent the
+                    // table still opens and says to update the agent.
+                    let is_local = session_type == "local";
+                    let process_connection_id = if is_local {
                         None
                     } else {
                         Some(remote_sid.clone())
                     };
+                    let agent_serves_session = self
+                        .agent_manager
+                        .get_capabilities(self.agent_id())
+                        .is_some_and(|caps| caps.session_processes);
                     self.process_proxy = Some(Arc::new(RemoteProcessProxy {
                         agent_id: self.agent_id.clone(),
                         connection_id: process_connection_id,
                         agent_manager: self.agent_manager.clone(),
+                        agent_outdated: !is_local && !agent_serves_session,
                     }));
                 }
             }
@@ -967,6 +975,10 @@ pub struct RemoteProcessProxy {
     agent_id: String,
     connection_id: Option<String>,
     agent_manager: Arc<dyn AgentRpcClient>,
+    /// The agent predates agent-hosted session processes (#3210): every
+    /// operation answers [`ProcessError::AgentOutdated`] without a request the
+    /// agent would only reject.
+    agent_outdated: bool,
 }
 
 /// Builders for the `connection.processes.*` JSON-RPC request params.
@@ -1048,6 +1060,9 @@ impl RemoteProcessProxy {
 #[async_trait::async_trait]
 impl ProcessManager for RemoteProcessProxy {
     async fn list_processes(&self) -> Result<Vec<ProcessInfo>, ProcessError> {
+        if self.agent_outdated {
+            return Err(ProcessError::AgentOutdated);
+        }
         let result = self
             .rpc(
                 termihub_core::protocol::methods::CONNECTION_PROCESSES_LIST,
@@ -1062,6 +1077,9 @@ impl ProcessManager for RemoteProcessProxy {
     }
 
     async fn kill_process(&self, pid: u32, signal: KillSignal) -> Result<(), ProcessError> {
+        if self.agent_outdated {
+            return Err(ProcessError::AgentOutdated);
+        }
         self.rpc(
             termihub_core::protocol::methods::CONNECTION_PROCESSES_KILL,
             processes_params::kill(self.connection_id.as_deref(), pid, signal),
@@ -1608,6 +1626,9 @@ mod tests {
         sent_requests: Mutex<Vec<(String, serde_json::Value)>>,
         /// Records remote_session_id for every register_monitoring_output call.
         registered_monitoring_hosts: Mutex<Vec<String>>,
+        /// When set, `get_capabilities` reports an agent with this
+        /// `session_processes` flag (#3210); `None` reports no capabilities.
+        session_processes: Option<bool>,
     }
 
     impl MockAgentRpcClient {
@@ -1618,6 +1639,7 @@ mod tests {
                 send_request_result: None,
                 sent_requests: Mutex::new(Vec::new()),
                 registered_monitoring_hosts: Mutex::new(Vec::new()),
+                session_processes: None,
             }
         }
 
@@ -1628,6 +1650,7 @@ mod tests {
                 send_request_result: Some(capabilities_result),
                 sent_requests: Mutex::new(Vec::new()),
                 registered_monitoring_hosts: Mutex::new(Vec::new()),
+                session_processes: None,
             }
         }
     }
@@ -1650,6 +1673,7 @@ mod tests {
                     monitoring_supported: false,
                     tool_streaming: false,
                     embedded_server_activity: false,
+                    session_processes: false,
                     agent_version: "mock".to_string(),
                 },
                 agent_version: "mock".to_string(),
@@ -1669,7 +1693,14 @@ mod tests {
         }
 
         fn get_capabilities(&self, _agent_id: &str) -> Option<AgentCapabilities> {
-            None
+            let session_processes = self.session_processes?;
+            let mut caps: AgentCapabilities = serde_json::from_value(json!({
+                "connectionTypes": [],
+                "maxSessions": 10,
+            }))
+            .expect("minimal capabilities parse");
+            caps.session_processes = session_processes;
+            Some(caps)
         }
 
         fn shutdown_agent(
@@ -3057,6 +3088,7 @@ mod tests {
                 net_rx_bytes_per_sec: 1024.0,
                 net_tx_bytes_per_sec: 512.0,
                 per_core_cpu_percent: vec![25.0, 75.0],
+                ..Default::default()
             }
         }
 
@@ -3848,6 +3880,9 @@ mod tests {
             handle.await.expect("driver ends when raw channel closes");
         }
     }
+
+    /// Agent-hosted process list + kill routing and the old-agent fallback (#3210).
+    mod process_tests;
 
     /// #3408: a process RPC is "not supported" by the agent's code (surfaced as
     /// `AgentUnsupported`), never by message text.

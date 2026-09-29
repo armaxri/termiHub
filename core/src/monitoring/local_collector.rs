@@ -155,6 +155,7 @@ impl StatsCollector for LocalCollector {
             net_rx_bytes_per_sec,
             net_tx_bytes_per_sec,
             per_core_cpu_percent,
+            ..Default::default()
         })
     }
 }

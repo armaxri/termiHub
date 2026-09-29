@@ -2,9 +2,9 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.19.0
+**Version**: 0.20.0
 **Status**: Draft
-**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089
+**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089, #3210
 
 ---
 
@@ -169,7 +169,7 @@ Persistent (reconnectable) sessions run in a detached session-daemon process. Th
 | Access control | `0o700` on the socket dir + socket       | Per-user DACL (`GENERIC_ALL` to the user SID + `LocalSystem`)      |
 | Daemon spawn   | Orphaned child (agent never waits on it) | `DETACHED_PROCESS \| CREATE_NEW_PROCESS_GROUP \| CREATE_NO_WINDOW` |
 
-Both restrict the endpoint to the current user, and neither exposes a TCP port. The daemon's binary frame protocol (`[type: 1B][length: 4B BE][payload]`) and the 1 MiB output ring buffer are identical on both platforms, so reconnect-with-scrollback-replay behaves the same. The `daemon_socket` field persisted in the agent's `state.json` therefore holds a named-pipe name on Windows and a socket path on unix.
+Both restrict the endpoint to the current user, and neither exposes a TCP port. The frame protocol is append-only: since 0.20.0 (#3210) a daemon whose backend can manage processes sends a capabilities frame before its ready frame, and then answers process list / kill request frames from the worker that holds the session — replies go only to that connection. A worker ignores unknown frames and a daemon started by an older agent sends no capabilities frame, so mixed versions keep working (process management of such a session reports "not supported"). The daemon's binary frame protocol (`[type: 1B][length: 4B BE][payload]`) and the 1 MiB output ring buffer are identical on both platforms, so reconnect-with-scrollback-replay behaves the same. The `daemon_socket` field persisted in the agent's `state.json` therefore holds a named-pipe name on Windows and a socket path on unix.
 
 ### Default Shell and Local Shell Spawning
 
@@ -288,6 +288,9 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                          |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.20.0          | 0.20.0        | Yes                                                                                                                                  |
+| 0.20.0          | 0.9.0–0.19.0  | Yes (no `sessionProcesses` — the process table of an agent-hosted SSH/Docker/WSL session says to update the agent)                   |
+| 0.19.0          | 0.20.0        | Yes (`sessionProcesses` ignored)                                                                                                     |
 | 0.19.0          | 0.19.0        | Yes                                                                                                                                  |
 | 0.19.0          | 0.9.0–0.18.0  | Yes (no `auth_failed` connect failure — an agent-hosted credential rejection stays a generic remote error)                           |
 | 0.18.0          | 0.19.0        | Yes (`connect_failure: "auth_failed"` is unknown and ignored — generic remote error)                                                 |
@@ -342,6 +345,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                           |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                 |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                  |
+
+**0.20.0 (additive, minor)** — [`connection.processes.list`](#connectionprocesseslist) / [`connection.processes.kill`](#connectionprocesseskill) now serve **agent-hosted SSH, Docker and WSL sessions** (#3210), and the `initialize` result gains `capabilities.sessionProcesses: true` to say so. With `connection_id` set to such a session's id, the agent lists or signals processes **inside that session's own context** — the remote SSH host, the container, or the WSL distribution — through the session backend's own process manager (reached through the session daemon, see [Session-Daemon Transport](#session-daemon-transport-named-pipe-vs-unix-socket)); it never falls back to the agent host. The session must be running and **held by the requesting client** (attached, not taken over): otherwise the call fails with `-32023` (held elsewhere) or `-32006` (not running). Negotiation is by **capability**: a pre-0.20.0 agent omits the flag and answers `-32020` for such sessions, so the desktop does not call it and the process table says the agent must be updated. A session started by an older agent's session daemon keeps answering `-32020` until it is reopened. A pre-0.20.0 desktop ignores the flag.
 
 **0.19.0 (additive, minor)** — adds the `auth_failed` value of the optional `error.data.connect_failure` of a failed [`connection.create`](#connectioncreate) (#3089): the SSH server of an agent-hosted session genuinely rejected the credentials (wrong password or passphrase, refused key). The agent derives it from the typed core `SessionError::AuthFailed` — in-process or reported by the session daemon — never from message text; a jump-host hop's rejection is not relayed as the target's. The desktop maps it to the same typed auth failure as a direct connection, so the tab lands in the terminal `authFailed` state and offers credential re-entry instead of retrying a doomed login. A pre-0.19.0 desktop does not recognize the value and ignores it; a pre-0.19.0 agent never sends it and the desktop keeps its generic remote error.
 
@@ -460,6 +465,7 @@ On a successful `initialize`, the agent records the client (`client`, `client_ve
 | `capabilities.toolStreaming`              | `boolean`              | Streaming tool runs supported — [`tool.start`](#toolstart) (0.9.0+; absent = `false`)                                                                                                    |
 | `capabilities.keyboardInteractivePrompts` | `boolean`              | The agent relays SSH keyboard-interactive prompts to a desktop that advertised them (0.10.0+; absent = `false`)                                                                          |
 | `capabilities.embeddedServerActivity`     | `boolean`              | The agent serves an agent-hosted embedded server's access log — [`embedded_server.activity`](#embedded_serveractivity) (0.11.0+; absent = `false`)                                       |
+| `capabilities.sessionProcesses`           | `boolean`              | [`connection.processes.*`](#connectionprocesseslist) serve agent-hosted SSH, Docker and WSL sessions, not only local ones (0.20.0+; absent = `false`)                                    |
 
 > **Field-casing note.** The `initialize` **params** are serialized in `camelCase`
 > (`protocolVersion`, `clientVersion`), matching the agent's `InitializeParams` — a field sent in
@@ -2161,6 +2167,105 @@ Stop periodic monitoring for a host.
 
 ---
 
+### `connection.processes.list`
+
+List the top processes by CPU (PROD-0028). Scoped by `connection_id`:
+
+| `connection_id`                | Lists processes of                                                                             |
+| ------------------------------ | ---------------------------------------------------------------------------------------------- |
+| absent / `null`                | The agent host itself                                                                          |
+| A local session of this client | The agent host (the session runs there)                                                        |
+| An SSH / Docker / WSL session  | The session's remote host, container or WSL distribution, via its own backend (0.20.0+, #3210) |
+| A saved local/shell connection | The agent host                                                                                 |
+
+A session id must belong to a running session **held by the requesting client** — the one it
+created or attached, not one it detached from or that another desktop took over (single-attach,
+see [`connection.attach`](#connectionattach)). An id that is neither such a session nor a saved
+connection is not found; it never falls back to the agent host.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connection.processes.list",
+  "params": { "connection_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890" },
+  "id": 32
+}
+```
+
+| Param           | Type     | Required | Description                                            |
+| --------------- | -------- | -------- | ------------------------------------------------------ |
+| `connection_id` | `string` | No       | Session id or saved connection id; absent = agent host |
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "processes": [
+      {
+        "pid": 4242,
+        "name": "postgres",
+        "user": "db",
+        "cpuPercent": 12.0,
+        "memoryPercent": 3.1,
+        "memoryKb": null
+      }
+    ]
+  },
+  "id": 32
+}
+```
+
+**Errors:**
+
+- `-32006` Session not running
+- `-32008` Connection not found (neither a session of this client nor a saved connection)
+- `-32019` Process operation failed (the `ps` exec failed, the transport dropped, …)
+- `-32020` Process not supported (the backend has no process management — serial, telnet, … — or
+  an SSH/Docker/WSL session on a pre-0.20.0 agent or started by an older agent's session daemon)
+- `-32023` Session held by other (the session is detached or another desktop holds it)
+
+---
+
+### `connection.processes.kill`
+
+Deliver a signal to **exactly one** process, in the same scope as
+[`connection.processes.list`](#connectionprocesseslist) and with the same ownership rule. The
+signal is sent by name (`kill -s <NAME>` remotely), never by number and never to a name-matched
+set of processes.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connection.processes.kill",
+  "params": {
+    "connection_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "pid": 4242,
+    "signal": "term"
+  },
+  "id": 33
+}
+```
+
+| Param           | Type      | Required | Description                                                                                         |
+| --------------- | --------- | -------- | --------------------------------------------------------------------------------------------------- |
+| `connection_id` | `string`  | No       | Session id or saved connection id; absent = agent host                                              |
+| `pid`           | `integer` | Yes      | The target process id                                                                               |
+| `signal`        | `string`  | Yes      | `term`, `kill`, `int`, `hup`, `quit`, `stop`, `cont`, `usr1` or `usr2` (#3209); others are `-32602` |
+
+**Response:** `{"jsonrpc": "2.0", "result": null, "id": 33}`
+
+**Errors:** as for `connection.processes.list`. A missing process, a refused permission and a
+signal the host cannot deliver are `-32019` with a message saying which (for example
+`signal SIGSTOP is not supported here: …`).
+
+---
+
 ### Agent-hosted tunnels (`tunnel.*`)
 
 The `tunnel.*` methods run an SSH tunnel **on the agent** instead of on the desktop (S3, #2185). The agent opens its own SSH client and binds the listen socket; the desktop keeps only lifecycle control — start, stop, and status — over this RPC. These methods are additive in protocol **0.6.0**: a pre-0.6.0 agent lacks them, so a `tunnel.start` call returns [`-32601` Method not found](#standard-json-rpc-errors), the desktop surfaces the existing "not supported" path, and the tunnel is hosted locally as before.
@@ -3289,35 +3394,37 @@ For serial sessions:
 
 ### Application Errors
 
-| Code     | Message                     | Description                                                                                                                 |
-| -------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `-32001` | Session not found           | No session with the given ID                                                                                                |
-| `-32002` | Version not supported       | Protocol version mismatch                                                                                                   |
-| `-32003` | Session creation failed     | Could not create the session (e.g., shell binary not found, serial port open failed)                                        |
-| `-32004` | Session limit reached       | Agent has reached `max_sessions`                                                                                            |
-| `-32005` | Invalid configuration       | Invalid config values (e.g., invalid baud rate, negative cols/rows)                                                         |
-| `-32006` | Session not running         | Session exists but has exited                                                                                               |
-| `-32007` | Not initialized             | Agent has not been initialized yet (must call `initialize` first)                                                           |
-| `-32008` | Connection not found        | No connection with the given ID                                                                                             |
-| `-32009` | Folder not found            | No folder with the given ID                                                                                                 |
-| `-32010` | File not found              | The file or directory was not found                                                                                         |
-| `-32011` | Permission denied           | Permission denied for the requested file operation                                                                          |
-| `-32012` | File operation failed       | A file operation failed (I/O error, docker exec failure, etc.)                                                              |
-| `-32013` | File browsing not supported | File browsing is not supported for this connection type (e.g., serial)                                                      |
-| `-32014` | Monitoring error            | A monitoring operation failed (collection error, SSH failure, etc.)                                                         |
-| `-32015` | Shutdown error              | An error occurred during agent shutdown                                                                                     |
-| `-32016` | Deferred update failed      | A deferred agent update failed to apply (binary swap / re-exec, or non-Unix)                                                |
-| `-32017` | Tunnel start failed         | An agent-hosted SSH tunnel failed to start (SSH connect or bind error)                                                      |
-| `-32018` | Service start failed        | An agent-hosted embedded server failed to start (bad config, port bind, or unknown type)                                    |
-| `-32021` | Update signature rejected   | An agent update's Ed25519 signature is missing, malformed, or does not verify (AGT-005)                                     |
-| `-32022` | Tool run rejected           | A streaming `tool.start` was refused: unknown tool, duplicate run id, concurrency limit, or no streaming on this connection |
-| `-32023` | Session held by other       | A plain `connection.attach` was refused because another desktop holds the session; only `takeover: true` may evict it       |
-| `-32024` | Auth cancelled              | The user cancelled an agent-relayed SSH keyboard-interactive prompt; the desktop treats it as a quiet cancel                |
-| `-32025` | Second factor failed        | An agent-authenticated SSH connection's one-time code was rejected after an earlier factor was accepted — keep the password |
-| `-32026` | Update unauthorized         | An agent update RPC lacked the instance's update auth token (missing or wrong), or the agent has none (AGT-003)             |
-| `-32027` | Update downgrade refused    | An agent update was refused by the downgrade policy: an unpinned downgrade, a mismatched pin, or an unknown version         |
-| `-32028` | Forward connect failed      | `agent.forward.connect` could not reach its target from the agent host (refused, unresolvable, timed out)                   |
-| `-32029` | Listen auth rejected        | The `--listen` pre-RPC `auth` handshake was refused (missing, malformed, or wrong token); the agent closes the connection   |
+| Code     | Message                     | Description                                                                                                                  |
+| -------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `-32001` | Session not found           | No session with the given ID                                                                                                 |
+| `-32002` | Version not supported       | Protocol version mismatch                                                                                                    |
+| `-32003` | Session creation failed     | Could not create the session (e.g., shell binary not found, serial port open failed)                                         |
+| `-32004` | Session limit reached       | Agent has reached `max_sessions`                                                                                             |
+| `-32005` | Invalid configuration       | Invalid config values (e.g., invalid baud rate, negative cols/rows)                                                          |
+| `-32006` | Session not running         | Session exists but has exited                                                                                                |
+| `-32007` | Not initialized             | Agent has not been initialized yet (must call `initialize` first)                                                            |
+| `-32008` | Connection not found        | No connection with the given ID                                                                                              |
+| `-32009` | Folder not found            | No folder with the given ID                                                                                                  |
+| `-32010` | File not found              | The file or directory was not found                                                                                          |
+| `-32011` | Permission denied           | Permission denied for the requested file operation                                                                           |
+| `-32012` | File operation failed       | A file operation failed (I/O error, docker exec failure, etc.)                                                               |
+| `-32013` | File browsing not supported | File browsing is not supported for this connection type (e.g., serial)                                                       |
+| `-32014` | Monitoring error            | A monitoring operation failed (collection error, SSH failure, etc.)                                                          |
+| `-32015` | Shutdown error              | An error occurred during agent shutdown                                                                                      |
+| `-32016` | Deferred update failed      | A deferred agent update failed to apply (binary swap / re-exec, or non-Unix)                                                 |
+| `-32017` | Tunnel start failed         | An agent-hosted SSH tunnel failed to start (SSH connect or bind error)                                                       |
+| `-32018` | Service start failed        | An agent-hosted embedded server failed to start (bad config, port bind, or unknown type)                                     |
+| `-32019` | Process operation failed    | A `connection.processes.*` call failed: exec/transport error, no such process, permission denied, or an undeliverable signal |
+| `-32020` | Process not supported       | The connection's backend has no process management, or the agent-hosted session cannot serve it (older agent or daemon)      |
+| `-32021` | Update signature rejected   | An agent update's Ed25519 signature is missing, malformed, or does not verify (AGT-005)                                      |
+| `-32022` | Tool run rejected           | A streaming `tool.start` was refused: unknown tool, duplicate run id, concurrency limit, or no streaming on this connection  |
+| `-32023` | Session held by other       | A plain `connection.attach` was refused because another desktop holds the session; only `takeover: true` may evict it        |
+| `-32024` | Auth cancelled              | The user cancelled an agent-relayed SSH keyboard-interactive prompt; the desktop treats it as a quiet cancel                 |
+| `-32025` | Second factor failed        | An agent-authenticated SSH connection's one-time code was rejected after an earlier factor was accepted — keep the password  |
+| `-32026` | Update unauthorized         | An agent update RPC lacked the instance's update auth token (missing or wrong), or the agent has none (AGT-003)              |
+| `-32027` | Update downgrade refused    | An agent update was refused by the downgrade policy: an unpinned downgrade, a mismatched pin, or an unknown version          |
+| `-32028` | Forward connect failed      | `agent.forward.connect` could not reach its target from the agent host (refused, unresolvable, timed out)                    |
+| `-32029` | Listen auth rejected        | The `--listen` pre-RPC `auth` handshake was refused (missing, malformed, or wrong token); the agent closes the connection    |
 
 ---
 

@@ -286,6 +286,12 @@ pub struct Capabilities {
     /// [`EMBEDDED_SERVER_CLEAR_ACTIVITY`] (#3453). Absent (read as `false`) on
     /// older agents, whose hosted servers show no log on the desktop.
     pub embedded_server_activity: bool,
+    /// Whether [`CONNECTION_PROCESSES_LIST`] / [`CONNECTION_PROCESSES_KILL`]
+    /// serve agent-hosted SSH, Docker and WSL sessions — listing and killing
+    /// inside that session's remote host or container through its own backend
+    /// (protocol 0.20.0, #3210). Absent (read as `false`) on older agents,
+    /// which manage processes of local sessions only.
+    pub session_processes: bool,
 }
 
 /// One prompt of a [`KbdInteractivePromptNotification`] round.
@@ -2409,6 +2415,7 @@ mod tests {
                 tool_streaming: true,
                 keyboard_interactive_prompts: true,
                 embedded_server_activity: true,
+                session_processes: true,
                 available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
                 available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
                 docker_available: false,
@@ -2423,6 +2430,8 @@ mod tests {
         assert_eq!(v["capabilities"]["availableSerialPorts"][0], "/dev/ttyUSB0");
         assert_eq!(v["capabilities"]["dockerAvailable"], false);
         assert_eq!(v["capabilities"]["embeddedServerActivity"], true);
+        // #3210: agent-hosted SSH/Docker/WSL process list + kill.
+        assert_eq!(v["capabilities"]["sessionProcesses"], true);
         assert!(v["capabilities"]["availableDockerImages"]
             .as_array()
             .unwrap()
@@ -3304,6 +3313,7 @@ mod tests {
                 net_rx_bytes_per_sec: 1024.0,
                 net_tx_bytes_per_sec: 2048.0,
                 per_core_cpu_percent: vec![50.0, 90.0],
+                ..Default::default()
             },
         );
         let v = serde_json::to_value(&data).unwrap();

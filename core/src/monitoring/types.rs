@@ -2,11 +2,62 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Where a [`SystemStats`] sample came from (#3202).
+///
+/// Most hosts are sampled from `/proc` (or `sysinfo` locally). A container with
+/// no shell / no readable `/proc` (distroless) falls back to the Docker Engine
+/// stats API, which reports a narrower set of metrics — the UI labels such
+/// samples "via Docker stats" and shows the metrics it cannot supply as
+/// unavailable (see [`SystemStats::unavailable_metrics`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub enum StatsSource {
+    /// Host/container `/proc` (or `sysinfo` for the local machine). The default,
+    /// so samples from older agents deserialize as `/proc`-sourced.
+    #[default]
+    Proc,
+    /// The Docker Engine container-stats API (`docker stats`).
+    DockerStats,
+}
+
+/// A metric a [`SystemStats`] sample could not supply (#3202).
+///
+/// Listed in [`SystemStats::unavailable_metrics`] so the UI renders the metric
+/// as "unavailable" instead of a misleading zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub enum StatsMetric {
+    /// Aggregate CPU usage.
+    Cpu,
+    /// Memory usage / limit.
+    Memory,
+    /// Network throughput.
+    Network,
+    /// Host uptime.
+    Uptime,
+    /// 1/5/15-minute load average.
+    LoadAverage,
+    /// Root filesystem usage.
+    Disk,
+    /// Swap usage.
+    Swap,
+    /// Per-core CPU usage.
+    PerCoreCpu,
+    /// Kernel / OS description.
+    OsInfo,
+    /// The process list (it needs an exec inside the target).
+    Processes,
+}
+
 /// Parsed system statistics from a local or remote host.
 ///
 /// Fields use `camelCase` serialization to match the JSON convention used
 /// by both the desktop frontend and the agent protocol.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
@@ -51,6 +102,49 @@ pub struct SystemStats {
     /// sends the field. `0.0` for every core on the first sample (no prior delta).
     #[serde(default)]
     pub per_core_cpu_percent: Vec<f64>,
+    /// Which collector produced this sample (#3202). Defaults to
+    /// [`StatsSource::Proc`] when absent (older agents).
+    #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<StatsSource>", optional))]
+    pub source: StatsSource,
+    /// Metrics this sample could not supply (#3202). Their numeric fields hold
+    /// placeholder zeros that must be rendered as "unavailable", never as data.
+    /// Empty for a full `/proc` sample.
+    #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<Vec<StatsMetric>>", optional))]
+    pub unavailable_metrics: Vec<StatsMetric>,
+    /// Block-device read throughput in bytes/sec (#3202). Only the Docker stats
+    /// source reports it; absent otherwise. `0.0` on the first sample.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub block_read_bytes_per_sec: Option<f64>,
+    /// Block-device write throughput in bytes/sec (see
+    /// [`Self::block_read_bytes_per_sec`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub block_write_bytes_per_sec: Option<f64>,
+    /// Number of processes/threads in the container's PID cgroup (#3202). Only
+    /// the Docker stats source reports it; absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "number"))]
+    pub pids_current: Option<u64>,
+}
+
+impl SystemStats {
+    /// Whether `metric` is listed as unavailable for this sample.
+    pub fn is_unavailable(&self, metric: StatsMetric) -> bool {
+        self.unavailable_metrics.contains(&metric)
+    }
+}
+
+/// Cumulative block-I/O byte counters (read/write), summed across devices.
+///
+/// Monotonic totals from the Docker stats API; callers diff two snapshots to
+/// derive the per-second throughput carried in [`SystemStats`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BlockIoCounters {
+    pub read_bytes: u64,
+    pub write_bytes: u64,
 }
 
 /// Cumulative CPU time counters parsed from the aggregate `cpu` line in `/proc/stat`.
@@ -90,7 +184,7 @@ impl CpuCounters {
 /// These are monotonic totals (as reported by `/proc/net/dev` or `sysinfo`), not
 /// rates. Callers diff two snapshots over the elapsed interval to derive the
 /// per-second throughput carried in [`SystemStats`].
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct NetCounters {
     pub rx_bytes: u64,
     pub tx_bytes: u64,
@@ -160,6 +254,7 @@ mod tests {
             net_rx_bytes_per_sec: 1024.0,
             net_tx_bytes_per_sec: 2048.0,
             per_core_cpu_percent: vec![10.0, 90.0],
+            ..Default::default()
         };
 
         let json = serde_json::to_string(&stats).unwrap();

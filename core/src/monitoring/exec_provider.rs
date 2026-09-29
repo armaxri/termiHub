@@ -26,23 +26,25 @@
 //! baselines so the next sample re-primes (first sample reports CPU 0, exactly
 //! like SSH). A source whose target has no readable `/proc` (distroless /
 //! BusyBox-only containers) yields collect/parse failures that surface honestly
-//! as `Stale` → `Offline` — never a crash and never fabricated stats. A
-//! `docker stats` fallback for such containers is deliberately out of scope here
-//! (tracked as a follow-up).
+//! as `Stale` → `Offline` — never a crash and never fabricated stats — unless the
+//! backend supplies a [`ContainerStatsSource`] fallback (#3202): then a target
+//! whose `/proc` probe fails at subscribe time is sampled from the container
+//! engine's stats API instead, tagged [`StatsSource::DockerStats`](crate::monitoring::StatsSource)
+//! with the metrics that API lacks listed as unavailable.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::errors::CoreError;
 use crate::monitoring::{
-    parse_stats, BackoffSchedule, CollectLoopState, CpuDeltaTracker, MonitorStatusSender,
-    MonitoringProvider, MonitoringReceiver, MonitoringSender, MonitoringSubscription,
-    NetDeltaTracker, PerCoreCpuTracker, SystemStats, DEFAULT_MONITORING_INTERVAL_MS,
-    DEFAULT_STALE_THRESHOLD,
+    parse_stats, BackoffSchedule, CollectLoopState, ContainerStatsSource, ContainerStatsTrackers,
+    CpuDeltaTracker, MonitorStatusSender, MonitoringProvider, MonitoringReceiver, MonitoringSender,
+    MonitoringSubscription, NetDeltaTracker, PerCoreCpuTracker, SystemStats,
+    DEFAULT_MONITORING_INTERVAL_MS, DEFAULT_STALE_THRESHOLD,
 };
 
 /// Default polling interval for collecting stats.
@@ -142,6 +144,7 @@ struct Trackers {
     cpu: CpuDeltaTracker,
     per_core: PerCoreCpuTracker,
     net: NetDeltaTracker,
+    container: ContainerStatsTrackers,
 }
 
 impl Trackers {
@@ -150,7 +153,76 @@ impl Trackers {
             cpu: CpuDeltaTracker::new(),
             per_core: PerCoreCpuTracker::new(),
             net: NetDeltaTracker::new(),
+            container: ContainerStatsTrackers::new(),
         }
+    }
+}
+
+/// The source a subscription samples from, chosen once at subscribe time.
+#[derive(Clone)]
+enum ActiveSource {
+    /// `MONITORING_COMMAND` run inside the target, parsed from `/proc`.
+    Proc(Arc<dyn ProcStatsSource>),
+    /// The container engine's stats API (#3202).
+    ContainerStats(Arc<dyn ContainerStatsSource>),
+}
+
+impl ActiveSource {
+    /// One bounded probe: `Ok` when the source produced a usable sample.
+    async fn probe(&self, timeout: Duration) -> Result<(), CoreError> {
+        let timed_out =
+            || CoreError::Other(format!("monitoring probe timed out after {timeout:?}"));
+        match self {
+            ActiveSource::Proc(source) => {
+                let output = tokio::time::timeout(timeout, source.collect_proc())
+                    .await
+                    .map_err(|_| timed_out())??;
+                parse_stats(&output).map(|_| ()).map_err(|e| {
+                    CoreError::Other(format!(
+                        "monitoring target returned unparseable output (no readable /proc?): {e}"
+                    ))
+                })
+            }
+            ActiveSource::ContainerStats(source) => {
+                tokio::time::timeout(timeout, source.collect_container_stats())
+                    .await
+                    .map_err(|_| timed_out())?
+                    .map(|_| ())
+            }
+        }
+    }
+}
+
+/// Pick the source a new subscription samples from (#3202).
+///
+/// `/proc` stays primary: it is probed first and wins whenever it yields a
+/// parseable sample. Only when that probe fails (no shell, no readable `/proc`,
+/// exec error or timeout) and a container-stats `fallback` exists is the
+/// fallback probed; if it answers, the subscription runs on it. Otherwise the
+/// original `/proc` error is returned — with the fallback's failure appended —
+/// so an unmonitorable target still surfaces as an honest `Err`.
+async fn select_source(
+    proc: Arc<dyn ProcStatsSource>,
+    fallback: Option<Arc<dyn ContainerStatsSource>>,
+    timeout: Duration,
+) -> Result<ActiveSource, CoreError> {
+    let primary = ActiveSource::Proc(proc);
+    let proc_err = match primary.probe(timeout).await {
+        Ok(()) => return Ok(primary),
+        Err(e) => e,
+    };
+    let Some(fallback) = fallback else {
+        return Err(proc_err);
+    };
+    let fallback = ActiveSource::ContainerStats(fallback);
+    match fallback.probe(timeout).await {
+        Ok(()) => {
+            info!("/proc monitoring unavailable ({proc_err}); using container stats fallback");
+            Ok(fallback)
+        }
+        Err(fallback_err) => Err(CoreError::Other(format!(
+            "{proc_err}; container stats fallback also failed: {fallback_err}"
+        ))),
     }
 }
 
@@ -164,6 +236,8 @@ impl Trackers {
 /// `Stale`/`Offline` lifecycle rather than a `subscribe` error.
 pub struct ExecMonitoringProvider {
     source: Arc<dyn ProcStatsSource>,
+    /// Container-engine stats fallback used when `/proc` is unusable (#3202).
+    fallback: Option<Arc<dyn ContainerStatsSource>>,
     /// Initial poll interval; live-updatable per subscription via `set_interval`.
     interval: Duration,
     /// Consecutive collect failures tolerated before the loop reports `Stale`.
@@ -178,11 +252,19 @@ impl ExecMonitoringProvider {
     pub fn new(source: Arc<dyn ProcStatsSource>) -> Self {
         Self {
             source,
+            fallback: None,
             interval: MONITORING_INTERVAL,
             stale_threshold: DEFAULT_STALE_THRESHOLD,
             reconnect_backoff: BackoffSchedule::default(),
             task: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Attach a container-stats fallback, used when the `/proc` probe fails at
+    /// subscribe time (distroless containers, #3202).
+    pub fn with_stats_fallback(mut self, fallback: Arc<dyn ContainerStatsSource>) -> Self {
+        self.fallback = Some(fallback);
+        self
     }
 
     /// Access the running loop's live controls, if a task is active.
@@ -212,10 +294,26 @@ enum CollectMiss {
 /// rejects (a target with no readable `/proc`). Never panics, never fabricates
 /// data.
 async fn collect_once(
-    source: &dyn ProcStatsSource,
+    source: &ActiveSource,
     timeout: Duration,
     trackers: &mut Trackers,
 ) -> Result<SystemStats, CollectMiss> {
+    let source = match source {
+        ActiveSource::Proc(source) => source,
+        ActiveSource::ContainerStats(source) => {
+            return match tokio::time::timeout(timeout, source.collect_container_stats()).await {
+                Ok(Ok(sample)) => Ok(trackers.container.apply(sample, Instant::now())),
+                Ok(Err(e)) => {
+                    debug!("Container stats collect failed: {e}");
+                    Err(CollectMiss::Failed)
+                }
+                Err(_elapsed) => {
+                    debug!("Container stats collect timed out after {timeout:?}");
+                    Err(CollectMiss::Failed)
+                }
+            };
+        }
+    };
     let output = match tokio::time::timeout(timeout, source.collect_proc()).await {
         Ok(Ok(output)) => output,
         Ok(Err(e)) => {
@@ -284,7 +382,7 @@ async fn interruptible_sleep(
 /// `Live`), or `false` when the budget is exhausted or the loop is asked to stop
 /// mid-backoff (the caller then emits `Offline`).
 async fn reconnect_with_backoff(
-    source: &dyn ProcStatsSource,
+    source: &ActiveSource,
     mut backoff: BackoffSchedule,
     collect_timeout: Duration,
     loop_state: &mut CollectLoopState,
@@ -303,14 +401,12 @@ async fn reconnect_with_backoff(
         // A probe collect that parses proves the target is reachable again. The
         // sample itself is discarded — the caller resets the trackers, so the
         // next loop collect re-primes (first sample = CPU 0), matching SSH.
-        match tokio::time::timeout(collect_timeout, source.collect_proc()).await {
-            Ok(Ok(output)) if parse_stats(&output).is_ok() => {
+        match source.probe(collect_timeout).await {
+            Ok(()) => {
                 debug!("Exec monitoring source reachable again");
                 return true;
             }
-            Ok(Ok(_)) => debug!("Exec monitoring reconnect probe produced unparseable output"),
-            Ok(Err(e)) => debug!("Exec monitoring reconnect probe failed: {e}"),
-            Err(_elapsed) => debug!("Exec monitoring reconnect probe timed out"),
+            Err(e) => debug!("Exec monitoring reconnect probe failed: {e}"),
         }
     }
 
@@ -322,7 +418,7 @@ async fn reconnect_with_backoff(
 /// and honors the live pause / interval / cancel controls.
 #[allow(clippy::too_many_arguments)]
 async fn run_collect_loop(
-    source: Arc<dyn ProcStatsSource>,
+    source: ActiveSource,
     controls: Arc<LoopControls>,
     collect_timeout: Duration,
     stale_threshold: u32,
@@ -351,7 +447,7 @@ async fn run_collect_loop(
             trackers = Trackers::new();
         }
 
-        let transition = match collect_once(&*source, collect_timeout, &mut trackers).await {
+        let transition = match collect_once(&source, collect_timeout, &mut trackers).await {
             Ok(stats) => {
                 if tx.send(stats).await.is_err() {
                     break;
@@ -375,7 +471,7 @@ async fn run_collect_loop(
         // the source in place.
         if loop_state.should_begin_reconnect() {
             let recovered = reconnect_with_backoff(
-                &*source,
+                &source,
                 reconnect_backoff.clone(),
                 collect_timeout,
                 &mut loop_state,
@@ -408,30 +504,15 @@ impl MonitoringProvider for ExecMonitoringProvider {
             *guard = None;
         }
 
-        // Probe once up front so an unmonitorable target — a distroless /
-        // BusyBox-only container with no readable `/proc` — surfaces as an honest
+        // Probe once up front so an unmonitorable target surfaces as an honest
         // `Err` (the UI shows a failed connect + retry) rather than a monitor that
-        // sits forever "connecting". This mirrors the SSH provider establishing
-        // its session inside `subscribe` so the real connect result reaches the
-        // caller (#1228, gap G4). The probe sample is discarded: the loop's first
-        // collect is the priming sample (CPU 0), preserving the SSH priming
-        // contract. A `docker stats` fallback for distroless containers is out of
-        // scope here (follow-up).
-        match tokio::time::timeout(COLLECT_TIMEOUT, self.source.collect_proc()).await {
-            Ok(Ok(output)) => {
-                parse_stats(&output).map_err(|e| {
-                    CoreError::Other(format!(
-                        "monitoring target returned unparseable output (no readable /proc?): {e}"
-                    ))
-                })?;
-            }
-            Ok(Err(e)) => return Err(e),
-            Err(_elapsed) => {
-                return Err(CoreError::Other(format!(
-                    "monitoring connect probe timed out after {COLLECT_TIMEOUT:?}"
-                )))
-            }
-        }
+        // sits forever "connecting" — mirroring the SSH provider establishing its
+        // session inside `subscribe` (#1228, gap G4). The probe also selects the
+        // source (#3202): `/proc` when it parses, else the container-stats
+        // fallback when one is attached. The probe sample is discarded: the
+        // loop's first collect is the priming sample (CPU 0).
+        let source =
+            select_source(self.source.clone(), self.fallback.clone(), COLLECT_TIMEOUT).await?;
 
         let cancel = CancellationToken::new();
 
@@ -443,7 +524,7 @@ impl MonitoringProvider for ExecMonitoringProvider {
         let controls = Arc::new(LoopControls::new(self.interval));
 
         tokio::spawn(run_collect_loop(
-            self.source.clone(),
+            source,
             controls.clone(),
             COLLECT_TIMEOUT,
             self.stale_threshold,
@@ -748,7 +829,7 @@ Inter-|   Receive                                                |  Transmit
     #[tokio::test]
     async fn unparseable_output_yields_no_sample() {
         let mut trackers = Trackers::new();
-        let source = FakeSource::with_outputs(&["not/proc output"]);
+        let source = ActiveSource::Proc(Arc::new(FakeSource::with_outputs(&["not/proc output"])));
         let sample = collect_once(&source, COLLECT_TIMEOUT, &mut trackers).await;
         assert_eq!(
             sample.err(),
@@ -954,3 +1035,9 @@ Inter-|   Receive                                                |  Transmit
         provider.unsubscribe().await.expect("unsubscribe");
     }
 }
+
+// Source-selection + container-stats fallback tests (#3202), kept beside the
+// provider but in their own file to bound this one's size.
+#[cfg(test)]
+#[path = "exec_provider_fallback_tests.rs"]
+mod fallback_tests;
