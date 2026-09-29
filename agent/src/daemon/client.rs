@@ -995,6 +995,29 @@ async fn reader_loop(
     .await;
 }
 
+/// Test entry point with a writer for heartbeat pings/pongs (#3140);
+/// `negotiated` is whether the daemon advertised [`CAP_HEARTBEAT`].
+#[cfg(test)]
+async fn reader_loop_with_heartbeat(
+    reader: BoxedReader,
+    writer: DaemonWriterHandle,
+    negotiated: bool,
+    notification_tx: &NotificationSender,
+    alive: &AtomicBool,
+    on_exit: ExitHookSlot,
+) {
+    let _ = (writer, negotiated);
+    reader_loop(
+        reader,
+        "sess",
+        notification_tx,
+        alive,
+        Arc::new(Mutex::new(None)),
+        on_exit,
+    )
+    .await;
+}
+
 /// The reader loop proper. `eviction` receives an [`MSG_EVICTED`] frame (SM-003);
 /// `features` receives [`MSG_PROCESS_RESPONSE`] replies (#3210) and
 /// [`MSG_MONITORING_EVENT`]s (#3871), and is failed when the loop ends, so no
@@ -1180,6 +1203,9 @@ pub(crate) fn send_output_notification(tx: &NotificationSender, session_id: &str
 mod tests {
     use super::*;
     use crate::daemon::protocol;
+
+    /// The worker's half of the session heartbeat (#3140).
+    mod heartbeat_tests;
 
     fn make_notification_tx() -> NotificationSender {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();

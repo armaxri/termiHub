@@ -66,6 +66,22 @@ pub const MSG_FILE_REQUEST: u8 = 0x09;
 /// [`CHUNK_SIZE`](super::files_rpc::CHUNK_SIZE) bytes.
 pub const MSG_FILE_WRITE_DATA: u8 = 0x0A;
 
+/// Agent → Daemon: the optional features this worker understands (#3140), sent
+/// right after [`MSG_ATTACH_INTENT`]. Payload: one flag byte ([`CAP_HEARTBEAT`]).
+/// The mirror of [`MSG_CAPABILITIES`]: a pre-#3140 daemon ignores the unknown
+/// frame, and a pre-#3140 worker never sends it, so the daemon reads "no
+/// optional features" and never heartbeat-reaps that worker.
+pub const MSG_AGENT_CAPABILITIES: u8 = 0x0B;
+
+/// Agent → Daemon: heartbeat probe (#3140). Empty payload. The daemon answers
+/// with [`MSG_PONG`] and nothing else — no output, no buffer replay. Sent only
+/// to a daemon that advertised [`CAP_HEARTBEAT`], and only after a stretch of
+/// receive silence (see [`crate::daemon::heartbeat`]).
+pub const MSG_PING: u8 = 0x0C;
+
+/// Agent → Daemon: the answer to a [`MSG_DAEMON_PING`] (#3140). Empty payload.
+pub const MSG_AGENT_PONG: u8 = 0x0D;
+
 /// [`MSG_ATTACH_INTENT`] payload: evict any writer currently attached — the
 /// historical accept behavior. Used by the spawn-path connect and explicit
 /// re-attach.
@@ -126,6 +142,15 @@ pub const MSG_FILE_RESPONSE: u8 = 0x8A;
 /// [`CHUNK_SIZE`](super::files_rpc::CHUNK_SIZE) bytes.
 pub const MSG_FILE_READ_DATA: u8 = 0x8B;
 
+/// Daemon → Agent: the answer to a [`MSG_PING`] (#3140). Empty payload. It is
+/// never forwarded as terminal output; its arrival only proves the daemon is
+/// alive.
+pub const MSG_PONG: u8 = 0x8C;
+/// Daemon → Agent: heartbeat probe (#3140). Empty payload. The worker answers
+/// with [`MSG_AGENT_PONG`]. Sent only to a worker that advertised
+/// [`CAP_HEARTBEAT`] in [`MSG_AGENT_CAPABILITIES`].
+pub const MSG_DAEMON_PING: u8 = 0x8D;
+
 /// [`MSG_CAPABILITIES`] flag: the daemon serves [`MSG_PROCESS_REQUEST`] through
 /// its session backend's process manager.
 pub const CAP_PROCESSES: u8 = 0x01;
@@ -137,6 +162,13 @@ pub const CAP_MONITORING: u8 = 0x02;
 /// [`MSG_CAPABILITIES`] flag: the daemon serves [`MSG_FILE_REQUEST`] through
 /// its session backend's file browser (#3242).
 pub const CAP_FILES: u8 = 0x04;
+
+/// [`MSG_CAPABILITIES`] / [`MSG_AGENT_CAPABILITIES`] flag: this side answers
+/// heartbeat probes ([`MSG_PING`] / [`MSG_DAEMON_PING`]) (#3140). A peer is
+/// only ever heartbeat-reaped when **both** sides advertised it, so a
+/// pre-heartbeat daemon or worker (the normal case across an agent binary swap)
+/// is never mistaken for a wedged one.
+pub const CAP_HEARTBEAT: u8 = 0x08;
 
 /// Maximum allowed frame payload size (16 MiB).
 const MAX_PAYLOAD_SIZE: u32 = 16 * 1024 * 1024;
@@ -154,9 +186,8 @@ const MAX_PAYLOAD_SIZE: u32 = 16 * 1024 * 1024;
 ///
 /// This is the contained, protocol-change-free half of #3015 (AGT-023
 /// follow-up): it catches the *mid-frame stall* class of wedged-but-connected
-/// peer. Detecting a peer that goes fully silent (sends no bytes at all) still
-/// requires an application-level heartbeat/ping-pong frame — a protocol change
-/// coupled to version negotiation (AGT-010) — which is tracked as a follow-up.
+/// peer. A peer that goes fully silent (sends no bytes at all) is caught by the
+/// application-level heartbeat instead (#3140, [`crate::daemon::heartbeat`]).
 pub const SESSION_MID_FRAME_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Header size: 1 byte type + 4 bytes length.

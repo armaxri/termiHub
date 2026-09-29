@@ -303,6 +303,11 @@ enum AgentCommand {
     /// Agent sent a slice of a file write's contents (#3242): the raw
     /// [`MSG_FILE_WRITE_DATA`] payload.
     FileData(Vec<u8>),
+    /// Agent sent a heartbeat probe: answer it with [`MSG_PONG`] (#3140).
+    Ping,
+    /// The agent has been silent for a heartbeat interval: send it a
+    /// [`MSG_DAEMON_PING`] probe (#3140).
+    Probe,
     /// Agent disconnected (EOF or error).
     ///
     /// Carries the connection generation that produced this disconnect so the
@@ -731,6 +736,7 @@ async fn daemon_loop(
                         let step = uploads.append(&payload);
                         route_file_step(step, connection_gen, file_job_tx.as_ref(), &file_event_tx);
                     }
+                    Some(AgentCommand::Ping) | Some(AgentCommand::Probe) => {}
                     Some(AgentCommand::Disconnected(gen)) => {
                         if gen == connection_gen {
                             info!("Agent disconnected");
@@ -1445,6 +1451,9 @@ pub(crate) mod tests {
 
     /// Session file browsing through the daemon, end to end (#3242).
     mod files_rpc_e2e;
+
+    /// The daemon's half of the session heartbeat (#3140).
+    mod heartbeat_tests;
 
     // ── AGT-015: owner-scoped recovery guard ────────────────────────────
     //
