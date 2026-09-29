@@ -471,6 +471,58 @@ jobs:
         continue-on-error: true
         run: pnpm size >> "$GITHUB_STEP_SUMMARY"
 
+  # Rustdoc intra-doc link gate (#3812). Plain `cargo doc` only warns on broken
+  # or private intra-doc links, so they accumulated silently (a link to a private
+  # item, a feature-gated path, a TS-only type). This builds the first-party
+  # crates' docs with `-D warnings` so a new broken link fails the run. Both the
+  # default and the --all-features build of termihub-core are checked: its
+  # backends are feature-gated, so each build sees a different set of items.
+  #
+  # POST-MERGE ONLY (#3325): a full doc build of the desktop crate is heavy
+  # (it compiles every dependency's metadata) for a docs-only signal, so it does
+  # not spend a PR runner slot. On a PR it reports skipped (a PR Gate pass); a
+  # push to develop/main fails the post-merge run — watch develop's own runs.
+  rustdoc:
+    name: Rustdoc (-D warnings)
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Rust toolchain
+        uses: ./.github/actions/setup-rust
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Push-only job, so it only ever runs on develop/main (see rust-quality).
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
+
+      - name: Build docs with -D warnings
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          set -euo pipefail
+          echo "::group::cargo doc termihub-core (default features)"
+          cargo doc --no-deps -p termihub-core
+          echo "::endgroup::"
+          echo "::group::cargo doc termihub, termihub-core, termihub-agent (--all-features)"
+          cargo doc --no-deps --all-features -p termihub -p termihub-core -p termihub-agent
+          echo "::endgroup::"
+
   # Shell-script quality: static analysis + cross-platform parity + headless
   # smoke (audit finding TOOL-012 / WA-CI-029).
   #
@@ -923,6 +975,7 @@ jobs:
       - changes
       - rust-quality
       - rust-quality-windows
+      - rustdoc
       - rdp-sidecar-quality
       - frontend-quality
       - shellcheck
