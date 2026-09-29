@@ -51,10 +51,7 @@ describe("classify", () => {
   });
 
   it("runs the frontend suite for Tauri config changes — the CSP guard is vitest (#3627)", () => {
-    for (const conf of [
-      "src-tauri/tauri.conf.json",
-      "src-tauri/tauri.windows.conf.json",
-    ]) {
+    for (const conf of ["src-tauri/tauri.conf.json", "src-tauri/tauri.windows.conf.json"]) {
       expect(on(classify([conf]))).toEqual(["rust", "frontend"]);
     }
   });
@@ -102,6 +99,12 @@ describe("classify", () => {
     expect(classify([".github/actions/setup-pnpm/action.yml"])).toEqual(allAreas());
   });
 
+  it("runs actionlint only when CI plumbing changes (#3327)", () => {
+    expect(classify([".github/workflows/agent.yml"]).workflows).toBe(true);
+    expect(classify(["src/main.tsx", "core/src/lib.rs", "docs/a.md"]).workflows).toBe(false);
+    expect(classify(["scripts/dev.sh"]).workflows).toBe(false);
+  });
+
   it("fails open on an unrecognised path", () => {
     expect(classify(["brand-new-dir/thing.bin"])).toEqual(allAreas());
     expect(classify(["docs/a.md", ".gitattributes"])).toEqual(allAreas());
@@ -143,6 +146,7 @@ describe("formatOutputs", () => {
     expect(out).toContain("frontend=true\n");
     expect(out).toContain("rust=false\n");
     expect(out).toContain("agent=false\n");
+    expect(out).toContain("workflows=false\n");
     expect(out).toContain('test_matrix=["ubuntu-latest"]\n');
   });
 });

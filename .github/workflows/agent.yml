@@ -72,6 +72,10 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: ${{ matrix.target }}
+          # Reader/writer split (#3328), same as code-quality.yml: only pushes to
+          # develop/main save; PR runs restore the develop cache and never write,
+          # so short-lived PR caches don't evict the shared ones (10 GB limit).
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Install cross-rs
         # Pinned to a specific cross-rs release and SHA256-verified before extract
@@ -141,6 +145,10 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: ${{ matrix.target }}
+          # Reader/writer split (#3328), same as code-quality.yml: only pushes to
+          # develop/main save; PR runs restore the develop cache and never write,
+          # so short-lived PR caches don't evict the shared ones (10 GB limit).
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       # Same bulk + capped-heavy split as code-quality.yml's test leg (CI-013,
       # #3350), so the PTY / remote-forward suites don't contend with the rest.
@@ -201,6 +209,10 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: ${{ matrix.target }}
+          # Reader/writer split (#3328), same as code-quality.yml: only pushes to
+          # develop/main save; PR runs restore the develop cache and never write,
+          # so short-lived PR caches don't evict the shared ones (10 GB limit).
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Build
         env:

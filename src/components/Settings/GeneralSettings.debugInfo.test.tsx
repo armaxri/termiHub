@@ -58,7 +58,6 @@ async function flush(): Promise<void> {
 
 describe("GeneralSettings — copy debug info (OBS-008)", () => {
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -72,7 +71,6 @@ describe("GeneralSettings — copy debug info (OBS-008)", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   it("copies a redacted, consolidated debug bundle to the clipboard", async () => {

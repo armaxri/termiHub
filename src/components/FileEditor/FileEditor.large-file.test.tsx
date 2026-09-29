@@ -92,7 +92,6 @@ function query(testId: string): HTMLElement | null {
 
 describe("FileEditor — large-file guard (#PROD-014 / #PERF-002)", () => {
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -104,7 +103,6 @@ describe("FileEditor — large-file guard (#PROD-014 / #PERF-002)", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   it("shows the guard and does NOT read an over-threshold local file", async () => {

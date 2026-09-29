@@ -90,7 +90,6 @@ function change(el: HTMLSelectElement, value: string) {
 
 describe("GeneralSettings — log file verbosity (OBS-009)", () => {
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -101,7 +100,6 @@ describe("GeneralSettings — log file verbosity (OBS-009)", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   it("persists the chosen level and applies it live", async () => {

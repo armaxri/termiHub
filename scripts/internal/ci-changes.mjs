@@ -28,6 +28,9 @@
  *   agent     anything the termihub-agent binary or its tests are built from
  *             (agent/, core/ and their workspace inputs) — gates the serial
  *             Windows live-agent job (#3615). Always a subset of `rust`.
+ *   workflows GitHub Actions workflows (actionlint, #3327). Only a .github/
+ *             change sets it, and any .github/ change already turns EVERY area
+ *             on (fail-open), so it is off exactly when no CI plumbing changed.
  *
  * Usage:
  *   git diff --name-only HEAD^1 HEAD | node scripts/internal/ci-changes.mjs
@@ -48,6 +51,7 @@ export const AREAS = [
   "markdown",
   "deps",
   "agent",
+  "workflows",
 ];
 
 /** Every OS the "Run Tests" matrix knows about (the post-merge set). */

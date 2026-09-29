@@ -105,61 +105,64 @@ describe("FileBrowser – useFileBrowserSync", () => {
 
   // --- Mode selection ---
 
-  it("sets fileBrowserMode to 'local' for a WSL tab", () => {
+  it("sets fileBrowserMode to 'local' for a WSL tab", async () => {
     const wslTab = makeTab({
       connectionType: "wsl",
       config: { type: "wsl", config: { distribution: "Ubuntu" } },
     });
     setActiveTab(wslTab);
 
-    act(() => {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <FileBrowser />
         </TooltipProvider>
       );
     });
+    await flushAsync();
 
     expect(currentFileBrowsersView().mode).toBe("local");
   });
 
-  it("sets fileBrowserMode to 'local' for a local tab with WSL shell type", () => {
+  it("sets fileBrowserMode to 'local' for a local tab with WSL shell type", async () => {
     const localWslTab = makeTab({
       connectionType: "local",
       config: { type: "local", config: { shell: "wsl:Ubuntu" } },
     });
     setActiveTab(localWslTab);
 
-    act(() => {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <FileBrowser />
         </TooltipProvider>
       );
     });
+    await flushAsync();
 
     expect(currentFileBrowsersView().mode).toBe("local");
   });
 
-  it("sets fileBrowserMode to 'local' for a plain local tab", () => {
+  it("sets fileBrowserMode to 'local' for a plain local tab", async () => {
     const localTab = makeTab({
       connectionType: "local",
       config: { type: "local", config: { shell: "powershell" } },
     });
     setActiveTab(localTab);
 
-    act(() => {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <FileBrowser />
         </TooltipProvider>
       );
     });
+    await flushAsync();
 
     expect(currentFileBrowsersView().mode).toBe("local");
   });
 
-  it("does not set fileBrowserMode to 'sftp' for a WSL tab even when capability claims true", () => {
+  it("does not set fileBrowserMode to 'sftp' for a WSL tab even when capability claims true", async () => {
     const wslTab = makeTab({
       connectionType: "wsl",
       config: { type: "wsl", config: { distribution: "Debian" } },
@@ -182,49 +185,52 @@ describe("FileBrowser – useFileBrowserSync", () => {
       ],
     });
 
-    act(() => {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <FileBrowser />
         </TooltipProvider>
       );
     });
+    await flushAsync();
 
     expect(currentFileBrowsersView().mode).toBe("local");
   });
 
-  it("sets fileBrowserMode to 'none' for a settings tab", () => {
+  it("sets fileBrowserMode to 'none' for a settings tab", async () => {
     const settingsTab = makeTab({
       contentType: "settings",
       config: { type: "local", config: {} },
     });
     setActiveTab(settingsTab);
 
-    act(() => {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <FileBrowser />
         </TooltipProvider>
       );
     });
+    await flushAsync();
 
     expect(currentFileBrowsersView().mode).toBe("none");
   });
 
-  it("sets fileBrowserMode to 'none' for unsupported connection types", () => {
+  it("sets fileBrowserMode to 'none' for unsupported connection types", async () => {
     const telnetTab = makeTab({
       connectionType: "telnet",
       config: { type: "telnet", config: { host: "example.com" } },
     });
     setActiveTab(telnetTab);
 
-    act(() => {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <FileBrowser />
         </TooltipProvider>
       );
     });
+    await flushAsync();
 
     expect(currentFileBrowsersView().mode).toBe("none");
   });
@@ -251,7 +257,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
     });
   }
 
-  it("sets fileBrowserMode to 'session' for an FTP tab and targets the tab's session", () => {
+  it("sets fileBrowserMode to 'session' for an FTP tab and targets the tab's session", async () => {
     const ftpTab = makeTab({
       connectionType: "ftp",
       sessionId: "ftp-sess-1",
@@ -260,13 +266,14 @@ describe("FileBrowser – useFileBrowserSync", () => {
     setActiveTab(ftpTab);
     setFileBrowserCapableType("ftp", "FTP");
 
-    act(() => {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <FileBrowser />
         </TooltipProvider>
       );
     });
+    await flushAsync();
 
     // FTP must browse through the shared session layer, not the SSH-only
     // SftpManager path — an `sftp_open` with an FTP config could never connect.
@@ -292,13 +299,14 @@ describe("FileBrowser – useFileBrowserSync", () => {
     setActiveTab(sshTab);
     setFileBrowserCapableType("ssh", "SSH");
 
-    act(() => {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <FileBrowser />
         </TooltipProvider>
       );
     });
+    await flushAsync();
     await flushAsync();
 
     expect(currentFileBrowsersView().mode).toBe("session");
@@ -307,7 +315,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
     expect(mockedInvoke).not.toHaveBeenCalledWith("sftp_open", expect.anything());
   });
 
-  it("sets fileBrowserMode to 'none' for an FTP tab that has no session yet", () => {
+  it("sets fileBrowserMode to 'none' for an FTP tab that has no session yet", async () => {
     const ftpTab = makeTab({
       connectionType: "ftp",
       sessionId: null,
@@ -316,18 +324,19 @@ describe("FileBrowser – useFileBrowserSync", () => {
     setActiveTab(ftpTab);
     setFileBrowserCapableType("ftp", "FTP");
 
-    act(() => {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <FileBrowser />
         </TooltipProvider>
       );
     });
+    await flushAsync();
 
     expect(currentFileBrowsersView().mode).toBe("none");
   });
 
-  it("sets fileBrowserMode to 'none' for an FTP tab when the file browser is disabled", () => {
+  it("sets fileBrowserMode to 'none' for an FTP tab when the file browser is disabled", async () => {
     const ftpTab = makeTab({
       connectionType: "ftp",
       sessionId: "ftp-sess-1",
@@ -337,18 +346,19 @@ describe("FileBrowser – useFileBrowserSync", () => {
     setFileBrowserCapableType("ftp", "FTP");
     seedSettings({ fileBrowserEnabled: false });
 
-    act(() => {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <FileBrowser />
         </TooltipProvider>
       );
     });
+    await flushAsync();
 
     expect(currentFileBrowsersView().mode).toBe("none");
   });
 
-  it("sets fileBrowserMode to 'session' for a Docker tab (shared session layer)", () => {
+  it("sets fileBrowserMode to 'session' for a Docker tab (shared session layer)", async () => {
     const dockerTab = makeTab({
       connectionType: "docker",
       sessionId: "docker-sess-1",
@@ -357,19 +367,20 @@ describe("FileBrowser – useFileBrowserSync", () => {
     setActiveTab(dockerTab);
     setFileBrowserCapableType("docker", "Docker");
 
-    act(() => {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <FileBrowser />
         </TooltipProvider>
       );
     });
+    await flushAsync();
 
     expect(currentFileBrowsersView().mode).toBe("session");
     expect(useAppStore.getState().sessionFileBrowserId).toBe("docker-sess-1");
   });
 
-  it("sets fileBrowserMode to 'session' for remote-session tab when agent supports file browser", () => {
+  it("sets fileBrowserMode to 'session' for remote-session tab when agent supports file browser", async () => {
     const remoteTab = makeTab({
       connectionType: "remote-session",
       sessionId: "terminal-sess-1",
@@ -413,19 +424,20 @@ describe("FileBrowser – useFileBrowserSync", () => {
       ],
     });
 
-    act(() => {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <FileBrowser />
         </TooltipProvider>
       );
     });
+    await flushAsync();
 
     expect(currentFileBrowsersView().mode).toBe("session");
     expect(useAppStore.getState().sessionFileBrowserId).toBe("terminal-sess-1");
   });
 
-  it("sets fileBrowserMode to 'none' for remote-session tab when agent does not support file browser", () => {
+  it("sets fileBrowserMode to 'none' for remote-session tab when agent does not support file browser", async () => {
     const remoteTab = makeTab({
       connectionType: "remote-session",
       sessionId: "terminal-sess-2",
@@ -469,18 +481,19 @@ describe("FileBrowser – useFileBrowserSync", () => {
       ],
     });
 
-    act(() => {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <FileBrowser />
         </TooltipProvider>
       );
     });
+    await flushAsync();
 
     expect(currentFileBrowsersView().mode).toBe("none");
   });
 
-  it("sets fileBrowserMode to 'none' for remote-session tab when no agent found", () => {
+  it("sets fileBrowserMode to 'none' for remote-session tab when no agent found", async () => {
     const remoteTab = makeTab({
       connectionType: "remote-session",
       sessionId: "terminal-sess-3",
@@ -492,13 +505,14 @@ describe("FileBrowser – useFileBrowserSync", () => {
     setActiveTab(remoteTab);
     seedAgentsRegion({ remoteAgents: [] });
 
-    act(() => {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <FileBrowser />
         </TooltipProvider>
       );
     });
+    await flushAsync();
 
     expect(currentFileBrowsersView().mode).toBe("none");
   });
@@ -945,9 +959,9 @@ describe("FileBrowser – Copy Name / Copy Path", () => {
     container.remove();
   });
 
-  it("shows Copy Name and Copy Path items for a file", () => {
+  it("shows Copy Name and Copy Path items for a file", async () => {
     const onAction = vi.fn();
-    act(() => {
+    await act(async () => {
       root.render(
         <FileMenuItems
           entry={fileEntry}
@@ -962,14 +976,15 @@ describe("FileBrowser – Copy Name / Copy Path", () => {
         />
       );
     });
+    await flushAsync();
 
     expect(container.querySelector('[data-testid="file-menu-copy-name"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="file-menu-copy-path"]')).toBeTruthy();
   });
 
-  it("shows Copy Name and Copy Path items for a directory", () => {
+  it("shows Copy Name and Copy Path items for a directory", async () => {
     const onAction = vi.fn();
-    act(() => {
+    await act(async () => {
       root.render(
         <FileMenuItems
           entry={dirEntry}
@@ -984,14 +999,15 @@ describe("FileBrowser – Copy Name / Copy Path", () => {
         />
       );
     });
+    await flushAsync();
 
     expect(container.querySelector('[data-testid="file-menu-copy-name"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="file-menu-copy-path"]')).toBeTruthy();
   });
 
-  it("triggers copyName action when Copy Name is clicked", () => {
+  it("triggers copyName action when Copy Name is clicked", async () => {
     const onAction = vi.fn();
-    act(() => {
+    await act(async () => {
       root.render(
         <FileMenuItems
           entry={fileEntry}
@@ -1006,6 +1022,7 @@ describe("FileBrowser – Copy Name / Copy Path", () => {
         />
       );
     });
+    await flushAsync();
 
     const item = container.querySelector('[data-testid="file-menu-copy-name"]') as HTMLElement;
     act(() => {
@@ -1015,9 +1032,9 @@ describe("FileBrowser – Copy Name / Copy Path", () => {
     expect(onAction).toHaveBeenCalledWith(fileEntry, "copyName");
   });
 
-  it("triggers copyPath action when Copy Path is clicked", () => {
+  it("triggers copyPath action when Copy Path is clicked", async () => {
     const onAction = vi.fn();
-    act(() => {
+    await act(async () => {
       root.render(
         <FileMenuItems
           entry={fileEntry}
@@ -1032,6 +1049,7 @@ describe("FileBrowser – Copy Name / Copy Path", () => {
         />
       );
     });
+    await flushAsync();
 
     const item = container.querySelector('[data-testid="file-menu-copy-path"]') as HTMLElement;
     act(() => {
@@ -1041,9 +1059,9 @@ describe("FileBrowser – Copy Name / Copy Path", () => {
     expect(onAction).toHaveBeenCalledWith(fileEntry, "copyPath");
   });
 
-  it("triggers copyName action for a directory", () => {
+  it("triggers copyName action for a directory", async () => {
     const onAction = vi.fn();
-    act(() => {
+    await act(async () => {
       root.render(
         <FileMenuItems
           entry={dirEntry}
@@ -1058,6 +1076,7 @@ describe("FileBrowser – Copy Name / Copy Path", () => {
         />
       );
     });
+    await flushAsync();
 
     const item = container.querySelector('[data-testid="file-menu-copy-name"]') as HTMLElement;
     act(() => {
@@ -1067,9 +1086,9 @@ describe("FileBrowser – Copy Name / Copy Path", () => {
     expect(onAction).toHaveBeenCalledWith(dirEntry, "copyName");
   });
 
-  it("triggers copyPath action for a directory", () => {
+  it("triggers copyPath action for a directory", async () => {
     const onAction = vi.fn();
-    act(() => {
+    await act(async () => {
       root.render(
         <FileMenuItems
           entry={dirEntry}
@@ -1084,6 +1103,7 @@ describe("FileBrowser – Copy Name / Copy Path", () => {
         />
       );
     });
+    await flushAsync();
 
     const item = container.querySelector('[data-testid="file-menu-copy-path"]') as HTMLElement;
     act(() => {
@@ -2021,14 +2041,15 @@ describe("FileBrowser – session-layer editor tabs (#1557)", () => {
     vi.clearAllMocks();
   });
 
-  function renderBrowser() {
-    act(() => {
+  async function renderBrowser() {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <FileBrowser />
         </TooltipProvider>
       );
     });
+    await flushAsync();
   }
 
   /** An editor tab carries a dummy local config; only its editorMeta matters here. */
@@ -2042,7 +2063,7 @@ describe("FileBrowser – session-layer editor tabs (#1557)", () => {
     });
   }
 
-  it("puts a session-backed editor tab in 'session' mode, not 'sftp'", () => {
+  it("puts a session-backed editor tab in 'session' mode, not 'sftp'", async () => {
     setActiveTab(
       makeEditorTab({
         filePath: "/srv/app/config.yml",
@@ -2051,7 +2072,7 @@ describe("FileBrowser – session-layer editor tabs (#1557)", () => {
       })
     );
 
-    renderBrowser();
+    await renderBrowser();
 
     // Falling into "sftp" here would point the browser at an SftpManager
     // session that does not exist for an FTP/Docker/agent-backed tab.
@@ -2059,10 +2080,10 @@ describe("FileBrowser – session-layer editor tabs (#1557)", () => {
     expect(useAppStore.getState().sessionFileBrowserId).toBe("ftp-sess-1");
   });
 
-  it("keeps a local editor tab in 'local' mode", () => {
+  it("keeps a local editor tab in 'local' mode", async () => {
     setActiveTab(makeEditorTab({ filePath: "/home/me/notes.txt", isRemote: false }));
 
-    renderBrowser();
+    await renderBrowser();
 
     expect(currentFileBrowsersView().mode).toBe("local");
   });
@@ -2091,7 +2112,7 @@ describe("FileBrowser – session-layer editor tabs (#1557)", () => {
       ],
     });
 
-    renderBrowser();
+    await renderBrowser();
     await flushAsync();
     expect(currentFileBrowsersView().mode).toBe("session");
 

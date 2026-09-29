@@ -160,8 +160,8 @@ export function installVirtualListSizing(options: VirtualListSizeOptions = {}): 
   // jsdom's is an inert no-op that never updates scrollTop or fires a scroll
   // event, so make it actually move the element and notify listeners. A real
   // browser's scroll → scrollend sequence is mirrored so a virtualizer using the
-  // native scrollend path (see the `onscrollend` shim in setup.ts) resets its
-  // `isScrolling` flag synchronously and never arms the leaked debounce timer.
+  // native scrollend path (jsdom implements `onscrollend`) resets its
+  // `isScrolling` flag synchronously instead of waiting on the debounce timer.
   savedScrollTo = Element.prototype.scrollTo;
   Element.prototype.scrollTo = function scrollTo(
     xOrOptions?: number | ScrollToOptions,

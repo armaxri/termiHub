@@ -162,7 +162,6 @@ function editContent(value: string): void {
 
 describe("FileEditor — load identity churn / dirty guard (FEC-011)", () => {
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -183,7 +182,6 @@ describe("FileEditor — load identity churn / dirty guard (FEC-011)", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   // (a) The core FEC-011 case: the SAME file's meta-object identity churns (a

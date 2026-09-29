@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { TooltipProvider } from "@/components/ui";
 import type { MonitoringEntry } from "@/types/monitoring";
@@ -111,19 +112,20 @@ describe("OpenConnectionsModal — per-host monitoring controls (#1233)", () => 
     teardownMonitors();
   });
 
-  function renderModal() {
-    act(() => {
+  async function renderModal() {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <OpenConnectionsModal open={true} onOpenChange={() => {}} />
         </TooltipProvider>
       );
     });
+    await flushAsync();
   }
 
-  it("renders Pause and interval controls on a live monitoring row", () => {
+  it("renders Pause and interval controls on a live monitoring row", async () => {
     seedMonitor();
-    renderModal();
+    await renderModal();
 
     expect(monitorSection()).not.toBeNull();
     expect(document.querySelector(`[data-testid="monitor-pause-${KEY}"]`)).not.toBeNull();
@@ -136,7 +138,7 @@ describe("OpenConnectionsModal — per-host monitoring controls (#1233)", () => 
     const setMonitoringPaused = vi.fn(() => Promise.resolve());
     seedMonitor();
     useAppStore.setState({ setMonitoringPaused });
-    renderModal();
+    await renderModal();
 
     const pause = document.querySelector(
       `[data-testid="monitor-pause-${KEY}"]`
@@ -147,9 +149,9 @@ describe("OpenConnectionsModal — per-host monitoring controls (#1233)", () => 
     expect(setMonitoringPaused).toHaveBeenCalledWith(KEY, true);
   });
 
-  it("shows a Resume control (not Pause) when the entry is paused", () => {
+  it("shows a Resume control (not Pause) when the entry is paused", async () => {
     seedMonitor({ paused: true, status: "paused" });
-    renderModal();
+    await renderModal();
 
     expect(document.querySelector(`[data-testid="monitor-resume-${KEY}"]`)).not.toBeNull();
     expect(document.querySelector(`[data-testid="monitor-pause-${KEY}"]`)).toBeNull();
@@ -162,7 +164,7 @@ describe("OpenConnectionsModal — per-host monitoring controls (#1233)", () => 
     const disconnectMonitoring = vi.fn(() => Promise.resolve());
     seedMonitor({ status: "offline" });
     useAppStore.setState({ connectMonitoring, disconnectMonitoring });
-    renderModal();
+    await renderModal();
 
     const retry = document.querySelector(
       `[data-testid="monitor-retry-${KEY}"]`
@@ -184,19 +186,22 @@ describe("OpenConnectionsModal — per-host monitoring controls (#1233)", () => 
     ["transport", "offline — connection lost"],
     ["silent", "offline — no data from agent"],
     [null, "offline — connection lost"],
-  ] as const)("says why an offline row is offline (reason %s, #3301)", (statusReason, text) => {
-    seedMonitor({ status: "offline", statusReason });
-    renderModal();
+  ] as const)(
+    "says why an offline row is offline (reason %s, #3301)",
+    async (statusReason, text) => {
+      seedMonitor({ status: "offline", statusReason });
+      await renderModal();
 
-    const detail = monitorSection()?.querySelector(".oc-row__detail");
-    expect(detail?.textContent).toBe(text);
-    // The Retry affordance is kept regardless of the reason.
-    expect(document.querySelector(`[data-testid="monitor-retry-${KEY}"]`)).not.toBeNull();
-  });
+      const detail = monitorSection()?.querySelector(".oc-row__detail");
+      expect(detail?.textContent).toBe(text);
+      // The Retry affordance is kept regardless of the reason.
+      expect(document.querySelector(`[data-testid="monitor-retry-${KEY}"]`)).not.toBeNull();
+    }
+  );
 
-  it("does not render a Retry control while live", () => {
+  it("does not render a Retry control while live", async () => {
     seedMonitor({ status: "live" });
-    renderModal();
+    await renderModal();
     expect(document.querySelector(`[data-testid="monitor-retry-${KEY}"]`)).toBeNull();
   });
 });

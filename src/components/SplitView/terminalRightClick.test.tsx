@@ -83,7 +83,6 @@ function rightClick(shiftKey: boolean) {
 }
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   tracking = false;
   paste.mockClear();
   xtermMouseDown.mockClear();
@@ -96,7 +95,6 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
 });
 
 describe("useTerminalRightClickRouting (#3801)", () => {

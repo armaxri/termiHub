@@ -191,6 +191,7 @@ each job runs only if the PR can affect it:
 | Build on ubuntu-latest (release compile)                  | Rust or frontend changed                                  |
 | RDP Sidecar Quality                                       | `rdp-sidecar/` changed                                    |
 | Shell Script Quality                                      | a shell/cmd script changed                                |
+| Workflow Lint (actionlint)                                | a `.github/` file changed                                 |
 | System-Test Harness / Test-ID Drift Guard                 | `tests/system/` changed (drift guard: also frontend)      |
 | Security Audit                                            | a dependency manifest/lockfile changed                    |
 | Vendored Forks Consistency                                | `vendor/**`, a lockfile or `docs/supply-chain.md` changed |
