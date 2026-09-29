@@ -10,8 +10,8 @@ evidence:
   - src/store/appStore.ts:1
   - src/store/appStore.ts:469
   - src/store/projectionCache.ts:9
-status: partial
-resolution: "#2881 — appStore split ongoing: 7163 -> 6467 lines this session via settings (#3777), ui-chrome/layout-config (#3783), agents (#3790) slices on top of earlier file-browser/transfers/workspaces/workflows/credential/portable slices. Remaining: tabs/panel layout, persistent sessions, per-tab state, broadcast, last-session restore, loadFromBackend orchestration"
+status: fixed
+resolution: "#2880..#3839 — appStore god-module split complete: every domain in src/store/slices, helpers in layoutHelpers/tabQueries/windowHelpers/restoreHelpers/reconnectHelpers/storeSubscriptions; appStore.ts 8156 -> 343-line composition root; slice import cycle removed (#3839); public API byte-identical, startup-order and layout pin tests"
 ---
 
 ## What
