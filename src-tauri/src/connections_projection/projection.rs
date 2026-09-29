@@ -136,10 +136,16 @@ pub fn fold_connections_from_manager<R: tauri::Runtime>(app_handle: &AppHandle<R
     let Ok(view) = manager.load_unified_view() else {
         return;
     };
+    let live = crate::tunnel::connection_refs::LiveConnections::from_view(&view);
     store.replace(view.folders, view.connections);
     if let Some(projection) = app_handle.try_state::<ProjectionState>() {
         publish_connections(&projection.projector, &store);
     }
+    // Cascade to the tunnels that reference a connection this view no longer
+    // holds — a single or bulk delete, or a changed or disabled external
+    // connection file (#2850): stop them, and mark them unresolved in the
+    // shared `tunnels` region.
+    crate::tunnel::connection_refs::reconcile_tunnels_with_connections(app_handle, live);
 }
 
 /// Register the `connection.*` intents on a handler registry.

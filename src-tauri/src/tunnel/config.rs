@@ -113,6 +113,9 @@ pub enum TunnelStatus {
     Connected,
     Reconnecting,
     Error,
+    /// Its SSH connection was deleted (#2850): the tunnel is kept but cannot
+    /// start until it is edited to use another SSH connection.
+    MissingConnection,
 }
 
 /// Map a [`TunnelStatus`] onto the canonical
@@ -132,6 +135,9 @@ impl From<TunnelStatus> for termihub_core::connection::lifecycle::SessionStatus 
             TunnelStatus::Connected => SessionStatus::Connected,
             TunnelStatus::Reconnecting => SessionStatus::Reconnecting,
             TunnelStatus::Error => SessionStatus::Failed,
+            // A resting, not-running state: nothing failed at runtime, the
+            // tunnel just cannot start until it is repointed (#2850).
+            TunnelStatus::MissingConnection => SessionStatus::Disconnected,
         }
     }
 }
@@ -150,6 +156,7 @@ mod tunnel_status_map_tests {
             (TunnelStatus::Connected, SessionStatus::Connected),
             (TunnelStatus::Reconnecting, SessionStatus::Reconnecting),
             (TunnelStatus::Error, SessionStatus::Failed),
+            (TunnelStatus::MissingConnection, SessionStatus::Disconnected),
         ];
         for (input, expected) in cases {
             assert_eq!(SessionStatus::from(input), expected);

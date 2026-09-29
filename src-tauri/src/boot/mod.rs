@@ -705,6 +705,16 @@ fn seed_projection_regions(
         .handle()
         .try_state::<Arc<tunnel::tunnel_manager::TunnelManager>>()
     {
+        // Seed which tunnels reference a deleted SSH connection (#2850) before
+        // the region, so it starts in the `missingConnection` state and the
+        // auto-start (spawned during tunnel init) refuses those tunnels.
+        if let Some(connections) = app.handle().try_state::<ConnectionManager>() {
+            if let Ok(view) = connections.load_unified_view() {
+                manager.reconcile_connections(tunnel::connection_refs::LiveConnections::from_view(
+                    &view,
+                ));
+            }
+        }
         projection_state.projector.register_region(
             tunnel::projection::TUNNELS_REGION,
             tunnel::projection::build_tunnel_view(&manager),
