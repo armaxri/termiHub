@@ -751,6 +751,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::transfer::ftp_download,
             commands::transfer::ftp_upload,
             commands::transfer::session_copy_remote,
+            commands::transfer::session_supports_remote_copy,
             commands::transfer::folder_paste_begin,
             commands::transfer::folder_paste_end,
             commands::transfer::folder_paste_link_transfer,

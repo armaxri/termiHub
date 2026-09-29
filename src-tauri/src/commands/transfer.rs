@@ -12,6 +12,7 @@ use tracing::debug;
 use crate::files::transfer::persist::{
     FolderPasteEndpoint, FolderPasteOperation, PersistedFolderPaste,
 };
+use crate::files::transfer::remote_copy::RemoteCopyEndpoint;
 use crate::files::transfer::{TransferPersistenceManager, TransferRegistry, TransferSnapshot};
 use crate::session::manager::SessionManager;
 use crate::utils::errors::TerminalError;
@@ -109,26 +110,53 @@ pub async fn transfer_retry(
     .await)
 }
 
-/// Copy a file directly from one SFTP-backed session to another, streaming the
-/// bytes **through the desktop with no local staging file** (product feature
-/// PROD-0013).
+/// Resolve a session to the end of a remote-to-remote copy it can be: SFTP
+/// first, then Docker. A session that is neither (FTP, a remote agent, or an
+/// unknown session) surfaces the SFTP "not supported" error, so the caller
+/// keeps the byte-based fallback.
+async fn resolve_copy_endpoint(
+    manager: &SessionManager,
+    session_id: &str,
+) -> Result<RemoteCopyEndpoint, TerminalError> {
+    let sftp_err = match manager.sftp_transfer_browser(session_id).await {
+        Ok(browser) => return Ok(RemoteCopyEndpoint::Sftp(browser)),
+        Err(e) => e,
+    };
+    match manager.docker_transfer_target(session_id).await {
+        Ok(target) => Ok(RemoteCopyEndpoint::Docker(target)),
+        Err(_) => Err(sftp_err),
+    }
+}
+
+/// Report whether a session can be either end of a streamed remote-to-remote
+/// copy ([`session_copy_remote`]): `true` for an SFTP- or Docker-backed
+/// session, `false` otherwise (FTP, remote agents, unknown sessions), which
+/// keep the frontend's byte-based read/write fallback (#3586).
+#[tauri::command]
+pub async fn session_supports_remote_copy(
+    session_id: String,
+    manager: State<'_, SessionManager>,
+) -> Result<bool, TerminalError> {
+    Ok(resolve_copy_endpoint(&manager, &session_id).await.is_ok())
+}
+
+/// Copy a file directly from one session to another, streaming the bytes
+/// **through the desktop with no local staging file** (product feature
+/// PROD-0013; Docker ends since #3586).
 ///
-/// Enqueues ONE rich transfer that reads from `src_session`'s dedicated SFTP
-/// channel and writes to `dst_session`'s channel via the shared chunked-copy
-/// primitive — so a remote→remote paste surfaces as a single Transfer Queue row
-/// instead of the download-to-temp + upload round-trip (two rows + a local disk
-/// copy) it replaces. Rides the same executor as `session_download` /
-/// `session_upload`, so pause/resume, auto-retry and byte-verified offset resume
-/// all work; progress is measured on the write side and cancel removes the
-/// partial destination.
+/// Enqueues ONE rich transfer that reads from `src_session` and writes to
+/// `dst_session` — each an SFTP session (a dedicated channel per attempt) or a
+/// Docker session (a streaming `docker exec` per attempt) — so a remote→remote
+/// paste surfaces as a single Transfer Queue row instead of a whole-file
+/// in-memory round trip. Pause/resume, auto-retry and byte-verified offset
+/// resume all work; progress is measured on the write side and cancel removes
+/// the partial destination.
 ///
-/// Both endpoints must be SFTP-backed: each browser is resolved (and validated)
-/// up front, so an unsupported / unreachable endpoint errors here rather than
-/// silently on the queue. The row is registered under `dst_session` (where the
-/// file lands); its name/path come from the destination remote path
-/// (#1531/#1573). A server-side host-to-host copy (SCP/rsync) is a deferred
-/// alternative — streaming through the desktop reaches everywhere both hosts are
-/// reachable from the desktop.
+/// Both endpoints are resolved (and validated) up front, so an unsupported /
+/// unreachable endpoint errors here rather than silently on the queue. The row
+/// is registered under `dst_session` (where the file lands); its name/path come
+/// from the destination remote path (#1531/#1573). FTP ends are not supported
+/// (see [`session_supports_remote_copy`]).
 #[tauri::command]
 pub async fn session_copy_remote(
     src_session: String,
@@ -143,12 +171,10 @@ pub async fn session_copy_remote(
 
     debug!(
         src_session,
-        src_path, dst_session, dst_path, "Session SFTP remote-to-remote copy"
+        src_path, dst_session, dst_path, "Session remote-to-remote copy"
     );
-    // Resolve (and validate) both SFTP browsers up front so an unsupported /
-    // unreachable endpoint errors here rather than silently on the queue.
-    let src_browser = manager.sftp_transfer_browser(&src_session).await?;
-    let dst_browser = manager.sftp_transfer_browser(&dst_session).await?;
+    let src = resolve_copy_endpoint(&manager, &src_session).await?;
+    let dst = resolve_copy_endpoint(&manager, &dst_session).await?;
 
     let transfer_id = uuid::Uuid::new_v4().to_string();
     // Named/pathed for the *destination* (where the file lands), mirroring the
@@ -162,52 +188,81 @@ pub async fn session_copy_remote(
         &dst_path,
         0,
     );
-    // Durable queue (PROD-0011): persist metadata only (references/paths, never
-    // credentials) so a restart rehydrates this remote-to-remote copy as paused.
-    // A remote-to-remote copy has no local endpoint, so `local_path` is None;
-    // its source session reference + path are kept so it can relaunch (#3206).
     if let Some(pm) = app_handle.try_state::<TransferPersistenceManager>() {
-        pm.record_registration(
-            &transfer_id,
-            &dst_session,
-            TransferDirection::Upload,
-            &file_name,
-            &dst_path,
-            None,
-            0,
-        );
-        pm.record_remote_source(
-            &transfer_id,
-            &src_session,
-            &src_path,
-            manager.saved_connection_of(&src_session).as_deref(),
-        );
-        // The saved connections behind both ends (#3876), so a relaunch after
-        // a restart can re-source their secrets.
-        crate::files::transfer::relaunch_session::record_saved_connection(
+        record_remote_copy(
             &pm,
             &manager,
             &transfer_id,
-            &dst_session,
+            (&src_session, &src_path, &src),
+            (&dst_session, &dst_path, &dst),
+            &file_name,
         );
     }
     let registry = (*registry).clone();
     let sink = transfer::app_progress_sink(app_handle);
     tauri::async_runtime::spawn(async move {
-        transfer::sftp::run_sftp_remote_copy(
-            src_browser,
-            dst_browser,
+        transfer::remote_copy::run_remote_copy(
+            src,
+            dst,
             src_path,
             dst_path,
             handle,
             registry,
             sink,
-            transfer::sftp::DEFAULT_RESUME_MODE,
+            transfer::remote_copy::DEFAULT_RESUME_MODE,
             0,
         )
         .await;
     });
     Ok(transfer_id)
+}
+
+/// Persist a remote-to-remote copy for the durable queue (PROD-0011): metadata
+/// only (references and paths, never credentials), so a restart rehydrates it
+/// as paused. It has no local endpoint, so `local_path` is None; its source
+/// session reference + path are kept so it can relaunch (#3206), with the saved
+/// connections behind SFTP ends (#3876) and the container ids of Docker ends
+/// (#3586), so each end re-attaches the way it connected.
+fn record_remote_copy(
+    pm: &TransferPersistenceManager,
+    manager: &SessionManager,
+    transfer_id: &str,
+    (src_session, src_path, src): (&str, &str, &RemoteCopyEndpoint),
+    (dst_session, dst_path, dst): (&str, &str, &RemoteCopyEndpoint),
+    file_name: &str,
+) {
+    use crate::files::transfer::TransferDirection;
+    pm.record_registration(
+        transfer_id,
+        dst_session,
+        TransferDirection::Upload,
+        file_name,
+        dst_path,
+        None,
+        0,
+    );
+    pm.record_remote_source(
+        transfer_id,
+        src_session,
+        src_path,
+        manager.saved_connection_of(src_session).as_deref(),
+    );
+    if let RemoteCopyEndpoint::Docker(target) = src {
+        pm.record_remote_source_container(transfer_id, target.container_id());
+    }
+    match dst {
+        RemoteCopyEndpoint::Docker(target) => {
+            pm.record_docker_target(transfer_id, target.container_id());
+        }
+        RemoteCopyEndpoint::Sftp(_) => {
+            crate::files::transfer::relaunch_session::record_saved_connection(
+                pm,
+                manager,
+                transfer_id,
+                dst_session,
+            );
+        }
+    }
 }
 
 // --- Folder-paste manifests (#3630) ---

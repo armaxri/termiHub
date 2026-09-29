@@ -130,14 +130,18 @@ pub(crate) enum RelaunchPlan {
         /// The folder copy's cancel group (#3613), absent for a single file.
         group_id: Option<String>,
     },
-    /// A remote-to-remote SFTP copy (PROD-0013) that persisted its source
-    /// endpoint (#3206): relaunchable given both live sessions.
+    /// A remote-to-remote copy (PROD-0013) that persisted its source endpoint
+    /// (#3206): relaunchable given both ends. An end with a persisted container
+    /// id is a Docker session re-attached by that id (#3586); any other end is
+    /// an SFTP session.
     RemoteCopy {
         src_session_id: String,
         src_saved_connection_id: Option<String>,
+        src_container_id: Option<String>,
         src_path: String,
         dst_session_id: String,
         dst_saved_connection_id: Option<String>,
+        dst_container_id: Option<String>,
         dst_path: String,
         offset: u64,
         total: u64,
@@ -201,9 +205,11 @@ pub(crate) fn plan_from_record(record: &PersistedTransfer) -> RelaunchPlan {
             Some(source) => RelaunchPlan::RemoteCopy {
                 src_session_id: source.session_id.clone(),
                 src_saved_connection_id: source.saved_connection_id.clone(),
+                src_container_id: source.container_id.clone(),
                 src_path: source.path.clone(),
                 dst_session_id: record.session_id.clone(),
                 dst_saved_connection_id: record.saved_connection_id.clone(),
+                dst_container_id: record.docker.as_ref().map(|d| d.container_id.clone()),
                 dst_path: record.remote_path.clone(),
                 offset: record.resume_offset,
                 total: record.total,
@@ -425,9 +431,11 @@ async fn relaunch_record(
         RelaunchPlan::RemoteCopy {
             src_session_id,
             src_saved_connection_id,
+            src_container_id,
             src_path,
             dst_session_id,
             dst_saved_connection_id,
+            dst_container_id,
             dst_path,
             offset,
             total,
@@ -442,15 +450,17 @@ async fn relaunch_record(
                 CopyEnd {
                     session_id: &src_session_id,
                     saved_connection_id: src_saved_connection_id.as_deref(),
+                    container_id: src_container_id.as_deref(),
                 },
                 CopyEnd {
                     session_id: &dst_session_id,
                     saved_connection_id: dst_saved_connection_id.as_deref(),
+                    container_id: dst_container_id.as_deref(),
                 },
             )
             .await
             {
-                Ok((src_browser, dst_browser)) => {
+                Ok((src_end, dst_end)) => {
                     let spawn_dst = dst_path.clone();
                     spawn_relaunch(
                         &record,
@@ -460,15 +470,15 @@ async fn relaunch_record(
                         registry,
                         app_handle,
                         move |handle, registry, sink| {
-                            super::sftp::run_sftp_remote_copy(
-                                src_browser,
-                                dst_browser,
+                            super::remote_copy::run_remote_copy(
+                                src_end,
+                                dst_end,
                                 src_path,
                                 spawn_dst,
                                 handle,
                                 registry,
                                 sink,
-                                super::sftp::DEFAULT_RESUME_MODE,
+                                super::remote_copy::DEFAULT_RESUME_MODE,
                                 offset,
                             )
                         },
@@ -887,6 +897,7 @@ mod tests {
             session_id: "sess-src".to_string(),
             path: "/src/data.csv".to_string(),
             saved_connection_id: Some("conn-src".to_string()),
+            container_id: None,
         });
         rec.saved_connection_id = Some("conn-dst".to_string());
         assert_eq!(
@@ -894,14 +905,47 @@ mod tests {
             RelaunchPlan::RemoteCopy {
                 src_session_id: "sess-src".to_string(),
                 src_saved_connection_id: Some("conn-src".to_string()),
+                src_container_id: None,
                 src_path: "/src/data.csv".to_string(),
                 dst_session_id: "sess-dst".to_string(),
                 dst_saved_connection_id: Some("conn-dst".to_string()),
+                dst_container_id: None,
                 dst_path: "/dst/data.csv".to_string(),
                 offset: 4096,
                 total: 8192,
             }
         );
+    }
+
+    /// A remote-to-remote copy with Docker ends (#3586) keeps both container
+    /// ids in its plan, so each end re-attaches to its exact container — it is
+    /// never mistaken for a Docker download/upload (it has no local endpoint).
+    #[test]
+    fn plan_for_a_docker_remote_copy_carries_both_container_ids() {
+        let mut rec = docker_record("r2r", None);
+        rec.remote_path = "/dst/data.csv".to_string();
+        rec.remote_source = Some(crate::files::transfer::persist::PersistedRemoteSource {
+            session_id: "sess-src".to_string(),
+            path: "/src/data.csv".to_string(),
+            saved_connection_id: None,
+            container_id: Some("src-container".to_string()),
+        });
+        match plan_from_record(&rec) {
+            RelaunchPlan::RemoteCopy {
+                src_container_id,
+                dst_container_id,
+                src_path,
+                ..
+            } => {
+                assert_eq!(src_container_id.as_deref(), Some("src-container"));
+                assert_eq!(
+                    dst_container_id,
+                    rec.docker.as_ref().map(|d| d.container_id.clone())
+                );
+                assert_eq!(src_path, "/src/data.csv");
+            }
+            other => panic!("expected RemoteCopy, got {other:?}"),
+        }
     }
 
     /// A remote-to-remote record rehydrated from the persisted queue plans a
