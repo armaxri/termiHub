@@ -33,7 +33,7 @@ export const GATE_JOB_NAME = "PR Gate";
  * job must appear in the gate's `needs:` (enforced by pr-gate.test.mjs).
  */
 export const GATE_EXCLUDED = {
-  "bundle-size": "advisory (continue-on-error) and push-only; never runs on a PR",
+  "bundle-size": "post-merge alarm (#3757); push-only, never runs on a PR",
 };
 
 /** Job results that count as a pass. */
