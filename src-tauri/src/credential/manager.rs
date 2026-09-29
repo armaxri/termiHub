@@ -129,7 +129,9 @@ impl CredentialManager {
     /// Locks the current store (if master password), then replaces the backend.
     /// Callers are responsible for migrating credentials before switching.
     /// Equivalent to [`Self::begin_switch`] immediately followed by
-    /// [`Self::commit_switch`].
+    /// [`Self::commit_switch`]. Production code uses the two-phase API so a
+    /// failed switch can be rolled back (#3323).
+    #[cfg(test)]
     pub fn switch_store(&self, new_mode: StorageMode) -> Result<()> {
         let pending = self.begin_switch(new_mode);
         self.commit_switch(pending);

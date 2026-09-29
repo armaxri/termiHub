@@ -6,13 +6,13 @@ use tracing::{debug, info, warn};
 
 use crate::connection::manager::ConnectionManager;
 use crate::connection::settings::{CredentialStorageMode, SettingsUnion};
+use crate::credential::manager::PendingStoreSwitch;
 use crate::credential::named::NamedCredentialRegistry;
 use crate::credential::types::{build_status_info, CredentialStoreStatusInfo};
 use crate::credential::{
     CredentialKey, CredentialManager, CredentialStore, CredentialType, LockedEventPayload,
     MasterPasswordStore, StorageMode, UnlockFailure,
 };
-use crate::credential::manager::PendingStoreSwitch;
 
 /// Event emitted when the credential store is locked.
 const EVENT_STORE_LOCKED: &str = "credential-store-locked";
@@ -531,7 +531,13 @@ pub async fn switch_credential_store(
         },
     );
 
-    if matches!(result, Ok(SwitchResult { rolled_back: false, .. })) {
+    if matches!(
+        result,
+        Ok(SwitchResult {
+            rolled_back: false,
+            ..
+        })
+    ) {
         sync_embedded_server_secrets(&app_handle);
         sync_connection_credential_scopes(&app_handle);
     }
@@ -1430,8 +1436,14 @@ mod tests {
         assert_eq!(result.failed_count, 2);
         // Old mode active, settings unchanged, old store still unlocked + usable.
         assert_eq!(mgr.get_mode(), StorageMode::MasterPassword);
-        assert!(persisted.is_none(), "a rolled-back mode must not be persisted");
-        assert_eq!(mgr.status(), crate::credential::CredentialStoreStatus::Unlocked);
+        assert!(
+            persisted.is_none(),
+            "a rolled-back mode must not be persisted"
+        );
+        assert_eq!(
+            mgr.status(),
+            crate::credential::CredentialStoreStatus::Unlocked
+        );
         assert_eq!(
             mgr.get(&cred("a").0).unwrap(),
             Some(MIGRATION_TEST_SECRET.to_string())
@@ -1556,7 +1568,10 @@ mod tests {
         assert_eq!(result.remaining.len(), 1);
         assert!(!persisted);
         assert_eq!(mgr.get_mode(), StorageMode::MasterPassword);
-        assert_eq!(mgr.status(), crate::credential::CredentialStoreStatus::Unlocked);
+        assert_eq!(
+            mgr.status(),
+            crate::credential::CredentialStoreStatus::Unlocked
+        );
         // The entry that could not be removed from disk is still readable.
         assert_eq!(
             mgr.get(&cred("x1").0).unwrap(),
