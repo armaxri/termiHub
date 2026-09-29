@@ -572,6 +572,54 @@ mod tests {
         );
     }
 
+    /// #2901: an FTP connection's legacy `timeoutSecs` is read under the unified
+    /// `connectTimeoutSecs` key on every typed `ConnectionConfig` read (external
+    /// files, imports, backups, inline tab configs), and only the new key is
+    /// written back.
+    #[test]
+    fn connection_config_reads_legacy_ftp_timeout_under_unified_key() {
+        let cfg: ConnectionConfig = serde_json::from_value(serde_json::json!({
+            "type": "ftp",
+            "config": { "host": "h", "timeoutSecs": 45 }
+        }))
+        .unwrap();
+        assert_eq!(
+            cfg.settings,
+            serde_json::json!({ "host": "h", "connectTimeoutSecs": 45 })
+        );
+        let out = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(
+            out,
+            serde_json::json!({ "type": "ftp", "config": { "host": "h", "connectTimeoutSecs": 45 } })
+        );
+    }
+
+    /// The FTP rename is type-scoped: another type's own `timeoutSecs` (e.g. a
+    /// plugin setting) is never touched.
+    #[test]
+    fn connection_config_leaves_non_ftp_timeout_secs_alone() {
+        let cfg: ConnectionConfig = serde_json::from_value(serde_json::json!({
+            "type": "plugin:acme:thing",
+            "config": { "timeoutSecs": 45 }
+        }))
+        .unwrap();
+        assert_eq!(cfg.settings, serde_json::json!({ "timeoutSecs": 45 }));
+    }
+
+    /// The type-aware read still applies the type-agnostic legacy renames.
+    #[test]
+    fn connection_config_ftp_read_keeps_generic_legacy_renames() {
+        let cfg: ConnectionConfig = serde_json::from_value(serde_json::json!({
+            "type": "ftp",
+            "config": { "timeoutSecs": 9, "resilientReconnect": false }
+        }))
+        .unwrap();
+        assert_eq!(
+            cfg.settings,
+            serde_json::json!({ "connectTimeoutSecs": 9, "autoReconnect": false })
+        );
+    }
+
     #[test]
     fn connection_store_default_is_current_version() {
         let store = ConnectionStore::default();

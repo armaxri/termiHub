@@ -2200,12 +2200,24 @@ mod tests {
     }
 
     #[test]
-    fn ftp_config_connect_timeout_persists_as_timeout_secs() {
-        // Serialization keeps the historical `timeoutSecs` key so a save/load
-        // round-trip through the raw settings blob stays byte-stable.
+    fn ftp_config_connect_timeout_persists_as_unified_key() {
+        // #2901: serialization writes only the unified `connectTimeoutSecs` key;
+        // the legacy `timeoutSecs` key is accepted on read (alias) but never
+        // written.
         let json = serde_json::to_string(&FtpConfig::default()).unwrap();
-        assert!(json.contains("\"timeoutSecs\":30"), "json: {json}");
-        assert!(!json.contains("connectTimeoutSecs"), "json: {json}");
+        assert!(json.contains("\"connectTimeoutSecs\":30"), "json: {json}");
+        assert!(!json.contains("\"timeoutSecs\""), "json: {json}");
+    }
+
+    #[test]
+    fn ftp_config_legacy_timeout_round_trips_to_unified_key_losslessly() {
+        let cfg: FtpConfig =
+            serde_json::from_str(r#"{ "host": "ftp.example.com", "timeoutSecs": 45 }"#).unwrap();
+        let out = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(out["connectTimeoutSecs"], serde_json::json!(45));
+        assert!(out.get("timeoutSecs").is_none());
+        let back: FtpConfig = serde_json::from_value(out).unwrap();
+        assert_eq!(back.connect_timeout_secs, 45);
     }
 
     #[test]

@@ -799,6 +799,142 @@ mod tests {
         assert!(!raw.contains("resilientReconnect"));
     }
 
+    // ── Legacy FTP connect-timeout key (#2901) ──────────────────────
+
+    /// An FTP definition persisted with the legacy `timeoutSecs` key loads under
+    /// the unified `connectTimeoutSecs` key with the user's value intact (so the
+    /// agent's schema-keyed form pre-populates it), and the next save writes only
+    /// the new key. A non-FTP type's own `timeoutSecs` is never touched.
+    #[tokio::test]
+    async fn legacy_ftp_timeout_key_is_read_and_rewritten() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        fs::write(
+            &path,
+            json!({
+                "connections": [
+                    {
+                        "id": "f1", "name": "ftp", "session_type": "ftp",
+                        "config": { "host": "h", "timeoutSecs": 45 }
+                    },
+                    {
+                        "id": "p1", "name": "plugin", "session_type": "plugin:acme:thing",
+                        "config": { "timeoutSecs": 7 }
+                    }
+                ],
+                "folders": []
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let store = ConnectionStore::new(path.clone());
+        let snap = store.get("f1").await.unwrap();
+        assert_eq!(
+            snap.config,
+            json!({ "host": "h", "connectTimeoutSecs": 45 })
+        );
+        let plugin = store.get("p1").await.unwrap();
+        assert_eq!(plugin.config, json!({ "timeoutSecs": 7 }));
+
+        store
+            .update(
+                "f1",
+                Some("renamed".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let raw: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).expect("valid json on disk");
+        let conns = raw["connections"].as_array().unwrap();
+        let ftp = conns.iter().find(|c| c["id"] == "f1").unwrap();
+        assert_eq!(
+            ftp["config"],
+            json!({ "host": "h", "connectTimeoutSecs": 45 })
+        );
+        let plugin = conns.iter().find(|c| c["id"] == "p1").unwrap();
+        assert_eq!(plugin["config"], json!({ "timeoutSecs": 7 }));
+    }
+
+    /// Create/update requests carrying the legacy FTP key (e.g. from a desktop
+    /// using an older agent schema) are stored under the unified key.
+    #[tokio::test]
+    async fn create_and_update_normalize_legacy_ftp_timeout_key() {
+        let tmp = TempDir::new().unwrap();
+        let store = ConnectionStore::new_temp(tmp.path().join("connections.json"));
+
+        let created = store
+            .create(Connection {
+                id: "f1".into(),
+                name: "ftp".into(),
+                session_type: "ftp".into(),
+                config: json!({ "host": "h", "timeoutSecs": 45 }),
+                persistent: false,
+                folder_id: None,
+                terminal_options: None,
+                icon: None,
+            })
+            .await;
+        assert_eq!(
+            created.config,
+            json!({ "host": "h", "connectTimeoutSecs": 45 })
+        );
+
+        let updated = store
+            .update(
+                "f1",
+                None,
+                None,
+                Some(json!({ "host": "h", "timeoutSecs": 60 })),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            updated.config,
+            json!({ "host": "h", "connectTimeoutSecs": 60 })
+        );
+        assert_eq!(
+            store.get("f1").await.unwrap().config,
+            json!({ "host": "h", "connectTimeoutSecs": 60 })
+        );
+    }
+
+    /// External connection files on the agent host are normalized the same way.
+    #[tokio::test]
+    async fn external_file_legacy_ftp_timeout_key_is_normalized() {
+        let tmp = TempDir::new().unwrap();
+        let store = ConnectionStore::new_temp(tmp.path().join("connections.json"));
+        let ext = tmp.path().join("external.json");
+        fs::write(
+            &ext,
+            json!({
+                "connections": [{
+                    "id": "x1", "name": "ftp", "session_type": "ftp",
+                    "config": { "timeoutSecs": 45 }
+                }],
+                "folders": []
+            })
+            .to_string(),
+        )
+        .unwrap();
+        store
+            .load_external_files(&[ext.to_string_lossy().into_owned()])
+            .await;
+        let (conns, _) = store.list().await;
+        let x = conns.iter().find(|c| c.id == "x1").unwrap();
+        assert_eq!(x.config, json!({ "connectTimeoutSecs": 45 }));
+    }
+
     // ── Connection CRUD ─────────────────────────────────────────────
 
     #[tokio::test]

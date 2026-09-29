@@ -122,6 +122,18 @@ impl Drop for Ftp {
 /// A bare "timed out" is unhelpful; this names the endpoint and suggests the
 /// common causes (wrong host/port, server down, firewall) so the user has
 /// something to check (concept: "surface a clear error with suggestions").
+/// Parse an FTP settings bag into an [`FtpConfig`].
+///
+/// The bag is normalized first
+/// ([`normalize_ftp_connect_timeout`](crate::connection::normalize_ftp_connect_timeout)),
+/// so a bag carrying **both** the legacy `timeoutSecs` and the unified
+/// `connectTimeoutSecs` key still parses (the unified key wins) instead of
+/// failing serde's duplicate-field check on the aliased field (#2901).
+fn parse_settings(settings: serde_json::Value) -> Result<FtpConfig, SessionError> {
+    serde_json::from_value(settings)
+        .map_err(|e| SessionError::InvalidConfig(format!("Invalid FTP settings: {e}")))
+}
+
 fn connection_timeout_message(host: &str, port: u16, secs: u64) -> String {
     format!(
         "FTP connection to {host}:{port} timed out after {secs}s. Check that the host \
@@ -515,9 +527,7 @@ impl ConnectionType for Ftp {
             return Err(SessionError::AlreadyExists("Already connected".to_string()));
         }
 
-        let config: FtpConfig = serde_json::from_value(settings)
-            .map_err(|e| SessionError::InvalidConfig(format!("Invalid FTP settings: {e}")))?;
-        let config = config.expand();
+        let config = parse_settings(settings)?.expand();
 
         if config.host.is_empty() {
             return Err(SessionError::InvalidConfig(
@@ -691,6 +701,42 @@ mod tests {
     #[test]
     fn default_creates_disconnected() {
         assert!(!Ftp::default().is_connected());
+    }
+
+    // --- #2901: unified `connectTimeoutSecs` schema key + tolerant parse ---
+
+    #[test]
+    fn schema_connect_timeout_uses_unified_key() {
+        let schema = Ftp::new().settings_schema();
+        let field = find_field(&schema, "connectTimeoutSecs");
+        assert_eq!(field.default, Some(serde_json::json!(30)));
+        let legacy = schema
+            .groups
+            .iter()
+            .flat_map(|g| g.fields.iter())
+            .any(|f| f.key == "timeoutSecs");
+        assert!(!legacy, "the legacy `timeoutSecs` schema key must be gone");
+    }
+
+    #[test]
+    fn parse_settings_accepts_legacy_and_unified_keys() {
+        let legacy = parse_settings(serde_json::json!({ "host": "h", "timeoutSecs": 45 })).unwrap();
+        assert_eq!(legacy.connect_timeout_secs, 45);
+        let unified =
+            parse_settings(serde_json::json!({ "host": "h", "connectTimeoutSecs": 12 })).unwrap();
+        assert_eq!(unified.connect_timeout_secs, 12);
+    }
+
+    #[test]
+    fn parse_settings_with_both_keys_prefers_unified_key() {
+        // A bag carrying both keys must not fail serde's duplicate-field check.
+        let cfg = parse_settings(serde_json::json!({
+            "host": "h",
+            "timeoutSecs": 45,
+            "connectTimeoutSecs": 12
+        }))
+        .expect("both keys present must still parse");
+        assert_eq!(cfg.connect_timeout_secs, 12);
     }
 
     #[test]
