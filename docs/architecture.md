@@ -2237,8 +2237,14 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
 STREAM` and `MDTM` are supported, and `SIZE` + `MDTM` fingerprint the remote
   file. Without `REST STREAM` the transfer restarts from zero; without `MDTM`
   a resume is checked against the size only. A **remote-to-remote** copy
-  persists its source endpoint (`remoteSource`: session reference + path) and
-  relaunches by re-attaching both sessions; the source is checked against the
+  streams between two sessions with no local staging file
+  (`core/src/files/transfer/remote_copy.rs`); either end may be SFTP (a
+  dedicated channel per attempt) or Docker (a streaming `docker exec` per
+  attempt, #3586), while an FTP or agent end keeps the frontend's byte-based
+  read/write fallback. It persists its source endpoint (`remoteSource`:
+  session reference + path, plus `containerId` for a Docker source; a Docker
+  destination keeps `docker`) and relaunches by re-attaching both ends — a
+  Docker end by its exact container id; the source is checked against the
   persisted size and mtime like any other relaunch.
   After a restart the original session id is gone, so each SFTP/FTP record
   (and each end of a remote-to-remote copy) also keeps `savedConnectionId`: the
