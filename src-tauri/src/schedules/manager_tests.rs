@@ -267,7 +267,7 @@ fn no_overlap_skips_while_the_previous_run_is_in_flight() {
     let m = enabled_manager(&dir, MissedRunPolicy::Skip);
     let w = windows(&["main"]);
     let token = m.tick_all(t(10, 10), &Utc, &w).fires[0].token.clone();
-    m.ack(&token, "main");
+    m.ack(&token, "main", &[]);
     // Next slot while still running → skipped + logged, not fired.
     let r = m.tick_all(t(10, 20), &Utc, &w);
     assert!(r.fires.is_empty());
@@ -381,7 +381,7 @@ fn a_run_nobody_settles_is_closed_as_failed_after_the_stale_timeout() {
     let w = windows(&["main"]);
     let fired = Utc.with_ymd_and_hms(2026, 6, 2, 0, 0, 0).unwrap();
     let token = m.tick_all(fired, &Utc, &w).fires[0].token.clone();
-    m.ack(&token, "main");
+    m.ack(&token, "main", &[]);
     m.tick_all(fired + Duration::hours(5), &Utc, &w);
     assert!(m.state(fired, &Utc).unwrap().schedules[0].running);
     m.tick_all(fired + Duration::hours(6) + Duration::minutes(1), &Utc, &w);
@@ -412,7 +412,7 @@ fn a_window_that_never_acknowledges_is_dropped_from_the_run() {
     let w = windows(&["main", "win-1"]);
     let fired = t(10, 10);
     let token = m.tick_all(fired, &Utc, &w).fires[0].token.clone();
-    m.ack(&token, "main");
+    m.ack(&token, "main", &[]);
     // win-1 was reloading and never received the fire.
     m.tick(fired + Duration::seconds(30), &Utc, &w);
     assert!(m.state(fired, &Utc).unwrap().schedules[0].running);
