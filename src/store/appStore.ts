@@ -21,13 +21,7 @@ import {
   SessionCloseConfirmRequest,
   BroadcastScope,
 } from "@/types/terminal";
-import {
-  FileEntry,
-  TransferState,
-  DEFAULT_LAYOUT,
-  PersistentRunState,
-  PersistentSessionEntry,
-} from "@/types/connection";
+import { FileEntry, TransferState, DEFAULT_LAYOUT, PersistentRunState } from "@/types/connection";
 import { loadConnections, getSettings, getRecoveryWarnings } from "@/services/storage";
 import { deriveTabStatus, type TabStatusMaps } from "@/utils/tabStatus";
 import { isAutoReconnectEnabled } from "@/utils/autoReconnect";
@@ -35,12 +29,7 @@ import {
   sessionGetCapabilities,
   listAvailableShells,
   getDefaultShell,
-  AgentDefinitionInfo,
   getConnectionTypes,
-  startPersistentSession as apiStartPersistentSession,
-  stopPersistentSession as apiStopPersistentSession,
-  attachPersistentTab as apiAttachPersistentTab,
-  adoptPersistentSession as apiAdoptPersistentSession,
   closeTerminal as apiCloseTerminal,
   reclaimSession as apiReclaimSession,
   detachPersistentTab as apiDetachPersistentTab,
@@ -75,7 +64,6 @@ import {
 import type { CapturedWindowLayout, WindowRestorePlanEntry } from "@/utils/windowPersistence";
 import { classifyWindowCloseSessions, windowCloseWouldLoseData } from "@/utils/windowClose";
 import type { ConnectionTypeInfo, ContainerSpawn, ShellSpawn } from "@/services/api";
-import type { SpawnRequestPayload } from "@/services/events";
 import { createTunnelSlice, TunnelSlice } from "./slices/tunnelSlice";
 import { createEmbeddedServersSlice, EmbeddedServersSlice } from "./slices/embedded-serversSlice";
 import { createMacrosSlice, MacrosSlice } from "./slices/macrosSlice";
@@ -116,6 +104,11 @@ import {
   createTerminalSessionStateSlice,
   TerminalSessionStateSlice,
 } from "./slices/terminalSessionStateSlice";
+import {
+  createPersistentSessionsSlice,
+  PersistentSessionsSlice,
+} from "./slices/persistentSessionsSlice";
+import { createRestoreCohortSlice, RestoreCohortSlice } from "./slices/restoreCohortSlice";
 
 export type { MacroPlaybackState, PlayMacroOptions } from "./slices/macrosSlice";
 export type {
@@ -219,9 +212,6 @@ import { currentConnectionsView, ensureConnectionsSubscribed } from "@/store/con
 import { currentSettingsView, ensureSettingsSubscribed } from "@/store/settingsBridge";
 import { currentBroadcastView } from "@/store/broadcastBridge";
 import {
-  currentRestoreCohortView,
-  mirrorRestoreBegin,
-  mirrorRestoreSettle,
   setRestoreSettlementRenderer,
   type ProjectedSettlement,
 } from "@/store/restoreCohortBridge";
@@ -359,7 +349,9 @@ export interface AppState
     ChordPendingSlice,
     SessionHighlightingSlice,
     TabRuntimeSlice,
-    TerminalSessionStateSlice {
+    TerminalSessionStateSlice,
+    PersistentSessionsSlice,
+    RestoreCohortSlice {
   // Connection type registry (loaded from backend at startup)
   connectionTypes: ConnectionTypeInfo[];
 
@@ -459,87 +451,6 @@ export interface AppState
    */
   openSpawnedShell: (spawn: ShellSpawn) => string;
 
-  // Session Picker (SI-3, #1366)
-  /**
-   * Whether the interactive Session Picker is showing. Raised by a `--pick`
-   * spawn arriving on `spawn-picker-requested`, which defers the decision to the
-   * user instead of opening a session outright.
-   */
-  spawnPickerVisible: boolean;
-  /**
-   * The request the visible picker is deciding, or `undefined` when it is
-   * closed. Carries the `location` the picker shows in its header, plus the
-   * `entry_id` / `new_window` context the confirmed choice inherits.
-   */
-  spawnPickerRequest: SpawnRequestPayload | undefined;
-  /** Show the Session Picker for `request`, replacing any request it was showing. */
-  showSpawnPicker: (request: SpawnRequestPayload) => void;
-  /** Close the Session Picker and drop the request it was deciding. */
-  hideSpawnPicker: () => void;
-
-  // Persistent connection sessions
-  /** Live state of all persistent connection sessions, keyed by connectionId. */
-  persistentSessions: Record<string, PersistentSessionEntry>;
-  /** Start the background process for a persistent connection (does not open a tab). */
-  startPersistentSession: (connectionId: string) => Promise<void>;
-  /** Attach a new terminal tab to an already-running persistent session. */
-  attachPersistentSession: (connectionId: string, panelId?: string) => Promise<void>;
-  /** Gracefully stop the background process for a persistent connection. */
-  stopPersistentSession: (connectionId: string) => Promise<void>;
-  /** Update the store entry for a persistent session (called from event listener). */
-  setPersistentSessionEntry: (connectionId: string, patch: Partial<PersistentSessionEntry>) => void;
-  /** Transition a persistent session to the error state (called when process dies unexpectedly). */
-  setPersistentSessionError: (connectionId: string, errorMessage: string) => void;
-  /**
-   * Start a persistent background session for an agent-hosted connection definition.
-   * Resolves with the backend session ID on success, or `null` if the API call failed
-   * (in which case the entry is left in the `error` state).
-   */
-  startAgentPersistentSession: (
-    agentId: string,
-    def: AgentDefinitionInfo
-  ) => Promise<string | null>;
-  /** Attach a new terminal tab to a running agent-hosted persistent session. */
-  attachAgentPersistentSession: (
-    agentId: string,
-    def: AgentDefinitionInfo,
-    panelId?: string
-  ) => Promise<void>;
-  /**
-   * Start a persistent agent session if not already running, then attach a tab.
-   * Used by the sidebar double-click handler so the session is registered with
-   * the persistent-session machinery (sidebar state dot turns green) rather than
-   * opening an unmanaged tab through `createTerminal`.
-   */
-  startAndAttachAgentPersistentSession: (
-    agentId: string,
-    def: AgentDefinitionInfo,
-    panelId?: string
-  ) => Promise<void>;
-  /**
-   * Restart (or reattach to) the persistent session backing `tabId` and write
-   * the resulting live session id onto the tab. Used by the terminal reconnect
-   * path so a persistent tab whose session was destroyed gets a fresh live
-   * session instead of reattaching to a dead one. Resolves with the new session
-   * id, or `null` if the tab is not persistent or the restart failed.
-   */
-  restartPersistentSessionForTab: (tabId: string) => Promise<string | null>;
-  /**
-   * Adopt a surviving agent session into the desktop's persistent registry and
-   * attach a new terminal tab to it with full scrollback replay.
-   *
-   * Used by the sidebar's Active Sessions double-click handler: when the user
-   * reopens a session that the desktop is not yet tracking (e.g. after a tab
-   * close, or after a desktop restart that discovered the session via
-   * `listAgentSessions`), the agent's session ID is linked to the desktop's
-   * `${agentId}:${def.id}` connection ID and a tab is attached.
-   */
-  adoptAndAttachAgentPersistentSession: (
-    agentId: string,
-    def: AgentDefinitionInfo,
-    agentSessionId: string,
-    panelId?: string
-  ) => Promise<void>;
   /**
    * Open (or focus the existing) Settings tab. An optional `target` deep-links
    * into a specific category — and, for the Plugins category, an optional plugin
@@ -882,38 +793,6 @@ export interface AppState
    * success.
    */
   reclaimSession: (tabId: string) => Promise<boolean>;
-
-  /**
-   * Register the cohort of tabs placed by a restore/launch (#1146, audit G4).
-   * When a restore or workspace launch places N tabs, each reconnects
-   * independently inside its own Terminal.tsx mount, so failures are otherwise
-   * only visible per-tab. This dispatches `restore.beginCohort` to the
-   * authoritative `restore-cohort@<clientId>` region, which tracks the cohort and
-   * raises a single aggregate summary toast once every tab settles.
-   *
-   * `pendingTabIds` are the live terminal tabs that will attempt to connect;
-   * `preFailedCount` counts tabs already known to have failed at build time (e.g.
-   * agent-error tabs that never emit a connect/fail signal). `toastId`, when
-   * given, is a pending toast the settle should resolve in place instead of
-   * raising a fresh one. A cohort with nothing to wait on settles immediately.
-   */
-  beginRestoreCohort: (
-    pendingTabIds: string[],
-    preFailedCount: number,
-    toastId?: string | number
-  ) => void;
-  /** Settle one tab of the active restore cohort (dispatches `restore.settleTab`);
-   * the region raises the summary once the cohort empties. */
-  settleRestoreTab: (tabId: string, outcome: "connected" | "failed") => void;
-  /**
-   * Bulk-retry every failed tab remembered from the last partial restore (the
-   * region's captured failed-tab set, {@link currentRestoreCohortView}) in one
-   * action (#1227, audit M2). Re-drives only the tabs that still exist as live
-   * terminals through the existing per-tab {@link reconnectTerminal} path,
-   * registers a fresh cohort so the outcome re-summarizes, and shows a pending
-   * toast that resolves into the aggregate result.
-   */
-  reconnectFailedRestoreTabs: () => void;
 
   // Remote agents — the ordered agent list plus each agent's live sessions, saved
   // definitions and folders are region-authoritative (#2409): they live only in the
@@ -2313,6 +2192,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
     ...createSessionHighlightingSlice(set, get, store),
     ...createTabRuntimeSlice(set, get, store),
     ...createTerminalSessionStateSlice(set, get, store),
+    ...createPersistentSessionsSlice(set, get, store),
+    ...createRestoreCohortSlice(set, get, store),
 
     // Connection type registry — updated by loadFromBackend()
     connectionTypes: [],
@@ -3031,360 +2912,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
     draggingTabId: null,
     setDraggingTabId: (id) => set({ draggingTabId: id }),
 
-    // Persistent connection sessions
-    persistentSessions: {},
-
-    startPersistentSession: async (connectionId) => {
-      const conn = currentConnectionsView().connections.find((c) => c.id === connectionId);
-      if (!conn) return;
-      set((state) => ({
-        persistentSessions: {
-          ...state.persistentSessions,
-          [connectionId]: {
-            connectionId,
-            sessionId: null,
-            state: "starting",
-            attachedTabIds: [],
-          },
-        },
-      }));
-      try {
-        await apiStartPersistentSession(connectionId, conn.config.type, conn.config.config);
-      } catch (err) {
-        set((state) => ({
-          persistentSessions: {
-            ...state.persistentSessions,
-            [connectionId]: {
-              ...state.persistentSessions[connectionId],
-              state: "error",
-              errorMessage: errorMessage(err),
-            },
-          },
-        }));
-      }
-    },
-
-    attachPersistentSession: async (connectionId, panelId) => {
-      const entry = get().persistentSessions[connectionId];
-      const conn = currentConnectionsView().connections.find((c) => c.id === connectionId);
-      if (!conn || !entry?.sessionId) return;
-      const tabId = get().addTab(conn.name, conn.config.type, conn.config, {
-        panelId,
-        contentType: "terminal",
-        terminalOptions: conn.terminalOptions,
-        sessionId: entry.sessionId,
-        persistentConnectionId: connectionId,
-      });
-      try {
-        await apiAttachPersistentTab(connectionId, tabId);
-        set((state) => {
-          const existing = state.persistentSessions[connectionId];
-          if (!existing) return state;
-          return {
-            persistentSessions: {
-              ...state.persistentSessions,
-              [connectionId]: {
-                ...existing,
-                attachedTabIds: [...existing.attachedTabIds, tabId],
-              },
-            },
-          };
-        });
-      } catch (err) {
-        frontendLog(
-          "app_store",
-          `attach_persistent_tab failed for ${connectionId}: ${errorMessage(err)}`
-        );
-      }
-    },
-
-    stopPersistentSession: async (connectionId) => {
-      set((state) => {
-        const existing = state.persistentSessions[connectionId];
-        if (!existing) return state;
-        return {
-          persistentSessions: {
-            ...state.persistentSessions,
-            [connectionId]: { ...existing, state: "stopping" },
-          },
-        };
-      });
-      try {
-        await apiStopPersistentSession(connectionId);
-      } catch (err) {
-        frontendLog(
-          "app_store",
-          `stop_persistent_session failed for ${connectionId}: ${errorMessage(err)}`
-        );
-      }
-    },
-
-    setPersistentSessionEntry: (connectionId, patch) =>
-      set((state) => {
-        const existing = state.persistentSessions[connectionId];
-        if (!existing) return state;
-        return {
-          persistentSessions: {
-            ...state.persistentSessions,
-            [connectionId]: { ...existing, ...patch },
-          },
-        };
-      }),
-
-    setPersistentSessionError: (connectionId, errorMessage) =>
-      set((state) => {
-        const existing = state.persistentSessions[connectionId];
-        if (!existing) return state;
-        return {
-          persistentSessions: {
-            ...state.persistentSessions,
-            [connectionId]: { ...existing, state: "error", errorMessage },
-          },
-        };
-      }),
-
-    startAgentPersistentSession: async (agentId, def) => {
-      const connectionId = `${agentId}:${def.id}`;
-      set((state) => ({
-        persistentSessions: {
-          ...state.persistentSessions,
-          [connectionId]: {
-            connectionId,
-            sessionId: null,
-            state: "starting",
-            attachedTabIds: [],
-          },
-        },
-      }));
-      try {
-        const sessionId = await apiStartPersistentSession(
-          connectionId,
-          def.sessionType,
-          { ...def.config, title: def.name, definitionId: def.id },
-          agentId
-        );
-        // Record the session ID immediately so callers can attach without
-        // racing the persistent-session-state-changed event. The state
-        // transition to "running" remains driven by that event.
-        set((state) => {
-          const existing = state.persistentSessions[connectionId];
-          if (!existing) return state;
-          return {
-            persistentSessions: {
-              ...state.persistentSessions,
-              [connectionId]: { ...existing, sessionId },
-            },
-          };
-        });
-        return sessionId;
-      } catch (err) {
-        set((state) => ({
-          persistentSessions: {
-            ...state.persistentSessions,
-            [connectionId]: {
-              ...state.persistentSessions[connectionId],
-              state: "error",
-              errorMessage: errorMessage(err),
-            },
-          },
-        }));
-        return null;
-      }
-    },
-
-    attachAgentPersistentSession: async (agentId, def, panelId) => {
-      const connectionId = `${agentId}:${def.id}`;
-      const entry = get().persistentSessions[connectionId];
-      if (!entry?.sessionId) return;
-      const tabId = get().addTab(
-        def.name,
-        "remote-session",
-        {
-          type: "remote-session",
-          config: {
-            agentId,
-            sessionType: def.sessionType,
-            ...def.config,
-            persistent: true,
-            title: def.name,
-          },
-        },
-        {
-          panelId,
-          contentType: "terminal",
-          terminalOptions: def.terminalOptions,
-          sessionId: entry.sessionId,
-          persistentConnectionId: connectionId,
-        }
-      );
-      // Resolve the actual panel the tab landed in so we can close it on failure.
-      const actualPanelId = findLeafByTab(curLayout().rootPanel, tabId)?.id;
-      try {
-        await apiAttachPersistentTab(connectionId, tabId);
-        set((state) => {
-          const existing = state.persistentSessions[connectionId];
-          if (!existing) return state;
-          return {
-            persistentSessions: {
-              ...state.persistentSessions,
-              [connectionId]: {
-                ...existing,
-                attachedTabIds: [...existing.attachedTabIds, tabId],
-              },
-            },
-          };
-        });
-      } catch (err) {
-        frontendLog(
-          "app_store",
-          `attach_persistent_tab failed for ${connectionId}: ${errorMessage(err)}`
-        );
-        // Session is gone — remove the tab so the user does not see a blank terminal.
-        if (actualPanelId) {
-          get().closeTab(tabId, actualPanelId);
-        }
-      }
-    },
-
-    adoptAndAttachAgentPersistentSession: async (agentId, def, agentSessionId, panelId) => {
-      const connectionId = `${agentId}:${def.id}`;
-      const existing = get().persistentSessions[connectionId];
-
-      // If we already track this connection and it points at the same agent
-      // session, fall through to the normal attach path — no adoption needed.
-      if (existing?.sessionId === agentSessionId) {
-        await get().attachAgentPersistentSession(agentId, def, panelId);
-        return;
-      }
-
-      // If we track a *different* session ID for this connection (e.g. a stale
-      // entry from before the agent restart), warn and skip — the user can stop
-      // the old persistent record explicitly if they want to overwrite it.
-      if (existing?.sessionId && existing.sessionId !== agentSessionId) {
-        frontendLog(
-          "app_store",
-          `adopt skipped for ${connectionId}: already mapped to ${existing.sessionId}`
-        );
-        return;
-      }
-
-      try {
-        await apiAdoptPersistentSession(connectionId, agentId, agentSessionId);
-      } catch (err) {
-        frontendLog(
-          "app_store",
-          `adopt_persistent_session failed for ${connectionId}: ${errorMessage(err)}`
-        );
-        return;
-      }
-
-      // Seed the desktop's persistentSessions map so attachAgentPersistentSession
-      // finds the entry. The backend will emit a persistent-state event that may
-      // re-set this asynchronously; mirroring it here avoids a race in the
-      // attach call that follows.
-      set((state) => ({
-        persistentSessions: {
-          ...state.persistentSessions,
-          [connectionId]: {
-            connectionId,
-            sessionId: agentSessionId,
-            state: "running",
-            attachedTabIds: [],
-          },
-        },
-      }));
-
-      await get().attachAgentPersistentSession(agentId, def, panelId);
-    },
-
-    startAndAttachAgentPersistentSession: async (agentId, def, panelId) => {
-      const connectionId = `${agentId}:${def.id}`;
-      const existing = get().persistentSessions[connectionId];
-      if (existing?.sessionId && (existing.state === "running" || existing.state === "attached")) {
-        await get().attachAgentPersistentSession(agentId, def, panelId);
-        return;
-      }
-      const sessionId = await get().startAgentPersistentSession(agentId, def);
-      if (!sessionId) return;
-      await get().attachAgentPersistentSession(agentId, def, panelId);
-    },
-
-    restartPersistentSessionForTab: async (tabId) => {
-      const state = get();
-      const tab = collectLiveTabs(state).find((t) => t.id === tabId);
-      const connectionId = tab?.persistentConnectionId;
-      if (!tab || !connectionId) return null;
-
-      const cfg = tab.config.config;
-      const agentId = readConfigString(tab.config, "agentId");
-      if (!agentId || !connectionId.startsWith(`${agentId}:`)) return null;
-      const defId = connectionId.slice(agentId.length + 1);
-
-      // Register this tab as attached to the (re)started persistent session and
-      // track it in the store entry so attach counts and detach-on-close stay
-      // correct. Failures are logged but non-fatal — the session is still usable.
-      const attachTab = async () => {
-        try {
-          await apiAttachPersistentTab(connectionId, tabId);
-          set((s) => {
-            const entry = s.persistentSessions[connectionId];
-            if (!entry || entry.attachedTabIds.includes(tabId)) return s;
-            return {
-              persistentSessions: {
-                ...s.persistentSessions,
-                [connectionId]: {
-                  ...entry,
-                  attachedTabIds: [...entry.attachedTabIds, tabId],
-                },
-              },
-            };
-          });
-        } catch (err) {
-          frontendLog(
-            "app_store",
-            `restart_persistent attach failed for ${connectionId}: ${errorMessage(err)}`
-          );
-        }
-      };
-
-      // Reuse a session that is already live (e.g. the agent transport simply
-      // dropped and recovered) rather than spawning a duplicate.
-      const existing = state.persistentSessions[connectionId];
-      if (existing?.sessionId && (existing.state === "running" || existing.state === "attached")) {
-        get().setTabSessionId(tabId, existing.sessionId);
-        await attachTab();
-        return existing.sessionId;
-      }
-
-      // The session is gone — clear the dead id so the terminal never reattaches
-      // to a corpse, then start a fresh persistent session. Reconstruct the
-      // connection definition from the tab config (agent definitions may not be
-      // loaded, e.g. after an agent disconnect); agentId/persistent are dropped
-      // from the forwarded settings.
-      get().setTabSessionId(tabId, null);
-      const {
-        agentId: _agentId,
-        sessionType: _sessionType,
-        title: _title,
-        persistent: _persistent,
-        ...connConfig
-      } = cfg;
-      const def: AgentDefinitionInfo = {
-        id: defId,
-        name: readConfigString(tab.config, "title") ?? tab.title,
-        sessionType: readConfigString(tab.config, "sessionType") ?? "shell",
-        config: connConfig,
-        persistent: true,
-        folderId: null,
-      };
-
-      const sessionId = await get().startAgentPersistentSession(agentId, def);
-      if (!sessionId) return null;
-      await attachTab();
-      get().setTabSessionId(tabId, sessionId);
-      return sessionId;
-    },
-
     // Panels & Tabs — see `layoutView` / `layoutSplitMarks` above (#2562).
     // Flat by-id tab-content map (part of #2283). The initial panel is empty, so
     // it starts empty and is populated as tabs open.
@@ -3639,12 +3166,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
         { contentType: "terminal", spawned: true, initialCommand }
       );
     },
-
-    // Session Picker (SI-3, #1366)
-    spawnPickerVisible: false,
-    spawnPickerRequest: undefined,
-    showSpawnPicker: (request) => set({ spawnPickerVisible: true, spawnPickerRequest: request }),
-    hideSpawnPicker: () => set({ spawnPickerVisible: false, spawnPickerRequest: undefined }),
 
     pendingSettingsCategory: null,
     pendingSettingsPluginId: null,
@@ -4786,51 +4307,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
         frontendLog("app_store", `Failed to reclaim session for ${tabId}: ${errorMessage(err)}`);
         toast.error(`Could not reclaim the session: ${errorMessage(err)}`);
         return false;
-      }
-    },
-
-    // Aggregate partial-restore feedback (#1146, audit G4) + bulk retry (#1227,
-    // M2). Region-authoritative (#2206): the `restore-cohort@<clientId>` store
-    // owns the cohort, the captured failed-tab set and the settlement summary; the
-    // actions below are thin dispatchers, and the summary toast fires from the
-    // projected settlement via the renderer registered at store init (see below).
-    beginRestoreCohort: (pendingTabIds, preFailedCount, toastId) => {
-      // The region folds begin/settle and settles a no-live cohort itself. A
-      // total-0 cohort is a backend no-op, matching the pre-cut early return.
-      mirrorRestoreBegin({ pendingTabIds, preFailedCount, toastId });
-    },
-    settleRestoreTab: (tabId, outcome) => {
-      // Dispatch unconditionally: the region is the sole guard and ignores a settle
-      // for a tab that is not pending in the current cohort (a stray/duplicate, or
-      // a disconnect outside any restore), so nothing settles and no toast fires.
-      mirrorRestoreSettle({ tabId, outcome });
-    },
-    reconnectFailedRestoreTabs: () => {
-      // The region keeps the raw captured failed-tab set; consume it here and, as
-      // before, only re-drive tabs that still exist as live terminal tabs (the
-      // live-terminal filter is a frontend concern). The fresh cohort begun below
-      // clears the region's failed set.
-      const captured = currentRestoreCohortView().failedTabIds;
-      if (captured.length === 0) return;
-      const liveTerminalIds = new Set(
-        collectLiveTabs(get())
-          .filter((t) => t.contentType === "terminal")
-          .map((t) => t.id)
-      );
-      const targets = captured.filter((id) => liveTerminalIds.has(id));
-      if (targets.length === 0) return;
-      frontendLog(
-        "workspace_restore",
-        `bulk reconnect: re-driving ${targets.length} failed tab(s)`
-      );
-      // Pending feedback that resolves into the aggregate cohort summary.
-      const toastId = toast.loading(
-        `Reconnecting ${targets.length} ${targets.length === 1 ? "tab" : "tabs"}…`
-      );
-      // Register the fresh cohort before re-driving so each settle lands in it.
-      get().beginRestoreCohort(targets, 0, toastId);
-      for (const id of targets) {
-        get().reconnectTerminal(id);
       }
     },
 
