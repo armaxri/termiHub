@@ -1627,8 +1627,12 @@ mod tests {
         /// Records remote_session_id for every register_monitoring_output call.
         registered_monitoring_hosts: Mutex<Vec<String>>,
         /// When set, `get_capabilities` reports an agent with this
-        /// `session_processes` flag (#3210); `None` reports no capabilities.
+        /// `session_processes` flag (#3210); `None` reports no capabilities
+        /// unless `session_monitoring` is set.
         session_processes: Option<bool>,
+        /// When set, `get_capabilities` reports an agent with this
+        /// `session_monitoring` flag (#3871).
+        session_monitoring: Option<bool>,
     }
 
     impl MockAgentRpcClient {
@@ -1640,6 +1644,7 @@ mod tests {
                 sent_requests: Mutex::new(Vec::new()),
                 registered_monitoring_hosts: Mutex::new(Vec::new()),
                 session_processes: None,
+                session_monitoring: None,
             }
         }
 
@@ -1651,6 +1656,7 @@ mod tests {
                 sent_requests: Mutex::new(Vec::new()),
                 registered_monitoring_hosts: Mutex::new(Vec::new()),
                 session_processes: None,
+                session_monitoring: None,
             }
         }
     }
@@ -1674,6 +1680,7 @@ mod tests {
                     tool_streaming: false,
                     embedded_server_activity: false,
                     session_processes: false,
+                    session_monitoring: false,
                     agent_version: "mock".to_string(),
                 },
                 agent_version: "mock".to_string(),
@@ -1693,13 +1700,16 @@ mod tests {
         }
 
         fn get_capabilities(&self, _agent_id: &str) -> Option<AgentCapabilities> {
-            let session_processes = self.session_processes?;
+            if self.session_processes.is_none() && self.session_monitoring.is_none() {
+                return None;
+            }
             let mut caps: AgentCapabilities = serde_json::from_value(json!({
                 "connectionTypes": [],
                 "maxSessions": 10,
             }))
             .expect("minimal capabilities parse");
-            caps.session_processes = session_processes;
+            caps.session_processes = self.session_processes.unwrap_or(false);
+            caps.session_monitoring = self.session_monitoring.unwrap_or(false);
             Some(caps)
         }
 
@@ -2198,7 +2208,7 @@ mod tests {
 
     #[tokio::test]
     async fn monitoring_proxy_uses_session_id_for_ssh_session() {
-        let mock = Arc::new(MockAgentRpcClient::with_capabilities(json!({
+        let mut mock = MockAgentRpcClient::with_capabilities(json!({
             "types": [
                 {
                     "typeId": "ssh",
@@ -2213,7 +2223,10 @@ mod tests {
                     }
                 }
             ]
-        })));
+        }));
+        // A 0.21.0+ agent monitors its sessions (#3871).
+        mock.session_monitoring = Some(true);
+        let mock = Arc::new(mock);
         let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
 
         proxy
@@ -3882,6 +3895,9 @@ mod tests {
 
     /// Agent-hosted process list + kill routing and the old-agent fallback (#3210).
     mod process_tests;
+
+    /// Agent-hosted session monitoring routing and the old-agent fallback (#3871).
+    mod monitoring_tests;
 
     /// #3408: a process RPC is "not supported" by the agent's code (surfaced as
     /// `AgentUnsupported`), never by message text.
