@@ -47,6 +47,9 @@ pub(crate) fn prepare_for_storage(
 ) -> Result<SavedConnection> {
     let uses_named = named::settings_ref(&connection.config.settings).is_some();
     let settings = &mut connection.config.settings;
+    // The remote-desktop types' legacy `saveToStore` flag means `savePassword`
+    // (#3818); only the unified key is ever written.
+    termihub_core::connection::normalize_save_password(settings);
     if let Some(password) = settings
         .get("password")
         .and_then(|v| v.as_str())
@@ -3286,3 +3289,7 @@ mod edit_move_tests;
 #[cfg(test)]
 #[path = "manager_jump_host_scope_tests.rs"]
 mod jump_host_scope_tests;
+
+#[cfg(test)]
+#[path = "manager_graphical_password_tests.rs"]
+mod graphical_password_tests;

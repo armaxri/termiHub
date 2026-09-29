@@ -22,6 +22,7 @@ pub mod graphical_resolution;
 pub mod lifecycle;
 pub mod plugin_type_id;
 pub mod registry;
+pub mod save_password;
 pub mod schema;
 pub mod schema_defaults;
 pub mod validation;
@@ -57,6 +58,7 @@ pub use plugin_type_id::{
 pub use registry::{
     register_core_backends, ConnectionFactory, ConnectionTypeInfo, ConnectionTypeRegistry,
 };
+pub use save_password::{normalize_save_password, LEGACY_SAVE_TO_STORE_KEY, SAVE_PASSWORD_KEY};
 pub use schema::*;
 pub use validation::{validate_settings, ValidationError};
 

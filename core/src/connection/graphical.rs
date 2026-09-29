@@ -62,7 +62,7 @@ fn opt(value: &str, label: &str) -> SelectOption {
 /// list of groups so a backend can append its protocol-specific group in the
 /// natural position.
 ///
-/// Groups: **Connection** (host, port, username, password + save-to-store),
+/// Groups: **Connection** (host, port, username, password + save password),
 /// **Display** (scale mode), **Features** (view only, clipboard sync,
 /// auto-reconnect).
 ///
@@ -101,7 +101,13 @@ pub fn shared_field_base(default_port: u16) -> Vec<SettingsGroup> {
                     description: Some(
                         "Save the password to the credential store for reuse".to_string(),
                     ),
-                    ..field("saveToStore", "Save to store", FieldType::Boolean)
+                    // The key every other connection type uses, so the desktop
+                    // routes the password into the credential store (#3818).
+                    ..field(
+                        super::save_password::SAVE_PASSWORD_KEY,
+                        "Save password",
+                        FieldType::Boolean,
+                    )
                 },
             ],
         },
@@ -1213,7 +1219,7 @@ mod tests {
             "port",
             "username",
             "password",
-            "saveToStore",
+            "savePassword",
             "scaleMode",
             "viewOnly",
             "clipboardSync",
@@ -1224,6 +1230,9 @@ mod tests {
                 "shared base must contain {expected}"
             );
         }
+        // One save option, the key every other type uses (#3818): the legacy
+        // `saveToStore` row was never read, so it must not come back.
+        assert!(!all_field_keys.contains(&"saveToStore"));
     }
 
     #[test]
