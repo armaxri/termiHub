@@ -2768,9 +2768,6 @@ fn serialize_request(id: u64, method: &str, params: Value) -> Result<String, Str
 }
 
 /// Read a single newline-terminated JSON-RPC line from a russh channel during
-/// the handshake phase. Accumulates `ChannelMsg::Data` chunks until a `\n`
-/// is encountered, then returns the trimmed line.
-/// Read a single newline-terminated JSON-RPC line from a russh channel during
 /// the handshake phase. Accumulates `ChannelMsg::Data` chunks into `buf` and,
 /// once a `\n` is present, returns the trimmed line while **retaining any bytes
 /// after the newline in `buf`** for the next call. Preserving the leftover is
@@ -2833,11 +2830,6 @@ async fn read_handshake_line(
     }
 }
 
-/// Owns the russh `SshSession` and `Channel` exclusively. Concurrently polls
-/// incoming SSH data and outgoing commands using `tokio::select!`. Routes
-/// JSON-RPC responses to waiting callers and notifications to registered
-/// session output channels.
-#[allow(clippy::too_many_arguments)]
 /// Build `connection.create` params from the shared DTO. `correlation_id` is
 /// the desktop's session id (#3085, OBS-004): the agent logs the session under
 /// it so both sides' log lines join on one id. Omitted from the wire when

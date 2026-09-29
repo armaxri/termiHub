@@ -244,13 +244,6 @@ pub(super) fn reconcile_output_senders(
     monitoring_outputs.retain(|id, _| live_ids.contains(id));
 }
 
-/// List the session ids the agent currently reports over the (freshly
-/// reconnected) channel, for post-reconnect reconciliation (G7, #1239).
-///
-/// Sends `connection.list` and reads until the matching response arrives,
-/// skipping any interleaved notifications. Returns `None` on any I/O or parse
-/// failure so the caller leaves the sender maps untouched rather than dropping
-/// senders it could not confirm as dead.
 /// Number of `connection.list` attempts after an in-task transport reconnect before
 /// giving up and settling the hosted tabs (SM-001). The transport is already back, so a
 /// first failure is usually transient; a small bounded retry recovers it while still
@@ -307,6 +300,13 @@ pub(super) async fn list_recovered_session_ids_bounded(
     None
 }
 
+/// List the session ids the agent currently reports over the (freshly
+/// reconnected) channel, for post-reconnect reconciliation (G7, #1239).
+///
+/// Sends `connection.list` and reads until the matching response arrives,
+/// skipping any interleaved notifications. Returns `None` on any I/O or parse
+/// failure so the caller leaves the sender maps untouched rather than dropping
+/// senders it could not confirm as dead.
 async fn list_recovered_session_ids(
     channel: &mut russh::Channel<russh::client::Msg>,
     agent_id: &str,
