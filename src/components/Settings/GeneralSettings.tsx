@@ -2,7 +2,7 @@ import { useCallback, useState, useEffect } from "react";
 import { AppSettings } from "@/types/connection";
 import { ShellType } from "@/types/terminal";
 import { detectAvailableShells } from "@/utils/shell-detection";
-import { getWslDistroName } from "@/utils/shell-detection";
+import { getShellLabel } from "@/utils/shellLabels";
 import { useAppStore } from "@/store/appStore";
 import { isWindows, getPlatform } from "@/utils/platform";
 import { shouldOfferGitBashSetup } from "@/utils/gitBashSetup";
@@ -35,28 +35,6 @@ const PLATFORM_DEFAULT_SHELL = "__platform_default__";
 
 /** Sentinel value for the "Git Bash — set up…" row that launches the guided install (#1672). */
 const GIT_BASH_SETUP = "__git_bash_setup__";
-
-const SHELL_LABELS: Record<string, string> = {
-  bash: "Bash",
-  zsh: "Zsh",
-  cmd: "Command Prompt",
-  powershell: "PowerShell",
-  gitbash: "Git Bash",
-  fish: "Fish",
-  nushell: "Nushell",
-  custom: "Custom",
-};
-
-function getShellLabel(shell: ShellType, defaultShell: ShellType): string {
-  const distro = getWslDistroName(shell);
-  let label: string;
-  if (distro !== null) {
-    label = `WSL: ${distro}`;
-  } else {
-    label = SHELL_LABELS[shell] ?? shell;
-  }
-  return shell === defaultShell ? `${label} (platform default)` : label;
-}
 
 /**
  * A settings change: either the full replacement document or a functional updater

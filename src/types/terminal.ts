@@ -14,6 +14,8 @@ export type ShellType =
   | "bash"
   | "cmd"
   | "powershell"
+  /** PowerShell 7 (`pwsh`), preferred on Windows when installed (#3728). */
+  | "pwsh"
   | "gitbash"
   | "fish"
   | "nushell"

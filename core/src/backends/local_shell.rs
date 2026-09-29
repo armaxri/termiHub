@@ -22,6 +22,7 @@ use crate::files::{FileBrowser, LocalFileBrowser};
 use crate::monitoring::{LocalMonitoringProvider, MonitoringProvider};
 use crate::session::shell::{
     build_shell_command, detect_available_shells, detect_default_shell, osc7_setup_command,
+    shell_kind, ShellCommand,
 };
 use crate::session::traits::{LocalShellSpawner, SpawnedShell};
 
@@ -526,37 +527,9 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
 
         let shell_cmd = build_shell_command(&config);
 
-        // Determine OSC 7 CWD tracking injection strategy.
-        let osc7_setup = if shell_integration {
-            osc7_setup_command(&effective_shell)
-        } else {
-            None
-        };
-
-        // Build the final command. For PowerShell / cmd, fold the OSC 7 setup
-        // into startup flags so it runs before the first prompt. For all other
-        // shells, keep `osc7_for_stdin` to inject via stdin after spawn.
-        let uses_startup_args = matches!(effective_shell.as_str(), "powershell" | "cmd");
-        let mut final_cmd = shell_cmd;
-        let osc7_for_stdin = if uses_startup_args {
-            if let Some(setup) = osc7_setup {
-                match effective_shell.as_str() {
-                    "powershell" => {
-                        final_cmd.args.push("-NoExit".to_string());
-                        final_cmd.args.push("-Command".to_string());
-                        final_cmd.args.push(setup.to_string());
-                    }
-                    "cmd" => {
-                        final_cmd.args.push("/K".to_string());
-                        final_cmd.args.push(setup.to_string());
-                    }
-                    _ => {}
-                }
-            }
-            None
-        } else {
-            osc7_setup
-        };
+        // Determine the shell-integration injection strategy (OSC 7 / 133).
+        let (final_cmd, osc7_for_stdin) =
+            apply_shell_integration(shell_cmd, &effective_shell, shell_integration);
 
         info!(program = %final_cmd.program, "Spawning local shell");
 
@@ -757,6 +730,45 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
+
+/// Fold shell integration (OSC 7 CWD tracking / OSC 133 marks) into a
+/// resolved shell command.
+///
+/// The injection is chosen by the shell's *kind* ([`shell_kind`]), so
+/// path-valued shells (the agent's `/bin/bash`, `C:\...\pwsh.exe`) get the
+/// same integration as their bare names (#3728). PowerShell (`powershell` /
+/// `pwsh`) and `cmd` take the setup as startup flags so it runs before the
+/// first prompt without echoing; every other shell gets it back as the
+/// snippet to inject via stdin after spawn. Returns `(command, stdin_setup)`.
+fn apply_shell_integration(
+    mut cmd: ShellCommand,
+    shell: &str,
+    shell_integration: bool,
+) -> (ShellCommand, Option<&'static str>) {
+    let setup = if shell_integration {
+        osc7_setup_command(shell)
+    } else {
+        None
+    };
+    match shell_kind(shell) {
+        "powershell" | "pwsh" => {
+            if let Some(setup) = setup {
+                cmd.args.push("-NoExit".to_string());
+                cmd.args.push("-Command".to_string());
+                cmd.args.push(setup.to_string());
+            }
+            (cmd, None)
+        }
+        "cmd" => {
+            if let Some(setup) = setup {
+                cmd.args.push("/K".to_string());
+                cmd.args.push(setup.to_string());
+            }
+            (cmd, None)
+        }
+        _ => (cmd, setup),
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1770,8 +1782,8 @@ mod tests {
     ///
     /// # Why not the platform default on Windows (#2498)
     ///
-    /// `detect_available_shells().first()` is `powershell` (Windows PowerShell
-    /// 5.1) on Windows. On the Windows CI runner its startup intermittently
+    /// `detect_available_shells().first()` is a PowerShell (`pwsh` when
+    /// installed, else Windows PowerShell 5.1) on Windows. On the Windows CI runner its startup intermittently
     /// stalls for over a minute: in the failing runs the ConPTY emitted its
     /// init sequence (`ESC[?9001h ESC[?1004h`) immediately and then *nothing*
     /// for the full 60s budget — no `Clear-Host`, no prompt, not even the echo
