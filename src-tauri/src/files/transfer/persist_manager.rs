@@ -512,6 +512,29 @@ mod tests {
         assert_eq!(rehydrated[0].resume_offset, CHECKPOINT_BYTES + 1);
     }
 
+    /// The source mtime the executor fingerprinted (#3572) is persisted with
+    /// the checkpoint, so a relaunch can detect a same-size rewrite. A change
+    /// of mtime forces a write (even below the byte checkpoint) that stores the
+    /// new mtime together with the offset reached against that source.
+    #[test]
+    fn source_mtime_is_persisted_with_its_offset() {
+        let (_d, m) = mgr();
+        register(&m, "t1");
+        assert_eq!(m.snapshot().get("t1").unwrap().source_mtime, None);
+
+        m.note_progress("t1", PersistedTransferStatus::Queued, 0, 2048, false, Some(7));
+        let rec = m.snapshot().get("t1").cloned().unwrap();
+        assert_eq!(rec.source_mtime, Some(7), "an mtime change is written");
+
+        m.note_progress("t1", PersistedTransferStatus::Queued, 100, 2048, false, Some(9));
+        let rec = m.snapshot().get("t1").cloned().unwrap();
+        assert_eq!(rec.source_mtime, Some(9));
+        assert_eq!(rec.resume_offset, 100, "offset is written with its mtime");
+
+        let rehydrated = m.load_incomplete_as_paused();
+        assert_eq!(rehydrated[0].source_mtime, Some(9));
+    }
+
     #[test]
     fn small_progress_does_not_checkpoint() {
         let (_d, m) = mgr();

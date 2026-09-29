@@ -425,6 +425,28 @@ mod tests {
         assert_eq!(parsed, entry);
     }
 
+    /// The source mtime (#3572) round-trips, and a legacy record written
+    /// before the field existed still loads (without it) and re-serializes
+    /// without the key, so the on-disk format is unchanged for it.
+    #[test]
+    fn source_mtime_round_trips_and_legacy_records_still_load() {
+        let mut entry = sample("t1", PersistedTransferStatus::Paused);
+        entry.source_mtime = Some(1_700_000_000_123_456_789);
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"sourceMtime\":1700000000123456789"));
+        let parsed: PersistedTransfer = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, entry);
+
+        let legacy = concat!(
+            r#"{"transferId":"x","sessionId":"s","direction":"download","fileName":"f","#,
+            r#""remotePath":"/f","localPath":"/l","status":"paused","transferred":10,"#,
+            r#""total":20,"resumeOffset":10,"createdAtMs":1,"updatedAtMs":2}"#
+        );
+        let rec: PersistedTransfer = serde_json::from_str(legacy).unwrap();
+        assert_eq!(rec.source_mtime, None);
+        assert_eq!(serde_json::to_string(&rec).unwrap(), legacy);
+    }
+
     /// A Docker record round-trips its container identity (#3585), and a
     /// record written before the field existed still loads (as non-Docker).
     #[test]

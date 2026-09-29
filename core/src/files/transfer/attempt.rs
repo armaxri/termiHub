@@ -681,23 +681,110 @@ mod tests {
         );
     }
 
+    fn fp_no_mtime(size: u64) -> Option<SourceFingerprint> {
+        Some(SourceFingerprint { size, mtime: None })
+    }
+
     #[test]
     fn rehydrate_fresh_transfer_starts_at_zero() {
-        assert_eq!(rehydrate_start_offset(0, 1000, fp(1000, 1)), 0);
+        assert_eq!(
+            decide_rehydrate(0, 1000, Some(1), fp(1000, 1)),
+            RehydrateStart::Fresh
+        );
+        assert_eq!(RehydrateStart::Fresh.offset(0), 0);
+    }
+
+    /// Same size and same mtime across the relaunch: the checkpoint is kept.
+    #[test]
+    fn rehydrate_same_size_same_mtime_resumes() {
+        let start = decide_rehydrate(400, 1000, Some(7), fp(1000, 7));
+        assert_eq!(start, RehydrateStart::Resume { verified: true });
+        assert_eq!(start.offset(400), 400);
+    }
+
+    /// A source rewritten to the same size while the app was closed (#3572):
+    /// the mtime differs, so the copy restarts from zero instead of splicing.
+    #[test]
+    fn rehydrate_same_size_different_mtime_restarts() {
+        let start = decide_rehydrate(400, 1000, Some(7), fp(1000, 8));
+        assert_eq!(start, RehydrateStart::RestartMtimeChanged);
+        assert_eq!(start.offset(400), 0);
     }
 
     #[test]
-    fn rehydrate_unchanged_source_keeps_checkpoint() {
-        assert_eq!(rehydrate_start_offset(400, 1000, fp(1000, 1)), 400);
+    fn rehydrate_different_size_restarts() {
+        let start = decide_rehydrate(400, 1000, Some(7), fp(1200, 7));
+        assert_eq!(start, RehydrateStart::RestartSizeChanged);
+        assert_eq!(start.offset(400), 0);
+        // A source that can no longer be stat'ed cannot be trusted either.
+        assert_eq!(
+            decide_rehydrate(400, 1000, Some(7), None),
+            RehydrateStart::RestartSizeChanged
+        );
+    }
+
+    /// A server that reports no mtime (now or at the checkpoint) falls back to
+    /// the size-only check; the resume is marked unverified.
+    #[test]
+    fn rehydrate_remote_without_mtime_falls_back_to_size_only() {
+        let start = decide_rehydrate(400, 1000, Some(7), fp_no_mtime(1000));
+        assert_eq!(start, RehydrateStart::Resume { verified: false });
+        assert_eq!(start.offset(400), 400);
+        assert_eq!(
+            decide_rehydrate(400, 1000, Some(7), fp_no_mtime(1200)),
+            RehydrateStart::RestartSizeChanged
+        );
+    }
+
+    /// A record persisted before the mtime existed (legacy `transfers.json`)
+    /// carries none: size-only, unverified.
+    #[test]
+    fn rehydrate_legacy_record_without_mtime_falls_back_to_size_only() {
+        assert_eq!(
+            decide_rehydrate(400, 1000, None, fp(1000, 7)),
+            RehydrateStart::Resume { verified: false }
+        );
+        assert_eq!(
+            decide_rehydrate(400, 1000, None, fp(1200, 7)),
+            RehydrateStart::RestartSizeChanged
+        );
         // Unknown persisted total → nothing to compare; the destination is
         // still byte-verified before the first append.
-        assert_eq!(rehydrate_start_offset(400, 0, fp(1200, 1)), 400);
+        assert_eq!(
+            decide_rehydrate(400, 0, None, fp(1200, 1)),
+            RehydrateStart::Resume { verified: false }
+        );
     }
 
+    /// The executor-facing wrapper reads the persisted mtime off the handle
+    /// and, whatever it decides, records the current source mtime there so the
+    /// next checkpoint persists the new baseline.
     #[test]
-    fn rehydrate_changed_or_missing_source_restarts() {
-        assert_eq!(rehydrate_start_offset(400, 1000, fp(1200, 1)), 0);
-        assert_eq!(rehydrate_start_offset(400, 1000, None), 0);
+    fn rehydrate_start_offset_reads_and_refreshes_handle_mtime() {
+        let (handle, _sink, _messages) = harness();
+        handle.set_metrics(0, 1000, 0);
+        handle.set_source_mtime(Some(7));
+        assert_eq!(rehydrate_start_offset(400, &handle, fp(1000, 7), "test"), 400);
+        assert_eq!(handle.source_mtime(), Some(7));
+
+        assert_eq!(rehydrate_start_offset(400, &handle, fp(1000, 9), "test"), 0);
+        assert_eq!(handle.source_mtime(), Some(9));
+
+        assert_eq!(rehydrate_start_offset(400, &handle, fp_no_mtime(1000), "test"), 400);
+        assert_eq!(handle.source_mtime(), None);
+    }
+
+    /// Restarting from zero on the resume gate adopts the new source mtime.
+    #[test]
+    fn rebase_records_source_mtime_on_handle() {
+        let (handle, _sink, _messages) = harness();
+        let mut cursor = ResumeCursor {
+            offset: 0,
+            total: 0,
+            baseline: None,
+        };
+        rebase_cursor(&mut cursor, &handle, fp(1000, 42));
+        assert_eq!(handle.source_mtime(), Some(42));
     }
 
     #[test]

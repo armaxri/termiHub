@@ -594,6 +594,21 @@ mod tests {
     use super::*;
     use crate::files::transfer::state::MAX_RETRIES;
 
+    // --- Source mtime (#3572) ---
+
+    #[test]
+    fn source_mtime_defaults_to_none_and_is_settable() {
+        let reg = TransferRegistry::new();
+        let h = enq(&reg, "t1", "s1");
+        assert_eq!(h.source_mtime(), None);
+        h.set_source_mtime(Some(1_700_000_000));
+        assert_eq!(h.source_mtime(), Some(1_700_000_000));
+        let fresh = reg
+            .enqueue_if_absent("t2", "s1", TransferDirection::Upload, "f", "/f", 0)
+            .expect("new id");
+        assert_eq!(fresh.source_mtime(), None);
+    }
+
     // --- Cancel / drop semantics ---
 
     #[test]
