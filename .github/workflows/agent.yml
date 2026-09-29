@@ -44,9 +44,33 @@ permissions:
   contents: read
 
 jobs:
+  # Changed-area detection (#3903): the path filter above is file-level, so a
+  # comment-only Rust change (every changed .rs line a whole-line `//` comment)
+  # still triggers this workflow. The shared classifier narrows it; see
+  # .github/actions/detect-changes. Non-PR events report every area on, and the
+  # gated jobs test `!= 'false'`, so a failure here runs everything (fail-open).
+  changes:
+    name: Detect Changed Areas
+    runs-on: ubuntu-latest
+    outputs:
+      agent: ${{ steps.detect.outputs.agent }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          # The PR merge commit plus its parents, so HEAD^1 (the base tip) exists.
+          fetch-depth: 2
+
+      - name: Classify changed files
+        id: detect
+        uses: ./.github/actions/detect-changes
+
   build-linux:
     name: Build (${{ matrix.target }})
     runs-on: ubuntu-latest
+    needs: changes
+    # Skipped on a PR whose agent/core changes are comment-only (#3903).
+    if: ${{ !cancelled() && needs.changes.outputs.agent != 'false' }}
 
     strategy:
       fail-fast: false
