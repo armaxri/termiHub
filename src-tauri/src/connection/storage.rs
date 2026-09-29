@@ -575,10 +575,10 @@ mod tests {
 
         storage.save_flat(&flat).unwrap();
 
-        // Verify on-disk format is the nested tree, at the current schema (v4)
+        // Verify on-disk format is the nested tree, at the current schema (v5)
         let raw = fs::read_to_string(&storage.file_path).unwrap();
         let on_disk: ConnectionStore = serde_json::from_str(&raw).unwrap();
-        assert_eq!(on_disk.version, "4");
+        assert_eq!(on_disk.version, "5");
         assert_eq!(on_disk.children.len(), 1); // One folder
         match &on_disk.children[0] {
             ConnectionTreeNode::Folder { name, children, .. } => {
@@ -815,8 +815,153 @@ mod tests {
         storage.save_flat(&loaded.data).unwrap();
         let raw = fs::read_to_string(&storage.file_path).unwrap();
         let on_disk: ConnectionStore = serde_json::from_str(&raw).unwrap();
-        assert_eq!(on_disk.version, "4");
+        assert_eq!(
+            on_disk.version,
+            ConnectionStore::CURRENT_VERSION.to_string()
+        );
         assert!(!raw.contains("resilientReconnect"));
+    }
+
+    /// #2901: a v4 file's FTP connections carrying the legacy `timeoutSecs`
+    /// migrate to `connectTimeoutSecs` with the user's value intact — nested
+    /// ones included — while a non-FTP type's own `timeoutSecs` is untouched.
+    /// The next save writes schema v5 with no legacy FTP key.
+    #[test]
+    fn v4_ftp_timeout_secs_migrates_to_connect_timeout_secs() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let conn = |name: &str, type_id: &str, settings: serde_json::Value| {
+            serde_json::json!({
+                "type": "connection",
+                "name": name,
+                "config": { "type": type_id, "config": settings }
+            })
+        };
+        let v4 = serde_json::json!({
+            "version": "4",
+            "children": [
+                conn("custom", "ftp", serde_json::json!({ "host": "a", "timeoutSecs": 45 })),
+                conn("absent", "ftp", serde_json::json!({ "host": "b" })),
+                conn(
+                    "both",
+                    "ftp",
+                    serde_json::json!({ "timeoutSecs": 45, "connectTimeoutSecs": 12 })
+                ),
+                conn("plugin", "plugin:acme:thing", serde_json::json!({ "timeoutSecs": 7 })),
+                {
+                    "type": "folder",
+                    "name": "Work",
+                    "children": [
+                        conn("nested", "ftp", serde_json::json!({ "timeoutSecs": 90 }))
+                    ]
+                }
+            ]
+        });
+        fs::write(&storage.file_path, v4.to_string()).unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(loaded.warnings.is_empty());
+        let settings = |name: &str| {
+            loaded
+                .data
+                .connections
+                .iter()
+                .find(|c| c.name == name)
+                .unwrap()
+                .config
+                .settings
+                .clone()
+        };
+        assert_eq!(
+            settings("custom"),
+            serde_json::json!({ "host": "a", "connectTimeoutSecs": 45 })
+        );
+        assert_eq!(settings("absent"), serde_json::json!({ "host": "b" }));
+        assert_eq!(
+            settings("both"),
+            serde_json::json!({ "connectTimeoutSecs": 12 })
+        );
+        assert_eq!(settings("plugin"), serde_json::json!({ "timeoutSecs": 7 }));
+        assert_eq!(
+            settings("nested"),
+            serde_json::json!({ "connectTimeoutSecs": 90 })
+        );
+
+        storage.save_flat(&loaded.data).unwrap();
+        let raw = fs::read_to_string(&storage.file_path).unwrap();
+        let on_disk: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(on_disk["version"], serde_json::json!("5"));
+        let on_disk_settings = |name: &str| {
+            on_disk["children"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|n| n["name"] == name)
+                .unwrap()["config"]["config"]
+                .clone()
+        };
+        assert_eq!(
+            on_disk_settings("custom"),
+            serde_json::json!({ "host": "a", "connectTimeoutSecs": 45 })
+        );
+        assert_eq!(
+            on_disk_settings("plugin"),
+            serde_json::json!({ "timeoutSecs": 7 })
+        );
+        // Only the plugin's own key is left; no FTP connection keeps the legacy key.
+        assert_eq!(raw.matches("\"timeoutSecs\"").count(), 1, "{raw}");
+    }
+
+    /// The raw v4 → v5 step itself (before the typed parse) renames the FTP key.
+    #[test]
+    fn migrate_step_rewrites_legacy_ftp_timeout_in_raw_json() {
+        use crate::utils::migrate::VersionedStore;
+        let raw = serde_json::json!({
+            "version": "4",
+            "children": [{
+                "type": "folder", "name": "F",
+                "children": [
+                    {
+                        "type": "connection", "name": "f",
+                        "config": { "type": "ftp", "config": { "timeoutSecs": 45 } }
+                    },
+                    {
+                        "type": "connection", "name": "p",
+                        "config": { "type": "plugin:x:y", "config": { "timeoutSecs": 45 } }
+                    }
+                ]
+            }]
+        });
+        let migrated = ConnectionStore::migrate(raw, 4).unwrap();
+        assert_eq!(
+            migrated["children"][0]["children"][0]["config"]["config"],
+            serde_json::json!({ "connectTimeoutSecs": 45 })
+        );
+        assert_eq!(
+            migrated["children"][0]["children"][1]["config"]["config"],
+            serde_json::json!({ "timeoutSecs": 45 })
+        );
+    }
+
+    /// Downgrade safety (#2901): a v4 build must refuse to overwrite the v5 file
+    /// this build writes, so it can never re-save an FTP connection under the old
+    /// key and silently reset the user's timeout.
+    #[test]
+    fn v4_build_refuses_to_overwrite_v5_file() {
+        use crate::utils::migrate::{guard_not_newer, VersionedStore};
+        assert_eq!(ConnectionStore::CURRENT_VERSION, 5);
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        storage
+            .save_flat(&FlatConnectionStore {
+                connections: Vec::new(),
+                folders: Vec::new(),
+                agents: Vec::new(),
+            })
+            .unwrap();
+        let err = guard_not_newer(&storage.file_path, ConnectionStore::STORE_NAME, 4)
+            .expect_err("a v4 build must not overwrite a v5 file");
+        assert!(err.to_string().contains("newer version"), "{err}");
     }
 
     /// The raw v3 → v4 step itself (before the typed parse) renames the key.

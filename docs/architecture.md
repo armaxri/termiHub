@@ -828,14 +828,37 @@ flowchart LR
     V4 -.->|older build| REFUSE["refuses to overwrite<br/>(guard_not_newer)"]
 ```
 
-- `connections.json` is at schema **v4**; the v3 → v4 step renames the key in every saved
-  connection, preserving the user's explicit value. An older build refuses to overwrite a
-  v4 file.
+- The v3 → v4 step of `connections.json` renames the key in every saved connection,
+  preserving the user's explicit value. An older build refuses to overwrite a v4 file.
 - The desktop `ConnectionConfig`, the agent's persisted connection definitions and the
   agent wire DTOs (`ConnectionDefinition`, `connections.create`/`update` params) rewrite
   the legacy key on read and write only `autoReconnect`.
 - Agent-hosted terminal tabs are always reconnect-eligible (agent-level session
   re-attach), independent of this setting.
+
+### Unified Connect Timeout (PARITY-006)
+
+Every connection type with a configurable connect timeout stores it under **one** settings
+key, `connectTimeoutSecs` (SSH, telnet, FTP). FTP used `timeoutSecs` until #2901. Because a
+plugin type may use `timeoutSecs` for its own setting, this rename applies **only to the
+`ftp` type**. The helper `normalize_connection_settings(type_id, settings)` in
+`core/src/connection/connect_timeout.rs` does the rename, so every read path calls it with
+the connection's type id:
+
+- `connections.json` is at schema **v5**. The v4 → v5 step renames the key in every saved
+  FTP connection and keeps the user's value; if both keys are present, `connectTimeoutSecs`
+  wins. A v4 build refuses to overwrite a v5 file (`guard_not_newer`). Without that, its
+  `timeoutSecs`-keyed FTP form would re-save the timeout at the default of 30.
+- The desktop `ConnectionConfig` renames the key when it reads external files, imports,
+  backups and inline tab configs.
+- The agent's persisted definitions, external definition files, and `create`/`update`
+  requests are renamed on the agent, which knows `session_type`. The desktop does **not**
+  rename `ConnectionDefinition`s reported by an agent. An agent's definitions are edited
+  with that agent's own schema, so an older agent's `timeoutSecs` still matches the
+  `timeoutSecs` field of its own form.
+- `FtpConfig` writes `connectTimeoutSecs` and still accepts `timeoutSecs` as a serde alias.
+  The FTP backend renames the key before parsing, so a settings object that has both keys
+  still parses. Otherwise serde would reject it as a duplicate field.
 
 ### Reconnect Policy (SM-020)
 

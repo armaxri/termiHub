@@ -6,7 +6,12 @@ use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 /// A saved connection configuration that survives agent restarts.
+///
+/// Deserialization goes through [`RawConnection`] so the type-scoped legacy
+/// settings keys (FTP's `timeoutSecs`, #2901) are rewritten with the
+/// connection's `session_type` in hand; only the unified keys are persisted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "RawConnection")]
 pub struct Connection {
     pub id: String,
     pub name: String,
@@ -36,6 +41,45 @@ pub struct Connection {
     pub icon: Option<String>,
 }
 
+/// On-disk shape of [`Connection`], read before the type-scoped legacy-key
+/// renames are applied (see [`Connection::normalize_settings`]).
+#[derive(Deserialize)]
+struct RawConnection {
+    id: String,
+    name: String,
+    session_type: String,
+    #[serde(
+        default,
+        with = "termihub_core::connection::auto_reconnect::settings_bag"
+    )]
+    config: serde_json::Value,
+    #[serde(default)]
+    persistent: bool,
+    #[serde(default)]
+    folder_id: Option<String>,
+    #[serde(default)]
+    terminal_options: Option<serde_json::Value>,
+    #[serde(default)]
+    icon: Option<String>,
+}
+
+impl From<RawConnection> for Connection {
+    fn from(raw: RawConnection) -> Self {
+        let mut conn = Self {
+            id: raw.id,
+            name: raw.name,
+            session_type: raw.session_type,
+            config: raw.config,
+            persistent: raw.persistent,
+            folder_id: raw.folder_id,
+            terminal_options: raw.terminal_options,
+            icon: raw.icon,
+        };
+        conn.normalize_settings();
+        conn
+    }
+}
+
 /// Read-only snapshot returned by list/create/update operations.
 ///
 /// This IS the shared wire DTO defined once in `termihub-core`
@@ -50,6 +94,15 @@ pub use termihub_core::protocol::methods::{
 };
 
 impl Connection {
+    /// Rewrite type-scoped legacy settings keys (FTP's `timeoutSecs` →
+    /// `connectTimeoutSecs`, #2901) in place, keeping the user's value.
+    fn normalize_settings(&mut self) {
+        termihub_core::connection::normalize_connection_settings(
+            &self.session_type,
+            &mut self.config,
+        );
+    }
+
     fn snapshot(&self) -> ConnectionSnapshot {
         ConnectionSnapshot {
             id: self.id.clone(),
@@ -208,7 +261,8 @@ impl ConnectionStore {
     }
 
     /// Create a new connection. Returns the snapshot.
-    pub async fn create(&self, conn: Connection) -> ConnectionSnapshot {
+    pub async fn create(&self, mut conn: Connection) -> ConnectionSnapshot {
+        conn.normalize_settings();
         let snapshot = conn.snapshot();
         let mut defs = self.definitions.lock().await;
         defs.connections.insert(conn.id.clone(), conn);
@@ -253,6 +307,7 @@ impl ConnectionStore {
         if let Some(icon) = icon {
             conn.icon = icon;
         }
+        conn.normalize_settings();
 
         let snapshot = conn.snapshot();
         self.save_to_disk(&defs);
@@ -460,7 +515,7 @@ impl ConnectionStore {
                     let connections: HashMap<String, Connection> = defs
                         .into_iter()
                         .map(|d| {
-                            let conn = Connection {
+                            let mut conn = Connection {
                                 id: d.id.clone(),
                                 name: d.name,
                                 session_type: d.session_type,
@@ -470,6 +525,7 @@ impl ConnectionStore {
                                 terminal_options: None,
                                 icon: None,
                             };
+                            conn.normalize_settings();
                             (d.id, conn)
                         })
                         .collect();
@@ -797,6 +853,142 @@ mod tests {
             raw.contains("\"autoReconnect\": false") || raw.contains("\"autoReconnect\":false")
         );
         assert!(!raw.contains("resilientReconnect"));
+    }
+
+    // ── Legacy FTP connect-timeout key (#2901) ──────────────────────
+
+    /// An FTP definition persisted with the legacy `timeoutSecs` key loads under
+    /// the unified `connectTimeoutSecs` key with the user's value intact (so the
+    /// agent's schema-keyed form pre-populates it), and the next save writes only
+    /// the new key. A non-FTP type's own `timeoutSecs` is never touched.
+    #[tokio::test]
+    async fn legacy_ftp_timeout_key_is_read_and_rewritten() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        fs::write(
+            &path,
+            json!({
+                "connections": [
+                    {
+                        "id": "f1", "name": "ftp", "session_type": "ftp",
+                        "config": { "host": "h", "timeoutSecs": 45 }
+                    },
+                    {
+                        "id": "p1", "name": "plugin", "session_type": "plugin:acme:thing",
+                        "config": { "timeoutSecs": 7 }
+                    }
+                ],
+                "folders": []
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let store = ConnectionStore::new(path.clone());
+        let snap = store.get("f1").await.unwrap();
+        assert_eq!(
+            snap.config,
+            json!({ "host": "h", "connectTimeoutSecs": 45 })
+        );
+        let plugin = store.get("p1").await.unwrap();
+        assert_eq!(plugin.config, json!({ "timeoutSecs": 7 }));
+
+        store
+            .update(
+                "f1",
+                Some("renamed".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let raw: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).expect("valid json on disk");
+        let conns = raw["connections"].as_array().unwrap();
+        let ftp = conns.iter().find(|c| c["id"] == "f1").unwrap();
+        assert_eq!(
+            ftp["config"],
+            json!({ "host": "h", "connectTimeoutSecs": 45 })
+        );
+        let plugin = conns.iter().find(|c| c["id"] == "p1").unwrap();
+        assert_eq!(plugin["config"], json!({ "timeoutSecs": 7 }));
+    }
+
+    /// Create/update requests carrying the legacy FTP key (e.g. from a desktop
+    /// using an older agent schema) are stored under the unified key.
+    #[tokio::test]
+    async fn create_and_update_normalize_legacy_ftp_timeout_key() {
+        let tmp = TempDir::new().unwrap();
+        let store = ConnectionStore::new_temp(tmp.path().join("connections.json"));
+
+        let created = store
+            .create(Connection {
+                id: "f1".into(),
+                name: "ftp".into(),
+                session_type: "ftp".into(),
+                config: json!({ "host": "h", "timeoutSecs": 45 }),
+                persistent: false,
+                folder_id: None,
+                terminal_options: None,
+                icon: None,
+            })
+            .await;
+        assert_eq!(
+            created.config,
+            json!({ "host": "h", "connectTimeoutSecs": 45 })
+        );
+
+        let updated = store
+            .update(
+                "f1",
+                None,
+                None,
+                Some(json!({ "host": "h", "timeoutSecs": 60 })),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            updated.config,
+            json!({ "host": "h", "connectTimeoutSecs": 60 })
+        );
+        assert_eq!(
+            store.get("f1").await.unwrap().config,
+            json!({ "host": "h", "connectTimeoutSecs": 60 })
+        );
+    }
+
+    /// External connection files on the agent host are normalized the same way.
+    #[tokio::test]
+    async fn external_file_legacy_ftp_timeout_key_is_normalized() {
+        let tmp = TempDir::new().unwrap();
+        let store = ConnectionStore::new_temp(tmp.path().join("connections.json"));
+        let ext = tmp.path().join("external.json");
+        fs::write(
+            &ext,
+            json!({
+                "connections": [{
+                    "id": "x1", "name": "ftp", "session_type": "ftp",
+                    "config": { "timeoutSecs": 45 }
+                }],
+                "folders": []
+            })
+            .to_string(),
+        )
+        .unwrap();
+        store
+            .load_external_files(&[ext.to_string_lossy().into_owned()])
+            .await;
+        let (conns, _) = store.list().await;
+        let x = conns.iter().find(|c| c.id == "x1").unwrap();
+        assert_eq!(x.config, json!({ "connectTimeoutSecs": 45 }));
     }
 
     // ── Connection CRUD ─────────────────────────────────────────────

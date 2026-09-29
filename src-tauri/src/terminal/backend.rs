@@ -305,7 +305,11 @@ impl RemoteAgentConfig {
 /// Stores the connection type as a plain string and the settings as
 /// unstructured JSON. The on-disk format is `{"type": "<id>", "config": {...}}`
 /// which is backward-compatible with the previous tagged-enum format.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Reading it accepts legacy settings keys and rewrites them to the unified
+/// ones, including type-scoped renames such as FTP's `timeoutSecs` →
+/// `connectTimeoutSecs` (#2901); only the unified keys are written.
+#[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct ConnectionConfig {
@@ -317,12 +321,38 @@ pub struct ConnectionConfig {
     // The legacy `resilientReconnect` key is accepted on read and rewritten to the
     // unified `autoReconnect` key (PARITY-008) — for connections.json, external
     // connection files, imports and inline tab configs alike.
+    #[serde(rename = "config")]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub settings: serde_json::Value,
+}
+
+/// On-the-wire / on-disk shape of [`ConnectionConfig`], read before the
+/// type-scoped legacy-key renames are applied.
+#[derive(Deserialize)]
+struct RawConnectionConfig {
+    #[serde(rename = "type")]
+    type_id: String,
     #[serde(
         rename = "config",
         with = "termihub_core::connection::auto_reconnect::settings_bag"
     )]
-    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
-    pub settings: serde_json::Value,
+    settings: serde_json::Value,
+}
+
+impl<'de> Deserialize<'de> for ConnectionConfig {
+    /// Deserialize, accepting every legacy settings key on read: the
+    /// type-agnostic renames (via the `settings_bag` codec) and the
+    /// type-scoped ones such as FTP's `timeoutSecs` (#2901) — for
+    /// connections.json, external connection files, imports, backups and
+    /// inline tab configs alike. Only the unified keys are ever written.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let RawConnectionConfig {
+            type_id,
+            mut settings,
+        } = RawConnectionConfig::deserialize(deserializer)?;
+        termihub_core::connection::normalize_connection_settings(&type_id, &mut settings);
+        Ok(Self { type_id, settings })
+    }
 }
 
 /// Event emitted when a remote connection's state changes.
