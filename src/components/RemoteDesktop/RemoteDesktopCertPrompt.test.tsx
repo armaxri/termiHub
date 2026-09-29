@@ -89,9 +89,10 @@ describe("RemoteDesktopCertPrompt", () => {
     expect(warning?.textContent).toContain("changed");
   });
 
-  it("copies the fingerprint to the clipboard", () => {
+  it("copies the fingerprint to the clipboard", async () => {
     render(<RemoteDesktopCertPrompt prompt={untrusted} onDecision={vi.fn()} />);
-    click("cert-fingerprint-copy");
+    // The copy action is async: settle its success state inside act.
+    await act(async () => click("cert-fingerprint-copy"));
     expect(writeClipboard).toHaveBeenCalledWith("sha256:AB:CD:EF");
   });
 });

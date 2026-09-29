@@ -53,8 +53,8 @@ describe("UnlockDialog", () => {
     container.remove();
   });
 
-  it("renders correctly when open", () => {
-    act(() => {
+  it("renders correctly when open", async () => {
+    await act(async () => {
       root.render(<UnlockDialog open={true} onOpenChange={vi.fn()} />);
     });
 
@@ -63,8 +63,8 @@ describe("UnlockDialog", () => {
     expect(query("unlock-dialog-unlock")).not.toBeNull();
   });
 
-  it("does not render content when closed", () => {
-    act(() => {
+  it("does not render content when closed", async () => {
+    await act(async () => {
       root.render(<UnlockDialog open={false} onOpenChange={vi.fn()} />);
     });
 
@@ -75,7 +75,7 @@ describe("UnlockDialog", () => {
     mockedUnlock.mockResolvedValueOnce(undefined);
     const onOpenChange = vi.fn();
 
-    act(() => {
+    await act(async () => {
       root.render(<UnlockDialog open={true} onOpenChange={onOpenChange} />);
     });
 
@@ -102,7 +102,7 @@ describe("UnlockDialog", () => {
     mockedUnlock.mockRejectedValueOnce(new Error("bad password"));
     const onOpenChange = vi.fn();
 
-    act(() => {
+    await act(async () => {
       root.render(<UnlockDialog open={true} onOpenChange={onOpenChange} />);
     });
 
@@ -130,10 +130,10 @@ describe("UnlockDialog", () => {
     expect(updatedInput.value).toBe("");
   });
 
-  it("skip calls onOpenChange(false)", () => {
+  it("skip calls onOpenChange(false)", async () => {
     const onOpenChange = vi.fn();
 
-    act(() => {
+    await act(async () => {
       root.render(<UnlockDialog open={true} onOpenChange={onOpenChange} />);
     });
 
@@ -145,8 +145,8 @@ describe("UnlockDialog", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it("unlock button is disabled when password is empty", () => {
-    act(() => {
+  it("unlock button is disabled when password is empty", async () => {
+    await act(async () => {
       root.render(<UnlockDialog open={true} onOpenChange={vi.fn()} />);
     });
 
@@ -171,7 +171,7 @@ describe("UnlockDialog", () => {
 
   it("shows the reset affordance (not wrong-password) when the store is corrupt", async () => {
     mockedUnlock.mockRejectedValueOnce({ message: "corrupt", corrupted: true });
-    act(() => {
+    await act(async () => {
       root.render(<UnlockDialog open={true} onOpenChange={vi.fn()} />);
     });
 
@@ -186,7 +186,7 @@ describe("UnlockDialog", () => {
 
   it("does NOT show the reset affordance on an ordinary wrong password", async () => {
     mockedUnlock.mockRejectedValueOnce({ message: "wrong", corrupted: false });
-    act(() => {
+    await act(async () => {
       root.render(<UnlockDialog open={true} onOpenChange={vi.fn()} />);
     });
 
@@ -200,7 +200,7 @@ describe("UnlockDialog", () => {
     mockedUnlock.mockRejectedValueOnce({ message: "corrupt", corrupted: true });
     mockedReset.mockResolvedValueOnce(undefined);
     const onOpenChange = vi.fn();
-    act(() => {
+    await act(async () => {
       root.render(<UnlockDialog open={true} onOpenChange={onOpenChange} />);
     });
 
@@ -217,8 +217,8 @@ describe("UnlockDialog", () => {
 
   // --- #1360: forgot-password recovery path (always available, guarded) ---
 
-  it("always offers a forgot-password reset affordance, even without corruption", () => {
-    act(() => {
+  it("always offers a forgot-password reset affordance, even without corruption", async () => {
+    await act(async () => {
       root.render(<UnlockDialog open={true} onOpenChange={vi.fn()} />);
     });
     // No failed unlock, no corruption — the recovery affordance is still present.
@@ -226,7 +226,7 @@ describe("UnlockDialog", () => {
   });
 
   it("does not reset immediately — it opens a destructive confirm first", async () => {
-    act(() => {
+    await act(async () => {
       root.render(<UnlockDialog open={true} onOpenChange={vi.fn()} />);
     });
 
@@ -245,7 +245,7 @@ describe("UnlockDialog", () => {
   it("resets the store only after the forgot-password confirm is accepted", async () => {
     mockedReset.mockResolvedValueOnce(undefined);
     const onOpenChange = vi.fn();
-    act(() => {
+    await act(async () => {
       root.render(<UnlockDialog open={true} onOpenChange={onOpenChange} />);
     });
 
@@ -264,7 +264,7 @@ describe("UnlockDialog", () => {
   });
 
   it("does not reset when the forgot-password confirm is cancelled", async () => {
-    act(() => {
+    await act(async () => {
       root.render(<UnlockDialog open={true} onOpenChange={vi.fn()} />);
     });
 

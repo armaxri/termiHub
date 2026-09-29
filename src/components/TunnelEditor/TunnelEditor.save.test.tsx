@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { seedLayoutState } from "@/test/layoutState";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
@@ -51,14 +52,15 @@ const ROOT_PANEL = {
 let container: HTMLDivElement;
 let root: Root;
 
-function render() {
-  act(() => {
+async function render() {
+  await act(async () => {
     root.render(
       <TooltipProvider>
         <TunnelEditor tabId={TAB_ID} meta={{ tunnelId: null }} isVisible={true} />
       </TooltipProvider>
     );
   });
+  await flushAsync();
 }
 
 async function flush() {
@@ -118,27 +120,27 @@ describe("TunnelEditor — save feedback (UX-022)", () => {
     vi.clearAllMocks();
   });
 
-  it("disables both save actions while the name is blank", () => {
-    render();
+  it("disables both save actions while the name is blank", async () => {
+    await render();
     expect(saveButton().disabled).toBe(true);
     expect(saveStartButton().disabled).toBe(true);
   });
 
-  it("enables Save once a non-blank name is entered", () => {
-    render();
+  it("enables Save once a non-blank name is entered", async () => {
+    await render();
     setValue(nameInput(), "Dev DB");
     expect(saveButton().disabled).toBe(false);
     expect(saveStartButton().disabled).toBe(false);
   });
 
-  it("keeps Save disabled for a whitespace-only name", () => {
-    render();
+  it("keeps Save disabled for a whitespace-only name", async () => {
+    await render();
     setValue(nameInput(), "   ");
     expect(saveButton().disabled).toBe(true);
   });
 
   it("confirms a plain Save with a success toast and does not start", async () => {
-    render();
+    await render();
     setValue(nameInput(), "Dev DB");
     click(saveButton());
     await flush();
@@ -148,7 +150,7 @@ describe("TunnelEditor — save feedback (UX-022)", () => {
   });
 
   it("does not raise the 'Saved tunnel' toast on Save & Start (start owns feedback)", async () => {
-    render();
+    await render();
     setValue(nameInput(), "Dev DB");
     click(saveStartButton());
     await flush();

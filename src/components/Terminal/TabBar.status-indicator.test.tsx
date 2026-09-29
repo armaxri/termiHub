@@ -13,6 +13,7 @@ import {
   flushSessionRegion,
   installSessionLifecycleHarness,
 } from "@/test/sessionLifecycleRegionTestHarness";
+import { flushAsync } from "@/test/flushAsync";
 
 // Render the real Tab so we exercise the actual status-indicator markup, but stub
 // the dnd-kit sortable wrapper and the terminal registry so it mounts in jsdom.
@@ -61,7 +62,7 @@ function makeTerminalTab(id: string, isActive: boolean): TerminalTab {
 let container: HTMLDivElement;
 let root: Root;
 
-function render(tabs: TerminalTab[]) {
+async function render(tabs: TerminalTab[]) {
   act(() => {
     root.render(
       <TooltipProvider>
@@ -69,6 +70,7 @@ function render(tabs: TerminalTab[]) {
       </TooltipProvider>
     );
   });
+  await flushAsync();
 }
 
 function dotFor(tabId: string): HTMLElement | null {
@@ -98,8 +100,8 @@ afterEach(() => {
 });
 
 describe("TabBar — non-colour status indicator (UX-014)", () => {
-  it("renders an icon shape (not just a coloured dot) for the connected state", () => {
-    render([makeTerminalTab("t1", true)]);
+  it("renders an icon shape (not just a coloured dot) for the connected state", async () => {
+    await render([makeTerminalTab("t1", true)]);
     const shape = iconShapeFor("t1");
     expect(shape).not.toBeNull();
     // A real svg icon is present, so status is conveyed by shape, not colour alone.
@@ -107,15 +109,17 @@ describe("TabBar — non-colour status indicator (UX-014)", () => {
   });
 
   it("uses a distinct shape for each connection status", async () => {
-    render([
+    await render([
       makeTerminalTab("connected", true),
       makeTerminalTab("connecting", false),
       makeTerminalTab("failed", false),
       makeTerminalTab("disconnected", false),
     ]);
     // Drive each tab into its state.
-    harness.transport.setSession("connecting", connecting());
-    harness.transport.setSession("disconnected", disconnected());
+    act(() => {
+      harness.transport.setSession("connecting", connecting());
+      harness.transport.setSession("disconnected", disconnected());
+    });
     act(() => {
       useAppStore.setState({ terminalSpawnErrors: { failed: "boom" } });
     });
@@ -135,14 +139,14 @@ describe("TabBar — non-colour status indicator (UX-014)", () => {
 
   it("marks the connecting spinner as essential motion so reduced-motion pulses instead of freezing", async () => {
     harness.transport.setSession("t1", connecting());
-    render([makeTerminalTab("t1", true)]);
+    await render([makeTerminalTab("t1", true)]);
     await flushSessionRegion();
     const icon = dotFor("t1")?.querySelector("svg");
     expect(icon?.getAttribute("class")).toContain("motion-essential-spinner");
   });
 
-  it("keeps a persistent accessible name on the indicator (legible without hover)", () => {
-    render([makeTerminalTab("t1", true)]);
+  it("keeps a persistent accessible name on the indicator (legible without hover)", async () => {
+    await render([makeTerminalTab("t1", true)]);
     const dot = dotFor("t1");
     expect(dot?.getAttribute("role")).toBe("img");
     expect(dot?.getAttribute("aria-label")).toBe("Connected");
@@ -154,7 +158,7 @@ describe("TabBar — non-colour status indicator (UX-014)", () => {
     // Scope the audit to the indicator: the surrounding tab strip has a separate,
     // pre-existing `nested-interactive` structure (role=tab + close button) that is
     // out of scope for UX-014.
-    render([makeTerminalTab("failed", true)]);
+    await render([makeTerminalTab("failed", true)]);
     act(() => {
       useAppStore.setState({ terminalSpawnErrors: { failed: "boom" } });
     });

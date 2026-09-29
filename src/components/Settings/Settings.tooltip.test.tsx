@@ -20,8 +20,8 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 let container: HTMLDivElement;
 let root: Root;
 
-function renderNode(node: React.ReactNode) {
-  act(() => {
+async function renderNode(node: React.ReactNode) {
+  await act(async () => {
     root.render(<TooltipProvider delayDuration={0}>{node}</TooltipProvider>);
   });
 }
@@ -53,21 +53,21 @@ describe("Settings icon controls tooltip adoption", () => {
   });
 
   describe("FileTypeSettings remove/copy icon buttons", () => {
-    function renderWithMapping() {
+    async function renderWithMapping() {
       seedSettings({ fileLanguageMappings: { Jenkinsfile: "groovy" } });
-      renderNode(<FileTypeSettings />);
+      await renderNode(<FileTypeSettings />);
     }
 
-    it("gives the remove-mapping button an aria-label and no bare title", () => {
-      renderWithMapping();
+    it("gives the remove-mapping button an aria-label and no bare title", async () => {
+      await renderWithMapping();
       const remove = btn("file-type-remove-Jenkinsfile");
       expect(remove, "remove button should render").toBeTruthy();
       expect(remove?.getAttribute("aria-label")).toBe("Remove mapping for Jenkinsfile");
       expect(remove?.hasAttribute("title")).toBe(false);
     });
 
-    it("gives the copy-override button an aria-label and no bare title", () => {
-      renderWithMapping();
+    it("gives the copy-override button an aria-label and no bare title", async () => {
+      await renderWithMapping();
       // Built-in reference rows expose the copy-into-add-form icon control.
       const copy = container.querySelector<HTMLButtonElement>('[data-testid^="file-type-copy-"]');
       expect(copy, "a copy button should render").toBeTruthy();
@@ -75,8 +75,8 @@ describe("Settings icon controls tooltip adoption", () => {
       expect(copy?.hasAttribute("title")).toBe(false);
     });
 
-    it("wires aria-describedby on focus of the remove button", () => {
-      renderWithMapping();
+    it("wires aria-describedby on focus of the remove button", async () => {
+      await renderWithMapping();
       const remove = btn("file-type-remove-Jenkinsfile") as HTMLButtonElement;
       act(() => {
         remove.focus();
@@ -87,20 +87,20 @@ describe("Settings icon controls tooltip adoption", () => {
   });
 
   describe("KeyPathInput browse icon button", () => {
-    function renderInput() {
-      renderNode(<KeyPathInput value="" onChange={() => {}} testIdPrefix="field-keyPath" />);
+    async function renderInput() {
+      await renderNode(<KeyPathInput value="" onChange={() => {}} testIdPrefix="field-keyPath" />);
     }
 
-    it("gives the browse button an aria-label and no bare title", () => {
-      renderInput();
+    it("gives the browse button an aria-label and no bare title", async () => {
+      await renderInput();
       const browse = btn("field-keyPath-key-path-browse");
       expect(browse, "browse button should render").toBeTruthy();
       expect(browse?.getAttribute("aria-label")).toBe("Browse");
       expect(browse?.hasAttribute("title")).toBe(false);
     });
 
-    it("wires aria-describedby on focus of the browse button", () => {
-      renderInput();
+    it("wires aria-describedby on focus of the browse button", async () => {
+      await renderInput();
       const browse = btn("field-keyPath-key-path-browse") as HTMLButtonElement;
       act(() => {
         browse.focus();
@@ -111,11 +111,11 @@ describe("Settings icon controls tooltip adoption", () => {
   });
 
   describe("SerialPortSettings remove-custom-prefix icon button", () => {
-    function renderWithCustomPrefix() {
+    async function renderWithCustomPrefix() {
       seedSettings({
         serialPortScanPrefixes: [{ prefix: "ttyXYZ", enabled: true, builtIn: false }],
       });
-      renderNode(<SerialPortSettings />);
+      await renderNode(<SerialPortSettings />);
     }
 
     function removeButton(): HTMLButtonElement | null {
@@ -124,16 +124,16 @@ describe("Settings icon controls tooltip adoption", () => {
       return container.querySelector<HTMLButtonElement>('[aria-label="Remove custom prefix"]');
     }
 
-    it("gives the remove-prefix button an aria-label and no bare title", () => {
-      renderWithCustomPrefix();
+    it("gives the remove-prefix button an aria-label and no bare title", async () => {
+      await renderWithCustomPrefix();
       const remove = removeButton();
       expect(remove, "remove-prefix button should render").toBeTruthy();
       expect(remove?.getAttribute("aria-label")).toBe("Remove custom prefix");
       expect(remove?.hasAttribute("title")).toBe(false);
     });
 
-    it("wires aria-describedby on focus of the remove-prefix button", () => {
-      renderWithCustomPrefix();
+    it("wires aria-describedby on focus of the remove-prefix button", async () => {
+      await renderWithCustomPrefix();
       const remove = removeButton() as HTMLButtonElement;
       act(() => {
         remove.focus();

@@ -17,8 +17,8 @@ const mockedOpenUrl = vi.mocked(openUrl);
 let container: HTMLDivElement;
 let root: Root;
 
-function render() {
-  act(() => {
+async function render() {
+  await act(async () => {
     root.render(<AboutSettings />);
   });
 }
@@ -51,19 +51,19 @@ describe("AboutSettings", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the About category heading", () => {
-    render();
+  it("renders the About category heading", async () => {
+    await render();
     const heading = container.querySelector(".settings-panel__category-title");
     expect(heading?.textContent).toBe("About");
   });
 
-  it("shows the app name", () => {
-    render();
+  it("shows the app name", async () => {
+    await render();
     expect(container.textContent).toContain("termiHub");
   });
 
   it("shows the version after app info loads", async () => {
-    render();
+    await render();
     await act(async () => {
       await Promise.resolve();
     });
@@ -73,7 +73,7 @@ describe("AboutSettings", () => {
   });
 
   it("shows the git hash after app info loads", async () => {
-    render();
+    await render();
     await act(async () => {
       await Promise.resolve();
     });
@@ -82,24 +82,24 @@ describe("AboutSettings", () => {
     );
   });
 
-  it("shows a project description / tagline", () => {
-    render();
+  it("shows a project description / tagline", async () => {
+    await render();
     expect(container.querySelector("[data-testid='about-description']")).not.toBeNull();
   });
 
-  it("shows the MIT license label", () => {
-    render();
+  it("shows the MIT license label", async () => {
+    await render();
     expect(container.textContent).toContain("MIT");
   });
 
-  it("has a GitHub repository link button", () => {
-    render();
+  it("has a GitHub repository link button", async () => {
+    await render();
     const btn = container.querySelector("[data-testid='about-github-link']");
     expect(btn).not.toBeNull();
   });
 
   it("opens the GitHub URL when the link button is clicked", async () => {
-    render();
+    await render();
     const btn = container.querySelector("[data-testid='about-github-link']") as HTMLButtonElement;
     await act(async () => {
       btn.click();
@@ -107,14 +107,14 @@ describe("AboutSettings", () => {
     expect(mockedOpenUrl).toHaveBeenCalledWith("https://github.com/armaxri/termiHub");
   });
 
-  it("has a link to the full license text", () => {
-    render();
+  it("has a link to the full license text", async () => {
+    await render();
     const btn = container.querySelector("[data-testid='about-license-link']");
     expect(btn).not.toBeNull();
   });
 
   it("opens the license URL when the license link is clicked", async () => {
-    render();
+    await render();
     const btn = container.querySelector("[data-testid='about-license-link']") as HTMLButtonElement;
     await act(async () => {
       btn.click();
@@ -124,8 +124,8 @@ describe("AboutSettings", () => {
     );
   });
 
-  it("has a link to the third-party licenses", () => {
-    render();
+  it("has a link to the third-party licenses", async () => {
+    await render();
     const btn = container.querySelector("[data-testid='about-third-party-licenses-link']");
     expect(btn).not.toBeNull();
     expect(btn?.textContent).toContain("Third-Party Licenses");
@@ -136,7 +136,7 @@ describe("AboutSettings", () => {
       if (cmd === "get_third_party_notices") return Promise.resolve("serde 1.0 - MIT");
       return Promise.resolve(undefined);
     });
-    render();
+    await render();
     const btn = container.querySelector(
       "[data-testid='about-third-party-licenses-link']"
     ) as HTMLButtonElement;

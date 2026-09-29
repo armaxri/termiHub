@@ -23,8 +23,8 @@ const mockedInvoke = vi.mocked(invoke);
 let container: HTMLDivElement;
 let root: Root;
 
-function render() {
-  act(() => {
+async function render() {
+  await act(async () => {
     root.render(<UpdateSettings />);
   });
 }
@@ -53,25 +53,25 @@ describe("UpdateSettings", () => {
     vi.clearAllMocks();
   });
 
-  it("renders 'Check Now' as a real button using the shared primitive", () => {
-    render();
+  it("renders 'Check Now' as a real button using the shared primitive", async () => {
+    await render();
     const btn = query("update-check-now") as HTMLButtonElement | null;
     expect(btn).not.toBeNull();
     expect(btn?.tagName).toBe("BUTTON");
     expect(btn?.className).toContain("ui-btn");
   });
 
-  it("triggers an update check when 'Check Now' is clicked", () => {
+  it("triggers an update check when 'Check Now' is clicked", async () => {
     const checkForUpdates = vi.fn().mockResolvedValue(undefined);
     useAppStore.setState({ checkForUpdates });
-    render();
-    act(() => {
+    await render();
+    await act(async () => {
       (query("update-check-now") as HTMLElement).click();
     });
     expect(checkForUpdates).toHaveBeenCalledWith(true);
   });
 
-  it("shows 'Open Downloads Page' when an update is available", () => {
+  it("shows 'Open Downloads Page' when an update is available", async () => {
     useAppStore.setState({
       updateCheckState: "available",
       updateInfo: {
@@ -82,7 +82,7 @@ describe("UpdateSettings", () => {
         isSecurity: false,
       },
     });
-    render();
+    await render();
     const btn = query("update-open-downloads") as HTMLButtonElement | null;
     expect(btn).not.toBeNull();
     expect(btn?.className).toContain("ui-btn--primary");
@@ -99,7 +99,7 @@ describe("UpdateSettings", () => {
         isSecurity: false,
       },
     });
-    render();
+    await render();
     await act(async () => {
       (query("update-open-downloads") as HTMLElement).click();
     });
@@ -117,21 +117,21 @@ describe("UpdateSettings", () => {
         isSecurity: false,
       },
     });
-    render();
+    await render();
     await act(async () => {
       (query("update-open-downloads") as HTMLElement).click();
     });
     expect(mockedOpenUrl).not.toHaveBeenCalled();
   });
 
-  it("renders a 'Clear' button for a skipped version and clears it", () => {
+  it("renders a 'Clear' button for a skipped version and clears it", async () => {
     const clearSkippedUpdateVersion = vi.fn().mockResolvedValue(undefined);
     useAppStore.setState({ clearSkippedUpdateVersion });
     seedSettings({ updates: { autoCheck: true, skippedVersion: "1.0.0" } });
-    render();
+    await render();
     const btn = query("update-clear-skipped") as HTMLButtonElement | null;
     expect(btn).not.toBeNull();
-    act(() => {
+    await act(async () => {
       btn?.click();
     });
     expect(clearSkippedUpdateVersion).toHaveBeenCalled();

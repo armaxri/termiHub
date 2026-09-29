@@ -201,7 +201,8 @@ describe("PluginSettingsSection (#2000)", () => {
       });
       expect(updatePluginSettings).not.toHaveBeenCalled();
 
-      act(() => {
+      // The save fires here; await its promise inside act() so the ack settles.
+      await act(async () => {
         vi.advanceTimersByTime(1);
       });
       expect(updatePluginSettings).toHaveBeenCalledTimes(2);
@@ -226,7 +227,8 @@ describe("PluginSettingsSection (#2000)", () => {
         vi.advanceTimersByTime(200);
       });
       act(() => setNativeValue(query("field-region") as HTMLInputElement, "us"));
-      act(() => {
+      // The save fires here; await its promise inside act() so the ack settles.
+      await act(async () => {
         vi.advanceTimersByTime(100);
       });
       expect(updatePluginSettings).toHaveBeenCalledTimes(1);

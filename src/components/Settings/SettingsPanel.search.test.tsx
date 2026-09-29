@@ -32,8 +32,8 @@ const mockedInvoke = vi.mocked(invoke);
 let container: HTMLDivElement;
 let root: Root;
 
-function render() {
-  act(() => {
+async function render() {
+  await act(async () => {
     root.render(
       <TooltipProvider delayDuration={0}>
         <SettingsPanel tabId="settings-search-tab" isVisible={true} />
@@ -83,13 +83,13 @@ describe("SettingsPanel — search surfaces every settings section (#3308)", () 
     container.remove();
   });
 
-  it("offers an Updates category in the nav", () => {
-    render();
+  it("offers an Updates category in the nav", async () => {
+    await render();
     expect(navItem("updates")).not.toBeNull();
   });
 
-  it("shows the update auto-check preference when searching 'auto-check'", () => {
-    render();
+  it("shows the update auto-check preference when searching 'auto-check'", async () => {
+    await render();
     search("auto-check");
     expect(container.querySelector("[data-testid='update-settings']")).not.toBeNull();
     expect(container.querySelector("[data-testid='update-auto-check-on']")).not.toBeNull();
@@ -98,21 +98,21 @@ describe("SettingsPanel — search surfaces every settings section (#3308)", () 
     expect(navItem("updates")?.className).not.toContain("settings-nav__item--dimmed");
   });
 
-  it("shows the update status block when searching 'check now'", () => {
-    render();
+  it("shows the update status block when searching 'check now'", async () => {
+    await render();
     search("check now");
     expect(container.querySelector("[data-testid='update-check-now']")).not.toBeNull();
   });
 
-  it("shows the external connection files section when searching 'external'", () => {
-    render();
+  it("shows the external connection files section when searching 'external'", async () => {
+    await render();
     search("external");
     expect(container.querySelector("[data-testid='external-files-add']")).not.toBeNull();
     expect(navItem("external-files")?.className).not.toContain("settings-nav__item--dimmed");
   });
 
-  it("still reports no results for a query nothing matches", () => {
-    render();
+  it("still reports no results for a query nothing matches", async () => {
+    await render();
     search("zzz-no-such-setting");
     expect(container.querySelector(".settings-panel__no-results")).not.toBeNull();
   });

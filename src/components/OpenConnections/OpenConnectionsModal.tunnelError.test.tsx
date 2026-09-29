@@ -153,7 +153,7 @@ describe("OpenConnectionsModal — errored tunnels (#1240)", () => {
 
     const killBtn = tunnelRows()[0].querySelector<HTMLButtonElement>(".oc-row__kill");
     expect(killBtn).not.toBeNull();
-    act(() => {
+    await act(async () => {
       killBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
