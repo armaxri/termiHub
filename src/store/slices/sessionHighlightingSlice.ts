@@ -1,6 +1,7 @@
 import { StateCreator } from "zustand";
 
-import { omitKey, type AppState } from "../appStore";
+import type { AppState } from "../appStore";
+import { omitKey } from "../layoutHelpers";
 
 /**
  * Per-session syntax-highlighting override slice (ARCH-001/FES-011, appStore

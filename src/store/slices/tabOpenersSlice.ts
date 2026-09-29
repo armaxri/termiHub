@@ -1,13 +1,13 @@
 import { StateCreator } from "zustand";
 
+import type { AppState } from "../appStore";
 import {
-  type AppState,
   createTab,
   patchTabContentEntry,
-  resolveEditorSessionKey,
   setTabContentEntry,
   tabContentFromGroups,
-} from "../appStore";
+} from "../layoutHelpers";
+import { resolveEditorSessionKey } from "../tabQueries";
 import {
   TerminalTab,
   PanelNode,

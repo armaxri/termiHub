@@ -1,6 +1,7 @@
 import { StateCreator } from "zustand";
 
-import { omitKey, type AppState } from "../appStore";
+import type { AppState } from "../appStore";
+import { omitKey } from "../layoutHelpers";
 import type { TerminalOptions } from "@/types/terminal";
 
 /**

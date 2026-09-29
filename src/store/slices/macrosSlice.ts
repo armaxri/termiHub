@@ -23,12 +23,9 @@ import { newId } from "@/services/transport/ids";
 
 import { currentSessionView, regionExited } from "../sessionBridge";
 
-import {
-  collectLiveTabs,
-  filterConnectedTerminalTabIds,
-  getActiveTab,
-  type AppState,
-} from "../appStore";
+import type { AppState } from "../appStore";
+import { collectLiveTabs, getActiveTab } from "../layoutHelpers";
+import { filterConnectedTerminalTabIds } from "../tabQueries";
 import { createMacroFanoutInjector, describeMacroFanoutOutcome } from "./macroFanout";
 import { buildMacroRun, macroTargetLabel, recordMacroRun } from "./macroRunHistory";
 import { errorMessage } from "@/utils/errorMessage";

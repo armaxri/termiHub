@@ -22,7 +22,8 @@ import { errorMessage } from "@/utils/errorMessage";
 
 import { clearWorkflowOutputContent, dispatchWorkflowDismissOutput } from "../workflowRunBridge";
 import { syncWorkflowOutputTriggers } from "../workflowSessionTriggers";
-import { getActiveTab, type AppState } from "../appStore";
+import type { AppState } from "../appStore";
+import { getActiveTab } from "../layoutHelpers";
 import {
   clampFanoutConcurrency,
   describeFanoutProgress,

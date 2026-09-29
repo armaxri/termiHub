@@ -1,12 +1,8 @@
 import { StateCreator } from "zustand";
 
-import {
-  filterConnectedTerminalTabIds,
-  getActiveTab,
-  resolveBroadcastTargetTabIds,
-  withComposedLayout,
-  type AppState,
-} from "../appStore";
+import type { AppState } from "../appStore";
+import { filterConnectedTerminalTabIds, resolveBroadcastTargetTabIds } from "../tabQueries";
+import { getActiveTab, withComposedLayout } from "../layoutHelpers";
 import type { BroadcastScope } from "@/types/terminal";
 import { currentBroadcastView, dispatchBroadcastIntentBestEffort } from "@/store/broadcastBridge";
 import { toast } from "@/components/ui";

@@ -27,7 +27,8 @@ import type { TerminalExitReason } from "@/types/terminal";
 import type { Workflow, WorkflowRunTrigger } from "@/types/workflow";
 import { frontendLog } from "@/utils/frontendLog";
 
-import { collectLiveTabs, type AppState } from "./appStore";
+import type { AppState } from "./appStore";
+import { collectLiveTabs } from "./layoutHelpers";
 import { unattendedParamValues } from "./scheduledRuns";
 import { currentSessionView, regionExited } from "./sessionBridge";
 import { resolveConnectedTargets } from "./slices/workflowFanout";

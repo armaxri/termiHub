@@ -1183,6 +1183,16 @@ The frontend uses a single **Zustand** store (`src/store/appStore.ts`) managing:
 - **Theme** — Active theme (dark/light/system), resolved theme for OS auto-detection
 - **Credential store** — Storage mode (master password/none), lock state
 
+`appStore.ts` is only the composition root (ARCH-001/FES-011, #2881). It spreads the domain slices
+from `src/store/slices/` into one store, keeps `reclaimSession` inline (the takeover audit pins that
+call site), and re-exports the shared helpers. The helpers live in their own modules:
+`layoutHelpers.ts`, `tabQueries.ts`, `windowHelpers.ts`, `restoreHelpers.ts` and
+`reconnectHelpers.ts`. The startup subscriptions live in `storeSubscriptions.ts`.
+
+No slice imports `appStore.ts` at runtime, which `sliceImportCycle.test.ts` enforces. A helper
+that needs the live store reads it through `appStoreHandle.ts`, which `appStore.ts` binds right
+after `create`.
+
 ### Terminal Rendering
 
 - **xterm.js** renders to `<canvas>`, not DOM elements

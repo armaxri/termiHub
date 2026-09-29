@@ -7,7 +7,8 @@
 import { toast } from "@/components/ui";
 import type { WorkflowRunResult } from "@/services/workflowRunner";
 
-import { collectLiveTabs, type AppState } from "../appStore";
+import type { AppState } from "../appStore";
+import { collectLiveTabs } from "../layoutHelpers";
 import { currentSessionView, regionExited } from "../sessionBridge";
 
 /**

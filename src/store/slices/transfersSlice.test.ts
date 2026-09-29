@@ -12,16 +12,18 @@ vi.mock("@/store/transfersBridge", () => ({
   dispatchTransferIntentBestEffort: vi.fn(),
 }));
 
-// The slice pulls three pure helpers off the (not-yet-extracted) layout domain
-// via `../appStore`; stub them so importing the slice does not drag in the whole
-// root store. Only `applyTransferProgress` uses them, which is covered elsewhere.
-vi.mock("../appStore", () => ({
+// The slice pulls three layout / window helpers from `../layoutHelpers` and
+// `../windowHelpers`; stub them so the tests do not need a composed layout. Only
+// `applyTransferProgress` uses them, which is covered elsewhere.
+vi.mock("../layoutHelpers", () => ({
   omitKey: (rec: Record<string, unknown>, key: string) => {
     const { [key]: _omit, ...rest } = rec;
     return rest;
   },
-  windowOwnsTransferSession: () => true,
   withComposedLayout: (s: unknown) => s,
+}));
+vi.mock("../windowHelpers", () => ({
+  windowOwnsTransferSession: () => true,
 }));
 
 import { sftpCancelTransfer } from "@/services/api";

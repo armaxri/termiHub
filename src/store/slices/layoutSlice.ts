@@ -1,22 +1,20 @@
 import { StateCreator } from "zustand";
 
+import type { AddTabOptions, AppState } from "../appStore";
+import { bestEffortOwnership } from "../windowHelpers";
 import {
-  type AddTabOptions,
-  type AppState,
-  bestEffortOwnership,
   createTab,
   currentLayoutSnapshot,
   generateGroupId,
   getComposedLayout,
-  isResilientReconnectTabId,
   omitKey,
   patchTabContentEntry,
   postLayoutSnapshot,
   removeTabFromLeaf,
-  runOnReconnectCommand,
   setSplitSizesInTree,
   setTabContentEntry,
-} from "../appStore";
+} from "../layoutHelpers";
+import { isResilientReconnectTabId, runOnReconnectCommand } from "../reconnectHelpers";
 import {
   TerminalTab,
   TabContent,

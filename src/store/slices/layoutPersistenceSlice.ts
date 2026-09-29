@@ -1,17 +1,15 @@
 import { StateCreator } from "zustand";
 
+import type { AppState } from "../appStore";
 import {
-  type AppState,
   beginRestoreGuard,
-  captureAllWindows,
   collectRestoreCohort,
-  currentWindowLabel,
   LAST_SESSION_SAVE_DEBOUNCE_MS,
   probeRestorePromptReachability,
-  restoreWindowedLayout,
-  tabContentFromGroups,
   teardownAllSessions,
-} from "../appStore";
+} from "../restoreHelpers";
+import { captureAllWindows, currentWindowLabel, restoreWindowedLayout } from "../windowHelpers";
+import { tabContentFromGroups } from "../layoutHelpers";
 import {
   stampWindowId,
   buildWindowsMeta,
