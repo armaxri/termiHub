@@ -7,8 +7,9 @@
 //! The reconnect-backlog filter, the test-only transport sever and the
 //! reconnect-lifecycle log vocabulary live beside it.
 //!
-//! Carved verbatim out of the parent `agent_manager` module: no behaviour,
-//! emit-order, channel, lock, task or timeout change.
+//! Carved verbatim out of the parent `agent_manager` module. Since #3018 the
+//! command path is bounded and prioritized through [`IoLanes`] (see
+//! [`super::io_lanes`]).
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,6 +28,7 @@ use termihub_core::protocol::methods::{
     AgentForwardCloseParams, AgentForwardDataParams, SessionInputParams, SessionResizeParams,
 };
 
+use super::io_lanes::{AgentIoSender, CloseBudgetOnDrop, IoBudget, IoLanes, Next};
 use super::{
     dispatch_agent_notification, emit_agent_state, emit_agent_state_with_error, evicted_remote_ids,
     evicted_session_ids, fold_agent_hosted_reconnect_failed, fold_agent_hosted_reconnecting,
@@ -152,8 +154,9 @@ pub(super) fn log_agent_reconnect_failed(agent_id: &str, error: &str) {
 pub(super) async fn agent_io_task<R: Runtime>(
     session: SshSession,
     mut channel: russh::Channel<russh::client::Msg>,
-    mut command_rx: UnboundedReceiver<AgentIoCommand>,
+    command_rx: UnboundedReceiver<AgentIoCommand>,
     command_tx: UnboundedSender<AgentIoCommand>,
+    io_budget: Arc<IoBudget>,
     alive: Arc<AtomicBool>,
     reconnecting: Arc<AtomicBool>,
     app_handle: AppHandle<R>,
@@ -167,6 +170,15 @@ pub(super) async fn agent_io_task<R: Runtime>(
     update_auth_token_path: Option<String>,
 ) {
     let b64 = base64::engine::general_purpose::STANDARD;
+    // #3018: however this task ends — return, panic or a teardown abort — fail
+    // every producer still waiting for data credit, so none waits forever.
+    let _close_budget = CloseBudgetOnDrop(io_budget.clone());
+    // Control commands are served ahead of queued data; gated data holds its
+    // credit until written (see `io_lanes`).
+    let mut lanes = IoLanes::new(command_rx, io_budget.clone());
+    // The gated sender the ssh-agent relay's pump tasks use (#1727). They run
+    // as their own tasks, so awaiting credit there never blocks this loop.
+    let relay_tx = AgentIoSender::new(command_tx.clone(), io_budget.clone(), reconnecting.clone());
     // AGT-003 (#3213): refreshed from every (re)connect's `initialize`, since a
     // re-launched agent is a new instance with a new token file.
     let mut update_auth_token_path = update_auth_token_path;
@@ -230,11 +242,16 @@ pub(super) async fn agent_io_task<R: Runtime>(
             tokio::select! {
                 biased;
 
-                // 1. Process incoming commands
-                cmd = command_rx.recv() => {
-                    let cmd = match cmd {
-                        Some(c) => c,
-                        None => {
+                // 1. Process incoming commands: control first, then the oldest
+                //    queued data (#3018).
+                next = lanes.next_command() => {
+                    // `_credit` returns the data command's budget once this arm
+                    // has written it (dropped at the end of the arm, or on any
+                    // early exit from it).
+                    let (cmd, _credit) = match next {
+                        Next::Control(c) => (c, None),
+                        Next::Data(c, credit) => (c, Some(credit)),
+                        Next::Closed => {
                             // Sender dropped — clean shutdown
                             alive.store(false, Ordering::SeqCst);
                             return;
@@ -430,7 +447,7 @@ pub(super) async fn agent_io_task<R: Runtime>(
                                         if !ki_relay.handle_notification(&method, &params)
                                             && !handle_agent_forward_notification(
                                             &agent_forward,
-                                            &command_tx,
+                                            &relay_tx,
                                             &method,
                                             &params,
                                             &b64,
@@ -502,6 +519,10 @@ pub(super) async fn agent_io_task<R: Runtime>(
         // recovered session. Cleared after the post-reconnect backlog is filtered
         // below (or left set on the failure path, where the entry is reaped anyway).
         reconnecting.store(true, Ordering::SeqCst);
+        // #3018: wake every producer waiting for data credit so it sees the
+        // outage and gives up (input is dropped per CONC-014) instead of parking
+        // its caller for the whole reconnect window.
+        io_budget.interrupt();
 
         // TEST-ONLY (#2573): a synthetic in-process sever breaks the inner loop
         // without the socket having died, so release the desktop russh transport
@@ -638,12 +659,11 @@ pub(super) async fn agent_io_task<R: Runtime>(
                 // correct dimensions; all control commands are preserved in order.
                 // Survivors are re-queued through `command_tx` and processed normally
                 // by the resumed loop. Clear the flag only after this drain so no new
-                // input races in ahead of it.
-                let mut drained = Vec::new();
-                while let Ok(cmd) = command_rx.try_recv() {
-                    drained.push(cmd);
-                }
-                for cmd in filter_reconnect_backlog(drained) {
+                // input races in ahead of it. #3018: the drain covers the queued data
+                // lane too, releases the credit of whatever the filter drops, and
+                // re-queues survivors ungated (they keep their credit) — so this task
+                // never waits on its own budget and cannot self-deadlock.
+                for cmd in lanes.drain_reconnect_backlog() {
                     let _ = command_tx.send(cmd);
                 }
                 reconnecting.store(false, Ordering::SeqCst);

@@ -40,7 +40,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tracing::debug;
 
-use super::agent_manager::AgentIoCommand;
+use super::agent_manager::{AgentIoCommand, AgentIoSender};
 
 /// A one-shot factory that connects to the operator's local ssh-agent, yielding
 /// a duplex byte stream (or a `NotFound`-style error when no agent is
@@ -79,7 +79,11 @@ impl DesktopAgentForward {
 
     /// Handle `agent.forward.open`: register the stream and start a task that
     /// connects to the local agent and pumps bytes for the stream's lifetime.
-    pub fn on_open(&self, stream_id: String, command_tx: UnboundedSender<AgentIoCommand>) {
+    ///
+    /// `command_tx` is the I/O task's gated sender (#3018): the pump awaits data
+    /// credit before each reply chunk, so a slow agent link backpressures the
+    /// local ssh-agent read instead of queuing without bound.
+    pub(crate) fn on_open(&self, stream_id: String, command_tx: AgentIoSender) {
         self.on_open_with(stream_id, command_tx, default_connector());
     }
 
@@ -89,9 +93,10 @@ impl DesktopAgentForward {
     fn on_open_with(
         &self,
         stream_id: String,
-        command_tx: UnboundedSender<AgentIoCommand>,
+        command_tx: impl Into<AgentIoSender>,
         connect: LocalAgentConnector,
     ) {
+        let command_tx = command_tx.into();
         // TAURI-014: intentionally UNBOUNDED, and safe. The producer is the remote
         // agent forwarding one operator ssh-agent connection, whose traffic is
         // protocol-bounded: ssh-agent is strictly request/response with small
@@ -162,7 +167,7 @@ impl DesktopAgentForward {
 async fn pump_local_agent(
     stream_id: String,
     rx: mpsc::UnboundedReceiver<Vec<u8>>,
-    command_tx: UnboundedSender<AgentIoCommand>,
+    command_tx: AgentIoSender,
     streams: Arc<Mutex<HashMap<String, UnboundedSender<Vec<u8>>>>>,
     connect: LocalAgentConnector,
 ) {
@@ -172,9 +177,11 @@ async fn pump_local_agent(
             // No local agent — mirror the russh no-op: tell the agent to drop the
             // forwarded channel, and forget the stream.
             debug!("no local ssh-agent to answer forwarded stream {stream_id}: {e}");
-            let _ = command_tx.send(AgentIoCommand::AgentForwardClose {
-                stream_id: stream_id.clone(),
-            });
+            let _ = command_tx
+                .send(AgentIoCommand::AgentForwardClose {
+                    stream_id: stream_id.clone(),
+                })
+                .await;
             streams
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -204,12 +211,16 @@ async fn pump_local_agent(
         match read_half.read(&mut buf).await {
             Ok(0) => break,
             Ok(n) => {
-                let sent = command_tx.send(AgentIoCommand::AgentForwardData {
-                    stream_id: stream_id.clone(),
-                    data: buf[..n].to_vec(),
-                });
+                // Awaits data credit (#3018); fails once the agent I/O loop is
+                // gone or reconnecting (the stream died with the transport).
+                let sent = command_tx
+                    .send(AgentIoCommand::AgentForwardData {
+                        stream_id: stream_id.clone(),
+                        data: buf[..n].to_vec(),
+                    })
+                    .await;
                 if sent.is_err() {
-                    break; // agent I/O loop gone
+                    break;
                 }
             }
             Err(e) => {
@@ -219,9 +230,11 @@ async fn pump_local_agent(
         }
     }
 
-    let _ = command_tx.send(AgentIoCommand::AgentForwardClose {
-        stream_id: stream_id.clone(),
-    });
+    let _ = command_tx
+        .send(AgentIoCommand::AgentForwardClose {
+            stream_id: stream_id.clone(),
+        })
+        .await;
     streams
         .lock()
         .unwrap_or_else(|e| e.into_inner())
