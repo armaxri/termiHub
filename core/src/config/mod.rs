@@ -702,12 +702,16 @@ pub struct FtpConfig {
     /// Directory to change into after login (`CWD`), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_directory: Option<String>,
-    /// Connect timeout in seconds. Persisted as `timeoutSecs` for byte-stable
-    /// back-compat with existing saved connections; also accepts the unified
-    /// `connectTimeoutSecs` name shared with SSH/telnet (PARITY-006).
+    /// Connect timeout in seconds, under the unified `connectTimeoutSecs` name
+    /// shared with SSH/telnet (PARITY-006, #2901). The historical FTP key
+    /// `timeoutSecs` is still accepted on read (alias) so settings saved by
+    /// older builds keep loading; only the unified key is written. A bag with
+    /// both keys must be normalized first
+    /// ([`normalize_ftp_connect_timeout`](crate::connection::normalize_ftp_connect_timeout)),
+    /// otherwise serde rejects it as a duplicate field.
     #[serde(
-        rename = "timeoutSecs",
-        alias = "connectTimeoutSecs",
+        rename = "connectTimeoutSecs",
+        alias = "timeoutSecs",
         default = "default_ftp_connect_timeout_secs"
     )]
     pub connect_timeout_secs: u64,

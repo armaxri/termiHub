@@ -34,8 +34,16 @@ pub const FTP_TYPE_ID: &str = "ftp";
 ///
 /// Returns `true` when the bag was changed.
 pub fn normalize_ftp_connect_timeout(settings: &mut Value) -> bool {
-    let _ = settings;
-    false
+    let Some(map) = settings.as_object_mut() else {
+        return false;
+    };
+    let Some(legacy) = map.remove(LEGACY_FTP_TIMEOUT_KEY) else {
+        return false;
+    };
+    if !map.contains_key(CONNECT_TIMEOUT_KEY) {
+        map.insert(CONNECT_TIMEOUT_KEY.to_string(), legacy);
+    }
+    true
 }
 
 /// Apply every **type-scoped** legacy-key rename to a connection's settings
@@ -44,8 +52,7 @@ pub fn normalize_ftp_connect_timeout(settings: &mut Value) -> bool {
 ///
 /// Returns `true` when the bag was changed.
 pub fn normalize_connection_settings(type_id: &str, settings: &mut Value) -> bool {
-    let _ = (type_id, settings);
-    false
+    type_id == FTP_TYPE_ID && normalize_ftp_connect_timeout(settings)
 }
 
 #[cfg(test)]

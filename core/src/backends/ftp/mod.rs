@@ -129,7 +129,8 @@ impl Drop for Ftp {
 /// so a bag carrying **both** the legacy `timeoutSecs` and the unified
 /// `connectTimeoutSecs` key still parses (the unified key wins) instead of
 /// failing serde's duplicate-field check on the aliased field (#2901).
-fn parse_settings(settings: serde_json::Value) -> Result<FtpConfig, SessionError> {
+fn parse_settings(mut settings: serde_json::Value) -> Result<FtpConfig, SessionError> {
+    crate::connection::normalize_ftp_connect_timeout(&mut settings);
     serde_json::from_value(settings)
         .map_err(|e| SessionError::InvalidConfig(format!("Invalid FTP settings: {e}")))
 }
@@ -459,7 +460,7 @@ fn transfer_group() -> SettingsGroup {
             SettingsField {
                 default: Some(serde_json::json!(30)),
                 ..base_field(
-                    "timeoutSecs",
+                    crate::connection::CONNECT_TIMEOUT_KEY,
                     "Timeout (s)",
                     FieldType::Number {
                         min: Some(1.0),
