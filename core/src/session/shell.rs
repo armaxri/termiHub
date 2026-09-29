@@ -870,10 +870,29 @@ mod tests {
         );
     }
 
+    /// The desktop default on Windows is the shared core selection (pwsh ->
+    /// powershell -> cmd), reported as a shell *kind*, so desktop and agent
+    /// agree (#3728).
     #[cfg(windows)]
     #[test]
-    fn detect_default_shell_returns_powershell_on_windows() {
-        assert_eq!(detect_default_shell(), Some("powershell".to_string()));
+    fn detect_default_shell_matches_shared_windows_selection() {
+        let expected = shell_kind(&detect_windows_default_shell()).to_string();
+        assert_eq!(detect_default_shell(), Some(expected.clone()));
+        assert!(
+            matches!(expected.as_str(), "pwsh" | "powershell" | "cmd"),
+            "unexpected Windows default shell kind: {expected}"
+        );
+    }
+
+    /// When PowerShell 7 is installed (it is on the GitHub Windows runners),
+    /// the desktop must prefer it over Windows PowerShell (#3728).
+    #[cfg(windows)]
+    #[test]
+    fn detect_default_shell_prefers_pwsh_when_on_path() {
+        let path_var = std::env::var_os("PATH");
+        if find_in_path("pwsh.exe", path_var.as_deref(), Path::is_file).is_some() {
+            assert_eq!(detect_default_shell(), Some("pwsh".to_string()));
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -2022,5 +2041,167 @@ mod tests {
 
         let result = parse_wsl_output(&raw);
         assert_eq!(result, vec!["Ubuntu"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // shell_kind (#3728)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn shell_kind_bare_names_pass_through() {
+        for name in [
+            "zsh", "bash", "sh", "cmd", "powershell", "pwsh", "gitbash", "fish", "nushell",
+        ] {
+            assert_eq!(shell_kind(name), name);
+        }
+    }
+
+    #[test]
+    fn shell_kind_keeps_non_path_values() {
+        assert_eq!(shell_kind("wsl:Ubuntu"), "wsl:Ubuntu");
+        assert_eq!(shell_kind("ssh"), "ssh");
+        assert_eq!(shell_kind("elvish"), "elvish");
+        assert_eq!(shell_kind("custom"), "custom");
+    }
+
+    #[test]
+    fn shell_kind_from_unix_paths() {
+        assert_eq!(shell_kind("/bin/bash"), "bash");
+        assert_eq!(shell_kind("/usr/bin/zsh"), "zsh");
+        assert_eq!(shell_kind("/usr/local/bin/fish"), "fish");
+        assert_eq!(shell_kind("/bin/sh"), "sh");
+        assert_eq!(shell_kind("/opt/homebrew/bin/nu"), "nushell");
+        assert_eq!(shell_kind("/usr/local/bin/pwsh"), "pwsh");
+    }
+
+    #[test]
+    fn shell_kind_from_windows_paths() {
+        assert_eq!(shell_kind(PWSH), "pwsh");
+        assert_eq!(shell_kind(WINPS), "powershell");
+        assert_eq!(shell_kind(CMD), "cmd");
+        assert_eq!(shell_kind(r"C:\Program Files\Git\bin\bash.exe"), "bash");
+        assert_eq!(shell_kind(r"C:\tools\zsh.exe"), "zsh");
+        assert_eq!(shell_kind(r"C:\tools\fish.exe"), "fish");
+    }
+
+    #[test]
+    fn shell_kind_is_case_insensitive_and_strips_exe() {
+        assert_eq!(shell_kind(r"C:\WINDOWS\System32\CMD.EXE"), "cmd");
+        assert_eq!(shell_kind(r"C:\Program Files\PowerShell\7\PwSh.Exe"), "pwsh");
+        assert_eq!(shell_kind("PowerShell.exe"), "powershell");
+        assert_eq!(shell_kind("cmd.exe"), "cmd");
+        assert_eq!(shell_kind("pwsh.exe"), "pwsh");
+        assert_eq!(shell_kind("C:/Program Files/PowerShell/7/pwsh.exe"), "pwsh");
+    }
+
+    #[test]
+    fn shell_kind_unknown_path_is_left_unchanged() {
+        assert_eq!(shell_kind("/opt/myshell/bin/mysh"), "/opt/myshell/bin/mysh");
+        assert_eq!(shell_kind(r"C:\shells\myshell.exe"), r"C:\shells\myshell.exe");
+    }
+
+    #[test]
+    fn osc7_setup_command_supports_pwsh_and_paths() {
+        let ps = osc7_setup_command("powershell");
+        assert!(ps.is_some());
+        assert_eq!(osc7_setup_command("pwsh"), ps);
+        assert_eq!(osc7_setup_command(PWSH), ps);
+        assert_eq!(osc7_setup_command(WINPS), ps);
+        assert_eq!(osc7_setup_command(CMD), osc7_setup_command("cmd"));
+        assert_eq!(osc7_setup_command("/bin/bash"), osc7_setup_command("bash"));
+        assert!(osc7_setup_command("/bin/bash").is_some());
+        assert_eq!(
+            osc7_setup_command("/usr/bin/fish"),
+            osc7_setup_command("fish")
+        );
+        assert_eq!(osc7_setup_command("/opt/myshell/bin/mysh"), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // pwsh shell kind + Windows default kind (#3728)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn shell_to_command_pwsh_has_nologo() {
+        let (cmd, args) = shell_to_command("pwsh");
+        assert_eq!(args, vec!["-NoLogo"]);
+        #[cfg(unix)]
+        assert_eq!(cmd, "pwsh");
+        #[cfg(windows)]
+        assert!(
+            cmd.to_ascii_lowercase().ends_with("pwsh.exe"),
+            "expected pwsh.exe, got: {cmd}"
+        );
+    }
+
+    #[test]
+    fn shell_to_command_powershell_paths_get_nologo() {
+        let (cmd, args) = shell_to_command(PWSH);
+        assert_eq!(cmd, PWSH);
+        assert_eq!(args, vec!["-NoLogo"]);
+        let (cmd, args) = shell_to_command(WINPS);
+        assert_eq!(cmd, WINPS);
+        assert_eq!(args, vec!["-NoLogo"]);
+        // Other path-valued shells keep their literal, argument-free launch.
+        let (cmd, args) = shell_to_command("/bin/bash");
+        assert_eq!(cmd, "/bin/bash");
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn windows_default_kind_prefers_pwsh() {
+        let kind = windows_default_shell_kind(
+            stub_path(&[("pwsh.exe", PWSH), ("powershell.exe", WINPS)]),
+            Some(CMD),
+            |_| true,
+        );
+        assert_eq!(kind, "pwsh");
+    }
+
+    #[test]
+    fn windows_default_kind_falls_back_in_order() {
+        let kind =
+            windows_default_shell_kind(stub_path(&[("powershell.exe", WINPS)]), Some(CMD), |_| {
+                true
+            });
+        assert_eq!(kind, "powershell");
+        let kind = windows_default_shell_kind(stub_path(&[]), Some(CMD), |_| true);
+        assert_eq!(kind, "cmd");
+        let kind = windows_default_shell_kind(stub_path(&[]), None, |_| true);
+        assert_eq!(kind, "cmd");
+    }
+
+    #[test]
+    fn windows_shell_kinds_puts_pwsh_first_and_keeps_powershell_and_cmd() {
+        let candidates = vec![PWSH.to_string(), WINPS.to_string(), CMD.to_string()];
+        assert_eq!(
+            windows_shell_kinds(&candidates, true),
+            vec!["pwsh", "powershell", "cmd", "gitbash"]
+        );
+        // Without pwsh, saved "powershell"/"cmd" choices are still offered.
+        assert_eq!(
+            windows_shell_kinds(&[], false),
+            vec!["powershell", "cmd"]
+        );
+        assert_eq!(
+            windows_shell_kinds(&[PWSH.to_string()], false),
+            vec!["pwsh", "powershell", "cmd"]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn detect_available_shells_windows_order() {
+        let shells = detect_available_shells();
+        let path_var = std::env::var_os("PATH");
+        let has_pwsh = find_in_path("pwsh.exe", path_var.as_deref(), Path::is_file).is_some();
+        if has_pwsh {
+            assert_eq!(shells.first().map(String::as_str), Some("pwsh"), "{shells:?}");
+        } else {
+            assert!(!shells.contains(&"pwsh".to_string()), "{shells:?}");
+        }
+        assert!(shells.contains(&"cmd".to_string()), "{shells:?}");
+        let default = detect_default_shell().expect("windows default shell");
+        assert!(shells.contains(&default), "default {default} not in {shells:?}");
     }
 }

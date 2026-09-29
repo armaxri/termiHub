@@ -2190,4 +2190,67 @@ mod tests {
 
         shell.disconnect().await.ok();
     }
+
+    // ── Shell-integration injection for path-valued shells (#3728) ──
+
+    fn bare_command(program: &str) -> ShellCommand {
+        ShellCommand {
+            program: program.to_string(),
+            args: vec![],
+            env: HashMap::new(),
+            cwd: None,
+            cols: 80,
+            rows: 24,
+        }
+    }
+
+    #[test]
+    fn shell_integration_pwsh_path_uses_startup_args() {
+        let pwsh = r"C:\Program Files\PowerShell\7\pwsh.exe";
+        let (cmd, stdin) = apply_shell_integration(bare_command(pwsh), pwsh, true);
+        assert!(stdin.is_none(), "pwsh setup must not go via stdin");
+        assert_eq!(cmd.args[0], "-NoExit");
+        assert_eq!(cmd.args[1], "-Command");
+        assert_eq!(Some(cmd.args[2].as_str()), osc7_setup_command("powershell"));
+    }
+
+    #[test]
+    fn shell_integration_pwsh_name_uses_startup_args() {
+        let (cmd, stdin) = apply_shell_integration(bare_command("pwsh"), "pwsh", true);
+        assert!(stdin.is_none());
+        assert!(cmd.args.iter().any(|a| a == "-NoExit"));
+    }
+
+    #[test]
+    fn shell_integration_cmd_path_uses_k_flag() {
+        let cmd_path = r"C:\Windows\system32\CMD.EXE";
+        let (cmd, stdin) = apply_shell_integration(bare_command(cmd_path), cmd_path, true);
+        assert!(stdin.is_none());
+        assert_eq!(cmd.args[0], "/K");
+        assert_eq!(Some(cmd.args[1].as_str()), osc7_setup_command("cmd"));
+    }
+
+    #[test]
+    fn shell_integration_bash_path_injects_via_stdin() {
+        let (cmd, stdin) = apply_shell_integration(bare_command("/bin/bash"), "/bin/bash", true);
+        assert!(cmd.args.is_empty());
+        assert_eq!(stdin, osc7_setup_command("bash"));
+        assert!(stdin.is_some());
+    }
+
+    #[test]
+    fn shell_integration_disabled_leaves_command_untouched() {
+        let pwsh = r"C:\Program Files\PowerShell\7\pwsh.exe";
+        let (cmd, stdin) = apply_shell_integration(bare_command(pwsh), pwsh, false);
+        assert!(stdin.is_none());
+        assert!(cmd.args.is_empty());
+    }
+
+    #[test]
+    fn shell_integration_unknown_path_gets_nothing() {
+        let (cmd, stdin) =
+            apply_shell_integration(bare_command("/opt/x/bin/mysh"), "/opt/x/bin/mysh", true);
+        assert!(stdin.is_none());
+        assert!(cmd.args.is_empty());
+    }
 }
