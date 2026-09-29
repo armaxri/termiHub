@@ -97,7 +97,6 @@ setupAgentsRegion();
 
 describe("ConnectionEditor — jump-host hops follow connection id changes (#3603)", () => {
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -119,7 +118,6 @@ describe("ConnectionEditor — jump-host hops follow connection id changes (#360
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   it("saves the hop with the renamed connection's new id and stays clean", async () => {
@@ -228,7 +226,6 @@ describe("ConnectionEditor — follows its own connection's id change (#3622)", 
   }
 
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -250,7 +247,6 @@ describe("ConnectionEditor — follows its own connection's id change (#3622)", 
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   it("a folder rename re-points the editor; saving updates the moved connection", async () => {

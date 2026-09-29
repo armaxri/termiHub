@@ -132,7 +132,6 @@ function armCloseRequest(): ReturnType<typeof vi.fn> {
 
 describe("FileEditor — Save & Close gates on a real save (FEC-010)", () => {
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -144,7 +143,6 @@ describe("FileEditor — Save & Close gates on a real save (FEC-010)", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   it("keeps the tab open (and shows the error) when the save fails", async () => {

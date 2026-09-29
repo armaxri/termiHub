@@ -120,7 +120,6 @@ function unwatchCalls() {
 
 describe("FileEditor — dormant while superseded by zoom (FEC-018)", () => {
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -135,7 +134,6 @@ describe("FileEditor — dormant while superseded by zoom (FEC-018)", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   it("does not register an OS file watch while superseded", async () => {

@@ -1222,7 +1222,6 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
   }
 
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -1245,7 +1244,6 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   it("renders the Jump Host section for an SSH connection", () => {
@@ -1415,7 +1413,6 @@ describe("ConnectionEditor — Setup SSH Agent button", () => {
   }
 
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -1436,7 +1433,6 @@ describe("ConnectionEditor — Setup SSH Agent button", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   it("shows the Setup SSH Agent button for agent auth", () => {
