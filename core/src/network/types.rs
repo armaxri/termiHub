@@ -4,7 +4,7 @@
 //! ts-rs (audit DUP-030, #3802). `u64` fields are mapped to `number`. `Option`
 //! fields serialize as `null` when unset but keep the frontend's historical
 //! `field?: T` typing via `ts(optional)`; tightening them to `T | null` is
-//! tracked separately so consumers can be updated first.
+//! tracked in #3821 so consumers can be updated first.
 
 use serde::{Deserialize, Serialize};
 
