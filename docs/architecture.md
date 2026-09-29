@@ -1804,8 +1804,8 @@ style-src 'self' 'unsafe-inline';
 img-src 'self' data: blob:;
 font-src 'self';
 connect-src 'self' ipc:;
-worker-src 'self' blob:;
-child-src 'self' blob:;
+worker-src 'self';
+child-src 'self';
 object-src 'none';
 frame-src 'none';
 base-uri 'self';
@@ -1888,18 +1888,18 @@ the guard is a vitest suite, the PR change classifier runs the frontend suite fo
 Signed off in #3627 (and #3628 for the IPC origin) against the production bundle (`pnpm build`,
 `dist/assets`):
 
-| Directive / source                   | Decision                              | Evidence                                                                                                                                |
-| ------------------------------------ | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `script-src 'wasm-unsafe-eval'`      | Keep                                  | Shiki's `onig.wasm` chunk and `@xterm/addon-image`'s SIXEL decoder instantiate WebAssembly                                              |
-| `script-src plugin://localhost`      | Keep, **macOS/Linux only**            | WebKit form of the `plugin` URI scheme (`src-tauri/src/plugin_protocol.rs`); the frontend-plugin sandbox worker `importScripts` from it |
-| `script-src http://plugin.localhost` | Keep, **Windows only** (was every OS) | WebView2 form of the same scheme. On WebKit it is an ordinary loopback URL, so listing it there trusted any local server on port 80     |
-| `style-src 'unsafe-inline'`          | Keep (signed off)                     | Runtime `<style>` from xterm, Monaco, sonner and `react-remove-scroll`; React `style` attributes                                        |
-| `img-src data:`                      | Keep                                  | Monaco's stylesheet embeds `data:` SVG/PNG backgrounds                                                                                  |
-| `img-src blob:`                      | Keep                                  | `@xterm/addon-image` shows inline images through blob URLs                                                                              |
-| `font-src data:`                     | **Removed**                           | No shipped font is a `data:` URL; Geist, Meslo and codicon load as bundled files                                                        |
-| `connect-src ipc:`                   | Keep, **macOS/Linux only**            | WebKit form of Tauri's IPC protocol: the IPC script fetches `ipc://localhost/<cmd>`                                                     |
-| `connect-src http://ipc.localhost`   | Keep, **Windows only** (was every OS) | WebView2 form of the IPC protocol (`http://ipc.localhost/<cmd>`). On WebKit it is an ordinary loopback URL                              |
-| `worker-src` / `child-src blob:`     | Keep (follow-up #3639)                | Monaco's workers now load as bundled `'self'` files (#3632), not a `blob:` bootstrap; `child-src` covers engines without `worker-src`   |
+| Directive / source                   | Decision                              | Evidence                                                                                                                                                                                                             |
+| ------------------------------------ | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `script-src 'wasm-unsafe-eval'`      | Keep                                  | Shiki's `onig.wasm` chunk and `@xterm/addon-image`'s SIXEL decoder instantiate WebAssembly                                                                                                                           |
+| `script-src plugin://localhost`      | Keep, **macOS/Linux only**            | WebKit form of the `plugin` URI scheme (`src-tauri/src/plugin_protocol.rs`); the frontend-plugin sandbox worker `importScripts` from it                                                                              |
+| `script-src http://plugin.localhost` | Keep, **Windows only** (was every OS) | WebView2 form of the same scheme. On WebKit it is an ordinary loopback URL, so listing it there trusted any local server on port 80                                                                                  |
+| `style-src 'unsafe-inline'`          | Keep (signed off)                     | Runtime `<style>` from xterm, Monaco, sonner and `react-remove-scroll`; React `style` attributes                                                                                                                     |
+| `img-src data:`                      | Keep                                  | Monaco's stylesheet embeds `data:` SVG/PNG backgrounds                                                                                                                                                               |
+| `img-src blob:`                      | Keep                                  | `@xterm/addon-image` shows inline images through blob URLs                                                                                                                                                           |
+| `font-src data:`                     | **Removed**                           | No shipped font is a `data:` URL; Geist, Meslo and codicon load as bundled files                                                                                                                                     |
+| `connect-src ipc:`                   | Keep, **macOS/Linux only**            | WebKit form of Tauri's IPC protocol: the IPC script fetches `ipc://localhost/<cmd>`                                                                                                                                  |
+| `connect-src http://ipc.localhost`   | Keep, **Windows only** (was every OS) | WebView2 form of the IPC protocol (`http://ipc.localhost/<cmd>`). On WebKit it is an ordinary loopback URL                                                                                                           |
+| `worker-src` / `child-src blob:`     | **Removed** (#3639)                   | Every worker loads from a bundled `'self'` file: Monaco's via `MonacoEnvironment.getWorker` (#3632), the plugin sandbox via `new URL(…, import.meta.url)`. `child-src 'self'` stays for engines without `worker-src` |
 
 #### Native file drag-out (no drag capability granted)
 
