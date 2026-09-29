@@ -493,7 +493,7 @@ async fn daemon_loop(
             // New agent connection
             conn = listener.accept() => {
                 match conn {
-                    Ok((mut read_half, mut write_half)) => {
+                    Ok((mut read_half, write_half)) => {
                         info!(session_id, "Agent connected");
 
                         // AGT-015: `state.json` is shared per-user across every
@@ -523,17 +523,10 @@ async fn daemon_loop(
                                 );
                                 // Off the loop, bounded (#3890): the refused
                                 // peer may not be reading either.
-                                tokio::spawn(async move {
-                                    let _ = worker_sink::write_with_progress_deadline(
-                                        &mut write_half,
-                                        &protocol::encode_frame(MSG_ERROR, ERR_OWNED_BY_LIVE_PEER),
-                                        EVICTED_NOTIFY_TIMEOUT,
-                                    )
-                                    .await;
-                                });
+                                tokio::spawn(refuse_connection(read_half, write_half));
                                 // Keep the existing writer and do NOT bump the
-                                // generation; the refused connection is dropped
-                                // once the refusal is written.
+                                // generation; the refused connection is closed
+                                // once the refused worker has read the refusal.
                                 continue;
                             }
                             AttachDecision::EvictAndTakeover => {
@@ -899,10 +892,41 @@ fn route_monitoring_request(
     }
 }
 
+/// Longest a refused recovery connect (AGT-015) is held open after its refusal
+/// is written, waiting for the refused worker to hang up first.
+///
+/// A worker writes its capabilities frame right after its attach intent and
+/// only then reads the answer. Closing the refused connection as soon as the
+/// refusal is out races that write: on Windows it then fails with os error 232
+/// ("The pipe is being closed") and the worker never reads the typed refusal
+/// (#3890). So the daemon keeps the connection until the worker, having read
+/// the refusal, closes its end — at once in practice — and this bound only
+/// stops a worker that never does from holding the connection.
+const REFUSAL_LINGER: Duration = Duration::from_secs(2);
+
 /// Upper bound on the best-effort [`MSG_EVICTED`] write to an incumbent writer
 /// (SM-003). The frame is tiny and normally lands in the socket buffer at once;
 /// the bound only guards against a wedged incumbent stalling the takeover.
 const EVICTED_NOTIFY_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Answer a refused recovery connect (AGT-015) with [`ERR_OWNED_BY_LIVE_PEER`],
+/// off the loop (#3890), then hold the connection open — discarding whatever
+/// the worker still sends — until the worker hangs up or [`REFUSAL_LINGER`]
+/// passes, so the worker's own handshake writes never meet a closed connection.
+async fn refuse_connection(mut read_half: BoxedReader, mut write_half: BoxedWriter) {
+    let refusal = protocol::encode_frame(MSG_ERROR, ERR_OWNED_BY_LIVE_PEER);
+    if worker_sink::write_with_progress_deadline(&mut write_half, &refusal, EVICTED_NOTIFY_TIMEOUT)
+        .await
+        .is_err()
+    {
+        return;
+    }
+    let _ = tokio::time::timeout(
+        REFUSAL_LINGER,
+        tokio::io::copy(&mut read_half, &mut tokio::io::sink()),
+    )
+    .await;
+}
 
 /// Best-effort: send [`MSG_EVICTED`] to the current writer, if any, as a
 /// takeover drops it (SM-003, single-attach). The frame joins the end of the
