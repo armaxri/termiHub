@@ -11,7 +11,7 @@
 //!   ([`run_local_transfer_in_group`](termihub_core::files::transfer::local_folder::run_local_transfer_in_group)).
 //!   The group id is persisted with each row (#3613), so a relaunch after an
 //!   app restart rebuilds the group
-//!   ([`relaunch`](crate::files::transfer::relaunch)).
+//!   (`crate::files::transfer::relaunch`).
 //!
 //! The core planning/layout/grouping lives in
 //! `termihub_core::files::transfer::local_folder`; this module only wires it to
@@ -33,6 +33,8 @@ use crate::utils::errors::TerminalError;
 
 /// One file copied in the background on the transfer queue.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct QueuedLocalCopy {
     /// Its Transfer Queue id.
@@ -43,6 +45,8 @@ pub struct QueuedLocalCopy {
 
 /// What `local_copy_start` started.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct LocalCopyStarted {
     /// The files copied in the background, empty when the whole copy finished

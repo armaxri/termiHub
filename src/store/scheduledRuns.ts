@@ -26,7 +26,9 @@ import type { Workflow, WorkflowParameter } from "@/types/workflow";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 
-import { collectLiveTabs, filterConnectedTerminalTabIds, type AppState } from "./appStore";
+import type { AppState } from "./appStore";
+import { collectLiveTabs } from "./layoutHelpers";
+import { filterConnectedTerminalTabIds } from "./tabQueries";
 import { currentBroadcastGroups } from "./broadcastGroups";
 import {
   resolveConnectedTargets,

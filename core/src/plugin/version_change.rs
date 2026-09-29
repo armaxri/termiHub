@@ -143,7 +143,7 @@ fn parse_version(raw: &str) -> Option<Version> {
 /// Classify replacing `installed` with an incoming package of
 /// `incoming_version` whose content hash is `incoming_sha256`.
 ///
-/// See the [module docs](self) for the full rule table. The result never
+/// See the module docs for the full rule table. The result never
 /// errs on the side of "silent": anything not provably a fresh install, an
 /// upgrade, or an identical reinstall requires confirmation.
 #[must_use]

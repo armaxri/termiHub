@@ -280,3 +280,81 @@ describe("DynamicField dockerContainer picker compose awareness (#3425)", () => 
     expect(q("field-existingContainer-group-other")).not.toBeNull();
   });
 });
+
+describe("DynamicField dockerContainer picker in Compose-service mode (#3784)", () => {
+  const serviceField: SettingsField = {
+    key: "composeService",
+    label: "Compose Service",
+    fieldType: { type: "dockerContainer" },
+    required: true,
+    placeholder: "my-project/web",
+  };
+
+  async function renderService(value: unknown, onChange = vi.fn(), context?: ContainerContext) {
+    await act(async () => {
+      root.render(
+        <DynamicField
+          field={serviceField}
+          value={value}
+          onChange={onChange}
+          containerContext={context}
+        />
+      );
+    });
+    return onChange;
+  }
+
+  const compose = (name: string, project: string, service: string, running = true) =>
+    info(name, running, { composeProject: project, composeService: service });
+
+  it("lists services (replicas collapsed) and stores project/service on pick", async () => {
+    mockedList.mockResolvedValue([
+      compose("shop-web-1", "shop", "web"),
+      compose("shop-web-2", "shop", "web", false),
+      compose("shop-db-1", "shop", "db", false),
+      info("plain", true),
+    ]);
+    const onChange = await renderService("");
+    expect(q("field-composeService-group-project-shop")?.textContent).toContain("shop");
+    expect(q("field-composeService-option-shop/web")?.textContent).toContain("1 of 2 running");
+    expect(q("field-composeService-option-shop/db")?.textContent).toContain("not running");
+    // Containers outside Compose are not services.
+    expect(q("field-composeService-option-plain")).toBeNull();
+    act(() => q("field-composeService-option-shop/web")?.click());
+    expect(onChange).toHaveBeenCalledWith("shop/web");
+  });
+
+  it("marks the saved service selected and keeps the full list", async () => {
+    mockedList.mockResolvedValue([
+      compose("shop-web-1", "shop", "web"),
+      compose("shop-db-1", "shop", "db"),
+    ]);
+    await renderService("shop/web");
+    expect(q("field-composeService-option-shop/web")?.getAttribute("aria-pressed")).toBe("true");
+    expect(q("field-composeService-option-shop/db")).not.toBeNull();
+  });
+
+  it("filters by the typed text and keeps an unlisted value as typed", async () => {
+    mockedList.mockResolvedValue([
+      compose("shop-web-1", "shop", "web"),
+      compose("blog-app-1", "blog", "app"),
+    ]);
+    await renderService("blo");
+    expect(q("field-composeService-option-blog/app")).not.toBeNull();
+    expect(q("field-composeService-option-shop/web")).toBeNull();
+    await renderService("gone/svc");
+    expect(q("field-composeService-list")).toBeNull();
+    expect(q("field-composeService-no-match")).not.toBeNull();
+  });
+
+  it("says when the runtime has no Compose services", async () => {
+    mockedList.mockResolvedValue([info("plain", true)]);
+    await renderService("");
+    expect(q("field-composeService-empty")?.textContent).toContain("No Docker Compose services");
+  });
+
+  it("asks for project/service when listing is unavailable", async () => {
+    await renderService("", vi.fn(), { listingEnabled: false });
+    expect(q("field-composeService-listing-unavailable")?.textContent).toContain("project/service");
+  });
+});

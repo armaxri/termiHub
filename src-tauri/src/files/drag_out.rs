@@ -5,7 +5,7 @@
 //! `NSDraggingSession`, `DoDragDrop` and GTK drag sources. The crate is used
 //! directly — rather than through `tauri-plugin-drag` — so no generic
 //! `drag:allow-start-drag` capability is granted to the webview: the only entry
-//! point is the typed [`crate::commands::files::drag_out_start`] command, which
+//! point is the typed `crate::commands::files::drag_out_start` command, which
 //! accepts file paths only (never arbitrary pasteboard data) and validates them.
 //!
 //! Remote (session) entries have no local path, so the frontend first downloads
@@ -116,6 +116,9 @@ pub fn unique_staged_names(names: &[String]) -> Vec<String> {
 /// name segments relative to the drag selection (`["logs", "2026", "a.txt"]`),
 /// and whether it is a directory. A one-segment entry is a dragged row itself.
 #[derive(Debug, Clone, serde::Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "DragOutStagingEntry"))]
 #[serde(rename_all = "camelCase")]
 pub struct StagingEntry {
     pub segments: Vec<String>,
@@ -271,6 +274,9 @@ pub fn sweep_stale_staging(root: &Path, max_age: Duration, now: SystemTime) -> u
 /// A freshly created staging directory and the local target path for each
 /// requested name, in request order.
 #[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "DragOutStagingDir"))]
 #[serde(rename_all = "camelCase")]
 pub struct StagingDir {
     pub dir: String,
@@ -428,6 +434,9 @@ pub fn is_staging_download(
 /// destination is always derived here, inside a staging directory this process
 /// owns, from the sanitized `name`.
 #[derive(Debug, Clone, serde::Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "DragOutSessionEntry"))]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStageEntry {
     pub path: String,
@@ -585,6 +594,8 @@ pub async fn stage_from_source<S: StageSource + ?Sized>(
 
 /// How a native drag-out ended.
 #[derive(Debug, Clone, Copy, serde::Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub enum DragOutResult {
     Dropped,

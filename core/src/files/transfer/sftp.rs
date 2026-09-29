@@ -15,7 +15,7 @@
 //! **Resume (PROD-0012, hardened by PARITY-004 / #3567).** A paused or retried
 //! transfer resumes from the byte offset already at the destination. Before
 //! **every** attempt the resume point is re-verified on that attempt's own
-//! channel ([`apply_resume_gate`] over the pure
+//! channel (`apply_resume_gate` over the pure
 //! [`decide_resume`](super::retry::decide_resume)): the source must still match
 //! the size + mtime fingerprint captured when its bytes were read, and the
 //! destination must hold a prefix we wrote — the resume starts from the bytes
@@ -355,7 +355,7 @@ async fn cleanup_partial(
 /// checkpoint (#3199) passes its stored `resume_offset` so the first stint
 /// resumes from where the previous run left off. The offset is still
 /// byte-verified against the destination before any append (via
-/// [`run_attempts`]), so a stale/divergent partial transparently restarts from
+/// `run_attempts`), so a stale/divergent partial transparently restarts from
 /// zero — the resume path is unchanged, only its starting point differs.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_sftp_transfer(

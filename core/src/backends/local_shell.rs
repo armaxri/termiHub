@@ -1,4 +1,4 @@
-//! Local shell backend implementing [`ConnectionType`](crate::connection::ConnectionType).
+//! Local shell backend implementing [`ConnectionType`].
 //!
 //! Uses `portable-pty` for cross-platform PTY management via the injected
 //! [`LocalShellSpawner`] trait. The default spawner (`NativeLocalShellSpawner`)

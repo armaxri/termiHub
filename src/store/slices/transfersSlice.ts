@@ -5,7 +5,9 @@ import { dispatchTransferIntentBestEffort } from "@/store/transfersBridge";
 import { TransferState } from "@/types/connection";
 import { frontendLog } from "@/utils/frontendLog";
 
-import { omitKey, windowOwnsTransferSession, withComposedLayout, type AppState } from "../appStore";
+import type { AppState } from "../appStore";
+import { omitKey, withComposedLayout } from "../layoutHelpers";
+import { windowOwnsTransferSession } from "../windowHelpers";
 import { errorMessage } from "@/utils/errorMessage";
 
 /**

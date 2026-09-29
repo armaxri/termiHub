@@ -3,11 +3,52 @@
 //!
 //! Provides [`validate_docker_config`], a no-I/O, no-async check run before a
 //! Docker session is created. The live backend
-//! ([`crate::backends::docker::Docker`]) talks to the daemon through the
+//! (`crate::backends::docker::Docker`) talks to the daemon through the
 //! `bollard` API, so there is no CLI-argument building here.
 
 use crate::config::{ContainerMode, DockerConfig};
 use crate::errors::SessionError;
+
+/// A Docker Compose service target (`project/service`, #3784).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComposeTarget {
+    /// Compose project name (the `com.docker.compose.project` label).
+    pub project: String,
+    /// Compose service name (the `com.docker.compose.service` label).
+    pub service: String,
+}
+
+impl std::fmt::Display for ComposeTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.project, self.service)
+    }
+}
+
+/// Parse a `project/service` Compose target (#3784).
+///
+/// Splits at the first `/`; both halves are trimmed and must be non-empty, and
+/// the service must not contain another `/` (Compose names never do).
+///
+/// # Errors
+///
+/// Returns [`SessionError::InvalidConfig`] for any other shape.
+pub fn parse_compose_target(value: &str) -> Result<ComposeTarget, SessionError> {
+    let invalid = || {
+        SessionError::InvalidConfig(format!(
+            "Compose service must be given as project/service, got {:?}",
+            value.trim()
+        ))
+    };
+    let (project, service) = value.trim().split_once('/').ok_or_else(invalid)?;
+    let (project, service) = (project.trim(), service.trim());
+    if project.is_empty() || service.is_empty() || service.contains('/') {
+        return Err(invalid());
+    }
+    Ok(ComposeTarget {
+        project: project.to_string(),
+        service: service.to_string(),
+    })
+}
 
 /// Validate a [`DockerConfig`] before session creation.
 ///
@@ -18,7 +59,7 @@ use crate::errors::SessionError;
 /// This is the last no-I/O gate before a session is created — the desktop
 /// `connect()` path does not run the schema validator — so, like
 /// [`validate_ssh_config`](crate::session::ssh::validate_ssh_config) and
-/// [`parse_serial_config`](crate::session::serial::parse_serial_config) (#2349),
+/// `parse_serial_config` (#2349),
 /// it **rejects** malformed values rather than letting them through to fail deep
 /// in the runtime:
 /// - Blank (whitespace-only) values are treated as empty: an image of `"   "`
@@ -44,6 +85,17 @@ pub fn validate_docker_config(config: &DockerConfig) -> Result<(), SessionError>
                     "An existing container name or ID must be provided".to_string(),
                 ));
             }
+        }
+        // Compose service (#3784): the image is irrelevant, but the target must
+        // be a well-formed `project/service`.
+        ContainerMode::Compose => {
+            let target = config.compose_service.as_deref().unwrap_or("").trim();
+            if target.is_empty() {
+                return Err(SessionError::InvalidConfig(
+                    "A Compose service (project/service) must be provided".to_string(),
+                ));
+            }
+            parse_compose_target(target)?;
         }
         // Create-and-run a new container: the image is required, as before.
         ContainerMode::New => {
@@ -127,6 +179,46 @@ mod tests {
             ..Default::default()
         };
         assert!(validate_docker_config(&config).is_ok());
+    }
+
+    #[test]
+    fn parse_compose_target_accepts_project_slash_service() {
+        let t = parse_compose_target(" shop / web ").unwrap();
+        assert_eq!(
+            t,
+            ComposeTarget {
+                project: "shop".into(),
+                service: "web".into()
+            }
+        );
+        assert_eq!(t.to_string(), "shop/web");
+    }
+
+    #[test]
+    fn parse_compose_target_rejects_malformed() {
+        for bad in ["", "shop", "/web", "shop/", " / ", "a/b/c"] {
+            let err = parse_compose_target(bad).unwrap_err();
+            assert!(
+                matches!(err, SessionError::InvalidConfig(_)),
+                "{bad:?} -> {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_docker_config_compose_mode() {
+        let with = |target: Option<&str>| DockerConfig {
+            container_mode: ContainerMode::Compose,
+            compose_service: target.map(str::to_string),
+            image: String::new(),
+            ..Default::default()
+        };
+        // Image is not required; a well-formed target is.
+        assert!(validate_docker_config(&with(Some("shop/web"))).is_ok());
+        let err = validate_docker_config(&with(None)).unwrap_err();
+        assert!(err.to_string().contains("Compose service"), "{err}");
+        assert!(validate_docker_config(&with(Some("  "))).is_err());
+        assert!(validate_docker_config(&with(Some("web"))).is_err());
     }
 
     #[test]

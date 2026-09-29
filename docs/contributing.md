@@ -215,11 +215,12 @@ coverage floors pass (on Linux); the app release-compiles and Vite-bundles on Li
 **macOS**; vitest on **Windows**; release compiles/installers on macOS, Windows
 and Linux arm64 (Dev Build); the Windows and macOS agent builds; the workspace
 `cargo audit`/`cargo deny`/`pnpm audit` gate for PRs that do not touch
-dependencies; unified coverage; bundle size; the macOS leg of plugin package-then-load (PLG-011).
+dependencies; unified coverage; bundle size; the rustdoc intra-doc link gate
+(`cargo doc -D warnings`, #3812); the macOS leg of plugin package-then-load (PLG-011).
 
 **Post-merge lane.** Every push to `develop` or `main` runs **every** job above
 on **every** platform — Code Quality with the full three-OS test matrix, Security
-Audit (also daily on both branches), Coverage, Bundle Size, the full Agent
+Audit (also daily on both branches), Coverage, Bundle Size, Rustdoc, the full Agent
 matrix and Dev Build. The newest commit's run is the
 one to read (it covers all earlier merges). **Watch `develop`'s own runs after
 merging**: a failure there is a real regression (or a new advisory) and needs a follow-up fix, since the PR

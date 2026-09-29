@@ -12,8 +12,8 @@
 //! # Mapping functions — additive scaffold, not yet wired
 //!
 //! Each other subsystem currently owns its own status enum
-//! ([`MonitorStatus`](crate::monitoring::MonitorStatus),
-//! [`GraphicalState`](crate::connection::graphical::GraphicalState), and the
+//! ([`MonitorStatus`],
+//! [`GraphicalState`], and the
 //! desktop-side `AgentConnectionState` / `TunnelStatus`). This module adds total
 //! `From<…> for SessionStatus` conversions so later SM-020 slices can migrate
 //! those subsystems onto the canonical vocabulary. The conversions are

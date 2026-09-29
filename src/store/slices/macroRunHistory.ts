@@ -11,7 +11,8 @@ import type { Macro, MacroRun, MacroRunOrigin } from "@/types/macro";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 
-import { collectLiveTabs, type AppState } from "../appStore";
+import type { AppState } from "../appStore";
+import { collectLiveTabs } from "../layoutHelpers";
 
 /** The display label (tab title) of a terminal tab, for the run history. */
 export function macroTargetLabel(state: AppState, tabId: string): string {

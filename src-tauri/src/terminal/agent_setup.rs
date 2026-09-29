@@ -40,6 +40,8 @@ const SHELL_INIT_DELAY_MS: u64 = 2000;
 
 /// Source for the agent binary during setup.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum AgentBinarySource {
     /// Download from GitHub (dev-latest for dev builds, v{version} for releases).
@@ -52,6 +54,8 @@ pub enum AgentBinarySource {
 
 /// Configuration for agent setup provided by the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSetupConfig {
     /// How to obtain the agent binary.
@@ -65,6 +69,7 @@ pub struct AgentSetupConfig {
     /// Detected before the dialog opens; used to select the correct binary.
     pub remote_arch: String,
     /// Remote install path (defaults to ~/.local/bin/termihub-agent).
+    #[cfg_attr(test, ts(optional))]
     pub remote_path: Option<String>,
     /// Whether to install a systemd service.
     pub install_service: bool,
@@ -76,6 +81,8 @@ fn default_linux_os() -> String {
 
 /// Information about the remote host's architecture, returned before the setup dialog opens.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteArchInfo {
     /// Raw `uname -m` output (e.g. `"aarch64"`).
@@ -139,6 +146,8 @@ pub struct AgentSetupProgress {
 
 /// Result returned to the frontend after initiating setup.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSetupResult {
     pub session_id: String,

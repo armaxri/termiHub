@@ -2,7 +2,7 @@
 //! streaming `docker exec` copy (PARITY-004, #3567).
 //!
 //! The Docker counterpart of [`run_sftp_transfer`](super::sftp::run_sftp_transfer):
-//! the same shared orchestration ([`super::attempt`]) — per-session slot,
+//! the same shared orchestration (`super::attempt`) — per-session slot,
 //! throttled progress + ETA, pause/resume, cancel, auto-retry with backoff, the
 //! stall watchdog — around the container streaming primitives in
 //! [`crate::backends::docker::DockerTransferTarget`]. Each attempt runs its own

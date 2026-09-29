@@ -18,7 +18,7 @@ import {
   upsertBroadcastGroup,
 } from "@/utils/broadcastGroups";
 
-import { useAppStore } from "./appStore";
+import { useAppStore } from "./appStoreHandle";
 import { currentSettingsView } from "./settingsBridge";
 import { useProjectedSettings } from "./useProjectedSettings";
 

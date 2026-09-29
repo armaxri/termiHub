@@ -129,6 +129,9 @@ pub struct ShellEntry {
 /// bridge without a translation table. Only used as the input to
 /// [`ShellEntry::remember`]; the persisted shape is [`ShellEntry`]'s own fields.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "SpawnTarget"))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PickedTarget {
     /// A local shell, by detected shell name (e.g. `"bash"`).
@@ -143,7 +146,12 @@ pub enum PickedTarget {
     },
     /// A new container bind-mounting the spawn location at `mount`.
     Container {
-        /// Docker or Podman — the picker's choice of section.
+        /// Docker or Podman — the picker's choice of section. The picker never
+        /// offers `Auto`, so the TS type narrows it away.
+        #[cfg_attr(
+            test,
+            ts(type = "Exclude<import(\"./ContainerRuntime\").ContainerRuntime, \"auto\">")
+        )]
         runtime: ContainerRuntime,
         /// Image reference (`repository:tag`).
         image: String,

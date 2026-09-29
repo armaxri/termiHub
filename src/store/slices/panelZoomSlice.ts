@@ -1,6 +1,7 @@
 import { StateCreator } from "zustand";
 
-import { getComposedLayout, type AppState } from "../appStore";
+import type { AppState } from "../appStore";
+import { getComposedLayout } from "../layoutHelpers";
 import { getAllLeaves } from "@/utils/panelTree";
 
 /**

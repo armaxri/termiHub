@@ -2,11 +2,11 @@
 //!
 //! # Hosted on the desktop or a remote agent (#2592)
 //!
-//! The monitor lives on the core [`Service`](crate::service::Service) trait (the
+//! The monitor lives on the core [`Service`] trait (the
 //! S1 substrate from #2148; lifted onto the trait in #2157/#2172): its poll loop
 //! is decoupled from any host-specific emitter and instead emits
-//! [`ServiceEvent`](crate::service::ServiceEvent)s carrying an [`HttpCheckResult`]
-//! on the core-owned [`EventChannel`](crate::service::EventChannel). Because it is
+//! [`ServiceEvent`]s carrying an [`HttpCheckResult`]
+//! on the core-owned [`EventChannel`]. Because it is
 //! `AppHandle`-free, the **same** implementation runs on the desktop host **or** a
 //! remote agent — #2592 relocated it here (out of `src-tauri/`) behind the
 //! `http-monitor` cargo feature so the agent crate can compile and host it, exactly

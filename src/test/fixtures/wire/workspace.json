@@ -1,0 +1,73 @@
+{
+  "loadWorkspace": {
+    "description": "Build + deploy",
+    "id": "ws-1",
+    "name": "Release day",
+    "tabGroups": [
+      {
+        "color": "#ff8800",
+        "layout": {
+          "children": [
+            {
+              "tabs": [
+                {
+                  "connectionRef": "Work/Build Box",
+                  "initialCommand": "make release",
+                  "title": "build"
+                },
+                {
+                  "inlineConfig": {
+                    "config": {
+                      "shell": "zsh"
+                    },
+                    "type": "local"
+                  }
+                }
+              ],
+              "type": "leaf"
+            },
+            {
+              "children": [
+                {
+                  "tabs": [
+                    {
+                      "agentRef": {
+                        "agentId": "agent-pi",
+                        "definitionId": "def-1"
+                      }
+                    }
+                  ],
+                  "type": "leaf"
+                },
+                {
+                  "tabs": [],
+                  "type": "leaf"
+                }
+              ],
+              "direction": "vertical",
+              "type": "split"
+            }
+          ],
+          "direction": "horizontal",
+          "sizes": [
+            60.0,
+            40.0
+          ],
+          "type": "split"
+        },
+        "name": "Main"
+      },
+      {
+        "layout": {
+          "tabs": [
+            {
+              "connectionRef": "Scratch"
+            }
+          ],
+          "type": "leaf"
+        },
+        "name": "Scratch"
+      }
+    ]
+  }
+}

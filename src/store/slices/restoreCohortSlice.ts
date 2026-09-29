@@ -1,6 +1,7 @@
 import { StateCreator } from "zustand";
 
-import { collectLiveTabs, type AppState } from "../appStore";
+import type { AppState } from "../appStore";
+import { collectLiveTabs } from "../layoutHelpers";
 import { toast } from "@/components/ui";
 import {
   currentRestoreCohortView,

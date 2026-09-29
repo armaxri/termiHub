@@ -80,7 +80,7 @@ pub const AUTH_METHOD_KEYBOARD_INTERACTIVE: &str = "keyboard-interactive";
 /// How long a single prompt may stay unanswered before the connect fails.
 ///
 /// Prompt time is excluded from the connect timeout
-/// ([`prompt_clock`](super::prompt_clock)), so this is the only bound on how
+/// (`prompt_clock`), so this is the only bound on how
 /// long the user may take to fetch a one-time code.
 pub const PROMPT_TIMEOUT: Duration = Duration::from_secs(300);
 

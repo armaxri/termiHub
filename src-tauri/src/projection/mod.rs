@@ -10,7 +10,7 @@
 //! the whole loop (subscribe → snapshot, intent → diff fan-out, gap → resync)
 //! is exercised in-memory by the test harness below. The Tauri command wiring
 //! that rides a `tauri::ipc::Channel` lives in
-//! [`crate::commands::projection`].
+//! `crate::commands::projection`.
 //!
 //! # Scope (Phase 1)
 //!
@@ -94,7 +94,7 @@ fn diffop_from_patch(op: json_patch::PatchOperation) -> Option<DiffOp> {
 /// Apply ordered [`DiffOp`]s to a cached view model in place.
 ///
 /// This is the reference applier the client cache mirrors (the TypeScript
-/// [`ProjectionClient`] uses `fast-json-patch`). It rejects the semantic-op
+/// `ProjectionClient` uses `fast-json-patch`). It rejects the semantic-op
 /// escape hatch, which has no RFC 6902 mapping.
 pub fn apply_ops(view: &mut Value, ops: &[DiffOp]) -> Result<(), ProjectionError> {
     let patch = ops_to_patch(ops)?;
@@ -374,7 +374,7 @@ impl Projector {
 
     /// Publish a region **incrementally** via a caller-computed delta (PERF-006).
     ///
-    /// The default [`publish`] re-serializes the whole region and diffs the
+    /// The default [`Self::publish`] re-serializes the whole region and diffs the
     /// entire new tree against the old one — O(region size) per call, so a
     /// per-entry stream over N entries is O(N²) even when a single entry
     /// changed. `publish_delta` instead hands the closure mutable access to the
@@ -385,12 +385,12 @@ impl Projector {
     /// The closure is the single writer of both the view and the emitted ops, so
     /// the two cannot disagree: whatever it splices into `view` is what the
     /// returned ops must describe. An empty result is a no-op — no version bump,
-    /// no frame — identical to [`publish`]. Otherwise the version is bumped by
+    /// no frame — identical to [`Self::publish`]. Otherwise the version is bumped by
     /// one and a single [`DiffFrame`] (`base_version = V`, `version = V + 1`) is
     /// fanned out to every current subscriber, reaping any whose sink is gone.
     ///
     /// The caller owns the equivalence contract: the ops MUST equal what
-    /// [`publish`] would have emitted for the same resulting view. The monitor
+    /// [`Self::publish`] would have emitted for the same resulting view. The monitor
     /// region (the pilot adopter) cross-checks that under `debug_assertions`.
     pub fn publish_delta(
         &self,

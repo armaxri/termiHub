@@ -1,7 +1,7 @@
 //! Shared russh-sftp mechanics consumed by every SFTP path in the workspace.
 //!
 //! Two SFTP implementations historically forked the same low-level russh-sftp
-//! plumbing: the core [`SftpFileBrowser`](super::file_browser) (the
+//! plumbing: the core `SftpFileBrowser` (the
 //! [`FileBrowser`](crate::files::FileBrowser) trait path) and the desktop
 //! `SftpSession` / transfer subsystem in `src-tauri`. Both opened the SFTP
 //! subsystem the same way and mapped `readdir` / `stat` attributes into

@@ -271,10 +271,94 @@ pub fn kill_pid(pid: u32) {
     }
 }
 
+/// How long [`reap_spawned_daemon`] lets a daemon that is already shutting down
+/// finish exiting before it falls back to SIGKILL. A clean exit takes
+/// milliseconds; the bound only matters when something is wrong.
+#[cfg(unix)]
+pub const DAEMON_EXIT_GRACE: Duration = Duration::from_secs(10);
+
+/// Stop a session daemon the test spawned itself (a `Child` serving the unix
+/// socket at `socket_path`) without SIGKILLing one that is already exiting
+/// (#3742).
+///
+/// Tests often end by closing the session (`connection.close`, `MSG_KILL`, the
+/// shell exiting), which makes the daemon exit on its own — and then drop a
+/// guard that SIGKILLs it. Under `cargo llvm-cov` the daemon writes its
+/// `.profraw` coverage profile in an `atexit` handler, and a SIGKILL that lands
+/// during that write leaves a truncated file: `llvm-profdata merge` then
+/// rejects the whole coverage run with "file header is corrupt".
+///
+/// The daemon drops its listener when its run loop returns, before the process
+/// exits, so a socket that refuses connections means "on its way out": wait for
+/// it (bounded by [`DAEMON_EXIT_GRACE`]). A daemon still serving is idle, not
+/// exiting, so it is killed at once, as before.
+#[cfg(unix)]
+pub fn reap_spawned_daemon(child: &mut std::process::Child, socket_path: &std::path::Path) {
+    reap_spawned_daemon_within(child, socket_path, DAEMON_EXIT_GRACE);
+}
+
+#[cfg(unix)]
+fn reap_spawned_daemon_within(
+    child: &mut std::process::Child,
+    socket_path: &std::path::Path,
+    grace: Duration,
+) {
+    let running = matches!(child.try_wait(), Ok(None));
+    if running && std::os::unix::net::UnixStream::connect(socket_path).is_err() {
+        let deadline = Instant::now() + grace;
+        while matches!(child.try_wait(), Ok(None)) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::{Error, ErrorKind};
+
+    /// A daemon that stopped serving its socket is left to exit on its own.
+    #[cfg(unix)]
+    #[test]
+    fn an_exiting_daemon_is_left_to_finish() {
+        use std::os::unix::process::ExitStatusExt;
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        // No listener at this path: the "daemon" is past its run loop.
+        let socket = dir.path().join("gone.sock");
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "sleep 0.3; exit 7"])
+            .spawn()
+            .expect("spawn stand-in daemon");
+        reap_spawned_daemon_within(&mut child, &socket, Duration::from_secs(10));
+        let status = child.wait().expect("reaped status");
+        assert_eq!(
+            status.code(),
+            Some(7),
+            "must exit on its own, not be killed"
+        );
+        assert_eq!(status.signal(), None);
+    }
+
+    /// A daemon still serving its socket is idle, so it is killed at once.
+    #[cfg(unix)]
+    #[test]
+    fn a_serving_daemon_is_killed_at_once() {
+        use std::os::unix::process::ExitStatusExt;
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let socket = dir.path().join("live.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket).expect("bind");
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn stand-in daemon");
+        let started = Instant::now();
+        reap_spawned_daemon_within(&mut child, &socket, Duration::from_secs(10));
+        assert!(started.elapsed() < Duration::from_secs(5), "no grace wait");
+        let status = child.wait().expect("reaped status");
+        assert_eq!(status.signal(), Some(libc::SIGKILL));
+    }
 
     fn busy(e: &Error) -> bool {
         e.kind() == ErrorKind::WouldBlock

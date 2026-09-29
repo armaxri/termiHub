@@ -543,7 +543,7 @@ fn detect_from_tcp_probe() -> Option<LocalXServerInfo> {
 
 /// Probe whether a TCP X server accepts a connection at `addr` within `timeout`.
 ///
-/// Extracted from [`detect_from_tcp_probe`] so it is unit-testable on every
+/// Extracted from `detect_from_tcp_probe` so it is unit-testable on every
 /// platform (the fallback itself is Windows-only) and shared with the desktop
 /// [`XServerManager`] adopt-probe (issue #1049), keeping one definition of
 /// "an X server is reachable on this TCP address".

@@ -1,0 +1,85 @@
+{
+  "channelDiff": {
+    "baseVersion": 7,
+    "kind": "diff",
+    "ops": [
+      {
+        "op": "replace",
+        "path": "/byPath/Work~1Dev/open",
+        "value": true
+      },
+      {
+        "op": "add",
+        "path": "/byPath/new~1key",
+        "value": []
+      },
+      {
+        "op": "remove",
+        "path": "/byPath/tilde~0key"
+      },
+      {
+        "op": "replace",
+        "path": "/count",
+        "value": 1
+      },
+      {
+        "op": "replace",
+        "path": "/items/0/label",
+        "value": "Alpha!"
+      },
+      {
+        "op": "remove",
+        "path": "/items/1"
+      },
+      {
+        "op": "replace",
+        "path": "/selected",
+        "value": "a"
+      }
+    ],
+    "region": "wire-contract",
+    "version": 8
+  },
+  "expectedView": {
+    "byPath": {
+      "Work/Dev": {
+        "open": true
+      },
+      "new/key": []
+    },
+    "count": 1,
+    "items": [
+      {
+        "id": "a",
+        "label": "Alpha!"
+      }
+    ],
+    "selected": "a"
+  },
+  "resyncCurrent": null,
+  "subscribeSnapshot": {
+    "kind": "snapshot",
+    "region": "wire-contract",
+    "version": 7,
+    "view": {
+      "byPath": {
+        "Work/Dev": {
+          "open": false
+        },
+        "tilde~key": 1
+      },
+      "count": 2,
+      "items": [
+        {
+          "id": "a",
+          "label": "Alpha"
+        },
+        {
+          "id": "b",
+          "label": "Beta"
+        }
+      ],
+      "selected": null
+    }
+  }
+}

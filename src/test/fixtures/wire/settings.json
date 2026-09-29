@@ -1,0 +1,56 @@
+{
+  "getSettings": {
+    "askOpenSavedFileInTab": true,
+    "confirmCloseAttachedTab": true,
+    "confirmCloseTabOnShortcut": true,
+    "credentialAutoLockMinutes": 0,
+    "cursorStyle": "underline",
+    "defaultLineEnding": "crlf",
+    "defaultShellIntegration": true,
+    "defaultX11Forwarding": true,
+    "externalConnectionFiles": [
+      {
+        "enabled": false,
+        "path": "/home/me/team.json"
+      }
+    ],
+    "fileBrowserEnabled": true,
+    "fileLanguageMappings": {
+      "*.conf": "ini"
+    },
+    "fontSize": 13,
+    "futureSettingFromNewerBuild": {
+      "enabled": true
+    },
+    "lineHeight": 1.5,
+    "networkToolHistoryEnabled": true,
+    "powerMonitoringEnabled": false,
+    "restoreLastSessionMode": "always",
+    "restoreLastSessionOnStartup": true,
+    "sessionHistoryEnabled": true,
+    "sessionHistoryLimit": 50,
+    "shellIntegration": {
+      "entries": [],
+      "fallback": "picker",
+      "firstLaunchBannerDismissed": false,
+      "linuxFileManagers": {
+        "kde": false,
+        "nautilus": false,
+        "thunar": false
+      },
+      "openInNewWindow": false,
+      "registered": false
+    },
+    "showRecentSessions": true,
+    "stopXServerWhenIdle": true,
+    "theme": "custom:midnight",
+    "updates": {
+      "autoCheck": true
+    },
+    "version": "2",
+    "warnLargePingSweep": true,
+    "warnLargePortScan": true,
+    "workflowLocalProcessAllowlist": [],
+    "workflowLocalProcessEnabled": false
+  }
+}

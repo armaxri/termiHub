@@ -379,7 +379,7 @@ mod unix_impl {
     /// directory is never trusted. The mode is only checked after we tighten it,
     /// so a freshly `create_dir_all`'d directory left group-readable by the
     /// umask is corrected rather than rejected. The shared parent is checked with
-    /// [`assert_safe_parent`].
+    /// `assert_safe_parent`.
     ///
     /// Shared so the same fail-closed hardening applies both here (listener bind)
     /// and to the agent's ssh-agent relay directory creation.

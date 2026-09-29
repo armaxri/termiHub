@@ -1,14 +1,13 @@
 import { StateCreator } from "zustand";
 
+import type { AppState } from "../appStore";
+import { collectLiveTabs, omitKey } from "../layoutHelpers";
 import {
-  collectLiveTabs,
   isResilientReconnectTab,
   isResilientReconnectTabId,
-  monitorKeyForTab,
-  omitKey,
   ABORTED_CONNECT_MESSAGE,
-  type AppState,
-} from "../appStore";
+} from "../reconnectHelpers";
+import { monitorKeyForTab } from "../tabQueries";
 import type { TerminalExitInfo } from "@/types/terminal";
 import {
   closeTerminal as apiCloseTerminal,

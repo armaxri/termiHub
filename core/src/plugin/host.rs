@@ -1286,9 +1286,9 @@ impl PluginHost {
     ///
     /// The plugin's restart counter is advanced. While the restart budget
     /// ([`MAX_RESTART_ATTEMPTS`]) is not exhausted this returns
-    /// [`RecoveryOutcome::Restart`] — the caller reloads the plugin (e.g. via the
+    /// `RecoveryOutcome::Restart` — the caller reloads the plugin (e.g. via the
     /// manager's enable path) to retry. Once the budget is exhausted the host
-    /// **unloads** the plugin and returns [`RecoveryOutcome::Disabled`], so the
+    /// **unloads** the plugin and returns `RecoveryOutcome::Disabled`, so the
     /// caller persists it as disabled and notifies the user. A failing plugin can
     /// therefore never spin forever.
     ///

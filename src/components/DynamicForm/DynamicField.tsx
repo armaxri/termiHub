@@ -5,7 +5,10 @@ import type { SettingsField, FieldType } from "@/types/schema";
 import { KeyPathInput } from "@/components/Settings/KeyPathInput";
 import { listAgentDockerContainers, listDockerContainers, listSerialPorts } from "@/services/api";
 import type { DockerContainerInfo } from "@/services/api";
-import { groupContainersByComposeProject } from "./dockerContainerGroups";
+import {
+  composeServicesFromContainers,
+  groupContainersByComposeProject,
+} from "./dockerContainerGroups";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Button, Input, Modal, NumberInput, Select, Toggle } from "@/components/ui";
 import { fieldPlatformLimitation } from "@/utils/platformFieldSupport";
@@ -693,6 +696,11 @@ function containerMatches(c: DockerContainerInfo, query: string): boolean {
  * from the agent's host (#3424); an agent too old for that keeps the typed
  * field only. Containers started by Docker Compose are grouped under their
  * project and show their service name (#3425).
+ *
+ * The `composeService` field uses the same picker in *service mode* (#3784):
+ * it lists the Compose services (replicas collapsed) instead of containers and
+ * stores `project/service`, which is resolved to the service's running
+ * container at connect time.
  */
 function DockerContainerField({
   field,
@@ -703,6 +711,8 @@ function DockerContainerField({
   testIdBase,
 }: FieldProps & { context?: ContainerContext; a11y: FieldA11y; testIdBase: string }) {
   const listingEnabled = context?.listingEnabled ?? true;
+  const serviceMode = field.key === "composeService";
+  const typedFallback = serviceMode ? "the service as project/service" : "the container name or ID";
   const runtime = context?.runtime;
   const agentId = context?.agentId;
   const currentValue = (value as string) ?? "";
@@ -747,7 +757,7 @@ function DockerContainerField({
         <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
         {input}
         <p className="settings-form__hint" data-testid={`${testIdBase}-listing-unavailable`}>
-          Container listing is not available for agent connections — type the container name or ID.
+          Container listing is not available for agent connections — type {typedFallback}.
         </p>
       </>
     );
@@ -759,14 +769,127 @@ function DockerContainerField({
         <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
         {input}
         <p className="settings-form__hint" data-testid={`${testIdBase}-listing-unsupported`}>
-          This agent version cannot list containers — update the agent, or type the container name
-          or ID.
+          This agent version cannot list containers — update the agent, or type {typedFallback}.
         </p>
       </>
     );
   }
 
   const containers = list.status === "loaded" ? list.containers : [];
+  const header = (
+    <>
+      <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
+      <div className="settings-form__file-row">
+        {input}
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => setRefreshToken((n) => n + 1)}
+          disabled={list.status === "loading"}
+          title="Refresh container list"
+          aria-label="Refresh container list"
+          data-testid={`${testIdBase}-refresh`}
+        >
+          <RefreshCw size={14} aria-hidden="true" />
+        </Button>
+      </div>
+      {list.status === "loading" && (
+        <p className="settings-form__hint" role="status" data-testid={`${testIdBase}-loading`}>
+          Loading containers…
+        </p>
+      )}
+      {list.status === "error" && (
+        <p
+          className="settings-form__hint settings-form__hint--warning"
+          data-testid={`${testIdBase}-list-error`}
+        >
+          Could not list containers: {list.message}. You can still type {typedFallback}.
+        </p>
+      )}
+    </>
+  );
+
+  if (serviceMode) {
+    const all = composeServicesFromContainers(containers);
+    const exactService = all.some((g) => g.services.some((sv) => sv.value === currentValue));
+    const query = currentValue.trim().toLowerCase();
+    const shownGroups = exactService
+      ? all
+      : all
+          .map((g) => ({
+            ...g,
+            services: g.services.filter((sv) => sv.value.toLowerCase().includes(query)),
+          }))
+          .filter((g) => g.services.length > 0);
+    return (
+      <>
+        {header}
+        {list.status === "loaded" && all.length === 0 && (
+          <p className="settings-form__hint" data-testid={`${testIdBase}-empty`}>
+            No Docker Compose services found.
+          </p>
+        )}
+        {list.status === "loaded" && all.length > 0 && shownGroups.length === 0 && (
+          <p className="settings-form__hint" data-testid={`${testIdBase}-no-match`}>
+            No listed service matches — it will be used as typed.
+          </p>
+        )}
+        {shownGroups.length > 0 && (
+          <ul
+            className="settings-form__container-list"
+            aria-label="Compose services"
+            data-testid={`${testIdBase}-list`}
+          >
+            {shownGroups.map((g) => {
+              const groupId = `project-${g.project}`;
+              return (
+                <li key={groupId} className="settings-form__container-group">
+                  <div
+                    className="settings-form__container-group-label"
+                    id={`${a11y.id}-${groupId}`}
+                    data-testid={`${testIdBase}-group-${groupId}`}
+                  >
+                    Compose project: {g.project}
+                  </div>
+                  <ul
+                    className="settings-form__container-group-list"
+                    aria-labelledby={`${a11y.id}-${groupId}`}
+                  >
+                    {g.services.map((sv) => {
+                      const selected = sv.value === currentValue;
+                      return (
+                        <li key={sv.value}>
+                          <button
+                            type="button"
+                            className={
+                              "settings-form__container-option" +
+                              (selected ? " settings-form__container-option--selected" : "") +
+                              (sv.running > 0 ? "" : " settings-form__container-option--stopped")
+                            }
+                            aria-pressed={selected}
+                            onClick={() => onChange(sv.value)}
+                            data-testid={`${testIdBase}-option-${sv.value}`}
+                          >
+                            <span className="settings-form__container-name">{sv.service}</span>
+                            <span className="settings-form__container-meta">
+                              {sv.running > 0
+                                ? `${sv.running} of ${sv.replicas} running`
+                                : "not running"}
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </>
+    );
+  }
+
   // An exact match means the user already picked one: show the full list so
   // they can switch, rather than filtering it down to the single match.
   const exact = containers.some((c) => c.name === currentValue || c.id === currentValue);
@@ -812,34 +935,7 @@ function DockerContainerField({
 
   return (
     <>
-      <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
-      <div className="settings-form__file-row">
-        {input}
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => setRefreshToken((n) => n + 1)}
-          disabled={list.status === "loading"}
-          title="Refresh container list"
-          aria-label="Refresh container list"
-          data-testid={`${testIdBase}-refresh`}
-        >
-          <RefreshCw size={14} aria-hidden="true" />
-        </Button>
-      </div>
-      {list.status === "loading" && (
-        <p className="settings-form__hint" role="status" data-testid={`${testIdBase}-loading`}>
-          Loading containers…
-        </p>
-      )}
-      {list.status === "error" && (
-        <p
-          className="settings-form__hint settings-form__hint--warning"
-          data-testid={`${testIdBase}-list-error`}
-        >
-          Could not list containers: {list.message}. You can still type a container name or ID.
-        </p>
-      )}
+      {header}
       {list.status === "loaded" && containers.length === 0 && (
         <p className="settings-form__hint" data-testid={`${testIdBase}-empty`}>
           No containers found.

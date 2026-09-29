@@ -1,4 +1,4 @@
-//! Serial port backend implementing [`ConnectionType`](crate::connection::ConnectionType).
+//! Serial port backend implementing [`ConnectionType`].
 //!
 //! Uses `serial2-tokio` for native async serial I/O. This is the canonical
 //! implementation shared by both the desktop and agent crates.

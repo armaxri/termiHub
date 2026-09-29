@@ -265,7 +265,7 @@ fn default_record_type() -> String {
     defaults::DNS_DEFAULT_RECORD_TYPE.to_string()
 }
 
-/// DNS record lookup (one-shot; returns the whole [`DnsResult`]).
+/// DNS record lookup (one-shot; returns the whole `DnsResult`).
 pub struct DnsTool;
 
 #[async_trait]

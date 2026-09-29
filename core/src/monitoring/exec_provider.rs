@@ -2,8 +2,8 @@
 //! (PROD-0022, #3182).
 //!
 //! Docker containers and WSL distributions are Linux with `/proc`, so their
-//! monitoring reuses the exact same [`MONITORING_COMMAND`] and
-//! [`parse_stats`](crate::monitoring::parse_stats) as the SSH backend — the only
+//! monitoring reuses the exact same `MONITORING_COMMAND` and
+//! [`parse_stats`] as the SSH backend — the only
 //! difference is *how* the command is run: `docker exec` / `wsl.exe -d <distro>`
 //! instead of an SSH exec channel. This module captures that shared machinery so
 //! neither backend re-implements the collect loop, the CPU/network delta

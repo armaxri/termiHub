@@ -4,11 +4,11 @@
 //!
 //! Following the HTTP-monitor pilot (#2157/#2172), each embedded HTTP/FTP/TFTP
 //! server is an [`EmbeddedServerService`] implementing the core
-//! [`Service`](crate::service::Service) trait (the S1 substrate from #2148). A
+//! [`Service`] trait (the S1 substrate from #2148). A
 //! server's lifecycle — spawn its listener thread, confirm the bind, track live
 //! stats, stop — is owned by the service, which emits status transitions as
-//! [`ServiceEvent`](crate::service::ServiceEvent)s on the core-owned
-//! [`EventChannel`](crate::service::EventChannel) instead of a host-specific
+//! [`ServiceEvent`]s on the core-owned
+//! [`EventChannel`] instead of a host-specific
 //! emitter. The desktop host bridges that channel to the existing
 //! `embedded-server-status-changed` Tauri event, and the agent bridges it to its
 //! RPC event stream, so both hosts run the same implementation unchanged.
@@ -205,7 +205,7 @@ struct ActiveServer {
 /// [`start`](Service::start)) spawns the listener thread and, once the bind is
 /// confirmed, emits a [`ServiceStatus::Running`] transition on the
 /// [`EventChannel`]. The server implementations themselves
-/// ([`start_http_server`] etc.) are unchanged and fully `AppHandle`-free.
+/// (`start_http_server` etc.) are unchanged and fully `AppHandle`-free.
 pub struct EmbeddedServerService {
     /// Which protocol this service hosts.
     server_type: ServerType,

@@ -12,11 +12,11 @@
 //! ## Why the types are (almost) free
 //!
 //! Every payload the shared [`GraphicalBackend`](crate::connection::GraphicalBackend)
-//! trait uses — [`FrameUpdate`](crate::connection::FrameUpdate),
-//! [`CursorUpdate`](crate::connection::CursorUpdate),
-//! [`InputEvent`](crate::connection::InputEvent),
-//! [`GraphicalState`](crate::connection::GraphicalState) — is already
-//! `Serialize`/`Deserialize`, as is [`RdpConfig`](super::config::RdpConfig). The
+//! trait uses — [`FrameUpdate`],
+//! [`CursorUpdate`],
+//! [`InputEvent`],
+//! [`GraphicalState`] — is already
+//! `Serialize`/`Deserialize`, as is [`RdpConfig`]. The
 //! two message enums below just wrap them, so both ends share one definition and
 //! the wire format cannot drift.
 //!
@@ -25,7 +25,7 @@
 //! Length-prefixed frames: a little-endian `u32` byte length followed by that
 //! many bytes of **MessagePack** ([`rmp_serde`]).
 //!
-//! MessagePack, not `bincode`: [`InputEvent`](crate::connection::InputEvent) is
+//! MessagePack, not `bincode`: [`InputEvent`] is
 //! an internally-tagged enum (`#[serde(tag = "kind")]`), which `bincode` cannot
 //! deserialize — a non-self-describing format has no `deserialize_any`.
 //! MessagePack is compact binary (frame `Vec<u8>` stays packed, unlike JSON's

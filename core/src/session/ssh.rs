@@ -67,7 +67,7 @@ pub fn build_ssh_args(config: &SshConfig) -> Vec<String> {
 /// - When `auth_method` is `"key"`, `key_path` must be present and non-empty
 ///
 /// Each jump-host hop is TCP-connected and authenticated exactly like the target
-/// (see [`connect_gateway_chain`](crate::backends::ssh::jump_host::connect_gateway_chain)),
+/// (see `connect_gateway_chain`),
 /// so a misconfigured bastion is held to the same bar here — rejected up front
 /// with a hop-identifying error instead of failing with a confusing low-level
 /// connect/auth error mid-chain, or (for a `key` hop with no key) silently

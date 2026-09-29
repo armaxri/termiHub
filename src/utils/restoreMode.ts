@@ -11,6 +11,13 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type { AppSettings, SavedConnection } from "@/types/connection";
 import type { LastSession } from "@/types/lastSession";
+import type { RestorePrompt } from "@/types/generated/RestorePrompt";
+import type { RestoreTabInfo } from "@/types/generated/RestoreTabInfo";
+import type { RestoreTabTarget } from "@/types/generated/RestoreTabTarget";
+
+// The restore-dialog DTOs returned by `restore_summarize_last_session` are
+// generated via ts-rs from `core/src/restore_mode.rs` (#3088).
+export type { RestorePrompt, RestoreTabInfo, RestoreTabTarget };
 
 /** The three restore modes (generated from the Rust settings enum, #3802). */
 export type RestoreLastSessionMode = NonNullable<AppSettings["restoreLastSessionMode"]>;
@@ -25,57 +32,7 @@ export type RestoreLastSessionMode = NonNullable<AppSettings["restoreLastSession
  * - `"unknown"` — not probed or the probe was inconclusive (the default before
  *   the probe resolves, and for targets with nothing meaningful to probe).
  */
-export type RestoreReachability = "reachable" | "unreachable" | "unknown";
-
-/**
- * The connection target derived from a stored tab, used to drive the
- * reachability probe. `kind` selects how the probe checks it; `local` and
- * `agent` targets are not network-probed (they resolve to `"unknown"`).
- */
-export interface RestoreTabTarget {
-  /** How the tab connects, selecting the reachability check to run. */
-  kind: "host" | "serial" | "local" | "agent";
-  /** Target host for `host` targets (SSH/telnet). */
-  host?: string;
-  /** Target TCP port for `host` targets. */
-  port?: number;
-  /** Serial device path for `serial` targets. */
-  device?: string;
-  /** Remote agent id for `agent` targets. */
-  agentId?: string;
-}
-
-/** A single restorable tab, described for the restore dialog. */
-export interface RestoreTabInfo {
-  /** Human-readable tab title. */
-  title: string;
-  /** Short connection-type label (e.g. "SSH", "Serial", "Local"). */
-  typeLabel: string;
-  /**
-   * The probe target derived from the stored tab. Optional so display-only
-   * callers (and tests) need not construct it; {@link summarizeLastSession}
-   * always populates it so the reachability probe can run.
-   */
-  target?: RestoreTabTarget;
-  /**
-   * Reachability of {@link target}, set asynchronously once the probe resolves.
-   * Absent until then (treated as `"unknown"`).
-   */
-  reachability?: RestoreReachability;
-  /**
-   * Short human-readable reason shown beside the warning icon when the target is
-   * unreachable (e.g. `"device offline"`, `"host unreachable"`).
-   */
-  unreachableReason?: string;
-}
-
-/** Summary of a stored last session for the restore dialog. */
-export interface RestorePrompt {
-  /** Total number of restorable tabs across all groups. */
-  tabCount: number;
-  /** Per-tab descriptors for display. */
-  tabs: RestoreTabInfo[];
-}
+export type RestoreReachability = NonNullable<RestoreTabInfo["reachability"]>;
 
 /**
  * Resolve the effective restore mode from settings, migrating the legacy

@@ -105,7 +105,7 @@ pub struct HopProgress {
 /// attempt and once with the resolved [`HopStatus::Connected`] /
 /// [`HopStatus::Failed`] after. On the first failure the probe stops and returns
 /// the error; nodes past the failure get no event (the UI leaves them pending).
-/// `cancel` aborts an in-flight probe promptly (see [`run_hop_step`]).
+/// `cancel` aborts an in-flight probe promptly (see `run_hop_step`).
 ///
 /// A direct (no jump host) target is a single-node path (`total == 1`).
 pub async fn probe_connection_path(
@@ -520,7 +520,7 @@ pub async fn connect_target_through_pooled_gateway_with_liveness(
 
 /// Connect to `target`, honoring its [`SshConfig::proxy_jump`] chain.
 ///
-/// When `proxy_jump` is empty this is a plain [`connect_and_authenticate`]; when
+/// When `proxy_jump` is empty this is a plain `connect_and_authenticate`; when
 /// it is non-empty the target is reached through its **pooled, shared** gateway
 /// (see [`connect_target_through_pooled_gateway`]) and a [`GatewayHold`] is
 /// returned to keep that gateway alive for the session's lifetime (`None` for a

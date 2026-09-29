@@ -85,6 +85,8 @@ pub(crate) fn commit<R: Runtime, T, E>(
 
 /// Response containing all connections (unified), folders, and agents.
 #[derive(Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionData {
     pub connections: Vec<SavedConnection>,
@@ -490,6 +492,8 @@ pub fn preview_import(json: String) -> Result<ImportPreview, TerminalError> {
 /// rather than substring-matching the English error text (I18N-010). The
 /// `message` stays populated for display/logging in every case.
 #[derive(Debug, Serialize, thiserror::Error)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ImportError {
     /// The supplied decryption password was wrong — safe to re-prompt.

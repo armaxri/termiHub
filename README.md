@@ -97,7 +97,7 @@ Prefer to build it yourself? See [Development](#development) below.
 - **SSH** — Remote terminal sessions with key-based and password authentication, plus jump host / `ProxyJump` chains, X11 forwarding, tunneling, and SFTP
 - **Serial** — Direct serial port connections for hardware debugging and IoT devices
 - **Telnet** — Classic telnet connections with window-size (NAWS), terminal-type and echo / suppress-go-ahead negotiation, a character or line input mode, plus optional prompt-driven auto-login
-- **Docker** — Start a new container from an image and open a shell in it (run-new; attaching to an already-running container is not yet supported)
+- **Docker** — Start a new container from an image, open a shell in an already-running container, or target a Docker Compose service by `project/service`
 - **WSL** — Windows Subsystem for Linux distribution sessions (Windows only)
 - **FTP / FTPS** — File-transfer connections with a managed transfer queue (browse, upload, download, edit)
 - **Remote Desktop (RDP / VNC)** — Graphical remote-desktop sessions with a shared framebuffer layer and clipboard integration. **Experimental** — hidden until you enable **Settings → General → Allow Experimental Features**. RDP runs via a bundled `termihub-rdp-helper` sidecar and can redirect the remote session's audio. **VNC sessions have no audio** — the RFB protocol has no standard audio channel.
@@ -226,7 +226,10 @@ termiHub uses a VS Code-inspired three-column layout:
 - **SSH** — Remote terminal via SSH. See [SSH Configuration](#ssh-configuration) below for authentication, jump hosts, X11 forwarding, and SFTP details.
 - **Telnet** — Remote terminal via Telnet protocol. Configure host and port (default: 23). See [Telnet](#telnet) below for window size, terminal type, and auto-login.
 - **Serial** — Connect to serial devices (USB-to-serial adapters, IoT, networking equipment). Configure port, baud rate, data/stop bits, parity, and flow control. Resizing the tab does not tell the device the new size (serial has no channel for it). See [Serial Port Setup](#serial-port-setup) below for platform-specific instructions and [Terminal Size](#terminal-size).
-- **Docker** — Start a new container from an image and open a shell in it (run-new; attaching to an already-running container is not yet supported).
+- **Docker** — Choose how the connection gets its container:
+  - **New container** (default) — pull the image, start a fresh container, and remove it on disconnect (unless turned off).
+  - **Existing (running) container** — open a shell in a container you already started. Pick it from the list of the runtime's containers (grouped by Compose project) or type its name or ID. It is never stopped or removed.
+  - **Compose service** — name a Docker Compose service as `project/service` (pick it from the list or type it). At connect time termiHub finds the service's running container by its Compose labels, so `docker compose up --force-recreate` or a scale change that renames the container does not break the connection. If the service runs several replicas, the running one with the lowest replica number (`com.docker.compose.container-number`) is used. If none is running, the connection fails with a "not found" error. This works for local and agent-hosted connections.
 - **WSL** — Open a session in a Windows Subsystem for Linux distribution (Windows only).
 - **FTP / FTPS** — File-transfer connection with a managed transfer queue.
 - **Remote Desktop (RDP / VNC)** — Graphical remote-desktop session. Experimental; enable **Settings → General → Allow Experimental Features** to use it. VNC carries no audio (RFB has no standard audio channel); use RDP if you need the remote session's sound.
