@@ -108,7 +108,9 @@ async fn a_slow_but_reading_worker_is_never_dropped() {
         "the transfer really was slow: {:?}",
         start.elapsed()
     );
-    assert!(event_within(&mut sink, Duration::from_secs(60)).await.is_none());
+    assert!(event_within(&mut sink, Duration::from_secs(60))
+        .await
+        .is_none());
 }
 
 #[tokio::test(start_paused = true)]
@@ -123,7 +125,11 @@ async fn the_budget_pauses_forwarding_and_room_resumes_it() {
 
     let reader = tokio::spawn(async move {
         let mut n = 0;
-        while protocol::read_frame_async(&mut client).await.unwrap().is_some() {
+        while protocol::read_frame_async(&mut client)
+            .await
+            .unwrap()
+            .is_some()
+        {
             n += 1;
             if n == frames {
                 break;

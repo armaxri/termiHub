@@ -18,7 +18,7 @@ use super::super::{daemon_loop, WorkerAcceptor};
 use super::recovery_guard::FakeConnection;
 use crate::daemon::protocol::{
     self, INTENT_RECOVERY, INTENT_TAKEOVER, MSG_ATTACH_INTENT, MSG_BUFFER_REPLAY, MSG_CAPABILITIES,
-    MSG_DETACH, MSG_ERROR, MSG_EVICTED, MSG_KILL, MSG_OUTPUT, MSG_READY,
+    MSG_DETACH, MSG_ERROR, MSG_KILL, MSG_OUTPUT, MSG_READY,
 };
 use crate::daemon::transport::{BoxedReader, BoxedWriter};
 use crate::daemon::worker_sink::WRITE_STALL_TIMEOUT;
@@ -38,8 +38,7 @@ struct TestAcceptor(mpsc::UnboundedReceiver<(BoxedReader, BoxedWriter)>);
 impl WorkerAcceptor for TestAcceptor {
     fn accept(
         &mut self,
-    ) -> impl std::future::Future<Output = std::io::Result<(BoxedReader, BoxedWriter)>> + Send
-    {
+    ) -> impl std::future::Future<Output = std::io::Result<(BoxedReader, BoxedWriter)>> + Send {
         let rx = &mut self.0;
         async move {
             match rx.recv().await {
@@ -363,5 +362,4 @@ async fn a_takeover_and_kill_are_served_while_the_worker_is_wedged() {
         .await
         .expect("the evicted worker's connection is closed")
         .unwrap();
-    let _ = MSG_EVICTED;
 }
