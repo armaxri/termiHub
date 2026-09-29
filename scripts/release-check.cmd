@@ -2,7 +2,7 @@
 REM Release readiness checklist — validates that the repo is ready for a release.
 REM Run from the repo root: scripts\release-check.cmd
 REM
-REM Usage: scripts\release-check.cmd [--versions-only] [--expect-version VER] [--help]
+REM Usage: scripts\release-check.cmd [--versions-only] [--only SECTION] [--expect-version VER] [--help]
 REM
 REM The full run (no flags) gates on: versions, CHANGELOG, unit tests, the coverage
 REM ratchet, quality checks, a clean tree on main/release/*, green CI integration
@@ -14,10 +14,20 @@ REM                           optional expected version, Tauri npm/crate drift) 
 REM                           exit. Mirrors release-check.sh --versions-only, the
 REM                           release workflow's verify-version gate (PKG-007).
 REM   --expect-version VER    Also require every version source to equal VER.
+REM   --only SECTION          Run just one release gate and print the summary:
+REM                           integration (CI lanes green on HEAD), markers
+REM                           (TODO/FIXME/HACK scan) or bundle (build + smoke).
+REM                           Mirrors release-check.sh --only.
 REM   --help                  Show this help and exit.
+
+REM cd first: "shift" below also shifts %%0, so %%~dp0 is only the script's own
+REM directory until the first shift. After it, %%~dp0 resolved an argument
+REM such as --only against the cwd and cd'd one level above the repo (#3753).
+cd /d "%~dp0\.."
 
 set VERSIONS_ONLY=0
 set "EXPECT_VERSION="
+set "ONLY="
 
 :parse_args
 if "%~1"=="" goto :args_done
@@ -36,44 +46,63 @@ if /i "%~1"=="--expect-version" (
     shift
     goto :parse_args
 )
+if /i "%~1"=="--only" (
+    if /i "%~2"=="integration" goto :only_ok
+    if /i "%~2"=="markers" goto :only_ok
+    if /i "%~2"=="bundle" goto :only_ok
+    echo error: --only needs one of: integration, markers, bundle 1>&2
+    exit /b 2
+)
 if /i "%~1"=="--help" goto :usage
 if /i "%~1"=="-h" goto :usage
 echo error: unknown argument '%~1' 1>&2
 exit /b 2
 
+:only_ok
+set "ONLY=%~2"
+shift
+shift
+goto :parse_args
+
 :usage
-echo Usage: scripts\release-check.cmd [--versions-only] [--expect-version VER] [--help]
+echo Usage: scripts\release-check.cmd [--versions-only] [--only SECTION] [--expect-version VER] [--help]
 echo   The full run also requires green CI integration lanes for HEAD ^(gh, logged in^), a
 echo   blocking TODO/FIXME/HACK scan ^(scripts\release-marker-allowlist.json^) and a real
 echo   bundle build + smoke test ^(needs a display^).
 echo   --versions-only         Run only the version checks and exit (no tests, no git checks).
 echo   --expect-version VER    Also require every version source to equal VER (a leading v is ignored).
+echo   --only SECTION          Run one release gate and the summary: integration, markers or bundle.
 echo   --help                  Show this help and exit.
 exit /b 0
 
 :args_done
-REM Accept a tag-style value ("v0.1.0") as well as a bare version.
-if defined EXPECT_VERSION if "%EXPECT_VERSION:~0,1%"=="v" set "EXPECT_VERSION=%EXPECT_VERSION:~1%"
-
-cd /d "%~dp0\.."
+if %VERSIONS_ONLY%==1 if defined ONLY (
+    echo error: --versions-only and --only are mutually exclusive 1>&2
+    exit /b 2
+)
+REM Accept a tag-style value ("v0.1.0") as well as a bare version. The goto,
+REM not "if defined X if ...", keeps this line unparsed when X is unset: cmd
+REM expands %%X:~0,1%% of an undefined X to garbage that breaks the quoting,
+REM which made every run without --expect-version a syntax error (#3753).
+if not defined EXPECT_VERSION goto :expect_normalised
+if "%EXPECT_VERSION:~0,1%"=="v" set "EXPECT_VERSION=%EXPECT_VERSION:~1%"
+:expect_normalised
 
 set FAILED=0
 set WARNINGS=0
+if defined ONLY goto :run_only
 
 REM === Version Consistency ===
 echo === Version Consistency ===
 
-for /f "tokens=2 delims=:, " %%a in ('findstr /r /c:"\"version\": *\"" package.json') do (
-    set "PKG_VER=%%~a"
-    goto :got_pkg_ver
-)
-:got_pkg_ver
-
-for /f "tokens=2 delims=:, " %%a in ('findstr /r /c:"\"version\": *\"" src-tauri\tauri.conf.json') do (
-    set "TAURI_VER=%%~a"
-    goto :got_tauri_ver
-)
-:got_tauri_ver
+REM The JSON versions come from node, not findstr: cmd does not treat \" as an
+REM escaped quote, so findstr /c:"\"version\": *\"" left an odd number of
+REM quotes, hid the closing parenthesis of the for /f and made every run a
+REM syntax error (#3753).
+set "PKG_VER="
+for /f "usebackq delims=" %%a in (`node -p "require('./package.json').version"`) do set "PKG_VER=%%a"
+set "TAURI_VER="
+for /f "usebackq delims=" %%a in (`node -p "require('./src-tauri/tauri.conf.json').version"`) do set "TAURI_VER=%%a"
 
 for /f "tokens=2 delims== " %%a in ('findstr /r /c:"^version = " src-tauri\Cargo.toml') do (
     set "TAURI_CARGO_VER=%%~a"
@@ -258,11 +287,13 @@ echo.
 echo === Branch Check ===
 
 for /f %%b in ('git rev-parse --abbrev-ref HEAD') do set BRANCH=%%b
+REM "if not errorlevel 1", not "if %%errorlevel%%==0", below: inside the
+REM parenthesised block %%errorlevel%% is expanded before findstr runs.
 if "%BRANCH%"=="main" (
     echo   PASS: On branch 'main'
 ) else (
     echo %BRANCH% | findstr /r /c:"^release/" >nul 2>&1
-    if %errorlevel%==0 (
+    if not errorlevel 1 (
         echo   PASS: On branch '%BRANCH%'
     ) else (
         echo   FAIL: Expected branch 'main' or 'release/*', but on '%BRANCH%'
@@ -270,7 +301,18 @@ if "%BRANCH%"=="main" (
     )
 )
 
+call :check_integration
+call :check_markers
+call :check_bundle
+goto :summary
+
+REM --only SECTION: run one release gate on its own, then the summary.
+:run_only
+call :check_%ONLY%
+goto :summary
+
 REM === Integration / System Tests (CI lanes on this commit) ===
+:check_integration
 echo.
 echo === Integration / System Tests (CI lanes on this commit) ===
 
@@ -282,7 +324,7 @@ REM Integration' run and the post-merge Code Quality and Dev Build push runs to
 REM be green on this exact commit, via the same release-integration-gate.mjs.
 REM Needs the gh CLI, logged in. Mirrors release-check.sh.
 for /f %%s in ('git rev-parse HEAD') do set "HEAD_SHA=%%s"
-set "GATE_REF=%BRANCH%"
+for /f %%b in ('git rev-parse --abbrev-ref HEAD') do set "GATE_REF=%%b"
 if "%GATE_REF%"=="HEAD" set "GATE_REF=RELEASE-BRANCH-OR-TAG"
 set "GATE_REPO=armaxri/termiHub"
 set "GATE_TOKEN="
@@ -290,7 +332,7 @@ where gh >nul 2>&1
 if errorlevel 1 (
     echo   FAIL: gh CLI not installed - cannot verify the integration lanes ^(https://cli.github.com^)
     set FAILED=1
-    goto :markers
+    exit /b 0
 )
 for /f %%r in ('gh repo view --json nameWithOwner -q .nameWithOwner 2^>nul') do set "GATE_REPO=%%r"
 set "DISPATCH_CMD=gh workflow run release-candidate.yml --repo %GATE_REPO% --ref %GATE_REF%"
@@ -298,7 +340,7 @@ for /f %%t in ('gh auth token 2^>nul') do set "GATE_TOKEN=%%t"
 if not defined GATE_TOKEN (
     echo   FAIL: gh CLI not logged in - cannot verify the integration lanes ^(run: gh auth login^)
     set FAILED=1
-    goto :markers
+    exit /b 0
 )
 set "ON_REMOTE="
 for /f %%b in ('git branch -r --contains %HEAD_SHA% 2^>nul') do set "ON_REMOTE=1"
@@ -308,7 +350,7 @@ if not defined ON_REMOTE (
     echo       %DISPATCH_CMD%
     echo     If you pushed it from elsewhere, run 'git fetch' and re-run this script.
     set FAILED=1
-    goto :markers
+    exit /b 0
 )
 set "RELEASE_GATE_LOCAL=1"
 set "RELEASE_SHA=%HEAD_SHA%"
@@ -327,9 +369,10 @@ if not %GATE_RC%==0 (
 ) else (
     echo   PASS: Integration lanes green on %HEAD_SHA%
 )
+exit /b 0
 
 REM === TODO/FIXME/HACK Scan ===
-:markers
+:check_markers
 echo.
 echo === TODO/FIXME/HACK Scan ===
 
@@ -344,8 +387,10 @@ if errorlevel 1 (
 ) else (
     echo   PASS: No un-allowlisted TODO/FIXME/HACK markers
 )
+exit /b 0
 
 REM === Release Bundle Build + Smoke Test ===
+:check_bundle
 echo.
 echo === Release Bundle Build + Smoke Test ===
 
@@ -358,7 +403,7 @@ call scripts\build.cmd
 if errorlevel 1 (
     echo   FAIL: Release bundle build failed ^(scripts\build.cmd^)
     set FAILED=1
-    goto :summary
+    exit /b 0
 )
 set "INSTALLER="
 for %%f in (target\release\bundle\msi\*.msi target\release\bundle\nsis\*.exe) do set "INSTALLER=%%f"
@@ -371,7 +416,7 @@ if defined INSTALLER (
 if not exist "%SMOKE_APP%" (
     echo   FAIL: Built app not found at %SMOKE_APP% - cannot smoke-test it
     set FAILED=1
-    goto :summary
+    exit /b 0
 )
 call scripts\smoke-test.cmd "%SMOKE_APP%"
 if errorlevel 1 (
@@ -380,6 +425,7 @@ if errorlevel 1 (
 ) else (
     echo   PASS: Smoke test passed against %SMOKE_APP%
 )
+exit /b 0
 
 REM === Summary ===
 :summary

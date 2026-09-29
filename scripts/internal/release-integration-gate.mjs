@@ -23,6 +23,8 @@
 // release-integration-gate.test.mjs.
 
 import { appendFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * The workflows that must be green on the release commit.
@@ -259,7 +261,9 @@ export async function runGate({ env, fetchImpl = fetch, log = console.log }) {
   return verdict.ok ? 0 : 1;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Compare paths, not `file://${argv[1]}`: on Windows argv[1] is "D:\\...", so
+// the string form never matched and release-check.cmd got a silent exit 0 (#3753).
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   runGate({ env: process.env }).then(
     (code) => process.exit(code),
     (err) => {
