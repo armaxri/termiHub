@@ -39,9 +39,20 @@ function sshConn(id: string, name: string, host: string): SavedConnection {
 let container: HTMLDivElement;
 let root: Root;
 
-function render() {
-  act(() => {
+/**
+ * Mount the palette and let its async mount work (the connections-region
+ * subscription resolving and fanning its snapshot) settle inside `act()`.
+ */
+async function render() {
+  await act(async () => {
     root.render(React.createElement(CommandPalette));
+  });
+}
+
+/** Update the store while the palette is mounted, flushing the re-render in `act()`. */
+function setStore(partial: Parameters<typeof useAppStore.setState>[0]) {
+  act(() => {
+    useAppStore.setState(partial);
   });
 }
 
@@ -75,7 +86,7 @@ function activeLabel(): string | null {
 
 setupConnectionsRegion();
 
-beforeEach(() => {
+beforeEach(async () => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -90,7 +101,7 @@ beforeEach(() => {
       sshConn("c2", "Staging Box", "staging.example.com"),
     ],
   });
-  render();
+  await render();
 }, 10000);
 
 afterEach(() => {
@@ -118,7 +129,7 @@ describe("CommandPalette", () => {
 
   it("runs the highlighted command on Enter and closes", () => {
     const addTab = vi.fn(() => "tab-1");
-    useAppStore.setState({ addTab });
+    setStore({ addTab });
     typeInto("new terminal");
     keydown("Enter");
     expect(addTab).toHaveBeenCalledWith("Terminal", "local");
@@ -128,7 +139,7 @@ describe("CommandPalette", () => {
 
   it("runs the highlighted workflow on Enter via the manual trigger and closes", () => {
     const runWorkflow = vi.fn(() => Promise.resolve());
-    useAppStore.setState({
+    setStore({
       runWorkflow,
       workflows: [
         {
@@ -152,7 +163,7 @@ describe("CommandPalette", () => {
 
   it("lists saved workspaces and launches the highlighted one on Enter", () => {
     const launchWorkspace = vi.fn(() => Promise.resolve());
-    useAppStore.setState({
+    setStore({
       launchWorkspace,
       workspaces: [{ id: "ws-1", name: "Dev Layout", connectionCount: 2 }],
     });
@@ -255,7 +266,7 @@ describe("CommandPalette", () => {
         await ensureBroadcastSubscribed();
       });
       const runWorkflow = vi.fn(() => Promise.resolve());
-      useAppStore.setState({
+      setStore({
         runWorkflow,
         getBroadcastTargetTabIds: () => [...opts.connected],
         workflows: opts.workflows ?? [wf("wf-1", "Deploy"), wf("wf-2", "Health Check")],
@@ -264,7 +275,7 @@ describe("CommandPalette", () => {
         root.unmount();
       });
       root = createRoot(container);
-      render();
+      await render();
       return runWorkflow;
     }
 

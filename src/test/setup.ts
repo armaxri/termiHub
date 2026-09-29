@@ -1,5 +1,6 @@
 import { expect, vi } from "vitest";
 import { toHaveNoViolations } from "jest-axe";
+import { installConsoleGuard } from "./consoleGuard";
 
 // Register the jest-axe accessibility matcher globally so any test can assert
 // `expect(await checkA11y()).toHaveNoViolations()` (audit finding TFE-012). The
@@ -17,6 +18,10 @@ expect.extend(toHaveNoViolations);
 // flag set, React instead reports the real problem (an update NOT wrapped in
 // act), which the console guard below turns into a test failure.
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+// Fail on environment-misconfiguration warnings and on any test file whose
+// console output exceeds a per-file budget, so the log cannot silently regrow.
+installConsoleGuard();
 
 declare module "vitest" {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- must mirror Vitest's own `Assertion<T = any>` signature for declaration merging.
