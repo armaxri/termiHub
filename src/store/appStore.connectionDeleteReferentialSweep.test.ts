@@ -10,8 +10,9 @@
  *   (an orphan reconnect target / badge for a connection that no longer exists).
  * - open tabs' `connectionId` / `persistentConnectionId` — pointed at a removed
  *   entity.
- * - SSH tunnels' `sshConnectionId` — a tunnel whose SSH connection was deleted
- *   became silently unresolvable.
+ * - SSH tunnels' `sshConnectionId` — handled by the backend cascade (#2850): the
+ *   backend stops such a tunnel and projects it as `missingConnection` to every
+ *   client, so the sweep leaves tunnels alone and raises no toast of its own.
  *
  * These tests drive the real `appStore` delete actions against the same faithful
  * in-memory port of the Rust `ConnectionsStore` the FES-005 atomicity tests use,
@@ -236,7 +237,7 @@ afterEach(() => {
 });
 
 describe("connection delete sweeps dependent state (FES-009)", () => {
-  it("deleteConnection tears down the persistent session, clears dangling tab refs, and surfaces orphaned tunnels", async () => {
+  it("deleteConnection tears down the persistent session, clears dangling tab refs, and leaves tunnels to the backend", async () => {
     useAppStore.getState().addConnection(makeConnection("ssh-1"));
     expect(ids()).toEqual(["ssh-1"]);
     seedDependents("ssh-1");
@@ -258,9 +259,10 @@ describe("connection delete sweeps dependent state (FES-009)", () => {
     // A tab keyed off a different connection is untouched.
     expect(content["tab-other"].connectionId).toBe("other-conn");
 
-    // Tunnels: the one referencing the deleted connection is surfaced (not silently
-    // rotted); the unrelated tunnel is left alone.
-    expect(toastMock.info).toHaveBeenCalledTimes(1);
+    // Tunnels: the backend cascade (#2850) owns them — it projects the unresolved
+    // state through the `tunnels` region — so the sweep neither touches them nor
+    // raises the old informational toast.
+    expect(toastMock.info).not.toHaveBeenCalled();
     expect(useAppStore.getState().tunnels).toHaveLength(2);
   });
 
