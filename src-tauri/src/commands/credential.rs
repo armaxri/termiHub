@@ -354,6 +354,16 @@ pub(crate) fn sync_connection_credential_scopes(app_handle: &AppHandle) {
     }
 }
 
+/// Resume the relaunched transfers paused because their secret could not be
+/// read while the store was locked (#3883). Runs after the scope migration, so
+/// the relaunch reads each secret under its current key. Never prompts.
+pub(crate) fn resume_transfers_waiting_for_credentials(app_handle: &AppHandle) {
+    crate::files::transfer::relaunch_auto::spawn_resume_waiting(
+        app_handle,
+        crate::files::transfer::relaunch_auto::WaitTrigger::StoreUnlocked,
+    );
+}
+
 /// Unlock the master password credential store.
 ///
 /// This is async because Argon2id key derivation is CPU-intensive.
@@ -369,6 +379,7 @@ pub async fn unlock_credential_store(
 
     sync_embedded_server_secrets(&app_handle);
     sync_connection_credential_scopes(&app_handle);
+    resume_transfers_waiting_for_credentials(&app_handle);
     if let Err(e) = app_handle.emit(EVENT_STORE_UNLOCKED, ()) {
         warn!("Failed to emit {}: {}", EVENT_STORE_UNLOCKED, e);
     }
@@ -449,6 +460,7 @@ pub async fn setup_master_password(
 
     sync_embedded_server_secrets(&app_handle);
     sync_connection_credential_scopes(&app_handle);
+    resume_transfers_waiting_for_credentials(&app_handle);
     if let Err(e) = app_handle.emit(EVENT_STORE_UNLOCKED, ()) {
         warn!("Failed to emit {}: {}", EVENT_STORE_UNLOCKED, e);
     }

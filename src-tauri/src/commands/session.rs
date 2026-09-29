@@ -166,6 +166,14 @@ pub async fn create_connection(
         manager
             .bind_saved_connection(session_id, connection_id)
             .await;
+        // Its file browser is ready now: resume the transfers that were paused
+        // waiting for this connection (#3883).
+        crate::files::transfer::relaunch_auto::spawn_resume_waiting(
+            &app_handle,
+            crate::files::transfer::relaunch_auto::WaitTrigger::ConnectionOpened(
+                connection_id.clone(),
+            ),
+        );
     }
     result
 }
