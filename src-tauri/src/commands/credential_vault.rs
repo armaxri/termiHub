@@ -17,7 +17,7 @@ use crate::credential::named::NamedCredentialRegistry;
 use crate::credential::vault::{
     self, ConflictStrategy, VaultError, VaultImportPreview, VaultImportResult,
 };
-use crate::credential::CredentialManager;
+use crate::credential::{CredentialKey, CredentialManager, CredentialType};
 use crate::embedded_servers::server_manager::EmbeddedServerManager;
 
 /// Map every saved connection and agent id to its display name.
@@ -46,6 +46,55 @@ pub(crate) fn known_owners(
         owners.extend(named.owner_labels());
     }
     Ok(owners)
+}
+
+/// Every credential owner id termiHub can derive from its own state: saved
+/// connections (scoped and legacy bare ids) and agents, embedded servers and
+/// shared named credentials. Fails when the saved connections cannot be read,
+/// so callers never act on an incomplete key set.
+///
+/// Used to probe the OS keychain, which cannot enumerate its items: the vault
+/// export and the store switch, which seed the key index on demand (#3434,
+/// #3844). Agent
+/// graphical secrets (`agent-graphical:*`) live under definitions held on the
+/// agent host; their names are recorded as index candidates (without reading
+/// the keychain) when an agent's definitions are listed.
+pub(crate) fn derivable_owner_ids(
+    connection_manager: &ConnectionManager,
+    app_handle: &AppHandle,
+) -> Result<Vec<String>, String> {
+    let mut ids = connection_manager
+        .credential_seed_owner_ids()
+        .map_err(|e| e.to_string())?;
+    if let Some(servers) = app_handle.try_state::<EmbeddedServerManager>() {
+        ids.extend(servers.vault_owners().into_iter().map(|(id, _)| id));
+    }
+    if let Some(named) = app_handle.try_state::<Arc<NamedCredentialRegistry>>() {
+        ids.extend(named.owner_labels().into_iter().map(|(id, _)| id));
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    Ok(ids)
+}
+
+/// Every credential key of every [`derivable_owner_ids`] owner (all types).
+pub(crate) fn derivable_credential_keys(
+    connection_manager: &ConnectionManager,
+    app_handle: &AppHandle,
+) -> Result<Vec<CredentialKey>, String> {
+    derivable_owner_ids(connection_manager, app_handle).map(|ids| keys_for_owners(&ids))
+}
+
+/// Every credential type of every owner in `owner_ids`.
+pub(crate) fn keys_for_owners(owner_ids: &[String]) -> Vec<CredentialKey> {
+    owner_ids
+        .iter()
+        .flat_map(|id| {
+            CredentialType::ALL
+                .into_iter()
+                .map(move |t| CredentialKey::new(id, t))
+        })
+        .collect()
 }
 
 /// Export every saved credential as an encrypted vault file.
@@ -80,12 +129,12 @@ pub async fn export_credential_vault(
     )?;
     vault::authorize_export(&manager, master_password.as_deref().map(String::as_str))?;
 
-    let owner_ids: Vec<String> = known_owners(&connection_manager, &app_handle)
-        .map_err(|e| VaultError::Other {
+    // Probe every derivable owner on top of the store's own listing (the OS
+    // keychain lists from its key index, #3434).
+    let owner_ids =
+        derivable_owner_ids(&connection_manager, &app_handle).map_err(|e| VaultError::Other {
             message: format!("Could not read the saved connections: {e}"),
-        })?
-        .into_keys()
-        .collect();
+        })?;
 
     let entries = vault::collect_entries(&**manager, &owner_ids)?;
     let file = vault::seal(

@@ -616,3 +616,50 @@ fn vault_owners_name_external_connections_by_their_scoped_owner_id() {
         Some("x (team.json)")
     );
 }
+
+#[test]
+fn keychain_index_is_seeded_from_existing_connections() {
+    // #3434: keychain items written before the key index existed become
+    // listable once seeded from every derivable connection owner id.
+    use crate::credential::OsKeychainStore;
+    let _mock = crate::credential::os_keychain::test_support::install_mock();
+    let dir = tempfile::tempdir().unwrap();
+    let keychain = Arc::new(OsKeychainStore::with_index_file(
+        dir.path()
+            .join(crate::credential::keychain_index::FILE_NAME),
+    ));
+    let mgr = ConnectionManager::new_for_test(dir.path(), keychain.clone()).unwrap();
+    let file = path(dir.path(), "team.json");
+    configure(&mgr, &[&file]);
+    mgr.save_connection(with_password(ssh("x", "x"), "main-secret"))
+        .unwrap();
+    mgr.save_connection_routed(in_file(with_password(ssh("y", "y"), "file-secret"), &file))
+        .unwrap();
+    let scoped_y = CredentialKey::new(&scoped(&mgr, &file, "y"), PW);
+    assert_eq!(
+        keychain.get(&scoped_y).unwrap().as_deref(),
+        Some("file-secret")
+    );
+
+    keychain.forget_index_for_test();
+    assert!(keychain.list_keys().unwrap().is_empty());
+
+    let ids = mgr.credential_seed_owner_ids().unwrap();
+    assert!(ids.contains(&"x".to_string()));
+    assert!(
+        ids.contains(&"y".to_string()),
+        "legacy bare id is probed too"
+    );
+    keychain.seed_key_index(&crate::commands::credential_vault::keys_for_owners(&ids));
+
+    let mut listed: Vec<String> = keychain
+        .list_keys()
+        .unwrap()
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    listed.sort();
+    let mut expected = vec!["x:password".to_string(), scoped_y.to_string()];
+    expected.sort();
+    assert_eq!(listed, expected);
+}

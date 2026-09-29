@@ -28,7 +28,15 @@ pub fn list_dir_sync(path: &str) -> Result<Vec<FileEntry>, std::io::Error> {
         // through `resolve_entry_metadata` follows the link for `is_directory`
         // (and stats) so a symlink-to-dir is navigable, while a dangling/looping
         // link degrades to the link's own metadata instead of aborting the list.
-        let own_metadata = entry.metadata()?;
+        //
+        // An entry removed between `read_dir` and this stat (a busy directory
+        // such as `$HOME`, where other processes churn temp files) is skipped
+        // rather than failing the whole listing (#2805).
+        let own_metadata = match entry.metadata() {
+            Ok(metadata) => metadata,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e),
+        };
         let file_type = entry.file_type().ok();
         let is_symlink_entry = file_type.is_some_and(|ft| ft.is_symlink());
         let (metadata, is_directory) =
@@ -1152,6 +1160,11 @@ mod tests {
         assert!(!file.exists());
     }
 
+    // The two tilde tests read the real process `HOME` (as production does), so
+    // no test in this binary may mutate it — inject a lookup instead (see
+    // `home_directory_from`, `RedactionContext::from_lookup`). A temporary `HOME`
+    // override elsewhere made these fail intermittently under parallel runs
+    // (#2805).
     #[cfg(unix)]
     #[tokio::test]
     async fn browser_list_tilde_expands_to_home_dir() {
