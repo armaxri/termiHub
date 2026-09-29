@@ -1,5 +1,6 @@
 pub mod client;
 pub mod files_rpc;
+pub mod heartbeat;
 pub mod monitoring_rpc;
 pub mod process;
 pub mod process_rpc;
