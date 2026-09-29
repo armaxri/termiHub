@@ -194,6 +194,21 @@ impl ConnectionManager {
         Ok(owners)
     }
 
+    /// Every credential owner id this manager can derive, for seeding the OS
+    /// keychain key index (#3434, #3844): the owners of
+    /// [`Self::credential_owner_names`], plus the bare (pre-#3591) id of every
+    /// external-file connection and the bare ids a scope migration kept — so
+    /// legacy keychain copies are found and removed with the rest.
+    pub fn credential_seed_owner_ids(&self) -> Result<Vec<String>> {
+        let mut ids: HashSet<String> = self.credential_owner_names()?.into_keys().collect();
+        let view = self.load_unified_view()?;
+        ids.extend(view.connections.into_iter().map(|c| c.id));
+        ids.extend(self.file_scopes.kept_bare_keys());
+        let mut ids: Vec<String> = ids.into_iter().collect();
+        ids.sort_unstable();
+        Ok(ids)
+    }
+
     /// External file path → credential scope, for the files `connections`
     /// were loaded from (bound when they were loaded).
     pub(crate) fn credential_scopes_of(

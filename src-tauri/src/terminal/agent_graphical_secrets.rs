@@ -191,6 +191,17 @@ pub fn migrate_definitions<F>(
 where
     F: FnMut(ConnectionUpdateParams) -> Result<AgentDefinitionInfo, TerminalError>,
 {
+    // These keys are only derivable from the agent's listing: remember their
+    // names (no keychain read) so the on-demand seed before an export or store
+    // switch probes them (#3434, #3844).
+    let graphical_keys: Vec<CredentialKey> = definitions
+        .iter()
+        .filter(|def| is_tunnelled_graphical(&def.session_type))
+        .map(|def| credential_key(agent_id, &def.id))
+        .collect();
+    if !graphical_keys.is_empty() {
+        store.note_key_candidates(&graphical_keys);
+    }
     definitions
         .into_iter()
         .map(|mut def| {
