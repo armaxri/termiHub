@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import type { DockerContainerInfo } from "@/services/api";
-import { groupContainersByComposeProject } from "./dockerContainerGroups";
+import {
+  composeServicesFromContainers,
+  groupContainersByComposeProject,
+} from "./dockerContainerGroups";
 
 function c(name: string, project?: string, service?: string): DockerContainerInfo {
   return {
@@ -49,5 +52,33 @@ describe("groupContainersByComposeProject (#3425)", () => {
 
   it("treats a blank project as plain", () => {
     expect(names(groupContainersByComposeProject([c("x", "  ")]))).toEqual([[null, ["x"]]]);
+  });
+});
+
+describe("composeServicesFromContainers (#3784)", () => {
+  const stopped = (x: DockerContainerInfo): DockerContainerInfo => ({
+    ...x,
+    running: false,
+    state: "exited",
+  });
+
+  it("returns no groups without compose containers", () => {
+    expect(composeServicesFromContainers([c("a"), c("b", "shop")])).toEqual([]);
+  });
+
+  it("collapses replicas into one service with counts", () => {
+    const groups = composeServicesFromContainers([
+      c("shop-web-1", "shop", "web"),
+      stopped(c("shop-web-2", "shop", "web")),
+      c("shop-db-1", "shop", "db"),
+      c("Blog-app-1", "Blog", "app"),
+      c("plain"),
+    ]);
+    expect(groups.map((g) => g.project)).toEqual(["Blog", "shop"]);
+    expect(groups[1].services).toEqual([
+      { project: "shop", service: "db", value: "shop/db", replicas: 1, running: 1 },
+      { project: "shop", service: "web", value: "shop/web", replicas: 2, running: 1 },
+    ]);
+    expect(groups[0].services.map((s) => s.value)).toEqual(["Blog/app"]);
   });
 });

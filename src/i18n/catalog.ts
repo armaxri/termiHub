@@ -34,6 +34,8 @@ const en = {
     "Open the connection editor and use the Setup SSH Agent button, or run:",
   "connection.hint.notFound.serial":
     "Serial port not found. Check that the device is connected and the port name is correct.",
+  "connection.hint.notFound.docker":
+    "Container not found. Check that the container, or the Compose service's project, is running (for example with docker compose up -d) and that the name is correct.",
   "connection.hint.permission.title": "Permission denied",
   "connection.hint.permission.serial.linux":
     "On Linux, add your user to the dialout group and re-login:",

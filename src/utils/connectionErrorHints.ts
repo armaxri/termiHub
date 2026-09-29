@@ -157,7 +157,9 @@ export function connectionErrorHint(
           }
         : null;
     case "not-found":
-      return family === "serial" ? { text: t("connection.hint.notFound.serial") } : null;
+      if (family === "serial") return { text: t("connection.hint.notFound.serial") };
+      // A missing / stopped container or Compose service (#3784).
+      return family === "docker" ? { text: t("connection.hint.notFound.docker") } : null;
     case "permission":
       if (family !== "serial") return null;
       // Only Linux has the dialout group, so only Linux gets the usermod fix

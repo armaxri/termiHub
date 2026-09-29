@@ -508,6 +508,16 @@ describe("TerminalConnectionOverlay — failed state", () => {
     );
   });
 
+  it("shows the container hint for a docker not-found failure (#3784)", () => {
+    const text = renderFailure(
+      "Compose service 'shop/web' has no running container (1 stopped)",
+      "not-found",
+      "docker"
+    );
+    expect(text).toContain("Container not found");
+    expect(text).not.toContain("Serial port not found");
+  });
+
   it("shows serial permission hint for serial sessionType", () => {
     const text = renderFailure("Permission denied on '/dev/ttyUSB0'", "permission", "serial");
     expect(text).toContain("Permission denied");
