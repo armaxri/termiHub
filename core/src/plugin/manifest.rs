@@ -153,7 +153,7 @@ pub struct TerminalBackendExtension {
     /// Multi-platform native libraries (PLG-011): Rust target triple → the
     /// library's `/`-separated path inside the package (under `backend/`,
     /// conventionally `backend/<triple>/<lib>`). The host loads only the entry
-    /// for its own triple (see [`super::platform`]).
+    /// for its own triple (see `super::platform`).
     ///
     /// Empty (the key absent) for a **legacy single-platform** package whose
     /// library sits flat in `backend/` and is picked by file extension.
@@ -324,7 +324,7 @@ pub struct PluginManifest {
     #[cfg_attr(test, ts(optional))]
     pub settings: Option<BTreeMap<String, PluginSettingSchema>>,
     /// Optional HTTPS URL of the plugin's update document (PROD-051), used by
-    /// the opt-in "Check for updates" — see [`super::update_check`]. Absent
+    /// the opt-in "Check for updates" — see `super::update_check`. Absent
     /// means the plugin never reports updates. Never triggers an install by
     /// itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]

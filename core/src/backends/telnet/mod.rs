@@ -1,10 +1,10 @@
-//! Telnet backend implementing [`ConnectionType`](crate::connection::ConnectionType).
+//! Telnet backend implementing [`ConnectionType`].
 //!
 //! Uses a raw TCP socket with telnet protocol handling: IAC command filtering,
 //! window-size (NAWS, RFC 1073), terminal-type (RFC 1091), ECHO (RFC 857) and
-//! SUPPRESS-GO-AHEAD (RFC 858) negotiation — see [`negotiation`] — an optional
-//! local line-editing input mode — see [`line_editor`] — plus an optional
-//! prompt-driven auto-login — see [`auto_login`]. This is the canonical telnet implementation, used by both
+//! SUPPRESS-GO-AHEAD (RFC 858) negotiation — see `negotiation` — an optional
+//! local line-editing input mode — see `line_editor` — plus an optional
+//! prompt-driven auto-login — see `auto_login`. This is the canonical telnet implementation, used by both
 //! the desktop and agent crates (the desktop crate previously had its own
 //! implementation in `src-tauri/src/terminal/telnet.rs`).
 

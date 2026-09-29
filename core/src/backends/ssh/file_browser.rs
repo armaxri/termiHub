@@ -49,7 +49,7 @@ struct SftpState {
 /// wraps one of these (#2104). It reaches jump-host targets through their pooled
 /// gateway via [`connect_target`] (#939).
 ///
-/// `Clone` shares the underlying connection: the lazily-opened [`SftpState`] lives
+/// `Clone` shares the underlying connection: the lazily-opened `SftpState` lives
 /// behind an `Arc<Mutex<…>>`, so a clone points at the **same** authenticated SFTP
 /// session rather than opening a new one. This lets a session-scoped caller lift an
 /// *owned* handle out from under the sessions lock (via

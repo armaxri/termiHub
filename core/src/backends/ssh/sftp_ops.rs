@@ -1,7 +1,7 @@
 //! Higher-level SFTP capability operations shared by every SFTP path.
 //!
 //! Where [`sftp`](super::sftp) holds the low-level russh-sftp *mechanics*
-//! (subsystem open, `readdir`/`stat` -> [`FileEntry`] mapping), this module holds
+//! (subsystem open, `readdir`/`stat` -> `FileEntry` mapping), this module holds
 //! the capability *operations* that the desktop file browser historically owned
 //! alone (#2075/#2104):
 //!

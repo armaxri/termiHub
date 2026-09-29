@@ -1,4 +1,4 @@
-//! FTP / FTPS backend implementing [`ConnectionType`](crate::connection::ConnectionType).
+//! FTP / FTPS backend implementing [`ConnectionType`].
 //!
 //! Wraps the [`suppaftp`](https://crates.io/crates/suppaftp) async client on the
 //! tokio runtime (rustls TLS via `tokio-rustls`, aligning with termiHub's
@@ -53,7 +53,7 @@ const ANONYMOUS_PASSWORD: &str = "anonymous@termihub";
 /// Lets a session-scoped caller holding only a `&dyn FileBrowser` resolve the
 /// connection settings needed to launch a queued FTP transfer — server-side, so
 /// credentials are never round-tripped through the frontend — without the
-/// concrete [`FtpFileBrowser`] type leaving this crate (PROD-010). Mirrors how
+/// concrete `FtpFileBrowser` type leaving this crate (PROD-010). Mirrors how
 /// the SFTP path downcasts a `&dyn FileBrowser` to reach its transfer handle.
 pub fn ftp_config_of(browser: &dyn FileBrowser) -> Option<FtpConfig> {
     browser

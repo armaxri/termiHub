@@ -22,7 +22,7 @@ use super::handler::SshSession;
 /// would otherwise hang the caller forever (there is no cancellation token
 /// plumbed into the drain). Direct callers — the exec-capability probe, the
 /// `sudo`-elevated write path — get this bound; the monitoring loop wraps its
-/// own (shorter) [`COLLECT_TIMEOUT`](super::monitoring). Kept generous so a
+/// own (shorter) `COLLECT_TIMEOUT`. Kept generous so a
 /// legitimately large elevated write is never cut off, while still bounding a
 /// genuinely stalled connection.
 pub const DEFAULT_EXEC_TIMEOUT: Duration = Duration::from_secs(60);

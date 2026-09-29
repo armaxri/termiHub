@@ -12,7 +12,7 @@
 //! * Linux-like remotes (SSH / Docker / WSL) share one implementation,
 //!   [`ExecProcessManager`], which runs [`PROCESS_LIST_COMMAND`] / a `kill`
 //!   command over the backend's own exec transport (a [`ProcessExecSource`],
-//!   the process twin of [`ProcStatsSource`](super::ProcStatsSource)) and parses
+//!   the process twin of `ProcStatsSource`) and parses
 //!   the output with [`parse_ps_output`]. One exec per refresh — never one per
 //!   process.
 //! * The local machine uses a `sysinfo`-based manager (see
@@ -245,7 +245,7 @@ pub enum ProcessError {
 
 impl ProcessError {
     /// A stable, locale-independent machine code for this error — the `code`
-    /// field of the IPC envelope, mirroring [`TerminalError`]'s scheme so the
+    /// field of the IPC envelope, mirroring `TerminalError`'s scheme so the
     /// frontend can classify structurally rather than by matching English text.
     pub fn code(&self) -> &'static str {
         match self {
@@ -267,7 +267,7 @@ impl From<CoreError> for ProcessError {
 impl Serialize for ProcessError {
     /// Serialize as the structured IPC error envelope `{ code, message, details }`
     /// so the frontend renders `message` and can branch on `code` — identical in
-    /// shape to how [`TerminalError`] crosses the boundary.
+    /// shape to how `TerminalError` crosses the boundary.
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -283,7 +283,7 @@ impl Serialize for ProcessError {
 
 /// Result of running a single command over a backend's exec transport.
 ///
-/// Unlike [`ProcStatsSource`](super::ProcStatsSource) (which needs only stdout),
+/// Unlike `ProcStatsSource` (which needs only stdout),
 /// a kill must know whether the command *succeeded*, so this carries stderr and
 /// the exit status too. `exit_status` is `None` when the transport cannot report
 /// one (it is then inferred from stderr).
@@ -298,7 +298,7 @@ pub struct ProcessCommandOutput {
 }
 
 /// A backend's exec transport for process operations — the process twin of
-/// [`ProcStatsSource`](super::ProcStatsSource).
+/// `ProcStatsSource`.
 ///
 /// Implementations run an arbitrary command in the target (an SSH exec channel,
 /// `docker exec`, `wsl.exe -d <distro>`) and return its captured output. Used by

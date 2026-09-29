@@ -3,7 +3,7 @@
 //!
 //! Provides [`validate_docker_config`], a no-I/O, no-async check run before a
 //! Docker session is created. The live backend
-//! ([`crate::backends::docker::Docker`]) talks to the daemon through the
+//! (`crate::backends::docker::Docker`) talks to the daemon through the
 //! `bollard` API, so there is no CLI-argument building here.
 
 use crate::config::{ContainerMode, DockerConfig};
@@ -18,7 +18,7 @@ use crate::errors::SessionError;
 /// This is the last no-I/O gate before a session is created — the desktop
 /// `connect()` path does not run the schema validator — so, like
 /// [`validate_ssh_config`](crate::session::ssh::validate_ssh_config) and
-/// [`parse_serial_config`](crate::session::serial::parse_serial_config) (#2349),
+/// `parse_serial_config` (#2349),
 /// it **rejects** malformed values rather than letting them through to fail deep
 /// in the runtime:
 /// - Blank (whitespace-only) values are treated as empty: an image of `"   "`

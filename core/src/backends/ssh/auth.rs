@@ -25,7 +25,7 @@ use super::prompt_clock::timeout_excluding_prompts;
 ///
 /// Returns an authenticated session handle and a channel registry for
 /// remote-port-forward notifications. Most callers only need the handle;
-/// the registry is used by [`RemoteForwarder`] and the X11 event loop.
+/// the registry is used by `RemoteForwarder` and the X11 event loop.
 ///
 /// The connect is bounded by [`SshConfig::connect_timeout`] so an unreachable
 /// host fails fast rather than blocking until the OS TCP timeout (#841).

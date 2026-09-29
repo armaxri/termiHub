@@ -2,7 +2,7 @@
 //! host-filesystem copy (PARITY-004, #3567).
 //!
 //! The local counterpart of [`run_docker_transfer`](super::docker) and
-//! `run_sftp_transfer`: the same shared orchestration ([`super::attempt`]) —
+//! `run_sftp_transfer`: the same shared orchestration (`super::attempt`) —
 //! per-session slot, throttled progress + ETA, pause/resume, cancel, auto-retry
 //! with backoff, the stall watchdog — around a plain `tokio::fs` copy. It backs
 //! every user-visible **file** copy on the local disk: copy/paste between local

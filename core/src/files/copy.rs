@@ -1,7 +1,7 @@
 //! Generic cancellable chunked reader→writer copy loop (audit finding DUP-025).
 //!
 //! Both the SFTP transfer path (`src-tauri`'s `files::transfer`) and the FTP
-//! transfer primitive ([`crate::backends::ftp`]) drove the same
+//! transfer primitive (`crate::backends::ftp`) drove the same
 //! "read a chunk → honour a stop request → write the chunk → report progress →
 //! flush at EOF" loop over different transports, so a fix to
 //! cancellation/progress/flush semantics in one could silently miss the other.
@@ -12,7 +12,7 @@
 //! - the chunk size and a resume `start_offset` (FTP resumes via `REST`; SFTP
 //!   always starts at `0`),
 //! - a `should_stop` probe returning a caller-defined reason (`()` for SFTP's
-//!   plain cancel, [`StopReason`](crate::backends::ftp::StopReason) for FTP's
+//!   plain cancel, `StopReason` for FTP's
 //!   pause-vs-cancel),
 //! - an `on_progress(transferred)` callback invoked after each chunk (the caller
 //!   owns any throttling), and

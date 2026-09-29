@@ -123,7 +123,7 @@ pub trait FileBrowser: Send {
     /// the backend-specific advanced operations that cannot live on this trait —
     /// for SSH, the SFTP advanced ops (`realpath` / `check_writable` /
     /// privilege-elevated write) and the owned transfer handle exposed by
-    /// [`SftpFileBrowser`](crate::backends::ssh::SftpFileBrowser). Backends that
+    /// `SftpFileBrowser`. Backends that
     /// offer such capabilities override this to return `Some(self)`, letting the
     /// caller `downcast_ref` to the concrete type; the default returns `None`, so
     /// no other backend is affected (#2312).

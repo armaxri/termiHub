@@ -15,7 +15,7 @@ use crate::utils::migrate::{guard_not_newer, load_store_with_recovery, Versioned
 const FILE_NAME: &str = "file-browser-bookmarks.json";
 
 /// Handles reading/writing the bookmarks JSON file. Mirrors
-/// [`crate::network::tool_history_storage::NetworkToolHistoryStorage`].
+/// `crate::network::tool_history_storage::NetworkToolHistoryStorage`.
 pub struct FileBookmarkStorage {
     file_path: PathBuf,
 }

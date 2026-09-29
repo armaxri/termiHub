@@ -6,7 +6,7 @@
 //! flushed), and the store is written **only on a status change or a coarse byte
 //! checkpoint** — never per-chunk — so a hot progress stream costs nothing.
 //!
-//! Mirrors [`crate::workflows::history_manager::WorkflowRunHistoryManager`] in
+//! Mirrors `crate::workflows::history_manager::WorkflowRunHistoryManager` in
 //! construction and recovery-warning handling.
 
 use std::sync::mpsc::{self, Sender};
@@ -229,7 +229,7 @@ impl TransferPersistenceManager {
     /// Fold a lifecycle/progress update for a transfer into the persisted queue.
     ///
     /// Debounced: writes only on a **status change** or a coarse **byte
-    /// checkpoint** ([`CHECKPOINT_BYTES`]), so per-chunk progress is free. A
+    /// checkpoint** (`CHECKPOINT_BYTES`), so per-chunk progress is free. A
     /// genuine terminal outcome (completed / user-cancel / failure) prunes the
     /// record. `is_teardown` marks the app-quit cancel-all sweep: the terminal
     /// transitions it induces must NOT erase in-flight records, so they can

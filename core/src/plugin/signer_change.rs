@@ -160,7 +160,7 @@ impl SignerChange {
 }
 
 /// Classify replacing a plugin signed by `installed` with a package signed by
-/// `incoming`. See the [module docs](self) for the rule table.
+/// `incoming`. See the module docs for the rule table.
 #[must_use]
 pub fn classify_signer_change(
     installed: InstalledSigner<'_>,

@@ -7,7 +7,7 @@
 //! [`InputEvent`]s into RFB `KeyEvent` / `PointerEvent`, and bridges the
 //! clipboard via RFB `ServerCutText` / `ClientCutText` — or, when the server
 //! supports it, the Extended Clipboard (UTF-8 text and `dib` images, #3472;
-//! see [`clipboard`]). Everything the user
+//! see `clipboard`). Everything the user
 //! touches — canvas, toolbar, overlays, input, clipboard, scaling — belongs to
 //! the shared layer and is untouched here; this module is the wire adapter only.
 //!

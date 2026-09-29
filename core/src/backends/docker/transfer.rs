@@ -67,7 +67,7 @@ const STDERR_CAP: usize = 16 * 1024;
 const EXIT_WAIT: Duration = Duration::from_secs(5);
 const EXIT_POLL: Duration = Duration::from_millis(50);
 
-/// Which streaming tools a container provides, from [`PROBE_SCRIPT`].
+/// Which streaming tools a container provides, from `PROBE_SCRIPT`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ContainerCaps {
     /// `cat` — required for any streaming transfer.
@@ -81,7 +81,7 @@ pub struct ContainerCaps {
 }
 
 impl ContainerCaps {
-    /// Parse the [`PROBE_SCRIPT`] output (one token per line). Pure.
+    /// Parse the `PROBE_SCRIPT` output (one token per line). Pure.
     pub fn parse(output: &str) -> Self {
         let mut caps = Self::default();
         for token in output.split_whitespace() {

@@ -1,9 +1,9 @@
 //! Reading/writing the persisted transfer-queue JSON file (PROD-0011).
 //!
-//! Mirrors [`crate::workflows::history_storage::WorkflowRunHistoryStorage`]: the
+//! Mirrors `crate::workflows::history_storage::WorkflowRunHistoryStorage`: the
 //! write is atomic (temp file + rename) so an interrupted save cannot truncate
 //! the queue into invalid JSON (PER-003), and it goes through the shared
-//! schema-migration / downgrade-safety layer ([`crate::utils::migrate`]) so a
+//! schema-migration / downgrade-safety layer (`crate::utils::migrate`) so a
 //! newer-version file is never clobbered (PER-004) and a corrupt file recovers
 //! per-entry rather than resetting the whole queue.
 

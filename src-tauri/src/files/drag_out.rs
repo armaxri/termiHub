@@ -5,7 +5,7 @@
 //! `NSDraggingSession`, `DoDragDrop` and GTK drag sources. The crate is used
 //! directly — rather than through `tauri-plugin-drag` — so no generic
 //! `drag:allow-start-drag` capability is granted to the webview: the only entry
-//! point is the typed [`crate::commands::files::drag_out_start`] command, which
+//! point is the typed `crate::commands::files::drag_out_start` command, which
 //! accepts file paths only (never arbitrary pasteboard data) and validates them.
 //!
 //! Remote (session) entries have no local path, so the frontend first downloads
