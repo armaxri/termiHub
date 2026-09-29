@@ -47,15 +47,24 @@ jobs:
           path: out
       # Cold + stressed: the first powershell.exe on this VM starts while the
       # whole core lib suite hammers the cores (the historical failing setup).
-      - name: Cold PowerShell under full-suite load
+      - name: Cold PowerShell x4 concurrent under full-suite load
         shell: bash
         working-directory: core
         run: |
           ../out/core-tests.exe --skip backends::local_shell:: >/dev/null 2>&1 &
           load=$!
-          ../out/core-tests.exe --exact --nocapture \
-            backends::local_shell::tests::windows_powershell_spawn_echo_resize_teardown
+          pids=()
+          for n in 1 2 3 4; do
+            ../out/core-tests.exe --exact --nocapture \
+              backends::local_shell::tests::windows_powershell_spawn_echo_resize_teardown \
+              > "ps$n.log" 2>&1 &
+            pids+=($!)
+          done
+          rc=0
+          for p in "${pids[@]}"; do wait "$p" || rc=1; done
+          for n in 1 2 3 4; do echo "== instance $n"; cat "ps$n.log"; done
           wait $load || true
+          exit $rc
       - name: Warm repeats (5x)
         if: ${{ !cancelled() }}
         shell: bash
