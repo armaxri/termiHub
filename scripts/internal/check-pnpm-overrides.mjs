@@ -19,6 +19,7 @@
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import path from "path";
+import { isMainModule } from "./is-main-module.mjs";
 
 /** Repository root, derived from this file's location (scripts/internal/). */
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -158,7 +159,7 @@ export function loadRepo(root) {
 }
 
 // CLI mode.
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   const rootFlag = process.argv.indexOf("--root");
   const root = rootFlag !== -1 ? path.resolve(process.argv[rootFlag + 1]) : DEFAULT_ROOT;
   const repo = loadRepo(root);

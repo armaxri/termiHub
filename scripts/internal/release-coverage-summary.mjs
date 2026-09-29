@@ -51,7 +51,6 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { COMPONENTS, percentages, tallyLcov } from "./coverage-ratchet.mjs";
 import {
   ARTIFACT as INTEGRATION_ARTIFACT,
@@ -61,6 +60,7 @@ import {
 } from "./fetch-integration-coverage.mjs";
 import { formatLcov, formatReport, mergeCoverage, parseLcov } from "./lcov-merge.mjs";
 import { pct, summarizeLcov } from "./lcov-summary.mjs";
+import { isMainModule } from "./is-main-module.mjs";
 
 export const COVERAGE_WORKFLOW = "coverage.yml";
 export const COVERAGE_ARTIFACT = "coverage-unified";
@@ -502,6 +502,6 @@ function main(argv) {
   return runSummary(opts);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

@@ -26,8 +26,7 @@
 // Usage: node scripts/internal/llvm-cov-report.mjs <output.lcov> [max-attempts]
 import { spawnSync } from "node:child_process";
 import { rmSync, existsSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { isMainModule } from "./is-main-module.mjs";
 
 /** Extract the .profraw paths llvm-profdata reported as corrupt/invalid. */
 export function corruptProfraws(stderr) {
@@ -68,6 +67,6 @@ function main(argv) {
   return 1;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   process.exit(main(process.argv.slice(2)));
 }

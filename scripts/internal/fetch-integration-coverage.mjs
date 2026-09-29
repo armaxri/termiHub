@@ -35,7 +35,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { isMainModule } from "./is-main-module.mjs";
 
 export const WORKFLOW = "integration-fixtures.yml";
 export const ARTIFACT = "integration-coverage";
@@ -284,6 +284,6 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isMainModule(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

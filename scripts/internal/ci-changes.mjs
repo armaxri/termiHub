@@ -37,6 +37,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import { isMainModule } from "./is-main-module.mjs";
 
 export const AREAS = [
   "rust",
@@ -232,7 +233,7 @@ export function formatOutputs(flags, pullRequest) {
 }
 
 // CLI mode.
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   if (process.argv.includes("--all")) {
     process.stdout.write(formatOutputs(allAreas(), false));
   } else {
