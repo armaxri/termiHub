@@ -1,7 +1,7 @@
 import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
 import { IconPickerDialog } from "./IconPickerDialog";
 import { IconByName } from "@/utils/connectionIcons";
-import { Button } from "@/components/ui";
+import { Button, Field } from "@/components/ui";
 import { useState } from "react";
 
 interface ConnectionAppearanceSettingsProps {
@@ -24,63 +24,71 @@ export function ConnectionAppearanceSettings({
     <div className="settings-panel__category">
       <h3 className="settings-panel__category-title">Appearance</h3>
 
-      <div className="settings-form__field">
-        <span className="settings-form__label">Tab Color</span>
-        <div className="connection-editor__color-row">
-          {color && (
-            <div className="connection-editor__color-preview" style={{ backgroundColor: color }} />
-          )}
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setColorPickerOpen(true)}
-            data-testid="connection-editor-color-picker"
-          >
-            {color ? "Change" : "Set Color"}
-          </Button>
-          {color && (
+      <Field
+        variant="settings"
+        label="Tab Color"
+        hint="Accent color shown on the connection tab and sidebar entry."
+      >
+        {/* Fragment: the buttons carry their own accessible names. */}
+        <>
+          <div className="connection-editor__color-row">
+            {color && (
+              <div
+                className="connection-editor__color-preview"
+                style={{ backgroundColor: color }}
+              />
+            )}
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => onColorChange(undefined)}
-              data-testid="connection-editor-clear-color"
+              onClick={() => setColorPickerOpen(true)}
+              data-testid="connection-editor-color-picker"
             >
-              Clear
+              {color ? "Change" : "Set Color"}
             </Button>
-          )}
-        </div>
-        <span className="settings-form__hint">
-          Accent color shown on the connection tab and sidebar entry.
-        </span>
-      </div>
+            {color && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => onColorChange(undefined)}
+                data-testid="connection-editor-clear-color"
+              >
+                Clear
+              </Button>
+            )}
+          </div>
+        </>
+      </Field>
 
-      <div className="settings-form__field">
-        <span className="settings-form__label">Icon</span>
-        <div className="connection-editor__color-row">
-          {icon && <IconByName name={icon} size={18} />}
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setIconPickerOpen(true)}
-            data-testid="connection-editor-icon-picker"
-          >
-            {icon ? "Change" : "Set Icon"}
-          </Button>
-          {icon && (
+      <Field
+        variant="settings"
+        label="Icon"
+        hint="Icon displayed on the connection tab and in the sidebar."
+      >
+        <>
+          <div className="connection-editor__color-row">
+            {icon && <IconByName name={icon} size={18} />}
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => onIconChange(undefined)}
-              data-testid="connection-editor-clear-icon"
+              onClick={() => setIconPickerOpen(true)}
+              data-testid="connection-editor-icon-picker"
             >
-              Clear
+              {icon ? "Change" : "Set Icon"}
             </Button>
-          )}
-        </div>
-        <span className="settings-form__hint">
-          Icon displayed on the connection tab and in the sidebar.
-        </span>
-      </div>
+            {icon && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => onIconChange(undefined)}
+                data-testid="connection-editor-clear-icon"
+              >
+                Clear
+              </Button>
+            )}
+          </div>
+        </>
+      </Field>
 
       <ColorPickerDialog
         open={colorPickerOpen}
