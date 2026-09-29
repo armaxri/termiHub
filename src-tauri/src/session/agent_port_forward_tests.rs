@@ -313,10 +313,19 @@ async fn dropping_the_forward_closes_streams_and_the_listener() {
     let port = fwd.local_port();
     let mut c = roundtrip(port, b"hello").await;
 
-    drop(fwd);
+    let accept_task = fwd.drop_and_take_accept_task();
     wait_until(|| agent.log.lock().unwrap().closed.len() == 1).await;
     expect_eof(&mut c).await;
-    wait_until(|| std::net::TcpStream::connect(("127.0.0.1", port)).is_err()).await;
+    // The accept task owns the listener: its handle resolving proves the
+    // listener closed, without probing the freed port, which a concurrent
+    // test's port-0 bind may already have re-taken (#3551).
+    let ended = tokio::time::timeout(Duration::from_secs(5), accept_task)
+        .await
+        .expect("accept task (and its listener) should end after drop");
+    assert!(
+        ended.as_ref().map_or_else(|e| e.is_cancelled(), |()| true),
+        "accept task must end by cancellation, not panic: {ended:?}"
+    );
 }
 
 /// A reconnect (a fresh dial after the agent dropped every stream) opens a new
