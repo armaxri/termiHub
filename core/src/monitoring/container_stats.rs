@@ -191,7 +191,8 @@ mod tests {
     #[test]
     fn cpu_percent_is_container_share_of_host_delta() {
         // 0.5 s of container CPU over 10 s of host CPU time = 5 %.
-        let pct = container_cpu_percent(cpu(1_000, 1_000), cpu(501_000_000 + 1_000, 10_000_001_000));
+        let pct =
+            container_cpu_percent(cpu(1_000, 1_000), cpu(501_000_000 + 1_000, 10_000_001_000));
         assert!((pct - 5.01).abs() < 0.01, "got {pct}");
     }
 
@@ -253,7 +254,10 @@ mod tests {
         let mut t = ContainerStatsTrackers::new();
         let stats = t.apply(full_sample(cpu(0, 0), 0, 0), Instant::now());
         for metric in ALWAYS_UNAVAILABLE {
-            assert!(stats.is_unavailable(metric), "{metric:?} must be unavailable");
+            assert!(
+                stats.is_unavailable(metric),
+                "{metric:?} must be unavailable"
+            );
         }
         assert!(!stats.is_unavailable(StatsMetric::Cpu));
         assert!(!stats.is_unavailable(StatsMetric::Network));

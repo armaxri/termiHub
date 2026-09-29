@@ -88,10 +88,7 @@ impl ContainerStatsSource for StatsFake {
     }
 }
 
-fn provider(
-    proc: Arc<ProcFake>,
-    fallback: Option<Arc<StatsFake>>,
-) -> ExecMonitoringProvider {
+fn provider(proc: Arc<ProcFake>, fallback: Option<Arc<StatsFake>>) -> ExecMonitoringProvider {
     let mut p = ExecMonitoringProvider::new(proc);
     if let Some(f) = fallback {
         p = p.with_stats_fallback(f);

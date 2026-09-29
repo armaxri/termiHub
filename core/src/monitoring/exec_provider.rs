@@ -41,10 +41,10 @@ use tracing::{debug, info, warn};
 
 use crate::errors::CoreError;
 use crate::monitoring::{
-    parse_stats, BackoffSchedule, ContainerStatsSource, ContainerStatsTrackers, CollectLoopState, CpuDeltaTracker, MonitorStatusSender,
-    MonitoringProvider, MonitoringReceiver, MonitoringSender, MonitoringSubscription,
-    NetDeltaTracker, PerCoreCpuTracker, SystemStats, DEFAULT_MONITORING_INTERVAL_MS,
-    DEFAULT_STALE_THRESHOLD,
+    parse_stats, BackoffSchedule, CollectLoopState, ContainerStatsSource, ContainerStatsTrackers,
+    CpuDeltaTracker, MonitorStatusSender, MonitoringProvider, MonitoringReceiver, MonitoringSender,
+    MonitoringSubscription, NetDeltaTracker, PerCoreCpuTracker, SystemStats,
+    DEFAULT_MONITORING_INTERVAL_MS, DEFAULT_STALE_THRESHOLD,
 };
 
 /// Default polling interval for collecting stats.
@@ -511,8 +511,8 @@ impl MonitoringProvider for ExecMonitoringProvider {
         // source (#3202): `/proc` when it parses, else the container-stats
         // fallback when one is attached. The probe sample is discarded: the
         // loop's first collect is the priming sample (CPU 0).
-        let source = select_source(self.source.clone(), self.fallback.clone(), COLLECT_TIMEOUT)
-            .await?;
+        let source =
+            select_source(self.source.clone(), self.fallback.clone(), COLLECT_TIMEOUT).await?;
 
         let cancel = CancellationToken::new();
 

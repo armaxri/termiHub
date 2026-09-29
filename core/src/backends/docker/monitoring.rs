@@ -132,15 +132,17 @@ pub(super) fn sample_from_docker_stats(stats: &Stats) -> ContainerStatsSample {
         .io_service_bytes_recursive
         .as_ref()
         .map(|entries| {
-            entries.iter().fold(BlockIoCounters::default(), |mut acc, e| {
-                // cgroup v1 reports "Read"/"Write", v2 "read"/"write".
-                if e.op.eq_ignore_ascii_case("read") {
-                    acc.read_bytes = acc.read_bytes.saturating_add(e.value);
-                } else if e.op.eq_ignore_ascii_case("write") {
-                    acc.write_bytes = acc.write_bytes.saturating_add(e.value);
-                }
-                acc
-            })
+            entries
+                .iter()
+                .fold(BlockIoCounters::default(), |mut acc, e| {
+                    // cgroup v1 reports "Read"/"Write", v2 "read"/"write".
+                    if e.op.eq_ignore_ascii_case("read") {
+                        acc.read_bytes = acc.read_bytes.saturating_add(e.value);
+                    } else if e.op.eq_ignore_ascii_case("write") {
+                        acc.write_bytes = acc.write_bytes.saturating_add(e.value);
+                    }
+                    acc
+                })
         });
 
     ContainerStatsSample {
@@ -423,7 +425,10 @@ mod tests {
             Value::Null,
             Some(1),
         );
-        assert_eq!(sample_from_docker_stats(&stats).memory_used_bytes, Some(1_000));
+        assert_eq!(
+            sample_from_docker_stats(&stats).memory_used_bytes,
+            Some(1_000)
+        );
     }
 
     #[test]
