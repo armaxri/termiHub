@@ -3580,11 +3580,12 @@ mod tests {
     /// `docker.list_containers`, 0.15.0 adds its Compose fields, 0.16.0 the
     /// `connection.create` `correlation_id`, 0.17.0 `agent.forward.connect`,
     /// 0.18.0 the `connection.create` error's `data.connect_failure`, and
-    /// 0.19.0 its `auth_failed` kind (#3089), and 0.20.0 the
-    /// `sessionProcesses` capability (#3210).
+    /// 0.19.0 its `auth_failed` kind (#3089), 0.20.0 the
+    /// `sessionProcesses` capability (#3210), and 0.21.0 the
+    /// `sessionMonitoring` capability (#3871).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.20.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.21.0");
     }
 
     // ── agent.forward.connect (desktop port forward, #3241) ────────
@@ -6024,6 +6025,8 @@ mod tests {
     struct MockMonitoringManager {
         subscribed: Arc<AsyncMutex<Vec<String>>>,
         unsubscribed: Arc<AsyncMutex<Vec<String>>>,
+        /// `(host, interval_ms)` of every session-provider subscribe (#3871).
+        provider_subscribed: Arc<AsyncMutex<Vec<(String, Option<u64>)>>>,
     }
 
     impl MockMonitoringManager {
@@ -6031,6 +6034,7 @@ mod tests {
             Self {
                 subscribed: Arc::new(AsyncMutex::new(Vec::new())),
                 unsubscribed: Arc::new(AsyncMutex::new(Vec::new())),
+                provider_subscribed: Arc::new(AsyncMutex::new(Vec::new())),
             }
         }
     }
@@ -6039,6 +6043,19 @@ mod tests {
     impl MonitoringManagerApi for MockMonitoringManager {
         async fn subscribe(&self, host: &str, _interval_ms: Option<u64>) -> anyhow::Result<()> {
             self.subscribed.lock().await.push(host.to_string());
+            Ok(())
+        }
+
+        async fn subscribe_provider(
+            &self,
+            host: &str,
+            _provider: Arc<dyn MonitoringProvider + Send + Sync>,
+            interval_ms: Option<u64>,
+        ) -> anyhow::Result<()> {
+            self.provider_subscribed
+                .lock()
+                .await
+                .push((host.to_string(), interval_ms));
             Ok(())
         }
 
@@ -6488,4 +6505,7 @@ mod tests {
 
     /// `connection.processes.*` for agent-hosted sessions (#3210).
     mod process_tests;
+
+    /// `connection.monitoring.*` for agent-hosted sessions (#3871).
+    mod monitoring_tests;
 }

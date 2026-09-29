@@ -2416,6 +2416,7 @@ mod tests {
                 keyboard_interactive_prompts: true,
                 embedded_server_activity: true,
                 session_processes: true,
+                session_monitoring: true,
                 available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
                 available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
                 docker_available: false,
@@ -2432,6 +2433,8 @@ mod tests {
         assert_eq!(v["capabilities"]["embeddedServerActivity"], true);
         // #3210: agent-hosted SSH/Docker/WSL process list + kill.
         assert_eq!(v["capabilities"]["sessionProcesses"], true);
+        // #3871: agent-hosted session monitoring.
+        assert_eq!(v["capabilities"]["sessionMonitoring"], true);
         assert!(v["capabilities"]["availableDockerImages"]
             .as_array()
             .unwrap()

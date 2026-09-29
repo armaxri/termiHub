@@ -1183,6 +1183,9 @@ pub(crate) mod tests {
     /// Process list + kill through the daemon, end to end (#3210).
     mod process_rpc_e2e;
 
+    /// Session monitoring through the daemon, end to end (#3871).
+    pub(crate) mod monitoring_rpc_e2e;
+
     // ── AGT-015: owner-scoped recovery guard ────────────────────────────
     //
     // These drive the real `daemon_loop` over a real endpoint with real

@@ -4871,4 +4871,7 @@ mod tests {
 
     /// Resolving a held session's process manager (#3210).
     mod process_tests;
+
+    /// Resolving a held session's monitoring provider (#3871).
+    mod monitoring_tests;
 }
