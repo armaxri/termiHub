@@ -60,8 +60,8 @@ function query(testId: string): HTMLElement | null {
   return document.querySelector(`[data-testid="${testId}"]`);
 }
 
-function renderPanel() {
-  act(() => {
+async function renderPanel() {
+  await act(async () => {
     root.render(<OverlayViewPanel />);
   });
 }
@@ -79,26 +79,26 @@ describe("OverlayViewPanel", () => {
     container.remove();
   });
 
-  it("renders nothing when no overlay view is active", () => {
-    renderPanel();
+  it("renders nothing when no overlay view is active", async () => {
+    await renderPanel();
     expect(query("overlay-view")).toBeNull();
   });
 
-  it("renders the About view in a modal when active", () => {
+  it("renders the About view in a modal when active", async () => {
     act(() => {
       useAppStore.setState({ overlayView: "about" });
     });
-    renderPanel();
+    await renderPanel();
 
     expect(query("overlay-view")).not.toBeNull();
     expect(query("about-settings")).not.toBeNull();
   });
 
-  it("closes the overlay when the modal close button is clicked", () => {
+  it("closes the overlay when the modal close button is clicked", async () => {
     act(() => {
       useAppStore.setState({ overlayView: "about" });
     });
-    renderPanel();
+    await renderPanel();
 
     const closeBtn = query("modal-close");
     expect(closeBtn).not.toBeNull();

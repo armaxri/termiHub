@@ -158,12 +158,14 @@ describe("SessionSettings", () => {
     expect((query("settings-clear-session-history") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("enables Clear History and calls the store action when there is history", () => {
+  it("enables Clear History and calls the store action when there is history", async () => {
     mockHistoryLength = 3;
     renderWith(defaultSettings);
     const btn = query("settings-clear-session-history") as HTMLButtonElement;
     expect(btn.disabled).toBe(false);
-    act(() => btn.click());
+    await act(async () => {
+      btn.click();
+    });
     expect(clearSessionHistory).toHaveBeenCalledTimes(1);
   });
 
@@ -192,17 +194,21 @@ describe("SessionSettings", () => {
       );
     });
 
-    it("clears every tool's history from the Clear button", () => {
+    it("clears every tool's history from the Clear button", async () => {
       clearNetworkToolHistory.mockClear();
       renderWith(defaultSettings);
-      act(() => (query("settings-clear-network-tool-history") as HTMLButtonElement).click());
+      await act(async () => {
+        (query("settings-clear-network-tool-history") as HTMLButtonElement).click();
+      });
       expect(clearNetworkToolHistory).toHaveBeenCalledWith();
     });
 
-    it("also clears every HTTP monitor's check history (#3462)", () => {
+    it("also clears every HTTP monitor's check history (#3462)", async () => {
       clearHttpMonitorHistory.mockClear();
       renderWith(defaultSettings);
-      act(() => (query("settings-clear-network-tool-history") as HTMLButtonElement).click());
+      await act(async () => {
+        (query("settings-clear-network-tool-history") as HTMLButtonElement).click();
+      });
       expect(clearHttpMonitorHistory).toHaveBeenCalledTimes(1);
     });
 

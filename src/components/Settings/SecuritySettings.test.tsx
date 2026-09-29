@@ -38,8 +38,8 @@ function setInputValue(input: HTMLInputElement, value: string) {
 let container: HTMLDivElement;
 let root: Root;
 
-function render(props: { visibleFields?: Set<string> } = {}) {
-  act(() => {
+async function render(props: { visibleFields?: Set<string> } = {}) {
+  await act(async () => {
     root.render(<SecuritySettings {...props} />);
   });
 }
@@ -68,12 +68,12 @@ describe("SecuritySettings", () => {
     vi.clearAllMocks();
   });
 
-  it("renders three storage mode radio options", () => {
+  it("renders three storage mode radio options", async () => {
     useAppStore.setState({
       credentialStoreStatus: { mode: "none", status: "unlocked" },
     });
 
-    render();
+    await render();
 
     expect(query("storage-mode-master-password")).not.toBeNull();
     expect(query("storage-mode-os-keychain")).not.toBeNull();
@@ -100,7 +100,7 @@ describe("SecuritySettings", () => {
       return Promise.resolve(undefined);
     });
 
-    render();
+    await render();
 
     const option = query("storage-mode-os-keychain") as HTMLElement;
     await act(async () => {
@@ -124,42 +124,42 @@ describe("SecuritySettings", () => {
     expect(args).toMatchObject({ newMode: "os_keychain", masterPassword: null });
   });
 
-  it("shows auto-lock dropdown only when mode is master_password", () => {
+  it("shows auto-lock dropdown only when mode is master_password", async () => {
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
 
-    render();
+    await render();
 
     expect(query("auto-lock-timeout")).not.toBeNull();
   });
 
-  it("hides auto-lock dropdown when mode is not master_password", () => {
+  it("hides auto-lock dropdown when mode is not master_password", async () => {
     useAppStore.setState({
       credentialStoreStatus: { mode: "none", status: "unlocked" },
     });
 
-    render();
+    await render();
 
     expect(query("auto-lock-timeout")).toBeNull();
   });
 
-  it("shows change master password button only in master_password mode", () => {
+  it("shows change master password button only in master_password mode", async () => {
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
 
-    render();
+    await render();
 
     expect(query("change-master-password-btn")).not.toBeNull();
   });
 
-  it("hides change master password button in non-master_password mode", () => {
+  it("hides change master password button in non-master_password mode", async () => {
     useAppStore.setState({
       credentialStoreStatus: { mode: "none", status: "unlocked" },
     });
 
-    render();
+    await render();
 
     expect(query("change-master-password-btn")).toBeNull();
   });
@@ -169,7 +169,7 @@ describe("SecuritySettings", () => {
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
 
-    render();
+    await render();
     const btn = query("change-master-password-btn") as HTMLElement;
     await act(async () => {
       btn.click();
@@ -186,7 +186,7 @@ describe("SecuritySettings", () => {
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
 
-    render();
+    await render();
     const noneOption = query("storage-mode-none") as HTMLElement;
     await act(async () => {
       noneOption.click();
@@ -219,7 +219,7 @@ describe("SecuritySettings", () => {
       return Promise.resolve(undefined);
     });
 
-    render();
+    await render();
 
     // Click the master password option to open the setup dialog
     const mpOption = query("storage-mode-master-password") as HTMLElement;
@@ -279,7 +279,7 @@ describe("SecuritySettings", () => {
       return Promise.resolve(undefined);
     });
 
-    render();
+    await render();
 
     const noneOption = query("storage-mode-none") as HTMLElement;
     await act(async () => {
@@ -306,7 +306,7 @@ describe("SecuritySettings", () => {
       return Promise.resolve(undefined);
     });
 
-    render();
+    await render();
 
     const noneOption = query("storage-mode-none") as HTMLElement;
     await act(async () => {
@@ -334,7 +334,7 @@ describe("SecuritySettings", () => {
       return Promise.resolve(undefined);
     });
 
-    render();
+    await render();
 
     const btn = query("change-master-password-btn") as HTMLElement;
     await act(async () => {
@@ -368,7 +368,7 @@ describe("SecuritySettings", () => {
     const requestUnlock = vi.fn(() => new Promise<boolean>(() => {}));
     useAppStore.setState({ requestUnlock });
 
-    render();
+    await render();
 
     const btn = query("change-master-password-btn") as HTMLElement;
     await act(async () => {
@@ -388,7 +388,7 @@ describe("SecuritySettings", () => {
     const requestUnlock = vi.fn(() => Promise.resolve(true));
     useAppStore.setState({ requestUnlock });
 
-    render();
+    await render();
 
     const btn = query("change-master-password-btn") as HTMLElement;
     await act(async () => {
@@ -408,7 +408,7 @@ describe("SecuritySettings", () => {
     const requestUnlock = vi.fn(() => Promise.resolve(false));
     useAppStore.setState({ requestUnlock });
 
-    render();
+    await render();
 
     const btn = query("change-master-password-btn") as HTMLElement;
     await act(async () => {
@@ -429,7 +429,7 @@ describe("SecuritySettings", () => {
     const requestUnlock = vi.fn(() => new Promise<boolean>(() => {}));
     useAppStore.setState({ requestUnlock });
 
-    render();
+    await render();
 
     const noneOption = query("storage-mode-none") as HTMLElement;
     await act(async () => {
@@ -448,7 +448,7 @@ describe("SecuritySettings", () => {
     const requestUnlock = vi.fn(() => Promise.resolve(true));
     useAppStore.setState({ requestUnlock });
 
-    render();
+    await render();
 
     const noneOption = query("storage-mode-none") as HTMLElement;
     await act(async () => {
@@ -466,7 +466,7 @@ describe("SecuritySettings", () => {
     const requestUnlock = vi.fn(() => Promise.resolve(false));
     useAppStore.setState({ requestUnlock });
 
-    render();
+    await render();
 
     const noneOption = query("storage-mode-none") as HTMLElement;
     await act(async () => {
@@ -484,7 +484,7 @@ describe("SecuritySettings", () => {
     const requestUnlock = vi.fn(() => Promise.resolve(true));
     useAppStore.setState({ requestUnlock });
 
-    render();
+    await render();
 
     const noneOption = query("storage-mode-none") as HTMLElement;
     await act(async () => {
@@ -500,7 +500,7 @@ describe("SecuritySettings", () => {
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
 
-    render();
+    await render();
 
     const noneOption = query("storage-mode-none") as HTMLElement;
     await act(async () => {
@@ -526,7 +526,7 @@ describe("SecuritySettings", () => {
       return Promise.resolve(undefined);
     });
 
-    render();
+    await render();
 
     const btn = query("change-master-password-btn") as HTMLElement;
     await act(async () => {
@@ -550,11 +550,11 @@ describe("SecuritySettings", () => {
   });
 
   describe("workflow local process execution (#1857)", () => {
-    it("shows the opt-in toggle, off by default, with no allowlist section", () => {
+    it("shows the opt-in toggle, off by default, with no allowlist section", async () => {
       useAppStore.setState({
         credentialStoreStatus: { mode: "none", status: "unlocked" },
       });
-      render();
+      await render();
 
       expect(query("workflow-local-process-toggle")).not.toBeNull();
       // The allowlist section only appears once the opt-in is on.
@@ -566,7 +566,7 @@ describe("SecuritySettings", () => {
       useAppStore.setState({
         credentialStoreStatus: { mode: "none", status: "unlocked" },
       });
-      render();
+      await render();
 
       const toggle = query("workflow-local-process-toggle") as HTMLElement;
       await act(async () => {
@@ -584,7 +584,7 @@ describe("SecuritySettings", () => {
         workflowLocalProcessEnabled: true,
         workflowLocalProcessAllowlist: ["notify-send", "echo"],
       });
-      render();
+      await render();
 
       const list = query("workflow-allowlist");
       expect(list).not.toBeNull();
@@ -610,7 +610,7 @@ describe("SecuritySettings", () => {
         if (cmd === "switch_credential_store") return Promise.resolve(result);
         return Promise.resolve(undefined);
       });
-      render();
+      await render();
       await act(async () => {
         (query("storage-mode-os-keychain") as HTMLElement).click();
       });
@@ -690,7 +690,7 @@ describe("SecuritySettings", () => {
         if (cmd === "switch_credential_store") return Promise.resolve(result);
         return Promise.resolve(undefined);
       });
-      render();
+      await render();
       await act(async () => {
         (query("storage-mode-none") as HTMLElement).click();
       });

@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 import React, { act } from "react";
+import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
@@ -75,9 +76,9 @@ describe("ConnectionList — jump-host delete protection", () => {
     container.remove();
   });
 
-  function renderWith(connections: SavedConnection[]) {
+  async function renderWith(connections: SavedConnection[]) {
     seedConnectionsRegion({ connections });
-    act(() =>
+    await act(async () =>
       root.render(
         React.createElement(TooltipProvider, {
           delayDuration: 0,
@@ -85,6 +86,7 @@ describe("ConnectionList — jump-host delete protection", () => {
         })
       )
     );
+    await flushAsync();
   }
 
   function clickDelete(id: string) {
@@ -96,8 +98,8 @@ describe("ConnectionList — jump-host delete protection", () => {
     act(() => del.click());
   }
 
-  it("warns before deleting a connection used as a jump host", () => {
-    renderWith([
+  it("warns before deleting a connection used as a jump host", async () => {
+    await renderWith([
       sshConnection("bastion"),
       sshConnection("app-server", { proxyJump: [ref("bastion")] }),
     ]);
@@ -114,8 +116,8 @@ describe("ConnectionList — jump-host delete protection", () => {
     expect(deleteConnection).toHaveBeenCalledWith("bastion");
   });
 
-  it("cancelling the warning leaves the connection in place", () => {
-    renderWith([
+  it("cancelling the warning leaves the connection in place", async () => {
+    await renderWith([
       sshConnection("bastion"),
       sshConnection("app-server", { proxyJump: [ref("bastion")] }),
     ]);
@@ -125,8 +127,8 @@ describe("ConnectionList — jump-host delete protection", () => {
     expect(deleteConnection).not.toHaveBeenCalled();
   });
 
-  it("confirms before deleting an unreferenced connection (no silent delete)", () => {
-    renderWith([
+  it("confirms before deleting an unreferenced connection (no silent delete)", async () => {
+    await renderWith([
       sshConnection("lonely"),
       sshConnection("app-server", { proxyJump: [ref("bastion")] }),
     ]);
@@ -143,8 +145,8 @@ describe("ConnectionList — jump-host delete protection", () => {
     expect(deleteConnection).toHaveBeenCalledWith("lonely");
   });
 
-  it("cancelling an ordinary delete leaves the connection in place", () => {
-    renderWith([sshConnection("lonely")]);
+  it("cancelling an ordinary delete leaves the connection in place", async () => {
+    await renderWith([sshConnection("lonely")]);
     clickDelete("lonely");
     act(() => q("confirm-delete-cancel").click());
     expect(q("confirm-delete-dialog")).toBeNull();

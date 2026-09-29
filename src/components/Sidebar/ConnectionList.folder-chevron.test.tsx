@@ -16,6 +16,7 @@ import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarn
 import { TooltipProvider } from "@/components/ui";
 import type { ConnectionFolder } from "@/types/connection";
 import type { RemoteAgentDefinition } from "@/types/connection";
+import { flushAsync } from "@/test/flushAsync";
 
 vi.mock("@/services/api", () => ({
   listAvailableShells: vi.fn(() => Promise.resolve([])),
@@ -64,6 +65,19 @@ const baseSettings = {
 setupConnectionsRegion();
 setupSettingsRegion();
 
+/** Mount the list and let its projection subscriptions settle inside act (#3860). */
+async function renderList(root: Root): Promise<void> {
+  await act(async () => {
+    root.render(
+      React.createElement(TooltipProvider, {
+        delayDuration: 0,
+        children: React.createElement(ConnectionList),
+      })
+    );
+  });
+  await flushAsync();
+}
+
 describe("ConnectionList — folder chevron placement", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -81,17 +95,10 @@ describe("ConnectionList — folder chevron placement", () => {
     container.remove();
   });
 
-  it("renders chevron as the last child of the folder button", () => {
+  it("renders chevron as the last child of the folder button", async () => {
     seedConnectionsRegion({ folders: [makeFolder()] });
 
-    act(() => {
-      root.render(
-        React.createElement(TooltipProvider, {
-          delayDuration: 0,
-          children: React.createElement(ConnectionList),
-        })
-      );
-    });
+    await renderList(root);
 
     const folderButton = container.querySelector('[data-testid="folder-toggle-folder-1"]');
     expect(folderButton).not.toBeNull();
@@ -105,17 +112,10 @@ describe("ConnectionList — folder chevron placement", () => {
     expect(chevronIdx).toBe(children.length - 1);
   });
 
-  it("does not render chevron as the first child of the folder button", () => {
+  it("does not render chevron as the first child of the folder button", async () => {
     seedConnectionsRegion({ folders: [makeFolder()] });
 
-    act(() => {
-      root.render(
-        React.createElement(TooltipProvider, {
-          delayDuration: 0,
-          children: React.createElement(ConnectionList),
-        })
-      );
-    });
+    await renderList(root);
 
     const folderButton = container.querySelector('[data-testid="folder-toggle-folder-1"]');
     expect(folderButton).not.toBeNull();
@@ -124,19 +124,12 @@ describe("ConnectionList — folder chevron placement", () => {
     expect(firstChild.classList.contains("connection-tree__chevron")).toBe(false);
   });
 
-  it("renders chevron at last position for a nested subfolder", () => {
+  it("renders chevron at last position for a nested subfolder", async () => {
     const parent = makeFolder({ id: "folder-parent", name: "Parent", isExpanded: true });
     const child = makeFolder({ id: "folder-child", name: "Child", parentId: "folder-parent" });
     seedConnectionsRegion({ folders: [parent, child] });
 
-    act(() => {
-      root.render(
-        React.createElement(TooltipProvider, {
-          delayDuration: 0,
-          children: React.createElement(ConnectionList),
-        })
-      );
-    });
+    await renderList(root);
 
     const childButton = container.querySelector('[data-testid="folder-toggle-folder-child"]');
     expect(childButton).not.toBeNull();

@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
+import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { currentConnectionsView } from "@/store/connectionsBridge";
@@ -59,8 +60,8 @@ const baseSettings = {
   experimentalFeaturesEnabled: false,
 };
 
-function render(_container: HTMLElement, root: Root) {
-  act(() => {
+async function render(_container: HTMLElement, root: Root) {
+  await act(async () => {
     root.render(
       React.createElement(TooltipProvider, {
         delayDuration: 0,
@@ -68,6 +69,7 @@ function render(_container: HTMLElement, root: Root) {
       })
     );
   });
+  await flushAsync();
 }
 
 function typeInto(input: HTMLInputElement, value: string) {
@@ -112,12 +114,12 @@ describe("ConnectionList — folder toggle ignored while filtering (#1378)", () 
     return container.querySelector('[data-testid="connection-filter-input"]') as HTMLInputElement;
   }
 
-  it("clicking a folder while filtering does not change its stored expansion state", () => {
+  it("clicking a folder while filtering does not change its stored expansion state", async () => {
     seedConnectionsRegion({
       folders: [makeFolder({ id: "folder-1", isExpanded: true })],
       connections: [makeConnection({ id: "conn-1", name: "web-server", folderId: "folder-1" })],
     });
-    render(container, root);
+    await render(container, root);
 
     // Activate a filter that matches the nested connection (force-expands folder).
     typeInto(filterInput(), "web");
@@ -134,12 +136,12 @@ describe("ConnectionList — folder toggle ignored while filtering (#1378)", () 
     expect(container.querySelector('[data-testid="connection-item-conn-1"]')).not.toBeNull();
   });
 
-  it("keyboard-collapsing a folder while filtering does not change its stored expansion state", () => {
+  it("keyboard-collapsing a folder while filtering does not change its stored expansion state", async () => {
     seedConnectionsRegion({
       folders: [makeFolder({ id: "folder-1", isExpanded: true })],
       connections: [makeConnection({ id: "conn-1", name: "web-server", folderId: "folder-1" })],
     });
-    render(container, root);
+    await render(container, root);
 
     typeInto(filterInput(), "web");
     expect(folderExpanded("folder-1")).toBe(true);
@@ -158,12 +160,12 @@ describe("ConnectionList — folder toggle ignored while filtering (#1378)", () 
     expect(folderExpanded("folder-1")).toBe(true);
   });
 
-  it("a collapsed folder stays collapsed after filtering force-expands then toggling it", () => {
+  it("a collapsed folder stays collapsed after filtering force-expands then toggling it", async () => {
     seedConnectionsRegion({
       folders: [makeFolder({ id: "folder-1", isExpanded: false })],
       connections: [makeConnection({ id: "conn-1", name: "web-server", folderId: "folder-1" })],
     });
-    render(container, root);
+    await render(container, root);
 
     // Collapsed: nested connection not rendered.
     expect(container.querySelector('[data-testid="connection-item-conn-1"]')).toBeNull();

@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { seedLayoutState } from "@/test/layoutState";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
@@ -63,14 +64,15 @@ let container: HTMLDivElement;
 let root: Root;
 let saveTunnel: (config: TunnelConfig) => Promise<void>;
 
-function render(tunnelId: string | null) {
-  act(() => {
+async function render(tunnelId: string | null) {
+  await act(async () => {
     root.render(
       <TooltipProvider>
         <TunnelEditor tabId={TAB_ID} meta={{ tunnelId }} isVisible={true} />
       </TooltipProvider>
     );
   });
+  await flushAsync();
 }
 
 function q(testid: string): HTMLElement | null {
@@ -106,13 +108,13 @@ describe("TunnelEditor — tunnel host (S3, #2155)", () => {
     vi.clearAllMocks();
   });
 
-  it("exposes a Tunnel host field", () => {
-    render(null);
+  it("exposes a Tunnel host field", async () => {
+    await render(null);
     expect(q("tunnel-editor-host")).not.toBeNull();
   });
 
-  it("names the concrete machine in the endpoint lines for a new (desktop) tunnel", () => {
-    render(null);
+  it("names the concrete machine in the endpoint lines for a new (desktop) tunnel", async () => {
+    await render(null);
     const endpoints = q("tunnel-editor-endpoints");
     expect(endpoints?.textContent).toContain("this computer");
     expect(endpoints?.textContent).toContain("Listens on");
@@ -120,8 +122,8 @@ describe("TunnelEditor — tunnel host (S3, #2155)", () => {
     expect(q("tunnel-editor-reachability")).toBeNull();
   });
 
-  it("names the agent and warns for an agent-hosted loopback listen", () => {
-    render("tun-agent");
+  it("names the agent and warns for an agent-hosted loopback listen", async () => {
+    await render("tun-agent");
     const endpoints = q("tunnel-editor-endpoints");
     expect(endpoints?.textContent).toContain("agent build-box");
     const warning = q("tunnel-editor-reachability");
@@ -129,8 +131,8 @@ describe("TunnelEditor — tunnel host (S3, #2155)", () => {
     expect(warning?.textContent).toContain("build-box");
   });
 
-  it("Widen bind rewrites the loopback listen to 0.0.0.0 and clears the warning", () => {
-    render("tun-agent");
+  it("Widen bind rewrites the loopback listen to 0.0.0.0 and clears the warning", async () => {
+    await render("tun-agent");
     const widen = q("tunnel-editor-widen-bind") as HTMLButtonElement;
     expect(widen).not.toBeNull();
     act(() => widen.click());
@@ -141,7 +143,7 @@ describe("TunnelEditor — tunnel host (S3, #2155)", () => {
   });
 
   it("persists the agent host through Save", async () => {
-    render("tun-agent");
+    await render("tun-agent");
     const save = q("tunnel-editor-save") as HTMLButtonElement;
     await act(async () => {
       save.click();

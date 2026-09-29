@@ -11,6 +11,7 @@ import { createRoot, Root } from "react-dom/client";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { TrustPrompt, type TrustFact } from "./TrustPrompt";
 import { toast } from "./Toast";
+import { flushAsync } from "@/test/flushAsync";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -113,10 +114,12 @@ describe("TrustPrompt", () => {
     expect(warning?.textContent).toContain("changed");
   });
 
-  it("copies a copyable fact to the clipboard and confirms", () => {
+  it("copies a copyable fact to the clipboard and confirms", async () => {
     const success = vi.spyOn(toast, "success").mockReturnValue("id");
     renderPrompt();
     click("tp-fingerprint-copy");
+    // The copy is an async Button action: let its pending lifecycle settle in act.
+    await flushAsync();
     expect(writeClipboard).toHaveBeenCalledWith("SHA256:AABBCCDD");
     success.mockRestore();
   });

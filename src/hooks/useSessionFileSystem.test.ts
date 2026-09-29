@@ -398,22 +398,24 @@ describe("useSessionFileSystem — SFTP-backed transport (probe resolves)", () =
     });
 
     const api = await mountHook();
-    useAppStore.getState().setFileClipboard({
-      entries: [
-        {
-          name: "file.bin",
-          path: "/remote/src/file.bin",
-          isDirectory: false,
-          size: 10,
-          modified: "",
-          permissions: null,
-          writable: null,
-        },
-      ],
-      operation: "copy",
-      sourceMode: "session",
-      sourcePath: "/remote/src",
-      terminalSessionId: "ssh-1",
+    await act(async () => {
+      useAppStore.getState().setFileClipboard({
+        entries: [
+          {
+            name: "file.bin",
+            path: "/remote/src/file.bin",
+            isDirectory: false,
+            size: 10,
+            modified: "",
+            permissions: null,
+            writable: null,
+          },
+        ],
+        operation: "copy",
+        sourceMode: "session",
+        sourcePath: "/remote/src",
+        terminalSessionId: "ssh-1",
+      });
     });
 
     await act(async () => {
@@ -460,22 +462,24 @@ describe("useSessionFileSystem — SFTP-backed transport (probe resolves)", () =
     vi.mocked(sessionCopyRemote).mockResolvedValue(0);
 
     const api = await mountHook();
-    useAppStore.getState().setFileClipboard({
-      entries: [
-        {
-          name: "file.bin",
-          path: "/remote/src/file.bin",
-          isDirectory: false,
-          size: 10,
-          modified: "",
-          permissions: null,
-          writable: null,
-        },
-      ],
-      operation: "copy",
-      sourceMode: "session",
-      sourcePath: "/remote/src",
-      terminalSessionId: "ssh-src",
+    await act(async () => {
+      useAppStore.getState().setFileClipboard({
+        entries: [
+          {
+            name: "file.bin",
+            path: "/remote/src/file.bin",
+            isDirectory: false,
+            size: 10,
+            modified: "",
+            permissions: null,
+            writable: null,
+          },
+        ],
+        operation: "copy",
+        sourceMode: "session",
+        sourcePath: "/remote/src",
+        terminalSessionId: "ssh-src",
+      });
     });
 
     await act(async () => {
@@ -611,22 +615,24 @@ describe("useSessionFileSystem — byte-based transport (probe rejects)", () => 
   // event-deferring wrapper left success silent — it must now toast itself.
   it("surfaces a success toast when a byte-based paste succeeds", async () => {
     const api = await mountHook();
-    useAppStore.getState().setFileClipboard({
-      entries: [
-        {
-          name: "file.bin",
-          path: "/remote/src/file.bin",
-          isDirectory: false,
-          size: 10,
-          modified: "",
-          permissions: null,
-          writable: null,
-        },
-      ],
-      operation: "copy",
-      sourceMode: "session",
-      sourcePath: "/remote/src",
-      terminalSessionId: "docker-1",
+    await act(async () => {
+      useAppStore.getState().setFileClipboard({
+        entries: [
+          {
+            name: "file.bin",
+            path: "/remote/src/file.bin",
+            isDirectory: false,
+            size: 10,
+            modified: "",
+            permissions: null,
+            writable: null,
+          },
+        ],
+        operation: "copy",
+        sourceMode: "session",
+        sourcePath: "/remote/src",
+        terminalSessionId: "docker-1",
+      });
     });
 
     await act(async () => {
@@ -646,22 +652,24 @@ describe("useSessionFileSystem — byte-based transport (probe rejects)", () => 
   it("surfaces an error toast when a byte-based paste fails", async () => {
     vi.mocked(sessionReadFile).mockRejectedValueOnce(new Error("no such file"));
     const api = await mountHook();
-    useAppStore.getState().setFileClipboard({
-      entries: [
-        {
-          name: "file.bin",
-          path: "/remote/src/file.bin",
-          isDirectory: false,
-          size: 10,
-          modified: "",
-          permissions: null,
-          writable: null,
-        },
-      ],
-      operation: "copy",
-      sourceMode: "session",
-      sourcePath: "/remote/src",
-      terminalSessionId: "docker-1",
+    await act(async () => {
+      useAppStore.getState().setFileClipboard({
+        entries: [
+          {
+            name: "file.bin",
+            path: "/remote/src/file.bin",
+            isDirectory: false,
+            size: 10,
+            modified: "",
+            permissions: null,
+            writable: null,
+          },
+        ],
+        operation: "copy",
+        sourceMode: "session",
+        sourcePath: "/remote/src",
+        terminalSessionId: "docker-1",
+      });
     });
 
     await act(async () => {
@@ -678,22 +686,24 @@ describe("useSessionFileSystem — byte-based transport (probe rejects)", () => 
   it("resolves a failed same-session cut paste and keeps the cut clipboard", async () => {
     vi.mocked(sessionRenameFile).mockRejectedValueOnce(new Error("permission denied"));
     const api = await mountHook();
-    useAppStore.getState().setFileClipboard({
-      entries: [
-        {
-          name: "file.bin",
-          path: "/remote/src/file.bin",
-          isDirectory: false,
-          size: 10,
-          modified: "",
-          permissions: null,
-          writable: null,
-        },
-      ],
-      operation: "cut",
-      sourceMode: "session",
-      sourcePath: "/remote/src",
-      terminalSessionId: "docker-1",
+    await act(async () => {
+      useAppStore.getState().setFileClipboard({
+        entries: [
+          {
+            name: "file.bin",
+            path: "/remote/src/file.bin",
+            isDirectory: false,
+            size: 10,
+            modified: "",
+            permissions: null,
+            writable: null,
+          },
+        ],
+        operation: "cut",
+        sourceMode: "session",
+        sourcePath: "/remote/src",
+        terminalSessionId: "docker-1",
+      });
     });
 
     await act(async () => {
@@ -721,22 +731,24 @@ describe("useSessionFileSystem — byte-based transport (probe rejects)", () => 
   // session→session copy stays a read/write round-trip (no tracked transfer).
   it("falls back to read/write for a session→session copy (no tracked transfer)", async () => {
     const api = await mountHook();
-    useAppStore.getState().setFileClipboard({
-      entries: [
-        {
-          name: "file.bin",
-          path: "/remote/src/file.bin",
-          isDirectory: false,
-          size: 10,
-          modified: "",
-          permissions: null,
-          writable: null,
-        },
-      ],
-      operation: "copy",
-      sourceMode: "session",
-      sourcePath: "/remote/src",
-      terminalSessionId: "docker-1",
+    await act(async () => {
+      useAppStore.getState().setFileClipboard({
+        entries: [
+          {
+            name: "file.bin",
+            path: "/remote/src/file.bin",
+            isDirectory: false,
+            size: 10,
+            modified: "",
+            permissions: null,
+            writable: null,
+          },
+        ],
+        operation: "copy",
+        sourceMode: "session",
+        sourcePath: "/remote/src",
+        terminalSessionId: "docker-1",
+      });
     });
 
     await act(async () => {
@@ -759,22 +771,24 @@ describe("useSessionFileSystem — byte-based transport (probe rejects)", () => 
   it("streams a Docker session→session copy as one tracked remote copy", async () => {
     vi.mocked(sessionSupportsRemoteCopy).mockResolvedValue(true);
     const api = await mountHook();
-    useAppStore.getState().setFileClipboard({
-      entries: [
-        {
-          name: "file.bin",
-          path: "/remote/src/file.bin",
-          isDirectory: false,
-          size: 10,
-          modified: "",
-          permissions: null,
-          writable: null,
-        },
-      ],
-      operation: "copy",
-      sourceMode: "session",
-      sourcePath: "/remote/src",
-      terminalSessionId: "docker-src",
+    await act(async () => {
+      useAppStore.getState().setFileClipboard({
+        entries: [
+          {
+            name: "file.bin",
+            path: "/remote/src/file.bin",
+            isDirectory: false,
+            size: 10,
+            modified: "",
+            permissions: null,
+            writable: null,
+          },
+        ],
+        operation: "copy",
+        sourceMode: "session",
+        sourcePath: "/remote/src",
+        terminalSessionId: "docker-src",
+      });
     });
 
     await act(async () => {
@@ -941,22 +955,24 @@ describe("useSessionFileSystem — mutation + clipboard wiring", () => {
 
   it("pasteEntry moves a same-session cut via a single sessionRenameFile", async () => {
     const api = await mountHook("/remote/dir");
-    useAppStore.getState().setFileClipboard({
-      entries: [
-        {
-          name: "a.txt",
-          path: "/remote/src/a.txt",
-          isDirectory: false,
-          size: 1,
-          modified: "",
-          permissions: null,
-          writable: null,
-        },
-      ],
-      operation: "cut",
-      sourceMode: "session",
-      sourcePath: "/remote/src",
-      terminalSessionId: "ssh-1",
+    await act(async () => {
+      useAppStore.getState().setFileClipboard({
+        entries: [
+          {
+            name: "a.txt",
+            path: "/remote/src/a.txt",
+            isDirectory: false,
+            size: 1,
+            modified: "",
+            permissions: null,
+            writable: null,
+          },
+        ],
+        operation: "cut",
+        sourceMode: "session",
+        sourcePath: "/remote/src",
+        terminalSessionId: "ssh-1",
+      });
     });
     await act(async () => {
       await api.pasteEntry();
@@ -971,7 +987,9 @@ describe("useSessionFileSystem — mutation + clipboard wiring", () => {
 
   it("pasteEntry with an explicit clipboard + destDir renames into that folder and keeps the user clipboard", async () => {
     const api = await mountHook("/remote/dir");
-    useAppStore.getState().setFileClipboard(null);
+    await act(async () => {
+      useAppStore.getState().setFileClipboard(null);
+    });
     await act(async () => {
       await api.pasteEntry({
         clipboard: {
@@ -1005,21 +1023,23 @@ describe("useSessionFileSystem — mutation + clipboard wiring", () => {
 
   it("pasteEntry uploads a local→session clipboard over the SFTP channel", async () => {
     const api = await mountHook("/remote/dir");
-    useAppStore.getState().setFileClipboard({
-      entries: [
-        {
-          name: "a.txt",
-          path: "/local/a.txt",
-          isDirectory: false,
-          size: 1,
-          modified: "",
-          permissions: null,
-          writable: null,
-        },
-      ],
-      operation: "copy",
-      sourceMode: "local",
-      sourcePath: "/local",
+    await act(async () => {
+      useAppStore.getState().setFileClipboard({
+        entries: [
+          {
+            name: "a.txt",
+            path: "/local/a.txt",
+            isDirectory: false,
+            size: 1,
+            modified: "",
+            permissions: null,
+            writable: null,
+          },
+        ],
+        operation: "copy",
+        sourceMode: "local",
+        sourcePath: "/local",
+      });
     });
     await act(async () => {
       await api.pasteEntry();
@@ -1129,21 +1149,23 @@ describe("useSessionFileSystem — FTP transport (queue-capable, not SFTP)", () 
 
   it("routes a local→session paste upload through the queue engine", async () => {
     const api = await mountHook();
-    useAppStore.getState().setFileClipboard({
-      entries: [
-        {
-          name: "a.txt",
-          path: "/local/a.txt",
-          isDirectory: false,
-          size: 1,
-          modified: "",
-          permissions: null,
-          writable: null,
-        },
-      ],
-      operation: "copy",
-      sourceMode: "local",
-      sourcePath: "/local",
+    await act(async () => {
+      useAppStore.getState().setFileClipboard({
+        entries: [
+          {
+            name: "a.txt",
+            path: "/local/a.txt",
+            isDirectory: false,
+            size: 1,
+            modified: "",
+            permissions: null,
+            writable: null,
+          },
+        ],
+        operation: "copy",
+        sourceMode: "local",
+        sourcePath: "/local",
+      });
     });
     await act(async () => {
       await api.pasteEntry();
@@ -1249,12 +1271,14 @@ describe("useSessionFileSystem — recursive directory paste (PROD-004)", () => 
     vi.mocked(sessionSupportsRemoteCopy).mockResolvedValue(true);
     vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(true);
     const api = await mountHook("ssh-1");
-    useAppStore.getState().setFileClipboard({
-      entries: [dirEntry("folder", "/remote/src/folder")],
-      operation: "copy",
-      sourceMode: "session",
-      sourcePath: "/remote/src",
-      terminalSessionId: "ssh-1",
+    await act(async () => {
+      useAppStore.getState().setFileClipboard({
+        entries: [dirEntry("folder", "/remote/src/folder")],
+        operation: "copy",
+        sourceMode: "session",
+        sourcePath: "/remote/src",
+        terminalSessionId: "ssh-1",
+      });
     });
 
     await act(async () => {
@@ -1302,12 +1326,14 @@ describe("useSessionFileSystem — recursive directory paste (PROD-004)", () => 
     });
 
     const api = await mountHook("ssh-1");
-    useAppStore.getState().setFileClipboard({
-      entries: [dirEntry("folder", "/remote/src/folder")],
-      operation: "copy",
-      sourceMode: "session",
-      sourcePath: "/remote/src",
-      terminalSessionId: "ssh-src",
+    await act(async () => {
+      useAppStore.getState().setFileClipboard({
+        entries: [dirEntry("folder", "/remote/src/folder")],
+        operation: "copy",
+        sourceMode: "session",
+        sourcePath: "/remote/src",
+        terminalSessionId: "ssh-src",
+      });
     });
 
     await act(async () => {
@@ -1357,12 +1383,14 @@ describe("useSessionFileSystem — recursive directory paste (PROD-004)", () => 
     );
 
     const api = await mountHook("ssh-1");
-    useAppStore.getState().setFileClipboard({
-      entries: [dirEntry("folder", "/remote/src/folder")],
-      operation: "copy",
-      sourceMode: "session",
-      sourcePath: "/remote/src",
-      terminalSessionId: "ssh-src",
+    await act(async () => {
+      useAppStore.getState().setFileClipboard({
+        entries: [dirEntry("folder", "/remote/src/folder")],
+        operation: "copy",
+        sourceMode: "session",
+        sourcePath: "/remote/src",
+        terminalSessionId: "ssh-src",
+      });
     });
 
     await act(async () => {
@@ -1385,12 +1413,14 @@ describe("useSessionFileSystem — recursive directory paste (PROD-004)", () => 
     });
 
     const api = await mountHook("docker-1");
-    useAppStore.getState().setFileClipboard({
-      entries: [dirEntry("folder", "/remote/src/folder")],
-      operation: "copy",
-      sourceMode: "session",
-      sourcePath: "/remote/src",
-      terminalSessionId: "docker-1",
+    await act(async () => {
+      useAppStore.getState().setFileClipboard({
+        entries: [dirEntry("folder", "/remote/src/folder")],
+        operation: "copy",
+        sourceMode: "session",
+        sourcePath: "/remote/src",
+        terminalSessionId: "docker-1",
+      });
     });
 
     await act(async () => {
@@ -1418,11 +1448,13 @@ describe("useSessionFileSystem — recursive directory paste (PROD-004)", () => 
     });
 
     const api = await mountHook("ssh-1");
-    useAppStore.getState().setFileClipboard({
-      entries: [dirEntry("proj", "/local/proj")],
-      operation: "copy",
-      sourceMode: "local",
-      sourcePath: "/local",
+    await act(async () => {
+      useAppStore.getState().setFileClipboard({
+        entries: [dirEntry("proj", "/local/proj")],
+        operation: "copy",
+        sourceMode: "local",
+        sourcePath: "/local",
+      });
     });
 
     await act(async () => {

@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { seedLayoutState } from "@/test/layoutState";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
@@ -49,14 +50,15 @@ const ORPHANED: TunnelConfig = {
 let container: HTMLDivElement;
 let root: Root;
 
-function render() {
-  act(() => {
+async function render() {
+  await act(async () => {
     root.render(
       <TooltipProvider>
         <TunnelEditor tabId={TAB_ID} meta={{ tunnelId: ORPHANED.id }} isVisible={true} />
       </TooltipProvider>
     );
   });
+  await flushAsync();
 }
 
 async function flush() {
@@ -128,13 +130,13 @@ describe("TunnelEditor — SSH connection deleted (#2850)", () => {
     vi.clearAllMocks();
   });
 
-  it("flags the deleted SSH connection", () => {
-    render();
+  it("flags the deleted SSH connection", async () => {
+    await render();
     expect(sshFieldError()).toBe(t("tunnel.editor.missingConnection"));
   });
 
   it("repoints the tunnel at the chosen SSH connection", async () => {
-    render();
+    await render();
     pickSshConnection("web");
     await flush();
     expect(sshFieldError()).toBeNull();
@@ -149,9 +151,9 @@ describe("TunnelEditor — SSH connection deleted (#2850)", () => {
     expect(save.mock.calls[0][0]).toMatchObject({ id: ORPHANED.id, sshConnectionId: "web" });
   });
 
-  it("does not flag a tunnel whose SSH connection exists", () => {
+  it("does not flag a tunnel whose SSH connection exists", async () => {
     useAppStore.setState({ tunnels: [{ ...ORPHANED, sshConnectionId: "db" }] });
-    render();
+    await render();
     expect(sshFieldError()).toBeNull();
   });
 });
