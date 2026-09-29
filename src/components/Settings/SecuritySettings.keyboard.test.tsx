@@ -51,7 +51,15 @@ describe("SecuritySettings — keyboard (#1341)", () => {
     useAppStore.setState({ credentialStoreStatus: { mode: "none", status: "unlocked" } });
     mockedInvoke.mockImplementation((cmd) => {
       if (cmd === "switch_credential_store") {
-        return Promise.resolve({ migratedCount: 0, warnings: [] });
+        return Promise.resolve({
+          status: "success",
+          migratedCount: 0,
+          failedCount: 0,
+          warnings: [],
+          removedCount: 0,
+          remaining: [],
+          rolledBack: false,
+        });
       }
       return Promise.resolve(undefined);
     });

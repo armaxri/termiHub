@@ -195,6 +195,22 @@ rejected every other format. termiHub can now negotiate 16-bit high colour:
 Tests: `src/client/hostile_server_tests.rs` (16-bpp cursor incl. big-endian,
 Tight fill/copy/palette/gradient, ZRLE), `src/codec/mod.rs` and `src/config.rs`.
 
+## Tight 24-bit TPIXEL byte order and alpha (#3545)
+
+Upstream's packed 24-bit TPIXEL path (32 bpp with 8-bit channels) always
+serialised the expanded pixel little-endian, ignoring `big_endian_flag`, and
+its gradient filter packed colours without the alpha lane that fill / copy /
+palette set (alpha 0 instead of 255). Every Tight filter now unpacks and packs
+channels through one pair of helpers in `src/codec/tight.rs`: the pixel honours
+the format's shifts, maxima and byte order (`codec::push_pixel`), and the
+24-bit case always carries an opaque alpha lane. The 24-bit and full-PIXEL
+gradient decoders are one function. JPEG rects are self-describing and
+unaffected.
+
+Tests: `src/client/hostile_server_tests.rs` (fill / copy / palette / gradient
+under little- and big-endian RGBA and big-endian BGRA, a hand-computed 2x2
+gradient hitting both clamp ends, and all filters agreeing on alpha).
+
 ## ExtendedDesktopSize and SetDesktopSize (#3463)
 
 Upstream `0.5.3` could only follow a server-dictated size (`DesktopSize`, -223);

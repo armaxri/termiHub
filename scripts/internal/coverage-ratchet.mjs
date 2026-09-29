@@ -37,8 +37,7 @@
 // DOWN to 2 decimals). It never lowers one unless --allow-decrease is given,
 // so an accidental bump on a worse tree cannot loosen the gate.
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { isMainModule } from "./is-main-module.mjs";
 
 export const COMPONENTS = ["frontend", "core", "agent", "src-tauri", "unified"];
 const DIR_TO_COMPONENT = {
@@ -275,6 +274,6 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   process.exit(main(process.argv.slice(2)));
 }

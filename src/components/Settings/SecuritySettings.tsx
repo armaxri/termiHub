@@ -11,6 +11,7 @@ import { CredentialVaultBackup } from "./CredentialVaultBackup";
 import { SharedCredentialsSettings } from "./SharedCredentialsSettings";
 import { BiometricUnlockSettings } from "./BiometricUnlockSettings";
 import { errorMessage } from "@/utils/errorMessage";
+import { tf } from "@/i18n/catalog";
 
 interface SecuritySettingsProps {
   visibleFields?: Set<string>;
@@ -54,11 +55,14 @@ function modeLabel(mode: CredentialStorageMode): string {
 
 /** Pluralize "credential" for a count. */
 function credentials(count: number): string {
-  return `${count} credential${count !== 1 ? "s" : ""}`;
+  return tf(count === 1 ? "credentialSwitch.count.one" : "credentialSwitch.count.other", {
+    count,
+  });
 }
 
 /** A completed switch plus the modes involved, for truthful result messaging. */
 interface MigrationResultView extends SwitchCredentialStoreResult {
+  targetMode: CredentialStorageMode;
   targetLabel: string;
   previousLabel: string;
 }
@@ -66,27 +70,47 @@ interface MigrationResultView extends SwitchCredentialStoreResult {
 /**
  * Human-readable summary of a completed store switch, driven by the backend's
  * structured `status` (#2839) — never inferred from the free-text warnings. A
- * partial or failed migration must not read as a clean success.
+ * partial or failed migration must not read as a clean success. A failed switch
+ * was rolled back, so it reads "nothing changed"; a switch to `none` removes the
+ * credentials, so it says "removed", never "migrated" (#3323).
  */
 function migrationSummary(view: MigrationResultView): string {
-  const { status, migratedCount, failedCount, targetLabel, previousLabel } = view;
+  const { status, migratedCount, removedCount, failedCount, targetLabel, previousLabel } = view;
+  const target = targetLabel;
+  const previous = previousLabel;
+  const removing = view.targetMode === "none";
+  const done = removing ? removedCount : migratedCount;
+  const total = done + failedCount;
   switch (status) {
     case "partial":
-      return (
-        `Switched to ${targetLabel}. ${migratedCount} of ${migratedCount + failedCount} ` +
-        `credentials migrated; ${credentials(failedCount)} could not be moved and ` +
-        `${failedCount !== 1 ? "remain" : "remains"} in ${previousLabel}.`
-      );
+      return removing
+        ? tf("credentialSwitch.removed.partial", {
+            target,
+            previous,
+            removed: removedCount,
+            total,
+            failed: credentials(failedCount),
+          })
+        : tf("credentialSwitch.migrated.partial", {
+            target,
+            previous,
+            migrated: migratedCount,
+            total,
+            failed: credentials(failedCount),
+          });
     case "failed":
-      return (
-        `Switched to ${targetLabel}, but none of your ${credentials(failedCount)} could be ` +
-        `migrated. They are still in ${previousLabel} — switch back to use them.`
-      );
+      return tf(removing ? "credentialSwitch.removed.failed" : "credentialSwitch.migrated.failed", {
+        target,
+        previous,
+        credentials: credentials(failedCount),
+      });
     case "success":
     default:
-      return migratedCount > 0
-        ? `Switched to ${targetLabel} — ${credentials(migratedCount)} migrated.`
-        : `Switched to ${targetLabel}.`;
+      if (done === 0) return tf("credentialSwitch.switched", { target });
+      return tf(
+        removing ? "credentialSwitch.removed.success" : "credentialSwitch.migrated.success",
+        { target, credentials: credentials(done) }
+      );
   }
 }
 
@@ -215,6 +239,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
       );
       const view: MigrationResultView = {
         ...result,
+        targetMode,
         targetLabel: modeLabel(targetMode),
         previousLabel: modeLabel(previousMode),
       };
@@ -224,9 +249,9 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
       setNewPassword("");
       setConfirmPassword("");
       await loadCredentialStoreStatus();
-      // The switch itself happened in every case; only the migration outcome
-      // differs. A partial migration is informational, a total failure is an
-      // error — neither may be reported as a clean success (#2839).
+      // A partial migration is informational (the switch happened); a total
+      // failure is an error and was rolled back, so nothing changed — neither
+      // may be reported as a clean success (#2839, #3323).
       const summary = migrationSummary(view);
       if (result.status === "failed") {
         toast.error(summary);
@@ -438,7 +463,24 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
               role={migrationResult.status === "success" ? "status" : "alert"}
             >
               <p>{migrationSummary(migrationResult)}</p>
-              {migrationResult.warnings.length > 0 && (
+              {migrationResult.remaining.length > 0 && (
+                <>
+                  <p>
+                    {tf("credentialSwitch.remaining.title", {
+                      previous: migrationResult.previousLabel,
+                    })}
+                  </p>
+                  <ul
+                    className="settings-panel__migration-warnings"
+                    data-testid="migration-remaining"
+                  >
+                    {migrationResult.remaining.map((entry) => (
+                      <li key={entry}>{entry}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {migrationResult.remaining.length === 0 && migrationResult.warnings.length > 0 && (
                 <ul className="settings-panel__migration-warnings" data-testid="migration-warnings">
                   {migrationResult.warnings.map((warning, i) => (
                     <li key={i}>{warning}</li>

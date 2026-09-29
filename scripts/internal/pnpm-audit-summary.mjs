@@ -20,8 +20,7 @@
 // Usage: node scripts/internal/pnpm-audit-summary.mjs <audit.json>
 
 import { appendFileSync, readFileSync } from "fs";
-import { fileURLToPath } from "url";
-import path from "path";
+import { isMainModule } from "./is-main-module.mjs";
 
 // pnpm's marker for "no patched version exists" (see pnpm audit --ignore-unfixable).
 const UNFIXABLE = "<0.0.0";
@@ -94,7 +93,7 @@ export function readIgnoreGhsas(packageJsonText) {
 }
 
 // CLI mode.
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   let text = "";
   try {
     text = readFileSync(process.argv[2], "utf8");

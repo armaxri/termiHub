@@ -37,7 +37,7 @@
 //     [--skip-list <file>] [--root <repo root>] --out <merged.lcov>
 //     [--report <gap.md>] [--title <text>] [--append]
 import { appendFileSync, readFileSync, writeFileSync, existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { isMainModule } from "./is-main-module.mjs";
 
 /** Normalize an lcov SF path to a repo-relative, forward-slash key. */
 export function normalizePath(sf, root) {
@@ -360,6 +360,6 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isMainModule(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

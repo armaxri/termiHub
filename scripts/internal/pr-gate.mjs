@@ -20,8 +20,7 @@
 // listed in GATE_EXCLUDED with a reason).
 
 import { appendFileSync } from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
+import { isMainModule } from "./is-main-module.mjs";
 
 /** Job id of the gate itself in code-quality.yml. */
 export const GATE_JOB_ID = "pr-gate";
@@ -173,6 +172,6 @@ export function main(env = process.env, log = console.log) {
   return evaluation.ok ? 0 : 1;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   process.exit(main());
 }

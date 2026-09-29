@@ -611,6 +611,62 @@ impl From<drag::DragResult> for DragOutResult {
     }
 }
 
+/// The `file://` URIs a Linux (GTK) drag-out advertises for `paths`, one per
+/// path, in order, each percent-encoded (RFC 8089 / RFC 3986).
+///
+/// The `drag` crate's GTK backend (2.1.1) builds these as `file://{path}` with
+/// no encoding, so `a b.txt`, `100%.txt`, `#x.txt` or `ümlaut.txt` reach the
+/// file manager as invalid URIs (#3492). [`start_native_drag`] overrides the
+/// crate's payload with these. Unix-only because the encoding works on the raw
+/// path bytes; it is compiled on macOS too so the tests run there.
+#[cfg(unix)]
+pub fn drag_out_uris(paths: &[PathBuf]) -> Vec<String> {
+    paths
+        .iter()
+        .map(|path| crate::utils::file_uri::path_to_file_uri(path))
+        .collect()
+}
+
+/// Linux-only: replaces the `drag` crate's unencoded `text/uri-list` payload
+/// with [`drag_out_uris`] for the duration of one drag (#3492).
+#[cfg(target_os = "linux")]
+mod gtk_uri_fix {
+    use std::sync::{Arc, Mutex};
+
+    use gtk::glib::thread_guard::ThreadGuard;
+    use gtk::glib::{ObjectExt, SignalHandlerId};
+    use gtk::prelude::WidgetExt;
+
+    /// The window plus our `drag-data-get` handler, disconnected when the drag
+    /// ends. GTK objects are main-thread-only; the guard makes the handle `Send`
+    /// for the crate's `Send` callback, which GTK always invokes on the main
+    /// thread (where the handle is created, used and dropped).
+    pub type Slot = Arc<Mutex<Option<ThreadGuard<(gtk::ApplicationWindow, SignalHandlerId)>>>>;
+
+    /// Connect a `drag-data-get` handler that sets the percent-encoded `uris`.
+    ///
+    /// Must run **after** `drag::start_drag`: GTK runs handlers in connection
+    /// order, so ours runs after the crate's and its `set_uris` wins.
+    pub fn install(window: &gtk::ApplicationWindow, uris: Vec<String>, slot: &Slot) {
+        let id = window.connect_drag_data_get(move |_, _, data, _, _| {
+            let uris: Vec<&str> = uris.iter().map(String::as_str).collect();
+            data.set_uris(&uris);
+        });
+        if let Ok(mut slot) = slot.lock() {
+            *slot = Some(ThreadGuard::new((window.clone(), id)));
+        }
+    }
+
+    /// Disconnect the handler installed by [`install`], if any. Idempotent.
+    pub fn remove(slot: &Slot) {
+        let taken = slot.lock().ok().and_then(|mut s| s.take());
+        if let Some(guard) = taken {
+            let (window, id) = guard.into_inner();
+            window.disconnect(id);
+        }
+    }
+}
+
 /// The drag preview image: the app's 32px icon, embedded so no file lookup can
 /// fail at drag time.
 const DRAG_PREVIEW_PNG: &[u8] = include_bytes!("../../icons/32x32.png");
@@ -623,23 +679,53 @@ pub fn start_native_drag<R: tauri::Runtime>(
     on_done: impl Fn(DragOutResult) + Send + 'static,
 ) -> Result<(), String> {
     #[cfg(target_os = "linux")]
-    let raw_window = window.gtk_window().map_err(|e| e.to_string())?;
-    #[cfg(target_os = "linux")]
-    let raw_window = &raw_window;
-    #[cfg(not(target_os = "linux"))]
-    let raw_window = window;
+    {
+        use gtk::prelude::WidgetExt;
 
-    drag::start_drag(
-        raw_window,
-        drag::DragItem::Files(paths),
-        drag::Image::Raw(DRAG_PREVIEW_PNG.to_vec()),
-        move |result, _cursor| on_done(result.into()),
-        drag::Options {
-            skip_animatation_on_cancel_or_failure: false,
-            mode: drag::DragMode::Copy,
-        },
-    )
-    .map_err(|e| e.to_string())
+        let gtk_window = window.gtk_window().map_err(|e| e.to_string())?;
+        let uris = drag_out_uris(&paths);
+        let slot = gtk_uri_fix::Slot::default();
+        let done_slot = slot.clone();
+        let started = drag::start_drag(
+            &gtk_window,
+            drag::DragItem::Files(paths),
+            drag::Image::Raw(DRAG_PREVIEW_PNG.to_vec()),
+            move |result, _cursor| {
+                gtk_uri_fix::remove(&done_slot);
+                on_done(result.into());
+            },
+            drag_options(),
+        );
+        if started.is_ok() {
+            // The crate unsets the window's drag source when the drag ends
+            // (drop-performed / drag-failed), so a finished drag leaves no GTK
+            // drag source behind to hijack later in-window drags.
+            gtk_uri_fix::install(&gtk_window, uris, &slot);
+        } else {
+            // A failed start leaves the drag source the crate already set.
+            gtk_window.drag_source_unset();
+        }
+        started.map_err(|e| e.to_string())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        drag::start_drag(
+            window,
+            drag::DragItem::Files(paths),
+            drag::Image::Raw(DRAG_PREVIEW_PNG.to_vec()),
+            move |result, _cursor| on_done(result.into()),
+            drag_options(),
+        )
+        .map_err(|e| e.to_string())
+    }
+}
+
+fn drag_options() -> drag::Options {
+    drag::Options {
+        skip_animatation_on_cancel_or_failure: false,
+        mode: drag::DragMode::Copy,
+    }
 }
 
 #[cfg(test)]
@@ -1214,6 +1300,65 @@ mod tests {
         assert_eq!(
             DragOutResult::from(drag::DragResult::Cancel),
             DragOutResult::Cancelled
+        );
+    }
+
+    #[cfg(unix)]
+    fn uri(path: &str) -> String {
+        drag_out_uris(&[PathBuf::from(path)]).remove(0)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn drag_out_uris_keep_plain_paths_readable() {
+        assert_eq!(uri("/tmp/dir/a.txt"), "file:///tmp/dir/a.txt");
+        assert_eq!(uri("/tmp/a-b_c.d~e"), "file:///tmp/a-b_c.d~e");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn drag_out_uris_percent_encode_spaces() {
+        assert_eq!(uri("/tmp/my dir/a b.txt"), "file:///tmp/my%20dir/a%20b.txt");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn drag_out_uris_percent_encode_percent_hash_and_question_mark() {
+        // `%` must be encoded first-class, or `100%.txt` would read as a bad escape;
+        // `#` and `?` would otherwise start a URI fragment / query.
+        assert_eq!(uri("/tmp/100%.txt"), "file:///tmp/100%25.txt");
+        assert_eq!(uri("/tmp/#x.txt"), "file:///tmp/%23x.txt");
+        assert_eq!(uri("/tmp/what?.txt"), "file:///tmp/what%3F.txt");
+        assert_eq!(uri("/tmp/%20.txt"), "file:///tmp/%2520.txt");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn drag_out_uris_percent_encode_unicode_as_utf8_bytes() {
+        // `ü` is U+00FC = UTF-8 C3 BC; `日` is U+65E5 = E6 97 A5.
+        assert_eq!(uri("/tmp/ümlaut.txt"), "file:///tmp/%C3%BCmlaut.txt");
+        assert_eq!(uri("/tmp/日.txt"), "file:///tmp/%E6%97%A5.txt");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn drag_out_uris_encode_raw_non_utf8_bytes_losslessly() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let path = PathBuf::from(OsStr::from_bytes(b"/tmp/bad\xff.bin"));
+        assert_eq!(
+            drag_out_uris(&[path]),
+            vec!["file:///tmp/bad%FF.bin".to_string()]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn drag_out_uris_map_every_path_in_order() {
+        let paths = vec![PathBuf::from("/tmp/a b"), PathBuf::from("/tmp/c")];
+        assert_eq!(
+            drag_out_uris(&paths),
+            vec!["file:///tmp/a%20b".to_string(), "file:///tmp/c".to_string()]
         );
     }
 }

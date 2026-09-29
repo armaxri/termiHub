@@ -6,9 +6,12 @@ pub mod docker_detect;
 pub mod download;
 pub mod errors;
 pub mod expand;
+pub mod file_log;
 /// Rotating, size-capped application log file written to the platform's
 /// conventional log directory (#1570).
-pub mod file_log;
+/// Percent-encoded `file://` URIs for Linux clipboard and drag-out (#3492).
+#[cfg(unix)]
+pub mod file_uri;
 pub mod fs;
 /// Efficient byte transport across the Tauri IPC boundary via base64 (PERF-009).
 pub mod ipc_bytes;

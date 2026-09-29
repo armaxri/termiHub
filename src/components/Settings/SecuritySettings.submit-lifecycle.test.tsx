@@ -123,7 +123,7 @@ describe("SecuritySettings — submit lifecycle parity (#1469)", () => {
   }
 
   it("master-password setup: clicking Confirm drives the pending affordance", async () => {
-    const gate = deferred<{ migratedCount: number; warnings: string[] }>();
+    const gate = deferred<Record<string, unknown>>();
     mockedInvoke.mockImplementation((cmd) =>
       cmd === "switch_credential_store" ? gate.promise : Promise.resolve(undefined)
     );
@@ -132,11 +132,19 @@ describe("SecuritySettings — submit lifecycle parity (#1469)", () => {
     await fireClick("master-password-confirm-btn");
 
     expect(isPending(el<HTMLButtonElement>("master-password-confirm-btn"))).toBe(true);
-    gate.resolve({ migratedCount: 0, warnings: [] });
+    gate.resolve({
+      status: "success",
+      migratedCount: 0,
+      failedCount: 0,
+      warnings: [],
+      removedCount: 0,
+      remaining: [],
+      rolledBack: false,
+    });
   });
 
   it("master-password setup: Enter drives the SAME pending affordance", async () => {
-    const gate = deferred<{ migratedCount: number; warnings: string[] }>();
+    const gate = deferred<Record<string, unknown>>();
     mockedInvoke.mockImplementation((cmd) =>
       cmd === "switch_credential_store" ? gate.promise : Promise.resolve(undefined)
     );
@@ -149,7 +157,15 @@ describe("SecuritySettings — submit lifecycle parity (#1469)", () => {
       expect.objectContaining({ newMode: "master_password", masterPassword: "supersecret1" })
     );
     expect(isPending(el<HTMLButtonElement>("master-password-confirm-btn"))).toBe(true);
-    gate.resolve({ migratedCount: 0, warnings: [] });
+    gate.resolve({
+      status: "success",
+      migratedCount: 0,
+      failedCount: 0,
+      warnings: [],
+      removedCount: 0,
+      remaining: [],
+      rolledBack: false,
+    });
   });
 
   it("change-password: clicking Change drives the pending affordance", async () => {

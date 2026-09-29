@@ -92,6 +92,9 @@ describe("SecuritySettings", () => {
           migratedCount: 0,
           failedCount: 0,
           warnings: [],
+          removedCount: 0,
+          remaining: [],
+          rolledBack: false,
         });
       }
       return Promise.resolve(undefined);
@@ -208,6 +211,9 @@ describe("SecuritySettings", () => {
           migratedCount: 0,
           failedCount: 0,
           warnings: [],
+          removedCount: 0,
+          remaining: [],
+          rolledBack: false,
         });
       }
       return Promise.resolve(undefined);
@@ -265,6 +271,9 @@ describe("SecuritySettings", () => {
           migratedCount: 2,
           failedCount: 0,
           warnings: [],
+          removedCount: 0,
+          remaining: [],
+          rolledBack: false,
         });
       }
       return Promise.resolve(undefined);
@@ -610,8 +619,11 @@ describe("SecuritySettings", () => {
       });
     }
 
+    const base = { removedCount: 0, remaining: [], rolledBack: false };
+
     it("reports a clean success with a success toast and no warnings", async () => {
       await switchFromMasterPasswordToKeychain({
+        ...base,
         status: "success",
         migratedCount: 3,
         failedCount: 0,
@@ -629,6 +641,7 @@ describe("SecuritySettings", () => {
 
     it("reports a partial migration as informational and lists what failed", async () => {
       await switchFromMasterPasswordToKeychain({
+        ...base,
         status: "partial",
         migratedCount: 2,
         failedCount: 1,
@@ -637,6 +650,7 @@ describe("SecuritySettings", () => {
 
       const panel = query("migration-result") as HTMLElement;
       expect(panel.dataset.status).toBe("partial");
+      expect(panel.textContent).toContain("Switched to OS Keychain");
       expect(panel.textContent).toContain("2 of 3 credentials migrated");
       expect(panel.textContent).toContain("1 credential could not be moved");
       expect(panel.textContent).not.toContain("successfully");
@@ -646,8 +660,10 @@ describe("SecuritySettings", () => {
       expect(mockedToast.error).not.toHaveBeenCalled();
     });
 
-    it("reports a total failure without claiming success", async () => {
+    it("reports a rolled-back total failure as 'switch failed, nothing changed'", async () => {
       await switchFromMasterPasswordToKeychain({
+        ...base,
+        rolledBack: true,
         status: "failed",
         migratedCount: 0,
         failedCount: 2,
@@ -657,12 +673,89 @@ describe("SecuritySettings", () => {
       const panel = query("migration-result") as HTMLElement;
       expect(panel.dataset.status).toBe("failed");
       expect(panel.getAttribute("role")).toBe("alert");
-      expect(panel.textContent).toContain("none of your 2 credentials could be migrated");
-      expect(panel.textContent).toContain("switch back");
-      expect(panel.textContent).not.toContain("successfully");
+      expect(panel.textContent).toContain("Switch failed, nothing changed");
+      expect(panel.textContent).toContain("none of your 2 credentials could be moved");
+      expect(panel.textContent).toContain("Master Password is still active");
+      expect(panel.textContent).not.toContain("Switched to");
       expect(query("migration-warnings")?.querySelectorAll("li")).toHaveLength(2);
       expect(mockedToast.error).toHaveBeenCalledTimes(1);
       expect(mockedToast.success).not.toHaveBeenCalled();
+    });
+
+    async function switchFromMasterPasswordToNone(result: unknown) {
+      useAppStore.setState({
+        credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+      });
+      mockedInvoke.mockImplementation((cmd) => {
+        if (cmd === "switch_credential_store") return Promise.resolve(result);
+        return Promise.resolve(undefined);
+      });
+      render();
+      await act(async () => {
+        (query("storage-mode-none") as HTMLElement).click();
+      });
+      await act(async () => {
+        (query("confirm-switch-confirm-btn") as HTMLElement).click();
+      });
+    }
+
+    it("reports a switch to none as removed, never migrated", async () => {
+      await switchFromMasterPasswordToNone({
+        ...base,
+        status: "success",
+        migratedCount: 0,
+        removedCount: 3,
+        failedCount: 0,
+        warnings: [],
+      });
+
+      const panel = query("migration-result") as HTMLElement;
+      expect(panel.dataset.status).toBe("success");
+      expect(panel.textContent).toContain("3 credentials removed");
+      expect(panel.textContent).not.toContain("migrated");
+      expect(query("migration-remaining")).toBeNull();
+      expect(mockedToast.success).toHaveBeenCalledWith("Switched to None — 3 credentials removed.");
+    });
+
+    it("lists the entries a switch to none could not remove", async () => {
+      await switchFromMasterPasswordToNone({
+        ...base,
+        status: "partial",
+        migratedCount: 0,
+        removedCount: 2,
+        failedCount: 1,
+        remaining: ["conn-9:password"],
+        warnings: ["Failed to remove conn-9:password: disk full"],
+      });
+
+      const panel = query("migration-result") as HTMLElement;
+      expect(panel.dataset.status).toBe("partial");
+      expect(panel.textContent).toContain("2 of 3 credentials removed");
+      expect(panel.textContent).toContain("1 credential could not be removed from Master Password");
+      expect(panel.textContent).toContain("Still stored in Master Password:");
+      const remaining = query("migration-remaining");
+      expect(remaining?.querySelectorAll("li")).toHaveLength(1);
+      expect(remaining?.textContent).toContain("conn-9:password");
+      expect(mockedToast.info).toHaveBeenCalledTimes(1);
+    });
+
+    it("reports a switch to none that removed nothing as rolled back", async () => {
+      await switchFromMasterPasswordToNone({
+        ...base,
+        rolledBack: true,
+        status: "failed",
+        migratedCount: 0,
+        removedCount: 0,
+        failedCount: 1,
+        remaining: ["conn-9:password"],
+        warnings: ["Failed to remove conn-9:password: disk full"],
+      });
+
+      const panel = query("migration-result") as HTMLElement;
+      expect(panel.textContent).toContain("Switch failed, nothing changed");
+      expect(panel.textContent).toContain("none of your 1 credential could be removed");
+      expect(query("migration-remaining")?.textContent).toContain("conn-9:password");
+      expect(mockedToast.error).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -2,7 +2,12 @@ import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { SETTINGS_REGISTRY, filterSettings, type SettingsCategory } from "./settingsRegistry";
+import {
+  CATEGORIES,
+  SETTINGS_REGISTRY,
+  filterSettings,
+  type SettingsCategory,
+} from "./settingsRegistry";
 
 /**
  * Registry-coverage guard (#2828).
@@ -51,6 +56,8 @@ const PANEL_CATEGORY: Record<string, SettingsCategory> = {
   "FileTypeSettings.tsx": "editor",
   "LanguagePackagesSettings.tsx": "editor",
   "CustomGrammarsSettings.tsx": "editor",
+  // Also rendered by the Updates overlay view (OverlayViewPanel), ungated there.
+  "UpdateSettings.tsx": "updates",
 };
 
 /**
@@ -58,11 +65,7 @@ const PANEL_CATEGORY: Record<string, SettingsCategory> = {
  * Settings search surface. Each entry must say why; the test also verifies
  * the claim still holds (the panel is not mounted by `SettingsPanel`).
  */
-const NOT_IN_SETTINGS_SEARCH: Record<string, string> = {
-  "UpdateSettings.tsx":
-    "Rendered only by the Updates overlay view (OverlayViewPanel), never by SettingsPanel, " +
-    "so it never receives visibleFields and has no Settings category to be searched under.",
-};
+const NOT_IN_SETTINGS_SEARCH: Record<string, string> = {};
 
 /**
  * Categories whose panels are mounted whole during search (no per-field
@@ -71,6 +74,7 @@ const NOT_IN_SETTINGS_SEARCH: Record<string, string> = {
  */
 const WHOLE_PANEL_CATEGORIES = new Set<SettingsCategory>([
   "shell-integration",
+  "external-files",
   "plugins",
   "backup",
   "portable",
@@ -157,6 +161,20 @@ describe("settings registry coverage (#2828)", () => {
     expect(orphaned).toEqual([]);
   });
 
+  it("gives every navigable category at least one searchable entry (#3308)", () => {
+    // A category with no registry entry can be opened from the nav but never
+    // matches a search, so none of its settings can be found.
+    const withEntries = new Set(SETTINGS_REGISTRY.map((s) => s.category));
+    const unsearchable = CATEGORIES.map((c) => c.id).filter((id) => !withEntries.has(id));
+    expect(unsearchable).toEqual([]);
+  });
+
+  it("files every registry entry under a navigable category", () => {
+    const navigable = new Set(CATEGORIES.map((c) => c.id));
+    const stray = SETTINGS_REGISTRY.filter((s) => !navigable.has(s.category)).map((s) => s.id);
+    expect(stray).toEqual([]);
+  });
+
   describe("previously unsearchable settings are now found by search", () => {
     const finds = (query: string, id: string) => filterSettings(query).some((s) => s.id === id);
 
@@ -167,6 +185,24 @@ describe("settings registry coverage (#2828)", () => {
 
     it("finds the SSH X11-forwarding default", () => {
       expect(finds("x11 forwarding", "defaultX11Forwarding")).toBe(true);
+    });
+
+    it("finds the update auto-check preference and update status (#3308)", () => {
+      expect(finds("update", "updateAutoCheck")).toBe(true);
+      expect(finds("auto-check", "updateAutoCheck")).toBe(true);
+      expect(finds("check for updates", "updateAutoCheck")).toBe(true);
+      expect(finds("version", "updateStatus")).toBe(true);
+    });
+
+    it("finds the external connection files section (#3308)", () => {
+      expect(finds("external", "externalConnectionFiles")).toBe(true);
+      expect(finds("power monitoring", "powerMonitoring")).toBe(true);
+      expect(finds("file browser", "fileBrowser")).toBe(true);
+    });
+
+    it("finds the trusted plugin publishers section (#3308)", () => {
+      expect(finds("trusted publisher", "trustedPublishers")).toBe(true);
+      expect(finds("signing key", "trustedPublishers")).toBe(true);
     });
 
     it("finds line height", () => {

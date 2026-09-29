@@ -119,8 +119,43 @@ impl Decoder {
         if self.native {
             image.extend_from_slice(tpixel);
         } else {
-            image.extend_from_slice(&self.to_true_color(format, tpixel));
+            self.push_channels(format, self.tpixel_channels(format, tpixel), image);
         }
+    }
+
+    /// The (red, green, blue) channel values one TPIXEL carries.
+    ///
+    /// A packed 24-bit TPIXEL is the three 8-bit channels in R, G, B order
+    /// regardless of the format's byte order; a full PIXEL is unpacked with the
+    /// format's endianness, shifts and maxima.
+    fn tpixel_channels(&self, format: &PixelFormat, tpixel: &[u8]) -> [u32; 3] {
+        if self.native {
+            let value = pixel_value(format, tpixel);
+            let max = [format.red_max, format.green_max, format.blue_max];
+            let shift = [format.red_shift, format.green_shift, format.blue_shift];
+            std::array::from_fn(|c| {
+                value.checked_shr(u32::from(shift[c])).unwrap_or(0) & u32::from(max[c])
+            })
+        } else {
+            [tpixel[0], tpixel[1], tpixel[2]].map(u32::from)
+        }
+    }
+
+    /// Append the negotiated-format pixel with channel values `rgb`.
+    ///
+    /// termiHub fork (#3545): the pixel is serialised in the format's byte order
+    /// (upstream always wrote little-endian), and the expanded 24-bit case sets
+    /// an opaque alpha lane for every filter (upstream's gradient left it 0).
+    fn push_channels(&self, format: &PixelFormat, rgb: [u32; 3], image: &mut Vec<u8>) {
+        let max = [format.red_max, format.green_max, format.blue_max];
+        let shift = [format.red_shift, format.green_shift, format.blue_shift];
+        let mut value = (0..3).fold(0, |acc, c| {
+            acc | shl_or_zero(rgb[c] & u32::from(max[c]), shift[c])
+        });
+        if !self.native {
+            value |= 0xff << self.alpha_shift;
+        }
+        push_pixel(format, value, format.bits_per_pixel as usize / 8, image);
     }
 
     async fn read_data<S>(&mut self, input: &mut S) -> Result<Vec<u8>, VncError>
@@ -265,10 +300,8 @@ impl Decoder {
             return Ok(());
         }
         let mut image = Vec::with_capacity(uncompressed_size / 3 * 4);
-        let mut j = 0;
-        while j < uncompressed_size {
-            image.extend_from_slice(&self.to_true_color(format, &data[j..j + 3]));
-            j += 3;
+        for tpixel in data.chunks_exact(self.tpixel_len) {
+            self.push_tpixel(format, tpixel, &mut image);
         }
 
         output_func(VncEvent::RawImage(*rect, image)).await?;
@@ -402,52 +435,51 @@ impl Decoder {
         let data = self
             .read_tight_data(stream, input, uncompressed_size)
             .await?;
-        if self.native {
-            let image = gradient_native(format, rect, self.tpixel_len, &data)?;
-            output_func(VncEvent::RawImage(*rect, image)).await?;
-            return Ok(());
-        }
-        let mut image = Vec::with_capacity(rect.width as usize * rect.height as usize * 4);
-
-        let row_len = rect.width as usize * 3 + 3;
-        let mut row_0 = vec![0_u16; row_len];
-        let mut row_1 = vec![0_u16; row_len];
-        let max = [format.red_max, format.green_max, format.blue_max];
-        let shift = [format.red_shift, format.green_shift, format.blue_shift];
-        let mut sp = 0;
-
-        for y in 0..rect.height as usize {
-            let (this_row, prev_row) = if y & 1 == 0 {
-                (&mut row_0, &mut row_1)
-            } else {
-                (&mut row_1, &mut row_0)
-            };
-            let mut x = 3;
-            while x < row_len {
-                let rgb = data.get(sp..sp + 3).ok_or(VncError::InvalidImageData)?;
-                let mut color = 0;
-                for index in 0..3 {
-                    let d = prev_row[index + x] as i32 + this_row[index + x - 3] as i32
-                        - prev_row[index + x - 3] as i32;
-                    let converted = if d < 0 {
-                        0
-                    } else if d > max[index] as i32 {
-                        max[index]
-                    } else {
-                        d as u16
-                    };
-                    this_row[index + x] = converted.wrapping_add(rgb[index] as u16) & max[index];
-                    color |=
-                        shl_or_zero(this_row[x + index] as u32 & max[index] as u32, shift[index]);
-                }
-                image.extend_from_slice(&color.to_le_bytes());
-                sp += 3;
-                x += 3;
-            }
-        }
-
+        let image = self.gradient(format, rect, &data)?;
         output_func(VncEvent::RawImage(*rect, image)).await?;
         Ok(())
+    }
+
+    /// Undo Tight's gradient filter (Tight spec / libvncclient
+    /// `FilterGradient24` and `FilterGradientBPP`).
+    ///
+    /// Each wire TPIXEL carries, per channel, the difference to the prediction
+    /// `up + left - up_left` (clamped to `0..=max`, zero outside the rect) modulo
+    /// `max + 1`. The result is a negotiated-format pixel buffer, packed exactly
+    /// like the other filters' output (termiHub fork, #3464, #3545).
+    fn gradient(
+        &self,
+        format: &PixelFormat,
+        rect: &Rect,
+        data: &[u8],
+    ) -> Result<Vec<u8>, VncError> {
+        let width = rect.width as usize;
+        let max = [format.red_max, format.green_max, format.blue_max].map(u32::from);
+        let mut prev_row = vec![[0_u32; 3]; width];
+        let mut this_row = vec![[0_u32; 3]; width];
+        let bytes_per_pixel = format.bits_per_pixel as usize / 8;
+        let mut image = Vec::with_capacity(width * rect.height as usize * bytes_per_pixel);
+        let mut wire = data.chunks_exact(self.tpixel_len);
+        for _ in 0..rect.height {
+            for x in 0..width {
+                let tpixel = wire.next().ok_or(VncError::InvalidImageData)?;
+                let delta = self.tpixel_channels(format, tpixel);
+                for c in 0..3 {
+                    let (left, up_left) = if x > 0 {
+                        (this_row[x - 1][c], prev_row[x - 1][c])
+                    } else {
+                        (0, 0)
+                    };
+                    let estimate = (i64::from(prev_row[x][c]) + i64::from(left)
+                        - i64::from(up_left))
+                    .clamp(0, i64::from(max[c])) as u32;
+                    this_row[x][c] = estimate.wrapping_add(delta[c]) & max[c];
+                }
+                self.push_channels(format, this_row[x], &mut image);
+            }
+            std::mem::swap(&mut prev_row, &mut this_row);
+        }
+        Ok(image)
     }
 
     async fn read_tight_data<S>(
@@ -479,64 +511,4 @@ impl Decoder {
         };
         Ok(data)
     }
-
-    fn to_true_color(&self, format: &PixelFormat, color: &[u8]) -> [u8; 4] {
-        let alpha = 255;
-        // always rgb
-        (shl_or_zero(color[0] as u32 & format.red_max as u32, format.red_shift)
-            | shl_or_zero(
-                color[1] as u32 & format.green_max as u32,
-                format.green_shift,
-            )
-            | shl_or_zero(color[2] as u32 & format.blue_max as u32, format.blue_shift)
-            | ((alpha as u32) << self.alpha_shift))
-            .to_le_bytes()
-    }
-}
-
-/// Undo Tight's gradient filter for a format whose TPIXELs are full pixels
-/// (termiHub fork, #3464; RFC-less Tight spec / libvncclient `FilterGradientBPP`).
-///
-/// Each wire pixel carries, per channel, the difference to the prediction
-/// `up + left - up_left` (clamped to `0..=max`), packed with the format's own
-/// shifts and endianness. The result is a negotiated-format pixel buffer.
-fn gradient_native(
-    format: &PixelFormat,
-    rect: &Rect,
-    bytes_per_pixel: usize,
-    data: &[u8],
-) -> Result<Vec<u8>, VncError> {
-    let width = rect.width as usize;
-    let max = [format.red_max, format.green_max, format.blue_max].map(u32::from);
-    let shift = [format.red_shift, format.green_shift, format.blue_shift];
-    let mut prev_row = vec![[0_u32; 3]; width];
-    let mut this_row = vec![[0_u32; 3]; width];
-    let mut image = Vec::with_capacity(width * rect.height as usize * bytes_per_pixel);
-    let mut sp = 0;
-    for _ in 0..rect.height {
-        for x in 0..width {
-            let wire = data
-                .get(sp..sp + bytes_per_pixel)
-                .ok_or(VncError::InvalidImageData)?;
-            let diff = pixel_value(format, wire);
-            let mut pixel = 0;
-            for c in 0..3 {
-                let (left, up_left) = if x > 0 {
-                    (this_row[x - 1][c], prev_row[x - 1][c])
-                } else {
-                    (0, 0)
-                };
-                let estimate = (i64::from(prev_row[x][c]) + i64::from(left) - i64::from(up_left))
-                    .clamp(0, i64::from(max[c])) as u32;
-                let delta = diff.checked_shr(u32::from(shift[c])).unwrap_or(0) & max[c];
-                let value = estimate.wrapping_add(delta) & max[c];
-                this_row[x][c] = value;
-                pixel |= shl_or_zero(value, shift[c]);
-            }
-            push_pixel(format, pixel, bytes_per_pixel, &mut image);
-            sp += bytes_per_pixel;
-        }
-        std::mem::swap(&mut prev_row, &mut this_row);
-    }
-    Ok(image)
 }

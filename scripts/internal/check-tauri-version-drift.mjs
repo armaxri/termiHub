@@ -17,6 +17,7 @@
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import path from "path";
+import { isMainModule } from "./is-main-module.mjs";
 
 /** Repository root, derived from this file's location (scripts/internal/). */
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -135,9 +136,7 @@ export function checkRepo() {
 
 // CLI mode: print a per-pair report and exit non-zero on drift so callers
 // (release-check, CI) can gate on it.
-// Compare paths, not `file://${argv[1]}`: on Windows argv[1] is "D:\\...", so
-// the string form never matched and release-check.cmd got a silent exit 0 (#3753).
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   const { ok, drift, skipped } = checkRepo();
 
   for (const p of ok) {

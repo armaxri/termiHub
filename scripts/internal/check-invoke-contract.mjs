@@ -32,6 +32,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { fileURLToPath } from "url";
 import path from "path";
 import ts from "typescript";
+import { isMainModule } from "./is-main-module.mjs";
 
 /** Repository root, derived from this file's location (scripts/internal/). */
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -470,7 +471,7 @@ export function checkRepo(root) {
   return { contract, calls, problems: [...problems, ...findMismatches(contract, calls)] };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   const rootIdx = process.argv.indexOf("--root");
   const root = rootIdx !== -1 ? path.resolve(process.argv[rootIdx + 1]) : DEFAULT_ROOT;
   const { contract, calls, problems } = checkRepo(root);

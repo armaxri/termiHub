@@ -29,6 +29,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMainModule } from "./is-main-module.mjs";
 
 /** Source trees that ship in a release artifact (desktop app, core, agent, plugin API, RDP sidecar). */
 export const SCAN_ROOTS = [
@@ -245,7 +246,7 @@ export function parseArgs(argv) {
   return out;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   const args = parseArgs(process.argv.slice(2));
   if (!args) {
     console.error(

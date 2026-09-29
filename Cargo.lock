@@ -7704,6 +7704,7 @@ dependencies = [
  "csv",
  "dirs",
  "drag",
+ "gtk",
  "hex",
  "if-addrs",
  "json-patch",

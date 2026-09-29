@@ -122,16 +122,15 @@ fi
 # Known flag gaps, as "<script path without extension>|<flag>". Each entry must
 # name the tracking issue; remove it when the gap is closed. An entry that no
 # longer matches a real gap fails the check, so the list cannot rot.
+# The `${arr[@]+"${arr[@]}"}` loops below keep an empty list safe under `set -u`
+# on bash 3.2 (macOS /bin/bash), which treats "${empty[@]}" as unbound.
 FLAG_DRIFT_ALLOWLIST=(
-  # build-rdp-sidecar.cmd lacks --target (cross-build) and --out (copy the
-  # binary elsewhere); build.cmd only needs --release --tauri-externalbin.
-  "scripts/build-rdp-sidecar|--out"    # #3475
-  "scripts/build-rdp-sidecar|--target" # #3475
+  # (none -- build-rdp-sidecar.cmd gained --target/--out in #3475)
 )
 
 flag_drift_allowed() {
   local needle="$1" entry
-  for entry in "${FLAG_DRIFT_ALLOWLIST[@]}"; do
+  for entry in ${FLAG_DRIFT_ALLOWLIST[@]+"${FLAG_DRIFT_ALLOWLIST[@]}"}; do
     [ "$entry" = "$needle" ] && return 0
   done
   return 1
@@ -193,7 +192,7 @@ while IFS= read -r sh; do
   done < <(comm -13 <(printf '%s\n' "$sh_set") <(printf '%s\n' "$cmd_set"))
 done < <(printf '%s\n' "$all_scripts" | grep -E '\.sh$' || true)
 
-for entry in "${FLAG_DRIFT_ALLOWLIST[@]}"; do
+for entry in ${FLAG_DRIFT_ALLOWLIST[@]+"${FLAG_DRIFT_ALLOWLIST[@]}"}; do
   if [[ "$seen_allow" != *" ${entry} "* ]]; then
     echo "::error file=scripts/internal/check-script-parity.sh::FLAG_DRIFT_ALLOWLIST entry '${entry}' matches no real gap -- remove it"
     stale=$((stale + 1))

@@ -17,8 +17,9 @@ export type CredentialStoreStatus = CredentialStoreStatusInfo["status"];
  * - `partial` — some credentials were migrated, some failed.
  * - `failed` — none of the credentials could be migrated.
  *
- * In every case the store switch itself has happened; failed credentials stay
- * in the previous store, which is left intact.
+ * A `failed` switch is rolled back (#3323): the previous store stays active and
+ * nothing changes. For a switch to `none` the counts describe credentials
+ * *removed* from the previous store instead of migrated.
  */
 export type CredentialMigrationStatus = "success" | "partial" | "failed";
 
@@ -26,9 +27,15 @@ export type CredentialMigrationStatus = "success" | "partial" | "failed";
 export interface SwitchCredentialStoreResult {
   status: CredentialMigrationStatus;
   migratedCount: number;
-  /** Credentials that could not be migrated (still in the previous store). */
+  /** Credentials that could not be migrated/removed (still in the previous store). */
   failedCount: number;
   warnings: string[];
+  /** Switch to `none` only: credentials removed from the previous store. */
+  removedCount: number;
+  /** Switch to `none` only: entries (`connection:type`) that could not be removed. */
+  remaining: string[];
+  /** The switch failed completely and was rolled back — nothing changed. */
+  rolledBack: boolean;
 }
 
 // Credential-vault export/import DTOs (PROD-063), generated from their Rust

@@ -608,7 +608,8 @@ jobs:
   # cheap job (no Rust/Node setup, no build) executes build-agents.cmd's
   # --help and its fail-fast argument/validation paths on a real Windows cmd.exe,
   # and runs the exact PowerShell line build-agents.cmd uses to write .sha256
-  # sidecars, checking the result is byte-identical to `sha256sum`. PR lane: only
+  # sidecars, checking the result is byte-identical to `sha256sum`. It also runs
+  # build-rdp-sidecar.cmd end to end against a stub cargo (#3475). PR lane: only
   # when scripts change. Post-merge: always.
   cmd-scripts-windows:
     name: Windows cmd Script Smoke
@@ -669,6 +670,107 @@ jobs:
             exit 1
           fi
           sha256sum -c termihub-agent.exe.sha256
+
+      # build-rdp-sidecar.cmd (#3475): --help, the fail-fast argument paths, and
+      # full runs of the script against a stub `cargo` (a cargo.cmd first on PATH
+      # that drops a fake helper where cargo would), so the flag parsing, the
+      # host-triple lookup, the externalBin staging, the .sha256 sidecar and the
+      # --out copy all execute on a real cmd.exe without a ~10 min sidecar build.
+      - name: build-rdp-sidecar.cmd --help and fail-fast paths
+        shell: cmd
+        run: |
+          call scripts\build-rdp-sidecar.cmd --help
+          if errorlevel 1 exit /b 1
+          call scripts\build-rdp-sidecar.cmd --no-such-flag
+          if not errorlevel 1 (echo expected failure: unknown option& exit /b 1)
+          call scripts\build-rdp-sidecar.cmd --target
+          if not errorlevel 1 (echo expected failure: --target without a value& exit /b 1)
+          call scripts\build-rdp-sidecar.cmd --release --out
+          if not errorlevel 1 (echo expected failure: --out without a value& exit /b 1)
+          echo build-rdp-sidecar.cmd fail-fast smoke OK
+          exit /b 0
+
+      - name: Stage a stub cargo for build-rdp-sidecar.cmd
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$(cygpath -u "$RUNNER_TEMP")/stub-cargo"
+          mkdir -p "$dir"
+          # Mimics `cargo build --manifest-path rdp-sidecar\Cargo.toml [--release]
+          # [--target <triple>]`: writes the helper where cargo's layout puts it.
+          # STUB_CARGO_FAIL makes it fail like a broken build.
+          printf '%s\r\n' \
+            '@echo off' \
+            'setlocal' \
+            'if defined STUB_CARGO_FAIL (echo stub cargo: failing on purpose 1>&2& exit /b 101)' \
+            'set "P=debug"' \
+            'set "T="' \
+            ':a' \
+            'if "%~1"=="" goto b' \
+            'if "%~1"=="--release" set "P=release"' \
+            'if "%~1"=="--target" set "T=%~2"' \
+            'shift' \
+            'goto a' \
+            ':b' \
+            'set "D=rdp-sidecar\target\%P%"' \
+            'if defined T set "D=rdp-sidecar\target\%T%\%P%"' \
+            'if not exist "%D%" mkdir "%D%"' \
+            '>"%D%\termihub-rdp-helper.exe" echo stub rdp helper %P% %T%' \
+            'exit /b 0' >"$dir/cargo.cmd"
+
+      - name: build-rdp-sidecar.cmd runs end to end (stub cargo)
+        shell: cmd
+        run: |
+          set "PATH=%RUNNER_TEMP%\stub-cargo;%PATH%"
+          rem Host triple from rustc, release, staged for externalBin, copied to --out.
+          call scripts\build-rdp-sidecar.cmd --release --tauri-externalbin --out "%RUNNER_TEMP%\rdp-out"
+          if errorlevel 1 (echo externalBin run failed& exit /b 1)
+          rem Explicit --target without staging: cargo's per-target output dir.
+          call scripts\build-rdp-sidecar.cmd --target aarch64-pc-windows-msvc
+          if errorlevel 1 (echo --target run failed& exit /b 1)
+          rem A failed cargo build must fail the script.
+          set "STUB_CARGO_FAIL=1"
+          call scripts\build-rdp-sidecar.cmd --release
+          if not errorlevel 1 (echo expected failure: cargo build failed& exit /b 1)
+          set "STUB_CARGO_FAIL="
+          rem A digest that cannot be computed must fail loudly, not write an empty
+          rem sidecar: the apostrophe in this triple breaks the PowerShell hash line.
+          call scripts\build-rdp-sidecar.cmd --target "bad'triple-pc-windows-msvc" --tauri-externalbin
+          if not errorlevel 1 (echo expected failure: unhashable staged binary& exit /b 1)
+          echo build-rdp-sidecar.cmd stub runs OK
+          exit /b 0
+
+      - name: build-rdp-sidecar.cmd outputs are correct
+        shell: bash
+        run: |
+          set -euo pipefail
+          triple="$(rustc -vV | sed -n 's/^host: //p' | tr -d '\r')"
+          staged="src-tauri/binaries/termihub-rdp-helper-${triple}.exe"
+          test -s "$staged" || { echo "::error::not staged: $staged"; exit 1; }
+          # --tauri-externalbin resolves the host triple and passes --target (as the .sh
+          # does), so cargo output lands in the per-target dir.
+          built="rdp-sidecar/target/${triple}/release/termihub-rdp-helper.exe"
+          cmp "$built" "$staged"
+          # The .sha256 must be "<hex>  <name>" + LF, byte-identical to what the .sh
+          # (sha256sum text mode) writes -- never empty (#3475).
+          hex="$(sha256sum <"$staged" | cut -c1-64)"
+          printf '%s  %s\n' "$hex" "termihub-rdp-helper-${triple}.exe" >"$RUNNER_TEMP/expected.sha256"
+          if ! cmp "$RUNNER_TEMP/expected.sha256" "$staged.sha256"; then
+            od -c "$staged.sha256"
+            exit 1
+          fi
+          (cd src-tauri/binaries && sha256sum -c "termihub-rdp-helper-${triple}.exe.sha256")
+          out="$(cygpath -u "$RUNNER_TEMP")/rdp-out/termihub-rdp-helper.exe"
+          cmp "$built" "$out"
+          test -s rdp-sidecar/target/aarch64-pc-windows-msvc/debug/termihub-rdp-helper.exe
+          bad="src-tauri/binaries/termihub-rdp-helper-bad'triple-pc-windows-msvc.exe"
+          test -f "$bad" || { echo "::error::failure scenario never reached staging"; exit 1; }
+          if [ -e "$bad.sha256" ]; then
+            echo "::error::a failed digest left a .sha256 behind"
+            od -c "$bad.sha256"
+            exit 1
+          fi
+
 
   # Run tests
   #
@@ -1009,7 +1111,11 @@ jobs:
       - name: Checkout gate script
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          sparse-checkout: scripts/internal/pr-gate.mjs
+          # Keep this list in sync with pr-gate.mjs's local imports: it runs from
+          # this sparse tree, so a missing helper fails the gate (ERR_MODULE_NOT_FOUND).
+          sparse-checkout: |
+            scripts/internal/pr-gate.mjs
+            scripts/internal/is-main-module.mjs
           sparse-checkout-cone-mode: false
 
       - name: Evaluate needed jobs
