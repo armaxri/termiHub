@@ -91,9 +91,7 @@ impl RemoteCopyEndpoint {
             #[cfg(feature = "ssh")]
             RemoteCopyEndpoint::Sftp(browser) => Arc::new(endpoints::SftpEndpoint::new(browser)),
             #[cfg(feature = "docker")]
-            RemoteCopyEndpoint::Docker(target) => {
-                Arc::new(endpoints::DockerEndpoint::new(target))
-            }
+            RemoteCopyEndpoint::Docker(target) => Arc::new(endpoints::DockerEndpoint::new(target)),
         }
     }
 }
@@ -256,7 +254,8 @@ where
             let read = reader.finish().await;
             let write = writer.finish().await;
             read.map_err(|e| RemoteCopyError::at(ends.src_prefix, format!("read failed: {e}")))?;
-            write.map_err(|e| RemoteCopyError::at(ends.dst_prefix, format!("write failed: {e}")))?;
+            write
+                .map_err(|e| RemoteCopyError::at(ends.dst_prefix, format!("write failed: {e}")))?;
         }
         ChunkedCopyOutcome::Stopped { .. } => {
             // Close the source, then best-effort settle the destination so the
@@ -286,11 +285,10 @@ struct Ends<'a> {
 async fn open_links(
     ends: Ends<'_>,
 ) -> Result<(Box<dyn EndpointLink>, Box<dyn EndpointLink>), RemoteCopyError> {
-    let src = ends
-        .src
-        .link()
-        .await
-        .map_err(|e| RemoteCopyError::at(ends.src.error_prefix(), format!("open source: {e}")))?;
+    let src =
+        ends.src.link().await.map_err(|e| {
+            RemoteCopyError::at(ends.src.error_prefix(), format!("open source: {e}"))
+        })?;
     let dst = ends.dst.link().await.map_err(|e| {
         RemoteCopyError::at(ends.dst.error_prefix(), format!("open destination: {e}"))
     })?;

@@ -317,7 +317,9 @@ impl CopyWriter for MockWriter {
 
 /// A deterministic, non-repeating byte pattern.
 fn content(n: usize, seed: u8) -> Vec<u8> {
-    (0..n).map(|i| ((i % 251) as u8).wrapping_add(seed)).collect()
+    (0..n)
+        .map(|i| ((i % 251) as u8).wrapping_add(seed))
+        .collect()
 }
 
 /// A copy running on its own task plus everything it emitted.
@@ -686,11 +688,29 @@ fn resume_mode_default_is_resume() {
 
 #[test]
 fn copy_errors_name_the_end_that_failed() {
-    let read = copy_error(CopyPhase::Read, io::Error::other("reset"), "SSH error", "Docker error");
+    let read = copy_error(
+        CopyPhase::Read,
+        io::Error::other("reset"),
+        "SSH error",
+        "Docker error",
+    );
     assert_eq!(read.to_string(), "SSH error: transfer read failed: reset");
-    let write = copy_error(CopyPhase::Write, io::Error::other("pipe"), "SSH error", "Docker error");
-    assert_eq!(write.to_string(), "Docker error: transfer write failed: pipe");
-    let flush = copy_error(CopyPhase::Flush, io::Error::other("x"), "SSH error", "Docker error");
+    let write = copy_error(
+        CopyPhase::Write,
+        io::Error::other("pipe"),
+        "SSH error",
+        "Docker error",
+    );
+    assert_eq!(
+        write.to_string(),
+        "Docker error: transfer write failed: pipe"
+    );
+    let flush = copy_error(
+        CopyPhase::Flush,
+        io::Error::other("x"),
+        "SSH error",
+        "Docker error",
+    );
     assert_eq!(flush.to_string(), "Docker error: transfer flush failed: x");
 }
 
