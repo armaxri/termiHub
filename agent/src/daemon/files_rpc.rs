@@ -484,12 +484,13 @@ impl Uploads {
             debug!("Malformed file data frame from agent");
             return UploadStep::Pending;
         };
-        let Some(upload) = self.pending.get_mut(&id) else {
+        // Take the write out while it is extended; it goes back only while
+        // more data is still expected.
+        let Some(mut upload) = self.pending.remove(&id) else {
             // A refused or abandoned write's trailing data.
             return UploadStep::Pending;
         };
         if upload.data.len() + bytes.len() > upload.expected {
-            let upload = self.pending.remove(&id).expect("present");
             return UploadStep::Refused(FileResponse {
                 id,
                 outcome: failed(FileError::OperationFailed(format!(
@@ -500,9 +501,9 @@ impl Uploads {
         }
         upload.data.extend_from_slice(bytes);
         if upload.data.len() < upload.expected {
+            self.pending.insert(id, upload);
             return UploadStep::Pending;
         }
-        let upload = self.pending.remove(&id).expect("present");
         UploadStep::Complete(FileJob {
             gen: upload.gen,
             request: upload.request,
