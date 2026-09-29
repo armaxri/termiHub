@@ -1214,10 +1214,6 @@ pub(crate) fn init_secondary_managers(
             });
         }
     }
-
-    // Every owner namespace is managed now: record the OS keychain items
-    // termiHub can derive in its key index (#3434), in the background.
-    crate::commands::credential_vault::spawn_keychain_index_seeding(app.handle().clone());
 }
 
 /// Re-activate the workspace recorded in the last session (#3517) when the

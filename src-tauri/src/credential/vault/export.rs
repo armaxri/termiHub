@@ -15,22 +15,29 @@ use crate::credential::CredentialStore;
 /// Read every credential the export should carry from `store`.
 ///
 /// Keys come from [`CredentialStore::list_keys`] plus every credential type
-/// for each id in `known_owner_ids` — the OS keychain cannot enumerate its
-/// items, so the saved connections and agents are probed explicitly. Any read
+/// for each id in `known_owner_ids` — the OS keychain lists only its key
+/// index, so the saved connections and agents are probed explicitly. The
+/// keychain's index is seeded on demand first (#3434): this user-initiated
+/// export is where an OS access prompt may appear, never at startup. Any read
 /// error aborts the export rather than silently producing an incomplete
 /// backup.
 pub fn collect_entries(
     store: &dyn CredentialStore,
     known_owner_ids: &[String],
 ) -> Result<Vec<VaultSecret>, VaultError> {
+    let owner_keys: Vec<CredentialKey> = known_owner_ids
+        .iter()
+        .flat_map(|id| {
+            CredentialType::ALL
+                .into_iter()
+                .map(move |t| CredentialKey::new(id, t))
+        })
+        .collect();
+    store.seed_key_index(&owner_keys);
     let mut keys: Vec<CredentialKey> = store
         .list_keys()
         .map_err(|e| VaultError::other(format!("Could not read the credential store: {e}")))?;
-    for id in known_owner_ids {
-        for credential_type in CredentialType::ALL {
-            keys.push(CredentialKey::new(id, credential_type));
-        }
-    }
+    keys.extend(owner_keys);
 
     let mut seen = HashSet::new();
     keys.retain(|k| seen.insert(k.to_string()));

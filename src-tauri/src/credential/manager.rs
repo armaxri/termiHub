@@ -182,6 +182,16 @@ impl CredentialManager {
         drop(abandoned);
     }
 
+    /// Drop every key from the OS keychain index without touching the
+    /// keychain, to simulate items written before the index existed.
+    #[cfg(test)]
+    pub(crate) fn forget_keychain_index_for_test(&self) {
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
+        if let StoreBackend::OsKeychain(ref s) = *inner {
+            s.forget_index_for_test();
+        }
+    }
+
     /// Execute a closure with a reference to the inner [`MasterPasswordStore`],
     /// if the current backend is master password mode.
     ///
@@ -534,6 +544,13 @@ impl CredentialStore for CredentialManager {
         let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
         if let StoreBackend::OsKeychain(ref s) = *inner {
             s.seed_key_index(candidates);
+        }
+    }
+
+    fn note_key_candidates(&self, keys: &[CredentialKey]) {
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
+        if let StoreBackend::OsKeychain(ref s) = *inner {
+            s.note_key_candidates(keys);
         }
     }
 

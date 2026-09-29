@@ -17,9 +17,7 @@ use crate::credential::named::NamedCredentialRegistry;
 use crate::credential::vault::{
     self, ConflictStrategy, VaultError, VaultImportPreview, VaultImportResult,
 };
-use crate::credential::{
-    CredentialKey, CredentialManager, CredentialStore, CredentialType, StorageMode,
-};
+use crate::credential::{CredentialKey, CredentialManager, CredentialType};
 use crate::embedded_servers::server_manager::EmbeddedServerManager;
 
 /// Map every saved connection and agent id to its display name.
@@ -56,9 +54,11 @@ pub(crate) fn known_owners(
 /// so callers never act on an incomplete key set.
 ///
 /// Used to probe the OS keychain, which cannot enumerate its items: the vault
-/// export, the store switch and the key-index seeding (#3434, #3844). Agent
+/// export and the store switch, which seed the key index on demand (#3434,
+/// #3844). Agent
 /// graphical secrets (`agent-graphical:*`) live under definitions held on the
-/// agent host; they are seeded when an agent's definitions are listed.
+/// agent host; their names are recorded as index candidates (without reading
+/// the keychain) when an agent's definitions are listed.
 pub(crate) fn derivable_owner_ids(
     connection_manager: &ConnectionManager,
     app_handle: &AppHandle,
@@ -95,35 +95,6 @@ pub(crate) fn keys_for_owners(owner_ids: &[String]) -> Vec<CredentialKey> {
                 .map(move |t| CredentialKey::new(id, t))
         })
         .collect()
-}
-
-/// Seed the OS keychain key index from every derivable key, in the
-/// background (#3434). Only in OS-keychain mode; items written by an older
-/// version become listable, so an export or store switch finds them too.
-pub(crate) fn spawn_keychain_index_seeding(app_handle: AppHandle) {
-    let is_keychain = app_handle
-        .try_state::<Arc<CredentialManager>>()
-        .is_some_and(|m| m.get_mode() == StorageMode::OsKeychain);
-    if !is_keychain {
-        return;
-    }
-    let spawned = std::thread::Builder::new()
-        .name("keychain-index-seed".to_string())
-        .spawn(move || {
-            let (Some(manager), Some(connections)) = (
-                app_handle.try_state::<Arc<CredentialManager>>(),
-                app_handle.try_state::<ConnectionManager>(),
-            ) else {
-                return;
-            };
-            match derivable_credential_keys(&connections, &app_handle) {
-                Ok(candidates) => manager.seed_key_index(&candidates),
-                Err(e) => warn!("Could not seed the OS keychain key index: {e}"),
-            }
-        });
-    if let Err(e) = spawned {
-        warn!("Could not start seeding the OS keychain key index: {e}");
-    }
 }
 
 /// Export every saved credential as an encrypted vault file.

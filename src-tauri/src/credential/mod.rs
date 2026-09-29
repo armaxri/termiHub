@@ -41,15 +41,22 @@ pub trait CredentialStore: Send + Sync {
     /// List all stored credential keys.
     fn list_keys(&self) -> Result<Vec<CredentialKey>>;
 
-    /// Record which of `candidates` exist, for backends that cannot enumerate
+    /// Record which of `candidates` (plus any recorded with
+    /// [`Self::note_key_candidates`]) exist, for backends that cannot enumerate
     /// their contents and keep their own key index (the OS keychain, #3434).
     ///
-    /// Called with every key termiHub can derive (saved connections, agents,
-    /// shared named credentials, embedded servers, agent graphical secrets) so
-    /// items written before the index existed become listable. Best effort:
-    /// failures are logged, never returned. The default is a no-op for
+    /// **Reads the store**, so it runs only on demand, right before the
+    /// user-initiated operations that need every key — vault export and store
+    /// switch — never at startup (an OS keychain may prompt for access). Best
+    /// effort: failures are logged, never returned. The default is a no-op for
     /// backends that can list their keys themselves.
     fn seed_key_index(&self, _candidates: &[CredentialKey]) {}
+
+    /// Remember `keys` as derived candidates for the next
+    /// [`Self::seed_key_index`], **without** reading the store (e.g. agent
+    /// graphical secrets, derivable only from an agent's listing). The default
+    /// is a no-op.
+    fn note_key_candidates(&self, _keys: &[CredentialKey]) {}
 
     /// Return the current status of the credential store.
     fn status(&self) -> CredentialStoreStatus;

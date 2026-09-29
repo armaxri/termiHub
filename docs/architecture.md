@@ -1293,14 +1293,17 @@ termiHub provides optional credential storage with three modes (`StorageMode` in
     termiHub keeps `keychain-index.json` in the config directory: the **names** of the keys it has
     written (`<owner-id>:<type>`), never their values (`src-tauri/src/credential/keychain_index.rs`).
     A key is added once its keychain write succeeded and removed only once its keychain delete
-    succeeded. Listing the store's keys reads the index and prunes entries whose item has gone
-    (deleted outside termiHub); a key whose read fails stays listed, so the caller's read surfaces
-    the error. At startup the index is seeded in the background from every derivable key —
+    succeeded. Listing the store's keys reads only the index, never the keychain; an indexed key
+    whose item has gone (deleted outside termiHub) is pruned by the read that finds it missing.
+    Keys only an agent's listing reveals (`agent-graphical:*`) are recorded by name as
+    _candidates_ when the definitions are listed, again without reading the keychain. **Seeding is
+    lazy:** right before a vault export or a store switch, termiHub probes every derivable key —
     saved connections (file-scoped and legacy bare ids) and agents, embedded servers and shared
-    named credentials, each with every credential type — and agent graphical secrets
-    (`agent-graphical:*`) are seeded whenever an agent's definitions are listed. The vault export
-    and the store switch read the index **and** probe every derivable key, so a switch to `none`
-    removes, and an export carries, per-connection, graphical and host-label secrets alike.
+    named credentials, each with every credential type — plus the recorded candidates, and indexes
+    the items it finds. Probing reads the keychain, and on an updated unsigned build macOS may ask
+    for access, so **keychain access prompts can appear only when the user exports credentials or
+    switches the credential store**, never at startup. The export and the switch then carry, or
+    (for a switch to `none`) remove, per-connection, graphical and host-label secrets alike.
     **Limitation:** a keychain item that was never indexed and whose key cannot be derived (e.g. a
     file-editor sudo password saved under a host label by a build that predates the index) cannot
     be discovered; re-saving it records it.

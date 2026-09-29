@@ -12,21 +12,28 @@
 //!
 //! Only key **names** — the canonical `"<owner-id>:<type>"` rendering of a
 //! [`CredentialKey`]. Never a secret value: the API accepts keys only, so there
-//! is no way to put a value into it.
+//! is no way to put a value into it. Two sets are kept:
+//!
+//! - `keys` — keys known to be stored in the keychain;
+//! - `candidates` — keys termiHub derived (e.g. agent graphical secrets, whose
+//!   owner ids only an agent's listing reveals) but has **not** checked against
+//!   the keychain. Recording a candidate never touches the keychain; the
+//!   on-demand seed before an export or store switch probes and resolves them.
 //!
 //! # Persistence
 //!
 //! `keychain-index.json` in the config directory, written atomically on every
 //! change. A missing file is an empty index; a corrupt one is logged and
-//! treated as empty (startup seeding rebuilds what can be derived).
+//! treated as empty (the next on-demand seed rebuilds what can be derived).
 //!
 //! # Drift
 //!
 //! - An indexed key whose keychain item has gone (deleted outside termiHub) is
-//!   pruned when the store lists its keys.
+//!   pruned when a read finds it missing.
 //! - A keychain item that is **not** indexed (written by an older termiHub or
-//!   outside the app) cannot be discovered. Seeding from every derivable key
-//!   namespace at startup keeps that gap small; it is a documented limitation.
+//!   outside the app) cannot be discovered unless its key is derivable: the
+//!   on-demand seed before every export and store switch probes every derivable
+//!   key namespace, keeping that gap small. It is a documented limitation.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -46,17 +53,26 @@ pub const FILE_NAME: &str = "keychain-index.json";
 const FORMAT_VERSION: u32 = 1;
 
 /// On-disk shape: a version and the sorted key names.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 struct IndexFile {
     version: u32,
     keys: Vec<String>,
+    #[serde(default)]
+    candidates: Vec<String>,
+}
+
+/// In-memory state: known keys and unchecked candidates.
+#[derive(Default)]
+struct Sets {
+    keys: BTreeSet<String>,
+    candidates: BTreeSet<String>,
 }
 
 /// The set of credential key names known to be stored in the OS keychain.
 pub struct KeychainKeyIndex {
     /// Where the index is persisted; `None` keeps it in memory only.
     path: Option<PathBuf>,
-    keys: Mutex<BTreeSet<String>>,
+    sets: Mutex<Sets>,
 }
 
 impl KeychainKeyIndex {
@@ -65,7 +81,7 @@ impl KeychainKeyIndex {
     pub fn in_memory() -> Self {
         Self {
             path: None,
-            keys: Mutex::new(BTreeSet::new()),
+            sets: Mutex::new(Sets::default()),
         }
     }
 
@@ -73,41 +89,74 @@ impl KeychainKeyIndex {
     /// an unreadable or corrupt one is logged and treated as empty. Entries
     /// that do not parse as a [`CredentialKey`] are dropped.
     pub fn load(path: PathBuf) -> Self {
-        let keys = match read_keys(&path) {
-            Ok(keys) => keys,
+        let sets = match read_sets(&path) {
+            Ok(sets) => sets,
             Err(e) => {
                 warn!(
                     path = %path.display(),
                     error = %e,
                     "Could not read the OS keychain key index; starting from an empty index"
                 );
-                BTreeSet::new()
+                Sets::default()
             }
         };
         Self {
             path: Some(path),
-            keys: Mutex::new(keys),
+            sets: Mutex::new(sets),
         }
     }
 
-    fn lock(&self) -> MutexGuard<'_, BTreeSet<String>> {
-        self.keys.lock().unwrap_or_else(|e| e.into_inner())
+    fn lock(&self) -> MutexGuard<'_, Sets> {
+        self.sets.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Whether `key` is indexed.
     pub fn contains(&self, key: &CredentialKey) -> bool {
-        self.lock().contains(&key.to_string())
+        self.lock().keys.contains(&key.to_string())
     }
 
     /// Every indexed key, sorted by name.
     pub fn keys(&self) -> Vec<CredentialKey> {
-        self.lock()
-            .iter()
-            .filter_map(|k| CredentialKey::from_map_key(k))
-            .collect()
+        parse_all(&self.lock().keys)
     }
 
-    /// Add `keys` to the index and persist it when anything changed.
+    /// Every unchecked candidate key, sorted by name.
+    pub fn candidates(&self) -> Vec<CredentialKey> {
+        parse_all(&self.lock().candidates)
+    }
+
+    /// Record `keys` as candidates to probe on the next on-demand seed. Keys
+    /// already indexed are skipped. Never touches the keychain.
+    pub fn add_candidates(&self, keys: &[CredentialKey]) -> Result<()> {
+        let mut guard = self.lock();
+        let mut changed = false;
+        for key in keys {
+            let name = key.to_string();
+            if !guard.keys.contains(&name) {
+                changed |= guard.candidates.insert(name);
+            }
+        }
+        if changed {
+            self.persist(&guard)?;
+        }
+        Ok(())
+    }
+
+    /// Drop `keys` from the candidates (a probe resolved them as absent).
+    pub fn remove_candidates(&self, keys: &[CredentialKey]) -> Result<()> {
+        let mut guard = self.lock();
+        let mut changed = false;
+        for key in keys {
+            changed |= guard.candidates.remove(&key.to_string());
+        }
+        if changed {
+            self.persist(&guard)?;
+        }
+        Ok(())
+    }
+
+    /// Add `keys` to the index (resolving any matching candidates) and
+    /// persist it when anything changed.
     ///
     /// The in-memory index keeps the keys even when persisting fails, so the
     /// next successful write records them.
@@ -115,7 +164,9 @@ impl KeychainKeyIndex {
         let mut guard = self.lock();
         let mut changed = false;
         for key in keys {
-            changed |= guard.insert(key.to_string());
+            let name = key.to_string();
+            changed |= guard.candidates.remove(&name);
+            changed |= guard.keys.insert(name);
         }
         if changed {
             self.persist(&guard)?;
@@ -135,7 +186,9 @@ impl KeychainKeyIndex {
         let mut guard = self.lock();
         let mut changed = false;
         for key in keys {
-            changed |= guard.remove(&key.to_string());
+            let name = key.to_string();
+            changed |= guard.keys.remove(&name);
+            changed |= guard.candidates.remove(&name);
         }
         if changed {
             self.persist(&guard)?;
@@ -148,13 +201,14 @@ impl KeychainKeyIndex {
         self.remove_many(std::slice::from_ref(key))
     }
 
-    fn persist(&self, keys: &BTreeSet<String>) -> Result<()> {
+    fn persist(&self, sets: &Sets) -> Result<()> {
         let Some(path) = &self.path else {
             return Ok(());
         };
         let file = IndexFile {
             version: FORMAT_VERSION,
-            keys: keys.iter().cloned().collect(),
+            keys: sets.keys.iter().cloned().collect(),
+            candidates: sets.candidates.iter().cloned().collect(),
         };
         let json = serde_json::to_string_pretty(&file)
             .context("Failed to serialize the OS keychain key index")?;
@@ -167,19 +221,34 @@ impl KeychainKeyIndex {
     }
 }
 
+fn parse_all(names: &BTreeSet<String>) -> Vec<CredentialKey> {
+    names
+        .iter()
+        .filter_map(|k| CredentialKey::from_map_key(k))
+        .collect()
+}
+
+fn valid_names(names: Vec<String>) -> BTreeSet<String> {
+    names
+        .into_iter()
+        .filter(|k| CredentialKey::from_map_key(k).is_some())
+        .collect()
+}
+
 /// Read and validate the key names in the index file at `path`.
-fn read_keys(path: &Path) -> Result<BTreeSet<String>> {
+fn read_sets(path: &Path) -> Result<Sets> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeSet::new()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Sets::default()),
         Err(e) => return Err(e).context("Failed to read the index file"),
     };
     let file: IndexFile = serde_json::from_str(&text).context("The index file is not valid")?;
-    Ok(file
-        .keys
+    let keys = valid_names(file.keys);
+    let candidates = valid_names(file.candidates)
         .into_iter()
-        .filter(|k| CredentialKey::from_map_key(k).is_some())
-        .collect())
+        .filter(|c| !keys.contains(c))
+        .collect();
+    Ok(Sets { keys, candidates })
 }
 
 #[cfg(test)]
@@ -263,8 +332,31 @@ mod tests {
         let obj = value.as_object().unwrap();
         let mut fields: Vec<&str> = obj.keys().map(String::as_str).collect();
         fields.sort_unstable();
-        assert_eq!(fields, vec!["keys", "version"]);
+        assert_eq!(fields, vec!["candidates", "keys", "version"]);
         assert_eq!(obj["keys"], serde_json::json!(["conn-a:password"]));
+    }
+
+    #[test]
+    fn candidates_persist_and_resolve() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        let index = KeychainKeyIndex::load(path.clone());
+        let known = key("conn-a", CredentialType::Password);
+        let found = key("agent-graphical:a:d1", CredentialType::Password);
+        let absent = key("agent-graphical:a:d2", CredentialType::Password);
+        index.insert(&known).unwrap();
+        index
+            .add_candidates(&[known.clone(), found.clone(), absent.clone()])
+            .unwrap();
+        // An already indexed key is not a candidate.
+        let reloaded = KeychainKeyIndex::load(path.clone());
+        assert_eq!(reloaded.candidates(), vec![found.clone(), absent.clone()]);
+
+        reloaded.insert(&found).unwrap();
+        reloaded.remove_candidates(&[absent]).unwrap();
+        let again = KeychainKeyIndex::load(path);
+        assert!(again.candidates().is_empty());
+        assert_eq!(again.keys(), vec![found, known]);
     }
 
     #[test]

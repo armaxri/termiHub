@@ -131,12 +131,19 @@ fn unreadable_source_error(current_mode: &StorageMode, detail: &str) -> String {
 /// - `probe_keys` are read in addition to the listed keys (deduplicated). The
 ///   OS keychain lists only the keys in its key index (#3434), so every key
 ///   derivable from saved state — connections, agents, embedded servers and
-///   shared named credentials (#3557) — is probed explicitly (#3844).
+///   shared named credentials (#3557) — is probed explicitly (#3844). The
+///   keychain's key index is seeded from them (and from recorded candidates)
+///   first, so items only the index can name are listed too.
 fn collect_credentials_for_migration(
     manager: &CredentialManager,
     current_mode: &StorageMode,
     probe_keys: &[CredentialKey],
 ) -> Result<Vec<(CredentialKey, String)>, String> {
+    // On-demand seed of the OS keychain key index (#3434): record items that
+    // predate the index, plus derived candidates such as agent graphical
+    // secrets. It reads the keychain, so it runs here — in the user-initiated
+    // switch — and never at startup. A no-op for the other stores.
+    manager.seed_key_index(probe_keys);
     let mut keys_to_migrate = manager
         .list_keys()
         .map_err(|e| unreadable_source_error(current_mode, &e.to_string()))?;
@@ -1552,6 +1559,45 @@ mod tests {
         let index = keychain_index_text(dir.path());
         for key in &expected {
             assert!(!index.contains(key.as_str()), "{key} still indexed");
+        }
+    }
+
+    #[test]
+    fn switching_keychain_to_none_seeds_and_removes_unindexed_items() {
+        // The switch triggers the on-demand seed: per-connection items that
+        // predate the index are found via the derived probe keys, and a
+        // graphical secret via the candidate recorded when its agent was
+        // listed — so none is left behind in the keychain.
+        let _mock = crate::credential::os_keychain::test_support::install_mock();
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = keychain_source(dir.path());
+        mgr.forget_keychain_index_for_test();
+        let graphical =
+            CredentialKey::new("agent-graphical:agent-1:vnc-1", CredentialType::Password);
+        mgr.note_key_candidates(std::slice::from_ref(&graphical));
+
+        let probe = crate::commands::credential_vault::keys_for_owners(&["conn-1".to_string()]);
+        let creds =
+            collect_credentials_for_migration(&mgr, &StorageMode::OsKeychain, &probe).unwrap();
+        let mut collected: Vec<String> = creds.iter().map(|(k, _)| k.to_string()).collect();
+        collected.sort();
+        assert_eq!(
+            collected,
+            vec![
+                graphical.to_string(),
+                "conn-1:key_passphrase".to_string(),
+                "conn-1:password".to_string(),
+                "conn-1:sudo_password".to_string(),
+            ]
+        );
+
+        let pending = mgr.begin_switch(StorageMode::None);
+        let result = clear_previous_store(&pending, &creds);
+        mgr.rollback_switch(pending);
+        assert!(result.remaining.is_empty());
+        assert_eq!(mgr.get(&graphical).unwrap(), None);
+        for t in CredentialType::ALL {
+            assert_eq!(mgr.get(&CredentialKey::new("conn-1", t)).unwrap(), None);
         }
     }
 

@@ -38,7 +38,9 @@ const SERVICE_NAME: &str = "termiHub";
 /// [`KeychainKeyIndex`] of the key **names** it has written (never values):
 /// a key is added once its keychain write succeeded and removed only once its
 /// keychain delete succeeded. [`list_keys`](CredentialStore::list_keys) reads
-/// the index (pruning entries whose item has gone), which is what lets a vault
+/// the index without reading the keychain (a read that finds an item gone
+/// prunes it), and an on-demand seed before an export or store switch
+/// records older items; that is what lets a vault
 /// export and a store switch find every stored credential (#3434, #3844).
 pub struct OsKeychainStore {
     entries: Mutex<HashMap<String, Arc<Entry>>>,
@@ -114,7 +116,17 @@ impl CredentialStore for OsKeychainStore {
         let entry = self.entry(key)?;
         match entry.get_password() {
             Ok(value) => Ok(Some(value)),
-            Err(KeyringError::NoEntry) => Ok(None),
+            Err(KeyringError::NoEntry) => {
+                // Drift: the item was deleted outside termiHub. Prune it, so
+                // the index converges without any extra keychain read.
+                if self.index.contains(key) {
+                    info!(key = %key, "Pruned an OS keychain index entry whose item is gone");
+                    if let Err(e) = self.index.remove(key) {
+                        warn!(key = %key, error = %e, "Failed to persist the pruned OS keychain key index");
+                    }
+                }
+                Ok(None)
+            }
             Err(e) => Err(e).with_context(|| format!("Failed to read OS keychain entry for {key}")),
         }
     }
@@ -162,59 +174,54 @@ impl CredentialStore for OsKeychainStore {
 
     fn list_keys(&self) -> Result<Vec<CredentialKey>> {
         // The native OS credential stores cannot be enumerated through the
-        // `keyring` crate, so the keys come from termiHub's own index. Each is
-        // checked against the keychain: an item deleted outside termiHub is
-        // pruned (drift). A key whose read fails is kept and listed, so the
-        // caller's own read surfaces the error instead of silently skipping it.
-        // Items never recorded in the index (written by an older version or
-        // outside termiHub) cannot be found; see `seed_key_index`.
-        let mut listed = Vec::new();
-        let mut gone = Vec::new();
-        for key in self.index.keys() {
-            match self.exists(&key) {
-                Ok(true) => listed.push(key),
-                Ok(false) => gone.push(key),
-                Err(e) => {
-                    debug!(key = %key, error = %e, "Could not check an indexed OS keychain key");
-                    listed.push(key);
-                }
-            }
+        // `keyring` crate, so the keys come from termiHub's own index — without
+        // reading the keychain. A listed key whose item has gone reads back as
+        // `None` (and is pruned by that read). Items never recorded in the
+        // index (written by an older version or outside termiHub) are found
+        // only through `seed_key_index`, which export and store switch call.
+        Ok(self.index.keys())
+    }
+
+    fn note_key_candidates(&self, keys: &[CredentialKey]) {
+        if let Err(e) = self.index.add_candidates(keys) {
+            warn!(error = %e, "Failed to record OS keychain key candidates in the index");
         }
-        if !gone.is_empty() {
-            info!(
-                pruned = gone.len(),
-                "Pruned OS keychain index entries whose keychain item is gone"
-            );
-            if let Err(e) = self.index.remove_many(&gone) {
-                warn!(error = %e, "Failed to persist the pruned OS keychain key index");
-            }
-        }
-        Ok(listed)
     }
 
     fn seed_key_index(&self, candidates: &[CredentialKey]) {
-        let mut found = Vec::new();
-        for key in candidates {
-            if self.index.contains(key) || found.contains(key) {
-                continue;
+        // Probe the given keys plus every recorded candidate that is not yet
+        // indexed. This reads the keychain, so it only runs on demand, right
+        // before a user-initiated export or store switch — never at startup —
+        // so any OS access prompt appears in that context.
+        let mut to_probe: Vec<CredentialKey> = Vec::new();
+        for key in candidates.iter().cloned().chain(self.index.candidates()) {
+            if !self.index.contains(&key) && !to_probe.contains(&key) {
+                to_probe.push(key);
             }
-            match self.exists(key) {
-                Ok(true) => found.push(key.clone()),
-                Ok(false) => {}
+        }
+        let mut found = Vec::new();
+        let mut absent = Vec::new();
+        for key in to_probe {
+            match self.exists(&key) {
+                Ok(true) => found.push(key),
+                Ok(false) => absent.push(key),
                 Err(e) => {
+                    // Unresolved: a recorded candidate stays for the next seed.
                     debug!(key = %key, error = %e, "Could not probe an OS keychain key for the index")
                 }
             }
         }
-        if found.is_empty() {
-            return;
+        if !found.is_empty() {
+            info!(
+                seeded = found.len(),
+                "Recorded existing OS keychain credentials in the key index"
+            );
+            if let Err(e) = self.index.insert_many(&found) {
+                warn!(error = %e, "Failed to persist the seeded OS keychain key index");
+            }
         }
-        info!(
-            seeded = found.len(),
-            "Recorded existing OS keychain credentials in the key index"
-        );
-        if let Err(e) = self.index.insert_many(&found) {
-            warn!(error = %e, "Failed to persist the seeded OS keychain key index");
+        if let Err(e) = self.index.remove_candidates(&absent) {
+            warn!(error = %e, "Failed to persist the resolved OS keychain key candidates");
         }
     }
 
@@ -429,8 +436,9 @@ mod tests {
     }
 
     #[test]
-    fn list_keys_prunes_indexed_keys_whose_item_is_gone() {
-        // Drift: an item deleted outside termiHub is dropped from the index.
+    fn a_read_prunes_indexed_keys_whose_item_is_gone() {
+        // Drift: an item deleted outside termiHub is dropped from the index by
+        // the read that finds it missing — no extra keychain read.
         let _guard = with_mock();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -439,13 +447,84 @@ mod tests {
         )
         .unwrap();
         let store = indexed_store(dir.path());
+        let gone = CredentialKey::new("conn-gone", CredentialType::Password);
         let live = CredentialKey::new("conn-live", CredentialType::Password);
         store.set(&live, "secret").unwrap();
+        assert_eq!(store.list_keys().unwrap(), vec![gone.clone(), live.clone()]);
+
+        assert_eq!(store.get(&gone).unwrap(), None);
 
         assert_eq!(store.list_keys().unwrap(), vec![live]);
         let text = index_file_text(dir.path());
         assert!(!text.contains("conn-gone"));
         assert!(text.contains("conn-live:password"));
+    }
+
+    /// Arm the mock entry of `key` to fail its next keychain operation, so a
+    /// test can tell whether anything touched the keychain.
+    fn arm_failure(store: &OsKeychainStore, key: &CredentialKey) {
+        let entry = store.entry(key).unwrap();
+        let mock: &keyring::mock::MockCredential = entry.get_credential().downcast_ref().unwrap();
+        mock.set_error(KeyringError::PlatformFailure("touched".into()));
+    }
+
+    #[test]
+    fn listing_and_noting_candidates_never_read_the_keychain() {
+        // Nothing but export / store switch may read the keychain (a read can
+        // raise an OS access prompt on an updated unsigned build).
+        let _guard = with_mock();
+        let dir = tempfile::tempdir().unwrap();
+        let store = indexed_store(dir.path());
+        let indexed = CredentialKey::new("conn-idx", CredentialType::Password);
+        let graphical = CredentialKey::new("agent-graphical:a1:vnc-1", CredentialType::Password);
+        store.set(&indexed, "secret").unwrap();
+        arm_failure(&store, &indexed);
+        arm_failure(&store, &graphical);
+
+        store.list_keys().unwrap();
+        store.note_key_candidates(std::slice::from_ref(&graphical));
+
+        // The armed failures are still pending: neither call read an item.
+        assert!(store.get(&indexed).is_err());
+        assert!(store.get(&graphical).is_err());
+        assert!(index_file_text(dir.path()).contains("agent-graphical:a1:vnc-1:password"));
+    }
+
+    #[test]
+    fn opening_the_store_reads_nothing() {
+        // Startup opens the store (loading the index) but never probes it.
+        let _guard = with_mock();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(super::super::keychain_index::FILE_NAME),
+            r#"{"version":1,"keys":["conn-a:password"],"candidates":["agent-graphical:a:d:password"]}"#,
+        )
+        .unwrap();
+        let store = indexed_store(dir.path());
+        let candidate = CredentialKey::new("agent-graphical:a:d", CredentialType::Password);
+        assert_eq!(store.index.candidates(), vec![candidate]);
+        assert_eq!(
+            store.list_keys().unwrap(),
+            vec![CredentialKey::new("conn-a", CredentialType::Password)]
+        );
+    }
+
+    #[test]
+    fn seed_resolves_recorded_candidates() {
+        let _guard = with_mock();
+        let dir = tempfile::tempdir().unwrap();
+        let store = indexed_store(dir.path());
+        let present = CredentialKey::new("agent-graphical:a1:vnc-1", CredentialType::Password);
+        let absent = CredentialKey::new("agent-graphical:a1:rdp-2", CredentialType::Password);
+        store.set(&present, "vnc-secret").unwrap();
+        store.forget_index_for_test();
+        store.note_key_candidates(&[present.clone(), absent]);
+        assert!(store.list_keys().unwrap().is_empty());
+
+        store.seed_key_index(&[]);
+
+        assert_eq!(store.list_keys().unwrap(), vec![present]);
+        assert!(store.index.candidates().is_empty());
     }
 
     #[test]
@@ -487,6 +566,10 @@ mod tests {
         for (id, t, v) in &secrets {
             store.set(&CredentialKey::new(id, t.clone()), v).unwrap();
         }
+        store.note_key_candidates(&[CredentialKey::new(
+            "agent-graphical:a1:d2",
+            CredentialType::Password,
+        )]);
         store.seed_key_index(&[CredentialKey::new("conn-v", CredentialType::Password)]);
         store.list_keys().unwrap();
 
