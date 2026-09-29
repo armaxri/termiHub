@@ -502,3 +502,140 @@ fn unattended_settings_follow_a_named_credential() {
     let settings = unattended_settings(&conn, Some("conn-a"), &store, |_| false).unwrap();
     assert_eq!(settings["password"], "shared");
 }
+
+// --- automatic resume (#3883) -------------------------------------------------
+
+mod auto_resume {
+    use super::*;
+    use crate::files::transfer::persist::{PersistedTransfer, PersistedTransferStatus};
+    use crate::files::transfer::relaunch_auto::{due, note_blocked, CredentialWaits, WaitTrigger};
+    use crate::files::transfer::{TransferDirection, TransferRegistry};
+
+    fn paused_record(connection_id: &str) -> PersistedTransfer {
+        PersistedTransfer {
+            transfer_id: "t1".to_string(),
+            session_id: "sess-old".to_string(),
+            direction: TransferDirection::Download,
+            file_name: "data.csv".to_string(),
+            remote_path: "/remote/data.csv".to_string(),
+            local_path: Some("/home/user/data.csv".to_string()),
+            status: PersistedTransferStatus::Paused,
+            transferred: 4096,
+            total: 8192,
+            resume_offset: 4096,
+            created_at_ms: 1_000,
+            updated_at_ms: 2_000,
+            docker: None,
+            group_id: None,
+            folder_paste_id: None,
+            source_mtime: None,
+            remote_source: None,
+            saved_connection_id: Some(connection_id.to_string()),
+        }
+    }
+
+    /// Run the relaunch's resolution for `record` and settle its outcome the
+    /// way a relaunch does: a missing secret puts it back on the wait list.
+    async fn relaunch(
+        src: &FakeSources,
+        waits: &CredentialWaits,
+        record: &PersistedTransfer,
+    ) -> Result<SessionTarget, RelaunchBlocked> {
+        let result = resolve_session_target(
+            src,
+            &record.session_id,
+            record.saved_connection_id.as_deref(),
+        )
+        .await;
+        if let Err(blocked) = &result {
+            note_blocked(waits, record, blocked);
+        }
+        result
+    }
+
+    fn unlock(src: &FakeSources) {
+        src.store
+            .locked
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// The store is locked, so the first relaunch pauses the transfer. The user
+    /// opens the connection: the transfer resumes on the new session, and the
+    /// store is never read.
+    #[tokio::test]
+    async fn opening_the_matching_connection_resumes_on_its_session() {
+        let rec = paused_record("conn-a");
+        let waits = CredentialWaits::default();
+        let registry = TransferRegistry::new();
+        let src = FakeSources::new(locked(RecordingStore::with(&[("conn-a", PW, "hunter2")])))
+            .with_connection(ssh_password("conn-a"));
+        assert_eq!(
+            relaunch(&src, &waits, &rec).await.err(),
+            Some(RelaunchBlocked::NeedsCredentials)
+        );
+        assert!(waits.contains("t1"));
+
+        let src = src
+            .with_live_sftp("sess-new", "live.internal")
+            .with_binding("conn-a", "sess-new");
+        let trigger = WaitTrigger::ConnectionOpened("conn-a".to_string());
+        assert_eq!(due(&waits, &trigger, &registry), vec!["t1"]);
+        let target = relaunch(&src, &waits, &rec).await.expect("resumes");
+
+        assert!(matches!(target, SessionTarget::Sftp(_)));
+        assert!(!waits.contains("t1"));
+        assert_eq!(src.store_reads(), 0, "the store is never read");
+        assert!(src.connects().is_empty(), "the reopened session is used");
+    }
+
+    /// The store is locked, so the first relaunch pauses the transfer. The user
+    /// unlocks it: the transfer resumes with the stored password.
+    #[tokio::test]
+    async fn unlocking_the_store_resumes_with_the_stored_secret() {
+        let rec = paused_record("conn-a");
+        let waits = CredentialWaits::default();
+        let registry = TransferRegistry::new();
+        let src = FakeSources::new(locked(RecordingStore::with(&[("conn-a", PW, "hunter2")])))
+            .with_connection(ssh_password("conn-a"));
+        assert!(relaunch(&src, &waits, &rec).await.is_err());
+        assert!(src.connects().is_empty(), "a locked store never connects");
+
+        unlock(&src);
+        assert_eq!(
+            due(&waits, &WaitTrigger::StoreUnlocked, &registry),
+            vec!["t1"]
+        );
+        relaunch(&src, &waits, &rec).await.expect("resumes");
+
+        assert!(!waits.contains("t1"));
+        let connects = src.connects();
+        assert_eq!(connects.len(), 1, "one unattended connect");
+        assert_eq!(connects[0].password.as_deref(), Some("hunter2"));
+    }
+
+    /// The store unlocks, but the password was never saved: the transfer stays
+    /// paused and keeps waiting, and nothing connects or prompts.
+    #[tokio::test]
+    async fn unlocking_the_store_without_the_secret_keeps_the_transfer_paused() {
+        let rec = paused_record("conn-a");
+        let waits = CredentialWaits::default();
+        let registry = TransferRegistry::new();
+        let src = FakeSources::new(locked(RecordingStore::default()))
+            .with_connection(ssh_password("conn-a"));
+        assert!(relaunch(&src, &waits, &rec).await.is_err());
+
+        unlock(&src);
+        assert_eq!(
+            due(&waits, &WaitTrigger::StoreUnlocked, &registry),
+            vec!["t1"]
+        );
+        assert_eq!(
+            relaunch(&src, &waits, &rec).await.err(),
+            Some(RelaunchBlocked::NeedsCredentials),
+            "still paused with the reason"
+        );
+
+        assert!(waits.contains("t1"), "it waits for the next trigger");
+        assert!(src.connects().is_empty());
+    }
+}
