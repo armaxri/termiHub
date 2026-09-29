@@ -40,7 +40,7 @@ describe("handleScheduleFire (PROD-043)", () => {
     await handleScheduleFire(fire);
     expect(mocks.ackScheduleRun).toHaveBeenCalledWith("tok");
     expect(mocks.executeScheduledRun).toHaveBeenCalledWith(fire, expect.any(Object), {
-      connectMissing: false,
+      connectMissing: undefined,
     });
     expect(mocks.reportScheduleRun).toHaveBeenCalledWith("tok", report);
   });
@@ -53,14 +53,14 @@ describe("handleScheduleFire (PROD-043)", () => {
     expect(mocks.executeScheduledRun).toHaveBeenLastCalledWith(
       expect.objectContaining({ connectWindow: "main" }),
       expect.any(Object),
-      { connectMissing: true }
+      { connectMissing: expect.any(Function) }
     );
 
     await handleScheduleFire({ ...fire, connectWindow: "aux-1" });
     expect(mocks.executeScheduledRun).toHaveBeenLastCalledWith(
       expect.objectContaining({ connectWindow: "aux-1" }),
       expect.any(Object),
-      { connectMissing: false }
+      { connectMissing: undefined }
     );
   });
 

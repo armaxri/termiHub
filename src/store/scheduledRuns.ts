@@ -43,12 +43,7 @@ import {
   type FanoutOutcome,
 } from "./slices/workflowFanout";
 import { newMacroRunId } from "./slices/macroRunHistory";
-import {
-  closeRunTabs,
-  connectMissingTargets,
-  connectUnattended,
-  type UnattendedConnector,
-} from "./scheduledConnect";
+import { closeRunTabs, connectMissingTargets, type UnattendedConnector } from "./scheduledConnect";
 import { activeWorkflowRunCount, runWorkflowOnTarget } from "./slices/workflowRunOnTarget";
 
 /** The store access a scheduled run needs. */
@@ -231,12 +226,10 @@ async function runScheduledMacro(
 /** Options of {@link executeScheduledRun}. */
 export interface ScheduledRunOptions {
   /**
-   * This window is the fire's `connectWindow` (#3527): connect the targets
-   * not connected here, unattended, before running.
+   * Set when this window is the fire's `connectWindow` (#3527): the unattended
+   * connector to connect the targets not connected here with, before running.
    */
-  connectMissing?: boolean;
-  /** The unattended connector (a test seam; defaults to the real flow). */
-  connect?: UnattendedConnector;
+  connectMissing?: UnattendedConnector;
   /** How long an opened tab may take to attach (a test seam). */
   readyTimeoutMs?: number;
 }
@@ -288,7 +281,7 @@ export async function executeScheduledRun(
     const connected = await connectMissingTargets(
       store.getState,
       connectionIds,
-      options.connect ?? connectUnattended,
+      options.connectMissing,
       options.readyTimeoutMs
     );
     closeRunTabs(store.getState, connected.abandoned, false);

@@ -13,10 +13,7 @@ import { t, tf } from "@/i18n/catalog";
 import { closeTerminal } from "@/services/api";
 import { isTerminalReady } from "@/services/macroPlayback";
 import type { SavedConnection } from "@/types/connection";
-import {
-  connectSavedConnection,
-  type ConnectSavedConnectionResult,
-} from "@/utils/connectSavedConnection";
+import type { ConnectSavedConnectionResult } from "@/utils/connectSavedConnection";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 import { findLeafByTab } from "@/utils/panelTree";
@@ -28,19 +25,19 @@ import { filterConnectedTerminalTabIds } from "./tabQueries";
 import { runWithConcurrency, WORKFLOW_FANOUT_CONCURRENCY } from "./slices/workflowFanout";
 
 /** How long an opened tab may take to attach before the run gives up on it. */
-export const TERMINAL_READY_TIMEOUT_MS = 10_000;
+const TERMINAL_READY_TIMEOUT_MS = 10_000;
 
 /** How often the readiness of an opened tab is polled. */
 const TERMINAL_READY_POLL_MS = 50;
 
-/** Connects one saved connection unattended (the real flow, or a test double). */
+/**
+ * Connects one saved connection unattended — the shared flow in its
+ * never-prompt mode, injected by the caller (the flow reads the root store,
+ * which this store-layer module must not import, #2881), or a test double.
+ */
 export type UnattendedConnector = (
   connection: SavedConnection
 ) => Promise<ConnectSavedConnectionResult>;
-
-/** The default connector: the shared flow in its never-prompt mode. */
-export const connectUnattended: UnattendedConnector = (connection) =>
-  connectSavedConnection(connection, { unattended: true });
 
 /** A tab a scheduled run opened, which it must close again. */
 export interface OpenedRunTab {
@@ -96,7 +93,7 @@ async function waitUntilReady(tabId: string, timeoutMs: number): Promise<boolean
 export async function connectMissingTargets(
   getState: () => AppState,
   connectionIds: readonly string[],
-  connect: UnattendedConnector = connectUnattended,
+  connect: UnattendedConnector,
   readyTimeoutMs: number = TERMINAL_READY_TIMEOUT_MS
 ): Promise<MissingTargetsResult> {
   const result: MissingTargetsResult = { opened: [], abandoned: [], skipped: [] };

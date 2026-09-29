@@ -139,14 +139,12 @@ describe("scheduled runs — connect if not connected (#3527)", () => {
     vi.restoreAllMocks();
   });
 
-  it("is off by default: without the opt-in nothing is connected", async () => {
-    const connector = openingConnector();
-
+  it("is off by default: a window that is not the connect window connects nothing", async () => {
     const report = await executeScheduledRun(fire(["conn-a", "conn-b"]), store, {
-      connect: connector,
+      connectMissing: undefined,
     });
 
-    expect(connector.calls).toEqual([]);
+    expect(liveTabIds()).toEqual(["tab-user-a"]);
     expect(report).toMatchObject({ outcome: "completed", targetsRun: 1 });
     expect(injected.map((i) => i.tabId)).toEqual(["tab-user-a"]);
   });
@@ -155,8 +153,7 @@ describe("scheduled runs — connect if not connected (#3527)", () => {
     const connector = openingConnector();
 
     const report = await executeScheduledRun(fire(["conn-a", "conn-b"]), store, {
-      connectMissing: true,
-      connect: connector,
+      connectMissing: connector,
     });
 
     // conn-a was already connected; only conn-b is connected unattended.
@@ -175,8 +172,7 @@ describe("scheduled runs — connect if not connected (#3527)", () => {
         : { status: "refused", reason: "host key not trusted" };
 
     const report = await executeScheduledRun(fire(["conn-a", "conn-b", "conn-c"]), store, {
-      connectMissing: true,
-      connect: connector,
+      connectMissing: connector,
     });
 
     expect(report.outcome).toBe("completed");
@@ -193,8 +189,7 @@ describe("scheduled runs — connect if not connected (#3527)", () => {
     });
 
     const report = await executeScheduledRun(fire(["conn-b"]), store, {
-      connectMissing: true,
-      connect: connector,
+      connectMissing: connector,
     });
 
     expect(report).toEqual({
@@ -210,8 +205,7 @@ describe("scheduled runs — connect if not connected (#3527)", () => {
     registerTerminalInputInjector(async (tabId) => tabId === "tab-user-a");
 
     const report = await executeScheduledRun(fire(["conn-b"]), store, {
-      connectMissing: true,
-      connect: connector,
+      connectMissing: connector,
     });
 
     expect(connector.calls).toEqual(["conn-b"]);
@@ -224,8 +218,7 @@ describe("scheduled runs — connect if not connected (#3527)", () => {
     registerTerminalReadyProbe(() => false);
 
     const report = await executeScheduledRun(fire(["conn-b"]), store, {
-      connectMissing: true,
-      connect: connector,
+      connectMissing: connector,
       readyTimeoutMs: 0,
     });
 
@@ -239,8 +232,7 @@ describe("scheduled runs — connect if not connected (#3527)", () => {
     const connector = openingConnector();
 
     const report = await executeScheduledRun(fire(["conn-gone"]), store, {
-      connectMissing: true,
-      connect: connector,
+      connectMissing: connector,
     });
 
     expect(connector.calls).toEqual([]);
