@@ -197,4 +197,52 @@ mod tests {
         let sink: Box<dyn OutputSink> = Box::new(JsonRpcOutputSink::new(tx));
         sink.send_output("s1", b"data".to_vec()).unwrap();
     }
+
+    // -- #3759: wire byte-identity with the legacy `json!` builders ----------
+
+    /// Serialize a notification exactly as the transport writes it (one line).
+    fn wire(n: &JsonRpcNotification) -> String {
+        serde_json::to_string(n).unwrap()
+    }
+
+    /// The legacy hand-built notification line for `method` + `params`.
+    fn legacy_wire(method: &str, params: serde_json::Value) -> String {
+        wire(&JsonRpcNotification::new(method, params))
+    }
+
+    #[test]
+    fn output_sink_wire_is_byte_identical_to_legacy_json() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = JsonRpcOutputSink::new(tx);
+        let b64 = base64::engine::general_purpose::STANDARD;
+
+        // Multi-chunk output with a session id that needs JSON escaping.
+        let data: Vec<u8> = (0..65536 + 7).map(|i| (i % 251) as u8).collect();
+        sink.send_output("s\"1 é", data.clone()).unwrap();
+        for chunk in data.chunks(65536) {
+            let n = rx.try_recv().unwrap();
+            let legacy = serde_json::json!({
+                "session_id": "s\"1 é",
+                "data": b64.encode(chunk),
+            });
+            assert_eq!(wire(&n), legacy_wire(CONNECTION_OUTPUT, legacy));
+        }
+        assert!(rx.try_recv().is_err());
+
+        for code in [Some(0), Some(-2), None] {
+            sink.send_exit("s1", code).unwrap();
+            let legacy = serde_json::json!({ "session_id": "s1", "exit_code": code });
+            assert_eq!(
+                wire(&rx.try_recv().unwrap()),
+                legacy_wire(CONNECTION_EXIT, legacy)
+            );
+        }
+
+        sink.send_error("s1", "read \"failed\"\n").unwrap();
+        let legacy = serde_json::json!({ "session_id": "s1", "message": "read \"failed\"\n" });
+        assert_eq!(
+            wire(&rx.try_recv().unwrap()),
+            legacy_wire("connection.error", legacy)
+        );
+    }
 }
