@@ -2,9 +2,9 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.21.0
+**Version**: 0.22.0
 **Status**: Draft
-**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089, #3210, #3871
+**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089, #3210, #3871, #3242
 
 ---
 
@@ -169,7 +169,7 @@ Persistent (reconnectable) sessions run in a detached session-daemon process. Th
 | Access control | `0o700` on the socket dir + socket       | Per-user DACL (`GENERIC_ALL` to the user SID + `LocalSystem`)      |
 | Daemon spawn   | Orphaned child (agent never waits on it) | `DETACHED_PROCESS \| CREATE_NEW_PROCESS_GROUP \| CREATE_NO_WINDOW` |
 
-Both restrict the endpoint to the current user, and neither exposes a TCP port. The frame protocol is append-only: since 0.20.0 (#3210) a daemon whose backend can manage processes sends a capabilities frame before its ready frame, and then answers process list / kill request frames from the worker that holds the session — replies go only to that connection. A worker ignores unknown frames and a daemon started by an older agent sends no capabilities frame, so mixed versions keep working (process management of such a session reports "not supported"). Since 0.21.0 (#3871) the capabilities frame also says whether the daemon's backend has a monitoring provider; the worker that holds the session then sends monitoring request frames (subscribe, unsubscribe, set interval, pause), and the daemon answers each one and streams the provider's samples and status transitions back in monitoring event frames — to that connection only. The daemon stops the provider as soon as that connection no longer holds the session (detach, drop, takeover) or the session ends. The daemon's binary frame protocol (`[type: 1B][length: 4B BE][payload]`) and the 1 MiB output ring buffer are identical on both platforms, so reconnect-with-scrollback-replay behaves the same. The `daemon_socket` field persisted in the agent's `state.json` therefore holds a named-pipe name on Windows and a socket path on unix.
+Both restrict the endpoint to the current user, and neither exposes a TCP port. The frame protocol is append-only: since 0.20.0 (#3210) a daemon whose backend can manage processes sends a capabilities frame before its ready frame, and then answers process list / kill request frames from the worker that holds the session — replies go only to that connection. A worker ignores unknown frames and a daemon started by an older agent sends no capabilities frame, so mixed versions keep working (process management of such a session reports "not supported"). Since 0.21.0 (#3871) the capabilities frame also says whether the daemon's backend has a monitoring provider; the worker that holds the session then sends monitoring request frames (subscribe, unsubscribe, set interval, pause), and the daemon answers each one and streams the provider's samples and status transitions back in monitoring event frames — to that connection only. The daemon stops the provider as soon as that connection no longer holds the session (detach, drop, takeover) or the session ends. Since 0.22.0 (#3242) the capabilities frame also says whether the daemon's backend has a file browser; the worker that holds the session then sends file request frames (list, stat, read, write, delete, rename, mkdir, chmod, chown, symlink, copy) and the daemon answers each one — to that connection only — through the backend's own browser, one request after another and each under a timeout. File contents never ride in the JSON: a write's bytes follow its request, and a read's bytes precede its reply, in separate data frames of at most 64 KiB each, so terminal output and input interleave between the chunks of a large transfer instead of waiting behind it. The daemon's binary frame protocol (`[type: 1B][length: 4B BE][payload]`) and the 1 MiB output ring buffer are identical on both platforms, so reconnect-with-scrollback-replay behaves the same. The `daemon_socket` field persisted in the agent's `state.json` therefore holds a named-pipe name on Windows and a socket path on unix.
 
 ### Default Shell and Local Shell Spawning
 
@@ -288,6 +288,9 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                          |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.22.0          | 0.22.0        | Yes                                                                                                                                  |
+| 0.22.0          | 0.9.0–0.21.0  | Yes (no `sessionFiles` — the file browser of an agent-hosted SSH/Docker/FTP/WSL session says to update the agent)                    |
+| 0.21.0          | 0.22.0        | Yes (`sessionFiles` ignored)                                                                                                         |
 | 0.21.0          | 0.21.0        | Yes                                                                                                                                  |
 | 0.21.0          | 0.9.0–0.20.0  | Yes (no `sessionMonitoring` — the status bar of an agent-hosted SSH/Docker/WSL session says to update the agent)                     |
 | 0.20.0          | 0.21.0        | Yes (`sessionMonitoring` ignored)                                                                                                    |
@@ -348,6 +351,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                           |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                 |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                  |
+
+**0.22.0 (additive, minor)** — the [`connection.files.*`](#connectionfileslist) methods now accept an **agent-hosted SSH, Docker, FTP or WSL session id** as `connection_id` (#3242), and the `initialize` result gains `capabilities.sessionFiles: true` to say so. For such a session the agent browses **inside that session's own context** — the remote SSH host (SFTP), the container, the FTP server, or the WSL distribution — through the session backend's own file browser, which for a persistent session runs in the session daemon (see [Session-Daemon Transport](#session-daemon-transport-named-pipe-vs-unix-socket)); it never falls back to the agent host. The session must be running and **held by the requesting client**, exactly as for `connection.processes.*`: otherwise the call fails with `-32023` (held elsewhere) or `-32006` (not running) — this now also applies to a local session's id. Negotiation is by **capability**: a pre-0.22.0 agent omits the flag and answers `-32013` for such sessions, so the desktop does not call it and the file browser says the agent must be updated. A session started by an older agent's session daemon keeps answering `-32013` until it is reopened. A pre-0.22.0 desktop ignores the flag.
 
 **0.21.0 (additive, minor)** — [`connection.monitoring.subscribe`](#connectionmonitoringsubscribe) now accepts an **agent-hosted SSH, Docker or WSL session id** as `host` (#3871), and the `initialize` result gains `capabilities.sessionMonitoring: true` to say so. For such a host the agent subscribes the **session backend's own monitoring provider** — the SSH exec loop on the remote host, the container's `/proc` exec (falling back to the Docker Engine stats API for distroless containers, so samples may carry `source: "dockerStats"`), or the WSL distribution's exec — running in the session daemon (see [Session-Daemon Transport](#session-daemon-transport-named-pipe-vs-unix-socket)), and streams its samples and status transitions as the usual [`connection.monitoring.data`](#connectionmonitoringdata) / [`connection.monitoring.status`](#connectionmonitoringstatus) notifications keyed by the session id. The session must be running and **held by the requesting client**, exactly as for `connection.processes.*`: otherwise the call fails with `-32023` (held elsewhere) or `-32006` (not running). Closing or detaching the session, or losing the hold on it, stops its monitor; a stream that ends on its own is reported `offline`. Negotiation is by **capability**: a pre-0.21.0 agent omits the flag and cannot monitor such a session, so the desktop does not subscribe and the status bar says the agent must be updated. A session started by an older agent's session daemon answers `-32014` until it is reopened. `"self"` and saved SSH connection ids behave as before. A pre-0.21.0 desktop ignores the flag.
 
@@ -472,6 +477,7 @@ On a successful `initialize`, the agent records the client (`client`, `client_ve
 | `capabilities.embeddedServerActivity`     | `boolean`              | The agent serves an agent-hosted embedded server's access log — [`embedded_server.activity`](#embedded_serveractivity) (0.11.0+; absent = `false`)                                       |
 | `capabilities.sessionProcesses`           | `boolean`              | [`connection.processes.*`](#connectionprocesseslist) serve agent-hosted SSH, Docker and WSL sessions, not only local ones (0.20.0+; absent = `false`)                                    |
 | `capabilities.sessionMonitoring`          | `boolean`              | [`connection.monitoring.subscribe`](#connectionmonitoringsubscribe) accepts an agent-hosted SSH, Docker or WSL session id (0.21.0+; absent = `false`)                                    |
+| `capabilities.sessionFiles`               | `boolean`              | [`connection.files.*`](#connectionfileslist) accept an agent-hosted SSH, Docker, FTP or WSL session id and browse inside that session (0.22.0+; absent = `false`)                        |
 
 > **Field-casing note.** The `initialize` **params** are serialized in `camelCase`
 > (`protocolVersion`, `clientVersion`), matching the agent's `InitializeParams` — a field sent in
@@ -1787,6 +1793,12 @@ Delete a folder. Connections and subfolders inside it are moved to the root leve
 
 List directory contents, scoped to a connection. When `connection_id` is omitted the agent's local filesystem is used.
 
+`connection_id` is resolved the same way for every `connection.files.*` method: a **session of this
+client** is browsed in its own context — a local session on the agent host, an SSH, Docker, FTP or
+WSL session inside its remote host, container, server or distribution through the session
+backend's own file browser (0.22.0+, #3242); the session must be running and held by this client.
+Otherwise a saved local/shell connection id browses the agent host, and any other id is not found.
+
 **Request:**
 
 ```json
@@ -1850,7 +1862,12 @@ List directory contents, scoped to a connection. When `connection_id` is omitted
 - `-32010` File not found (path does not exist)
 - `-32011` Permission denied
 - `-32012` File operation failed
-- `-32013` File browsing not supported (e.g., serial connections)
+- `-32013` File browsing not supported (e.g., serial connections, or an agent-hosted session whose
+  backend or session daemon cannot browse — reopen a session started by an older agent)
+- `-32006` Session not running (`connection_id` is a session of this client that has exited)
+- `-32008` Connection not found (neither a session of this client nor a saved connection)
+- `-32023` Session held by other (`connection_id` is a session this client detached from or another
+  desktop holds)
 
 ---
 
