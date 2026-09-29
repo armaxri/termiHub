@@ -20,7 +20,12 @@ use crate::daemon::protocol::{self, *};
 use crate::daemon::transport::{self, BoxedReader, BoxedWriter};
 use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
-use crate::protocol::methods::{CONNECTION_EVICTED, CONNECTION_EXIT, CONNECTION_OUTPUT};
+use crate::protocol::methods::{
+    ConnectionErrorNotification, ConnectionEvictedNotification, ConnectionExitNotification,
+    ConnectionOutputNotification, CONNECTION_ERROR, CONNECTION_EVICTED, CONNECTION_EXIT,
+    CONNECTION_OUTPUT,
+};
+use crate::transport::to_params;
 
 /// How long to wait for the Ready frame after connecting.
 ///
@@ -141,9 +146,9 @@ pub const EVICTED_REASON_HELD_BY_PEER: &str = "heldByPeer";
 pub(crate) fn evicted_notification(session_id: &str, reason: &str) -> JsonRpcNotification {
     JsonRpcNotification::new(
         CONNECTION_EVICTED,
-        serde_json::json!({
-            "session_id": session_id,
-            "reason": reason,
+        to_params(&ConnectionEvictedNotification {
+            session_id: session_id.to_owned(),
+            reason: reason.to_owned(),
         }),
     )
 }
@@ -918,9 +923,9 @@ async fn reader_loop_inner(
 
                     let notification = JsonRpcNotification::new(
                         CONNECTION_EXIT,
-                        serde_json::json!({
-                            "session_id": session_id,
-                            "exit_code": code,
+                        to_params(&ConnectionExitNotification {
+                            session_id: session_id.to_owned(),
+                            exit_code: Some(code),
                         }),
                     );
                     let _ = notification_tx.send(notification);
@@ -935,10 +940,10 @@ async fn reader_loop_inner(
                     warn!("Daemon error for session {session_id}: {msg}");
 
                     let notification = JsonRpcNotification::new(
-                        "connection.error",
-                        serde_json::json!({
-                            "session_id": session_id,
-                            "message": msg.to_string(),
+                        CONNECTION_ERROR,
+                        to_params(&ConnectionErrorNotification {
+                            session_id: session_id.to_owned(),
+                            message: msg.into_owned(),
                         }),
                     );
                     let _ = notification_tx.send(notification);
@@ -990,13 +995,15 @@ async fn reader_loop_inner(
 pub(crate) fn send_output_notification(tx: &NotificationSender, session_id: &str, data: &[u8]) {
     let b64 = base64::engine::general_purpose::STANDARD;
     for chunk in data.chunks(65536) {
-        let encoded = b64.encode(chunk);
+        // `into_params` moves the encoded chunk into the params object, so
+        // this builds no more than the old `json!` did (#3759).
         let notification = JsonRpcNotification::new(
             CONNECTION_OUTPUT,
-            serde_json::json!({
-                "session_id": session_id,
-                "data": encoded,
-            }),
+            ConnectionOutputNotification {
+                session_id: session_id.to_owned(),
+                data: b64.encode(chunk),
+            }
+            .into_params(),
         );
         let _ = tx.send(notification);
     }
@@ -1686,5 +1693,83 @@ mod tests {
         assert_eq!(f1.payload, b"first");
         assert_eq!(f2.msg_type, MSG_RESIZE);
         assert_eq!(f2.payload, b"2nd");
+    }
+
+    // -- #3759: wire byte-identity with the legacy `json!` builders ----------
+
+    fn wire(n: &JsonRpcNotification) -> String {
+        serde_json::to_string(n).unwrap()
+    }
+
+    fn legacy_wire(method: &str, params: serde_json::Value) -> String {
+        wire(&JsonRpcNotification::new(method, params))
+    }
+
+    #[test]
+    fn output_and_evicted_wire_is_byte_identical_to_legacy_json() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let data: Vec<u8> = (0..65536 * 2 + 3).map(|i| (i % 253) as u8).collect();
+        send_output_notification(&tx, "sess-\"x\"", &data);
+        for chunk in data.chunks(65536) {
+            let legacy =
+                serde_json::json!({ "session_id": "sess-\"x\"", "data": b64.encode(chunk) });
+            assert_eq!(
+                wire(&rx.try_recv().unwrap()),
+                legacy_wire(CONNECTION_OUTPUT, legacy)
+            );
+        }
+        assert!(rx.try_recv().is_err());
+
+        for reason in [EVICTED_REASON_TAKEOVER, EVICTED_REASON_HELD_BY_PEER] {
+            let legacy = serde_json::json!({ "session_id": "sess", "reason": reason });
+            assert_eq!(
+                wire(&evicted_notification("sess", reason)),
+                legacy_wire(CONNECTION_EVICTED, legacy)
+            );
+        }
+    }
+
+    /// The reader's `connection.error` / `connection.exit` notifications keep
+    /// their legacy wire lines.
+    #[tokio::test]
+    async fn reader_loop_error_and_exit_wire_is_byte_identical_to_legacy_json() {
+        let (client_sock, mut server_sock) = tokio::io::duplex(64 * 1024);
+        tokio::spawn(async move {
+            protocol::write_frame_async(&mut server_sock, MSG_ERROR, "boom \"é\"".as_bytes())
+                .await
+                .unwrap();
+            protocol::write_frame_async(
+                &mut server_sock,
+                MSG_EXITED,
+                &protocol::encode_exit_code(-7),
+            )
+            .await
+            .unwrap();
+        });
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let (on_exit, _ran) = recording_exit_hook();
+        reader_loop(
+            Box::new(client_sock),
+            "sess",
+            &tx,
+            &Arc::new(AtomicBool::new(true)),
+            Arc::new(Mutex::new(None)),
+            on_exit,
+        )
+        .await;
+
+        let legacy =
+            serde_json::json!({ "session_id": "sess", "message": "boom \"é\"".to_string() });
+        assert_eq!(
+            wire(&rx.try_recv().unwrap()),
+            legacy_wire("connection.error", legacy)
+        );
+        let legacy = serde_json::json!({ "session_id": "sess", "exit_code": -7 });
+        assert_eq!(
+            wire(&rx.try_recv().unwrap()),
+            legacy_wire(CONNECTION_EXIT, legacy)
+        );
     }
 }
