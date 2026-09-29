@@ -94,10 +94,12 @@ mod tests {
             .expect("run console probe helper");
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         assert!(output.status.success(), "probe helper failed: {stdout}");
+        // libtest prints the marker on the same line as `test <name> ... `.
         stdout
-            .lines()
-            .find_map(|l| l.trim().strip_prefix("NO_WINDOW_PROBE_CONSOLE="))
-            .map(str::to_string)
+            .split("NO_WINDOW_PROBE_CONSOLE=")
+            .nth(1)
+            .and_then(|rest| rest.chars().next())
+            .map(String::from)
             .unwrap_or_else(|| panic!("probe marker missing from: {stdout}"))
     }
 
