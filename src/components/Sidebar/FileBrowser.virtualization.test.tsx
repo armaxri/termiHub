@@ -234,6 +234,30 @@ describe("FileBrowser – virtualization", () => {
     expect(document.activeElement).toBe(second);
   });
 
+  it("leaves no pending scroll timer when unmounted mid-scroll (#3056)", async () => {
+    await renderLocalBrowser(makeEntries(300));
+    const list = container.querySelector('[data-testid="file-browser-list"]') as HTMLElement;
+
+    // Fake only the timer APIs so the already-settled async render is unaffected.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const before = vi.getTimerCount();
+      act(() => {
+        list.scrollTop = 600;
+        list.dispatchEvent(new Event("scroll"));
+      });
+      act(() => {
+        root.unmount();
+      });
+      // Nothing the scroll armed may outlive the list — no global onscrollend
+      // shim is involved (react-virtual clears its own reset timer on cleanup).
+      expect(vi.getTimerCount()).toBeLessThanOrEqual(before);
+    } finally {
+      vi.useRealTimers();
+      root = createRoot(container);
+    }
+  });
+
   it("still supports rename-in-place (F2) on the focused row", async () => {
     await renderLocalBrowser(makeEntries(40));
     const list = container.querySelector('[data-testid="file-browser-list"]') as HTMLElement;

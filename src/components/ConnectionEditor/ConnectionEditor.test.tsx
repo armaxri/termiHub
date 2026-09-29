@@ -4,6 +4,7 @@ import { act } from "react";
 import { flushMacrotask } from "@/test/flushAsync";
 import React from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { currentConnectionsView } from "@/store/connectionsBridge";
@@ -104,8 +105,8 @@ const EXISTING_CONN: SavedConnection = {
 let container: HTMLDivElement;
 let root: Root;
 
-function render() {
-  act(() => {
+async function render() {
+  await act(async () => {
     root.render(
       <ConnectionEditor
         tabId="tab-test-1"
@@ -114,6 +115,7 @@ function render() {
       />
     );
   });
+  await flushAsync();
 }
 
 setupSettingsRegion();
@@ -153,7 +155,7 @@ describe("ConnectionEditor — credential hint", () => {
       return Promise.resolve(false);
     });
 
-    render();
+    await render();
 
     // Flush the resolveCredential promise
     await act(async () => {
@@ -170,7 +172,7 @@ describe("ConnectionEditor — credential hint", () => {
       return Promise.resolve(false);
     });
 
-    render();
+    await render();
 
     await act(async () => {
       await Promise.resolve();
@@ -255,8 +257,8 @@ const SSH_CONN_KEY: SavedConnection = {
 };
 
 describe("ConnectionEditor — Save & Connect credential handling", () => {
-  function renderFor(connId: string) {
-    act(() => {
+  async function renderFor(connId: string) {
+    await act(async () => {
       root.render(
         <ConnectionEditor
           tabId="tab-sc-1"
@@ -265,6 +267,7 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
         />
       );
     });
+    await flushAsync();
   }
 
   beforeEach(() => {
@@ -301,7 +304,7 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
       return Promise.resolve(null);
     });
 
-    renderFor(SSH_CONN_PASSWORD.id);
+    await renderFor(SSH_CONN_PASSWORD.id);
 
     // Flush initial effects (credential hint resolution, etc.)
     await act(async () => {
@@ -334,7 +337,7 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
       return Promise.resolve(null);
     });
 
-    renderFor(SSH_CONN_PASSWORD.id);
+    await renderFor(SSH_CONN_PASSWORD.id);
 
     await act(async () => {
       await Promise.resolve();
@@ -372,7 +375,7 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
       return Promise.resolve(null);
     });
 
-    renderFor(SSH_CONN_PASSWORD.id);
+    await renderFor(SSH_CONN_PASSWORD.id);
     await act(async () => {
       await Promise.resolve();
     });
@@ -413,7 +416,7 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
       return Promise.resolve(null);
     });
 
-    renderFor(SSH_CONN_PASSWORD.id);
+    await renderFor(SSH_CONN_PASSWORD.id);
     await act(async () => {
       await Promise.resolve();
     });
@@ -448,7 +451,7 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
       return Promise.resolve(null);
     });
 
-    renderFor(SSH_CONN_KEY.id);
+    await renderFor(SSH_CONN_KEY.id);
 
     await act(async () => {
       await Promise.resolve();
@@ -478,7 +481,7 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
       return Promise.resolve(null);
     });
 
-    renderFor(SSH_CONN_KEY.id);
+    await renderFor(SSH_CONN_KEY.id);
 
     await act(async () => {
       await Promise.resolve();
@@ -510,7 +513,7 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
       return Promise.resolve(null);
     });
 
-    renderFor(SSH_CONN_KEY.id);
+    await renderFor(SSH_CONN_KEY.id);
     await act(async () => {
       await Promise.resolve();
     });
@@ -548,7 +551,7 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
       return Promise.resolve(null);
     });
 
-    renderFor(opts.connId);
+    await renderFor(opts.connId);
     await act(async () => {
       await Promise.resolve();
     });
@@ -668,13 +671,14 @@ const DIRTY_CONN: SavedConnection = {
 describe("ConnectionEditor — unsaved-changes dirty state", () => {
   const TAB_ID = "tab-dirty-1";
 
-  function renderEditor(connectionId: string, strictMode = false) {
+  async function renderEditor(connectionId: string, strictMode = false) {
     const editor = (
       <ConnectionEditor tabId={TAB_ID} meta={{ connectionId, folderId: null }} isVisible={true} />
     );
-    act(() => {
+    await act(async () => {
       root.render(strictMode ? <React.StrictMode>{editor}</React.StrictMode> : editor);
     });
+    await flushAsync();
   }
 
   async function flushEffects() {
@@ -721,7 +725,7 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
       connectionTypes: [LOCAL_TYPE],
     });
     seedConnectionsRegion({ connections: [DIRTY_CONN] });
-    renderEditor(DIRTY_CONN.id);
+    await renderEditor(DIRTY_CONN.id);
     await flushEffects();
 
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBeFalsy();
@@ -733,7 +737,7 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
       connectionTypes: [LOCAL_TYPE],
     });
     seedConnectionsRegion({ connections: [DIRTY_CONN] });
-    renderEditor(DIRTY_CONN.id, true);
+    await renderEditor(DIRTY_CONN.id, true);
     await flushEffects();
 
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBeFalsy();
@@ -745,7 +749,7 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
       connectionTypes: [LOCAL_TYPE],
     });
     seedConnectionsRegion({ connections: [] });
-    renderEditor("new");
+    await renderEditor("new");
     await flushEffects();
 
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBeFalsy();
@@ -757,7 +761,7 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
       connectionTypes: [LOCAL_TYPE],
     });
     seedConnectionsRegion({ connections: [] });
-    renderEditor("new", true);
+    await renderEditor("new", true);
     await flushEffects();
 
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBeFalsy();
@@ -769,7 +773,7 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
       connectionTypes: [LOCAL_TYPE],
     });
     seedConnectionsRegion({ connections: [DIRTY_CONN] });
-    renderEditor(DIRTY_CONN.id);
+    await renderEditor(DIRTY_CONN.id);
     await flushEffects();
 
     const nameInput = container.querySelector(
@@ -790,7 +794,7 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
       connectionTypes: [LOCAL_TYPE],
     });
     seedConnectionsRegion({ connections: [DIRTY_CONN] });
-    renderEditor(DIRTY_CONN.id);
+    await renderEditor(DIRTY_CONN.id);
     await flushEffects();
 
     const nameInput = container.querySelector(
@@ -853,7 +857,7 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
       connectionTypes: [LOCAL_TYPE_WITH_DEFAULTS],
     });
     seedConnectionsRegion({ connections: [CONN_WITHOUT_EXPLICIT_DEFAULTS] });
-    renderEditor(CONN_WITHOUT_EXPLICIT_DEFAULTS.id);
+    await renderEditor(CONN_WITHOUT_EXPLICIT_DEFAULTS.id);
     await flushEffects();
 
     // Toggle shows as on because the schema default is true (Radix Switch:
@@ -986,16 +990,17 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
     vi.clearAllMocks();
   });
 
-  function renderLocal(connectionId: string, folderId: string | null = null) {
-    act(() => {
+  async function renderLocal(connectionId: string, folderId: string | null = null) {
+    await act(async () => {
       root.render(
         <ConnectionEditor tabId={TAB_ID} meta={{ connectionId, folderId }} isVisible={true} />
       );
     });
+    await flushAsync();
   }
 
-  function renderAgentDefinition(agentId: string) {
-    act(() => {
+  async function renderAgentDefinition(agentId: string) {
+    await act(async () => {
       root.render(
         <ConnectionEditor
           tabId={TAB_ID}
@@ -1004,6 +1009,7 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
         />
       );
     });
+    await flushAsync();
   }
 
   async function flush() {
@@ -1020,7 +1026,7 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
     seedAgentsRegion({ remoteAgents: [makeAgent({ name: "Shared Name" })] });
     seedConnectionsRegion({ connections: [] });
 
-    renderLocal("new");
+    await renderLocal("new");
     await flush();
 
     await act(async () => {
@@ -1046,7 +1052,7 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
       ],
     });
 
-    renderLocal("new");
+    await renderLocal("new");
     await flush();
 
     await act(async () => {
@@ -1072,7 +1078,7 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
       ],
     });
 
-    renderLocal("new", "folder-B");
+    await renderLocal("new", "folder-B");
     await flush();
 
     await act(async () => {
@@ -1098,7 +1104,7 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
       ],
     });
 
-    renderLocal("new-remote-agent");
+    await renderLocal("new-remote-agent");
     await flush();
 
     await act(async () => {
@@ -1118,7 +1124,7 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
     });
     seedConnectionsRegion({ connections: [] });
 
-    renderLocal("new-remote-agent");
+    await renderLocal("new-remote-agent");
     await flush();
 
     await act(async () => {
@@ -1146,7 +1152,7 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
       ],
     });
 
-    renderAgentDefinition(agent.id);
+    await renderAgentDefinition(agent.id);
     await flush();
 
     await act(async () => {
@@ -1173,7 +1179,7 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
     seedAgentsRegion({ remoteAgents: [agent], agentDefinitions: { [agent.id]: [existingDef] } });
     seedConnectionsRegion({ connections: [] });
 
-    renderAgentDefinition(agent.id);
+    await renderAgentDefinition(agent.id);
     await flush();
 
     await act(async () => {
@@ -1207,8 +1213,8 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
       await Promise.resolve();
     });
 
-  function renderFor(connId: string) {
-    act(() => {
+  async function renderFor(connId: string) {
+    await act(async () => {
       root.render(
         <TooltipProvider>
           <ConnectionEditor
@@ -1219,10 +1225,10 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
         </TooltipProvider>
       );
     });
+    await flushAsync();
   }
 
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -1245,18 +1251,17 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
-  it("renders the Jump Host section for an SSH connection", () => {
-    renderFor(SSH_CONN_PASSWORD.id);
+  it("renders the Jump Host section for an SSH connection", async () => {
+    await renderFor(SSH_CONN_PASSWORD.id);
     expect(query("jump-host-section")).toBeTruthy();
     // Migrated to the shared Checkbox primitive (Radix): aria-checked, not .checked.
     expect(query("jump-host-enabled")?.getAttribute("aria-checked")).toBe("false");
   });
 
   it("persists an inline jump host through save, surviving a later schema-field edit", async () => {
-    renderFor(SSH_CONN_PASSWORD.id);
+    await renderFor(SSH_CONN_PASSWORD.id);
     await flush();
 
     // Enable the jump host and fill its required fields (host + username, so
@@ -1292,14 +1297,14 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
     ]);
   });
 
-  it("renders the SSH Agent Forwarding toggle, off by default (#1699)", () => {
-    renderFor(SSH_CONN_PASSWORD.id);
+  it("renders the SSH Agent Forwarding toggle, off by default (#1699)", async () => {
+    await renderFor(SSH_CONN_PASSWORD.id);
     expect(query("ssh-agent-forwarding-section")).toBeTruthy();
     expect(query("connection-editor-forward-agent")?.getAttribute("aria-checked")).toBe("false");
   });
 
   it("persists forwardAgent through save, surviving a later schema-field edit (#1699)", async () => {
-    renderFor(SSH_CONN_PASSWORD.id);
+    await renderFor(SSH_CONN_PASSWORD.id);
     await flush();
 
     // Turn on agent forwarding.
@@ -1329,7 +1334,7 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
   });
 
   it("omits forwardAgent from saved settings when left off (#1699)", async () => {
-    renderFor(SSH_CONN_PASSWORD.id);
+    await renderFor(SSH_CONN_PASSWORD.id);
     await flush();
 
     // Make a change so save is enabled, without touching agent forwarding.
@@ -1351,7 +1356,7 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
   });
 
   it("blocks save while a jump host is missing required fields", async () => {
-    renderFor(SSH_CONN_PASSWORD.id);
+    await renderFor(SSH_CONN_PASSWORD.id);
     await flush();
 
     // Enable the jump host but leave host/username empty → invalid.
@@ -1402,8 +1407,8 @@ describe("ConnectionEditor — Setup SSH Agent button", () => {
       await Promise.resolve();
     });
 
-  function renderFor(connId: string) {
-    act(() => {
+  async function renderFor(connId: string) {
+    await act(async () => {
       root.render(
         <ConnectionEditor
           tabId="tab-agent-1"
@@ -1412,10 +1417,10 @@ describe("ConnectionEditor — Setup SSH Agent button", () => {
         />
       );
     });
+    await flushAsync();
   }
 
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -1436,16 +1441,15 @@ describe("ConnectionEditor — Setup SSH Agent button", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
-  it("shows the Setup SSH Agent button for agent auth", () => {
-    renderFor(SSH_CONN_AGENT.id);
+  it("shows the Setup SSH Agent button for agent auth", async () => {
+    await renderFor(SSH_CONN_AGENT.id);
     expect(query("ssh-setup-agent")).toBeTruthy();
   });
 
-  it("hides the Setup SSH Agent button for non-agent auth", () => {
-    renderFor(SSH_CONN_PASSWORD.id);
+  it("hides the Setup SSH Agent button for non-agent auth", async () => {
+    await renderFor(SSH_CONN_PASSWORD.id);
     expect(query("ssh-setup-agent")).toBeNull();
   });
 
@@ -1453,7 +1457,7 @@ describe("ConnectionEditor — Setup SSH Agent button", () => {
     const addTabSpy = vi.fn();
     useAppStore.setState({ addTab: addTabSpy });
 
-    renderFor(SSH_CONN_AGENT.id);
+    await renderFor(SSH_CONN_AGENT.id);
     await flush();
 
     act(() => {
@@ -1478,8 +1482,8 @@ describe("ConnectionEditor — Setup SSH Agent button", () => {
 // ---------------------------------------------------------------------------
 
 describe("ConnectionEditor — storage-file picker (#1105)", () => {
-  function renderFor(connId: string) {
-    act(() => {
+  async function renderFor(connId: string) {
+    await act(async () => {
       root.render(
         <ConnectionEditor
           tabId="tab-sf-1"
@@ -1488,6 +1492,7 @@ describe("ConnectionEditor — storage-file picker (#1105)", () => {
         />
       );
     });
+    await flushAsync();
   }
 
   beforeEach(() => {
@@ -1512,18 +1517,18 @@ describe("ConnectionEditor — storage-file picker (#1105)", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the storage-file picker when an external file is enabled", () => {
-    renderFor(CONN_ID);
+  it("renders the storage-file picker when an external file is enabled", async () => {
+    await renderFor(CONN_ID);
     const select = container.querySelector('[data-testid="connection-editor-source-file"]');
     expect(select).not.toBeNull();
   });
 
-  it("uses a non-empty sentinel value for the default option (Radix rejects empty string)", () => {
+  it("uses a non-empty sentinel value for the default option (Radix rejects empty string)", async () => {
     // Regression: the default option previously used value="" and the select's
     // value fell back to "" when no source file was chosen. Radix Select forbids
     // empty-string item values, so the default must resolve to a non-empty
     // sentinel. EXISTING_CONN has no sourceFile, so this is the default case.
-    renderFor(CONN_ID);
+    await renderFor(CONN_ID);
     const trigger = container.querySelector(
       '[data-testid="connection-editor-source-file"]'
     ) as HTMLElement | null;
@@ -1565,8 +1570,8 @@ describe("ConnectionEditor — Save gating on invalid input (#1357)", () => {
     });
   }
 
-  function renderNew() {
-    act(() => {
+  async function renderNew() {
+    await act(async () => {
       root.render(
         <TooltipProvider>
           <ConnectionEditor
@@ -1577,6 +1582,7 @@ describe("ConnectionEditor — Save gating on invalid input (#1357)", () => {
         </TooltipProvider>
       );
     });
+    await flushAsync();
   }
 
   beforeEach(() => {
@@ -1600,7 +1606,7 @@ describe("ConnectionEditor — Save gating on invalid input (#1357)", () => {
   });
 
   it("does not save a new connection while name and a required field are empty", async () => {
-    renderNew();
+    await renderNew();
     await flush();
 
     const saveBtn = container.querySelector<HTMLButtonElement>(
@@ -1613,7 +1619,7 @@ describe("ConnectionEditor — Save gating on invalid input (#1357)", () => {
   });
 
   it("saves once the name and required field are filled", async () => {
-    renderNew();
+    await renderNew();
     await flush();
 
     const nameInput = container.querySelector<HTMLInputElement>(

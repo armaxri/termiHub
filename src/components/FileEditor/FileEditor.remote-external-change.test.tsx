@@ -203,7 +203,6 @@ function countInvokes(cmd: string): number {
 describe("FileEditor — remote external-change poll (#1627)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -222,7 +221,6 @@ describe("FileEditor — remote external-change poll (#1627)", () => {
     vi.clearAllMocks();
     vi.restoreAllMocks();
     vi.useRealTimers();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   it("re-stats an SFTP file on an interval and does not watch it via the OS", async () => {

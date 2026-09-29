@@ -188,7 +188,6 @@ async function fireExternalChange(diskContent: string): Promise<void> {
 describe("FileEditor — external on-disk change reload (#1620)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -206,7 +205,6 @@ describe("FileEditor — external on-disk change reload (#1620)", () => {
     container.remove();
     vi.clearAllMocks();
     vi.useRealTimers();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
   it("registers a watch for a local file on mount and tears it down on unmount", async () => {

@@ -92,6 +92,17 @@ async function click(buttonTestId: string) {
   await flush();
 }
 
+/**
+ * Resolve a deferred gate inside `act()` so the panel's post-await continuation
+ * settles there instead of landing after the test has finished.
+ */
+async function release<T>(gate: { resolve: (value: T) => void }, value: T) {
+  await act(async () => {
+    gate.resolve(value);
+  });
+  await flush();
+}
+
 /** True when the Button is showing its async pending affordance. */
 function isPending(button: HTMLButtonElement): boolean {
   return (
@@ -121,7 +132,7 @@ describe("Network Tools — submit lifecycle parity (#1414)", () => {
     await click("dns-run");
 
     expect(isPending(get<HTMLButtonElement>("dns-run"))).toBe(true);
-    gate.resolve({ records: [], queryMs: 1 });
+    await release(gate, { records: [], queryMs: 1 });
   });
 
   it("DNS: pressing Enter shows the SAME pending affordance as clicking", async () => {
@@ -134,7 +145,7 @@ describe("Network Tools — submit lifecycle parity (#1414)", () => {
 
     expect(networkApi.networkDnsLookup).toHaveBeenCalledTimes(1);
     expect(isPending(get<HTMLButtonElement>("dns-run"))).toBe(true);
-    gate.resolve({ records: [], queryMs: 1 });
+    await release(gate, { records: [], queryMs: 1 });
   });
 
   it("DNS: an invalid form gates BOTH Enter and click (one shared gate)", async () => {

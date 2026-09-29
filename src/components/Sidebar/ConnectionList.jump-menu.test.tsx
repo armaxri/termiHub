@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
@@ -97,9 +98,9 @@ describe("ConnectionList — jump-host context menu", () => {
     container.remove();
   });
 
-  function openMenu(connection: SavedConnection, others: SavedConnection[] = []) {
+  async function openMenu(connection: SavedConnection, others: SavedConnection[] = []) {
     seedConnectionsRegion({ connections: [connection, ...others] });
-    act(() =>
+    await act(async () =>
       root.render(
         React.createElement(TooltipProvider, {
           delayDuration: 0,
@@ -112,18 +113,19 @@ describe("ConnectionList — jump-host context menu", () => {
     act(() => {
       trigger!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
     });
+    await flushAsync();
   }
 
-  it("shows the jump-host actions for a jump-host connection", () => {
-    openMenu(sshConnection("app-server", { proxyJump: [hop("bastion")] }));
+  it("shows the jump-host actions for a jump-host connection", async () => {
+    await openMenu(sshConnection("app-server", { proxyJump: [hop("bastion")] }));
     expect(
       document.querySelector('[data-testid="context-connection-open-jump-host"]')
     ).not.toBeNull();
     expect(document.querySelector('[data-testid="context-connection-show-path"]')).not.toBeNull();
   });
 
-  it("hides the jump-host actions for a direct connection", () => {
-    openMenu(sshConnection("plain", {}));
+  it("hides the jump-host actions for a direct connection", async () => {
+    await openMenu(sshConnection("plain", {}));
     expect(document.querySelector('[data-testid="context-connection-open-jump-host"]')).toBeNull();
     expect(document.querySelector('[data-testid="context-connection-show-path"]')).toBeNull();
   });
@@ -139,7 +141,7 @@ describe("ConnectionList — jump-host context menu", () => {
       authMethod: "password",
       password: "bastion-secret",
     };
-    openMenu(sshConnection("app-server", { proxyJump: [passwordHop] }));
+    await openMenu(sshConnection("app-server", { proxyJump: [passwordHop] }));
 
     const openGateway = document.querySelector(
       '[data-testid="context-connection-open-jump-host"]'
@@ -156,8 +158,8 @@ describe("ConnectionList — jump-host context menu", () => {
     expect(mockedResolveCredential).not.toHaveBeenCalled();
   });
 
-  it("opens the connection-path dialog with the full hop chain", () => {
-    openMenu(sshConnection("db-server", { proxyJump: [hop("edge"), hop("bastion")] }));
+  it("opens the connection-path dialog with the full hop chain", async () => {
+    await openMenu(sshConnection("db-server", { proxyJump: [hop("edge"), hop("bastion")] }));
     const showPath = document.querySelector(
       '[data-testid="context-connection-show-path"]'
     ) as HTMLElement | null;
@@ -206,7 +208,7 @@ describe("ConnectionList — jump-host context menu", () => {
     it("opens a terminal on the referenced connection's host", async () => {
       const addTab = vi.fn();
       useAppStore.setState({ addTab });
-      openMenu(sshConnection("app-server", { proxyJump: [refHop] }), [bastion]);
+      await openMenu(sshConnection("app-server", { proxyJump: [refHop] }), [bastion]);
       await clickOpenJumpHost();
 
       expect(toastError).not.toHaveBeenCalled();
@@ -220,7 +222,7 @@ describe("ConnectionList — jump-host context menu", () => {
       const addTab = vi.fn();
       useAppStore.setState({ addTab });
       const external = { ...bastion, sourceFile: "/team/shared.json" };
-      openMenu(sshConnection("app-server", { proxyJump: [refHop] }), [bastion, external]);
+      await openMenu(sshConnection("app-server", { proxyJump: [refHop] }), [bastion, external]);
       await clickOpenJumpHost();
 
       expect(addTab).not.toHaveBeenCalled();

@@ -10,6 +10,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { TooltipProvider } from "@/components/ui";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
@@ -118,36 +119,37 @@ describe("OpenConnectionsModal — errored tunnels (#1240)", () => {
     container.remove();
   });
 
-  function renderModal() {
-    act(() => {
+  async function renderModal() {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <OpenConnectionsModal open={true} onOpenChange={() => {}} />
         </TooltipProvider>
       );
     });
+    await flushAsync();
   }
 
-  it("lists an errored tunnel so its leaked resources can be force-stopped", () => {
+  it("lists an errored tunnel so its leaked resources can be force-stopped", async () => {
     useAppStore.setState({
       tunnels: [tunnelConfig("t1", "expose-web")],
       tunnelStates: { t1: erroredState("t1", "SSH session closed by peer") },
     });
 
-    renderModal();
+    await renderModal();
 
     const rows = tunnelRows();
     expect(rows).toHaveLength(1);
     expect(rows[0].textContent).toContain("expose-web");
   });
 
-  it("force-Stop on an errored tunnel dispatches a tunnel.stop intent", () => {
+  it("force-Stop on an errored tunnel dispatches a tunnel.stop intent", async () => {
     useAppStore.setState({
       tunnels: [tunnelConfig("t1", "expose-web")],
       tunnelStates: { t1: erroredState("t1", "SSH session closed by peer") },
     });
 
-    renderModal();
+    await renderModal();
 
     const killBtn = tunnelRows()[0].querySelector<HTMLButtonElement>(".oc-row__kill");
     expect(killBtn).not.toBeNull();

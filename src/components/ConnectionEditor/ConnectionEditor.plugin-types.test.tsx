@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
@@ -67,14 +68,14 @@ const ACME_TYPE_B: ConnectionTypeInfo = {
 let container: HTMLDivElement;
 let root: Root;
 
-function renderNew() {
+async function renderNew() {
   const initial = useAppStore.getInitialState();
   useAppStore.setState({
     ...initial,
     connectionTypes: [LOCAL_TYPE, ACME_TYPE, ACME_TYPE_B],
   });
   seedConnectionsRegion({ connections: [] });
-  act(() => {
+  await act(async () => {
     root.render(
       <TooltipProvider delayDuration={0}>
         <ConnectionEditor
@@ -85,6 +86,7 @@ function renderNew() {
       </TooltipProvider>
     );
   });
+  await flushAsync();
 }
 
 /** Open the Radix type-select and return its rendered option elements. */
@@ -123,8 +125,8 @@ afterEach(() => {
 setupConnectionsRegion();
 
 describe("ConnectionEditor — plugin connection types", () => {
-  it("lists plugin types under a puzzle-badged Plugins separator, below the built-ins", () => {
-    renderNew();
+  it("lists plugin types under a puzzle-badged Plugins separator, below the built-ins", async () => {
+    await renderNew();
     const options = openTypeOptions();
     const values = options.map((o) => o.getAttribute("data-value"));
 
@@ -146,8 +148,8 @@ describe("ConnectionEditor — plugin connection types", () => {
     expect(plugin?.textContent).toContain("Acme Terminal");
   });
 
-  it("renders two same-named plugin backends with distinct disambiguated labels", () => {
-    renderNew();
+  it("renders two same-named plugin backends with distinct disambiguated labels", async () => {
+    await renderNew();
     const options = openTypeOptions();
     const labels = options
       .filter((o) => o.getAttribute("data-value")?.startsWith("acme-term"))

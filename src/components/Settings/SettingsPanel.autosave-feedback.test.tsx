@@ -146,4 +146,113 @@ describe("SettingsPanel — auto-save feedback (#1342)", () => {
     // The tab is closed directly.
     expect(closeTab).toHaveBeenCalledWith(TAB_ID, "panel-1");
   });
+
+  describe("debounced save through useDebouncedCallback (#3022)", () => {
+    function toggleShellIntegration() {
+      const toggle = container.querySelector<HTMLElement>(
+        "[data-testid='settings-default-shell-integration']"
+      );
+      expect(toggle).not.toBeNull();
+      act(() => {
+        toggle!.click();
+      });
+    }
+
+    it("coalesces rapid edits into one save after 300ms, then acks", () => {
+      const updateSettings = vi.fn();
+      const setEditorDirty = vi.fn();
+      useAppStore.setState({ updateSettings, setEditorDirty });
+      render();
+
+      toggleShellIntegration(); // true → false (dirty)
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      toggleShellIntegration(); // false → true (back to baseline: cancels the save)
+      toggleShellIntegration(); // true → false (dirty again, re-arms)
+      act(() => {
+        vi.advanceTimersByTime(299);
+      });
+      expect(updateSettings).not.toHaveBeenCalled();
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(updateSettings).toHaveBeenCalledTimes(1);
+      expect(updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ defaultShellIntegration: false })
+      );
+      expect(setEditorDirty).toHaveBeenLastCalledWith(TAB_ID, false);
+      expect(ackEl()?.textContent ?? "").toContain("Saved");
+    });
+
+    it("reverting to the saved value cancels the pending save", () => {
+      const updateSettings = vi.fn();
+      useAppStore.setState({ updateSettings });
+      render();
+
+      toggleShellIntegration();
+      toggleShellIntegration();
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(updateSettings).not.toHaveBeenCalled();
+    });
+
+    it("flushes the last pending change on unmount without a dirty-flag write or ack", () => {
+      const updateSettings = vi.fn();
+      const setEditorDirty = vi.fn();
+      useAppStore.setState({ updateSettings, setEditorDirty });
+      render();
+
+      toggleShellIntegration();
+      expect(setEditorDirty).toHaveBeenCalledTimes(1);
+      expect(setEditorDirty).toHaveBeenLastCalledWith(TAB_ID, true);
+      expect(updateSettings).not.toHaveBeenCalled();
+
+      act(() => root.unmount());
+      // The pending edit was persisted synchronously on unmount…
+      expect(updateSettings).toHaveBeenCalledTimes(1);
+      expect(updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ defaultShellIntegration: false })
+      );
+      // …without clearing the dirty flag in the store or arming an ack timer.
+      expect(setEditorDirty).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+
+      // Nothing fires later either.
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+      expect(updateSettings).toHaveBeenCalledTimes(1);
+
+      // Re-create a root so afterEach's unmount has something to tear down.
+      root = createRoot(container);
+    });
+
+    it("a close request flushes the pending change without an ack", () => {
+      const updateSettings = vi.fn();
+      const setEditorDirty = vi.fn();
+      const closeTab = vi.fn();
+      const setPendingCloseRequest = vi.fn();
+      useAppStore.setState({ updateSettings, setEditorDirty, closeTab, setPendingCloseRequest });
+      render();
+
+      toggleShellIntegration();
+      act(() => {
+        useAppStore.setState({ pendingCloseRequest: { tabId: TAB_ID, panelId: "panel-1" } });
+      });
+
+      expect(updateSettings).toHaveBeenCalledTimes(1);
+      expect(setEditorDirty).toHaveBeenLastCalledWith(TAB_ID, false);
+      expect(closeTab).toHaveBeenCalledWith(TAB_ID, "panel-1");
+      expect(ackEl()?.textContent ?? "").not.toContain("Saved");
+
+      // The debounce timer was consumed by the flush — no second save later.
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+      expect(updateSettings).toHaveBeenCalledTimes(1);
+    });
+  });
 });

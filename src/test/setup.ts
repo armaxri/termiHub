@@ -1,5 +1,6 @@
 import { expect, vi } from "vitest";
 import { toHaveNoViolations } from "jest-axe";
+import { installConsoleGuard } from "./consoleGuard";
 
 // Register the jest-axe accessibility matcher globally so any test can assert
 // `expect(await checkA11y()).toHaveNoViolations()` (audit finding TFE-012). The
@@ -7,6 +8,20 @@ import { toHaveNoViolations } from "jest-axe";
 // The matcher is framework-agnostic (a plain `{ pass, message }` result), so it
 // plugs straight into Vitest's `expect.extend`.
 expect.extend(toHaveNoViolations);
+
+// Tell React this is an act()-aware test environment. The component tests drive
+// React directly (`createRoot` + `act` from "react"); there is no
+// @testing-library/react, which would otherwise set this flag. Without it every
+// state update flushed inside `act()` logs "The current testing environment is
+// not configured to support act(...)" with a component stack: that warning alone
+// was ~985 MB of stderr per run and bloated the Windows CI log (#3356). With the
+// flag set, React instead reports the real problem (an update NOT wrapped in
+// act), which the console guard below turns into a test failure.
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+// Fail on environment-misconfiguration warnings and on any test file whose
+// console output exceeds a per-file budget, so the log cannot silently regrow.
+installConsoleGuard();
 
 declare module "vitest" {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- must mirror Vitest's own `Assertion<T = any>` signature for declaration merging.
@@ -63,31 +78,6 @@ if (typeof Element !== "undefined") {
         removeEventListener: () => {},
         dispatchEvent: () => false,
       }) as unknown as MediaQueryList;
-  }
-
-  // @tanstack/react-virtual resets its `isScrolling` flag either from the native
-  // `scrollend` event (when the environment advertises `onscrollend` and the
-  // virtualizer opts in via `useScrollendEvent`) or, as a fallback, from a 150ms
-  // debounced `setTimeout` that its cleanup never clears. That leaked timer fires
-  // after a virtualized list (the FileBrowser) unmounts and — once jsdom has torn
-  // the environment down between test files — throws an unhandled "window is not
-  // defined" that fails the whole run.
-  //
-  // The unclear-on-unmount timer is a bug inside the `@tanstack/virtual-core`
-  // dependency (`observeOffset`'s cleanup removes the scroll listener but never
-  // clears the fallback debounce), not our code — see follow-up issue and the
-  // regression test in `src/test/virtualListSize.test.tsx`, which asserts the
-  // scrollend path leaves `vi.getTimerCount() === 0` while the debounce fallback
-  // leaks one timer. jsdom does not implement `onscrollend`, so advertise it here
-  // — at module load, because `virtual-core` captures `"onscrollend" in window`
-  // in a top-level `const` when it first loads — to steer the virtualizer onto
-  // the timer-free scrollend path (it opts in via `useScrollendEvent: true`),
-  // leaving nothing pending past teardown. This shim must stay global; the
-  // per-test sizing/scroll helpers moved to `src/test/virtualListSize.ts` as an
-  // explicit opt-in (audit finding MOCK-008), but this one is load-time-bound.
-  if (typeof window !== "undefined" && !("onscrollend" in window)) {
-    (window as unknown as { onscrollend: ((this: Window, ev: Event) => void) | null }).onscrollend =
-      null;
   }
 }
 

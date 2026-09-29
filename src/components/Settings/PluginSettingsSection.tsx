@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Puzzle } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useKeyedDebouncedCallback } from "@/hooks/useDebounce";
 import type { InstalledPlugin, JsonValue } from "@/types/plugin";
 import { EmptyState } from "@/components/ui";
 import { ConnectionSettingsForm } from "@/components/DynamicForm";
@@ -40,12 +41,7 @@ export function PluginSettingsSection({ focusPluginId }: PluginSettingsSectionPr
   // gated on this so its (init-only) default values are the correct ones.
   const [values, setValues] = useState<Record<string, Record<string, JsonValue>>>({});
   const [savedAckId, setSavedAckId] = useState<string | null>(null);
-  // LIBFE-003: left as-is (not routed through useDebouncedCallback). This is a
-  // *keyed map* of concurrent per-plugin debounces (one pending save per plugin
-  // id), which the single-callback hook does not model; `ackTimer` is a plain
-  // clear-the-ack delay, not a debounce. The unmount effect below clears every
-  // pending timer, so nothing leaks past unmount. Tracked for a follow-up.
-  const saveTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  // `ackTimer` is a plain clear-the-ack delay, not a debounce.
   const ackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const groupRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
@@ -68,12 +64,27 @@ export function PluginSettingsSection({ focusPluginId }: PluginSettingsSectionPr
     };
   }, [configurable, getPluginSettings]);
 
-  // Clear timers on unmount.
+  // One independent debounced save per plugin id, so edits to one plugin never
+  // delay or drop another's pending save. Pending saves are cancelled (not
+  // flushed) on unmount, by the hook.
+  const debouncedSave = useKeyedDebouncedCallback(
+    (pluginId: string, typed: Record<string, JsonValue>) => {
+      updatePluginSettings(pluginId, typed)
+        .then(() => {
+          setSavedAckId(pluginId);
+          if (ackTimer.current) clearTimeout(ackTimer.current);
+          ackTimer.current = setTimeout(() => setSavedAckId(null), SAVED_ACK_MS);
+        })
+        .catch(() => {
+          // The store already surfaced a recoverable error toast.
+        });
+    },
+    SAVE_DEBOUNCE_MS
+  );
+
+  // Clear the ack timer on unmount.
   useEffect(() => {
-    const timers = saveTimers.current;
     return () => {
-      for (const t of timers.values()) clearTimeout(t);
-      timers.clear();
       if (ackTimer.current) clearTimeout(ackTimer.current);
     };
   }, []);
@@ -90,26 +101,9 @@ export function PluginSettingsSection({ focusPluginId }: PluginSettingsSectionPr
       const typed = next as Record<string, JsonValue>;
       setValues((prev) => ({ ...prev, [pluginId]: typed }));
 
-      const timers = saveTimers.current;
-      const existing = timers.get(pluginId);
-      if (existing) clearTimeout(existing);
-      timers.set(
-        pluginId,
-        setTimeout(() => {
-          timers.delete(pluginId);
-          updatePluginSettings(pluginId, typed)
-            .then(() => {
-              setSavedAckId(pluginId);
-              if (ackTimer.current) clearTimeout(ackTimer.current);
-              ackTimer.current = setTimeout(() => setSavedAckId(null), SAVED_ACK_MS);
-            })
-            .catch(() => {
-              // The store already surfaced a recoverable error toast.
-            });
-        }, SAVE_DEBOUNCE_MS)
-      );
+      debouncedSave(pluginId, typed);
     },
-    [updatePluginSettings]
+    [debouncedSave]
   );
 
   if (configurable.length === 0) {

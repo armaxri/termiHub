@@ -9,6 +9,7 @@ import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarn
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { ConnectionEditor } from "./ConnectionEditor";
@@ -51,7 +52,7 @@ const MOCK_RD_TYPE: ConnectionTypeInfo = {
 let container: HTMLDivElement;
 let root: Root;
 
-function renderNew(experimentalFeaturesEnabled: boolean) {
+async function renderNew(experimentalFeaturesEnabled: boolean) {
   const initial = useAppStore.getInitialState();
   useAppStore.setState({
     ...initial,
@@ -59,7 +60,7 @@ function renderNew(experimentalFeaturesEnabled: boolean) {
   });
   seedConnectionsRegion({ connections: [] });
   seedSettings({ experimentalFeaturesEnabled });
-  act(() => {
+  await act(async () => {
     root.render(
       <TooltipProvider delayDuration={0}>
         <ConnectionEditor
@@ -70,6 +71,7 @@ function renderNew(experimentalFeaturesEnabled: boolean) {
       </TooltipProvider>
     );
   });
+  await flushAsync();
 }
 
 /** Open the Radix type-select and return its rendered option elements. */
@@ -107,16 +109,16 @@ setupSettingsRegion();
 setupConnectionsRegion();
 
 describe("ConnectionEditor — experimental type-picker gating", () => {
-  it("omits graphical remote-desktop types when the flag is off", () => {
-    renderNew(false);
+  it("omits graphical remote-desktop types when the flag is off", async () => {
+    await renderNew(false);
     const options = openTypeOptions();
     const values = options.map((o) => o.getAttribute("data-value"));
     expect(values).toContain("local");
     expect(values).not.toContain("mock-remote-desktop");
   });
 
-  it("offers graphical types labelled '— Experimental' when the flag is on", () => {
-    renderNew(true);
+  it("offers graphical types labelled '— Experimental' when the flag is on", async () => {
+    await renderNew(true);
     const options = openTypeOptions();
     const rd = options.find((o) => o.getAttribute("data-value") === "mock-remote-desktop");
     expect(rd).toBeTruthy();

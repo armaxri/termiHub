@@ -34,6 +34,7 @@ import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { mirrorSettingsIntent } from "@/store/settingsBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
+import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { applyEffectiveTheme } from "@/services/workspaceSettings";
 import { AppSettings } from "@/types/connection";
 import { SettingsCategory, CATEGORIES } from "./settingsRegistry";
@@ -125,14 +126,8 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   const appInfo = useAppInfo();
   const [showSavedAck, setShowSavedAck] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  // LIBFE-003: left as-is (not routed through useDebouncedCallback). The fired
-  // debounce body also calls setEditorDirty(false) + acknowledgeSaved(), but
-  // flushPendingSave (unmount / close-request path) deliberately does neither —
-  // so the hook's single-fn `.flush()` cannot express the divergent flush
-  // behaviour without a store write + a *new* ack timer firing during unmount.
-  // The existing hand-rolled unmount/close cleanup already flushes and clears
-  // both timers, so no timer leaks past unmount. Tracked for a hook extension.
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The latest not-yet-persisted edit (the base a functional updater resolves
+  // against). Set exactly while a debounced save is pending.
   const pendingSettingsRef = useRef<AppSettings | null>(null);
   const ackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The last-persisted document — the dirty-tracking baseline. Since the settings
@@ -173,25 +168,41 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   }, []);
 
   /**
-   * Cancel any pending debounced save and persist it immediately, so the last
-   * <=300ms of edits aren't lost when the tab closes or the panel unmounts.
+   * Persist a settings document. The persisted document is region-authoritative
+   * (#2404): `updateSettings` persists and folds it into the region. Pin the local
+   * baseline so a later edit's dirty check compares against what we just persisted.
    */
-  const flushPendingSave = useCallback(() => {
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
-    const toSave = pendingSettingsRef.current;
-    if (toSave) {
+  const persistSettings = useCallback(
+    (toSave: AppSettings) => {
       pendingSettingsRef.current = null;
-      // The persisted document is region-authoritative (#2404): `updateSettings`
-      // persists and folds it into the region. Pin the local baseline so a later
-      // edit's dirty check compares against what we just persisted.
       savedSettingsRef.current = toSave;
       dirtyRef.current = false;
       updateSettings(toSave);
-    }
-  }, [updateSettings]);
+    },
+    [updateSettings]
+  );
+
+  // Debounced auto-save. A normal fire persists, clears the tab's dirty flag and
+  // surfaces the "Saved" acknowledgment. An early run — a close request, or the
+  // panel unmounting (`flushOnUnmount`) — persists the last <=300ms of edits via
+  // `onFlush` but deliberately does *neither* side effect: flushing must not
+  // write the dirty flag to the store or arm a new ack timer during unmount (the
+  // close-request path clears the dirty flag itself).
+  const debouncedSave = useDebouncedCallback(
+    (toSave: AppSettings) => {
+      persistSettings(toSave);
+      setEditorDirty(tabId, false);
+      acknowledgeSaved();
+    },
+    SAVE_DEBOUNCE_MS,
+    { onFlush: persistSettings, flushOnUnmount: true }
+  );
+
+  /**
+   * Cancel any pending debounced save and persist it immediately, so the last
+   * <=300ms of edits aren't lost when the tab closes.
+   */
+  const flushPendingSave = debouncedSave.flush;
 
   // ResizeObserver for compact mode
   useEffect(() => {
@@ -241,10 +252,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
         applyEffectiveTheme(newSettings);
       }
 
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = null;
-      }
+      debouncedSave.cancel();
 
       // Optimistically reflect the edit into the authoritative region so the UI
       // (which renders from `useProjectedSettings`, #2404) updates instantly — the
@@ -262,24 +270,13 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
       if (isDirty) {
         pendingSettingsRef.current = newSettings;
         setEditorDirty(tabId, true);
-        saveTimerRef.current = setTimeout(() => {
-          saveTimerRef.current = null;
-          const toSave = pendingSettingsRef.current;
-          if (toSave) {
-            pendingSettingsRef.current = null;
-            savedSettingsRef.current = toSave;
-            dirtyRef.current = false;
-            updateSettings(toSave);
-            setEditorDirty(tabId, false);
-            acknowledgeSaved();
-          }
-        }, SAVE_DEBOUNCE_MS);
+        debouncedSave(newSettings);
       } else {
         pendingSettingsRef.current = null;
         setEditorDirty(tabId, false);
       }
     },
-    [updateSettings, tabId, setEditorDirty, acknowledgeSaved]
+    [tabId, setEditorDirty, debouncedSave]
   );
 
   // Settings auto-save, so a close request never needs a confirmation dialog.
@@ -303,16 +300,16 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
     closeTab,
   ]);
 
-  // Flush any pending debounced save and clear the ack timer on unmount.
+  // Clear the ack timer on unmount. (The pending debounced save is flushed on
+  // unmount by `useDebouncedCallback`'s `flushOnUnmount`.)
   useEffect(() => {
     return () => {
       if (ackTimerRef.current) {
         clearTimeout(ackTimerRef.current);
         ackTimerRef.current = null;
       }
-      flushPendingSave();
     };
-  }, [flushPendingSave]);
+  }, []);
 
   // Search filtering
   const isSearchActive = searchQuery.trim().length > 0;

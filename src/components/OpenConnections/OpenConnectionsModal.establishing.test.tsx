@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { TooltipProvider } from "@/components/ui";
 import type { RemoteAgentDefinition } from "@/types/connection";
@@ -79,15 +80,16 @@ describe("OpenConnectionsModal — Establishing / recovering section", () => {
     container.remove();
   });
 
-  function renderWithAgents(agents: RemoteAgentDefinition[]) {
+  async function renderWithAgents(agents: RemoteAgentDefinition[]) {
     seedAgentsRegion({ remoteAgents: agents });
-    act(() => {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <OpenConnectionsModal open={true} onOpenChange={() => {}} />
         </TooltipProvider>
       );
     });
+    await flushAsync();
   }
 
   function rowFor(title: string): Element | undefined {
@@ -96,8 +98,8 @@ describe("OpenConnectionsModal — Establishing / recovering section", () => {
     );
   }
 
-  it("lists a connecting agent and cancels it via cancel_connect_agent", () => {
-    renderWithAgents([agent("a1", "build-box", "connecting")]);
+  it("lists a connecting agent and cancels it via cancel_connect_agent", async () => {
+    await renderWithAgents([agent("a1", "build-box", "connecting")]);
 
     const row = rowFor("build-box");
     expect(row).toBeTruthy();
@@ -108,8 +110,8 @@ describe("OpenConnectionsModal — Establishing / recovering section", () => {
     expect(cancelConnectAgent).toHaveBeenCalledWith("a1");
   });
 
-  it("lists a reconnecting agent and kills it via disconnect", () => {
-    renderWithAgents([agent("a2", "edge-node", "reconnecting")]);
+  it("lists a reconnecting agent and kills it via disconnect", async () => {
+    await renderWithAgents([agent("a2", "edge-node", "reconnecting")]);
 
     const row = rowFor("edge-node");
     expect(row).toBeTruthy();
@@ -120,8 +122,8 @@ describe("OpenConnectionsModal — Establishing / recovering section", () => {
     expect(disconnectAgent).toHaveBeenCalledWith("a2");
   });
 
-  it("shows no Establishing section when no agent is connecting/reconnecting", () => {
-    renderWithAgents([agent("a3", "ready", "connected")]);
+  it("shows no Establishing section when no agent is connecting/reconnecting", async () => {
+    await renderWithAgents([agent("a3", "ready", "connected")]);
     const titles = Array.from(document.querySelectorAll(".oc-section__title")).map(
       (t) => t.textContent
     );

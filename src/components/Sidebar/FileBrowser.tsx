@@ -1146,14 +1146,10 @@ export function FileBrowser() {
     // Key rows by path so selection/focus survive scroll-driven remounts.
     getItemKey: (index) => displayEntries[index]?.path ?? index,
     // Reset the `isScrolling` flag from the native `scrollend` event where the
-    // platform supports it, rather than the default 150ms debounce. The debounce
-    // arms a `setTimeout` on every scroll that react-virtual's cleanup never
-    // clears, so unmounting within that window leaves the timer to later fire a
-    // state update on a torn-down tree — harmless in the running app, but under
-    // jsdom (once the environment is disposed) it surfaces as an unhandled
-    // "window is not defined" that fails the whole test run. Where `scrollend`
-    // is unavailable react-virtual transparently falls back to the debounce, so
-    // this is a safe, strictly-better opt-in.
+    // platform supports it, rather than arming a 150ms debounce on every scroll.
+    // Where `scrollend` is unavailable react-virtual falls back to the debounce,
+    // whose timer its own cleanup cancels on unmount (virtual-core >= 3.17.8,
+    // #3056) — so no global `onscrollend` shim is needed for teardown safety.
     useScrollendEvent: true,
   });
 

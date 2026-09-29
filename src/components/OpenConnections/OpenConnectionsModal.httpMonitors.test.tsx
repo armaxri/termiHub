@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { TooltipProvider } from "@/components/ui";
 import type { HttpMonitorState } from "@/types/network";
@@ -107,17 +108,18 @@ describe("OpenConnectionsModal — HTTP Monitors section", () => {
     container.remove();
   });
 
-  function renderModal() {
-    act(() => {
+  async function renderModal() {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <OpenConnectionsModal open={true} onOpenChange={() => {}} />
         </TooltipProvider>
       );
     });
+    await flushAsync();
   }
 
-  it("renders a row per running monitor from the store's httpMonitors", () => {
+  it("renders a row per running monitor from the store's httpMonitors", async () => {
     useAppStore.setState({
       httpMonitors: [
         monitorState("m1", "https://up.example.com", true),
@@ -125,14 +127,14 @@ describe("OpenConnectionsModal — HTTP Monitors section", () => {
       ],
     });
 
-    renderModal();
+    await renderModal();
 
     const titles = monitorRows().map((r) => r.querySelector(".oc-row__title")?.textContent);
     expect(titles.some((t) => t?.includes("https://up.example.com"))).toBe(true);
     expect(titles.some((t) => t?.includes("https://down.example.com"))).toBe(true);
   });
 
-  it("shows an up/down badge derived from the last result", () => {
+  it("shows an up/down badge derived from the last result", async () => {
     useAppStore.setState({
       httpMonitors: [
         monitorState("m1", "https://up.example.com", true),
@@ -140,7 +142,7 @@ describe("OpenConnectionsModal — HTTP Monitors section", () => {
       ],
     });
 
-    renderModal();
+    await renderModal();
 
     const badges = monitorRows().map((r) => r.querySelector(".oc-row__badge")?.textContent);
     expect(badges).toContain("up");
@@ -152,7 +154,7 @@ describe("OpenConnectionsModal — HTTP Monitors section", () => {
       httpMonitors: [monitorState("m1", "https://up.example.com", true)],
     });
 
-    renderModal();
+    await renderModal();
 
     const killBtn = monitorRows()[0]?.querySelector("button") as HTMLButtonElement;
     await act(async () => {
@@ -170,7 +172,7 @@ describe("OpenConnectionsModal — HTTP Monitors section", () => {
       ],
     });
 
-    renderModal();
+    await renderModal();
 
     const killAll = monitorSection()?.querySelector(".oc-section__kill-all") as HTMLButtonElement;
     await act(async () => {
@@ -189,8 +191,8 @@ describe("OpenConnectionsModal — HTTP Monitors section", () => {
     expect(networkHttpMonitorStopAll).toHaveBeenCalledTimes(1);
   });
 
-  it("renders no HTTP Monitors section when there are no monitors", () => {
-    renderModal();
+  it("renders no HTTP Monitors section when there are no monitors", async () => {
+    await renderModal();
     expect(monitorSection()).toBeNull();
   });
 });
