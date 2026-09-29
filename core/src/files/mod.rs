@@ -50,11 +50,14 @@ pub fn check_read_size(size: u64) -> Result<(), FileError> {
 /// This is the unified structure used by both the desktop and agent crates.
 /// Field names are serialized as camelCase for the frontend.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct FileEntry {
     pub name: String,
     pub path: String,
     pub is_directory: bool,
+    #[cfg_attr(test, ts(type = "number"))]
     pub size: u64,
     /// ISO 8601 timestamp.
     pub modified: String,
@@ -71,12 +74,14 @@ pub struct FileEntry {
     /// via `symlink_metadata`); `false` otherwise. `#[serde(default)]` keeps
     /// older persisted/round-tripped JSON without the field deserializing.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub is_symlink: bool,
     /// The link target, when the backend could determine it cheaply — e.g. the
     /// `-> target` suffix of a Unix `ls -l` FTP line, or `read_link` for a local
     /// entry. `None` for non-links and for formats that do not carry a target
     /// (MLSD `type=link`, SFTP `readdir`). `#[serde(default)]` for compatibility.
     #[serde(default)]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub symlink_target: Option<String>,
 }
 

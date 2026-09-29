@@ -11,6 +11,7 @@ import type { LineEnding } from "./LineEnding";
 import type { RestoreLastSessionMode } from "./RestoreLastSessionMode";
 import type { RightClickBehavior } from "./RightClickBehavior";
 import type { SerialPortScanPrefix } from "./SerialPortScanPrefix";
+import type { ShellIntegrationSettings } from "./ShellIntegrationSettings";
 import type { UpdateSettings } from "./UpdateSettings";
 
 /**
@@ -25,7 +26,7 @@ import type { UpdateSettings } from "./UpdateSettings";
  *   omit them (the frontend applies the same default), so they are emitted as
  *   optional via `ts(as = "Option<…>", optional)`.
  * - Values the backend stores opaquely (`customThemes`, `syntaxHighlighting`)
- *   or whose TS type is owned elsewhere (`theme`, `shellIntegration`) are
+ *   or whose TS type is owned elsewhere (`theme`) are
  *   typed via `ts(type = …)`, pointing at the frontend-owned type.
  */
 export type AppSettings = { version: string, externalConnectionFiles: Array<ExternalFileConfig>, defaultUser?: string, defaultSshKeyPath?: string, defaultShell?: string, theme?: "dark" | "light" | "solarized-dark" | "solarized-light" | "system" | `custom:${string}`, 
@@ -228,7 +229,7 @@ serialPortScanPrefixes?: Array<SerialPortScanPrefix>,
  * Shell context-menu / CLI-spawn integration configuration (epic #1363).
  * `#[serde(default)]` keeps older settings files forward-compatible.
  */
-shellIntegration?: import("../connection").ShellIntegrationSettings, 
+shellIntegration?: ShellIntegrationSettings, 
 /**
  * Terminal output syntax-highlighting configuration (epic #1696).
  *

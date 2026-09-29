@@ -39,11 +39,15 @@ pub enum BundleSource {
 
 /// One file in the bundle, as shown in the preview.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "DiagnosticsBundleEntry"))]
 #[serde(rename_all = "camelCase")]
 pub struct BundleEntryInfo {
     /// Path inside the zip, e.g. `logs/termihub.log`.
     pub name: String,
     /// Size of the source before redaction, in bytes.
+    #[cfg_attr(test, ts(type = "number"))]
     pub size: u64,
     /// Short human description.
     pub description: String,

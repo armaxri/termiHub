@@ -19,6 +19,8 @@ use crate::spawn::SpawnKind;
 /// On non-Windows platforms this has no effect (each entry is a separate named
 /// action); it is still resolved so the model is uniform across platforms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub enum ShellEntryVisibility {
     /// Always shown in the context menu.
@@ -30,6 +32,8 @@ pub enum ShellEntryVisibility {
 
 /// Which right-click targets an entry is offered for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(default, rename_all = "camelCase")]
 pub struct ShowForTargets {
     /// Right-click on a folder.
@@ -52,6 +56,8 @@ impl Default for ShowForTargets {
 
 /// A single configurable "Open in termiHub" quick-access entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ShellEntry {
     /// Stable identifier embedded in the registered command (`--entry-id`).
@@ -61,6 +67,7 @@ pub struct ShellEntry {
     /// Saved connection this entry opens. `None` means the entry shows the
     /// interactive session picker instead of a fixed connection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub connection_id: Option<String>,
     /// Windows context-menu visibility (Always / Extended-only).
     #[serde(default)]
@@ -74,11 +81,13 @@ pub struct ShellEntry {
     /// preference. Optional + `#[serde(default)]` so pre-#1447 `settings.json`
     /// files round-trip unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub container_image: Option<String>,
     /// Saved per-entry in-container mount-target preference (e.g. `"/src"`). Same
     /// priority + forward-compat semantics as [`container_image`](Self::container_image):
     /// honored for a container spawn when no explicit `--container-mount` is given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub container_mount: Option<String>,
     /// The kind of session this entry opens — the Session Picker's "Remember this
     /// choice" writes the picked section here (SI-3, #1366 / #1561).
@@ -89,6 +98,7 @@ pub struct ShellEntry {
     /// Anything else is authoritative — it is emitted as `--kind <token>` at
     /// registration time and pins resolution for a context-menu click.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<SpawnKind>", optional))]
     pub spawn_kind: SpawnKind,
     /// Saved per-entry shell preference in [`shell_to_command`]'s single-string
     /// encoding: a local shell name (`"zsh"`, `"powershell"`, an absolute path) or
@@ -100,6 +110,7 @@ pub struct ShellEntry {
     ///
     /// [`shell_to_command`]: termihub_core::session::shell::shell_to_command
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub shell: Option<String>,
     /// Saved per-entry container-runtime preference — the Docker/Podman section the
     /// user picked. Same priority + forward-compat semantics as
@@ -107,6 +118,7 @@ pub struct ShellEntry {
     /// when no explicit runtime is given. [`ContainerRuntime::Auto`] (the default)
     /// keeps the pre-picker behaviour of detecting whichever runtime is installed.
     #[serde(default)]
+    #[cfg_attr(test, ts(optional, type = "\"auto\" | \"docker\" | \"podman\""))]
     pub container_runtime: ContainerRuntime,
 }
 
@@ -197,6 +209,8 @@ impl ShellEntry {
 
 /// Fallback behaviour when no entry resolves a spawn request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub enum ShellIntegrationFallback {
     /// Show the interactive session picker.
@@ -211,6 +225,8 @@ pub enum ShellIntegrationFallback {
 /// These are Linux-only in effect; the fields exist on every platform so the
 /// settings shape is uniform and forward-compatible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(default, rename_all = "camelCase")]
 pub struct LinuxFileManagerToggles {
     /// Install Nautilus (GNOME) scripts.
@@ -227,6 +243,8 @@ pub struct LinuxFileManagerToggles {
 /// `#[serde(default)]`-driven struct so older `settings.json` files that predate
 /// this feature deserialize cleanly (forward-compat).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(default, rename_all = "camelCase")]
 pub struct ShellIntegrationSettings {
     /// Configured quick-access entries, in display / priority order.
@@ -241,6 +259,7 @@ pub struct ShellIntegrationSettings {
     /// the current executable to detect a stale registration (see
     /// [`exe_path_matches`]).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub registered_exe_path: Option<String>,
     /// Linux per-file-manager install toggles.
     pub linux_file_managers: LinuxFileManagerToggles,
@@ -283,6 +302,8 @@ pub fn exe_path_matches(registered_exe_path: Option<&str>, current_exe_path: Opt
 /// each manager's `--version` output), and on macOS/Windows from the native
 /// always-present manager (Finder / File Explorer).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct DetectedFileManager {
     /// Stable id (`"nautilus"`, `"kde"`, `"thunar"`, …).
@@ -293,20 +314,25 @@ pub struct DetectedFileManager {
     pub detected: bool,
     /// Detected version string, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub version: Option<String>,
 }
 
 /// Registration + staleness status reported to the settings UI.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ShellIntegrationStatus {
     /// Whether the OS context-menu integration is currently registered.
     pub registered: bool,
     /// Executable path recorded at registration time, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub registered_exe_path: Option<String>,
     /// The current executable path, if resolvable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub current_exe_path: Option<String>,
     /// Whether the registered path matches the current executable.
     pub exe_path_matches: bool,

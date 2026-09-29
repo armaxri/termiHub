@@ -55,6 +55,9 @@ pub const FILE_BOOKMARKS_REKEYED_EVENT: &str = "file-bookmarks-rekeyed";
 
 /// Bookmarks in scope `from` moved to scope `to`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "FileBookmarkScopeRekey"))]
 pub struct ScopeRekey {
     pub from: String,
     pub to: String,

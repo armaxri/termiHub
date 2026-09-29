@@ -8,6 +8,8 @@ use crate::utils::portable::AppMode;
 
 /// Frontend-facing representation of the current app mode.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct AppModeInfo {
     pub is_portable: bool,
@@ -32,6 +34,8 @@ impl From<&AppMode> for AppModeInfo {
 
 /// Files that can be included in a config migration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigFileStatus {
     pub name: String,
@@ -40,6 +44,8 @@ pub struct ConfigFileStatus {
 
 /// Result of a config export or import operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigMigrationResult {
     pub files_copied: Vec<String>,

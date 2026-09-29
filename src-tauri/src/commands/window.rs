@@ -26,12 +26,15 @@ use crate::window::{
 /// so the "Move to Window ▸" picker can show a live "N tabs" / "empty" hint
 /// sourced from real per-window state rather than a placeholder.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct WindowInfo {
     /// The window's runtime label (`main`, `win-1`, …).
     pub label: String,
     /// The window's live tab count, or `None` if it has not reported one yet
     /// (a window that just booted and has not drawn its tabs).
+    #[cfg_attr(test, ts(optional = nullable))]
     pub tab_count: Option<usize>,
 }
 

@@ -441,12 +441,16 @@ pub struct ConnectionInfo {
 
 /// One crash report in an `agent.crash_reports.list` result.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "AgentCrashReportSummary"))]
 #[serde(rename_all = "camelCase")]
 pub struct CrashReportSummary {
     /// File name (`crash-YYYYMMDDTHHMMSSZ-<pid>.txt`); pass to
     /// `agent.crash_reports.read`. Never a path.
     pub name: String,
     /// Size on disk in bytes.
+    #[cfg_attr(test, ts(type = "number"))]
     pub size: u64,
 }
 

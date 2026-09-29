@@ -24,6 +24,8 @@ const FILE_NAME: &str = "last-session.json";
 /// a workspace it has no name/id and is never shown in the workspace list — it is
 /// silently saved on every layout change and silently restored on startup.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct LastSession {
     /// Schema version for forward compatibility.
@@ -37,6 +39,7 @@ pub struct LastSession {
     /// persistence, #1905). Absent/empty for a legacy single-window session,
     /// which restores entirely into the main window.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub windows: Option<Vec<WorkspaceWindowDef>>,
     /// Id of the workspace whose settings overrides (PROD-052) were active when
     /// the session was saved, so a restart re-activates it (#3517). Stamped by
@@ -45,10 +48,12 @@ pub struct LastSession {
     /// deleted. Absent when no workspace was active. Additive and optional, so
     /// the schema version is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub active_workspace_id: Option<String>,
     /// Unknown top-level keys, captured verbatim so an older app preserves
     /// fields a newer version added rather than dropping them on save (PER-010).
     #[serde(flatten, default)]
+    #[cfg_attr(test, ts(skip))]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 

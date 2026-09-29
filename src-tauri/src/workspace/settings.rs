@@ -29,6 +29,8 @@ const MAX_ENV_NAME_LEN: usize = 256;
 
 /// One extra environment variable for new local sessions of a workspace.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceEnvVar {
     /// Variable name (`[A-Za-z_][A-Za-z0-9_]*`).
@@ -40,25 +42,33 @@ pub struct WorkspaceEnvVar {
 /// The settings a workspace overrides. Every field is optional; an absent field
 /// inherits the global setting.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceSettings {
     /// Theme override (same value space as `AppSettings.theme`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub theme: Option<String>,
     /// Terminal font family override.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub font_family: Option<String>,
     /// Terminal font size override in pixels ([`MIN_FONT_SIZE`]..=[`MAX_FONT_SIZE`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub font_size: Option<u32>,
     /// Default working directory for new local shells that do not set their own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub default_working_directory: Option<String>,
     /// Extra environment variables for new local shells (connection entries win).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(as = "Option<Vec<WorkspaceEnvVar>>", optional))]
     pub env_vars: Vec<WorkspaceEnvVar>,
     /// Unknown keys written by a newer build, preserved verbatim on save (PER-010).
     #[serde(flatten, default)]
+    #[cfg_attr(test, ts(skip))]
     pub extra: serde_json::Map<String, Value>,
 }
 
@@ -66,6 +76,8 @@ pub struct WorkspaceSettings {
 /// and returned by `get_active_workspace`, so each window applies the same
 /// overrides live.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ActiveWorkspaceInfo {
     /// Workspace id.
@@ -74,6 +86,7 @@ pub struct ActiveWorkspaceInfo {
     pub name: String,
     /// The workspace's overrides (`None` → it inherits every global setting).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub settings: Option<WorkspaceSettings>,
 }
 
