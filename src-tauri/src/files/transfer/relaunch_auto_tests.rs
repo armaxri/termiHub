@@ -63,7 +63,10 @@ fn opening_the_matching_connection_resumes_the_transfer() {
     waiting(&waits, &record("t1", Some("conn-a")));
 
     assert_eq!(due(&waits, &opened("conn-a"), &registry), vec!["t1"]);
-    assert!(!waits.contains("t1"), "a picked-up transfer no longer waits");
+    assert!(
+        !waits.contains("t1"),
+        "a picked-up transfer no longer waits"
+    );
     assert!(
         due(&waits, &opened("conn-a"), &registry).is_empty(),
         "a second session of the connection does not resume it again"
@@ -78,7 +81,10 @@ fn opening_a_different_connection_does_not_resume_the_transfer() {
     waiting(&waits, &record("t1", Some("conn-a")));
 
     assert!(due(&waits, &opened("conn-b"), &registry).is_empty());
-    assert!(waits.contains("t1"), "it still waits for its own connection");
+    assert!(
+        waits.contains("t1"),
+        "it still waits for its own connection"
+    );
 }
 
 /// A remote-to-remote copy waits for both of its connections: either one
@@ -120,7 +126,10 @@ fn a_transfer_blocked_again_after_a_trigger_keeps_waiting() {
     let rec = record("t1", Some("conn-a"));
     waiting(&waits, &rec);
 
-    assert_eq!(due(&waits, &WaitTrigger::StoreUnlocked, &registry), vec!["t1"]);
+    assert_eq!(
+        due(&waits, &WaitTrigger::StoreUnlocked, &registry),
+        vec!["t1"]
+    );
     note_blocked(&waits, &rec, &RelaunchBlocked::NeedsCredentials);
 
     assert!(waits.contains("t1"));
@@ -225,5 +234,10 @@ fn a_cancelled_transfer_is_never_resumed() {
 
     assert!(persist.take_record("t1").is_some());
 
-    assert!(due(persist.credential_waits(), &WaitTrigger::StoreUnlocked, &registry).is_empty());
+    assert!(due(
+        persist.credential_waits(),
+        &WaitTrigger::StoreUnlocked,
+        &registry
+    )
+    .is_empty());
 }

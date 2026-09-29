@@ -113,9 +113,7 @@ pub(crate) fn note_blocked(
     }
     let connections = saved_connections(record);
     if !connections.is_empty() {
-        waits
-            .lock()
-            .insert(record.transfer_id.clone(), connections);
+        waits.lock().insert(record.transfer_id.clone(), connections);
     }
 }
 
@@ -169,7 +167,11 @@ async fn resume_waiting(app: &AppHandle, trigger: &WaitTrigger) {
         return;
     };
     for transfer_id in due(persist.credential_waits(), trigger, &registry) {
-        debug!(transfer_id, ?trigger, "auto-resuming a transfer paused for credentials");
+        debug!(
+            transfer_id,
+            ?trigger,
+            "auto-resuming a transfer paused for credentials"
+        );
         run_unattended(super::relaunch::resume_or_relaunch(
             &transfer_id,
             &registry,
