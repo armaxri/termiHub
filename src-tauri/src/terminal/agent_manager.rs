@@ -92,10 +92,13 @@ use notifications::{
 ///
 /// Carved verbatim into sibling modules; the manager below spawns
 /// [`agent_io_task`] and emits through [`emit_agent_state`].
+mod io_lanes;
 mod io_task;
 mod reconnect;
 mod recovery;
 mod state_events;
+pub(crate) use io_lanes::AgentIoSender;
+use io_lanes::{GateError, IoBudget, AGENT_IO_DATA_BUDGET, AGENT_IO_MAX_CHUNK};
 use io_task::agent_io_task;
 #[cfg(all(test, unix))]
 use io_task::test_sever_desktop_transport;
@@ -868,8 +871,17 @@ pub struct AgentConnectionManager<R: Runtime = Wry> {
     /// [`Self::retain_agent_config`] (#3661). See
     /// [`crate::terminal::agent_config_store`].
     agent_configs: AgentConfigStore,
+    /// Per-agent data-credit budgets bounding the I/O command queue (#3018),
+    /// keyed by agent id. Written only under the `agents` lock (lock order:
+    /// `agents` → `io_budgets`), together with the matching map entry, so a
+    /// producer always pairs a connection's sender with that connection's own
+    /// budget. See [`io_lanes`].
+    io_budgets: IoBudgetMap,
     app_handle: AppHandle<R>,
 }
+
+/// Agent id → the data-credit budget of its current I/O task (#3018).
+type IoBudgetMap = Arc<Mutex<HashMap<String, Arc<IoBudget>>>>;
 
 impl<R: Runtime> AgentConnectionManager<R> {
     pub fn new(app_handle: AppHandle<R>) -> Self {
@@ -877,6 +889,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             agents: Arc::new(Mutex::new(HashMap::new())),
             connecting: Arc::new(Mutex::new(HashMap::new())),
             agent_configs: AgentConfigStore::new(),
+            io_budgets: Arc::new(Mutex::new(HashMap::new())),
             app_handle,
         }
     }
@@ -1153,21 +1166,13 @@ impl<R: Runtime> AgentConnectionManager<R> {
             // 4. Spawn the async I/O task
             let alive = Arc::new(AtomicBool::new(true));
             let reconnecting = Arc::new(AtomicBool::new(false));
-            // TAURI-014: this channel stays UNBOUNDED, deliberately. A bounded +
-            // backpressured version was assessed and deferred (see follow-up), for
-            // three reasons: (1) the sole consumer (`agent_io_task`) re-queues
-            // survivors into this same channel during reconnect (the
-            // `command_tx.send` at the CONC-014 drain below) — under a full bounded
-            // channel `send().await` would self-deadlock, and `try_send`+drop would
-            // silently discard control commands (forbidden); (2) the task holds its
-            // own `command_tx` clone (CONC-009), so the channel never closes and a
-            // full bound would block every producer for the entire reconnect window;
-            // (3) the real unbounded-growth vector — terminal input piling up while
-            // the consumer stalls — is already bounded by CONC-014, which drops
-            // `SessionInput` at the source (via `reconnecting`) during the only
-            // window the loop stops draining. Under normal operation the loop drains
-            // continuously, so the queue does not grow. Bounding this safely needs a
-            // producer-context refactor tracked as a follow-up.
+            // #3018: the command ingress is bounded by a per-agent data-credit
+            // budget rather than by channel slots. Producers of terminal input and
+            // forwarded bytes wait for credit (backpressure, nothing dropped);
+            // control commands are never gated and the I/O task serves them ahead
+            // of queued data. Survivors of a reconnect keep their credit, so the
+            // task never waits on its own queue. See `io_lanes`.
+            let io_budget = IoBudget::new(AGENT_IO_DATA_BUDGET);
             let (command_tx, command_rx) = mpsc::unbounded_channel::<AgentIoCommand>();
 
             let alive_clone = alive.clone();
@@ -1184,6 +1189,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             // send reply chunks back through it (#1727). Teardown is driven by an
             // explicit `Disconnect`, so a task-held clone does not mask it.
             let command_tx_task = command_tx.clone();
+            let io_budget_task = io_budget.clone();
             // Retain the task's abort handle (CONC-009): the self-held `command_tx`
             // clone means an all-external-senders-dropped condition can never close
             // the loop, so a guaranteed force-stop is the only escape hatch for a
@@ -1195,6 +1201,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
                     channel,
                     command_rx,
                     command_tx_task,
+                    io_budget_task,
                     alive_clone,
                     reconnecting_clone,
                     app_handle_task,
@@ -1217,6 +1224,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 protocol_version,
                 client_id,
                 command_tx,
+                io_budget,
                 alive,
                 reconnecting,
                 io_task,
@@ -1234,6 +1242,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             protocol_version,
             client_id,
             command_tx,
+            io_budget,
             alive,
             reconnecting,
             io_task,
@@ -1256,6 +1265,11 @@ impl<R: Runtime> AgentConnectionManager<R> {
             protocol_version: protocol_version.clone(),
         };
 
+        // Paired with the map entry under the same `agents` lock (#3018).
+        self.io_budgets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(agent_id.to_string(), io_budget);
         agents.insert(
             agent_id.to_string(),
             AgentConnection {
@@ -1296,6 +1310,18 @@ impl<R: Runtime> AgentConnectionManager<R> {
             .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
 
         let live = agents.remove(agent_id);
+        // #3018: drop the budget with its entry, under the same lock that pairs
+        // them, and close it now: a producer waiting for queue credit fails at
+        // once instead of waiting on the ending I/O task (whose own drop guard
+        // closes it too).
+        if let Some(budget) = self
+            .io_budgets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(agent_id)
+        {
+            budget.close();
+        }
         // Scrub the reattach config unconditionally, before returning either arm:
         // a user disconnect is a terminal point, and the agent may already have
         // been *reaped* (no live entry) while its reattach config lingers — that
@@ -2294,18 +2320,50 @@ impl<R: Runtime> AgentConnectionManager<R> {
         );
     }
 
-    /// Queue a command for an agent's I/O task.
+    /// Queue a command for an agent's I/O task. Gated data (forwarded bytes)
+    /// blocks for queue credit first (#3018); control never waits.
     fn send_io_command(&self, agent_id: &str, cmd: AgentIoCommand) -> Result<(), TerminalError> {
+        let sender = self.io_sender(agent_id, TerminalError::RemoteError)?;
+        sender.send_blocking(cmd).map_err(|e| {
+            TerminalError::RemoteError(match e {
+                GateError::Closed => "Agent I/O task gone".to_string(),
+                GateError::Reconnecting => format!("Agent {} is reconnecting", agent_id),
+                GateError::WouldDeadlock => "Agent I/O queue full".to_string(),
+            })
+        })
+    }
+
+    /// Snapshot `agent_id`'s gated command sender (#3018): its ingress, its
+    /// data-credit budget and its reconnecting flag, read under the `agents`
+    /// lock so the three belong to the same connection. The lock is released
+    /// before the caller sends, so a producer waiting for credit never holds it.
+    fn io_sender(
+        &self,
+        agent_id: &str,
+        err: fn(String) -> TerminalError,
+    ) -> Result<AgentIoSender, TerminalError> {
         let agents = self
             .agents
             .lock()
-            .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
-        let conn = agents.get(agent_id).ok_or_else(|| {
-            TerminalError::RemoteError(format!("Agent {} not connected", agent_id))
-        })?;
-        conn.command_tx
-            .send(cmd)
-            .map_err(|_| TerminalError::RemoteError("Agent I/O task gone".to_string()))
+            .map_err(|e| err(format!("Lock failed: {}", e)))?;
+        let conn = agents
+            .get(agent_id)
+            .ok_or_else(|| err(format!("Agent {} not connected", agent_id)))?;
+        // `connect_agent` always inserts the budget with the entry; the fallback
+        // only serves entries built without it (unit tests), which get their own
+        // bounded budget rather than an ungated path.
+        let budget = self
+            .io_budgets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(agent_id.to_string())
+            .or_insert_with(|| IoBudget::new(AGENT_IO_DATA_BUDGET))
+            .clone();
+        Ok(AgentIoSender::new(
+            conn.command_tx.clone(),
+            budget,
+            conn.reconnecting.clone(),
+        ))
     }
 
     /// Send input to a session on the agent (fire-and-forget).
@@ -2315,32 +2373,52 @@ impl<R: Runtime> AgentConnectionManager<R> {
         remote_session_id: &str,
         data: &[u8],
     ) -> Result<(), TerminalError> {
-        let agents = self
-            .agents
-            .lock()
-            .map_err(|e| TerminalError::WriteFailed(format!("Lock failed: {}", e)))?;
-
-        let conn = agents.get(agent_id).ok_or_else(|| {
-            TerminalError::WriteFailed(format!("Agent {} not connected", agent_id))
-        })?;
+        let sender = self.io_sender(agent_id, TerminalError::WriteFailed)?;
 
         // CONC-014: drop terminal input while the transport is down. The I/O task
         // is not draining `command_rx` during a reconnect, so anything queued now
-        // would (a) grow the unbounded channel without bound for the whole outage
-        // and (b) replay stale keystrokes into the recovered remote session once it
-        // reconnects. The tab already shows a reconnecting overlay; discarding input
-        // is the safe behavior. Fire-and-forget, so reporting success is correct —
-        // the keystroke is intentionally not delivered.
-        if conn.reconnecting.load(Ordering::SeqCst) {
+        // would (a) sit in the queue for the whole outage and (b) replay stale
+        // keystrokes into the recovered remote session once it reconnects. The tab
+        // already shows a reconnecting overlay; discarding input is the safe
+        // behavior. Fire-and-forget, so reporting success is correct — the
+        // keystroke is intentionally not delivered.
+        if sender.is_reconnecting() {
             return Ok(());
         }
 
-        conn.command_tx
-            .send(AgentIoCommand::SessionInput {
+        // #3018: a large paste is split into bounded chunks, each waiting for queue
+        // credit in order — backpressure instead of unbounded growth, and a control
+        // command never waits behind more than one chunk's write. Chunks of one
+        // call are enqueued back to back by this (serialized) writer, so a
+        // session's input is never reordered.
+        let chunks: Vec<&[u8]> = if data.is_empty() {
+            vec![data]
+        } else {
+            data.chunks(AGENT_IO_MAX_CHUNK).collect()
+        };
+        for chunk in chunks {
+            let sent = sender.send_blocking(AgentIoCommand::SessionInput {
                 session_id: remote_session_id.to_string(),
-                data: data.to_vec(),
-            })
-            .map_err(|_| TerminalError::WriteFailed("Agent I/O task gone".to_string()))
+                data: chunk.to_vec(),
+            });
+            match sent {
+                Ok(()) => {}
+                // The transport broke while this write waited for credit: the rest
+                // is dropped like any other input typed during an outage (CONC-014).
+                Err(GateError::Reconnecting) => return Ok(()),
+                Err(GateError::Closed) => {
+                    return Err(TerminalError::WriteFailed(
+                        "Agent I/O task gone".to_string(),
+                    ))
+                }
+                Err(GateError::WouldDeadlock) => {
+                    return Err(TerminalError::WriteFailed(
+                        "Agent I/O queue full".to_string(),
+                    ))
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Resize a session on the agent (fire-and-forget).
