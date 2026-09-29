@@ -145,6 +145,11 @@ tauri-plugin-cli = "2"
 # dev-checkout workflow keeps running many debug copies, and skipped at runtime in
 # portable mode where separate data dirs mean separate copies legitimately coexist.
 tauri-plugin-single-instance = "2"
+# Native error dialog shown *before* the Tauri event loop exists, when a portable
+# data dir is already locked by another instance (#3100). Already in the tree via
+# `tauri-plugin-dialog` (same version); default features off to match it — its
+# gtk3 backend is selected in the Linux section below.
+rfd = { version = "0.16", default-features = false }
 if-addrs = "0.6"
 # Native OS credential store (macOS Keychain / Windows Credential Manager /
 # Linux Secret Service). Platform backends are enabled per-target below; the
@@ -223,6 +228,9 @@ keyring = { version = "3", default-features = false, features = ["windows-native
 winreg = "0.55"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# GTK3 backend for the pre-event-loop "already running" dialog (#3100); the same
+# backend `tauri-plugin-dialog` enables by default.
+rfd = { version = "0.16", default-features = false, features = ["gtk3"] }
 # X11 `CLIPBOARD`-selection owner for the remote-clipboard delayed-render binding
 # (#1815): own the selection and serve `text/uri-list` (+ gnome/mate copied-files)
 # on request, fetching the remote files only when a paste converts the selection.
