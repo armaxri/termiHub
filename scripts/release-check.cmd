@@ -75,8 +75,13 @@ if %VERSIONS_ONLY%==1 if defined ONLY (
     echo error: --versions-only and --only are mutually exclusive 1>&2
     exit /b 2
 )
-REM Accept a tag-style value ("v0.1.0") as well as a bare version.
-if defined EXPECT_VERSION if "%EXPECT_VERSION:~0,1%"=="v" set "EXPECT_VERSION=%EXPECT_VERSION:~1%"
+REM Accept a tag-style value ("v0.1.0") as well as a bare version. The goto,
+REM not "if defined X if ...", keeps this line unparsed when X is unset: cmd
+REM expands %%X:~0,1%% of an undefined X to garbage that breaks the quoting,
+REM which made every run without --expect-version a syntax error (#3753).
+if not defined EXPECT_VERSION goto :expect_normalised
+if "%EXPECT_VERSION:~0,1%"=="v" set "EXPECT_VERSION=%EXPECT_VERSION:~1%"
+:expect_normalised
 
 cd /d "%~dp0\.."
 
