@@ -311,7 +311,7 @@ fn workspace_fixture() -> Value {
 
 // ── transfer snapshot (`transfer_list`) ───────────────────────────────────────
 
-fn transfer_fixture() -> Value {
+fn transfer_fixture(drift: &mut Vec<String>) -> Value {
     // The command returns core's registry snapshot (not the ts-rs-typed
     // `transfers_projection` mirror), so that is what is serialized here.
     let snapshots = vec![
@@ -347,10 +347,18 @@ fn transfer_fixture() -> Value {
         },
     ];
     let wire_value = wire("TransferSnapshot[]", &snapshots);
-    // The generated TS type comes from the `transfers_projection` mirror; prove
+    // The generated TS type comes from the `transfers_projection` mirror; check
     // the producer's JSON decodes into it, so the two Rust sides cannot drift.
-    let _: Vec<crate::transfers_projection::store::TransferSnapshot> =
-        from_json("TransferSnapshot mirror", wire_value.clone());
+    // Reported after every fixture is written, so the frontend suite sees the
+    // drifted wire shape too.
+    if let Err(e) = serde_json::from_value::<
+        Vec<crate::transfers_projection::store::TransferSnapshot>,
+    >(wire_value.clone())
+    {
+        drift.push(format!(
+            "transfer_list JSON does not decode into the ts-rs mirror: {e}"
+        ));
+    }
     json!({ "transferList": wire_value })
 }
 
@@ -426,7 +434,9 @@ fn write_ipc_wire_fixtures() {
     write_fixture("agent.json", agent_fixture());
     write_fixture("settings.json", settings_fixture());
     write_fixture("workspace.json", workspace_fixture());
-    write_fixture("transfers.json", transfer_fixture());
+    let mut drift = Vec::new();
+    write_fixture("transfers.json", transfer_fixture(&mut drift));
     write_fixture("open_ports.json", open_ports_fixture());
     write_fixture("projection.json", projection_fixture());
+    assert!(drift.is_empty(), "wire drift: {drift:#?}");
 }
