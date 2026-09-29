@@ -122,7 +122,11 @@ use termihub_core::monitoring::{LocalProcessManager, ProcessError, ProcessManage
 /// a desktop-initiated TCP stream over the `agent.forward.*` relay, carrying a
 /// VNC/RDP connection routed through the agent. An older agent answers "method
 /// not found" and the desktop reports that the agent must be updated.
-const AGENT_PROTOCOL_VERSION: &str = "0.17.0";
+/// Bumped to 0.18.0 for the additive, optional `data.connect_failure` of a
+/// `connection.create` error (#3751): the typed connect-failure kind of an
+/// agent-hosted session, so the desktop shows the matching hint. An older agent
+/// omits it (generic error); an older desktop ignores it.
+const AGENT_PROTOCOL_VERSION: &str = "0.18.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -472,6 +476,22 @@ fn rpc_err(code: i64, message: impl Into<String>) -> ErrorObjectOwned {
 
 fn rpc_err_data(code: i64, message: impl Into<String>, data: Value) -> ErrorObjectOwned {
     ErrorObjectOwned::owned(code as i32, message.into(), Some(data))
+}
+
+/// The `connection.create` error for a connect that failed for a typed reason
+/// (protocol 0.18.0, #3751): the same `SESSION_CREATION_FAILED` code and
+/// message as an untyped backend failure — so an older desktop sees exactly
+/// what it did before — plus the kind in the optional `data.connect_failure`.
+fn connect_failed_err(
+    failure: crate::ki_prompt::relay::ClassifiedConnectFailure,
+) -> ErrorObjectOwned {
+    let data = termihub_core::protocol::errors::SessionCreateErrorData {
+        connect_failure: Some(failure.kind),
+    };
+    match serde_json::to_value(&data) {
+        Ok(data) => rpc_err_data(errors::SESSION_CREATION_FAILED, failure.message, data),
+        Err(_) => rpc_err(errors::SESSION_CREATION_FAILED, failure.message),
+    }
 }
 
 /// Serialize a method result into a JSON [`Value`], turning the
@@ -929,6 +949,7 @@ fn register_connection_create(module: &mut RpcModule<Mutex<HandlerState>>) -> an
                 SessionCreateError::SecondFactorFailed(msg) => {
                     rpc_err(errors::SECOND_FACTOR_FAILED, msg)
                 }
+                SessionCreateError::ConnectFailed(failure) => connect_failed_err(failure),
             })?;
 
         // The join line: pairs the desktop's correlation id with the agent's
@@ -3533,10 +3554,11 @@ mod tests {
     /// log RPC) may now arrive — and, from 0.12.0, that `network.*` is gone;
     /// 0.13.0 made the update RPCs require the auth token, 0.14.0 adds
     /// `docker.list_containers`, 0.15.0 adds its Compose fields, 0.16.0 the
-    /// `connection.create` `correlation_id`, and 0.17.0 `agent.forward.connect`.
+    /// `connection.create` `correlation_id`, 0.17.0 `agent.forward.connect`,
+    /// and 0.18.0 the `connection.create` error's `data.connect_failure`.
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.17.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.18.0");
     }
 
     // ── agent.forward.connect (desktop port forward, #3241) ────────
@@ -6073,6 +6095,9 @@ mod tests {
                     SessionCreateError::SecondFactorFailed(m) => {
                         SessionCreateError::SecondFactorFailed(m.clone())
                     }
+                    SessionCreateError::ConnectFailed(f) => {
+                        SessionCreateError::ConnectFailed(f.clone())
+                    }
                 });
             }
             let snapshot = SessionSnapshot {
@@ -6252,6 +6277,46 @@ mod tests {
             .as_str()
             .unwrap_or("")
             .contains("PTY spawn failed"));
+    }
+
+    /// A classified connect failure (e.g. an agent-hosted serial port that is
+    /// busy) keeps the pre-0.18.0 code and message and adds the kind as the
+    /// optional `data.connect_failure` (#3751); an untyped failure sends no
+    /// `data`, exactly as before.
+    #[tokio::test]
+    async fn mock_session_create_classified_failure_carries_the_kind_in_data() {
+        use termihub_core::errors::ConnectFailureKind;
+        for kind in ConnectFailureKind::ALL {
+            let handler = make_mock_handler_failing(SessionCreateError::ConnectFailed(
+                crate::ki_prompt::relay::ClassifiedConnectFailure {
+                    kind,
+                    message: "Spawn failed: port held".into(),
+                },
+            ));
+            dispatch(&handler, "initialize", init_params(), 1).await;
+            let result = dispatch(
+                &handler,
+                "connection.create",
+                json!({"type": "local", "config": {}}),
+                2,
+            )
+            .await;
+            assert_eq!(result["error"]["code"], errors::SESSION_CREATION_FAILED);
+            assert_eq!(result["error"]["message"], "Spawn failed: port held");
+            assert_eq!(result["error"]["data"]["connect_failure"], kind.code());
+        }
+
+        let handler =
+            make_mock_handler_failing(SessionCreateError::BackendFailed("PTY spawn failed".into()));
+        dispatch(&handler, "initialize", init_params(), 1).await;
+        let result = dispatch(
+            &handler,
+            "connection.create",
+            json!({"type": "local", "config": {}}),
+            2,
+        )
+        .await;
+        assert!(result["error"].get("data").is_none_or(Value::is_null));
     }
 
     #[tokio::test]

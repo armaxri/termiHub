@@ -29,6 +29,17 @@
 //! second factor as a **typed** `connection.create` error rather than an
 //! opaque "daemon exited" message. The daemon waits for the ack before exiting
 //! so the worker records the reason before it notices the exit.
+//!
+//! ## Connect-failure reports for every daemon launch (#3751)
+//!
+//! The same endpoint also carries a classified connect failure (a core
+//! [`ConnectFailureKind`] — timeout, SSH-agent auth, serial port missing /
+//! denied / busy — plus its human message). The worker starts the relay for
+//! **every** daemon launch and exports it as [`CONNECT_REPORT_ENDPOINT_ENV`];
+//! [`KI_PROMPT_ENDPOINT_ENV`] (which installs the prompter) is still exported
+//! only for SSH with a prompt-capable desktop. The worker turns a reported kind
+//! into a [`ClassifiedConnectFailure`], which `connection.create` relays to the
+//! desktop in its error `data`.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -38,7 +49,7 @@ use serde::{Deserialize, Serialize};
 use termihub_core::backends::ssh::keyboard_interactive::{
     KbdInteractiveAnswer, KbdInteractivePrompt, KbdInteractiveRequest, KeyboardInteractivePrompter,
 };
-use termihub_core::errors::SessionError;
+use termihub_core::errors::{ConnectFailureKind, SessionError};
 use termihub_core::protocol::methods::KbdInteractivePromptItem;
 use tracing::{debug, warn};
 use zeroize::Zeroizing;
@@ -49,6 +60,12 @@ use crate::daemon::transport::{BoxedReader, BoxedWriter, DaemonListener};
 
 /// Env var carrying the worker's prompt-relay endpoint to a session daemon.
 pub const KI_PROMPT_ENDPOINT_ENV: &str = "TERMIHUB_KI_PROMPT_ENDPOINT";
+
+/// Env var carrying the worker's relay endpoint to a session daemon for its
+/// connect-failure report (#3751). Exported for every daemon launch, unlike
+/// [`KI_PROMPT_ENDPOINT_ENV`], so a serial or non-prompting SSH daemon can
+/// still say *why* its connect failed.
+pub const CONNECT_REPORT_ENDPOINT_ENV: &str = "TERMIHUB_CONNECT_REPORT_ENDPOINT";
 
 /// Daemon → worker: a round to answer ([`RelayPrompt`] JSON).
 pub const FRAME_PROMPT: u8 = 0x01;
@@ -159,11 +176,72 @@ impl KiFailureKind {
     }
 }
 
-/// The daemon's failure report.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The daemon's failure report: a prompt outcome, or a classified connect
+/// failure with its human message (#3751). Every member is optional so either
+/// shape parses.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelayFailure {
-    pub kind: KiFailureKind,
+    /// A keyboard-interactive outcome (#3375).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<KiFailureKind>,
+    /// The typed connect-failure category (#3751).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connect_failure: Option<ConnectFailureKind>,
+    /// The human-readable connect error, shown to the user.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
+
+impl RelayFailure {
+    /// The report for `error`, or `None` when the error carries no typed
+    /// reason the desktop needs (it then sees today's generic failure).
+    pub fn from_session_error(error: &SessionError) -> Option<Self> {
+        if let Some(kind) = KiFailureKind::from_session_error(error) {
+            return Some(Self {
+                kind: Some(kind),
+                ..Self::default()
+            });
+        }
+        let connect_failure = error.connect_failure_kind()?;
+        Some(Self {
+            kind: None,
+            connect_failure: Some(connect_failure),
+            message: Some(error.to_string()),
+        })
+    }
+
+    /// The typed create error this report stands for, if any.
+    pub fn into_error(self) -> Option<anyhow::Error> {
+        if let Some(kind) = self.kind {
+            return Some(anyhow::Error::new(KiConnectFailure(kind)));
+        }
+        let kind = self.connect_failure?;
+        Some(anyhow::Error::new(ClassifiedConnectFailure {
+            kind,
+            message: self.message.unwrap_or_else(|| kind.code().to_string()),
+        }))
+    }
+}
+
+/// A connect failure with a typed [`ConnectFailureKind`] (I18N-009, #3751),
+/// carried through `anyhow` from a session backend bring-up — a session
+/// daemon's report or an in-process connect — to `connection.create`'s error
+/// mapping, which relays the kind to the desktop in the error `data`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClassifiedConnectFailure {
+    /// The failure category.
+    pub kind: ConnectFailureKind,
+    /// The human-readable message (displayed verbatim).
+    pub message: String,
+}
+
+impl std::fmt::Display for ClassifiedConnectFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ClassifiedConnectFailure {}
 
 /// A connect failure with a typed reason, carried through `anyhow` from the
 /// session backend bring-up to `connection.create`'s error mapping.
@@ -185,7 +263,7 @@ impl std::error::Error for KiConnectFailure {}
 pub struct KiRelaySession {
     endpoint: String,
     activity: Arc<PromptActivity>,
-    failure: Arc<Mutex<Option<KiFailureKind>>>,
+    failure: Arc<Mutex<Option<RelayFailure>>>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -245,9 +323,25 @@ impl KiRelaySession {
         self.activity.clone()
     }
 
-    /// The typed reason the daemon reported for a failed connect, if any.
+    /// The keyboard-interactive reason the daemon reported for a failed
+    /// connect, if any.
+    #[cfg(test)]
     pub fn failure(&self) -> Option<KiFailureKind> {
-        *self.failure.lock().unwrap_or_else(|e| e.into_inner())
+        self.report().and_then(|r| r.kind)
+    }
+
+    /// The daemon's whole failure report, if it sent one.
+    pub fn report(&self) -> Option<RelayFailure> {
+        self.failure
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// The typed create error for the daemon's report — a prompt outcome or a
+    /// classified connect failure (#3751) — if it sent one.
+    pub fn failure_error(&self) -> Option<anyhow::Error> {
+        self.report().and_then(RelayFailure::into_error)
     }
 }
 
@@ -270,7 +364,7 @@ async fn serve_connection(
     hub: Arc<KiPromptHub>,
     session_id: String,
     activity: Arc<PromptActivity>,
-    failure: Arc<Mutex<Option<KiFailureKind>>>,
+    failure: Arc<Mutex<Option<RelayFailure>>>,
 ) {
     let frame = match tokio::time::timeout(FIRST_FRAME_TIMEOUT, read_frame_async(&mut reader)).await
     {
@@ -310,7 +404,7 @@ async fn serve_connection(
         }
         FRAME_FAILURE => {
             if let Ok(report) = serde_json::from_slice::<RelayFailure>(&frame.payload) {
-                *failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(report.kind);
+                *failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(report);
             }
             let _ = write_frame_async(&mut writer, FRAME_ACK, &[]).await;
         }
@@ -393,16 +487,26 @@ pub fn install_daemon_prompter_from_env() -> Option<String> {
     Some(endpoint)
 }
 
+/// The endpoint a session daemon reports its connect failure to (#3751): the
+/// dedicated [`CONNECT_REPORT_ENDPOINT_ENV`], else the prompt relay endpoint.
+pub fn connect_report_endpoint_from_env(ki_prompt_endpoint: Option<&str>) -> Option<String> {
+    std::env::var(CONNECT_REPORT_ENDPOINT_ENV)
+        .ok()
+        .filter(|e| !e.is_empty())
+        .or_else(|| ki_prompt_endpoint.map(str::to_string))
+}
+
 /// Best-effort: tell the worker why the connect failed, when the reason is one
-/// the desktop must see typed. Waits (bounded) for the worker's ack so the
-/// report lands before the daemon exits.
+/// the desktop must see typed — a prompt outcome (#3375) or a classified
+/// connect failure (#3751). Waits (bounded) for the worker's ack so the report
+/// lands before the daemon exits.
 pub async fn report_connect_failure(endpoint: &str, error: &SessionError) {
-    let Some(kind) = KiFailureKind::from_session_error(error) else {
+    let Some(failure) = RelayFailure::from_session_error(error) else {
         return;
     };
     let report = async {
         let (mut reader, mut writer) = connect_to_worker(endpoint).await?;
-        let payload = serde_json::to_vec(&RelayFailure { kind }).map_err(std::io::Error::other)?;
+        let payload = serde_json::to_vec(&failure).map_err(std::io::Error::other)?;
         write_frame_async(&mut writer, FRAME_FAILURE, &payload).await?;
         let _ack = read_frame_async(&mut reader).await?;
         Ok::<_, std::io::Error>(())
