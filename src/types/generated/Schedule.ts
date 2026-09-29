@@ -8,11 +8,12 @@ import type { ScheduleTargets } from "./ScheduleTargets";
 /**
  * A stored schedule.
  *
- * The user-editable part is `name`, `action`, `targets`, `rule` and
- * `missed_runs`. Everything else is owned by the backend: a schedule is
- * created **disabled**, is enabled only through `set_schedule_enabled` (the
- * first enable must carry the user's confirmation of the targets), and loses
- * its enabled state + confirmation whenever its action or targets change.
+ * The user-editable part is `name`, `action`, `targets`, `rule`,
+ * `missed_runs` and `connect_if_needed`. Everything else is owned by the
+ * backend: a schedule is created **disabled**, is enabled only through
+ * `set_schedule_enabled` (the first enable must carry the user's confirmation
+ * of the targets), and loses its enabled state + confirmation whenever its
+ * action or targets change, or it newly opts into connecting its targets.
  */
 export type Schedule = { 
 /**
@@ -39,6 +40,14 @@ rule: ScheduleRule,
  * Missed-run handling (default: skip).
  */
 missedRuns: MissedRunPolicy, 
+/**
+ * "Connect if not connected" (#3527, opt-in, default off): a target saved
+ * connection with no connected terminal is connected **unattended** first
+ * — stored credentials / key auth and an already-trusted host key only,
+ * never a prompt — and the tab it opened is closed after the run. A target
+ * that would need input is skipped with the reason.
+ */
+connectIfNeeded?: boolean, 
 /**
  * Whether the schedule fires. Always `false` for a new schedule.
  */

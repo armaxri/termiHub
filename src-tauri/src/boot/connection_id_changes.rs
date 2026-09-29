@@ -376,6 +376,7 @@ mod tests {
                     },
                     rule: ScheduleRule::Interval { every_minutes: 5 },
                     missed_runs: MissedRunPolicy::Skip,
+                    connect_if_needed: false,
                 },
                 now,
                 &chrono::Utc,
