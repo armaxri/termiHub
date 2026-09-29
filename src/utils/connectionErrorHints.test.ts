@@ -111,7 +111,7 @@ describe("connectionErrorHint — every kind for every family", () => {
     timeout: FAMILIES,
     auth: ["ssh", "telnet", "unknown"],
     "agent-auth": ["ssh"],
-    "not-found": ["serial"],
+    "not-found": ["serial", "docker"],
     permission: ["serial"],
     busy: ["serial"],
     other: [],
@@ -159,5 +159,10 @@ describe("connectionErrorHint — every kind for every family", () => {
   it("gives device guidance for serial not-found and busy", () => {
     expect(hintText("serial", "not-found")).toContain("Serial port not found");
     expect(hintText("serial", "busy")).toContain("already in use");
+  });
+
+  it("gives container guidance for docker not-found (#3784)", () => {
+    expect(hintText("docker", "not-found")).toContain("Container not found");
+    expect(hintText("docker", "not-found")).toContain("docker compose up");
   });
 });

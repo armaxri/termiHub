@@ -103,3 +103,79 @@ describe("ConnectionSettingsForm container picker source (PROD-017 / #3424)", ()
     expect(q("field-existingContainer-listing-unavailable")).not.toBeNull();
   });
 });
+
+describe("ConnectionSettingsForm Compose-service option (#3784)", () => {
+  // Mirrors the backend Docker schema's container-mode select and its two
+  // conditionally visible target fields.
+  const MODE_SCHEMA: SettingsSchema = {
+    groups: [
+      {
+        key: "container",
+        label: "Container",
+        fields: [
+          {
+            key: "containerMode",
+            label: "Container",
+            fieldType: {
+              type: "select",
+              options: [
+                { value: "new", label: "New container" },
+                { value: "existing", label: "Existing (running) container" },
+                { value: "compose", label: "Compose service" },
+              ],
+            },
+            required: false,
+            default: "new",
+          },
+          {
+            key: "existingContainer",
+            label: "Existing Container",
+            fieldType: { type: "dockerContainer" },
+            required: true,
+            visibleWhen: { field: "containerMode", equals: "existing" },
+          },
+          {
+            key: "composeService",
+            label: "Compose Service",
+            fieldType: { type: "dockerContainer" },
+            required: true,
+            visibleWhen: { field: "containerMode", equals: "compose" },
+          },
+        ],
+      },
+    ],
+  };
+
+  async function renderMode(settings: Record<string, unknown>) {
+    await act(async () => {
+      root.render(
+        <ConnectionSettingsForm schema={MODE_SCHEMA} settings={settings} onChange={vi.fn()} />
+      );
+    });
+  }
+
+  it("shows the Compose-service picker only in compose mode", async () => {
+    mockedLocal.mockResolvedValue([
+      {
+        id: "w1",
+        name: "shop-web-1",
+        image: "nginx",
+        state: "running",
+        status: "Up",
+        running: true,
+        composeProject: "shop",
+        composeService: "web",
+      },
+    ]);
+    await renderMode({ containerMode: "compose", composeService: "" });
+    expect(q("field-composeService")).not.toBeNull();
+    expect(q("field-existingContainer")).toBeNull();
+    expect(q("field-composeService-option-shop/web")).not.toBeNull();
+  });
+
+  it("keeps the existing-container picker for existing mode", async () => {
+    await renderMode({ containerMode: "existing", existingContainer: "" });
+    expect(q("field-composeService")).toBeNull();
+    expect(q("field-existingContainer")).not.toBeNull();
+  });
+});
