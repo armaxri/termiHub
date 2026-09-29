@@ -51,6 +51,10 @@ vi.mock("@/services/api", () => ({
   // use the byte-based fallback. The SFTP and FTP suites override this to true
   // (PROD-010).
   sessionSupportsTransferQueue: vi.fn(() => Promise.resolve(false)),
+  // Default: false → the session cannot be an end of a streamed remote copy
+  // (FTP / agent). SFTP-backed suites override this to true, and so does the
+  // Docker case (#3586).
+  sessionSupportsRemoteCopy: vi.fn(() => Promise.resolve(false)),
   // The real marker class so `error instanceof TransferTerminalError` in
   // runTransfer resolves correctly (#1286).
   TransferTerminalError: class TransferTerminalError extends Error {
@@ -291,6 +295,7 @@ import {
   sessionVscodeOpenRemote,
   sessionReadFile,
   sessionHasExecCapability,
+  sessionSupportsRemoteCopy,
   sessionSupportsTransferQueue,
 } from "@/services/api";
 import { dispatchTransferIntentBestEffort } from "@/store/transfersBridge";
@@ -308,6 +313,7 @@ describe("useSessionFileSystem — SFTP-backed transport (probe resolves)", () =
     vi.clearAllMocks();
     // Resolve → the session is SFTP-backed (the boolean is exec capability).
     vi.mocked(sessionHasExecCapability).mockResolvedValue(true);
+    vi.mocked(sessionSupportsRemoteCopy).mockResolvedValue(true);
     // SFTP is queue-capable, so download/upload route through the queue engine.
     vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(true);
   });
@@ -501,6 +507,7 @@ describe("useSessionFileSystem — byte-based transport (probe rejects)", () => 
     vi.clearAllMocks();
     // Reject → the session is byte-based (Docker / agent).
     vi.mocked(sessionHasExecCapability).mockRejectedValue(new Error("not sftp-backed"));
+    vi.mocked(sessionSupportsRemoteCopy).mockResolvedValue(false);
     // Not queue-capable → transfers use the blocking byte-based fallback.
     vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(false);
   });
@@ -745,6 +752,47 @@ describe("useSessionFileSystem — byte-based transport (probe rejects)", () => 
     expect(vi.mocked(sessionDownload)).not.toHaveBeenCalled();
     expect(vi.mocked(sessionUpload)).not.toHaveBeenCalled();
   });
+
+  // #3586: a Docker session is not SFTP-backed but can stream, so a copy
+  // between two Docker sessions is ONE tracked remote copy, not a whole-file
+  // in-memory round trip.
+  it("streams a Docker session→session copy as one tracked remote copy", async () => {
+    vi.mocked(sessionSupportsRemoteCopy).mockResolvedValue(true);
+    const api = await mountHook();
+    useAppStore.getState().setFileClipboard({
+      entries: [
+        {
+          name: "file.bin",
+          path: "/remote/src/file.bin",
+          isDirectory: false,
+          size: 10,
+          modified: "",
+          permissions: null,
+          writable: null,
+        },
+      ],
+      operation: "copy",
+      sourceMode: "session",
+      sourcePath: "/remote/src",
+      terminalSessionId: "docker-src",
+    });
+
+    await act(async () => {
+      await api.pasteEntry();
+    });
+
+    expect(vi.mocked(sessionSupportsRemoteCopy)).toHaveBeenCalledWith("docker-src");
+    expect(vi.mocked(sessionSupportsRemoteCopy)).toHaveBeenCalledWith("docker-1");
+    expect(vi.mocked(sessionCopyRemote)).toHaveBeenCalledWith(
+      "docker-src",
+      "/remote/src/file.bin",
+      "docker-1",
+      "/remote/dir/file.bin",
+      expect.any(Function)
+    );
+    expect(vi.mocked(sessionReadFile)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionWriteFile)).not.toHaveBeenCalled();
+  });
 });
 
 // ── Mutation wiring: each transport-agnostic action targets the session id ─────
@@ -788,6 +836,7 @@ describe("useSessionFileSystem — mutation + clipboard wiring", () => {
     useAppStore.setState(useAppStore.getInitialState());
     vi.clearAllMocks();
     vi.mocked(sessionHasExecCapability).mockResolvedValue(true);
+    vi.mocked(sessionSupportsRemoteCopy).mockResolvedValue(true);
     vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(true);
   });
 
@@ -1013,6 +1062,7 @@ describe("useSessionFileSystem — FTP transport (queue-capable, not SFTP)", () 
     vi.clearAllMocks();
     // Not SFTP-backed → no exec channel (no VS Code / chmod)…
     vi.mocked(sessionHasExecCapability).mockRejectedValue(new Error("not sftp-backed"));
+    vi.mocked(sessionSupportsRemoteCopy).mockResolvedValue(false);
     // …but FTP IS queue-capable → download/upload use the rich queue engine.
     vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(true);
   });
@@ -1196,6 +1246,7 @@ describe("useSessionFileSystem — recursive directory paste (PROD-004)", () => 
 
   it("routes a same-session SFTP directory copy through the recursive copy() capability", async () => {
     vi.mocked(sessionHasExecCapability).mockResolvedValue(true);
+    vi.mocked(sessionSupportsRemoteCopy).mockResolvedValue(true);
     vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(true);
     const api = await mountHook("ssh-1");
     useAppStore.getState().setFileClipboard({
@@ -1234,6 +1285,7 @@ describe("useSessionFileSystem — recursive directory paste (PROD-004)", () => 
 
   it("recursively copies a cross-session SFTP directory, recreating the tree and copying each file", async () => {
     vi.mocked(sessionHasExecCapability).mockResolvedValue(true);
+    vi.mocked(sessionSupportsRemoteCopy).mockResolvedValue(true);
     vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(true);
     vi.mocked(sessionCopyRemote).mockResolvedValue(0);
     vi.mocked(sessionListFiles).mockImplementation(async (_id, path) => {
@@ -1297,6 +1349,7 @@ describe("useSessionFileSystem — recursive directory paste (PROD-004)", () => 
 
   it("keeps the folder-paste manifest when a file of the folder fails (#3630)", async () => {
     vi.mocked(sessionHasExecCapability).mockResolvedValue(true);
+    vi.mocked(sessionSupportsRemoteCopy).mockResolvedValue(true);
     vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(true);
     vi.mocked(sessionCopyRemote).mockRejectedValueOnce(new Error("connection lost"));
     vi.mocked(sessionListFiles).mockImplementation(async (_id, path) =>
@@ -1324,6 +1377,7 @@ describe("useSessionFileSystem — recursive directory paste (PROD-004)", () => 
 
   it("recursively copies a same-session directory over a byte-based backend via read/write", async () => {
     vi.mocked(sessionHasExecCapability).mockRejectedValue(new Error("not sftp-backed"));
+    vi.mocked(sessionSupportsRemoteCopy).mockResolvedValue(false);
     vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(false);
     vi.mocked(sessionListFiles).mockImplementation(async (_id, path) => {
       if (path === "/remote/src/folder") return [fileEntry("a.txt", "/remote/src/folder/a.txt")];
@@ -1356,6 +1410,7 @@ describe("useSessionFileSystem — recursive directory paste (PROD-004)", () => 
 
   it("recursively uploads a local directory, recreating the tree and uploading each file", async () => {
     vi.mocked(sessionHasExecCapability).mockResolvedValue(true);
+    vi.mocked(sessionSupportsRemoteCopy).mockResolvedValue(true);
     vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(true);
     vi.mocked(localListDir).mockImplementation(async (path) => {
       if (path === "/local/proj") return [fileEntry("x.txt", "/local/proj/x.txt")];

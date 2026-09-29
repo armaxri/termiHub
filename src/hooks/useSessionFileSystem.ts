@@ -31,6 +31,7 @@ import { joinDirPath, pasteVerbLabels, type PasteOptions } from "@/utils/fileDra
 import {
   pasteFileLeg,
   pasteFolderRecorded,
+  probeRemoteCopy,
   startSessionUpload,
   type PasteTransport,
 } from "./sessionFolderPaste";
@@ -413,29 +414,31 @@ export function useSessionFileSystem() {
       const destDir = options?.destDir ?? sessionCurrentPath;
       const labels = pasteVerbLabels(options?.verb);
 
-      // The clipboard's source session (and whether it is SFTP-backed) is constant
-      // across every entry, so resolve it once rather than probing per file. A
-      // session source keys on `terminalSessionId` — SSH flows through here too
-      // since the convergence (#2421), so the retired `sftpSessionId` field is
-      // unused; a same-session paste falls back to the active session id. `null`
-      // for a local source.
+      // The clipboard's source session (and whether it can stream a remote
+      // copy) is constant across every entry, so resolve it once rather than
+      // probing per file. A session source keys on `terminalSessionId` — SSH
+      // flows through here too since the convergence (#2421), so the retired
+      // `sftpSessionId` field is unused; a same-session paste falls back to the
+      // active session id. `null` for a local source.
       const srcSession =
         clipboard.sourceMode === "session" ? (clipboard.terminalSessionId ?? destSession) : null;
-      const srcSftp =
+      // Both ends must stream (SFTP or Docker) for a tracked remote copy
+      // (#3586); a local source never needs the probe.
+      const [srcRemoteCopy, destRemoteCopy] =
         srcSession === null
-          ? false
-          : srcSession === destSession
-            ? sftpCapable
-            : await sessionHasExecCapability(srcSession)
-                .then(() => true)
-                .catch(() => false);
+          ? [false, false]
+          : await Promise.all([
+              probeRemoteCopy(srcSession),
+              srcSession === destSession ? null : probeRemoteCopy(destSession),
+            ]).then(([src, dest]) => [src, dest ?? src]);
 
       const transport: PasteTransport = {
         operation: clipboard.operation,
         sourceMode: clipboard.sourceMode === "session" ? "session" : "local",
         srcSession,
         destSession,
-        srcSftp,
+        srcRemoteCopy,
+        destRemoteCopy,
         destSftp: sftpCapable,
         destQueueCapable: transferQueueCapable,
       };

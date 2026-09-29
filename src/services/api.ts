@@ -2133,6 +2133,16 @@ export async function sessionSupportsTransferQueue(sessionId: string): Promise<b
 }
 
 /**
+ * Report whether a session can be either end of a streamed session-to-session
+ * copy ({@link sessionCopyRemote}): `true` for an SFTP- or Docker-backed
+ * session, `false` for FTP, remote-agent or unknown sessions, which keep the
+ * byte-based read/write fallback (#3586).
+ */
+export async function sessionSupportsRemoteCopy(sessionId: string): Promise<boolean> {
+  return await invoke<boolean>("session_supports_remote_copy", { sessionId });
+}
+
+/**
  * Download a remote file to a local path over a session's SFTP connection.
  *
  * Registers a background (#2312, mirroring the retired standalone `sftp_download`):
@@ -2180,18 +2190,18 @@ export async function sessionUpload(
 }
 
 /**
- * Copy a file directly from one SFTP-backed session to another, streaming the
- * bytes **through the desktop with no local staging file** (PROD-0013).
+ * Stream a file from one session to another as ONE tracked transfer, with no
+ * local staging file (PROD-0013; Docker ends since #3586).
  *
  * Registers ONE background transfer on the rich queue model — reading the source
- * session's dedicated SFTP channel and writing the destination session's channel
- * — and resolves with the bytes transferred once it completes. Replaces the
- * download-to-temp + upload round-trip (two rows + a local disk copy) for the
- * SFTP↔SFTP paste case; pause/resume/retry and byte-verified offset resume all
- * work as for {@link sessionDownload}/{@link sessionUpload}. `onRegistered` fires
- * once with the backend `transferId` the instant the start command returns, for
- * seeding the Transfer Queue ahead of any progress event (#1632). Both endpoints
- * must be SFTP-backed.
+ * session (a dedicated SFTP channel, or a streaming `docker exec`) and writing
+ * the destination session the same way — and resolves with the bytes
+ * transferred once it completes. Replaces the whole-file read/write round trip
+ * for every pair of streamable sessions; pause/resume/retry and byte-verified
+ * offset resume all work as for {@link sessionDownload}/{@link sessionUpload}.
+ * `onRegistered` fires once with the backend `transferId` the instant the start
+ * command returns, for seeding the Transfer Queue ahead of any progress event
+ * (#1632). Both endpoints must pass {@link sessionSupportsRemoteCopy}.
  */
 export async function sessionCopyRemote(
   srcSession: string,

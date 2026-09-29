@@ -53,6 +53,9 @@ pub mod ftp;
 pub mod local;
 #[cfg(feature = "local-transfer")]
 pub mod local_folder;
+// Remote→remote copies between SFTP and/or Docker sessions (PROD-0013, #3586).
+#[cfg(any(feature = "ssh", feature = "docker"))]
+pub mod remote_copy;
 #[cfg(feature = "ssh")]
 pub mod sftp;
 

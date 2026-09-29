@@ -57,6 +57,10 @@ pub mod local {
     pub use termihub_core::files::transfer::local::*;
 }
 
+pub mod remote_copy {
+    pub use termihub_core::files::transfer::remote_copy::*;
+}
+
 #[cfg(feature = "ftp")]
 pub mod ftp {
     pub use termihub_core::files::transfer::ftp::*;

@@ -172,6 +172,11 @@ pub struct PersistedRemoteSource {
     /// gone. The id only — never a secret.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub saved_connection_id: Option<String>,
+    /// The full id of the source container when the source is a Docker
+    /// session (#3586), so a relaunch re-attaches to that exact container
+    /// (see [`PersistedDockerTarget`]). Absent for an SFTP source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_id: Option<String>,
 }
 
 /// The persisted identity of a Docker transfer's container (#3585).
@@ -521,6 +526,7 @@ mod tests {
             session_id: "sess-src".to_string(),
             path: "/src/data.csv".to_string(),
             saved_connection_id: None,
+            container_id: None,
         });
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains(r#""remoteSource":{"sessionId":"sess-src","path":"/src/data.csv"}"#));
@@ -586,6 +592,7 @@ mod tests {
             session_id: "sess-src".to_string(),
             path: "/src/data.csv".to_string(),
             saved_connection_id: Some("Work/source".to_string()),
+            container_id: None,
         });
         // The saved-connection reference (#3876) is an id, never its secret.
         entry.saved_connection_id = Some("Work/files".to_string());
