@@ -709,3 +709,147 @@ async fn test_docker_session_monitoring_proc_container_uses_proc() {
     assert_ne!(sample["source"], "dockerStats", "{sample}");
     assert!(sample["diskTotalKb"].as_u64().unwrap_or(0) > 0, "{sample}");
 }
+
+// ── Session file browsing through the daemon (#3242) ──────────────
+
+/// Agent → daemon file request, a write's data, and the replies (#3242).
+const MSG_FILE_REQUEST: u8 = 0x09;
+const MSG_FILE_WRITE_DATA: u8 = 0x0A;
+const MSG_FILE_RESPONSE: u8 = 0x8A;
+const MSG_FILE_READ_DATA: u8 = 0x8B;
+/// [`MSG_CAPABILITIES`] flag: the daemon serves file requests (#3242).
+const CAP_FILES: u8 = 0x04;
+
+/// Send file request `request` (plus a write's `data`) and collect its reply
+/// together with the bytes of a read.
+async fn file_call(
+    reader: &mut FrameReader,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    request: serde_json::Value,
+    data: &[u8],
+) -> (serde_json::Value, Vec<u8>) {
+    let id = request["id"].as_u64().expect("request id");
+    write_frame(writer, MSG_FILE_REQUEST, request.to_string().as_bytes())
+        .await
+        .expect("send the file request");
+    for chunk in data.chunks(64 * 1024) {
+        let mut payload = id.to_be_bytes().to_vec();
+        payload.extend_from_slice(chunk);
+        write_frame(writer, MSG_FILE_WRITE_DATA, &payload)
+            .await
+            .expect("send write data");
+    }
+    let mut bytes = Vec::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let frame = reader
+            .next_frame(remaining)
+            .await
+            .expect("a file reply in time")
+            .expect("the daemon stays up");
+        match frame.msg_type {
+            MSG_FILE_READ_DATA => {
+                assert_eq!(
+                    frame.payload[..8],
+                    id.to_be_bytes(),
+                    "chunk for this request"
+                );
+                bytes.extend_from_slice(&frame.payload[8..]);
+            }
+            MSG_FILE_RESPONSE => {
+                let reply: serde_json::Value =
+                    serde_json::from_slice(&frame.payload).expect("reply JSON");
+                assert_eq!(reply["id"], id);
+                return (reply["outcome"].clone(), bytes);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// An agent-hosted Docker session browses **inside its container** through
+/// the session daemon (#3242): the listing shows the container's own files,
+/// and a multi-chunk write reads back intact — none of it touches the agent
+/// host.
+#[tokio::test]
+#[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
+async fn test_docker_session_browses_inside_the_container() {
+    if !docker_available() {
+        eprintln!("Skipping test: Docker not available");
+        return;
+    }
+    let args = [
+        "/bin/sh",
+        "-c",
+        "echo inside > /tmp/marker-3242 && sleep 300",
+    ];
+    let Some(container) = start_container("files", "alpine:latest", &args) else {
+        eprintln!("Skipping test: could not start an alpine container");
+        return;
+    };
+    let (_dir, socket_path) = temp_socket_path("docker-files");
+    let _daemon =
+        spawn_existing_container_daemon("docker-files", &socket_path, &container.0, "/bin/sh");
+    assert!(
+        wait_for_socket(&socket_path, Duration::from_secs(30)).await,
+        "Daemon socket did not appear"
+    );
+
+    let (mut reader, mut writer, flags) = connect_with_capabilities(&socket_path).await;
+    assert_ne!(flags & CAP_FILES, 0, "the daemon serves file browsing");
+
+    // Give the container's startup command a moment to write its marker.
+    let mut listed = serde_json::Value::Null;
+    for attempt in 1..=20u64 {
+        let (outcome, _) = file_call(
+            &mut reader,
+            &mut writer,
+            serde_json::json!({"id": attempt, "op": "list", "path": "/tmp"}),
+            &[],
+        )
+        .await;
+        assert_eq!(outcome["status"], "listed", "{outcome}");
+        if outcome["entries"]
+            .as_array()
+            .is_some_and(|e| e.iter().any(|e| e["name"] == "marker-3242"))
+        {
+            listed = outcome;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    assert!(!listed.is_null(), "the container's own /tmp is listed");
+
+    let (outcome, bytes) = file_call(
+        &mut reader,
+        &mut writer,
+        serde_json::json!({"id": 100, "op": "read", "path": "/tmp/marker-3242"}),
+        &[],
+    )
+    .await;
+    assert_eq!(outcome["status"], "read", "{outcome}");
+    assert_eq!(bytes, b"inside\n");
+
+    let upload: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+    let (outcome, _) = file_call(
+        &mut reader,
+        &mut writer,
+        serde_json::json!({
+            "id": 101, "op": "write", "path": "/tmp/upload-3242.bin", "size": upload.len()
+        }),
+        &upload,
+    )
+    .await;
+    assert_eq!(outcome["status"], "done", "{outcome}");
+
+    let (outcome, bytes) = file_call(
+        &mut reader,
+        &mut writer,
+        serde_json::json!({"id": 102, "op": "read", "path": "/tmp/upload-3242.bin"}),
+        &[],
+    )
+    .await;
+    assert_eq!(outcome["status"], "read", "{outcome}");
+    assert!(bytes == upload, "the multi-chunk upload reads back intact");
+}
