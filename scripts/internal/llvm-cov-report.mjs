@@ -17,6 +17,12 @@
 // file(s) and retries. Dropping one short-lived process's profile loses a
 // negligible amount of coverage; failing the whole gate loses all of it.
 //
+// Root cause (#3742): agent-test harness guards SIGKILLed session daemons that
+// were already exiting (the test had just closed the session), which cut off
+// the daemon's atexit profile write. Those guards now wait for an exiting
+// daemon (agent/tests/common/daemon_reaper.rs). This retry stays as defense in
+// depth: any other process killed mid-exit would still truncate its profile.
+//
 // Usage: node scripts/internal/llvm-cov-report.mjs <output.lcov> [max-attempts]
 import { spawnSync } from "node:child_process";
 import { rmSync, existsSync } from "node:fs";

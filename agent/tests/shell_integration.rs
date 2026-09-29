@@ -163,7 +163,8 @@ fn agent_binary() -> &'static str {
 
 /// A running daemon process with its socket path.
 ///
-/// On drop, sends SIGKILL to the daemon and removes the socket file.
+/// On drop, stops the daemon (see [`common::daemon_reaper::reap_spawned_daemon`])
+/// and removes the socket file.
 struct DaemonHandle {
     child: Child,
     socket_path: PathBuf,
@@ -171,8 +172,8 @@ struct DaemonHandle {
 
 impl Drop for DaemonHandle {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        // Never SIGKILL a daemon that is already exiting (#3742).
+        common::daemon_reaper::reap_spawned_daemon(&mut self.child, &self.socket_path);
         let _ = std::fs::remove_file(&self.socket_path);
     }
 }
@@ -535,7 +536,7 @@ async fn test_kill() {
 #[tokio::test]
 async fn test_shell_exit() {
     let (_dir, socket_path) = temp_socket_path("exit");
-    let _daemon = spawn_daemon("test-exit", &socket_path);
+    let mut daemon = spawn_daemon("test-exit", &socket_path);
 
     assert!(
         wait_for_socket(&socket_path, Duration::from_secs(5)).await,
@@ -574,6 +575,15 @@ async fn test_shell_exit() {
     assert!(
         got_exit,
         "Expected an Exited frame or EOF after shell exits"
+    );
+
+    // The daemon itself must then exit on its own. Waiting for it also keeps
+    // the drop guard from SIGKILLing it mid-exit, which under cargo-llvm-cov
+    // truncates its coverage profile (#3742).
+    let status = wait_for_daemon_exit(&mut daemon, Duration::from_secs(15)).await;
+    assert!(
+        status.is_some_and(|s| s.success()),
+        "daemon did not exit cleanly after its shell exited: {status:?}"
     );
 }
 
