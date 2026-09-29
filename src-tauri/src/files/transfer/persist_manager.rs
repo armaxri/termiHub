@@ -514,7 +514,8 @@ impl TransferPersistenceManager {
         self.writer
             .send(WriterMsg::Flush(ack))
             .expect("transfer-persist writer is running");
-        done.recv().expect("transfer-persist writer acknowledged the flush");
+        done.recv()
+            .expect("transfer-persist writer acknowledged the flush");
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, PersistedTransferStore> {
@@ -1005,7 +1006,8 @@ mod tests {
             .map(|s| s.contains(needle))
             .unwrap_or(false);
         assert_eq!(
-            has, present,
+            has,
+            present,
             "transfers.json should {}contain {needle}",
             if present { "" } else { "not " }
         );
