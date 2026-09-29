@@ -140,6 +140,9 @@ impl LocalForwarder {
         // from a user stop via its own cancel token (#1243).
         let (death_tx, death_rx) = tokio::sync::oneshot::channel();
         let task_handle = tokio::spawn(async move {
+            // Bound before the accept-loop future, so it is dropped after it: the
+            // signal fires only once the listener (owned by that future) is closed,
+            // which teardown tests rely on instead of probing the freed port (#3551).
             let _death = death_tx;
             Self::accept_loop(
                 listener,
@@ -272,7 +275,6 @@ mod tests {
     //! server or network is needed (#2044). Before this the forwarder sat near
     //! 0% coverage because [`SshSession`] cannot be fabricated without a server.
 
-    use std::io;
     use std::time::Duration;
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -368,10 +370,11 @@ mod tests {
 
     #[tokio::test]
     async fn teardown_closes_the_listener() {
-        let forwarder =
+        let mut forwarder =
             LocalForwarder::start_with_opener(&ephemeral_config(), EchoChannelOpener::new())
                 .expect("start forwarder");
         let addr = forwarder.local_addr();
+        let death = forwarder.take_death_signal().expect("death signal");
 
         // Sanity: the port accepts while running.
         TcpStream::connect(addr)
@@ -380,17 +383,14 @@ mod tests {
 
         drop(forwarder); // Drop -> stop() aborts the accept task, freeing the port.
 
-        // The listener should stop accepting shortly after teardown.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
-        loop {
-            match TcpStream::connect(addr).await {
-                Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => break,
-                _ if tokio::time::Instant::now() >= deadline => {
-                    panic!("listener still accepting after teardown");
-                }
-                _ => tokio::time::sleep(Duration::from_millis(10)).await,
-            }
-        }
+        // The accept task owns the listener, and its death signal fires only once
+        // that task's future — listener included — has been dropped. Awaiting it
+        // proves the listener closed without probing the freed port, which a
+        // concurrent test's port-0 bind may already have re-taken (#3551).
+        tokio::time::timeout(Duration::from_secs(3), death)
+            .await
+            .expect("accept task (and its listener) should end after teardown")
+            .expect_err("the death signal resolves by its sender dropping");
     }
 
     #[tokio::test]

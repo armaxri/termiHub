@@ -225,17 +225,29 @@ fn short_or_placeholder_usernames_are_not_literal_replaced() {
 
 #[test]
 fn from_environment_collects_the_current_user_context() {
-    temp_env::with_vars(
-        [
-            ("HOME", Some("/home/zed")),
-            ("USER", Some("zed")),
-            ("HOSTNAME", Some("zbox.lan")),
-        ],
-        || {
-            let ctx = RedactionContext::from_environment();
-            assert!(ctx.home_dirs.contains(&"/home/zed".to_string()));
-            assert!(ctx.usernames.contains(&"zed".to_string()));
-            assert!(ctx.hostnames.contains(&"zbox".to_string()));
-        },
-    );
+    // Injected rather than set on the process: temporarily repointing the
+    // process-global `HOME` raced concurrently running tests that expand `~`
+    // (#2805).
+    let env = |name: &str| match name {
+        "HOME" => Some("/home/zed".to_string()),
+        "USER" => Some("zed".to_string()),
+        "HOSTNAME" => Some("zbox.lan".to_string()),
+        _ => None,
+    };
+    let ctx = RedactionContext::from_lookup(&env, Some("zbox-machine.local"));
+    assert_eq!(ctx.home_dirs, vec!["/home/zed".to_string()]);
+    assert_eq!(ctx.usernames, vec!["zed".to_string()]);
+    for host in ["zbox-machine.local", "zbox.lan", "zbox-machine", "zbox"] {
+        assert!(ctx.hostnames.contains(&host.to_string()), "{host}: {ctx:?}");
+    }
+}
+
+#[test]
+fn from_environment_reads_the_real_process_environment() {
+    // The production entry point wires the real environment through the pure
+    // core; read-only, so it cannot perturb concurrent tests.
+    let ctx = RedactionContext::from_environment();
+    if let Some(home) = std::env::var("HOME").ok().filter(|h| !h.trim().is_empty()) {
+        assert!(ctx.home_dirs.contains(&home.trim().to_string()), "{ctx:?}");
+    }
 }
