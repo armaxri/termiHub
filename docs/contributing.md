@@ -1268,6 +1268,19 @@ Update the version number in all five locations:
 Check them before tagging with `./scripts/release-check.sh --versions-only --expect-version X.Y.Z`
 — the same check the Release workflow runs as its first gate.
 
+The version check runs in two places (CI-009, #3901):
+
+- **On every PR** that touches the frontend or Rust areas (which cover all five version
+  files, `Cargo.lock` and `pnpm-lock.yaml`), the `Frontend Code Quality` job runs
+  `release-check.sh --versions-only`. A PR whose version sources disagree, or whose
+  `@tauri-apps/*` npm packages drift from their Rust crates on major/minor, fails there
+  and blocks the PR Gate. That PR check has no tag, so it cannot compare against one.
+- **On the tag push**, the Release workflow's `Verify Version` job runs the same script with
+  `--expect-version <tag>`. Every build job lists it in its `needs:`, so a tag that disagrees
+  with the in-repo version fails before anything is built or published.
+  [`release-version-gate.test.mjs`](../scripts/internal/release-version-gate.test.mjs)
+  checks this wiring.
+
 Use [Semantic Versioning](https://semver.org/):
 
 - **MAJOR** (X): Breaking changes
