@@ -798,13 +798,92 @@ mod tests {
     ///
     /// A ceiling alone did not end the flake: the recurrence was not a slow
     /// shell but a `powershell.exe` cold start that stalled past the whole
-    /// 60s. See [`integration_test_shell`] for the deterministic fix.
+    /// 60s. See [`integration_test_shell`] and `shell_startup_timeout`.
     fn pty_output_timeout() -> tokio::time::Duration {
         std::env::var("TERMIHUB_TEST_READY_TIMEOUT_SECS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .map(tokio::time::Duration::from_secs)
             .unwrap_or(tokio::time::Duration::from_secs(60))
+    }
+
+    /// Load-tolerant ceiling for a real shell's *startup* (spawn to first
+    /// prompt), separate from [`pty_output_timeout`] for a command's output.
+    ///
+    /// Windows PowerShell 5.1's cold start on a fresh CI runner is slow and
+    /// highly variable (#2498), so it gets its own, longer budget
+    /// (`TERMIHUB_TEST_SHELL_STARTUP_TIMEOUT_SECS`). The wait returns as soon
+    /// as the prompt appears; the ceiling only bounds a genuine hang.
+    #[cfg(windows)]
+    fn shell_startup_timeout() -> tokio::time::Duration {
+        std::env::var("TERMIHUB_TEST_SHELL_STARTUP_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(tokio::time::Duration::from_secs)
+            .unwrap_or(tokio::time::Duration::from_secs(300))
+    }
+
+    /// Append output chunks from `rx` to `output` until `done` accepts the
+    /// accumulated text (returns `true`), the channel closes, or `deadline`
+    /// elapses (both return `false`).
+    #[cfg(windows)]
+    async fn read_output_until(
+        rx: &mut crate::connection::OutputReceiver,
+        output: &mut Vec<u8>,
+        deadline: tokio::time::Duration,
+        done: impl Fn(&str) -> bool,
+    ) -> bool {
+        tokio::time::timeout(deadline, async {
+            while let Some(chunk) = rx.recv().await {
+                output.extend_from_slice(&chunk);
+                if done(&String::from_utf8_lossy(output)) {
+                    return true;
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or(false)
+    }
+
+    /// Whether PowerShell has printed its first prompt: the OSC 133 `A`
+    /// prompt-start mark from termiHub's shell integration, or the default
+    /// `PS <path>>` prompt text as ConPTY renders it.
+    #[cfg(windows)]
+    fn powershell_prompt_shown(text: &str) -> bool {
+        text.contains("\x1b]133;A")
+            || text
+                .rfind("PS ")
+                .is_some_and(|start| text[start..].contains('>'))
+    }
+
+    /// One line per running `powershell.exe`: pid, run time, accumulated CPU
+    /// time. Attached to a startup-timeout failure so a stalled process (CPU
+    /// time flat) can be told apart from a slow one (CPU time climbing).
+    #[cfg(windows)]
+    fn powershell_process_snapshot() -> String {
+        use sysinfo::{ProcessesToUpdate, System};
+
+        let mut sys = System::new();
+        sys.refresh_processes(ProcessesToUpdate::All, true);
+        let lines: Vec<String> = sys
+            .processes()
+            .values()
+            .filter(|p| p.name().eq_ignore_ascii_case("powershell.exe"))
+            .map(|p| {
+                format!(
+                    "pid {} run {}s cpu {}ms",
+                    p.pid(),
+                    p.run_time(),
+                    p.accumulated_cpu_time()
+                )
+            })
+            .collect();
+        if lines.is_empty() {
+            "no powershell.exe running".to_string()
+        } else {
+            lines.join("; ")
+        }
     }
 
     // ── MockLocalShellSpawner ────────────────────────────────────────
@@ -1703,8 +1782,9 @@ mod tests {
     /// not lost. No deadline makes a test deterministic against an external
     /// process that stalls for an unbounded time, so the plumbing tests use
     /// `cmd` on Windows (the ConPTY + child-exit-watcher paths they cover are
-    /// shell-agnostic). PowerShell-specific coverage lives in the quarantined
-    /// `windows_powershell_spawn_echo_resize_teardown`.
+    /// shell-agnostic). PowerShell-specific coverage lives in
+    /// `windows_powershell_spawn_echo_resize_teardown`, which waits for the
+    /// first prompt with its own load-tolerant startup budget.
     fn integration_test_shell() -> String {
         if cfg!(windows) {
             "cmd".to_string()
@@ -1931,57 +2011,84 @@ mod tests {
     //      the reader thread must observe EOF.
 
     /// Windows-only: spawn PowerShell via the native ConPTY-backed
-    /// spawner, write a command, observe its output, resize the PTY, and
+    /// spawner, wait for its first prompt, run a command, observe its
+    /// *output* (not the echo of the typed command), resize the PTY, and
     /// disconnect cleanly.
     ///
-    /// Quarantined (#2498): `powershell.exe` startup on the Windows CI runner
-    /// intermittently stalls for more than a minute before its first prompt —
-    /// ConPTY emits its init sequence and then nothing, while `cmd.exe`
-    /// sessions spawned alongside finish in under a second. The stall is in
-    /// the external process's cold start, not in `LocalShell`, so no deadline
-    /// makes this deterministic. Run it by hand with `--ignored` on Windows;
-    /// #2498 tracks restoring it once the stall is understood.
+    /// # Startup vs. command deadline (#2498)
+    ///
+    /// Windows PowerShell 5.1 has a slow and highly variable cold start on a
+    /// fresh CI runner (.NET/AMSI/Defender initialisation), and every past
+    /// failure of this test was that cold start, never `LocalShell`: ConPTY
+    /// painted its initial screen and then `powershell.exe` printed nothing
+    /// before a single 60s deadline covering startup *and* the command ran
+    /// out. So the two phases now have separate, event-driven waits:
+    ///
+    /// 1. Startup: read until PowerShell's first prompt appears, bounded by
+    ///    the load-tolerant [`shell_startup_timeout`].
+    /// 2. Command: only then write the command, and read until its output
+    ///    appears, bounded by the ordinary [`pty_output_timeout`].
+    ///
+    /// Both waits return the instant their marker arrives, so the green path
+    /// is as fast as before. A PowerShell that never starts still fails, with
+    /// a snapshot of the `powershell.exe` processes (CPU time, run time) in
+    /// the message so a stall can be told apart from a slow start.
     #[cfg(windows)]
     #[tokio::test]
     #[serial(local_pty)]
-    #[cfg_attr(
-        windows,
-        ignore = "flaky: powershell.exe startup can stall >60s on Windows CI — see #2498"
-    )]
     async fn windows_powershell_spawn_echo_resize_teardown() {
         let mut shell = LocalShell::new();
         let settings = serde_json::json!({ "shell": "powershell" });
 
+        let started = std::time::Instant::now();
         shell
             .connect(settings)
             .await
             .expect("powershell connect failed");
         assert!(shell.is_connected());
-
         let mut rx = shell.subscribe_output();
-        // `Write-Output` is a built-in in both Windows PowerShell 5.1 and
-        // PowerShell 7. CRLF matches ConPTY's cooked-mode line ending.
-        shell
-            .write(b"Write-Output 'HELLO_WINDOWS_PS'\r\n")
-            .expect("write failed");
 
         let mut output = Vec::new();
-        let deadline = pty_output_timeout();
-        let result = tokio::time::timeout(deadline, async {
-            while let Some(chunk) = rx.recv().await {
-                output.extend_from_slice(&chunk);
-                if String::from_utf8_lossy(&output).contains("HELLO_WINDOWS_PS") {
-                    return true;
-                }
-            }
-            false
+        let ready = read_output_until(
+            &mut rx,
+            &mut output,
+            shell_startup_timeout(),
+            powershell_prompt_shown,
+        )
+        .await;
+        assert!(
+            ready,
+            "PowerShell printed no prompt within {:?}; output: {:?}; processes: {}",
+            shell_startup_timeout(),
+            String::from_utf8_lossy(&output),
+            powershell_process_snapshot()
+        );
+        eprintln!(
+            "windows_powershell_spawn_echo_resize_teardown: prompt after {:?}",
+            started.elapsed()
+        );
+
+        // The marker is assembled at run time, so the echo of the typed
+        // command line (which contains `'HELLO_' + 'WINDOWS_PS'`) cannot
+        // satisfy the wait. Only PowerShell actually executing it can.
+        // `Write-Output` exists in Windows PowerShell 5.1 and PowerShell 7;
+        // CR is the byte a terminal sends for Enter.
+        output.clear();
+        shell
+            .write(b"Write-Output ('HELLO_' + 'WINDOWS_PS')\r")
+            .expect("write failed");
+        let ran = read_output_until(&mut rx, &mut output, pty_output_timeout(), |text| {
+            text.contains("HELLO_WINDOWS_PS")
         })
         .await;
-
         assert!(
-            result.unwrap_or(false),
-            "expected HELLO_WINDOWS_PS in PowerShell output, got: {}",
+            ran,
+            "expected HELLO_WINDOWS_PS in PowerShell output, got: {:?}",
             String::from_utf8_lossy(&output)
+        );
+        eprintln!(
+            "windows_powershell_spawn_echo_resize_teardown: command output after {:?}",
+            started.elapsed()
         );
 
         // ConPTY resize: portable-pty forwards this to `ResizePseudoConsole`,
