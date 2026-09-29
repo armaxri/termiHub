@@ -145,6 +145,16 @@ pub trait HostKeyVerifier: Send + Sync {
     /// Return `true` to accept the key and proceed, `false` to reject and abort
     /// the connection.
     async fn verify(&self, info: &HostKeyInfo) -> bool;
+
+    /// Decide **without prompting** whether to trust the key, for an
+    /// unattended connect (a scheduled run, #3527): only a key that is already
+    /// trusted is accepted; anything that would need the user's decision is
+    /// refused. The default is the strict headless policy (trust only
+    /// `~/.ssh/known_hosts`); a verifier with its own trust store overrides it
+    /// to consult that store too.
+    async fn verify_unattended(&self, info: &HostKeyInfo) -> bool {
+        default_verify(info)
+    }
 }
 
 /// The process-wide verifier, registered once by the host application.
@@ -170,6 +180,16 @@ pub fn host_key_verifier() -> Option<Arc<dyn HostKeyVerifier>> {
 pub(crate) async fn verify_host_key(info: &HostKeyInfo) -> bool {
     match host_key_verifier() {
         Some(verifier) => verifier.verify(info).await,
+        None => default_verify(info),
+    }
+}
+
+/// Decide whether to accept a presented host key for an **unattended**
+/// connect (#3527): never prompts. Delegates to the registered verifier's
+/// [`HostKeyVerifier::verify_unattended`], or the strict headless default.
+pub(crate) async fn verify_host_key_unattended(info: &HostKeyInfo) -> bool {
+    match host_key_verifier() {
+        Some(verifier) => verifier.verify_unattended(info).await,
         None => default_verify(info),
     }
 }

@@ -22,6 +22,7 @@ mod prompt_clock;
 pub mod session_pool;
 pub mod sftp;
 pub mod sftp_ops;
+pub mod unattended;
 pub mod x11;
 
 pub use self::exec::{
