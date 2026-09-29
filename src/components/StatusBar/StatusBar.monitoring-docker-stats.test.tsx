@@ -24,6 +24,7 @@ import {
 import type { ConnectionTypeInfo } from "@/types/connection";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+import { flushAsync } from "@/test/flushAsync";
 
 vi.mock("@/components/CredentialStoreIndicator", () => ({ CredentialStoreIndicator: () => null }));
 vi.mock("./PortableBadge", () => ({ PortableBadge: () => null }));
@@ -158,11 +159,12 @@ describe("StatusBar — Docker stats fallback (#3202)", () => {
     teardownMonitors();
   });
 
-  function renderWith(stats: SystemStats) {
+  async function renderWith(stats: SystemStats) {
     setActiveMonitor({ monitorSessionId: "sess-1", stats, sampleCount: 2, status: "live" });
-    act(() =>
-      root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)))
-    );
+    await act(async () => {
+      root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)));
+    });
+    await flushAsync();
   }
 
   function openDropdown() {
@@ -175,16 +177,16 @@ describe("StatusBar — Docker stats fallback (#3202)", () => {
     });
   }
 
-  it("renders disk as unavailable instead of 0%", () => {
-    renderWith(dockerStatsSample());
+  it("renders disk as unavailable instead of 0%", async () => {
+    await renderWith(dockerStatsSample());
     const disk = container.querySelector('[data-testid="monitoring-disk"]');
     expect(disk!.textContent).toBe("Disk n/a");
     expect(disk!.getAttribute("title")).toBe("Disk: unavailable via Docker stats");
     expect(container.querySelector('[data-testid="monitoring-swap"]')).toBeNull();
   });
 
-  it("keeps the metrics Docker stats does supply numeric", () => {
-    renderWith(dockerStatsSample());
+  it("keeps the metrics Docker stats does supply numeric", async () => {
+    await renderWith(dockerStatsSample());
     expect(container.querySelector('[data-testid="monitoring-cpu"]')!.textContent).toBe("CPU 0%");
     expect(container.querySelector('[data-testid="monitoring-mem"]')!.textContent).toBe("Mem 50%");
     expect(container.querySelector('[data-testid="monitoring-net"]')!.textContent).toContain(
@@ -192,8 +194,8 @@ describe("StatusBar — Docker stats fallback (#3202)", () => {
     );
   });
 
-  it("renders a missing CPU / memory / network as unavailable too", () => {
-    renderWith({
+  it("renders a missing CPU / memory / network as unavailable too", async () => {
+    await renderWith({
       ...dockerStatsSample(),
       unavailableMetrics: ["cpu", "memory", "network", "disk"],
     });
@@ -206,8 +208,8 @@ describe("StatusBar — Docker stats fallback (#3202)", () => {
     }
   });
 
-  it("labels the source and disables the process list in the dropdown", () => {
-    renderWith(dockerStatsSample());
+  it("labels the source and disables the process list in the dropdown", async () => {
+    await renderWith(dockerStatsSample());
     openDropdown();
     const source = document.body.querySelector('[data-testid="monitoring-info-source"]');
     expect(source?.textContent).toBe("via Docker stats");
@@ -219,8 +221,8 @@ describe("StatusBar — Docker stats fallback (#3202)", () => {
     expect(unavailable?.hasAttribute("data-disabled")).toBe(true);
   });
 
-  it("keeps a /proc sample unlabelled with its process list available", () => {
-    renderWith(makeStats());
+  it("keeps a /proc sample unlabelled with its process list available", async () => {
+    await renderWith(makeStats());
     expect(container.querySelector('[data-testid="monitoring-disk"]')!.textContent).toBe(
       "Disk 50%"
     );

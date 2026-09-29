@@ -139,7 +139,8 @@ describe("SshHostKeyPrompt", () => {
   it("copies the fingerprint to the clipboard from the copy button", async () => {
     render(<SshHostKeyPrompt />);
     await fire(unknownPrompt);
-    click("ssh-hostkey-fingerprint-copy");
+    // The copy action is async: settle its success state inside act.
+    await act(async () => click("ssh-hostkey-fingerprint-copy"));
     expect(writeClipboard).toHaveBeenCalledWith("SHA256:AABBCCDD");
   });
 
@@ -183,7 +184,8 @@ describe("SshHostKeyPrompt", () => {
   it("copies the previously-trusted fingerprint from its copy button", async () => {
     render(<SshHostKeyPrompt />);
     await fire(changedWithPriorPrompt);
-    click("ssh-hostkey-prev-fingerprint-copy");
+    // The copy action is async: settle its success state inside act.
+    await act(async () => click("ssh-hostkey-prev-fingerprint-copy"));
     expect(writeClipboard).toHaveBeenCalledWith("SHA256:AABBCCDD");
   });
 

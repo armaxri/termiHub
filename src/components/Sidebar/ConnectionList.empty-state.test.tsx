@@ -13,6 +13,7 @@ import { ConnectionList } from "./ConnectionList";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { TooltipProvider } from "@/components/ui";
+import { flushAsync } from "@/test/flushAsync";
 import type { SavedConnection, ConnectionFolder, RemoteAgentDefinition } from "@/types/connection";
 
 vi.mock("@/services/api", () => ({
@@ -59,8 +60,8 @@ const baseSettings = {
   experimentalFeaturesEnabled: false,
 };
 
-function render(root: Root) {
-  act(() => {
+async function render(root: Root) {
+  await act(async () => {
     root.render(
       React.createElement(TooltipProvider, {
         delayDuration: 0,
@@ -68,6 +69,8 @@ function render(root: Root) {
       })
     );
   });
+  // Let the projection subscriptions settle inside act (#3860).
+  await flushAsync();
 }
 
 function click(el: Element) {
@@ -96,8 +99,8 @@ describe("ConnectionList — first-run empty state", () => {
     container.remove();
   });
 
-  it("renders the empty-state card with a CTA when there are zero connections", () => {
-    render(root);
+  it("renders the empty-state card with a CTA when there are zero connections", async () => {
+    await render(root);
 
     expect(container.querySelector('[data-testid="connections-empty-state"]')).not.toBeNull();
     expect(
@@ -105,17 +108,17 @@ describe("ConnectionList — first-run empty state", () => {
     ).not.toBeNull();
   });
 
-  it("shows the experimental-features signpost while the flag is off", () => {
-    render(root);
+  it("shows the experimental-features signpost while the flag is off", async () => {
+    await render(root);
 
     expect(
       container.querySelector('[data-testid="connections-empty-experimental-link"]')
     ).not.toBeNull();
   });
 
-  it("hides the experimental signpost when experimental features are enabled", () => {
+  it("hides the experimental signpost when experimental features are enabled", async () => {
     seedSettings({ ...baseSettings, experimentalFeaturesEnabled: true });
-    render(root);
+    await render(root);
 
     // The empty state still shows (still zero connections)...
     expect(container.querySelector('[data-testid="connections-empty-state"]')).not.toBeNull();
@@ -125,10 +128,10 @@ describe("ConnectionList — first-run empty state", () => {
     ).toBeNull();
   });
 
-  it("CTA opens the new-connection editor", () => {
+  it("CTA opens the new-connection editor", async () => {
     const openConnectionEditorTab = vi.fn();
     useAppStore.setState({ openConnectionEditorTab });
-    render(root);
+    await render(root);
 
     const cta = container.querySelector(
       '[data-testid="connections-empty-new-connection"]'
@@ -138,10 +141,10 @@ describe("ConnectionList — first-run empty state", () => {
     expect(openConnectionEditorTab).toHaveBeenCalledWith("new");
   });
 
-  it("signpost link deep-links to the General settings category", () => {
+  it("signpost link deep-links to the General settings category", async () => {
     const openSettingsTab = vi.fn();
     useAppStore.setState({ openSettingsTab });
-    render(root);
+    await render(root);
 
     const link = container.querySelector(
       '[data-testid="connections-empty-experimental-link"]'
@@ -151,17 +154,17 @@ describe("ConnectionList — first-run empty state", () => {
     expect(openSettingsTab).toHaveBeenCalledWith({ category: "general" });
   });
 
-  it("does NOT render the empty state once a connection exists", () => {
+  it("does NOT render the empty state once a connection exists", async () => {
     seedConnectionsRegion({ connections: [makeConnection({ id: "conn-1", name: "web-server" })] });
-    render(root);
+    await render(root);
 
     expect(container.querySelector('[data-testid="connections-empty-state"]')).toBeNull();
     expect(container.querySelector('[data-testid="connection-item-conn-1"]')).not.toBeNull();
   });
 
-  it("does NOT render the empty state when only a folder exists", () => {
+  it("does NOT render the empty state when only a folder exists", async () => {
     seedConnectionsRegion({ folders: [makeFolder({ id: "folder-1" })] });
-    render(root);
+    await render(root);
 
     expect(container.querySelector('[data-testid="connections-empty-state"]')).toBeNull();
   });

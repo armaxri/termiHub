@@ -12,6 +12,7 @@ import { TooltipProvider } from "@/components/ui";
 import { useAppStore, type MacroPlaybackState } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
 import { installSessionLifecycleHarness } from "@/test/sessionLifecycleRegionTestHarness";
+import { flushAsync } from "@/test/flushAsync";
 
 vi.mock("@dnd-kit/sortable", () => ({
   SortableContext: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -73,8 +74,8 @@ function playback(overrides: Partial<MacroPlaybackState> = {}): MacroPlaybackSta
 let container: HTMLDivElement;
 let root: Root;
 
-function render() {
-  act(() => {
+async function render() {
+  await act(async () => {
     root.render(
       <TooltipProvider>
         <TabBar panelId="left" tabs={LEFT} />
@@ -82,6 +83,7 @@ function render() {
       </TooltipProvider>
     );
   });
+  await flushAsync();
 }
 
 function badge(tabId: string): HTMLElement | null {
@@ -108,56 +110,56 @@ afterEach(() => {
 });
 
 describe("TabBar — receiving-macro marker (#3446)", () => {
-  it("marks every receiving tab across split panels, and only those", () => {
+  it("marks every receiving tab across split panels, and only those", async () => {
     setPlayback(playback());
-    render();
+    await render();
     expect(badge("a")).not.toBeNull();
     expect(badge("c")).not.toBeNull();
     expect(badge("d")).not.toBeNull();
     expect(badge("b")).toBeNull();
   });
 
-  it("exposes the macro name and progress as the accessible label and tooltip", () => {
+  it("exposes the macro name and progress as the accessible label and tooltip", async () => {
     setPlayback(playback());
-    render();
+    await render();
     const el = badge("c")!;
     expect(el.getAttribute("role")).toBe("img");
     expect(el.getAttribute("aria-label")).toBe('Receiving macro "deploy" (2/5 steps)');
     expect(el.getAttribute("title")).toBe('Receiving macro "deploy" (2/5 steps)');
   });
 
-  it("updates the progress as steps are played", () => {
+  it("updates the progress as steps are played", async () => {
     setPlayback(playback());
-    render();
+    await render();
     setPlayback(playback({ played: 4 }));
     expect(badge("a")?.getAttribute("aria-label")).toBe('Receiving macro "deploy" (4/5 steps)');
   });
 
-  it("clears the marker on a target that dropped out mid-run, keeping the rest", () => {
+  it("clears the marker on a target that dropped out mid-run, keeping the rest", async () => {
     setPlayback(playback());
-    render();
+    await render();
     setPlayback(playback({ targetTabIds: ["a", "d"] }));
     expect(badge("c")).toBeNull();
     expect(badge("a")).not.toBeNull();
     expect(badge("d")).not.toBeNull();
   });
 
-  it("clears every marker when the run ends (finished or cancelled)", () => {
+  it("clears every marker when the run ends (finished or cancelled)", async () => {
     setPlayback(playback());
-    render();
+    await render();
     setPlayback(null);
     for (const id of ["a", "b", "c", "d"]) expect(badge(id)).toBeNull();
   });
 
-  it("does not mark the tab of a single-terminal playback", () => {
+  it("does not mark the tab of a single-terminal playback", async () => {
     setPlayback(playback({ targetTabIds: undefined }));
-    render();
+    await render();
     for (const id of ["a", "b", "c", "d"]) expect(badge(id)).toBeNull();
   });
 
-  it("is distinct from the broadcast badge", () => {
+  it("is distinct from the broadcast badge", async () => {
     setPlayback(playback());
-    render();
+    await render();
     expect(badge("a")?.className).toBe("tab__macro-badge");
     expect(container.querySelector('[data-testid="tab-broadcast-badge-a"]')).toBeNull();
   });

@@ -294,7 +294,9 @@ describe("Button — native form submit bridge (#1469)", () => {
 
     expect(action).toHaveBeenCalledTimes(1);
     expect(isPending(q<HTMLButtonElement>("b"))).toBe(true);
-    gate.resolve();
+    await act(async () => {
+      gate.resolve();
+    });
   });
 
   it("drives the SAME pending lifecycle on a click", async () => {
@@ -312,7 +314,9 @@ describe("Button — native form submit bridge (#1469)", () => {
 
     expect(action).toHaveBeenCalledTimes(1);
     expect(isPending(q<HTMLButtonElement>("b"))).toBe(true);
-    gate.resolve();
+    await act(async () => {
+      gate.resolve();
+    });
   });
 
   it("does not double-run the action on click (native re-submit prevented)", async () => {
@@ -368,7 +372,9 @@ describe("Button — native form submit bridge (#1469)", () => {
 
     expect(action).toHaveBeenCalledTimes(1);
     expect(isPending(q<HTMLButtonElement>("b"))).toBe(true);
-    gate.resolve();
+    await act(async () => {
+      gate.resolve();
+    });
   });
 
   it("leaves a submit Button WITHOUT onClick as a plain native control (no recursion)", async () => {

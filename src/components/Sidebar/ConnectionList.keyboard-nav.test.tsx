@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
+import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
@@ -57,8 +58,8 @@ const baseSettings = {
   experimentalFeaturesEnabled: false,
 };
 
-function render(_container: HTMLElement, root: Root) {
-  act(() => {
+async function render(_container: HTMLElement, root: Root) {
+  await act(async () => {
     root.render(
       React.createElement(TooltipProvider, {
         delayDuration: 0,
@@ -66,6 +67,7 @@ function render(_container: HTMLElement, root: Root) {
       })
     );
   });
+  await flushAsync();
 }
 
 function keydown(el: Element, key: string) {
@@ -94,22 +96,22 @@ describe("ConnectionList — keyboard navigation & ARIA", () => {
     container.remove();
   });
 
-  it("exposes role=tree with treeitem rows", () => {
+  it("exposes role=tree with treeitem rows", async () => {
     seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" }), makeConnection({ id: "conn-2" })],
     });
-    render(container, root);
+    await render(container, root);
 
     expect(container.querySelector('[role="tree"]')).not.toBeNull();
     const items = container.querySelectorAll('[role="treeitem"]');
     expect(items.length).toBe(2);
   });
 
-  it("uses roving tabindex: only the first item is tabbable initially", () => {
+  it("uses roving tabindex: only the first item is tabbable initially", async () => {
     seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" }), makeConnection({ id: "conn-2" })],
     });
-    render(container, root);
+    await render(container, root);
 
     const item1 = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
     const item2 = container.querySelector('[data-testid="connection-item-conn-2"]') as HTMLElement;
@@ -117,11 +119,11 @@ describe("ConnectionList — keyboard navigation & ARIA", () => {
     expect(item2.getAttribute("tabindex")).toBe("-1");
   });
 
-  it("ArrowDown moves focus (roving tabindex) to the next item", () => {
+  it("ArrowDown moves focus (roving tabindex) to the next item", async () => {
     seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" }), makeConnection({ id: "conn-2" })],
     });
-    render(container, root);
+    await render(container, root);
 
     const item1 = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
     const item2 = container.querySelector('[data-testid="connection-item-conn-2"]') as HTMLElement;
@@ -133,13 +135,13 @@ describe("ConnectionList — keyboard navigation & ARIA", () => {
     expect(document.activeElement).toBe(item2);
   });
 
-  it("Enter on a focused connection connects it", () => {
+  it("Enter on a focused connection connects it", async () => {
     const addTab = vi.fn();
     useAppStore.setState({ addTab });
     seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" })],
     });
-    render(container, root);
+    await render(container, root);
 
     const item1 = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
     act(() => item1.focus());
@@ -151,12 +153,12 @@ describe("ConnectionList — keyboard navigation & ARIA", () => {
     });
   });
 
-  it("folder rows expose aria-expanded and ArrowRight expands a collapsed folder", () => {
+  it("folder rows expose aria-expanded and ArrowRight expands a collapsed folder", async () => {
     seedConnectionsRegion({
       folders: [makeFolder({ id: "folder-1", isExpanded: false })],
       connections: [makeConnection({ id: "conn-1", folderId: "folder-1" })],
     });
-    render(container, root);
+    await render(container, root);
 
     const folder = container.querySelector('[data-testid="folder-toggle-folder-1"]') as HTMLElement;
     expect(folder.getAttribute("role")).toBe("treeitem");

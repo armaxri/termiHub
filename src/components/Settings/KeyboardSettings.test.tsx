@@ -19,8 +19,8 @@ vi.mock("@/themes", () => ({
 let container: HTMLDivElement;
 let root: Root;
 
-function renderComponent(visibleFields?: Set<string>) {
-  act(() => {
+async function renderComponent(visibleFields?: Set<string>) {
+  await act(async () => {
     root.render(
       <TooltipProvider delayDuration={0}>
         <KeyboardSettings visibleFields={visibleFields} />
@@ -47,33 +47,33 @@ describe("KeyboardSettings", () => {
     container.remove();
   });
 
-  it("renders the keyboard shortcuts heading", () => {
-    renderComponent();
+  it("renders the keyboard shortcuts heading", async () => {
+    await renderComponent();
     expect(container.querySelector("h3")?.textContent).toBe("Keyboard Shortcuts");
   });
 
-  it("renders the search input", () => {
-    renderComponent();
+  it("renders the search input", async () => {
+    await renderComponent();
     const searchInput = container.querySelector('[data-testid="keyboard-settings-search"]');
     expect(searchInput).not.toBeNull();
   });
 
-  it("renders binding rows for known actions", () => {
-    renderComponent();
+  it("renders binding rows for known actions", async () => {
+    await renderComponent();
     expect(container.textContent).toContain("Toggle Sidebar");
     expect(container.textContent).toContain("Close Tab");
     expect(container.textContent).toContain("Copy Selection");
     expect(container.textContent).toContain("Paste");
   });
 
-  it("renders reset all button", () => {
-    renderComponent();
+  it("renders reset all button", async () => {
+    await renderComponent();
     const resetBtn = container.querySelector('[data-testid="keyboard-settings-reset-all"]');
     expect(resetBtn).not.toBeNull();
   });
 
-  it("renders export HTML button", () => {
-    renderComponent();
+  it("renders export HTML button", async () => {
+    await renderComponent();
     const exportBtn = container.querySelector('[data-testid="keyboard-settings-export-pdf"]');
     expect(exportBtn).not.toBeNull();
     expect(exportBtn?.textContent).toContain("Save HTML Cheat Sheet");
@@ -81,7 +81,7 @@ describe("KeyboardSettings", () => {
 
   it("calls exportCheatSheet when export PDF button is clicked", async () => {
     const { exportCheatSheet } = await import("@/utils/cheatSheetPdf");
-    renderComponent();
+    await renderComponent();
     const exportBtn = container.querySelector(
       '[data-testid="keyboard-settings-export-pdf"]'
     ) as HTMLElement;
@@ -93,8 +93,8 @@ describe("KeyboardSettings", () => {
     expect(exportCheatSheet).toHaveBeenCalledOnce();
   });
 
-  it("filters bindings by search query", () => {
-    renderComponent();
+  it("filters bindings by search query", async () => {
+    await renderComponent();
     const searchInput = container.querySelector(
       '[data-testid="keyboard-settings-search"]'
     ) as HTMLInputElement;
@@ -121,8 +121,8 @@ describe("KeyboardSettings", () => {
     });
   });
 
-  it("renders the editor-delegation toggle, on by default", () => {
-    renderComponent();
+  it("renders the editor-delegation toggle, on by default", async () => {
+    await renderComponent();
     const toggle = container.querySelector(
       '[data-testid="keyboard-settings-editor-delegation"]'
     ) as HTMLElement;
@@ -132,7 +132,7 @@ describe("KeyboardSettings", () => {
   });
 
   it("persists the editor-delegation setting when toggled off", async () => {
-    renderComponent();
+    await renderComponent();
     const toggle = container.querySelector(
       '[data-testid="keyboard-settings-editor-delegation"]'
     ) as HTMLElement;
@@ -146,13 +146,13 @@ describe("KeyboardSettings", () => {
     expect(currentSettingsView().editorShortcutDelegation).toBe(false);
   });
 
-  it("renders nothing when visibleFields excludes keybindings", () => {
-    renderComponent(new Set(["other"]));
+  it("renders nothing when visibleFields excludes keybindings", async () => {
+    await renderComponent(new Set(["other"]));
     expect(container.innerHTML).toBe("");
   });
 
-  it("shows category group headings", () => {
-    renderComponent();
+  it("shows category group headings", async () => {
+    await renderComponent();
     const headings = container.querySelectorAll(".keyboard-settings__group-title");
     const titles = Array.from(headings).map((h) => h.textContent);
     expect(titles).toContain("General");
@@ -161,8 +161,8 @@ describe("KeyboardSettings", () => {
     expect(titles).toContain("Navigation / Split");
   });
 
-  it("enters recording mode when binding cell is clicked", () => {
-    renderComponent();
+  it("enters recording mode when binding cell is clicked", async () => {
+    await renderComponent();
     const bindingCell = container.querySelector(
       '[data-testid="keybinding-binding-toggle-sidebar"]'
     ) as HTMLElement;
@@ -175,7 +175,7 @@ describe("KeyboardSettings", () => {
   });
 
   it("shows an unbind button for a bound action and clears it on click", async () => {
-    renderComponent();
+    await renderComponent();
 
     const unbindBtn = container.querySelector(
       '[data-testid="keybinding-unbind-toggle-sidebar"]'
@@ -205,10 +205,10 @@ describe("KeyboardSettings", () => {
     expect(entry?.key).toBe("");
   });
 
-  it("restores an unbound action to its default via the reset button", () => {
-    renderComponent();
+  it("restores an unbound action to its default via the reset button", async () => {
+    await renderComponent();
 
-    act(() => {
+    await act(async () => {
       (
         container.querySelector('[data-testid="keybinding-unbind-toggle-sidebar"]') as HTMLElement
       ).click();
@@ -218,7 +218,7 @@ describe("KeyboardSettings", () => {
         .textContent
     ).toBe("(unbound)");
 
-    act(() => {
+    await act(async () => {
       (
         container.querySelector('[data-testid="keybinding-reset-toggle-sidebar"]') as HTMLElement
       ).click();
@@ -235,8 +235,8 @@ describe("KeyboardSettings", () => {
     ).not.toBeNull();
   });
 
-  it("cancels recording mode on Escape", () => {
-    renderComponent();
+  it("cancels recording mode on Escape", async () => {
+    await renderComponent();
     const bindingCell = container.querySelector(
       '[data-testid="keybinding-binding-toggle-sidebar"]'
     ) as HTMLElement;
@@ -253,7 +253,7 @@ describe("KeyboardSettings", () => {
   });
 
   it("captures a two-combo chord and persists it in the engine's chord shape", async () => {
-    renderComponent();
+    await renderComponent();
     const bindingCell = container.querySelector(
       '[data-testid="keybinding-binding-new-terminal"]'
     ) as HTMLElement;
@@ -288,7 +288,7 @@ describe("KeyboardSettings", () => {
   it("records a single combo (no chord) once the finish timeout elapses", async () => {
     vi.useFakeTimers();
     try {
-      renderComponent();
+      await renderComponent();
       const bindingCell = container.querySelector(
         '[data-testid="keybinding-binding-new-terminal"]'
       ) as HTMLElement;

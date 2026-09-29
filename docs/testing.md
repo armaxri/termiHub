@@ -276,9 +276,15 @@ regrowing:
 - a test **fails** if it logs an environment-misconfiguration warning (the
   act-environment warning above);
 - a test **file fails** when its combined console output exceeds a per-file
-  budget (512 KiB). A budget rather than zero-tolerance, because React's
+  budget (96 KiB). A budget rather than zero-tolerance, because React's
   "update … not wrapped in act(...)" warning is timing-dependent and a strict
   check would flake on a loaded Windows runner.
+
+The suite prints no "not wrapped in act(...)" warnings (#3860). When checking
+for them, run vitest with `--reporter=default`: when vitest detects a coding
+agent (for example `AI_AGENT` or `CLAUDECODE` is set) it picks a reporter that
+hides console output from passing tests, so a plain `pnpm exec vitest run <file>`
+can show zero warnings for a file that does emit them.
 
 Output a test silences on purpose (`vi.spyOn(console, "error").mockImplementation(…)`)
 is not counted. When a file goes over budget, rerun it with

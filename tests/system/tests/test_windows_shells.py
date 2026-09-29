@@ -168,7 +168,10 @@ class TestWindowsShells(
         self.set_sidebar_visible(True)
         self.open_new_connection_editor()
         self.wait(lambda: self.driver.exists("field-shell"), what="the shell field")
-        assert "powershell" in self.driver.get_value("field-shell").lower()
+        # PowerShell 7 (`pwsh`) is the default when installed, else Windows
+        # PowerShell (#3728).
+        value = self.driver.get_value("field-shell").lower()
+        assert "pwsh" in value or "powershell" in value, value
         self.driver.click(self.EDITOR_CANCEL)
 
     # ── MT-LOCAL-11: the Local dropdown offers the Windows shells; WSL is its
