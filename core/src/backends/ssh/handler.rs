@@ -5,6 +5,7 @@
 //! used throughout the SSH subsystem.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc::UnboundedSender;
@@ -93,6 +94,12 @@ pub struct TermiHubHandler {
     /// The TCP port this connection targets, paired with `host` for host-key
     /// verification (#1959).
     port: u16,
+    /// Set for an **unattended** connect (#3527): the host key is then checked
+    /// without prompting, and a refusal is recorded here so the connecting task
+    /// can report the typed `HostKeyUntrusted` instead of a bare handshake
+    /// error. The check runs on russh's session task, which cannot see the
+    /// connecting task's unattended scope, so the handler carries the mode.
+    unattended_host_key_refused: Option<Arc<AtomicBool>>,
 }
 
 impl TermiHubHandler {
@@ -122,8 +129,16 @@ impl TermiHubHandler {
             forward_agent,
             host,
             port,
+            unattended_host_key_refused: None,
         };
         (handler, registry, LivenessWatch { rx: liveness_rx })
+    }
+
+    /// Make this an **unattended** connect's handler (#3527): the host key is
+    /// verified without prompting, and `refused` is set when it is not trusted.
+    pub fn unattended(mut self, refused: Arc<AtomicBool>) -> Self {
+        self.unattended_host_key_refused = Some(refused);
+        self
     }
 }
 
@@ -187,7 +202,18 @@ impl russh::client::Handler for TermiHubHandler {
                 server_public_key,
             ),
         };
-        Ok(super::host_key::verify_host_key(&info).await)
+        match &self.unattended_host_key_refused {
+            // Unattended (#3527): never prompt — only an already-trusted key
+            // passes, and a refusal is recorded for the typed error.
+            Some(refused) => {
+                let trusted = super::host_key::verify_host_key_unattended(&info).await;
+                if !trusted {
+                    refused.store(true, Ordering::SeqCst);
+                }
+                Ok(trusted)
+            }
+            None => Ok(super::host_key::verify_host_key(&info).await),
+        }
     }
 
     /// Route an incoming server-initiated forwarded channel to the registered

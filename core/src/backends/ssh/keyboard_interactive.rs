@@ -70,7 +70,7 @@ use russh::client::KeyboardInteractiveAuthResponse;
 use russh::MethodKind;
 use zeroize::Zeroizing;
 
-use crate::errors::SessionError;
+use crate::errors::{ConnectFailureKind, SessionError};
 
 use super::prompt_clock::excluded_from_connect_timeout;
 
@@ -366,6 +366,15 @@ where
             factors.answered(Answerer::SavedPassword);
             vec![Zeroizing::new(password.to_string())]
         } else {
+            // An unattended connect (a scheduled run, #3527) never prompts:
+            // a round the saved password cannot answer fails fast, typed.
+            if super::unattended::is_unattended() {
+                return Err(SessionError::classified(
+                    ConnectFailureKind::InteractionRequired,
+                    "The server asks for interactive input (for example a one-time code), \
+                     which an unattended connect cannot give",
+                ));
+            }
             let Some(prompter) = prompter else {
                 return Err(match mode {
                     // Keep the pre-keyboard-interactive outcome of a refused

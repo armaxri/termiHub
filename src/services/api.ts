@@ -210,6 +210,12 @@ export async function getConnectionTypes(): Promise<ConnectionTypeInfo[]> {
  * connection request as redrive-eligible only when `resilientReconnect` is true
  * (#2454), and the backend redrive is the sole reconnect authority (the client
  * reconnect engine was deleted, #2558).
+ *
+ * `unattended` marks a connect with nobody at the keyboard — a scheduled run
+ * connecting a saved target (#3527). The backend then never prompts: an
+ * untrusted host key or a keyboard-interactive round fails fast with the typed
+ * `host_key_untrusted` / `interaction_required` code. Direct connections only.
+ * Sent only when set, so the ordinary payload is unchanged.
  */
 export async function createConnection(
   typeId: string,
@@ -217,7 +223,8 @@ export async function createConnection(
   agentId?: string,
   connectId?: string,
   spawned?: boolean,
-  resilientReconnect?: boolean
+  resilientReconnect?: boolean,
+  unattended?: boolean
 ): Promise<SessionId> {
   return await invoke<string>("create_connection", {
     typeId,
@@ -226,6 +233,7 @@ export async function createConnection(
     connectId: connectId ?? null,
     spawned: spawned ?? false,
     resilientReconnect: resilientReconnect ?? false,
+    ...(unattended ? { unattended: true } : {}),
   });
 }
 
@@ -369,12 +377,17 @@ export async function importInventoryHosts(path: string): Promise<InventoryHost[
  * only retains a tab's request for the redrive when `resilientReconnect` is true.
  * Agent sessions are never spawn-origin, so `spawned` is not forwarded on the
  * `remote-session` path.
+ *
+ * `unattended` (#3527) requests a never-prompting connect; see
+ * {@link createConnection}. It is direct-only, so the `remote-session` path
+ * refuses it rather than connect an agent session that could prompt.
  */
 export async function createTerminal(
   config: ConnectionConfig,
   connectId?: string,
   spawned?: boolean,
-  resilientReconnect?: boolean
+  resilientReconnect?: boolean,
+  unattended?: boolean
 ): Promise<SessionId> {
   if (config.type === "remote-session") {
     const { agentId, sessionType, ...rest } = config.config as {
@@ -388,7 +401,8 @@ export async function createTerminal(
       agentId,
       connectId,
       undefined,
-      resilientReconnect
+      resilientReconnect,
+      unattended
     );
   }
   return await createConnection(
@@ -397,7 +411,8 @@ export async function createTerminal(
     undefined,
     connectId,
     spawned,
-    resilientReconnect
+    resilientReconnect,
+    unattended
   );
 }
 

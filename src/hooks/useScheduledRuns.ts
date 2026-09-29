@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import {
   ackScheduleRun,
@@ -9,9 +10,28 @@ import {
 } from "@/services/scheduleApi";
 import { useAppStore } from "@/store/appStore";
 import { executeScheduledRun } from "@/store/scheduledRuns";
+import { connectSavedConnection } from "@/utils/connectSavedConnection";
+import type { SavedConnection } from "@/types/connection";
 import type { ScheduleFire } from "@/types/schedule";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
+
+/**
+ * This window's label, or `null` outside Tauri (tests, a browser build) —
+ * compared with a fire's `connectWindow` (#3527).
+ */
+function currentWindowLabel(): string | null {
+  try {
+    return getCurrentWindow().label;
+  } catch {
+    return null;
+  }
+}
+
+/** Connect a schedule's target without prompting (#3527). */
+function connectUnattended(connection: SavedConnection) {
+  return connectSavedConnection(connection, { unattended: true });
+}
 
 /** Execute one fired schedule in this window and report the outcome. */
 export async function handleScheduleFire(fire: ScheduleFire): Promise<void> {
@@ -22,10 +42,14 @@ export async function handleScheduleFire(fire: ScheduleFire): Promise<void> {
   } catch (err) {
     frontendLog("schedules", `Failed to acknowledge scheduled run: ${errorMessage(err)}`);
   }
-  const report = await executeScheduledRun(fire, {
-    getState: useAppStore.getState,
-    setState: useAppStore.setState,
-  });
+  // Only the window the backend named connects missing targets (#3527).
+  const isConnectWindow =
+    fire.connectWindow !== undefined && fire.connectWindow === currentWindowLabel();
+  const report = await executeScheduledRun(
+    fire,
+    { getState: useAppStore.getState, setState: useAppStore.setState },
+    { connectMissing: isConnectWindow ? connectUnattended : undefined }
+  );
   frontendLog(
     "schedules",
     `schedule ${fire.scheduleId} ${report.outcome}${report.message ? `: ${report.message}` : ""}`

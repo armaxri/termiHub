@@ -1667,11 +1667,23 @@ sequenceDiagram
   frontend registered as listening (a due run is held while none has, e.g. during boot); a window
   that does not acknowledge a run within 60 s is dropped from it, and a run no window settles
   within 6 hours is closed as failed.
-- **Execution** (`src/store/scheduledRuns.ts`) — unattended: only already-connected tabs opened
-  from a target connection, no connecting, no prompts (a required parameter without a default or
-  an un-allowlisted local program makes it skip/fail), and never while another run or macro
-  playback is active in that window. Workflow runs and macro playbacks are recorded in their run
-  histories with the `scheduled` origin; the status bar shows "N schedules active".
+- **Execution** (`src/store/scheduledRuns.ts`) — unattended: only connected tabs opened from a
+  target connection, no prompts (a required parameter without a default or an un-allowlisted
+  local program makes it skip/fail), and never while another run or macro playback is active in
+  that window. Workflow runs and macro playbacks are recorded in their run histories with the
+  `scheduled` origin; the status bar shows "N schedules active".
+- **Connect if not connected** (#3527, opt-in per schedule, `connectIfNeeded`, default off) — the
+  fire names one `connectWindow` (the main window, else the first listening one). That window
+  connects each target with no connected terminal there through the shared saved-connection flow
+  (`src/utils/connectSavedConnection.ts`) in its **unattended** mode, runs on those tabs too, and
+  closes exactly the tabs it opened when the run ends (`src/store/scheduledConnect.ts`). The
+  unattended connect never prompts: a missing password or key passphrase, a locked credential
+  store or a rejected stored credential is refused in the frontend; the backend connect runs in
+  core's `run_unattended` scope (`create_connection` with `unattended: true`, direct connections
+  only), where an untrusted host key fails fast as `ConnectFailureKind::HostKeyUntrusted` and a
+  keyboard-interactive round the saved password cannot answer as `InteractionRequired`. Each
+  refused target is recorded in the attempt with its reason. Turning the option on needs a fresh
+  confirmation.
 - **Macro run history** (`src-tauri/src/macros/history*.rs`, #3543) — every started macro
   playback (manual, command palette, a workflow's `run-macro` step, scheduled) is recorded
   fire-and-forget in `macro-runs.json`: macro id + name, start/end, outcome, steps played,

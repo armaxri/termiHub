@@ -1,4 +1,5 @@
 import { ConfirmDialog } from "@/components/ui";
+import { t } from "@/i18n/catalog";
 
 export interface ScheduleEnableConfirmDialogProps {
   /** Whether the dialog is open. */
@@ -11,6 +12,8 @@ export interface ScheduleEnableConfirmDialogProps {
   ruleLabel: string;
   /** The hosts it will send input to. */
   hosts: string[];
+  /** It also connects hosts that are not connected (#3527). */
+  connects?: boolean;
   /** Enable the schedule (confirmed). */
   onConfirm: () => void | Promise<void>;
   onCancel: () => void;
@@ -27,6 +30,7 @@ export function ScheduleEnableConfirmDialog({
   actionLabel,
   ruleLabel,
   hosts,
+  connects = false,
   onConfirm,
   onCancel,
 }: ScheduleEnableConfirmDialogProps) {
@@ -47,6 +51,9 @@ export function ScheduleEnableConfirmDialog({
               <li key={`${host}-${i}`}>{host}</li>
             ))}
           </ul>
+          {connects ? (
+            <p data-testid="schedule-confirm-connects">{t("schedule.connect.confirm")}</p>
+          ) : null}
           <p>It only runs while termiHub is open. You can pause all schedules at any time.</p>
         </>
       }

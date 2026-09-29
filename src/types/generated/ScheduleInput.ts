@@ -32,4 +32,8 @@ rule: ScheduleRule,
 /**
  * Missed-run policy (default: skip).
  */
-missedRuns: MissedRunPolicy, };
+missedRuns: MissedRunPolicy, 
+/**
+ * "Connect if not connected" (#3527, default off).
+ */
+connectIfNeeded?: boolean, };

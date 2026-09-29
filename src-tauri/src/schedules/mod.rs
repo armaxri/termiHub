@@ -12,8 +12,11 @@
 //! ticks it and, when a schedule fires, emits a `schedule-fire` event to every
 //! app window. The frontend — which owns the tabs and the workflow runner —
 //! runs the workflow on the matching *connected* terminals of its window
-//! (unattended: it never prompts, never connects) and reports back with
-//! `report_schedule_run`, which settles the run.
+//! (unattended: it never prompts) and reports back with
+//! `report_schedule_run`, which settles the run. Only a schedule that opts into
+//! "Connect if not connected" (#3527) connects its missing targets first — in
+//! one designated window, unattended (stored credentials, trusted host keys,
+//! never a prompt) — and closes the tabs it opened when the run ends.
 //!
 //! Scheduling only happens while the app runs; there is no OS service.
 

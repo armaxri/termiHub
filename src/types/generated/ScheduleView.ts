@@ -42,6 +42,14 @@ rule: ScheduleRule,
  */
 missedRuns: MissedRunPolicy, 
 /**
+ * "Connect if not connected" (#3527, opt-in, default off): a target saved
+ * connection with no connected terminal is connected **unattended** first
+ * — stored credentials / key auth and an already-trusted host key only,
+ * never a prompt — and the tab it opened is closed after the run. A target
+ * that would need input is skipped with the reason.
+ */
+connectIfNeeded?: boolean, 
+/**
  * Whether the schedule fires. Always `false` for a new schedule.
  */
 enabled: boolean, 

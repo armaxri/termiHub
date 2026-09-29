@@ -58,6 +58,8 @@ export interface ScheduleFormValues {
   time: string;
   days: ScheduleWeekday[];
   missedRuns: MissedRunPolicy;
+  /** "Connect if not connected" (#3527, default off). */
+  connectIfNeeded: boolean;
 }
 
 /** Validation schema for {@link ScheduleFormValues}. */
@@ -75,6 +77,7 @@ export const scheduleFormSchema = z
     time: z.string(),
     days: z.array(z.enum(["mon", "tue", "wed", "thu", "fri", "sat", "sun"])),
     missedRuns: z.enum(["skip", "run-once"]),
+    connectIfNeeded: z.boolean(),
   })
   .superRefine((v, ctx) => {
     const issue = (path: string, message: string) =>
@@ -120,6 +123,7 @@ export function blankScheduleForm(action?: ScheduleAction): ScheduleFormValues {
     time: "09:00",
     days: ["mon", "tue", "wed", "thu", "fri"],
     missedRuns: "skip",
+    connectIfNeeded: false,
   };
 }
 
@@ -137,6 +141,7 @@ export function scheduleToForm(input: ScheduleInput): ScheduleFormValues {
     time: input.rule.kind === "interval" ? base.time : input.rule.time,
     days: input.rule.kind === "weekly" ? [...input.rule.days] : base.days,
     missedRuns: input.missedRuns,
+    connectIfNeeded: input.connectIfNeeded === true,
   };
 }
 
@@ -160,7 +165,16 @@ export function formToScheduleInput(id: string, v: ScheduleFormValues): Schedule
     const days = SCHEDULE_WEEKDAYS.filter((d) => v.days.includes(d));
     rule = { kind: "weekly", days, time: v.time };
   }
-  return { id, name: v.name.trim(), action, targets, rule, missedRuns: v.missedRuns };
+  return {
+    id,
+    name: v.name.trim(),
+    action,
+    targets,
+    rule,
+    missedRuns: v.missedRuns,
+    // Sent only when on, so a schedule that never opted in stays unchanged.
+    ...(v.connectIfNeeded ? { connectIfNeeded: true } : {}),
+  };
 }
 
 /** "Every 15 minutes", "Daily at 09:00", "Mon, Fri at 18:30". */

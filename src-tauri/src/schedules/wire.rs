@@ -33,6 +33,14 @@ pub struct ScheduleFire {
     pub targets: ScheduleTargets,
     /// `true` when this is a catch-up for a missed slot.
     pub catch_up: bool,
+    /// For a schedule with "Connect if not connected" (#3527): the one window
+    /// that connects the targets not connected there — unattended — before it
+    /// runs, and closes the tabs it opened afterwards. Every other window runs
+    /// on its connected terminals only. Absent when the schedule does not
+    /// connect (every window runs on its connected terminals, as before).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub connect_window: Option<String>,
 }
 
 /// One window's report of a fired run.
@@ -110,6 +118,10 @@ pub struct ScheduleInput {
     /// Missed-run policy (default: skip).
     #[serde(default)]
     pub missed_runs: MissedRunPolicy,
+    /// "Connect if not connected" (#3527, default off).
+    #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub connect_if_needed: bool,
 }
 
 /// What a tick decided.
@@ -187,10 +199,25 @@ pub(crate) fn aggregate(
         (ScheduleRunOutcome::Skipped, Some(message))
     } else {
         let targets: u32 = ran.iter().map(|r| r.targets_run).sum();
-        let summary = format!(
+        let mut summary = format!(
             "Ran on {targets} terminal{}",
             if targets == 1 { "" } else { "s" }
         );
+        // A window that ran but also skipped some targets — an unattended
+        // connect that needed input (#3527) — says why; keep it on the record.
+        let mut notes: Vec<&str> = Vec::new();
+        for r in &ran {
+            if let (ScheduleRunOutcome::Completed | ScheduleRunOutcome::Cancelled, Some(m)) =
+                (r.outcome, r.message.as_deref())
+            {
+                if !notes.contains(&m) {
+                    notes.push(m);
+                }
+            }
+        }
+        if !notes.is_empty() {
+            summary = format!("{summary} ({})", notes.join("; "));
+        }
         let worst = |o: ScheduleRunOutcome| ran.iter().find(|r| r.outcome == o);
         if let Some(failed) = worst(ScheduleRunOutcome::Failed) {
             let detail = failed

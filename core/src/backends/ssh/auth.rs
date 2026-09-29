@@ -5,6 +5,7 @@
 //! availability.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
@@ -147,10 +148,31 @@ where
         config.port,
         config.forward_agent,
     );
+    // An unattended connect (#3527) verifies the host key without prompting;
+    // the handler records a refusal so it surfaces as a typed error below.
+    let host_key_refused = Arc::new(AtomicBool::new(false));
+    let handler = if super::unattended::is_unattended() {
+        handler.unattended(host_key_refused.clone())
+    } else {
+        handler
+    };
 
     let mut session = russh::client::connect_stream(russh_config, stream, handler)
         .await
-        .map_err(|e| SessionError::SpawnFailed(format!("SSH handshake failed: {e}")))?;
+        .map_err(|e| {
+            if host_key_refused.load(Ordering::SeqCst) {
+                SessionError::classified(
+                    ConnectFailureKind::HostKeyUntrusted,
+                    format!(
+                        "The host key of {}:{} is not trusted yet; connect once \
+                         interactively to review and trust it",
+                        config.host, config.port
+                    ),
+                )
+            } else {
+                SessionError::SpawnFailed(format!("SSH handshake failed: {e}"))
+            }
+        })?;
 
     authenticate(&mut session, config).await?;
 
@@ -858,3 +880,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "auth_unattended_tests.rs"]
+mod unattended_tests;

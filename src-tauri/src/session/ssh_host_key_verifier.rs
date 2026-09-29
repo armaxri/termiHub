@@ -235,6 +235,39 @@ impl HostKeyVerifier for SshHostKeyVerifier {
         }
         decision.accept
     }
+
+    /// An unattended connect (a scheduled run, #3527) never prompts: only a key
+    /// already trusted — in `~/.ssh/known_hosts` or remembered here — passes.
+    /// An unknown or changed key is refused without asking.
+    async fn verify_unattended(&self, info: &HostKeyInfo) -> bool {
+        if info.known_hosts == KnownHostsStatus::Match {
+            return true;
+        }
+        // A key changed relative to `~/.ssh/known_hosts` is never trusted
+        // silently, even if this store remembers it.
+        if info.known_hosts == KnownHostsStatus::Changed {
+            warn!(
+                host = %info.host,
+                port = info.port,
+                "unattended connect refused: SSH host key changed from ~/.ssh/known_hosts"
+            );
+            return false;
+        }
+        match self
+            .trust_store
+            .lookup(&info.host_port(), &info.fingerprint)
+        {
+            TrustLookup::Trusted => true,
+            TrustLookup::Unknown | TrustLookup::Changed => {
+                warn!(
+                    host = %info.host,
+                    port = info.port,
+                    "unattended connect refused: SSH host key is not trusted"
+                );
+                false
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -296,6 +329,58 @@ mod tests {
             }
             tokio::task::yield_now().await;
         }
+    }
+
+    // ── Unattended connects (#3527): never prompt ─────────────────────
+
+    /// A key remembered here or recorded in `~/.ssh/known_hosts` is trusted
+    /// unattended, with no prompt.
+    #[tokio::test]
+    async fn unattended_accepts_only_already_trusted_keys() {
+        let store = Arc::new(SshTrustStore::in_memory());
+        store.remember("h:22", "SHA256:AA");
+        let sink = Arc::new(RecordingSink::default());
+        let verifier = SshHostKeyVerifier::new(store, sink.clone());
+
+        assert!(
+            verifier
+                .verify_unattended(&info("h", 22, "SHA256:AA"))
+                .await
+        );
+        let kh = info_kh("k", 22, "SHA256:KK", KnownHostsStatus::Match);
+        assert!(verifier.verify_unattended(&kh).await);
+        assert_eq!(sink.count.load(Ordering::SeqCst), 0);
+    }
+
+    /// An unknown host, a changed key, and a key changed in known_hosts are all
+    /// refused unattended — immediately, without emitting a prompt.
+    #[tokio::test]
+    async fn unattended_refuses_unknown_and_changed_keys_without_prompting() {
+        let store = Arc::new(SshTrustStore::in_memory());
+        store.remember("h:22", "SHA256:OLD");
+        let sink = Arc::new(RecordingSink::default());
+        let verifier = SshHostKeyVerifier::new(store.clone(), sink.clone());
+
+        assert!(
+            !verifier
+                .verify_unattended(&info("new", 22, "SHA256:N"))
+                .await
+        );
+        assert!(
+            !verifier
+                .verify_unattended(&info("h", 22, "SHA256:NEW"))
+                .await
+        );
+        store.remember("c:22", "SHA256:C");
+        let changed = info_kh("c", 22, "SHA256:C", KnownHostsStatus::Changed);
+        assert!(!verifier.verify_unattended(&changed).await);
+        assert_eq!(sink.count.load(Ordering::SeqCst), 0, "never prompts");
+        assert!(
+            !store
+                .fingerprints_for("new:22")
+                .contains(&"SHA256:N".to_string()),
+            "a refusal never remembers the key"
+        );
     }
 
     /// A remembered fingerprint is accepted with no prompt at all.

@@ -110,6 +110,7 @@ fn start(every_minutes: u32, policy: MissedRunPolicy) -> Harness {
                 },
                 rule: ScheduleRule::Interval { every_minutes },
                 missed_runs: policy,
+                connect_if_needed: false,
             },
             base(),
             &Utc,

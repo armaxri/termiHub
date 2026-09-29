@@ -21,7 +21,10 @@
 //!    [`ACK_TIMEOUT`], or [`STALE_RUN_TIMEOUT`] passed.
 //!
 //! Whether the targets are connected is decided by the frontend (it owns the
-//! tabs); a window with no connected target reports `skipped`.
+//! tabs); a window with no connected target reports `skipped`. A schedule
+//! with "Connect if not connected" (#3527) names one window in the fire
+//! ([`ScheduleFire::connect_window`]) that connects the missing targets
+//! unattended — never prompting — and closes the tabs it opened afterwards.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Mutex;
@@ -245,7 +248,12 @@ impl ScheduleManager {
         let idx = match inner.store.schedules.iter().position(|s| s.id == input.id) {
             Some(i) => {
                 let s = &mut inner.store.schedules[i];
-                let retarget = s.action != input.action || s.targets != input.targets;
+                // Newly connecting targets unattended is a wider reach than
+                // before, so it needs a fresh confirmation too (#3527);
+                // turning it off never does.
+                let retarget = s.action != input.action
+                    || s.targets != input.targets
+                    || (input.connect_if_needed && !s.connect_if_needed);
                 let retimed = s.rule != input.rule;
                 if retarget {
                     s.enabled = false;
@@ -261,6 +269,7 @@ impl ScheduleManager {
                 s.targets = input.targets;
                 s.rule = input.rule;
                 s.missed_runs = input.missed_runs;
+                s.connect_if_needed = input.connect_if_needed;
                 s.updated_at = stamp.clone();
                 i
             }
@@ -272,6 +281,7 @@ impl ScheduleManager {
                     targets: input.targets,
                     rule: input.rule,
                     missed_runs: input.missed_runs,
+                    connect_if_needed: input.connect_if_needed,
                     enabled: false,
                     confirmed_at: None,
                     enabled_at: None,
@@ -532,3 +542,7 @@ mod tests;
 #[cfg(test)]
 #[path = "manager_history_tests.rs"]
 mod history_tests;
+
+#[cfg(test)]
+#[path = "manager_connect_tests.rs"]
+mod connect_tests;
