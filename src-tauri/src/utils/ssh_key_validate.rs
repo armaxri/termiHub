@@ -34,6 +34,9 @@ const PUTTY_HEADER: &str = "PuTTY-User-Key-File-";
 
 /// Validation status level.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "SshKeyValidationStatus"))]
 #[serde(rename_all = "lowercase")]
 pub enum ValidationStatus {
     Valid,
@@ -43,6 +46,8 @@ pub enum ValidationStatus {
 
 /// Result of validating an SSH key file path.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct SshKeyValidation {
     pub status: ValidationStatus,

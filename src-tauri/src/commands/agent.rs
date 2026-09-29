@@ -323,6 +323,9 @@ pub async fn apply_agent_settings(
 
 /// Response to a deferred-update request (`request_agent_deferred_update`).
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "AgentDeferredUpdateResult"))]
 #[serde(rename_all = "camelCase")]
 pub struct DeferredUpdateResponse {
     /// `true` if the agent was idle and applied the update immediately.
@@ -401,6 +404,9 @@ pub async fn request_agent_deferred_update(
 /// / `all_acked` / `remaining_clients`), so the desktop can report *"3 hosts were
 /// notified, 1 was still connected"* rather than only "done".
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "AgentCoordinatedUpdateResult"))]
 #[serde(rename_all = "camelCase")]
 pub struct CoordinatedUpdateResponse {
     /// `true` if the agent was idle and applied the update immediately.

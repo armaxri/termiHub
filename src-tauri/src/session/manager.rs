@@ -116,6 +116,8 @@ pub struct PersistentSessionStateEvent {
 
 /// Public summary of a persistent session, returned by `list_persistent_sessions`.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct PersistentSessionSummary {
     pub connection_id: String,
@@ -478,6 +480,8 @@ pub(super) fn drop_fold_for(exit_code: Option<i32>, resilient: bool) -> Option<D
 
 /// Status of a session's output logging, returned to the frontend.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct SessionLogStatus {
     /// Absolute path of the active transcript file.

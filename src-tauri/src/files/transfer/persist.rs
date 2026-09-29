@@ -159,6 +159,8 @@ impl PersistedTransfer {
 
 /// Whether a folder paste copies or moves its folder (#3630).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum FolderPasteOperation {
     Copy,
@@ -168,19 +170,24 @@ pub enum FolderPasteOperation {
 /// One side of a folder paste (#3630): the local disk (no `session_id`) or a
 /// session's file system. Metadata only — never credentials.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct FolderPasteEndpoint {
     /// The session the folder lives on, absent for the local disk. A session
     /// id does not survive a restart; it only identifies the endpoint while
     /// the app runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub session_id: Option<String>,
     /// The saved connection the session was opened from, when known — the
     /// reference a Retry after a restart uses to find the reconnected session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub connection_id: Option<String>,
     /// A display name for the endpoint (its tab title), for the notice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub label: Option<String>,
     /// The folder's path on this endpoint.
     pub path: String,
@@ -192,6 +199,9 @@ pub struct FolderPasteEndpoint {
 /// that may be only partly copied, so the user can be told and offered a
 /// Retry that continues the rest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "InterruptedFolderPaste"))]
 #[serde(rename_all = "camelCase")]
 pub struct PersistedFolderPaste {
     /// Opaque manifest id.
@@ -204,6 +214,7 @@ pub struct PersistedFolderPaste {
     pub destination: FolderPasteEndpoint,
     /// Epoch-millis wall clock when the paste started.
     #[serde(default)]
+    #[cfg_attr(test, ts(type = "number"))]
     pub started_at_ms: u64,
 }
 
@@ -673,6 +684,24 @@ mod tests {
         assert!(!serde_json::to_string(&rec)
             .unwrap()
             .contains("folderPasteId"));
+    }
+
+    /// A `folderPastes` manifest written by an earlier build re-serializes
+    /// byte-identically, unknown keys included (#3088: generating the
+    /// `InterruptedFolderPaste` / `FolderPasteEndpoint` TS types must not change
+    /// the persisted format).
+    #[test]
+    fn legacy_folder_paste_manifest_round_trips_byte_identical() {
+        let legacy = concat!(
+            r#"{"version":"1","transfers":[],"folderPastes":[{"id":"p1","operation":"cut","#,
+            r#""source":{"sessionId":"s1","connectionId":"c1","label":"host","path":"/src"},"#,
+            r#""destination":{"path":"/dst"},"startedAtMs":1700000000000}],"#,
+            r#""futureKey":{"kept":true}}"#
+        );
+        let parsed: PersistedTransferStore = serde_json::from_str(legacy).unwrap();
+        assert_eq!(parsed.folder_pastes[0].operation, FolderPasteOperation::Cut);
+        assert_eq!(parsed.folder_pastes[0].destination.session_id, None);
+        assert_eq!(serde_json::to_string(&parsed).unwrap(), legacy);
     }
 
     #[test]

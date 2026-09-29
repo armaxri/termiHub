@@ -117,6 +117,8 @@ pub async fn realpath(sftp: &RusshSftp, path: &str) -> Result<String, FileError>
 /// re-promptable case; `Other` carries a human-readable reason (sudo missing,
 /// not in sudoers, `requiretty`, a write error, …).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(tag = "kind", content = "message", rename_all = "camelCase")]
 pub enum ElevatedWriteResult {
     /// The destination file was rewritten with root privileges.
