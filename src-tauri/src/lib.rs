@@ -428,11 +428,14 @@ pub fn run() -> anyhow::Result<()> {
     // the forward) is threaded into `setup()` via `pending_spawn`.
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
 
-    // Top-level `--version`/`-V` and `--help`/`-h` must print and exit before
-    // any window, spawn IPC, or logging setup, so they work headlessly with no
-    // display (#2655). `tauri_plugin_cli`'s matches are only available inside
-    // `setup()` (after the window is built), so these are routed here from the
-    // raw args, ahead of the spawn/shell-integration classification below.
+    // Top-level `--version`/`-V`, `--help`/`-h` and `--list-workspaces` must
+    // print and exit before any window, spawn IPC, or logging setup, so they
+    // work headlessly with no display (#2655). `tauri_plugin_cli`'s matches are
+    // only available inside `setup()` (after the window is built), so these are
+    // routed here from the raw args, ahead of the spawn/shell-integration
+    // classification below. This also runs before the single-instance plugin,
+    // which exits a second process during plugin setup — so the listing prints
+    // even while an instance is already running (#3854).
     if let Some(flag) = cli::classify_info_flag(&raw_args) {
         cli::handle_info_flag(flag);
     }
@@ -488,6 +491,13 @@ pub fn run() -> anyhow::Result<()> {
         }
         (Ok(()), None) => unreachable!("the writer opened, so a log path resolves"),
     }
+
+    // Portable mode: take the exclusive lock on the `data/` dir before any store
+    // is built, so the same portable folder cannot run twice and clobber its own
+    // config/session files (#3100). A contended lock shows an error and exits
+    // here; the OS releases the lock when this process exits or crashes. Bound
+    // for the whole of `run()` (the builder below runs the app to completion).
+    let _data_dir_lock = utils::data_dir_lock::lock_portable_data_dir_or_exit();
 
     // Durable panic reporting (OBS-002). Installed right after the subscriber is
     // live so a crash lands in the ring buffer and the synchronous file sink
@@ -559,8 +569,6 @@ pub fn run() -> anyhow::Result<()> {
             boot::init_projection(app);
 
             boot::init_secondary_managers(app, &mut recovery_warnings);
-
-            boot::handle_cli_list_workspaces(app);
 
             boot::init_spawn_ipc(app, pending_spawn);
 

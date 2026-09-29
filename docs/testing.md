@@ -5047,12 +5047,40 @@ against an **installed release build** (`./scripts/build.sh`), not `./scripts/de
 3. Confirm your open tabs/state are untouched and the config/session files are
    **not** duplicated or reset (single writer, so no clobber).
 
+**Second launch forwards `--workspace` to the running instance (installed release, #3101).**
+
+Argument parsing and forwarding are unit-tested (`utils::single_instance::forward_tests`,
+`src/utils/cliWorkspace.test.ts`); the two-process round trip is manual.
+
+1. With the release build running, save a workspace named `Demo`.
+2. Launch the binary again with `--workspace Demo` (e.g.
+   `/Applications/termiHub.app/Contents/MacOS/termiHub --workspace Demo`). Confirm
+   no second window opens and the running window comes to the front and opens `Demo`.
+3. Repeat with `--workspace-file <path to a workspace JSON>` → the workspace is
+   imported and opened in the running window.
+4. Repeat with an unknown flag (`--bogus`) → the window just comes to the front;
+   the Log Viewer shows `ignoring unsupported second-launch arguments`.
+
 **Portable mode in two folders both run (no lock).**
 
 1. Make two separate portable copies (each in its own folder containing a `data/`
    directory — see the portable-mode notes). Launch **both** at once.
 2. Confirm **both instances run simultaneously** (they use separate `data/` dirs
    and legitimately do not clobber, so single-instance must **not** block them).
+
+**Same portable folder launched twice is refused (portable, #3100).**
+
+The lock itself — acquire, contention, per-folder scoping, and release when a
+holder process is killed — is unit-tested (`utils::data_dir_lock::tests`); the
+dialog is manual.
+
+1. In one portable folder (containing a `data/` directory), launch termiHub.
+   Confirm `data/.termihub.lock` exists.
+2. Launch the **same** portable copy again. Confirm an error dialog
+   "termiHub is already running" names the `data/` folder, and after **OK** the
+   second process exits without opening a window; the first is untouched.
+3. Force-quit the first instance (Activity Monitor / Task Manager / `kill -9`),
+   then launch again → it starts normally (the stale lock file does not block).
 
 **Dev builds are not locked.**
 
