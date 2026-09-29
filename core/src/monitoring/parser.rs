@@ -284,6 +284,7 @@ pub fn parse_stats(
         net_rx_bytes_per_sec: 0.0,
         net_tx_bytes_per_sec: 0.0,
         per_core_cpu_percent: Vec::new(),
+        ..Default::default()
     };
 
     Ok((stats, cpu_counters, per_core_counters, net_counters))

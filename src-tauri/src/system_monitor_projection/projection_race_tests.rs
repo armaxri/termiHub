@@ -78,6 +78,7 @@ fn stats(cpu: f64) -> SystemStats {
         net_rx_bytes_per_sec: 1024.0,
         net_tx_bytes_per_sec: 512.0,
         per_core_cpu_percent: vec![25.0, 75.0],
+        ..Default::default()
     }
 }
 
