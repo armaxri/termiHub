@@ -103,29 +103,6 @@
   gap: var(--spacing-sm);
 }
 
-/* Arch select — a native select styled to match the Input primitive. */
-.agent-setup-dialog__select {
-  height: 32px;
-  font-size: var(--font-size-sm);
-  background: var(--bg-input);
-  color: var(--text-primary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  padding: 0 var(--spacing-sm);
-  outline: none;
-  box-sizing: border-box;
-  cursor: pointer;
-  appearance: auto;
-  transition:
-    border-color var(--transition-fast),
-    box-shadow var(--transition-fast);
-}
-
-.agent-setup-dialog__select:focus {
-  border-color: var(--focus-border);
-  box-shadow: var(--shadow-focus);
-}
-
 .agent-setup-dialog__arch-hint {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);

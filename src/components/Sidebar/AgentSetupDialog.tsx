@@ -28,6 +28,8 @@ import {
   Checkbox,
   RadioGroup,
   RadioGroupItem,
+  Select,
+  type SelectOption,
   toast,
 } from "@/components/ui";
 import "./AgentSetupDialog.css";
@@ -57,6 +59,12 @@ const ARCH_OPTIONS = [
 ] as const;
 
 type ArchSuffix = (typeof ARCH_OPTIONS)[number]["suffix"];
+
+/** {@link ARCH_OPTIONS} projected onto the shared `ui/Select` option shape. */
+const ARCH_SELECT_OPTIONS: SelectOption[] = ARCH_OPTIONS.map((o) => ({
+  value: o.suffix,
+  label: o.label,
+}));
 
 /** Default POSIX install path. */
 const POSIX_INSTALL_PATH = "~/.local/bin/termihub-agent";
@@ -404,19 +412,15 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
               <label className="agent-setup-dialog__label" htmlFor="arch-select">
                 Target Architecture
               </label>
-              <select
+              <Select
                 id="arch-select"
-                className="agent-setup-dialog__select"
                 value={selectedArch}
-                onChange={(e) => setSelectedArch(e.target.value as ArchSuffix)}
+                onChange={(v) => {
+                  if (isKnownSuffix(v)) setSelectedArch(v);
+                }}
+                options={ARCH_SELECT_OPTIONS}
                 data-testid="agent-setup-arch-select"
-              >
-                {ARCH_OPTIONS.map((o) => (
-                  <option key={o.suffix} value={o.suffix}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
+              />
               <span className="agent-setup-dialog__arch-hint">
                 Detected: {phase.archInfo.os} / {phase.archInfo.arch}
                 {!isKnownSuffix(phase.archInfo.archSuffix) && (

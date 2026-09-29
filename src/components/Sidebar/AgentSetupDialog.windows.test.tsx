@@ -132,4 +132,53 @@ describe("AgentSetupDialog Windows support", () => {
     expect(pathInput!.readOnly).toBe(false);
     expect(pathInput!.value).toBe("~/.local/bin/termihub-agent");
   });
+
+  it("renders the arch picker via ui/Select with the detected arch pre-selected", async () => {
+    detectAgentArch.mockResolvedValue(makeArchInfo());
+
+    await renderAndDetect(makeAgent());
+
+    const trigger = document.querySelector(
+      '[data-testid="agent-setup-arch-select"]'
+    ) as HTMLButtonElement | null;
+    expect(trigger).not.toBeNull();
+    // Shared primitive: a Radix trigger button, not a native <select>.
+    expect(trigger!.tagName).toBe("BUTTON");
+    expect(trigger!.classList.contains("ui-select__trigger")).toBe(true);
+    expect(trigger!.id).toBe("arch-select");
+    expect(trigger!.getAttribute("data-value")).toBe("linux-x64");
+    expect(trigger!.textContent).toContain("linux-x64 (x86_64)");
+    expect(document.querySelector("select")).toBeNull();
+  });
+
+  it("switches to the Windows install path when a Windows arch is picked", async () => {
+    detectAgentArch.mockResolvedValue(makeArchInfo());
+
+    await renderAndDetect(makeAgent());
+
+    const trigger = document.querySelector(
+      '[data-testid="agent-setup-arch-select"]'
+    ) as HTMLButtonElement;
+    await act(async () => {
+      trigger.focus();
+      trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    const options = Array.from(document.querySelectorAll('[role="option"]'));
+    expect(options.length).toBe(7);
+    const windowsOption = options.find(
+      (o) => o.getAttribute("data-value") === "windows-x64"
+    ) as HTMLElement;
+    expect(windowsOption).toBeTruthy();
+    await act(async () => {
+      windowsOption.focus();
+      windowsOption.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+
+    expect(trigger.getAttribute("data-value")).toBe("windows-x64");
+    const pathInput = document.querySelector(
+      '[data-testid="agent-setup-remote-path"]'
+    ) as HTMLInputElement;
+    expect(pathInput.readOnly).toBe(true);
+    expect(pathInput.value).toContain("termihub-agent.exe");
+  });
 });
