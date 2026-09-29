@@ -36,7 +36,8 @@
       "sessionFiles": false,
       "sessionMonitoring": false,
       "sessionProcesses": false,
-      "toolStreaming": true
+      "toolStreaming": true,
+      "unattendedConnect": false
     },
     "protocolVersion": "0.9.0"
   },
@@ -55,7 +56,8 @@
       "sessionFiles": false,
       "sessionMonitoring": false,
       "sessionProcesses": false,
-      "toolStreaming": false
+      "toolStreaming": false,
+      "unattendedConnect": false
     },
     "protocolVersion": "0.1.0"
   },

@@ -305,6 +305,11 @@ pub struct Capabilities {
     /// through its own backend (protocol 0.22.0, #3242). Absent (read as
     /// `false`) on older agents, which browse local sessions only.
     pub session_files: bool,
+    /// Whether the agent honors [`SessionCreateParams::unattended`]: an
+    /// unattended `connection.create` never prompts and refuses with a typed
+    /// kind instead (protocol 0.23.0, #3877). Absent (read as `false`) on
+    /// older agents, which the desktop never asks to connect unattended.
+    pub unattended_connect: bool,
 }
 
 /// One prompt of a [`KbdInteractivePromptNotification`] round.
@@ -545,6 +550,18 @@ pub struct SessionCreateParams {
     /// unknown member.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
+    /// Connect with nobody at the keyboard — a scheduled run (#3877; protocol
+    /// 0.23.0). The agent then never relays a prompt to the desktop: a
+    /// keyboard-interactive / one-time-code round, an untrusted host key, a
+    /// missing password or key passphrase fails fast with its typed
+    /// `connect_failure` kind (`interaction_required`, `host_key_untrusted`,
+    /// `auth_failed`) instead.
+    ///
+    /// Additive: omitted from the wire when `false`. The desktop sends it only
+    /// to an agent that advertises [`Capabilities::unattended_connect`] — an
+    /// older agent would ignore the member and connect attended.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unattended: bool,
 }
 
 /// Upper bound on a [`SessionCreateParams::correlation_id`] an agent will log
@@ -2431,6 +2448,7 @@ mod tests {
                 session_processes: true,
                 session_monitoring: true,
                 session_files: true,
+                unattended_connect: true,
                 available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
                 available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
                 docker_available: false,
@@ -2451,6 +2469,8 @@ mod tests {
         assert_eq!(v["capabilities"]["sessionMonitoring"], true);
         // #3242: agent-hosted session file browsing.
         assert_eq!(v["capabilities"]["sessionFiles"], true);
+        // #3877: unattended `connection.create`.
+        assert_eq!(v["capabilities"]["unattendedConnect"], true);
         assert!(v["capabilities"]["availableDockerImages"]
             .as_array()
             .unwrap()
@@ -2541,6 +2561,7 @@ mod tests {
             title: None,
             definition_id: None,
             correlation_id: Some("3f1c-desk-sid".to_string()),
+            unattended: false,
         };
         let v = serde_json::to_value(&params).unwrap();
         assert_eq!(v["correlation_id"], "3f1c-desk-sid");
@@ -2558,15 +2579,40 @@ mod tests {
             title: Some("Build".to_string()),
             definition_id: None,
             correlation_id: None,
+            unattended: false,
         };
         let v = serde_json::to_value(&params).unwrap();
         assert!(v.get("correlation_id").is_none());
+        assert!(
+            v.get("unattended").is_none(),
+            "attended keeps the legacy shape"
+        );
         assert_eq!(
             v,
             json!({"type": "local", "config": {"shell": "/bin/bash"}, "title": "Build"})
         );
         let legacy: SessionCreateParams = serde_json::from_value(json!({"type": "local"})).unwrap();
         assert!(legacy.correlation_id.is_none());
+    }
+
+    /// #3877: the unattended flag rides `connection.create` only when set, and
+    /// a create without it (an older desktop) reads as attended.
+    #[test]
+    fn session_create_params_unattended_flag_round_trips() {
+        let params = SessionCreateParams {
+            session_type: "ssh".to_string(),
+            config: json!({}),
+            title: None,
+            definition_id: None,
+            correlation_id: None,
+            unattended: true,
+        };
+        let v = serde_json::to_value(&params).unwrap();
+        assert_eq!(v["unattended"], true);
+        let back: SessionCreateParams = serde_json::from_value(v).unwrap();
+        assert!(back.unattended);
+        let legacy: SessionCreateParams = serde_json::from_value(json!({"type": "ssh"})).unwrap();
+        assert!(!legacy.unattended);
     }
 
     #[test]
@@ -3639,6 +3685,7 @@ mod tests {
             title: Some("Build".to_string()),
             definition_id: Some("def-1".to_string()),
             correlation_id: None,
+            unattended: false,
         };
         assert_eq!(serde_json::to_value(&typed).unwrap(), legacy);
 
@@ -3651,6 +3698,7 @@ mod tests {
             title: None,
             definition_id: None,
             correlation_id: None,
+            unattended: false,
         };
         assert_eq!(serde_json::to_value(&typed_min).unwrap(), legacy_min);
     }

@@ -80,6 +80,13 @@ pub struct AgentCapabilities {
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub session_files: bool,
+    /// Whether the agent connects unattended on request — a
+    /// `connection.create` with `unattended: true` never prompts and refuses
+    /// with a typed kind instead (protocol 0.23.0, #3877). `false` for older
+    /// agents, which a scheduled run skips as "agent too old".
+    #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub unattended_connect: bool,
     /// Agent binary version string, e.g. "1.4.2".
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<String>", optional))]

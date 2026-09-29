@@ -147,7 +147,12 @@ use termihub_core::monitoring::{
 /// session id and browse inside that session through its own backend. An
 /// older agent omits the flag and the desktop tells the user to update it; an
 /// older desktop ignores the flag.
-const AGENT_PROTOCOL_VERSION: &str = "0.22.0";
+/// Bumped to 0.23.0 for the additive `unattended` member of
+/// `connection.create` and the matching `capabilities.unattendedConnect` flag
+/// (#3877): an unattended create never relays a prompt and refuses with a typed
+/// `connect_failure` kind instead. The desktop sends the member only to an agent
+/// that advertises the flag; an older desktop never sends it.
+const AGENT_PROTOCOL_VERSION: &str = "0.23.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -917,6 +922,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 session_processes: true,
                 session_monitoring: true,
                 session_files: true,
+                unattended_connect: true,
             },
         })
     })?;
@@ -948,13 +954,16 @@ fn register_connection_create(module: &mut RpcModule<Mutex<HandlerState>>) -> an
         // id (#3085, OBS-004) so they join the desktop's `termihub.log` lines.
         let span = session_create_span(type_id, p.correlation_id.as_deref());
 
+        // An unattended create (a desktop's scheduled run, #3877) never
+        // prompts: it refuses with a typed kind wherever it would have asked.
         let snapshot = session_manager
-            .create_correlated(
+            .create_with_mode(
                 type_id,
                 title,
                 p.config,
                 p.definition_id,
                 p.correlation_id.as_deref(),
+                p.unattended,
             )
             .instrument(span.clone())
             .await
@@ -3681,11 +3690,12 @@ mod tests {
     /// 0.18.0 the `connection.create` error's `data.connect_failure`, and
     /// 0.19.0 its `auth_failed` kind (#3089), 0.20.0 the
     /// `sessionProcesses` capability (#3210), and 0.21.0 the
-    /// `sessionMonitoring` capability (#3871), and 0.22.0 the `sessionFiles`
-    /// capability (#3242).
+    /// `sessionMonitoring` capability (#3871), 0.22.0 the `sessionFiles`
+    /// capability (#3242), and 0.23.0 the unattended `connection.create` with
+    /// its `unattendedConnect` capability (#3877).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.22.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.23.0");
     }
 
     // ── agent.forward.connect (desktop port forward, #3241) ────────
@@ -6193,6 +6203,8 @@ mod tests {
         /// When set, `create` asks this hub one OTP round first, standing in
         /// for an SSH connect that needs a keyboard-interactive answer (#3375).
         ki_hub: Option<Arc<KiPromptHub>>,
+        /// The `unattended` mode of every create, in order (#3877).
+        unattended_seen: Arc<AsyncMutex<Vec<bool>>>,
     }
 
     impl MockSessionManager {
@@ -6202,6 +6214,7 @@ mod tests {
                 create_error: None,
                 sessions: Arc::new(AsyncMutex::new(Vec::new())),
                 ki_hub: None,
+                unattended_seen: Arc::new(AsyncMutex::new(Vec::new())),
             }
         }
 
@@ -6211,6 +6224,7 @@ mod tests {
                 create_error: Some(error),
                 sessions: Arc::new(AsyncMutex::new(Vec::new())),
                 ki_hub: None,
+                unattended_seen: Arc::new(AsyncMutex::new(Vec::new())),
             }
         }
 
@@ -6270,6 +6284,19 @@ mod tests {
             };
             self.sessions.lock().await.push(snapshot.clone());
             Ok(snapshot)
+        }
+
+        async fn create_with_mode(
+            &self,
+            type_id: &str,
+            title: String,
+            settings: serde_json::Value,
+            definition_id: Option<String>,
+            _correlation_id: Option<&str>,
+            unattended: bool,
+        ) -> Result<SessionSnapshot, SessionCreateError> {
+            self.unattended_seen.lock().await.push(unattended);
+            self.create(type_id, title, settings, definition_id).await
         }
 
         async fn list(&self) -> Vec<SessionSnapshot> {
@@ -6617,6 +6644,9 @@ mod tests {
 
     /// `connection.create` correlation id on the session's log span (#3085).
     mod correlation_tests;
+
+    /// `connection.create` with `unattended` + its capability (#3877).
+    mod unattended_tests;
 
     /// `connection.processes.*` for agent-hosted sessions (#3210).
     mod process_tests;

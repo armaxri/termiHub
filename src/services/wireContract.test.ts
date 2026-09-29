@@ -218,6 +218,7 @@ describe("wire contract: agent connect / definitions", () => {
       "sessionMonitoring",
       "sessionProcesses",
       "toolStreaming",
+      "unattendedConnect",
     ]);
     expect(result.capabilities.availableShells).toEqual([]);
     expect(result.capabilities.dockerAvailable).toBe(false);

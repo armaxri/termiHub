@@ -2,7 +2,7 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.22.0
+**Version**: 0.23.0
 **Status**: Draft
 **Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089, #3210, #3871, #3242
 
@@ -288,6 +288,9 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                          |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.23.0          | 0.23.0        | Yes                                                                                                                                  |
+| 0.23.0          | 0.9.0–0.22.0  | Yes (no `unattendedConnect` — a scheduled run skips an agent-hosted target: "agent too old for unattended connect")                  |
+| 0.22.0          | 0.23.0        | Yes (`unattendedConnect` ignored; `unattended` never sent)                                                                           |
 | 0.22.0          | 0.22.0        | Yes                                                                                                                                  |
 | 0.22.0          | 0.9.0–0.21.0  | Yes (no `sessionFiles` — the file browser of an agent-hosted SSH/Docker/FTP/WSL session says to update the agent)                    |
 | 0.21.0          | 0.22.0        | Yes (`sessionFiles` ignored)                                                                                                         |
@@ -351,6 +354,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                           |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                 |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                  |
+
+**0.23.0 (additive, minor)** — [`connection.create`](#connectioncreate) accepts the optional `unattended: true` member (#3877), and the `initialize` result gains `capabilities.unattendedConnect: true` to say so. An unattended create is a connect with nobody at the keyboard — a desktop's scheduled run connecting a saved target — and **never prompts the desktop**: the agent runs the connect (in its own process, or in the session daemon of a persistent session) inside core's never-prompt scope and relays no keyboard-interactive round. Wherever the attended connect would ask, it fails fast with `-32003` and a typed `error.data.connect_failure`: `host_key_untrusted` for a host key that is not already trusted (unknown or changed), `interaction_required` for a keyboard-interactive / one-time-code round the saved password cannot answer, a password auth with no password, or an encrypted key with no passphrase; a rejected credential stays `auth_failed`. Negotiation is by **capability**: the desktop sends the member only to an agent that advertises the flag — an older agent would ignore it and connect attended, so the desktop skips such a target with "agent too old for unattended connect". The member is omitted when `false`, so an attended create keeps its wire shape; a pre-0.23.0 desktop never sends it.
 
 **0.22.0 (additive, minor)** — the [`connection.files.*`](#connectionfileslist) methods now accept an **agent-hosted SSH, Docker, FTP or WSL session id** as `connection_id` (#3242), and the `initialize` result gains `capabilities.sessionFiles: true` to say so. For such a session the agent browses **inside that session's own context** — the remote SSH host (SFTP), the container, the FTP server, or the WSL distribution — through the session backend's own file browser, which for a persistent session runs in the session daemon (see [Session-Daemon Transport](#session-daemon-transport-named-pipe-vs-unix-socket)); it never falls back to the agent host. The session must be running and **held by the requesting client**, exactly as for `connection.processes.*`: otherwise the call fails with `-32023` (held elsewhere) or `-32006` (not running) — this now also applies to a local session's id. Negotiation is by **capability**: a pre-0.22.0 agent omits the flag and answers `-32013` for such sessions, so the desktop does not call it and the file browser says the agent must be updated. A session started by an older agent's session daemon keeps answering `-32013` until it is reopened. A pre-0.22.0 desktop ignores the flag.
 
@@ -478,6 +483,7 @@ On a successful `initialize`, the agent records the client (`client`, `client_ve
 | `capabilities.sessionProcesses`           | `boolean`              | [`connection.processes.*`](#connectionprocesseslist) serve agent-hosted SSH, Docker and WSL sessions, not only local ones (0.20.0+; absent = `false`)                                    |
 | `capabilities.sessionMonitoring`          | `boolean`              | [`connection.monitoring.subscribe`](#connectionmonitoringsubscribe) accepts an agent-hosted SSH, Docker or WSL session id (0.21.0+; absent = `false`)                                    |
 | `capabilities.sessionFiles`               | `boolean`              | [`connection.files.*`](#connectionfileslist) accept an agent-hosted SSH, Docker, FTP or WSL session id and browse inside that session (0.22.0+; absent = `false`)                        |
+| `capabilities.unattendedConnect`          | `boolean`              | [`connection.create`](#connectioncreate) honors `unattended: true` — it never prompts and refuses with a typed `connect_failure` instead (0.23.0+; absent = `false`)                     |
 
 > **Field-casing note.** The `initialize` **params** are serialized in `camelCase`
 > (`protocolVersion`, `clientVersion`), matching the agent's `InitializeParams` — a field sent in
@@ -562,6 +568,7 @@ For serial sessions:
 | `config`         | `object`  | Type-specific configuration (see below)                                                                                                                                                                                                                                                                     |
 | `title`          | `string?` | Optional display title                                                                                                                                                                                                                                                                                      |
 | `correlation_id` | `string?` | Optional log correlation id (0.16.0, #3085): the desktop's own `session_id`. The agent logs this session under an `agent_session` span carrying it. At most 128 characters of `A–Z a–z 0–9 - _ .`; the agent ignores (does not log) any other value rather than failing the create. Older agents ignore it. |
+| `unattended`     | `bool?`   | Connect with nobody at the keyboard (0.23.0, #3877): never prompt; refuse with `host_key_untrusted`, `interaction_required` or `auth_failed` instead. Absent = `false`. Sent only to an agent that advertises `capabilities.unattendedConnect`.                                                             |
 
 **Local shell config fields:**
 
@@ -603,14 +610,16 @@ For serial sessions:
 }
 ```
 
-| `connect_failure`   | Meaning                                                        |
-| ------------------- | -------------------------------------------------------------- |
-| `timeout`           | The connect or handshake did not finish within its deadline    |
-| `agent_auth_failed` | SSH authentication through the SSH agent failed                |
-| `not_found`         | The target does not exist (e.g. an unplugged serial port)      |
-| `permission_denied` | The OS denied access to the target (e.g. a serial port)        |
-| `busy`              | The target is held by another application (e.g. a serial port) |
-| `auth_failed`       | The server rejected the credentials (0.19.0, #3089)            |
+| `connect_failure`      | Meaning                                                                                                     |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `timeout`              | The connect or handshake did not finish within its deadline                                                 |
+| `agent_auth_failed`    | SSH authentication through the SSH agent failed                                                             |
+| `not_found`            | The target does not exist (e.g. an unplugged serial port)                                                   |
+| `permission_denied`    | The OS denied access to the target (e.g. a serial port)                                                     |
+| `busy`                 | The target is held by another application (e.g. a serial port)                                              |
+| `auth_failed`          | The server rejected the credentials (0.19.0, #3089)                                                         |
+| `host_key_untrusted`   | Unattended only: the host key is not already trusted (0.23.0, #3877)                                        |
+| `interaction_required` | Unattended only: a one-time code, a password or a key passphrase would have to be asked for (0.23.0, #3877) |
 
 The member is optional: absent for an untyped failure and from agents older than 0.18.0. Clients must ignore a value they do not recognize.
 

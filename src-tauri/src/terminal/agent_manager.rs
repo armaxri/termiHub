@@ -541,6 +541,12 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     /// so closing / cancelling that connect cancels it. `correlation_id` is the
     /// desktop session id the agent logs this session under (#3085). Defaults
     /// to a plain create so test doubles need not implement it.
+    ///
+    /// `unattended` (#3877) asks the agent to connect with nobody at the
+    /// keyboard: it never relays a prompt and refuses with a typed kind
+    /// instead. Callers send it only to an agent that advertises
+    /// [`AgentCapabilities::unattended_connect`]. The default refuses it, so a
+    /// test double can never silently connect attended in its place.
     #[allow(clippy::too_many_arguments)]
     fn create_session_owned(
         &self,
@@ -551,7 +557,13 @@ pub trait AgentRpcClient: Send + Sync + 'static {
         definition_id: Option<&str>,
         _owner: Option<&str>,
         _correlation_id: Option<&str>,
+        unattended: bool,
     ) -> Result<AgentSessionInfo, TerminalError> {
+        if unattended {
+            return Err(TerminalError::SpawnFailed(
+                "unattended connect is not supported".to_string(),
+            ));
+        }
         self.create_session(agent_id, session_type, config, title, definition_id)
     }
 
@@ -1745,6 +1757,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
         definition_id: Option<&str>,
         owner: Option<&str>,
         correlation_id: Option<&str>,
+        unattended: bool,
     ) -> Result<AgentSessionInfo, TerminalError> {
         let _owned = match owner {
             Some(owner) => self
@@ -1752,8 +1765,14 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 .map(|a| a.begin_owned_create(owner)),
             None => None,
         };
-        let params =
-            session_create_params(session_type, config, title, definition_id, correlation_id)?;
+        let params = session_create_params(
+            session_type,
+            config,
+            title,
+            definition_id,
+            correlation_id,
+            unattended,
+        )?;
         self.send_create(agent_id, params)
     }
 
@@ -1790,7 +1809,8 @@ impl<R: Runtime> AgentConnectionManager<R> {
         title: Option<&str>,
         definition_id: Option<&str>,
     ) -> Result<AgentSessionInfo, TerminalError> {
-        let params = session_create_params(session_type, config, title, definition_id, None)?;
+        let params =
+            session_create_params(session_type, config, title, definition_id, None, false)?;
         self.send_create(agent_id, params)
     }
 
@@ -2573,6 +2593,7 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
         definition_id: Option<&str>,
         owner: Option<&str>,
         correlation_id: Option<&str>,
+        unattended: bool,
     ) -> Result<AgentSessionInfo, TerminalError> {
         AgentConnectionManager::create_session_owned(
             self,
@@ -2583,6 +2604,7 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
             definition_id,
             owner,
             correlation_id,
+            unattended,
         )
     }
 
@@ -2948,13 +2970,15 @@ async fn read_handshake_line(
 /// Build `connection.create` params from the shared DTO. `correlation_id` is
 /// the desktop's session id (#3085, OBS-004): the agent logs the session under
 /// it so both sides' log lines join on one id. Omitted from the wire when
-/// `None`, and an agent older than protocol 0.16.0 ignores it.
+/// `None`, and an agent older than protocol 0.16.0 ignores it. `unattended`
+/// (#3877) is omitted when `false`, keeping the attended wire shape unchanged.
 fn session_create_params(
     session_type: &str,
     config: Value,
     title: Option<&str>,
     definition_id: Option<&str>,
     correlation_id: Option<&str>,
+    unattended: bool,
 ) -> Result<Value, TerminalError> {
     serde_json::to_value(SessionCreateParams {
         session_type: session_type.to_string(),
@@ -2962,6 +2986,7 @@ fn session_create_params(
         title: title.map(str::to_string),
         definition_id: definition_id.map(str::to_string),
         correlation_id: correlation_id.map(str::to_string),
+        unattended,
     })
     .map_err(|e| {
         TerminalError::RemoteError(format!("Failed to build connection.create params: {e}"))

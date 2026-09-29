@@ -1727,9 +1727,15 @@ sequenceDiagram
   closes exactly the tabs it opened when the run ends (`src/store/scheduledConnect.ts`). The
   unattended connect never prompts: a missing password or key passphrase, a locked credential
   store or a rejected stored credential is refused in the frontend; the backend connect runs in
-  core's `run_unattended` scope (`create_connection` with `unattended: true`, direct connections
-  only), where an untrusted host key fails fast as `ConnectFailureKind::HostKeyUntrusted` and a
-  keyboard-interactive round the saved password cannot answer as `InteractionRequired`. Each
+  core's `run_unattended` scope (`create_connection` with `unattended: true`), where an untrusted
+  host key fails fast as `ConnectFailureKind::HostKeyUntrusted` and a keyboard-interactive round
+  the saved password cannot answer as `InteractionRequired`. An **agent-hosted** target (#3877)
+  carries the mode to its agent as `connection.create` `unattended: true` (protocol 0.23.0): the
+  agent runs the connect in the same scope — in-process, or in the session daemon via
+  `TERMIHUB_UNATTENDED` — relays no prompt, and also refuses a missing password or key passphrase
+  as `InteractionRequired`; the typed kinds come back in `error.data.connect_failure`. An agent
+  without `capabilities.unattendedConnect` is never asked: the target is skipped as "agent too old
+  for unattended connect" (frontend) or refused with `agent_outdated` (`RemoteProxy`). Each
   refused target is recorded in the attempt with its reason. Turning the option on needs a fresh
   confirmation. A target connected in **another** window is not connected again (#3878): every
   window acknowledges the fire with the target connections it runs on itself, and the connect
