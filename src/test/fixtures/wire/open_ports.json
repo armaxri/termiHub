@@ -1,0 +1,16 @@
+{
+  "networkOpenPorts": [
+    {
+      "localAddr": "127.0.0.1:5432",
+      "pid": 4242,
+      "process": "postgres",
+      "protocol": "TCP"
+    },
+    {
+      "localAddr": "[::]:5353",
+      "pid": null,
+      "process": null,
+      "protocol": "UDP"
+    }
+  ]
+}
