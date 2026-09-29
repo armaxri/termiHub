@@ -29,6 +29,7 @@ import {
   reportedReachability,
 } from "@/utils/tunnelHost";
 import { pairStatusLabel, type PairStatus } from "@/utils/tunnelChain";
+import { t } from "@/i18n/catalog";
 
 interface TunnelListItemProps {
   tunnel: TunnelConfig;
@@ -81,6 +82,8 @@ function statusTone(status: TunnelStatus): SidebarStatusTone {
       return "warning";
     case "error":
       return "error";
+    case "missingConnection":
+      return "warning";
     default:
       return "neutral";
   }
@@ -114,6 +117,9 @@ export function TunnelListItem({
   const status = state?.status ?? "disconnected";
   const isActive = status === "connected" || status === "connecting" || status === "reconnecting";
   const isError = status === "error";
+  // Its SSH connection was deleted (#2850): the backend refuses to start it
+  // until the user repoints it in the editor.
+  const isMissingConnection = status === "missingConnection";
   const lastError = state?.error;
   // Live up/down throughput (PROD-038), smoothed from the cumulative stats
   // counters. Sampled only while connected; reset when the tunnel drops.
@@ -173,7 +179,11 @@ export function TunnelListItem({
       status={
         <SidebarStatusDot
           tone={statusTone(status)}
-          label={connectionStateLabel(status)}
+          label={
+            isMissingConnection
+              ? t("tunnel.missingConnection.status")
+              : connectionStateLabel(status)
+          }
           testId={`tunnel-status-${tunnel.id}`}
         />
       }
@@ -250,7 +260,7 @@ export function TunnelListItem({
               </Tooltip>
             </>
           )}
-          {!isActive && !isError && (
+          {!isActive && !isError && !isMissingConnection && (
             <Tooltip content="Start" side="top">
               <Button
                 variant="ghost"
@@ -367,6 +377,26 @@ export function TunnelListItem({
             >
               {reach.warn && <AlertTriangle size={11} className="tunnel-item__reach-icon" />}
               <span className="tunnel-item__reach-text">{reach.label}</span>
+            </span>
+          )}
+          {isMissingConnection && (
+            <span
+              className="tunnel-item__missing-connection"
+              data-testid={`tunnel-missing-connection-${tunnel.id}`}
+            >
+              <AlertTriangle size={11} className="tunnel-item__missing-connection-icon" />
+              <span>{t("tunnel.missingConnection.detail")}</span>
+              <button
+                type="button"
+                className="tunnel-item__inline-action"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEdit(tunnel.id);
+                }}
+                data-testid={`tunnel-choose-connection-${tunnel.id}`}
+              >
+                {t("tunnel.missingConnection.choose")}
+              </button>
             </span>
           )}
           {isError && lastError && (
