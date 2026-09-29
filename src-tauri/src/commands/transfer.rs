@@ -176,7 +176,20 @@ pub async fn session_copy_remote(
             None,
             0,
         );
-        pm.record_remote_source(&transfer_id, &src_session, &src_path);
+        pm.record_remote_source(
+            &transfer_id,
+            &src_session,
+            &src_path,
+            manager.saved_connection_of(&src_session).as_deref(),
+        );
+        // The saved connections behind both ends (#3876), so a relaunch after
+        // a restart can re-source their secrets.
+        crate::files::transfer::relaunch_session::record_saved_connection(
+            &pm,
+            &manager,
+            &transfer_id,
+            &dst_session,
+        );
     }
     let registry = (*registry).clone();
     let sink = transfer::app_progress_sink(app_handle);
@@ -270,6 +283,25 @@ pub fn transfer_list(
     registry.list(session_id.as_deref())
 }
 
+/// Record the saved connection behind an FTP transfer's session (#3876), so a
+/// relaunch after a restart can re-source its password from the store.
+#[cfg(feature = "ftp")]
+fn record_ftp_saved_connection(
+    pm: &TransferPersistenceManager,
+    app_handle: &tauri::AppHandle,
+    transfer_id: &str,
+    session_id: &str,
+) {
+    if let Some(manager) = app_handle.try_state::<SessionManager>() {
+        crate::files::transfer::relaunch_session::record_saved_connection(
+            pm,
+            &manager,
+            transfer_id,
+            session_id,
+        );
+    }
+}
+
 /// Parse the frontend FTP settings JSON into an expanded [`FtpConfig`].
 #[cfg(feature = "ftp")]
 fn parse_ftp_config(
@@ -321,6 +353,7 @@ pub async fn ftp_download(
                 Some(local_path.clone()),
                 0,
             );
+            record_ftp_saved_connection(&pm, &app_handle, &transfer_id, &session_id);
         }
         let registry = (*registry).clone();
         let sink = transfer::app_progress_sink(app_handle);
@@ -401,6 +434,7 @@ pub async fn ftp_upload(
                 Some(local_path.clone()),
                 0,
             );
+            record_ftp_saved_connection(&pm, &app_handle, &transfer_id, &session_id);
         }
         let registry = (*registry).clone();
         let sink = transfer::app_progress_sink(app_handle);

@@ -157,6 +157,7 @@ impl TransferPersistenceManager {
             folder_paste_id: None,
             source_mtime: None,
             remote_source: None,
+            saved_connection_id: None,
         };
         let mut store = self.lock();
         store.upsert(entry);
@@ -180,9 +181,16 @@ impl TransferPersistenceManager {
 
     /// Attach the source endpoint of a remote-to-remote copy to a registered
     /// transfer (#3206), so a relaunch after a restart can re-attach both
-    /// sessions. References and paths only — never credentials. A no-op for
-    /// an unknown id (never fabricates a record).
-    pub fn record_remote_source(&self, transfer_id: &str, session_id: &str, path: &str) {
+    /// sessions — with the saved connection the source session was opened for
+    /// (#3876), when known. References and paths only — never credentials. A
+    /// no-op for an unknown id (never fabricates a record).
+    pub fn record_remote_source(
+        &self,
+        transfer_id: &str,
+        session_id: &str,
+        path: &str,
+        saved_connection_id: Option<&str>,
+    ) {
         let mut store = self.lock();
         let Some(mut entry) = store.get(transfer_id).cloned() else {
             return;
@@ -190,7 +198,22 @@ impl TransferPersistenceManager {
         entry.remote_source = Some(PersistedRemoteSource {
             session_id: session_id.to_string(),
             path: path.to_string(),
+            saved_connection_id: saved_connection_id.map(str::to_string),
         });
+        store.upsert(entry);
+        self.schedule_write(&store);
+    }
+
+    /// Attach the saved connection a registered transfer's session was opened
+    /// for (#3876), so a relaunch after a restart can re-source its secret from
+    /// the credential store. The id only — never a secret. A no-op for an
+    /// unknown id (never fabricates a record).
+    pub fn record_saved_connection(&self, transfer_id: &str, connection_id: &str) {
+        let mut store = self.lock();
+        let Some(mut entry) = store.get(transfer_id).cloned() else {
+            return;
+        };
+        entry.saved_connection_id = Some(connection_id.to_string());
         store.upsert(entry);
         self.schedule_write(&store);
     }

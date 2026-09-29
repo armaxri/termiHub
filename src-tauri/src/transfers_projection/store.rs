@@ -145,7 +145,9 @@ pub struct TransferEntry {
     #[serde(default)]
     #[cfg_attr(test, ts(type = "number | null"))]
     pub eta_seconds: Option<u64>,
-    /// Human-readable error, only populated for the `failed` state.
+    /// Human-readable error for the `failed` state — or, for a `paused` row, the
+    /// reason it cannot continue on its own (a relaunch that needs credentials,
+    /// #3876). Absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub error: Option<String>,
@@ -407,15 +409,15 @@ impl TransferEntry {
             percent,
             speed_bytes_per_sec,
             eta_seconds,
-            error: if state == TransferQueueState::Failed {
-                Some(
+            error: match state {
+                TransferQueueState::Failed => Some(
                     progress
                         .message
                         .clone()
                         .unwrap_or_else(|| "Transfer failed".to_string()),
-                )
-            } else {
-                None
+                ),
+                TransferQueueState::Paused => progress.message.clone(),
+                _ => None,
             },
             attempt: progress.attempt.or_else(|| prev.and_then(|p| p.attempt)),
             max_attempts: progress

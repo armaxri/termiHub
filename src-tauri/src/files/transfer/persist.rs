@@ -147,6 +147,14 @@ pub struct PersistedTransfer {
     /// relaunched after a restart. References and paths only, never secrets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_source: Option<PersistedRemoteSource>,
+    /// The id of the saved connection the owning session was opened for
+    /// (#3876) — absent for a session opened from an unsaved configuration and
+    /// for records written before it existed. When the session is gone after a
+    /// restart, a relaunch looks the connection up by this id and re-sources
+    /// its password or key passphrase from the credential store under the
+    /// connection's existing store key. The id only — never a secret.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_connection_id: Option<String>,
 }
 
 /// Where a remote-to-remote copy reads from (#3206): a session **reference**
@@ -159,6 +167,11 @@ pub struct PersistedRemoteSource {
     pub session_id: String,
     /// The source file's path on that session.
     pub path: String,
+    /// The saved connection the source session was opened for (#3876), so a
+    /// relaunch can re-source the source end's secret when its session is
+    /// gone. The id only — never a secret.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_connection_id: Option<String>,
 }
 
 /// The persisted identity of a Docker transfer's container (#3585).

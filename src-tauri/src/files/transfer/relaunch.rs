@@ -14,15 +14,22 @@
 //! # What a relaunch does
 //!
 //! 1. **Re-attach the session** from the stored session reference via the normal
-//!    session path ([`SessionManager::sftp_transfer_browser`]). If the session is
-//!    not currently connected, the row moves to a clear **Failed** state
-//!    ("session unavailable …") — never a silent drop or a stuck "Resuming…".
+//!    session path ([`SessionManager::sftp_transfer_browser`]). When that session
+//!    is gone (after a restart it always is), the record's saved-connection id
+//!    finds a session the user reopened for the same connection (#3876).
 //! 2. **Re-source credentials at resume time.** Credentials were deliberately
-//!    never persisted (the PROD-0011 invariant); the live SFTP session already
-//!    holds the credentials the session machinery sourced from the credential
-//!    store at connect time, so re-attaching the session *is* the re-sourcing.
-//!    Nothing here ever reads a credential from — or writes one to — the
-//!    persisted queue.
+//!    never persisted (the PROD-0011 invariant); a live session already holds
+//!    the credentials the session machinery sourced from the credential store
+//!    at connect time, so re-attaching the session *is* the re-sourcing. With
+//!    no live session, the saved connection's password or key passphrase is
+//!    read from the **unlocked** store under its existing key and the
+//!    connection is opened unattended (#3876, see
+//!    [`super::relaunch_credentials`]). A relaunch never prompts: a locked
+//!    store or a secret that is not stored keeps the row **paused** with the
+//!    reason "Needs credentials — open the connection to resume"; any other
+//!    failure moves it to a clear **Failed** state — never a silent drop or a
+//!    stuck "Resuming…". Nothing here ever reads a credential from — or writes
+//!    one to — the persisted queue.
 //! 3. **Re-spawn the executor from the stored resume offset** ([`run_sftp_transfer`]
 //!    with `start_offset = resume_offset`), reusing the existing PROD-0012
 //!    byte-verified offset-resume (with automatic restart-from-zero fallback).
@@ -79,6 +86,7 @@ use std::sync::Arc;
 use super::persist::PersistedTransfer;
 use super::persist_manager::TransferPersistenceManager;
 use super::registry::TransferRegistry;
+use super::relaunch_credentials::RelaunchBlocked;
 use super::state::MAX_RETRIES;
 use super::{ProgressSink, TransferDirection, TransferPhase, TransferProgress, TransferStateTag};
 use crate::session::manager::SessionManager;
@@ -92,6 +100,9 @@ pub(crate) enum RelaunchPlan {
     /// the resume offset and totals.
     Session {
         session_id: String,
+        /// The saved connection the session was opened for (#3876), used when
+        /// the session is gone.
+        saved_connection_id: Option<String>,
         direction: TransferDirection,
         remote_path: String,
         local_path: String,
@@ -123,8 +134,10 @@ pub(crate) enum RelaunchPlan {
     /// endpoint (#3206): relaunchable given both live sessions.
     RemoteCopy {
         src_session_id: String,
+        src_saved_connection_id: Option<String>,
         src_path: String,
         dst_session_id: String,
+        dst_saved_connection_id: Option<String>,
         dst_path: String,
         offset: u64,
         total: u64,
@@ -177,6 +190,7 @@ pub(crate) fn plan_from_record(record: &PersistedTransfer) -> RelaunchPlan {
         },
         (Some(local_path), None) => RelaunchPlan::Session {
             session_id: record.session_id.clone(),
+            saved_connection_id: record.saved_connection_id.clone(),
             direction: record.direction,
             remote_path: record.remote_path.clone(),
             local_path: local_path.clone(),
@@ -186,8 +200,10 @@ pub(crate) fn plan_from_record(record: &PersistedTransfer) -> RelaunchPlan {
         (None, _) => match &record.remote_source {
             Some(source) => RelaunchPlan::RemoteCopy {
                 src_session_id: source.session_id.clone(),
+                src_saved_connection_id: source.saved_connection_id.clone(),
                 src_path: source.path.clone(),
                 dst_session_id: record.session_id.clone(),
+                dst_saved_connection_id: record.saved_connection_id.clone(),
                 dst_path: record.remote_path.clone(),
                 offset: record.resume_offset,
                 total: record.total,
@@ -210,6 +226,16 @@ pub(crate) fn plan_from_record(record: &PersistedTransfer) -> RelaunchPlan {
 /// indistinguishable from any other failed transfer.
 fn failed_progress(record: &PersistedTransfer, message: String) -> TransferProgress {
     settled_progress(record, TransferPhase::Error, Some(message))
+}
+
+/// The synthetic event that keeps a rehydrated row **paused** with `reason`
+/// (#3876): its secret cannot be re-sourced without the user. Metadata only,
+/// like [`failed_progress`]; the progress so far is kept.
+fn paused_progress(record: &PersistedTransfer, reason: String) -> TransferProgress {
+    TransferProgress {
+        state: TransferStateTag::Paused,
+        ..settled_progress(record, TransferPhase::Transferring, Some(reason))
+    }
 }
 
 /// The synthetic `cancelled` progress event that moves a rehydrated row with no
@@ -300,6 +326,7 @@ async fn relaunch_record(
     match plan_from_record(&record) {
         RelaunchPlan::Session {
             session_id,
+            saved_connection_id,
             direction,
             remote_path,
             local_path,
@@ -307,9 +334,18 @@ async fn relaunch_record(
             total,
         } => {
             // Re-attach the session (and, transitively, its credentials) through
-            // the normal session path. A not-connected session errors here → the
-            // row moves to a clear Failed state rather than hanging.
-            match super::relaunch_session::resolve_session_target(manager, &session_id).await {
+            // the normal session path — or, when it is gone, the saved connection
+            // it was opened for (#3876). A secret that cannot be re-sourced
+            // unattended keeps the row paused with a reason; any other failure
+            // moves it to a clear Failed state rather than hanging.
+            let sources = sources(manager, app_handle);
+            match super::relaunch_session::resolve_session_target(
+                &sources,
+                &session_id,
+                saved_connection_id.as_deref(),
+            )
+            .await
+            {
                 Ok(target) => {
                     let (spawn_remote, spawn_local) = (remote_path.clone(), local_path);
                     spawn_relaunch(
@@ -334,12 +370,8 @@ async fn relaunch_record(
                     );
                     true
                 }
-                Err(e) => {
-                    fail_row(
-                        app_handle,
-                        &record,
-                        format!("Cannot resume: session unavailable ({e})"),
-                    );
+                Err(blocked) => {
+                    block_row(app_handle, &record, blocked);
                     true
                 }
             }
@@ -392,18 +424,29 @@ async fn relaunch_record(
         }
         RelaunchPlan::RemoteCopy {
             src_session_id,
+            src_saved_connection_id,
             src_path,
             dst_session_id,
+            dst_saved_connection_id,
             dst_path,
             offset,
             total,
         } => {
-            // Re-attach both ends; either one unavailable fails the row (the
-            // record is kept, so a Retry after reconnecting relaunches it).
+            // Re-attach both ends; either one unavailable fails the row, or keeps
+            // it paused when only a secret is missing (the record is kept, so a
+            // Resume/Retry after reconnecting relaunches it).
+            use super::relaunch_session::CopyEnd;
+            let sources = sources(manager, app_handle);
             match super::relaunch_session::resolve_remote_copy(
-                manager,
-                &src_session_id,
-                &dst_session_id,
+                &sources,
+                CopyEnd {
+                    session_id: &src_session_id,
+                    saved_connection_id: src_saved_connection_id.as_deref(),
+                },
+                CopyEnd {
+                    session_id: &dst_session_id,
+                    saved_connection_id: dst_saved_connection_id.as_deref(),
+                },
             )
             .await
             {
@@ -432,8 +475,8 @@ async fn relaunch_record(
                     );
                     true
                 }
-                Err(message) => {
-                    fail_row(app_handle, &record, message);
+                Err(blocked) => {
+                    block_row(app_handle, &record, blocked);
                     true
                 }
             }
@@ -644,6 +687,32 @@ fn spawn_relaunch<F, Fut>(
     let sink = super::app_progress_sink(app_handle.clone());
     // Not app-owned (#3105): a transfer; cancelled explicitly via `TransferRegistry::cancel_all`.
     tauri::async_runtime::spawn(run(handle, registry.clone(), sink));
+}
+
+/// The running app's live sessions, saved connections and credential store,
+/// for re-sourcing a relaunched transfer's connection (#3876).
+fn sources<'a>(
+    manager: &'a SessionManager,
+    app_handle: &'a AppHandle,
+) -> super::relaunch_session::AppSources<'a> {
+    super::relaunch_session::AppSources {
+        manager,
+        connections: app_handle
+            .try_state::<crate::connection::manager::ConnectionManager>()
+            .map(|state| state.inner()),
+    }
+}
+
+/// Settle a rehydrated row a relaunch could not start (#3876): keep it paused
+/// with the reason when only its credentials are missing, otherwise fail it
+/// with the message. The persisted record is left intact either way.
+fn block_row(app_handle: &AppHandle, record: &PersistedTransfer, blocked: RelaunchBlocked) {
+    match blocked {
+        RelaunchBlocked::NeedsCredentials => {
+            fold_row(app_handle, &paused_progress(record, blocked.message()));
+        }
+        RelaunchBlocked::Failed(message) => fail_row(app_handle, record, message),
+    }
 }
 
 /// Move a rehydrated row to a clear Failed state with an honest message, folding a
