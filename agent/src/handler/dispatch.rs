@@ -6085,8 +6085,11 @@ mod tests {
         subscribed: Arc<AsyncMutex<Vec<String>>>,
         unsubscribed: Arc<AsyncMutex<Vec<String>>>,
         /// `(host, interval_ms)` of every session-provider subscribe (#3871).
-        provider_subscribed: Arc<AsyncMutex<Vec<(String, Option<u64>)>>>,
+        provider_subscribed: Arc<AsyncMutex<Vec<ProviderSubscribe>>>,
     }
+
+    /// A recorded `(host, interval_ms)` session-provider subscribe (#3871).
+    type ProviderSubscribe = (String, Option<u64>);
 
     impl MockMonitoringManager {
         fn new() -> Self {
