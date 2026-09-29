@@ -436,8 +436,7 @@ impl EmbeddedServerService {
     }
 
     /// The address the running server's listener actually bound, or `None` when
-    /// it is not running or the server type cannot report it (FTP, whose
-    /// listener is bound inside libunftp).
+    /// it is not running.
     ///
     /// For a config with port `0` this is how a caller learns the OS-assigned
     /// port (#3533).

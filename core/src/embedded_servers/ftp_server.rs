@@ -37,9 +37,10 @@ use super::shutdown::ShutdownSignal;
 ///
 /// Internally this creates a single-threaded tokio runtime so that the async
 /// libunftp server can run inside the OS thread that the `EmbeddedServerManager`
-/// already spawned. `ready` is signalled exactly once once the control port is
-/// confirmed bindable (or if binding fails), so the manager only reports
-/// `Running` after the bind is confirmed (GAP G3, #1145).
+/// already spawned. `ready` is signalled exactly once, with the control
+/// listener's real bound address once it is bound (or with the error if binding
+/// fails), so the manager only reports `Running` for a socket the server
+/// actually serves on (GAP G3 #1145, #3549).
 pub fn start_ftp_server(
     config: &EmbeddedServerConfig,
     shutdown: ShutdownSignal,
@@ -61,22 +62,23 @@ pub fn start_ftp_server(
     rt.block_on(run_ftp_server(config, shutdown, stats, ready))
 }
 
-async fn run_ftp_server(
-    config: &EmbeddedServerConfig,
-    shutdown: ShutdownSignal,
-    stats: Arc<AtomicServerStats>,
-    ready: BindSignal,
-) -> Result<()> {
-    let root: PathBuf = config.root_directory.clone().into();
-    let addr = format!("{}:{}", config.bind_host, config.port);
-    let read_only = config.read_only;
+/// The concrete libunftp server type this module builds.
+type FtpServer = libunftp::Server<MaybeReadOnlyFilesystem, FtpUser>;
 
-    let root_for_factory = root.clone();
+/// Build a libunftp server for `config`. `Server::service` consumes the server,
+/// so the accept loop builds one per control connection (cheap: every field is
+/// an `Arc` or small value).
+fn build_server(
+    config: &EmbeddedServerConfig,
+    stats: &Arc<AtomicServerStats>,
+) -> Result<FtpServer> {
+    let root: PathBuf = config.root_directory.clone().into();
+    let read_only = config.read_only;
     let activity = Arc::clone(&stats.activity);
     let activity_for_factory = Arc::clone(&activity);
-    let server = match ServerBuilder::with_authenticator(
+    ServerBuilder::with_authenticator(
         Box::new(move || MaybeReadOnlyFilesystem {
-            inner: Filesystem::new(root_for_factory.clone()),
+            inner: Filesystem::new(root.clone()),
             read_only,
             activity: Arc::clone(&activity_for_factory),
         }),
@@ -85,53 +87,86 @@ async fn run_ftp_server(
     .passive_ports(49152..65535)
     .greeting("termiHub FTP Server ready.")
     .notify_data(StatsTracker {
-        stats: Arc::clone(&stats),
+        stats: Arc::clone(stats),
     })
     .notify_presence(StatsTracker {
-        stats: Arc::clone(&stats),
+        stats: Arc::clone(stats),
     })
     .build()
     .context("Failed to build libunftp server")
-    {
-        Ok(server) => server,
-        Err(e) => {
-            ready.fail(&e.to_string());
-            return Err(e);
-        }
-    };
+}
 
-    // libunftp binds the control port inside `listen`, with no bound-callback.
-    // Probe-bind the control port ourselves so we can confirm (or fail) the
-    // bind before reporting Running; drop the probe immediately so libunftp can
-    // take the port (GAP G3, #1145).
-    match tokio::net::TcpListener::bind(&addr).await {
-        Ok(probe) => {
-            drop(probe);
-            // libunftp owns the real listener, so its bound address is not
-            // observable here (see `EmbeddedServerService::local_addr`).
-            ready.confirm(None);
-        }
+async fn run_ftp_server(
+    config: &EmbeddedServerConfig,
+    shutdown: ShutdownSignal,
+    stats: Arc<AtomicServerStats>,
+    ready: BindSignal,
+) -> Result<()> {
+    let addr = format!("{}:{}", config.bind_host, config.port);
+
+    // Validate the server configuration before binding, so a bad config fails
+    // the start instead of every later connection.
+    if let Err(e) = build_server(config, &stats) {
+        ready.fail(&e.to_string());
+        return Err(e);
+    }
+
+    // Bind the control port once and keep the listener: the socket confirmed
+    // here is the one the server serves on, so there is no probe-then-rebind
+    // window another process could win, and a port-0 config reports the port
+    // it actually got (GAP G3 #1145, #3549). libunftp's `listen` can only bind
+    // an address itself, so we run the accept loop and hand each connection to
+    // `Server::service`.
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(listener) => listener,
         Err(e) => {
             let msg = format!("Failed to bind FTP server to {addr}: {e}");
             ready.fail(&msg);
             return Err(anyhow::anyhow!(msg));
         }
-    }
+    };
+    let local_addr = listener.local_addr().ok();
+    ready.confirm(local_addr);
 
-    tracing::info!(addr, "FTP server listening (libunftp)");
+    tracing::info!(?local_addr, "FTP server listening (libunftp)");
 
-    tokio::select! {
-        result = server.listen(&addr) => {
-            result.map_err(|e| anyhow::anyhow!("FTP server error: {e}"))?;
-        }
-        // Event-driven: park until the signal fires, then drop the listener at
-        // once — no fixed-interval poll (WA-RS-001 / CORE-001).
-        _ = shutdown.wait() => {
-            tracing::info!("FTP server shutting down");
+    loop {
+        tokio::select! {
+            accepted = listener.accept() => match accepted {
+                Ok((stream, peer)) => serve_connection(config, &stats, stream, peer),
+                Err(e) => tracing::warn!(error = %e, "FTP accept failed"),
+            },
+            // Event-driven: park until the signal fires, then drop the listener
+            // at once — no fixed-interval poll (WA-RS-001 / CORE-001).
+            _ = shutdown.wait() => {
+                tracing::info!("FTP server shutting down");
+                break;
+            }
         }
     }
 
     Ok(())
+}
+
+/// Spawn a control-channel task for one accepted FTP connection.
+fn serve_connection(
+    config: &EmbeddedServerConfig,
+    stats: &Arc<AtomicServerStats>,
+    stream: tokio::net::TcpStream,
+    peer: std::net::SocketAddr,
+) {
+    let server = match build_server(config, stats) {
+        Ok(server) => server,
+        Err(e) => {
+            tracing::warn!(%peer, error = %e, "FTP server build failed; dropping connection");
+            return;
+        }
+    };
+    tokio::spawn(async move {
+        if let Err(e) = server.service(stream).await {
+            tracing::warn!(%peer, error = ?e, "FTP control connection failed");
+        }
+    });
 }
 
 // ─── Session user ─────────────────────────────────────────────────────────────
