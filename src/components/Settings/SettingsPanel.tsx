@@ -1,4 +1,14 @@
-import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+  lazy,
+  Suspense,
+  Fragment,
+  type ReactNode,
+} from "react";
 import { frontendLog } from "@/utils/frontendLog";
 import {
   Settings2,
@@ -17,6 +27,7 @@ import {
   HardDrive,
   DatabaseBackup,
   Puzzle,
+  RefreshCw,
   Check,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -51,6 +62,7 @@ import { PluginUpdateCheckSettings } from "./PluginUpdateCheckSettings";
 import { PluginCatalogSettings } from "./PluginCatalogSettings";
 import { NativePluginGateSettings } from "./NativePluginGateSettings";
 import { TrustedPublishersSettings } from "./TrustedPublishersSettings";
+import { UpdateSettings } from "./UpdateSettings";
 import { useAppInfo } from "@/hooks/useAppInfo";
 import "./SettingsPanel.css";
 
@@ -82,6 +94,7 @@ const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
   plugins: Puzzle,
   backup: DatabaseBackup,
   portable: HardDrive,
+  updates: RefreshCw,
 };
 
 const SAVE_DEBOUNCE_MS = 300;
@@ -313,174 +326,97 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
     return new Set(matched.map((s) => s.id));
   }, [isSearchActive, searchQuery]);
 
-  const renderContent = () => {
-    if (isSearchActive) {
-      // Show all categories that have matching settings
-      const sections: React.ReactNode[] = [];
-      if (highlightedCategories?.has("general")) {
-        sections.push(
-          <GeneralSettings
-            key="general"
-            settings={settings}
-            onChange={handleSettingsChange}
-            visibleFields={visibleFields}
-          />
-        );
-      }
-      if (highlightedCategories?.has("serial")) {
-        sections.push(<SerialPortSettings key="serial-ports" visibleFields={visibleFields} />);
-      }
-      if (highlightedCategories?.has("appearance")) {
-        sections.push(
-          <AppearanceSettings
-            key="appearance"
-            settings={settings}
-            onChange={handleSettingsChange}
-            visibleFields={visibleFields}
-          />
-        );
-      }
-      if (highlightedCategories?.has("terminal")) {
-        sections.push(
-          <TerminalSettings
-            key="terminal"
-            settings={settings}
-            onChange={handleSettingsChange}
-            visibleFields={visibleFields}
-          />
-        );
-      }
-      if (highlightedCategories?.has("accessibility")) {
-        sections.push(
-          <AccessibilitySettings
-            key="accessibility"
-            settings={settings}
-            onChange={handleSettingsChange}
-            visibleFields={visibleFields}
-          />
-        );
-      }
-      if (highlightedCategories?.has("shell-integration")) {
-        sections.push(<ShellIntegrationSettings key="shell-integration" />);
-      }
-      if (highlightedCategories?.has("keyboard")) {
-        sections.push(<KeyboardSettings key="keyboard" visibleFields={visibleFields} />);
-      }
-      if (highlightedCategories?.has("sessions")) {
-        sections.push(
-          <SessionSettings
-            key="sessions"
-            settings={settings}
-            onChange={handleSettingsChange}
-            visibleFields={visibleFields}
-          />
-        );
-      }
-      if (highlightedCategories?.has("safety-prompts")) {
-        sections.push(
-          <SafetyPromptSettings
-            key="safety-prompts"
-            settings={settings}
-            onChange={handleSettingsChange}
-            visibleFields={visibleFields}
-          />
-        );
-      }
-      if (highlightedCategories?.has("x-server")) {
-        sections.push(
-          <XServerSettings
-            key="x-server"
-            settings={settings}
-            onChange={handleSettingsChange}
-            visibleFields={visibleFields}
-          />
-        );
-      }
-      if (highlightedCategories?.has("security")) {
-        sections.push(<SecuritySettings key="security" visibleFields={visibleFields} />);
-        sections.push(<RdpTrustSettings key="rdp-trust" visibleFields={visibleFields} />);
-        sections.push(<SshTrustSettings key="ssh-trust" visibleFields={visibleFields} />);
-      }
-      if (highlightedCategories?.has("editor")) {
-        sections.push(
-          <Suspense key="editor" fallback={<div className="settings-panel__lazy-fallback" />}>
-            <EditorSettingsSection visibleFields={visibleFields} />
-          </Suspense>
-        );
-      }
-      if (highlightedCategories?.has("plugins")) {
-        sections.push(<FrontendPluginGateSettings key="frontend-plugin-gate" />);
-        sections.push(<NativePluginGateSettings key="native-plugin-gate" />);
-        sections.push(<PluginSettingsSection key="plugins" focusPluginId={focusPluginId} />);
-        sections.push(<PluginCatalogSettings key="plugin-catalog" />);
-        sections.push(<PluginUpdateCheckSettings key="plugin-update-check" />);
-        sections.push(<TrustedPublishersSettings key="trusted-publishers" />);
-      }
-      if (highlightedCategories?.has("backup")) {
-        sections.push(<BackupRestoreSettings key="backup" />);
-      }
-      if (highlightedCategories?.has("portable")) {
-        sections.push(<PortableModeSettings key="portable" />);
-      }
-      if (sections.length === 0) {
-        return <div className="settings-panel__no-results">No settings match your search.</div>;
-      }
-      return <>{sections}</>;
-    }
+  /**
+   * Every settings section, keyed by its category. This single table drives both
+   * the category view (`visibleFields` undefined → the whole section) and search
+   * mode (each category with a matching registry entry, gated to the matched
+   * fields), so a section registered here is searchable automatically — the
+   * `Record` type makes a category without a section a compile error (#3308).
+   */
+  const sections: Record<SettingsCategory, (fields?: Set<string>) => ReactNode> = {
+    general: (fields) => (
+      <GeneralSettings settings={settings} onChange={handleSettingsChange} visibleFields={fields} />
+    ),
+    appearance: (fields) => (
+      <AppearanceSettings
+        settings={settings}
+        onChange={handleSettingsChange}
+        visibleFields={fields}
+      />
+    ),
+    terminal: (fields) => (
+      <TerminalSettings
+        settings={settings}
+        onChange={handleSettingsChange}
+        visibleFields={fields}
+      />
+    ),
+    serial: (fields) => <SerialPortSettings visibleFields={fields} />,
+    accessibility: (fields) => (
+      <AccessibilitySettings
+        settings={settings}
+        onChange={handleSettingsChange}
+        visibleFields={fields}
+      />
+    ),
+    "shell-integration": () => <ShellIntegrationSettings />,
+    keyboard: (fields) => <KeyboardSettings visibleFields={fields} />,
+    sessions: (fields) => (
+      <SessionSettings settings={settings} onChange={handleSettingsChange} visibleFields={fields} />
+    ),
+    "safety-prompts": (fields) => (
+      <SafetyPromptSettings
+        settings={settings}
+        onChange={handleSettingsChange}
+        visibleFields={fields}
+      />
+    ),
+    "x-server": (fields) => (
+      <XServerSettings settings={settings} onChange={handleSettingsChange} visibleFields={fields} />
+    ),
+    security: (fields) => (
+      <>
+        <SecuritySettings visibleFields={fields} />
+        <RdpTrustSettings visibleFields={fields} />
+        <SshTrustSettings visibleFields={fields} />
+      </>
+    ),
+    "external-files": () => <ExternalFilesSettings />,
+    editor: (fields) => (
+      <Suspense fallback={<div className="settings-panel__lazy-fallback" />}>
+        <EditorSettingsSection visibleFields={fields} />
+      </Suspense>
+    ),
+    plugins: () => (
+      <>
+        <FrontendPluginGateSettings />
+        <NativePluginGateSettings />
+        <PluginSettingsSection focusPluginId={focusPluginId} />
+        <PluginCatalogSettings />
+        <PluginUpdateCheckSettings />
+        <TrustedPublishersSettings />
+      </>
+    ),
+    backup: () => <BackupRestoreSettings />,
+    portable: () => <PortableModeSettings />,
+    updates: (fields) => <UpdateSettings visibleFields={fields} />,
+  };
 
-    switch (activeCategory) {
-      case "general":
-        return <GeneralSettings settings={settings} onChange={handleSettingsChange} />;
-      case "serial":
-        return <SerialPortSettings />;
-      case "appearance":
-        return <AppearanceSettings settings={settings} onChange={handleSettingsChange} />;
-      case "terminal":
-        return <TerminalSettings settings={settings} onChange={handleSettingsChange} />;
-      case "accessibility":
-        return <AccessibilitySettings settings={settings} onChange={handleSettingsChange} />;
-      case "shell-integration":
-        return <ShellIntegrationSettings />;
-      case "keyboard":
-        return <KeyboardSettings />;
-      case "sessions":
-        return <SessionSettings settings={settings} onChange={handleSettingsChange} />;
-      case "safety-prompts":
-        return <SafetyPromptSettings settings={settings} onChange={handleSettingsChange} />;
-      case "x-server":
-        return <XServerSettings settings={settings} onChange={handleSettingsChange} />;
-      case "security":
-        return (
-          <>
-            <SecuritySettings />
-            <RdpTrustSettings />
-            <SshTrustSettings />
-          </>
-        );
-      case "external-files":
-        return <ExternalFilesSettings />;
-      case "editor":
-        return (
-          <Suspense fallback={<div className="settings-panel__lazy-fallback" />}>
-            <EditorSettingsSection />
-          </Suspense>
-        );
-      case "plugins":
-        return (
-          <>
-            <FrontendPluginGateSettings />
-            <NativePluginGateSettings />
-            <PluginSettingsSection focusPluginId={focusPluginId} />
-            <PluginCatalogSettings />
-            <PluginUpdateCheckSettings />
-            <TrustedPublishersSettings />
-          </>
-        );
-      case "backup":
-        return <BackupRestoreSettings />;
-      case "portable":
-        return <PortableModeSettings />;
+  const renderContent = () => {
+    if (!isSearchActive) return sections[activeCategory]();
+
+    // Show every category that has a matching setting, in navigation order.
+    const matched = CATEGORIES.filter((c) => highlightedCategories?.has(c.id));
+    if (matched.length === 0) {
+      return <div className="settings-panel__no-results">No settings match your search.</div>;
     }
+    return (
+      <>
+        {matched.map((c) => (
+          <Fragment key={c.id}>{sections[c.id](visibleFields)}</Fragment>
+        ))}
+      </>
+    );
   };
 
   return (
