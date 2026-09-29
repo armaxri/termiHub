@@ -73,15 +73,15 @@ HEAVY_TEST_THREADS="${CI_HEAVY_TEST_THREADS:-2}"
 SERIAL_FILTERS=(
   "live_agent_tcp_"
 )
-# How many tests the serial set holds today: 16 on unix (15 in
-# local_agent_integration.rs + 1 in tcp_listener_readiness.rs), 10 on Windows
+# How many tests the serial set holds today: 17 on unix (16 in
+# local_agent_integration.rs + 1 in tcp_listener_readiness.rs), 11 on Windows
 # (six of them are `#[cfg(unix)]` daemon-recovery tests). Raise the count when
 # adding one; a rename that drops a test out of the prefix then fails the serial
 # phase instead of going unseen.
 if [ "${OS:-}" = "Windows_NT" ]; then
-  SERIAL_MIN_TESTS_DEFAULT=10
+  SERIAL_MIN_TESTS_DEFAULT=11
 else
-  SERIAL_MIN_TESTS_DEFAULT=16
+  SERIAL_MIN_TESTS_DEFAULT=17
 fi
 SERIAL_MIN_TESTS="${CI_SERIAL_MIN_TESTS:-$SERIAL_MIN_TESTS_DEFAULT}"
 # Hard ceiling for the whole serial phase (incremental build + the tests). The

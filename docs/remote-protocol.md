@@ -97,7 +97,7 @@ The remote session management protocol enables the termiHub desktop app to manag
 
 ### Connection Topology & Client Tracking
 
-The desktop opens **one SSH exec channel per connection** and runs `termihub-agent --stdio`, so there is **one agent process per desktop→agent channel**, and that process serves **exactly one client**. Two desktops connecting to the same host do **not** share a running agent process — they run independent `--stdio` workers and share only the deployed binary on disk and the layer of detached **session daemons** (`termihub-agent --daemon <id>`) that outlive each worker. (The alternative `--listen` TCP mode shares a `SessionManager` across connections but still serves one client at a time; the desktop does not use it.)
+The desktop opens **one SSH exec channel per connection** and runs `termihub-agent --stdio`, so there is **one agent process per desktop→agent channel**, and that process serves **exactly one client**. Two desktops connecting to the same host do **not** share a running agent process — they run independent `--stdio` workers and share only the deployed binary on disk and the layer of detached **session daemons** (`termihub-agent --daemon <id>`) that outlive each worker. (The alternative `--listen` TCP mode shares a `SessionManager` and its hosted services across connections but still serves one client at a time; the desktop does not use it.)
 
 Because a process knows exactly one client, each agent process keeps a **per-process `ConnectionRegistry`** (`agent/src/client_registry.rs`) that records the connected client from the `initialize` request — its `client`, `client_version`, an agent-assigned `client_id`, and `connected_since`. The entry is added on `initialize` and removed when the transport connection drops. This is the in-process foundation for the coordinated remote-agent update strategy (epic #1345); cross-client coordination is built on the shared daemon layer rather than a single all-knowing process (see [ADR-11](architecture.md#adr-11-per-process-agent-connection-tracking-multi-host-model)).
 
@@ -2672,7 +2672,9 @@ List the embedded-server types the agent can host — the read-only discovery me
 
 ### `service.start`
 
-Start an embedded server on the agent. The agent creates the `serviceId` server type from its registry, starts it under the desktop-chosen `instanceId`, and binds its listen socket on the agent host. A duplicate `instanceId` or an unknown `serviceId` fails with [`-32018` Service start failed](#application-errors).
+Start an embedded server on the agent. The agent creates the `serviceId` server type from its registry, starts it under the desktop-chosen `instanceId`, and binds its listen socket on the agent host. An unknown `serviceId` fails with [`-32018` Service start failed](#application-errors).
+
+A start for an `instanceId` the agent already hosts is not an error (#3910). If the instance is running with the same `serviceId` and `config`, the call is idempotent: the instance keeps running (a paused monitor resumes) and its current status is returned. A restarted desktop re-sends its starts this way. With a different `serviceId` or `config`, the agent stops the hosted instance and starts the new one in its place. A `--listen` agent shares its hosted services across its connections, so a service a previous connection started stays reachable.
 
 **Request:**
 
@@ -2719,7 +2721,7 @@ Start an embedded server on the agent. The agent creates the `serviceId` server 
 
 **Errors:**
 
-- `-32018` Service start failed (bad config, port bind failure, unknown `serviceId`, or duplicate `instanceId`)
+- `-32018` Service start failed (bad config, port bind failure, or unknown `serviceId`)
 - `-32602` Invalid params (malformed request)
 
 ---

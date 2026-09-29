@@ -1682,6 +1682,77 @@ fn live_agent_tcp_shell_session_persists_across_client_disconnect() {
     client2.close(&session_id);
 }
 
+/// #3910: services a `--listen` connection started on the agent (an HTTP
+/// monitor and an embedded HTTP server) stay reachable from the next
+/// connection. It can query them, re-send their start without an error (a
+/// restarted desktop does this), and stop them. None is left orphaned.
+#[test]
+fn live_agent_tcp_hosted_services_stay_reachable_after_client_disconnect() {
+    let agent = LocalAgent::spawn();
+    let root = std::env::temp_dir().to_string_lossy().into_owned();
+    let monitor = json!({
+        "instanceId": "mon-3910",
+        "serviceId": "http_monitor",
+        "config": {
+            "id": "mon-3910",
+            "url": "http://127.0.0.1:1/",
+            "intervalMs": 60_000,
+            "method": "GET",
+            "expectedStatus": 200,
+            "timeoutMs": 500,
+        },
+    });
+    let server = json!({
+        "instanceId": "srv-3910",
+        "serviceId": "http_server",
+        "config": {
+            "id": "srv-3910",
+            "name": "Agent HTTP",
+            "serverType": "http",
+            "rootDirectory": root,
+            "bindHost": "127.0.0.1",
+            "port": 0,
+            "readOnly": true,
+            "directoryListing": true,
+        },
+    });
+
+    {
+        let mut client = agent.client();
+        client.initialize();
+        for params in [&monitor, &server] {
+            let resp = client.rpc("service.start", params.clone());
+            assert_eq!(resp["result"]["status"]["state"], "running", "{resp}");
+        }
+        // implicit drop → TCP connection closes → the agent deregisters it
+    }
+
+    let mut client2 = agent.client();
+    client2.initialize();
+    for id in ["mon-3910", "srv-3910"] {
+        let resp = client2.rpc("service.status", json!({ "instanceId": id }));
+        assert_eq!(
+            resp["result"]["status"]["state"], "running",
+            "{id} unreachable from the next connection: {resp}"
+        );
+    }
+
+    let again = client2.rpc("service.start", monitor.clone());
+    assert_eq!(
+        again["result"]["status"]["state"], "running",
+        "re-sending the start after a reconnect must not error: {again}"
+    );
+
+    for id in ["mon-3910", "srv-3910"] {
+        let resp = client2.rpc("service.stop", json!({ "instanceId": id }));
+        assert_eq!(
+            resp["result"]["stopped"],
+            json!(true),
+            "{id} not stoppable: {resp}"
+        );
+    }
+}
+
 /// Verify the full attach → disconnect → reconnect → re-attach lifecycle.
 ///
 /// The first client creates and attaches to a shell, confirms it is alive via

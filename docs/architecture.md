@@ -1020,6 +1020,15 @@ the latest-result slot, so `service.status` still reports it. On `initialize`,
 servers keep their drain, because they serve their own clients whether or not a desktop
 is attached.
 
+A `--listen` agent shares one `AgentServiceRegistry` across its connections, the way it
+shares its `SessionManager` (#3910). A service one connection started is still hosted
+when the next connects, which can query, stop or start it again. The registry counts
+attached clients, so a monitor idles only when the last one leaves. A handler counts
+itself once, in `initialize`, and uncounts itself once, on `deregister_client`. A
+`service.start` for an instance that is already running with the same config returns its
+status instead of failing, because a restarted desktop re-sends its starts. A `--stdio`
+agent builds its own registry, which ends with the process.
+
 ### Graphical Backend Parity: VNC Has No Audio (PROD-020)
 
 The two graphical backends share the framebuffer, input, clipboard and auto-reconnect
