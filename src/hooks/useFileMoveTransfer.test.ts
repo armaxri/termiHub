@@ -293,7 +293,25 @@ describe("useFileMoveTransfer", () => {
       expect(pasteEntry).not.toHaveBeenCalled();
     });
 
-    it("hands an unsupported remote → local paste to the local pane to report", async () => {
+    it("pastes a remote clipboard into a local folder after a conflict check (#3563)", async () => {
+      // "/home/u" remotely and locally are unrelated paths: no into-self guard.
+      mockClipboard = clip({
+        entries: [entry("/home/u", true)],
+        operation: "cut",
+        sourceMode: "session",
+        terminalSessionId: "ssh-1",
+      });
+      await mount();
+      await act(async () => {
+        await api.requestPaste("/home/u");
+      });
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(localListDir).toHaveBeenCalledWith("/home/u");
+      expect(pasteEntry).toHaveBeenCalledWith({ destDir: "/home/u" });
+    });
+
+    it("confirms a name clash before a remote → local paste", async () => {
+      vi.mocked(localListDir).mockResolvedValueOnce([entry("/home/u/a.txt")]);
       mockClipboard = clip({
         entries: [entry("/srv/a.txt")],
         sourceMode: "session",
@@ -303,8 +321,8 @@ describe("useFileMoveTransfer", () => {
       await act(async () => {
         await api.requestPaste("/home/u");
       });
-      expect(localListDir).not.toHaveBeenCalled();
-      expect(pasteEntry).toHaveBeenCalledWith();
+      expect(api.pendingConflict).toMatchObject({ conflicts: ["a.txt"], fromClipboard: true });
+      expect(pasteEntry).not.toHaveBeenCalled();
     });
 
     it("does nothing for a session pane that has no live session", async () => {

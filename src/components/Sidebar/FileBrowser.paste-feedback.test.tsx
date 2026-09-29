@@ -53,7 +53,13 @@ vi.mock("@/themes", () => ({
   onThemeChange: vi.fn(() => vi.fn()),
 }));
 
-vi.mock("@/services/events", () => ({
+const fsWriteFile = vi.fn((_path: string, _data: Uint8Array) => Promise.resolve());
+vi.mock("@tauri-apps/plugin-fs", () => ({
+  writeFile: (path: string, data: Uint8Array) => fsWriteFile(path, data),
+}));
+
+vi.mock("@/services/events", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/events")>()),
   onVscodeEditComplete: vi.fn(() => Promise.resolve(vi.fn())),
   onLocalDirChanged: vi.fn(() => Promise.resolve(vi.fn())),
 }));
@@ -261,8 +267,18 @@ describe("FileBrowser — plain Paste feedback (#3458)", () => {
     expect(calls("local_rename")).toEqual([]);
   });
 
-  it("reports an unsupported remote→local paste instead of doing nothing", async () => {
+  it("pastes a remote copy into the local folder with pending/success feedback (#3563)", async () => {
     await renderLocal();
+    mockedInvoke.mockImplementation((cmd: string, args?: InvokeArgs) => {
+      if (cmd === "local_list_dir") {
+        const path = (args as { path?: string } | undefined)?.path;
+        return Promise.resolve(path === "/home" ? homeEntries : []);
+      }
+      // A byte-based (agent) session: the paste owns its success toast.
+      if (cmd === "session_supports_transfer_queue") return Promise.resolve(false);
+      if (cmd === "session_read_file") return Promise.resolve("AQID");
+      return Promise.resolve(undefined);
+    });
     act(() => {
       useAppStore.getState().setFileClipboard({
         entries: [
@@ -283,9 +299,12 @@ describe("FileBrowser — plain Paste feedback (#3458)", () => {
       });
     });
     await clickPaste();
-    expect(toastError).toHaveBeenCalledWith(
-      "Pasting remote items into a local folder is not supported"
+    expect(calls("session_read_file")).toEqual([{ sessionId: "ssh-1", path: "/srv/r.txt" }]);
+    expect(fsWriteFile).toHaveBeenCalledWith("/home/r.txt", new Uint8Array([1, 2, 3]));
+    expect(toastError).not.toHaveBeenCalled();
+    expect(toastSuccess).toHaveBeenCalledWith(
+      'Pasted "r.txt" to /home',
+      expect.objectContaining({ id: "toast-id" })
     );
-    expect(toastSuccess).not.toHaveBeenCalled();
   });
 });

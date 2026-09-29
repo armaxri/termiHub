@@ -37,7 +37,6 @@ import {
   sessionRenameFile,
   sessionSupportsRemoteCopy,
   sessionSupportsTransferQueue,
-  sessionUpload,
   sessionWriteFile,
   type FolderPasteEndpoint,
   type FolderPasteOperation,
@@ -47,6 +46,7 @@ import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
 import type { FileEntry } from "@/types/connection";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
+import { startQueuedUpload, uploadLocalFile } from "@/services/paneTransfer";
 import { seedTransferQueueRow } from "./transferFeedback";
 
 /**
@@ -71,10 +71,9 @@ export function startSessionUpload(
   remotePath: string,
   pasteId?: string
 ): Promise<number> {
-  return sessionUpload(sessionId, localPath, remotePath, (transferId) => {
-    seedTransferQueueRow({ transferId, sessionId, direction: "upload", remotePath });
-    linkToFolderPaste(pasteId, transferId);
-  });
+  return startQueuedUpload(sessionId, localPath, remotePath, (transferId) =>
+    linkToFolderPaste(pasteId, transferId)
+  );
 }
 
 /**
@@ -172,19 +171,15 @@ export async function pasteFileLeg(
     }
     return tracked;
   }
-  // local→session: upload the local file to the remote destination.
-  if (t.destQueueCapable) {
-    // Queue-capable (SFTP/FTP/Docker): a tracked transfer on the rich queue
-    // engine (#2421, PROD-010).
-    await startSessionUpload(t.destSession, srcPath, destPath, t.pasteId);
-    return true;
-  }
-  // Byte-based fallback (remote-agent): blocking round-trip with no
-  // transfer-progress event.
-  const { readFile } = await import("@tauri-apps/plugin-fs");
-  const data = await readFile(srcPath);
-  await sessionWriteFile(t.destSession, destPath, data);
-  return false;
+  // local→session: the same per-leg upload as the dual-pane transfer view
+  // (#3563) — a queued transfer on a queue-capable (SFTP/FTP/Docker) session,
+  // a blocking byte round-trip on a remote agent.
+  return uploadLocalFile(
+    { sessionId: t.destSession, queueCapable: t.destQueueCapable },
+    srcPath,
+    destPath,
+    (transferId) => linkToFolderPaste(t.pasteId, transferId)
+  );
 }
 
 /**

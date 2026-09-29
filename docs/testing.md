@@ -3397,6 +3397,23 @@ tests mock.
    the connection and pick it from the **Remote connection** picker → the pane
    lists it again.
 
+### Remote → local paste in the file browser (#3563)
+
+Covers real downloads, which the unit tests mock.
+
+1. Open an SSH session and its file browser. Right-click a remote file →
+   **Copy**. Switch the file browser to the local disk, open a folder and
+   **Paste** → a `Pasting "<file>"…` toast and a Transfer Queue row appear;
+   when it finishes the file is listed in the local folder.
+2. Copy a remote folder that has a nested subfolder and paste it locally → one
+   row per file appears and the whole tree lands in the local folder.
+3. **Cut** a remote file and paste it locally → it appears locally and is
+   gone from the remote folder once the download finished.
+4. Paste the same file again → a **Paste and Replace?** dialog appears.
+   **Cancel** leaves the local file untouched.
+5. Repeat step 1 on a remote-agent session → a `Pasted "<file>"` success
+   toast appears (no Transfer Queue row: agents copy bytes directly).
+
 ### File browser drag-out to the OS file manager (#3457)
 
 Covers the native OS drag, which unit tests can only exercise with the drag

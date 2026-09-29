@@ -16,6 +16,7 @@ const api = vi.hoisted(() => ({
   sessionListFiles: vi.fn(),
   localMkdir: vi.fn(),
   localListDir: vi.fn(),
+  sessionSupportsTransferQueue: vi.fn(),
 }));
 vi.mock("@/services/api", () => api);
 
@@ -35,7 +36,13 @@ const feedback = vi.hoisted(() => ({
 }));
 vi.mock("@/hooks/transferFeedback", () => feedback);
 
-import { copyBetweenPanes } from "./paneTransfer";
+import {
+  copyBetweenPanes,
+  copyPaneEntry,
+  downloadToLocal,
+  probePaneRemote,
+  uploadLocalFile,
+} from "./paneTransfer";
 
 function file(path: string): FileEntry {
   const name = path.split("/").pop()!;
@@ -172,5 +179,52 @@ describe("copyBetweenPanes", () => {
     });
     expect(ok).toBe(false);
     expect(api.sessionUpload).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("shared per-leg helpers (#3563)", () => {
+  it("uploadLocalFile seeds the queue row and hands the transfer id on", async () => {
+    const onRegistered = vi.fn();
+    const tracked = await uploadLocalFile(queued, "/l/a", "/r/a", onRegistered);
+    expect(tracked).toBe(true);
+    expect(feedback.seedTransferQueueRow).toHaveBeenCalledWith({
+      transferId: "t-up",
+      sessionId: "s1",
+      direction: "upload",
+      remotePath: "/r/a",
+    });
+    expect(onRegistered).toHaveBeenCalledWith("t-up");
+  });
+
+  it("uploadLocalFile falls back to a byte write and reports it untracked", async () => {
+    fs.readFile.mockResolvedValue(new Uint8Array([3]));
+    const tracked = await uploadLocalFile(byteBased, "/l/a", "/r/a");
+    expect(tracked).toBe(false);
+    expect(api.sessionWriteFile).toHaveBeenCalledWith("s1", "/r/a", new Uint8Array([3]));
+  });
+
+  it("downloadToLocal seeds a download row on a queue-capable session", async () => {
+    const tracked = await downloadToLocal(queued, "/r/b", "/l/b");
+    expect(tracked).toBe(true);
+    expect(feedback.seedTransferQueueRow).toHaveBeenCalledWith({
+      transferId: "t-down",
+      sessionId: "s1",
+      direction: "download",
+      remotePath: "/r/b",
+    });
+  });
+
+  it("copyPaneEntry copies one entry without its own toast", async () => {
+    const tracked = await copyPaneEntry("remote", file("/r/c"), "/l", queued);
+    expect(tracked).toBe(true);
+    expect(api.sessionDownload.mock.calls.map((c) => c[2])).toEqual(["/l/c"]);
+    expect(feedback.runMaybeTrackedTransfer).not.toHaveBeenCalled();
+  });
+
+  it("probePaneRemote reads the queue capability, a failed probe meaning byte-based", async () => {
+    api.sessionSupportsTransferQueue.mockResolvedValueOnce(true);
+    expect(await probePaneRemote("s9")).toEqual({ sessionId: "s9", queueCapable: true });
+    api.sessionSupportsTransferQueue.mockRejectedValueOnce(new Error("gone"));
+    expect(await probePaneRemote("s9")).toEqual({ sessionId: "s9", queueCapable: false });
   });
 });
