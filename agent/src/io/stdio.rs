@@ -126,7 +126,7 @@ pub async fn run_stdio_loop(
 
     // The single client for this process has disconnected — clear it from the
     // registry before propagating any transport error.
-    handler.deregister_client();
+    handler.deregister_client().await;
     // Best-effort hygiene: this process's token dies with it.
     if let Some(auth) = &update_auth {
         auth.remove_token_file();

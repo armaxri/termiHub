@@ -10,6 +10,20 @@
 //! slot so `service.status` can report the streamed [`ServerState`] without the
 //! desktop having to subscribe.
 //!
+//! # Idle while no desktop is attached (#3896)
+//!
+//! That drain task is itself a subscriber, and the HTTP monitor's poll loop only
+//! checks while something subscribes to its events (the core observer gate,
+//! PERF-008). A permanent drain would keep an agent-hosted monitor checking
+//! while no desktop is connected, with every result but the last discarded. So
+//! the registry tracks whether a client is attached:
+//! [`detach_client`](AgentServiceRegistry::detach_client) drops the drain of every
+//! service that idles when unobserved, which idles its poll loop while keeping
+//! the last result for `service.status`;
+//! [`attach_client`](AgentServiceRegistry::attach_client) re-subscribes, and the
+//! loop checks again within one interval. Embedded servers keep their drain:
+//! they serve clients whether or not a desktop watches.
+//!
 //! [`ServerState`]: termihub_core::embedded_servers::config::ServerState
 
 use std::collections::HashMap;
@@ -17,6 +31,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use serde_json::Value;
 use termihub_core::embedded_servers::activity::ActivitySnapshot;
+use termihub_core::monitoring::http_monitor::SERVICE_ID as HTTP_MONITOR_SERVICE_ID;
 use termihub_core::service::{
     drain_broadcast, Service, ServiceError, ServiceEvent, ServiceInfo, ServiceRegistry,
     ServiceStatus,
@@ -30,8 +45,45 @@ struct RunningService {
     /// Latest status payload emitted on the service's `EventChannel` (the
     /// `ServerState` JSON), captured by `bridge`.
     latest: Arc<StdMutex<Option<Value>>>,
-    /// Task draining the `EventChannel` into `latest`; aborted on stop.
-    bridge: JoinHandle<()>,
+    /// Task draining the `EventChannel` into `latest`; aborted on stop. `None`
+    /// while the service is idled because no client is attached (#3896).
+    bridge: Option<JoinHandle<()>>,
+    /// Whether the service does no work while nothing subscribes to its events,
+    /// so its drain is dropped while no client is attached (#3896).
+    idles_when_unobserved: bool,
+}
+
+impl RunningService {
+    /// Abort the drain task and wait for it to end, so its subscription is gone
+    /// by the time this returns.
+    async fn drop_bridge(&mut self) {
+        if let Some(bridge) = self.bridge.take() {
+            bridge.abort();
+            // An aborted task resolves to a cancellation error; nothing to report.
+            let _ = bridge.await;
+        }
+    }
+}
+
+/// Whether service type `service_id` does no work while nothing subscribes to
+/// its events. Only the HTTP monitor: its poll loop is gated on a subscriber
+/// (PERF-008), while an embedded server serves its clients regardless.
+fn idles_when_unobserved(service_id: &str) -> bool {
+    service_id == HTTP_MONITOR_SERVICE_ID
+}
+
+/// Spawn the task that drains `service`'s event channel into `latest`.
+fn spawn_bridge(service: &dyn Service, latest: &Arc<StdMutex<Option<Value>>>) -> JoinHandle<()> {
+    let rx = service.subscribe_events();
+    let latest = Arc::clone(latest);
+    tokio::spawn(async move {
+        drain_broadcast(rx, move |ServiceEvent { payload, .. }| {
+            if let Ok(mut slot) = latest.lock() {
+                *slot = Some(payload);
+            }
+        })
+        .await;
+    })
 }
 
 /// A snapshot of a running service's state, returned by `service.status`.
@@ -84,18 +136,10 @@ impl AgentServiceRegistry {
         let mut service = self.factories.create(service_id)?;
 
         // Subscribe before starting so the bridge cannot miss the first
-        // Starting/Running transitions.
+        // Starting/Running transitions. A start always comes from a client's
+        // RPC, so that client is attached and the service is observed.
         let latest = Arc::new(StdMutex::new(None));
-        let rx = service.subscribe_events();
-        let latest_for_task = Arc::clone(&latest);
-        let bridge = tokio::spawn(async move {
-            drain_broadcast(rx, move |ServiceEvent { payload, .. }| {
-                if let Ok(mut slot) = latest_for_task.lock() {
-                    *slot = Some(payload);
-                }
-            })
-            .await;
-        });
+        let bridge = spawn_bridge(service.as_ref(), &latest);
 
         if let Err(e) = service.start(config).await {
             bridge.abort();
@@ -109,7 +153,8 @@ impl AgentServiceRegistry {
             RunningService {
                 service,
                 latest,
-                bridge,
+                bridge: Some(bridge),
+                idles_when_unobserved: idles_when_unobserved(service_id),
             },
         );
         Ok(ServiceStatusSnapshot { status, state })
@@ -120,7 +165,7 @@ impl AgentServiceRegistry {
         let mut running = self.running.lock().await;
         if let Some(mut rs) = running.remove(instance_id) {
             let _ = rs.service.stop().await;
-            rs.bridge.abort();
+            rs.drop_bridge().await;
             true
         } else {
             false
@@ -202,6 +247,14 @@ impl AgentServiceRegistry {
             .and_then(|rs| rs.service.local_addr())
     }
 
+    /// Whether instance `instance_id`'s events are currently drained (so a
+    /// monitor is observed and checking), or `None` when it is not hosted.
+    #[cfg(test)]
+    pub async fn is_observed(&self, instance_id: &str) -> Option<bool> {
+        let running = self.running.lock().await;
+        running.get(instance_id).map(|rs| rs.bridge.is_some())
+    }
+
     /// Number of currently-hosted instances.
     #[cfg(test)]
     pub async fn active_count(&self) -> usize {
@@ -214,7 +267,37 @@ impl AgentServiceRegistry {
         let mut running = self.running.lock().await;
         for (_id, mut rs) in running.drain() {
             let _ = rs.service.stop().await;
-            rs.bridge.abort();
+            rs.drop_bridge().await;
+        }
+    }
+
+    /// The client has gone (#3896): idle every hosted service that does no work
+    /// while unobserved, by dropping its event drain.
+    ///
+    /// Its poll loop then makes no checks, while `status` keeps reporting the
+    /// last result drained before the detach. Services that serve regardless (the
+    /// embedded servers) are untouched. Idempotent.
+    pub async fn detach_client(&self) {
+        let mut running = self.running.lock().await;
+        for rs in running.values_mut() {
+            if rs.idles_when_unobserved {
+                rs.drop_bridge().await;
+            }
+        }
+    }
+
+    /// A client has attached (#3896): re-subscribe every service idled by
+    /// [`detach_client`](Self::detach_client).
+    ///
+    /// The core poll loop re-evaluates its observer gate every interval, so an
+    /// idled monitor checks again within one interval; until then `status`
+    /// reports the last cached result. Idempotent.
+    pub async fn attach_client(&self) {
+        let mut running = self.running.lock().await;
+        for rs in running.values_mut() {
+            if rs.bridge.is_none() {
+                rs.bridge = Some(spawn_bridge(rs.service.as_ref(), &rs.latest));
+            }
         }
     }
 }
@@ -520,7 +603,10 @@ mod tests {
         reg.attach_client().await;
         reg.attach_client().await;
         reg.detach_client().await;
-        assert!(reg.stop("mon-1").await, "an idle monitor can still be stopped");
+        assert!(
+            reg.stop("mon-1").await,
+            "an idle monitor can still be stopped"
+        );
         assert_eq!(reg.active_count().await, 0);
         reg.attach_client().await;
     }
