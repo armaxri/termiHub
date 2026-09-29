@@ -87,6 +87,9 @@ impl DynamicForwarder {
 
         let (death_tx, death_rx) = tokio::sync::oneshot::channel();
         let task_handle = tokio::spawn(async move {
+            // Bound before the accept-loop future, so it is dropped after it: the
+            // signal fires only once the listener (owned by that future) is closed,
+            // which teardown tests rely on instead of probing the freed port (#3551).
             let _death = death_tx;
             Self::accept_loop(listener, opener, stats_clone).await;
         });
@@ -616,25 +619,24 @@ mod tests {
 
     #[tokio::test]
     async fn teardown_closes_the_listener() {
-        let forwarder =
+        let mut forwarder =
             DynamicForwarder::start_with_opener(&ephemeral_config(), EchoChannelOpener::new())
                 .expect("start forwarder");
         let addr = forwarder.local_addr();
+        let death = forwarder.take_death_signal().expect("death signal");
         TcpStream::connect(addr)
             .await
             .expect("connect while active");
 
         drop(forwarder);
 
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
-        loop {
-            match TcpStream::connect(addr).await {
-                Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => break,
-                _ if tokio::time::Instant::now() >= deadline => {
-                    panic!("listener still accepting after teardown");
-                }
-                _ => tokio::time::sleep(Duration::from_millis(10)).await,
-            }
-        }
+        // The death signal fires only once the accept task's future — which owns
+        // the listener — has been dropped, so awaiting it proves the listener
+        // closed without probing the freed port, which a concurrent test's
+        // port-0 bind may already have re-taken (#3551).
+        tokio::time::timeout(Duration::from_secs(3), death)
+            .await
+            .expect("accept task (and its listener) should end after teardown")
+            .expect_err("the death signal resolves by its sender dropping");
     }
 }

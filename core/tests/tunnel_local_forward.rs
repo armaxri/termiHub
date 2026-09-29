@@ -94,9 +94,10 @@ async fn local_forward_stops_on_teardown() {
         remote_host: "localhost".to_string(),
         remote_port: 8080,
     };
-    let forwarder =
+    let mut forwarder =
         LocalForwarder::start(&forward, Arc::new(session)).expect("bind local forwarder");
     let listen_port = forwarder.local_addr().port();
+    let death = forwarder.take_death_signal().expect("death signal");
 
     TcpStream::connect(("127.0.0.1", listen_port))
         .await
@@ -104,14 +105,12 @@ async fn local_forward_stops_on_teardown() {
 
     drop(forwarder);
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
-    loop {
-        match TcpStream::connect(("127.0.0.1", listen_port)).await {
-            Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => break,
-            _ if tokio::time::Instant::now() >= deadline => {
-                panic!("listener still accepting after teardown")
-            }
-            _ => tokio::time::sleep(Duration::from_millis(20)).await,
-        }
-    }
+    // The death signal fires only once the accept task — which owns the listen
+    // socket — has been dropped. Awaiting it proves the listener closed without
+    // probing the freed port, which a concurrent test's port-0 bind may already
+    // have re-taken (#3551).
+    tokio::time::timeout(Duration::from_secs(3), death)
+        .await
+        .expect("accept task (and its listener) should end after teardown")
+        .expect_err("the death signal resolves by its sender dropping");
 }

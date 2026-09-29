@@ -320,6 +320,23 @@ impl AgentTunnelRegistry {
         self.tunnels.lock().await.len()
     }
 
+    /// Take a running tunnel's forwarder-death receiver (once).
+    ///
+    /// Resolves only after the forwarder's accept task — and the listen socket it
+    /// owns — has been dropped, so tests can assert a stop actually closed the
+    /// listener without probing the freed port (#3551).
+    #[cfg(test)]
+    pub async fn take_death_signal(
+        &self,
+        tunnel_id: &str,
+    ) -> Option<tokio::sync::oneshot::Receiver<()>> {
+        self.tunnels
+            .lock()
+            .await
+            .get_mut(tunnel_id)
+            .and_then(|t| t.forwarder.take_death_signal())
+    }
+
     /// Stop every running tunnel (used on agent shutdown).
     pub async fn stop_all(&self) {
         self.tunnels.lock().await.clear();
@@ -567,18 +584,19 @@ mod tests {
         );
 
         // Stopping removes the forward and frees the port.
+        // Assert the listener closed via the forwarder's death signal, not by
+        // probing the freed port: a concurrent test's port-0 bind may already
+        // have re-taken it (#3551).
+        let death = registry
+            .take_death_signal("t-http")
+            .await
+            .expect("death signal");
         assert!(registry.stop("t-http").await);
         assert_eq!(registry.active_count().await, 0);
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
-        loop {
-            match TcpStream::connect(("127.0.0.1", listen_port)).await {
-                Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => break,
-                _ if tokio::time::Instant::now() >= deadline => {
-                    panic!("agent forward still accepting after stop")
-                }
-                _ => tokio::time::sleep(Duration::from_millis(20)).await,
-            }
-        }
+        tokio::time::timeout(Duration::from_secs(3), death)
+            .await
+            .expect("forwarder (and its listener) should end after stop")
+            .expect_err("the death signal resolves by its sender dropping");
     }
 
     /// Full end-to-end start of an agent-hosted **remote** (`-R`) forward against
@@ -840,17 +858,18 @@ mod tests {
         );
 
         // Stopping removes the forward and frees the SOCKS listen port.
+        // Assert the listener closed via the forwarder's death signal, not by
+        // probing the freed port: a concurrent test's port-0 bind may already
+        // have re-taken it (#3551).
+        let death = registry
+            .take_death_signal("t-socks")
+            .await
+            .expect("death signal");
         assert!(registry.stop("t-socks").await);
         assert_eq!(registry.active_count().await, 0);
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
-        loop {
-            match TcpStream::connect(("127.0.0.1", listen_port)).await {
-                Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => break,
-                _ if tokio::time::Instant::now() >= deadline => {
-                    panic!("agent SOCKS forward still accepting after stop")
-                }
-                _ => tokio::time::sleep(Duration::from_millis(20)).await,
-            }
-        }
+        tokio::time::timeout(Duration::from_secs(3), death)
+            .await
+            .expect("forwarder (and its listener) should end after stop")
+            .expect_err("the death signal resolves by its sender dropping");
     }
 }

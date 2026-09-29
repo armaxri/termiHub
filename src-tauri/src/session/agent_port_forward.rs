@@ -234,7 +234,9 @@ pub struct AgentPortForward {
     local_port: u16,
     last_error: ForwardErrorSlot,
     cancel: CancellationToken,
-    accept_task: JoinHandle<()>,
+    /// Owns the listener. `Option` only so a test can take it out of this
+    /// `Drop` type and await its end (see `drop_and_take_accept_task`).
+    accept_task: Option<JoinHandle<()>>,
 }
 
 impl std::fmt::Debug for AgentPortForward {
@@ -292,7 +294,7 @@ impl AgentPortForward {
             local_port,
             last_error,
             cancel,
-            accept_task,
+            accept_task: Some(accept_task),
         })
     }
 
@@ -314,12 +316,26 @@ impl AgentPortForward {
     pub fn error_slot(&self) -> ForwardErrorSlot {
         self.last_error.clone()
     }
+
+    /// Drop the forward exactly as production does (cancel + abort) and hand
+    /// back its accept task. The handle resolves only once the task's future —
+    /// which owns the listener — has been dropped, so a test can assert the
+    /// listener closed without probing the freed port, which a concurrent
+    /// test's port-0 bind may already have re-taken (#3551).
+    #[cfg(test)]
+    pub(crate) fn drop_and_take_accept_task(mut self) -> JoinHandle<()> {
+        let task = self.accept_task.take().expect("accept task present");
+        task.abort();
+        task
+    }
 }
 
 impl Drop for AgentPortForward {
     fn drop(&mut self) {
         self.cancel.cancel();
-        self.accept_task.abort();
+        if let Some(task) = self.accept_task.take() {
+            task.abort();
+        }
     }
 }
 
