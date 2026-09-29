@@ -1779,6 +1779,59 @@ pub struct DockerListContainersResult {
     pub containers: Vec<DockerContainerEntry>,
 }
 
+// ── connection.exit / connection.error (notification payloads) ─────
+
+/// Notification (agent → desktop): a session reported an error (#3759).
+/// Params: [`ConnectionErrorNotification`].
+pub const CONNECTION_ERROR: &str = "connection.error";
+
+/// Payload of a [`CONNECTION_EXIT`] notification (agent → desktop, #3759).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConnectionExitNotification {
+    pub session_id: String,
+    /// Process exit code; serialized as `null` when the backend reports none.
+    pub exit_code: Option<i32>,
+}
+
+/// Payload of a [`CONNECTION_ERROR`] notification (agent → desktop, #3759).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConnectionErrorNotification {
+    pub session_id: String,
+    /// Human-readable error message.
+    pub message: String,
+}
+
+// ── Zero-copy params for the hot output paths (#3759) ──────────────
+//
+// `serde_json::to_value(&dto)` copies every string into the resulting `Value`,
+// which for `connection.output` / `agent.forward.data` means a second copy of
+// each base64 chunk. These two DTOs sit on per-chunk paths, so they convert by
+// *moving* their fields into the params object instead. The wire shape is still
+// the derive's: `hot_path_into_params_matches_the_derived_serialization` pins
+// each conversion byte-for-byte against `serde_json::to_value`.
+
+impl ConnectionOutputNotification {
+    /// Build the notification params, moving the (large) `data` string rather
+    /// than copying it. Byte-identical to `serde_json::to_value(&self)`.
+    pub fn into_params(self) -> Value {
+        let mut map = serde_json::Map::new();
+        map.insert("session_id".to_owned(), Value::String(self.session_id));
+        map.insert("data".to_owned(), Value::String(self.data));
+        Value::Object(map)
+    }
+}
+
+impl AgentForwardDataParams {
+    /// Build the notification params, moving the (large) `data` string rather
+    /// than copying it. Byte-identical to `serde_json::to_value(&self)`.
+    pub fn into_params(self) -> Value {
+        let mut map = serde_json::Map::new();
+        map.insert("stream_id".to_owned(), Value::String(self.stream_id));
+        map.insert("data".to_owned(), Value::String(self.data));
+        Value::Object(map)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4112,5 +4165,52 @@ mod tests {
         let v = serde_json::to_value(&d).unwrap();
         assert_eq!(v["host"], "self");
         assert_eq!(v["hostname"], "myhost");
+    }
+    #[test]
+    fn hot_path_into_params_matches_the_derived_serialization() {
+        for (sid, data) in [("s-1", "aGk="), ("", ""), ("sess \"q\" é", "AAAA/+==")] {
+            let n = ConnectionOutputNotification {
+                session_id: sid.to_owned(),
+                data: data.to_owned(),
+            };
+            let derived = serde_json::to_string(&serde_json::to_value(&n).unwrap()).unwrap();
+            assert_eq!(n.into_params().to_string(), derived);
+
+            let f = AgentForwardDataParams {
+                stream_id: sid.to_owned(),
+                data: data.to_owned(),
+            };
+            let derived = serde_json::to_string(&serde_json::to_value(&f).unwrap()).unwrap();
+            assert_eq!(f.into_params().to_string(), derived);
+        }
+    }
+
+    #[test]
+    fn exit_and_error_notifications_match_the_agent_wire_shapes() {
+        assert_eq!(CONNECTION_ERROR, "connection.error");
+        let exit = ConnectionExitNotification {
+            session_id: "s-1".to_owned(),
+            exit_code: Some(3),
+        };
+        assert_eq!(
+            serde_json::to_value(&exit).unwrap(),
+            json!({ "session_id": "s-1", "exit_code": 3 })
+        );
+        let exit = ConnectionExitNotification {
+            session_id: "s-1".to_owned(),
+            exit_code: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&exit).unwrap(),
+            json!({ "session_id": "s-1", "exit_code": null })
+        );
+        let err = ConnectionErrorNotification {
+            session_id: "s-1".to_owned(),
+            message: "boom".to_owned(),
+        };
+        assert_eq!(
+            serde_json::to_value(&err).unwrap(),
+            json!({ "session_id": "s-1", "message": "boom" })
+        );
     }
 }
