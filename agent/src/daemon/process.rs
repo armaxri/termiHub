@@ -1538,6 +1538,9 @@ pub(crate) mod tests {
     /// The daemon's half of the session heartbeat (#3140).
     mod heartbeat_tests;
 
+    /// Bounded writes to the attached worker (#3890).
+    mod write_bound_tests;
+
     // ── AGT-015: owner-scoped recovery guard ────────────────────────────
     //
     // These drive the real `daemon_loop` over a real endpoint with real
