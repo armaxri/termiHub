@@ -1077,6 +1077,10 @@ fn decide_attach(writer_attached: bool, intent: u8) -> AttachDecision {
     }
 }
 
+/// How long a newcomer has to declare its [`MSG_ATTACH_INTENT`] before it is
+/// treated as a pre-AGT-015 worker (which never sends one).
+const ATTACH_INTENT_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// Read a newly-connected worker's [`MSG_ATTACH_INTENT`] to learn whether it is
 /// a recovery connect (refuse if a live writer is attached) or a takeover.
 ///
@@ -1086,8 +1090,7 @@ fn decide_attach(writer_attached: bool, intent: u8) -> AttachDecision {
 /// arrive within a short window (a pre-AGT-015 worker never sends it). The short
 /// timeout also bounds how long the daemon's event loop can stall here.
 async fn read_attach_intent(reader: &mut BoxedReader) -> u8 {
-    const INTENT_TIMEOUT: Duration = Duration::from_secs(2);
-    match tokio::time::timeout(INTENT_TIMEOUT, protocol::read_frame_async(reader)).await {
+    match tokio::time::timeout(ATTACH_INTENT_TIMEOUT, protocol::read_frame_async(reader)).await {
         Ok(Ok(Some(frame))) if frame.msg_type == MSG_ATTACH_INTENT => {
             frame.payload.first().copied().unwrap_or(INTENT_TAKEOVER)
         }
@@ -1532,6 +1535,9 @@ pub(crate) mod tests {
 
     /// Bounded writes to the attached worker (#3890).
     mod write_bound_tests;
+
+    /// The attach intent is read off the loop, and a slow one is honoured (#3928).
+    mod attach_intent_tests;
 
     // ── AGT-015: owner-scoped recovery guard ────────────────────────────
     //
