@@ -1,4 +1,9 @@
 import { describe, it, expect } from "vitest";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   classify,
   allAreas,
@@ -6,7 +11,16 @@ import {
   formatOutputs,
   findCommentOnlyRust,
   isNarrowableRustSource,
+  hasSkipTestsTag,
+  skipTestsRequested,
+  skipTestsNote,
+  skipTestsBlockers,
+  resolveSkipTests,
+  skipTestsIgnoredNote,
+  SKIP_TESTS_TAG,
 } from "./ci-changes.mjs";
+
+const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "ci-changes.mjs");
 
 const on = (flags) => Object.keys(flags).filter((k) => flags[k]);
 
@@ -222,5 +236,223 @@ describe("formatOutputs", () => {
     expect(out).toContain("agent=false\n");
     expect(out).toContain("workflows=false\n");
     expect(out).toContain('test_matrix=["ubuntu-latest"]\n');
+  });
+
+  it("reports tests=true by default and keeps the matrix", () => {
+    const out = formatOutputs(classify(["core/src/lib.rs"]), true);
+    expect(out).toContain("tests=true\n");
+    expect(out).toContain('test_matrix=["ubuntu-latest","windows-latest"]\n');
+  });
+
+  it("under [skip-tests] reports tests=false and an empty matrix, areas unchanged", () => {
+    const out = formatOutputs(classify(["core/src/lib.rs"]), true, { skipTests: true });
+    expect(out).toContain("tests=false\n");
+    expect(out).toContain("test_matrix=[]\n");
+    // Quality/lint/rustdoc jobs still see their areas.
+    expect(out).toContain("rust=true\n");
+    expect(out).toContain("rustdoc=true\n");
+  });
+});
+
+describe("[skip-tests] tag (#3915)", () => {
+  // A fake git that answers `log -1 --format=%B <sha> --` from a sha->message map.
+  const fakeGit = (messages) => (args) => {
+    expect(args.slice(0, 3)).toEqual(["log", "-1", "--format=%B"]);
+    const sha = args[3];
+    if (!(sha in messages)) throw new Error(`unknown revision ${sha}`);
+    return messages[sha];
+  };
+  const HEAD = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const OLDER = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+  it("matches the exact tag anywhere in the message", () => {
+    expect(hasSkipTestsTag("docs: fix typo [skip-tests]")).toBe(true);
+    expect(hasSkipTestsTag("style: reflow\n\n[skip-tests]\n")).toBe(true);
+    expect(hasSkipTestsTag("docs: fix typo")).toBe(false);
+    expect(hasSkipTestsTag("docs: [skip tests] [skip-test]")).toBe(false);
+    expect(hasSkipTestsTag(undefined)).toBe(false);
+    expect(SKIP_TESTS_TAG).toBe("[skip-tests]");
+  });
+
+  it("skips when the PR head commit carries the tag", () => {
+    const git = fakeGit({ [HEAD]: "docs: reword comment [skip-tests]\n", [OLDER]: "feat: x\n" });
+    expect(skipTestsRequested({ eventName: "pull_request", headSha: HEAD, git })).toBe(true);
+  });
+
+  it("does not skip when only an older commit carries the tag", () => {
+    const git = fakeGit({ [HEAD]: "fix: real change\n", [OLDER]: "docs: typo [skip-tests]\n" });
+    expect(skipTestsRequested({ eventName: "pull_request", headSha: HEAD, git })).toBe(false);
+  });
+
+  it("ignores the tag on push, schedule and dispatch events", () => {
+    const git = fakeGit({ [HEAD]: "docs: typo [skip-tests]\n" });
+    for (const eventName of ["push", "schedule", "workflow_dispatch", "workflow_call", undefined]) {
+      expect(skipTestsRequested({ eventName, headSha: HEAD, git })).toBe(false);
+    }
+  });
+
+  it("fails open (runs tests) without a head sha, on an unsafe rev, or on a git error", () => {
+    const git = fakeGit({ [HEAD]: "docs: typo [skip-tests]\n" });
+    expect(skipTestsRequested({ eventName: "pull_request", headSha: "", git })).toBe(false);
+    expect(skipTestsRequested({ eventName: "pull_request", headSha: "--output=x", git })).toBe(
+      false
+    );
+    expect(skipTestsRequested({ eventName: "pull_request", headSha: OLDER, git })).toBe(false);
+  });
+
+  it("is ignored when the PR changes CI itself (.github or detection/gate scripts)", () => {
+    const git = fakeGit({ [HEAD]: "style: reflow [skip-tests]\n" });
+    const blocking = [
+      ".github/workflows/code-quality.yml",
+      ".github/actions/detect-changes/action.yml",
+      "scripts/internal/ci-changes.mjs",
+      "scripts/internal/ci-changes.test.mjs",
+      "scripts/internal/rust-comment-diff.mjs",
+      "scripts/internal/rust-comment-diff.test.mjs",
+      "scripts/internal/ci-rust-tests.sh",
+      "scripts/internal/pr-gate.mjs",
+      "scripts/internal/pr-gate.test.mjs",
+    ];
+    for (const path of blocking) {
+      const paths = ["core/src/lib.rs", path];
+      expect(skipTestsBlockers(paths)).toEqual([path]);
+      expect(resolveSkipTests({ eventName: "pull_request", headSha: HEAD, paths, git })).toEqual({
+        skip: false,
+        requested: true,
+        blockedBy: [path],
+      });
+    }
+    // Other scripts/internal helpers and ordinary code do not block it.
+    const paths = ["core/src/lib.rs", "scripts/internal/bundle-size.mjs", "docs/a.md"];
+    expect(skipTestsBlockers(paths)).toEqual([]);
+    expect(resolveSkipTests({ eventName: "pull_request", headSha: HEAD, paths, git }).skip).toBe(
+      true
+    );
+    expect(skipTestsIgnoredNote([".github/x.yml"])).toBe(
+      "[skip-tests] ignored: this PR changes CI (.github/x.yml); running every lane"
+    );
+  });
+
+  it("names the sha in the job-summary note", () => {
+    expect(skipTestsNote(HEAD)).toBe(`tests skipped by [skip-tests] on ${HEAD}`);
+  });
+
+  // End to end against a real git repo shaped like a pull_request checkout: HEAD
+  // is the synthetic merge commit, HEAD^1 the base tip, HEAD^2 the PR head.
+  describe("CLI against a simulated PR merge commit", () => {
+    const git = (cwd, ...args) =>
+      execFileSync("git", args, {
+        cwd,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "t",
+          GIT_AUTHOR_EMAIL: "t@example.com",
+          GIT_COMMITTER_NAME: "t",
+          GIT_COMMITTER_EMAIL: "t@example.com",
+        },
+      }).trim();
+
+    /** Build base -> PR commits (messages in order) -> merge commit; returns the dir. */
+    const makePr = (messages) => {
+      const dir = mkdtempSync(path.join(tmpdir(), "ci-changes-skip-"));
+      git(dir, "init", "-q", "-b", "develop");
+      git(dir, "config", "commit.gpgsign", "false");
+      writeFileSync(path.join(dir, "base.txt"), "base\n");
+      git(dir, "add", ".");
+      git(dir, "commit", "-q", "--no-verify", "-m", "chore: base");
+      git(dir, "checkout", "-q", "-b", "pr");
+      messages.forEach((message, i) => {
+        writeFileSync(path.join(dir, `f${i}.rs`), `// ${i}\n`);
+        git(dir, "add", ".");
+        git(dir, "commit", "-q", "--no-verify", "-m", message);
+      });
+      git(dir, "checkout", "-q", "develop");
+      writeFileSync(path.join(dir, "develop.txt"), "moved on\n");
+      git(dir, "add", ".");
+      git(dir, "commit", "-q", "--no-verify", "-m", "chore: develop advanced");
+      // Even a tagged merge-commit message must not count: only the PR head does.
+      git(dir, "merge", "-q", "--no-ff", "--no-verify", "-m", "Merge pr [skip-tests]", "pr");
+      return dir;
+    };
+
+    const run = (dir, args) => {
+      const summary = path.join(dir, "summary.md");
+      writeFileSync(summary, "");
+      const res = spawnSync(process.execPath, [SCRIPT, ...args], {
+        cwd: dir,
+        input: "core/src/lib.rs\n",
+        encoding: "utf8",
+        env: { ...process.env, GITHUB_STEP_SUMMARY: summary },
+      });
+      expect(res.status).toBe(0);
+      return { out: res.stdout, summary: readFileSync(summary, "utf8"), stderr: res.stderr };
+    };
+
+    it("skips when the PR head (HEAD^2 / head.sha) is tagged, and says so", () => {
+      const dir = makePr(["feat: real change", "docs: reword comment [skip-tests]"]);
+      try {
+        const headSha = git(dir, "rev-parse", "HEAD^2");
+        for (const rev of [headSha, "HEAD^2"]) {
+          const { out, summary } = run(dir, ["--event", "pull_request", "--head-sha", rev]);
+          expect(out).toContain("tests=false\n");
+          expect(out).toContain("test_matrix=[]\n");
+          expect(out).toContain("rust=true\n");
+          expect(summary).toContain(`tests skipped by [skip-tests] on ${rev}`);
+        }
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("runs everything when only an older PR commit is tagged", () => {
+      const dir = makePr(["docs: reword comment [skip-tests]", "fix: real change"]);
+      try {
+        const headSha = git(dir, "rev-parse", "HEAD^2");
+        const { out, summary } = run(dir, ["--event", "pull_request", "--head-sha", headSha]);
+        expect(out).toContain("tests=true\n");
+        expect(out).toContain('test_matrix=["ubuntu-latest","windows-latest"]\n');
+        expect(summary).toBe("");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("ignores the tag, with a notice, when the PR changes CI", () => {
+      const dir = makePr(["style: reflow [skip-tests]"]);
+      try {
+        const summary = path.join(dir, "summary.md");
+        writeFileSync(summary, "");
+        const res = spawnSync(
+          process.execPath,
+          [SCRIPT, "--event", "pull_request", "--head-sha", "HEAD^2"],
+          {
+            cwd: dir,
+            input: "core/src/lib.rs\n.github/workflows/build.yml\n",
+            encoding: "utf8",
+            env: { ...process.env, GITHUB_STEP_SUMMARY: summary },
+          }
+        );
+        expect(res.status).toBe(0);
+        expect(res.stdout).toContain("tests=true\n");
+        expect(res.stderr).toContain("[skip-tests] ignored: this PR changes CI");
+        expect(readFileSync(summary, "utf8")).toContain("[skip-tests] ignored");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("ignores the tag on a push event and never reads the merge commit", () => {
+      const dir = makePr(["docs: reword comment [skip-tests]"]);
+      try {
+        const headSha = git(dir, "rev-parse", "HEAD^2");
+        expect(run(dir, ["--event", "push", "--head-sha", headSha]).out).toContain("tests=true\n");
+        // HEAD is the merge commit; its own "[skip-tests]" is irrelevant — the
+        // action always passes the PR head, and --all (non-PR events) never skips.
+        expect(run(dir, ["--all"]).out).toContain("tests=true\n");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 });

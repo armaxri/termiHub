@@ -201,6 +201,10 @@ each job runs only if the PR can affect it:
 | Integration (Docker fixtures)                             | a backend/fixture path changed (not comment-only Rust)    |
 | Lint Commit Messages                                      | always                                                    |
 
+The test and build rows (Run Tests, Agent Live Tests, Build, the agent
+cross-builds, Plugin Packaging, Integration, System-Test Harness) also skip when
+the PR head commit carries `[skip-tests]`; see below.
+
 A skipped check reports as **skipped**, which is a pass. The classifier is
 **fail-open**: an unrecognised path, any `.github/` change, or a failure of the
 detection job itself runs every per-PR job. An `audit/**`-only PR runs only
@@ -215,6 +219,32 @@ inside a string or block comment, a doctest line (inside a doc code fence), a
 file that uses ts-rs (its docs flow into `src/types/generated`), and an added,
 deleted or renamed file all keep the full Rust lane. Clippy's doc lints on a
 comment-only change surface post-merge.
+
+**The `[skip-tests]` commit tag (#3915).** If the **head commit** of a PR (the
+newest commit on the PR branch) has `[skip-tests]` anywhere in its message, that
+PR run skips the test and build lanes: Run Tests (all OS), Agent Live Tests
+(Windows), the agent musl cross-builds, Build on ubuntu, core/tests against live
+fixtures, the polkit verifier, the System-Test Harness (machinery) and Plugin
+Package + load. Detect Changed Areas, Lint Commit Messages, Rust and Frontend
+Code Quality (fmt, clippy, eslint, tsc, prettier), Rustdoc, actionlint, the shell
+and Markdown lints, the Test-ID Drift Guard and the PR Gate still run. The skipped
+jobs pass the gate. The job summary of `Detect Changed Areas` shows
+`tests skipped by [skip-tests] on <sha>`.
+
+- Only the head commit counts. A tag on an older commit in the PR does nothing,
+  and pushing a later untagged commit turns every lane back on.
+- Pushes to `develop` and `main`, schedules and manual dispatches ignore the tag.
+  They always run everything, so a wrongly-tagged change is caught after merge.
+- **Use it only when the change cannot alter compiled or runtime behaviour:**
+  formatting, renames with no logic change, comments, docs, and text that is
+  never executed. Authors and agents alike may use it under that rule.
+- **Never use it** for test changes, behaviour fixes or dependency bumps. When in
+  doubt, leave it off.
+- **CI changes are enforced, not just forbidden:** if the PR changes any
+  `.github/` file or the change-detection and gate scripts
+  (`scripts/internal/ci-changes*`, `rust-comment-diff*`, `ci-rust-tests.sh`,
+  `pr-gate*`), the classifier ignores the tag, prints a notice saying so and
+  runs every lane.
 
 **Required checks.** The intended branch protection is committed in
 [`.github/branch-protection.json`](../.github/branch-protection.json); see

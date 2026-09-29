@@ -42,16 +42,28 @@
  * Any doubt (git error, new/renamed file, code line, doctest, ts-rs file) keeps
  * the file's full Rust classification.
  *
+ * The `[skip-tests]` commit tag (#3915). On a pull_request event whose PR HEAD
+ * commit (the PR branch tip, NOT the synthetic merge commit the checkout sits on)
+ * carries `[skip-tests]` in its message, the `tests` output is `false` and
+ * `test_matrix` is `[]`: the test and build lanes skip, while the quality, lint,
+ * rustdoc and gate jobs still run on their area flags. Only the head commit
+ * counts, so pushing a later untagged commit re-enables everything. Push,
+ * schedule and dispatch runs ignore the tag, so a wrong tag is caught after
+ * merge. Any doubt (no head sha, git error) keeps the tests on. The tag is
+ * IGNORED (with a notice) when the PR changes CI itself: any `.github/` file or
+ * the change-detection / gate scripts (see skipTestsBlockers).
+ *
  * Usage:
  *   git diff --name-only HEAD^1 HEAD | node scripts/internal/ci-changes.mjs \
- *     [--base HEAD^1 --head HEAD]
+ *     [--base HEAD^1 --head HEAD] [--event pull_request --head-sha <sha>]
  *   node scripts/internal/ci-changes.mjs --all
  * Prints `key=value` lines suitable for appending to $GITHUB_OUTPUT, including
- * `test_matrix` — the JSON OS list for the "Run Tests" matrix on a PR.
+ * `tests` (false only under `[skip-tests]`) and `test_matrix` — the JSON OS list
+ * for the "Run Tests" matrix on a PR.
  */
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { isMainModule } from "./is-main-module.mjs";
 import { isCommentOnlyChange } from "./rust-comment-diff.mjs";
 
@@ -295,15 +307,99 @@ export function testMatrix(flags, pullRequest) {
   return os;
 }
 
+/** The commit-message tag that skips a PR's test and build lanes (#3915). */
+export const SKIP_TESTS_TAG = "[skip-tests]";
+
+/**
+ * Whether a commit message carries the `[skip-tests]` tag (exact, anywhere).
+ * @param {string | undefined} message
+ */
+export function hasSkipTestsTag(message) {
+  return typeof message === "string" && message.includes(SKIP_TESTS_TAG);
+}
+
+// A revision we are willing to hand to git: a sha or a simple rev like HEAD^2.
+// Never starts with `-`, so it cannot be read as an option.
+const SAFE_REV = /^[0-9A-Za-z_][0-9A-Za-z_^~./-]*$/;
+
+/**
+ * Whether this run should skip the test and build lanes: only on a
+ * pull_request event, and only when the PR's HEAD commit (`headSha` — the PR
+ * branch tip, not the merge commit) carries the tag. Older commits in the PR do
+ * not count. Fail-open: a missing/odd sha or a git error means "run the tests".
+ * @param {{ eventName?: string, headSha?: string, git?: (args: string[]) => string }} options
+ * @returns {boolean}
+ */
+export function skipTestsRequested({ eventName, headSha, git = runGit }) {
+  if (eventName !== "pull_request") return false;
+  if (!headSha || !SAFE_REV.test(headSha)) return false;
+  try {
+    return hasSkipTestsTag(git(["log", "-1", "--format=%B", headSha, "--"]));
+  } catch {
+    return false;
+  }
+}
+
+// CI plumbing a [skip-tests] PR may not touch: a change here could itself break
+// the lanes the tag would skip, so the tag is ignored and everything runs.
+const SKIP_TESTS_BLOCKING_SCRIPTS =
+  /^scripts\/internal\/(ci-changes[^/]*|rust-comment-diff[^/]*|ci-rust-tests\.sh|pr-gate[^/]*)$/;
+
+/**
+ * The changed paths that forbid honouring `[skip-tests]`: any `.github/` file
+ * and the change-detection / test-driver / gate scripts under scripts/internal.
+ * @param {string[]} paths - repo-relative changed paths.
+ * @returns {string[]} normalised blocking paths (empty: the tag may apply).
+ */
+export function skipTestsBlockers(paths) {
+  return paths
+    .map(normalise)
+    .filter((path) => path.startsWith(".github/") || SKIP_TESTS_BLOCKING_SCRIPTS.test(path));
+}
+
+/**
+ * Resolve the tag for a PR run: requested on the head commit AND no CI change.
+ * @param {{ eventName?: string, headSha?: string, paths: string[],
+ *   git?: (args: string[]) => string }} options
+ * @returns {{ skip: boolean, requested: boolean, blockedBy: string[] }}
+ */
+export function resolveSkipTests({ eventName, headSha, paths, git = runGit }) {
+  const requested = skipTestsRequested({ eventName, headSha, git });
+  const blockedBy = requested ? skipTestsBlockers(paths) : [];
+  return { skip: requested && blockedBy.length === 0, requested, blockedBy };
+}
+
+/**
+ * The notice printed when `[skip-tests]` was requested but a CI change blocks it.
+ * @param {string[]} blockedBy
+ */
+export function skipTestsIgnoredNote(blockedBy) {
+  const shown = blockedBy.slice(0, 5).join(", ");
+  const more = blockedBy.length > 5 ? ` (+${blockedBy.length - 5} more)` : "";
+  return `${SKIP_TESTS_TAG} ignored: this PR changes CI (${shown}${more}); running every lane`;
+}
+
+/**
+ * The job-summary note printed when `[skip-tests]` skipped the tests.
+ * @param {string} headSha
+ */
+export function skipTestsNote(headSha) {
+  return `tests skipped by ${SKIP_TESTS_TAG} on ${headSha}`;
+}
+
 /**
  * Render flags + matrix as GITHUB_OUTPUT lines.
  * @param {Record<string, boolean>} flags
  * @param {boolean} pullRequest
+ * @param {{ skipTests?: boolean }} [options] - `skipTests`: the PR head commit
+ *   carries `[skip-tests]` (#3915): `tests=false` and an empty test matrix.
  * @returns {string}
  */
-export function formatOutputs(flags, pullRequest) {
+export function formatOutputs(flags, pullRequest, { skipTests = false } = {}) {
   const lines = AREAS.map((area) => `${area}=${flags[area]}`);
-  lines.push(`test_matrix=${JSON.stringify(testMatrix(flags, pullRequest))}`);
+  lines.push(`tests=${!skipTests}`);
+  const matrix = skipTests ? [] : testMatrix(flags, pullRequest);
+  lines.push(`test_matrix=${JSON.stringify(matrix)}`);
   return `${lines.join("\n")}\n`;
 }
 
@@ -325,6 +421,28 @@ if (isMainModule(import.meta.url)) {
       const tag = commentOnly.has(normalise(path)) ? " (comment-only Rust)" : "";
       process.stderr.write(`changed: ${path}${tag}\n`);
     }
-    process.stdout.write(formatOutputs(flags, true));
+    const headSha = argValue("--head-sha");
+    const resolved = resolveSkipTests({ eventName: argValue("--event"), headSha, paths });
+    const skipTests = resolved.skip;
+    if (resolved.requested && !skipTests) {
+      const note = skipTestsIgnoredNote(resolved.blockedBy);
+      process.stderr.write(`::notice title=${SKIP_TESTS_TAG}::${note}\n`);
+      if (process.env.GITHUB_STEP_SUMMARY) {
+        appendFileSync(process.env.GITHUB_STEP_SUMMARY, `> [!WARNING]\n> **${note}**\n`);
+      }
+    }
+    if (skipTests) {
+      const note = skipTestsNote(headSha);
+      process.stderr.write(`::notice title=${SKIP_TESTS_TAG}::${note}\n`);
+      if (process.env.GITHUB_STEP_SUMMARY) {
+        appendFileSync(
+          process.env.GITHUB_STEP_SUMMARY,
+          `> [!NOTE]\n> **${note}** — the test and build lanes are off for this PR run; ` +
+            `quality, lint, rustdoc and the gate still run. Pushes to develop/main run ` +
+            `everything.\n`
+        );
+      }
+    }
+    process.stdout.write(formatOutputs(flags, true, { skipTests }));
   }
 }
