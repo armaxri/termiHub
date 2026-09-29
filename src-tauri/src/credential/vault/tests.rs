@@ -447,6 +447,76 @@ fn collect_entries_probes_known_owner_ids() {
 }
 
 #[test]
+fn keychain_export_includes_non_connection_credentials() {
+    // #3434: the file editor saves `sudo_password` under a host label, which
+    // is no saved connection id. The keychain lists it from its key index.
+    let _mock = crate::credential::os_keychain::test_support::install_mock();
+    let dir = tempfile::tempdir().unwrap();
+    let store = crate::credential::OsKeychainStore::with_index_file(
+        dir.path()
+            .join(crate::credential::keychain_index::FILE_NAME),
+    );
+    store
+        .set(&key("conn-x", CredentialType::Password), "conn-secret")
+        .unwrap();
+    store
+        .set(
+            &key("db.example.com", CredentialType::SudoPassword),
+            "sudo-secret",
+        )
+        .unwrap();
+    store
+        .set(
+            &key("agent-graphical:agent-1:rdp-1", CredentialType::Password),
+            "rdp-secret",
+        )
+        .unwrap();
+
+    let entries = collect_entries(&store, &["conn-x".to_string()]).unwrap();
+    let keys: Vec<String> = entries.iter().map(|(k, _)| k.to_string()).collect();
+    assert_eq!(
+        keys,
+        vec![
+            "agent-graphical:agent-1:rdp-1:password",
+            "conn-x:password",
+            "db.example.com:sudo_password",
+        ]
+    );
+}
+
+#[test]
+fn keychain_export_seeds_items_that_predate_the_index() {
+    // The export triggers the on-demand seed: items written before the index
+    // existed (a known owner's key, and an agent graphical secret recorded as
+    // a candidate when its agent was listed) are exported and indexed.
+    let _mock = crate::credential::os_keychain::test_support::install_mock();
+    let dir = tempfile::tempdir().unwrap();
+    let store = crate::credential::OsKeychainStore::with_index_file(
+        dir.path()
+            .join(crate::credential::keychain_index::FILE_NAME),
+    );
+    let conn = key("conn-x", CredentialType::KeyPassphrase);
+    let graphical = key("agent-graphical:agent-1:vnc-1", CredentialType::Password);
+    store.set(&conn, "phrase").unwrap();
+    store.set(&graphical, "vnc-secret").unwrap();
+    store.forget_index_for_test();
+    store.note_key_candidates(std::slice::from_ref(&graphical));
+
+    let entries = collect_entries(&store, &["conn-x".to_string()]).unwrap();
+    let keys: Vec<String> = entries.iter().map(|(k, _)| k.to_string()).collect();
+    assert_eq!(keys, vec![graphical.to_string(), conn.to_string()]);
+
+    let mut indexed: Vec<String> = store
+        .list_keys()
+        .unwrap()
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    indexed.sort();
+    assert_eq!(indexed, keys);
+}
+
+#[test]
 fn export_passphrase_rules() {
     assert!(matches!(
         validate_export_passphrase("short", None),

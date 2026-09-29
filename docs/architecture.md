@@ -1289,6 +1289,24 @@ termiHub provides optional credential storage with three modes (`StorageMode` in
 
 - **Master Password** — Encrypts all credentials into a single `credentials.enc` file using Argon2id key derivation and AES-256-GCM authenticated encryption. Supports auto-lock after a configurable inactivity timeout, and optional biometric unlock (see below).
 - **OS keychain** — Stores each credential as an entry in the native OS credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service) through the `keyring` crate (`src-tauri/src/credential/os_keychain.rs`). There is no in-app lock: the OS protects the entries with the login session. Because termiHub can read its own entries without an OS prompt, exporting them requires a fresh [OS user verification](#os-user-verification-and-biometric-unlock). See [ADR-6](#adr-6-credential-storage-evolved) for the trade-offs.
+  - **Key index** (#3434, #3844). The native stores cannot be enumerated through `keyring`, so
+    termiHub keeps `keychain-index.json` in the config directory: the **names** of the keys it has
+    written (`<owner-id>:<type>`), never their values (`src-tauri/src/credential/keychain_index.rs`).
+    A key is added once its keychain write succeeded and removed only once its keychain delete
+    succeeded. Listing the store's keys reads only the index, never the keychain; an indexed key
+    whose item has gone (deleted outside termiHub) is pruned by the read that finds it missing.
+    Keys only an agent's listing reveals (`agent-graphical:*`) are recorded by name as
+    _candidates_ when the definitions are listed, again without reading the keychain. **Seeding is
+    lazy:** right before a vault export or a store switch, termiHub probes every derivable key —
+    saved connections (file-scoped and legacy bare ids) and agents, embedded servers and shared
+    named credentials, each with every credential type — plus the recorded candidates, and indexes
+    the items it finds. Probing reads the keychain, and on an updated unsigned build macOS may ask
+    for access, so **keychain access prompts can appear only when the user exports credentials or
+    switches the credential store**, never at startup. The export and the switch then carry, or
+    (for a switch to `none`) remove, per-connection, graphical and host-label secrets alike.
+    **Limitation:** a keychain item that was never indexed and whose key cannot be derived (e.g. a
+    file-editor sudo password saved under a host label by a build that predates the index) cannot
+    be discovered; re-saving it records it.
 - **None** — Passwords are prompted at connection time and never persisted (the default for new installations).
 
 Credential storage is managed through the Security section in Settings.
@@ -1400,8 +1418,8 @@ webview only where a per-connection secret already did.
 
 **Storage modes.** With storage off (`none`) a named credential cannot be created or rotated —
 there is nowhere to keep the secret. A master-password ↔ OS-keychain switch migrates named secrets
-like any other; since the keychain cannot enumerate its items, the switch probes the keys known
-from the metadata, so they migrate in both directions.
+like any other; the keychain lists them from its key index and the switch also probes the keys
+known from the metadata, so they migrate in both directions.
 
 **Deleting an in-use credential is refused**, and the refusal lists every referencing connection
 and agent (main and external connection files). Silently deleting it — or deleting it with a
