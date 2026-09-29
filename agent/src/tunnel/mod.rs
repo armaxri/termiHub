@@ -93,6 +93,24 @@ struct PreparedForward {
     reachable_from: ReachableFrom,
 }
 
+impl PreparedForward {
+    /// A `-L`/`-D` forward whose listen socket is bound on this agent, with the
+    /// reachability classified from the bind host.
+    fn agent_listener(
+        forwarder: ActiveForwarder,
+        session: Option<Arc<SshSession>>,
+        local_host: &str,
+        local_port: u16,
+    ) -> Self {
+        Self {
+            forwarder,
+            session,
+            bound_address: format!("{local_host}:{local_port}"),
+            reachable_from: classify_reachability(local_host),
+        }
+    }
+}
+
 /// Registry of tunnels currently forwarding on this agent, keyed by tunnel id.
 ///
 /// Long-lived, id-keyed, and behind an async `Mutex` — the same shape as the
@@ -185,12 +203,12 @@ impl AgentTunnelRegistry {
             let session = Arc::new(session);
             let forwarder = LocalForwarder::start(forward, Arc::clone(&session))
                 .context("failed to bind agent-hosted local forwarder")?;
-            Ok(PreparedForward {
-                forwarder: ActiveForwarder::Local(forwarder),
-                session: Some(session),
-                bound_address: format!("{}:{}", forward.local_host, forward.local_port),
-                reachable_from: classify_reachability(&forward.local_host),
-            })
+            Ok(PreparedForward::agent_listener(
+                ActiveForwarder::Local(forwarder),
+                Some(session),
+                &forward.local_host,
+                forward.local_port,
+            ))
         })
         .await
     }
@@ -254,12 +272,12 @@ impl AgentTunnelRegistry {
             let session = Arc::new(session);
             let forwarder = DynamicForwarder::start(forward, Arc::clone(&session))
                 .context("failed to bind agent-hosted dynamic (SOCKS5) forwarder")?;
-            Ok(PreparedForward {
-                forwarder: ActiveForwarder::Dynamic(forwarder),
-                session: Some(session),
-                bound_address: format!("{}:{}", forward.local_host, forward.local_port),
-                reachable_from: classify_reachability(&forward.local_host),
-            })
+            Ok(PreparedForward::agent_listener(
+                ActiveForwarder::Dynamic(forwarder),
+                Some(session),
+                &forward.local_host,
+                forward.local_port,
+            ))
         })
         .await
     }
@@ -320,6 +338,121 @@ mod tests {
             local_port: port,
             remote_host: "db.internal".to_string(),
             remote_port: 5432,
+        }
+    }
+
+    // ── Reported bound address (#3550) ────────────────────────────────────────
+
+    /// In-memory [`ChannelOpener`] whose "channels" echo every byte back, so a
+    /// forwarder's accept/relay path runs without a live SSH server.
+    struct EchoOpener;
+
+    impl termihub_core::tunnel::ChannelOpener for EchoOpener {
+        type Stream = tokio::io::DuplexStream;
+
+        async fn open_direct_tcpip(
+            &self,
+            _host: String,
+            _port: u16,
+        ) -> std::io::Result<Self::Stream> {
+            let (ours, theirs) = tokio::io::duplex(1024);
+            tokio::spawn(async move {
+                let (mut rd, mut wr) = tokio::io::split(theirs);
+                let _ = tokio::io::copy(&mut rd, &mut wr).await;
+            });
+            Ok(ours)
+        }
+    }
+
+    /// Port parsed from a reported `host:port` / `[v6]:port` bound address.
+    fn reported_port(bound_address: &str) -> u16 {
+        bound_address
+            .rsplit_once(':')
+            .and_then(|(_, p)| p.parse().ok())
+            .expect("bound_address ends in :port")
+    }
+
+    #[tokio::test]
+    async fn local_forward_on_port_zero_reports_real_bound_port() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let forward = loopback_forward(0);
+        let forwarder = LocalForwarder::start_with_opener(&forward, EchoOpener).expect("bind");
+        let prepared = PreparedForward::agent_listener(
+            ActiveForwarder::Local(forwarder),
+            None,
+            &forward.local_host,
+            forward.local_port,
+        );
+
+        let port = reported_port(&prepared.bound_address);
+        assert_ne!(port, 0, "reported {:?}", prepared.bound_address);
+        assert_eq!(prepared.reachable_from, ReachableFrom::AgentOnly);
+
+        // A client connecting to the reported port reaches the forwarder.
+        let mut client = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect to the reported port");
+        client.write_all(b"ping").await.expect("write");
+        let mut echoed = [0u8; 4];
+        client.read_exact(&mut echoed).await.expect("echo");
+        assert_eq!(&echoed, b"ping");
+    }
+
+    #[tokio::test]
+    async fn dynamic_forward_on_port_zero_reports_real_bound_port() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let forward = DynamicForwardConfig {
+            local_host: "127.0.0.1".to_string(),
+            local_port: 0,
+        };
+        let forwarder = DynamicForwarder::start_with_opener(&forward, EchoOpener).expect("bind");
+        let prepared = PreparedForward::agent_listener(
+            ActiveForwarder::Dynamic(forwarder),
+            None,
+            &forward.local_host,
+            forward.local_port,
+        );
+
+        let port = reported_port(&prepared.bound_address);
+        assert_ne!(port, 0, "reported {:?}", prepared.bound_address);
+
+        // The reported port speaks SOCKS5: a no-auth greeting is accepted.
+        let mut client = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect to the reported port");
+        client.write_all(&[0x05, 0x01, 0x00]).await.expect("greet");
+        let mut method = [0u8; 2];
+        client.read_exact(&mut method).await.expect("method");
+        assert_eq!(method, [0x05, 0x00]);
+    }
+
+    /// Two forwards racing for one fixed port: at most one binds, and the one
+    /// that does reports exactly the port it holds.
+    #[tokio::test]
+    async fn concurrent_local_forwards_on_same_port_bind_at_most_once() {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("bind")
+            .local_addr()
+            .expect("addr")
+            .port();
+        let forward = loopback_forward(port);
+
+        let (a, b) = tokio::join!(
+            async { LocalForwarder::start_with_opener(&forward, EchoOpener) },
+            async { LocalForwarder::start_with_opener(&forward, EchoOpener) },
+        );
+        let bound: Vec<_> = [a, b].into_iter().filter_map(Result::ok).collect();
+        assert!(bound.len() <= 1, "two forwarders bound port {port}");
+        for forwarder in bound {
+            let prepared = PreparedForward::agent_listener(
+                ActiveForwarder::Local(forwarder),
+                None,
+                &forward.local_host,
+                forward.local_port,
+            );
+            assert_eq!(reported_port(&prepared.bound_address), port);
         }
     }
 
