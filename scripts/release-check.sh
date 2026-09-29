@@ -2,7 +2,8 @@
 # Release readiness checklist — validates that the repo is ready for a release.
 # Run from anywhere: ./scripts/release-check.sh
 #
-# Usage: ./scripts/release-check.sh [--versions-only] [--expect-version <ver>] [--help]
+# Usage: ./scripts/release-check.sh [--versions-only | --only <section>]
+#                                   [--expect-version <ver>] [--help]
 #
 # The full run (no flags) gates on: versions, CHANGELOG, unit tests, the coverage
 # ratchet, quality checks, a clean tree on main/release/*, green CI integration
@@ -16,15 +17,19 @@
 #                            verify-version gate (PKG-007).
 #   --expect-version <ver>   Also require every version source to equal <ver>
 #                            (e.g. the release tag without its leading "v").
+#   --only <section>         Run just one release gate and print the summary:
+#                            integration (CI lanes green on HEAD), markers
+#                            (TODO/FIXME/HACK scan) or bundle (build + smoke).
 #   --help                   Show this help and exit.
 set -euo pipefail
 
 usage() {
-    sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 VERSIONS_ONLY=false
 EXPECT_VERSION=""
+ONLY=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --versions-only)
@@ -39,6 +44,16 @@ while [ $# -gt 0 ]; do
             EXPECT_VERSION="${2#v}"
             shift 2
             ;;
+        --only)
+            case "${2:-}" in
+                integration | markers | bundle) ONLY="$2" ;;
+                *)
+                    echo "error: --only needs one of: integration, markers, bundle" >&2
+                    exit 2
+                    ;;
+            esac
+            shift 2
+            ;;
         -h | --help)
             usage
             exit 0
@@ -50,6 +65,10 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+if [ "$VERSIONS_ONLY" = true ] && [ -n "$ONLY" ]; then
+    echo "error: --versions-only and --only are mutually exclusive" >&2
+    exit 2
+fi
 
 cd "$(git rev-parse --show-toplevel)"
 
@@ -59,6 +78,154 @@ WARNINGS=0
 pass() { echo "  ✓ PASS: $1"; }
 fail() { echo "  ✗ FAIL: $1"; FAILED=1; }
 warn() { echo "  ⚠ WARN: $1"; WARNINGS=$((WARNINGS + 1)); }
+
+# ---------------------------------------------------------------------------
+check_integration() {
+    echo ""
+    echo "=== Integration / System Tests (CI lanes on this commit) ==="
+
+    # The unit tests above never touch the Python bridge integration lane, the
+    # Docker fixture suites or the agent live tests (TOOL-011, #3750). Running them
+    # here is not reliable: they need Docker fixtures, a real display and a quiet
+    # machine, and on macOS the container VMs pin the CPU and stall the WKWebView.
+    # So the gate is the same one the Release workflow enforces: the newest run of
+    # 'Release Candidate: Full Integration' and the post-merge Code Quality and Dev
+    # Build push runs must be green on this exact commit. The check reuses
+    # scripts/internal/release-integration-gate.mjs, so the local gate and the tag
+    # gate cannot disagree. It needs the gh CLI, logged in.
+    HEAD_SHA=$(git rev-parse HEAD)
+    GATE_REF=$(git rev-parse --abbrev-ref HEAD)
+    if [ "$GATE_REF" = "HEAD" ]; then
+        GATE_REF="RELEASE-BRANCH-OR-TAG"
+    fi
+    GATE_REPO="armaxri/termiHub"
+    if command -v gh >/dev/null 2>&1; then
+        GATE_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "$GATE_REPO")
+    fi
+    DISPATCH_CMD="gh workflow run release-candidate.yml --repo $GATE_REPO --ref $GATE_REF"
+    if ! command -v gh >/dev/null 2>&1; then
+        fail "gh CLI not installed — cannot verify the integration lanes (https://cli.github.com)"
+    elif ! GATE_TOKEN=$(gh auth token 2>/dev/null) || [ -z "$GATE_TOKEN" ]; then
+        fail "gh CLI not logged in — cannot verify the integration lanes (run: gh auth login)"
+    elif [ -z "$(git branch -r --contains "$HEAD_SHA" 2>/dev/null)" ]; then
+        fail "HEAD $HEAD_SHA is on no remote branch, so no CI run can exist for it"
+        echo "    Push it first (git push), then run the full integration lanes on it:"
+        echo "      $DISPATCH_CMD"
+        echo "    If you pushed it from elsewhere, run 'git fetch' and re-run this script."
+    elif GATE_OUTPUT=$(RELEASE_GATE_LOCAL=1 RELEASE_SHA="$HEAD_SHA" RELEASE_REF_NAME="$GATE_REF" \
+        GITHUB_REPOSITORY="$GATE_REPO" GITHUB_TOKEN="$GATE_TOKEN" \
+        node scripts/internal/release-integration-gate.mjs 2>&1); then
+        echo "$GATE_OUTPUT" | sed 's/^/    /'
+        pass "Integration lanes green on $HEAD_SHA"
+    else
+        echo "$GATE_OUTPUT" | sed 's/^/    /'
+        echo "    The dispatched run grades the ref's tip, so dispatch it on a ref whose tip is"
+        echo "    $HEAD_SHA (the release branch you are on, or the release tag)."
+        fail "Integration lanes not green on $HEAD_SHA — run: $DISPATCH_CMD"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+check_markers() {
+    echo ""
+    echo "=== TODO/FIXME/HACK Scan ==="
+
+    # A TODO/FIXME/HACK comment in shipped source BLOCKS the release unless it is
+    # listed, with a reason, in scripts/release-marker-allowlist.json (TOOL-011,
+    # #3750; WA-CI-030). Only markers that open a comment count, so string literals
+    # and test fixtures that mention the words do not trip it. The scan is one Node
+    # script so this and release-check.cmd run the identical check.
+    if MARKER_OUTPUT=$(node scripts/internal/release-marker-scan.mjs 2>&1); then
+        echo "$MARKER_OUTPUT" | sed 's/^/    /'
+        pass "No un-allowlisted TODO/FIXME/HACK markers"
+    else
+        echo "$MARKER_OUTPUT" | sed 's/^/    /'
+        fail "TODO/FIXME/HACK markers block the release (allowlist: scripts/release-marker-allowlist.json)"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+check_bundle() {
+    echo ""
+    echo "=== Release Bundle Build + Smoke Test ==="
+
+    # Build the real installable bundle with the same recipe as the installers
+    # (scripts/build.sh: RDP sidecar + notices + 'pnpm tauri build'), then launch it
+    # with scripts/smoke-test.sh (TOOL-011, #3750). Without this, release-check could
+    # report READY for a commit that does not produce a working app. It runs last
+    # because it is the slowest step and needs a desktop session (a display) to launch
+    # the app. On headless Linux it uses xvfb-run when available.
+    case "$(uname -s)" in
+        Darwin*)
+            SMOKE_APP="target/release/bundle/macos/termiHub.app"
+            INSTALLER_GLOB="target/release/bundle/dmg/*.dmg"
+            ;;
+        MINGW* | MSYS* | CYGWIN*)
+            SMOKE_APP="target/release/termihub.exe"
+            INSTALLER_GLOB="target/release/bundle/msi/*.msi target/release/bundle/nsis/*.exe"
+            ;;
+        *)
+            SMOKE_APP="target/release/termihub"
+            INSTALLER_GLOB="target/release/bundle/deb/*.deb target/release/bundle/appimage/*.AppImage"
+            ;;
+    esac
+
+    if ! ./scripts/build.sh 2>&1; then
+        fail "Release bundle build failed (scripts/build.sh)"
+    else
+        INSTALLERS=""
+        for pattern in $INSTALLER_GLOB; do
+            [ -e "$pattern" ] && INSTALLERS="$INSTALLERS $pattern"
+        done
+        if [ -z "$INSTALLERS" ]; then
+            fail "Bundle build produced no installer (expected: $INSTALLER_GLOB)"
+        else
+            pass "Bundle build produced:$INSTALLERS"
+        fi
+
+        SMOKE_CMD=(./scripts/smoke-test.sh "$SMOKE_APP")
+        if [ "$(uname -s)" = "Linux" ] && [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] \
+            && command -v xvfb-run >/dev/null 2>&1; then
+            SMOKE_CMD=(xvfb-run -a "${SMOKE_CMD[@]}")
+        fi
+        if [ ! -e "$SMOKE_APP" ]; then
+            fail "Built app not found at $SMOKE_APP — cannot smoke-test it"
+        elif "${SMOKE_CMD[@]}" 2>&1; then
+            pass "Smoke test passed against $SMOKE_APP"
+        else
+            fail "Smoke test failed against $SMOKE_APP"
+        fi
+    fi
+}
+
+# ---------------------------------------------------------------------------
+print_summary() {
+    echo ""
+    echo "==========================================="
+    echo "  Release Readiness Summary"
+    echo "==========================================="
+
+    if [ "$FAILED" -ne 0 ]; then
+        echo "  RESULT: NOT READY — one or more blocking checks failed"
+        echo "  Warnings: $WARNINGS"
+        exit 1
+    else
+        echo "  RESULT: READY for release"
+        if [ "$WARNINGS" -gt 0 ]; then
+            echo "  Warnings: $WARNINGS (review recommended)"
+        fi
+    fi
+}
+
+# --only <section> runs one release-gate section on its own and prints the
+# summary. The Windows CI harness (release-check-cmd.yml, #3753) drives the .cmd
+# twin this way; it is equally handy to re-check one gate after fixing it.
+if [ -n "$ONLY" ]; then
+    "check_$ONLY"
+    print_summary
+    exit 0
+fi
+
 
 # ---------------------------------------------------------------------------
 echo "=== Version Consistency ==="
@@ -233,131 +400,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-echo ""
-echo "=== Integration / System Tests (CI lanes on this commit) ==="
-
-# The unit tests above never touch the Python bridge integration lane, the
-# Docker fixture suites or the agent live tests (TOOL-011, #3750). Running them
-# here is not reliable: they need Docker fixtures, a real display and a quiet
-# machine, and on macOS the container VMs pin the CPU and stall the WKWebView.
-# So the gate is the same one the Release workflow enforces: the newest run of
-# 'Release Candidate: Full Integration' and the post-merge Code Quality and Dev
-# Build push runs must be green on this exact commit. The check reuses
-# scripts/internal/release-integration-gate.mjs, so the local gate and the tag
-# gate cannot disagree. It needs the gh CLI, logged in.
-HEAD_SHA=$(git rev-parse HEAD)
-GATE_REF=$(git rev-parse --abbrev-ref HEAD)
-if [ "$GATE_REF" = "HEAD" ]; then
-    GATE_REF="RELEASE-BRANCH-OR-TAG"
-fi
-GATE_REPO="armaxri/termiHub"
-if command -v gh >/dev/null 2>&1; then
-    GATE_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "$GATE_REPO")
-fi
-DISPATCH_CMD="gh workflow run release-candidate.yml --repo $GATE_REPO --ref $GATE_REF"
-if ! command -v gh >/dev/null 2>&1; then
-    fail "gh CLI not installed — cannot verify the integration lanes (https://cli.github.com)"
-elif ! GATE_TOKEN=$(gh auth token 2>/dev/null) || [ -z "$GATE_TOKEN" ]; then
-    fail "gh CLI not logged in — cannot verify the integration lanes (run: gh auth login)"
-elif [ -z "$(git branch -r --contains "$HEAD_SHA" 2>/dev/null)" ]; then
-    fail "HEAD $HEAD_SHA is on no remote branch, so no CI run can exist for it"
-    echo "    Push it first (git push), then run the full integration lanes on it:"
-    echo "      $DISPATCH_CMD"
-    echo "    If you pushed it from elsewhere, run 'git fetch' and re-run this script."
-elif GATE_OUTPUT=$(RELEASE_GATE_LOCAL=1 RELEASE_SHA="$HEAD_SHA" RELEASE_REF_NAME="$GATE_REF" \
-    GITHUB_REPOSITORY="$GATE_REPO" GITHUB_TOKEN="$GATE_TOKEN" \
-    node scripts/internal/release-integration-gate.mjs 2>&1); then
-    echo "$GATE_OUTPUT" | sed 's/^/    /'
-    pass "Integration lanes green on $HEAD_SHA"
-else
-    echo "$GATE_OUTPUT" | sed 's/^/    /'
-    echo "    The dispatched run grades the ref's tip, so dispatch it on a ref whose tip is"
-    echo "    $HEAD_SHA (the release branch you are on, or the release tag)."
-    fail "Integration lanes not green on $HEAD_SHA — run: $DISPATCH_CMD"
-fi
-
-# ---------------------------------------------------------------------------
-echo ""
-echo "=== TODO/FIXME/HACK Scan ==="
-
-# A TODO/FIXME/HACK comment in shipped source BLOCKS the release unless it is
-# listed, with a reason, in scripts/release-marker-allowlist.json (TOOL-011,
-# #3750; WA-CI-030). Only markers that open a comment count, so string literals
-# and test fixtures that mention the words do not trip it. The scan is one Node
-# script so this and release-check.cmd run the identical check.
-if MARKER_OUTPUT=$(node scripts/internal/release-marker-scan.mjs 2>&1); then
-    echo "$MARKER_OUTPUT" | sed 's/^/    /'
-    pass "No un-allowlisted TODO/FIXME/HACK markers"
-else
-    echo "$MARKER_OUTPUT" | sed 's/^/    /'
-    fail "TODO/FIXME/HACK markers block the release (allowlist: scripts/release-marker-allowlist.json)"
-fi
-
-# ---------------------------------------------------------------------------
-echo ""
-echo "=== Release Bundle Build + Smoke Test ==="
-
-# Build the real installable bundle with the same recipe as the installers
-# (scripts/build.sh: RDP sidecar + notices + 'pnpm tauri build'), then launch it
-# with scripts/smoke-test.sh (TOOL-011, #3750). Without this, release-check could
-# report READY for a commit that does not produce a working app. It runs last
-# because it is the slowest step and needs a desktop session (a display) to launch
-# the app. On headless Linux it uses xvfb-run when available.
-case "$(uname -s)" in
-    Darwin*)
-        SMOKE_APP="target/release/bundle/macos/termiHub.app"
-        INSTALLER_GLOB="target/release/bundle/dmg/*.dmg"
-        ;;
-    MINGW* | MSYS* | CYGWIN*)
-        SMOKE_APP="target/release/termihub.exe"
-        INSTALLER_GLOB="target/release/bundle/msi/*.msi target/release/bundle/nsis/*.exe"
-        ;;
-    *)
-        SMOKE_APP="target/release/termihub"
-        INSTALLER_GLOB="target/release/bundle/deb/*.deb target/release/bundle/appimage/*.AppImage"
-        ;;
-esac
-
-if ! ./scripts/build.sh 2>&1; then
-    fail "Release bundle build failed (scripts/build.sh)"
-else
-    INSTALLERS=""
-    for pattern in $INSTALLER_GLOB; do
-        [ -e "$pattern" ] && INSTALLERS="$INSTALLERS $pattern"
-    done
-    if [ -z "$INSTALLERS" ]; then
-        fail "Bundle build produced no installer (expected: $INSTALLER_GLOB)"
-    else
-        pass "Bundle build produced:$INSTALLERS"
-    fi
-
-    SMOKE_CMD=(./scripts/smoke-test.sh "$SMOKE_APP")
-    if [ "$(uname -s)" = "Linux" ] && [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] \
-        && command -v xvfb-run >/dev/null 2>&1; then
-        SMOKE_CMD=(xvfb-run -a "${SMOKE_CMD[@]}")
-    fi
-    if [ ! -e "$SMOKE_APP" ]; then
-        fail "Built app not found at $SMOKE_APP — cannot smoke-test it"
-    elif "${SMOKE_CMD[@]}" 2>&1; then
-        pass "Smoke test passed against $SMOKE_APP"
-    else
-        fail "Smoke test failed against $SMOKE_APP"
-    fi
-fi
-
-# ---------------------------------------------------------------------------
-echo ""
-echo "==========================================="
-echo "  Release Readiness Summary"
-echo "==========================================="
-
-if [ "$FAILED" -ne 0 ]; then
-    echo "  RESULT: NOT READY — one or more blocking checks failed"
-    echo "  Warnings: $WARNINGS"
-    exit 1
-else
-    echo "  RESULT: READY for release"
-    if [ "$WARNINGS" -gt 0 ]; then
-        echo "  Warnings: $WARNINGS (review recommended)"
-    fi
-fi
+check_integration
+check_markers
+check_bundle
+print_summary

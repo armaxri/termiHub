@@ -1245,6 +1245,15 @@ Release workflow enforces the same gate at tag time. release-check reuses
 two cannot disagree. Running release-check first means you learn about a missing or red
 lane before you tag, not after.
 
+**Re-running one gate.** `--only integration`, `--only markers` or `--only bundle` runs just
+that gate and prints the summary, which is quicker than a full run after you fix one thing.
+The Windows half of these gates is executed in CI by
+[Release Check (Windows .cmd)](../.github/workflows/release-check-cmd.yml) whenever
+`scripts/release-check*`, `scripts/internal/release-*` or the harness change: it drives
+`release-check.cmd --only <section>` through each pass and fail case. The real bundle build +
+smoke test is too slow for a PR, so there it runs against stub `build.cmd` / `smoke-test.cmd`;
+dispatch the workflow on your branch to run the real build too.
+
 ### Version Bump
 
 Update the version number in all five locations:
