@@ -32,6 +32,7 @@ vi.mock("@/services/api", () => ({
 
 import { OpenConnectionsModal } from "./OpenConnectionsModal";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
+import { flushAsync } from "@/test/flushAsync";
 
 function connectingTab(id: string, title: string, panelId: string): TerminalTab {
   return {
@@ -84,6 +85,7 @@ describe("OpenConnectionsModal — Connecting section", () => {
       );
     });
     await flushSessionRegion();
+    await flushAsync();
   }
 
   it("lists a connecting session and cancels it via cancel_connecting", async () => {
@@ -99,7 +101,7 @@ describe("OpenConnectionsModal — Connecting section", () => {
     expect(killBtn).not.toBeNull();
     // Kill is now the shared Button primitive (retains .oc-row__kill as a hook).
     expect(killBtn.classList.contains("ui-btn")).toBe(true);
-    act(() => killBtn.click());
+    await act(async () => killBtn.click());
 
     expect(cancelConnecting).toHaveBeenCalledWith("tab-1");
   });
@@ -111,7 +113,7 @@ describe("OpenConnectionsModal — Connecting section", () => {
     expect(modal?.querySelector(".ui-modal__title")?.textContent).toContain("Open Connections");
   });
 
-  it("shows no Connecting section when nothing is connecting", () => {
+  it("shows no Connecting section when nothing is connecting", async () => {
     act(() => {
       root.render(
         <TooltipProvider delayDuration={0}>
@@ -119,6 +121,7 @@ describe("OpenConnectionsModal — Connecting section", () => {
         </TooltipProvider>
       );
     });
+    await flushAsync();
     const titles = Array.from(document.querySelectorAll(".oc-section__title")).map(
       (t) => t.textContent
     );

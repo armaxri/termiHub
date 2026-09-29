@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { seedConnectionsRegion, setupConnectionsRegion } from "@/test/connectionsHarness";
 import { withTooltip } from "@/test/tooltip";
@@ -37,27 +38,31 @@ let setSchedulesPaused: ReturnType<typeof vi.fn>;
 let deleteSchedule: ReturnType<typeof vi.fn>;
 let openScheduleEditor: ReturnType<typeof vi.fn>;
 
-function render(schedules: ScheduleView[], paused = false) {
-  useAppStore.setState({
-    schedules,
-    schedulesPaused: paused,
-    workflows: [
-      {
-        id: "wf-1",
-        name: "Uptime",
-        tags: [],
-        steps: [],
-        triggers: [],
-        createdAt: "",
-        updatedAt: "",
-      },
-    ],
-    setScheduleEnabled,
-    setSchedulesPaused,
-    deleteSchedule,
-    openScheduleEditor,
-  } as never);
-  act(() => root.render(withTooltip(<SchedulesSection />)));
+async function render(schedules: ScheduleView[], paused = false) {
+  // Wrapped in act: the second render in a test updates an already-mounted tree.
+  act(() => {
+    useAppStore.setState({
+      schedules,
+      schedulesPaused: paused,
+      workflows: [
+        {
+          id: "wf-1",
+          name: "Uptime",
+          tags: [],
+          steps: [],
+          triggers: [],
+          createdAt: "",
+          updatedAt: "",
+        },
+      ],
+      setScheduleEnabled,
+      setSchedulesPaused,
+      deleteSchedule,
+      openScheduleEditor,
+    } as never);
+  });
+  await act(async () => root.render(withTooltip(<SchedulesSection />)));
+  await flushAsync();
 }
 
 describe("SchedulesSection (PROD-043)", () => {
@@ -83,15 +88,15 @@ describe("SchedulesSection (PROD-043)", () => {
     useAppStore.setState(useAppStore.getInitialState());
   });
 
-  it("shows an empty state and opens the editor for a new schedule", () => {
-    render([]);
+  it("shows an empty state and opens the editor for a new schedule", async () => {
+    await render([]);
     expect(query("schedules-empty")).not.toBeNull();
     act(() => query("schedules-new-btn")!.click());
     expect(openScheduleEditor).toHaveBeenCalledWith();
   });
 
-  it("summarises the rule, action and target hosts", () => {
-    render([view({ enabled: true, nextRunAt: new Date().toISOString() })]);
+  it("summarises the rule, action and target hosts", async () => {
+    await render([view({ enabled: true, nextRunAt: new Date().toISOString() })]);
     expect(query("schedule-summary-s1")!.textContent).toBe(
       'Every 15 minutes · workflow "Uptime" on web-1, web-2'
     );
@@ -99,7 +104,7 @@ describe("SchedulesSection (PROD-043)", () => {
   });
 
   it("asks for confirmation listing the hosts before the first enable", async () => {
-    render([view()]);
+    await render([view()]);
     act(() => query("schedule-enable-s1")!.click());
     expect(setScheduleEnabled).not.toHaveBeenCalled();
     const hosts = query("schedule-confirm-hosts")!;
@@ -110,39 +115,39 @@ describe("SchedulesSection (PROD-043)", () => {
     expect(setScheduleEnabled).toHaveBeenCalledWith("s1", true, true);
   });
 
-  it("the confirmation says a connecting schedule also connects the hosts (#3527)", () => {
-    render([view()]);
+  it("the confirmation says a connecting schedule also connects the hosts (#3527)", async () => {
+    await render([view()]);
     act(() => query("schedule-enable-s1")!.click());
     expect(query("schedule-confirm-connects")).toBeNull();
     act(() => query("schedule-enable-confirm-cancel")!.click());
 
-    render([view({ connectIfNeeded: true })]);
+    await render([view({ connectIfNeeded: true })]);
     act(() => query("schedule-enable-s1")!.click());
     expect(query("schedule-confirm-connects")!.textContent).toContain("never asking");
   });
 
-  it("cancelling the confirmation leaves the schedule disabled", () => {
-    render([view()]);
+  it("cancelling the confirmation leaves the schedule disabled", async () => {
+    await render([view()]);
     act(() => query("schedule-enable-s1")!.click());
     act(() => query("schedule-enable-confirm-cancel")!.click());
     expect(setScheduleEnabled).not.toHaveBeenCalled();
   });
 
   it("toggles an already-confirmed schedule without asking again", async () => {
-    render([view({ confirmedAt: "2026-09-26T00:00:00Z" })]);
+    await render([view({ confirmedAt: "2026-09-26T00:00:00Z" })]);
     await act(async () => query("schedule-enable-s1")!.click());
     expect(query("schedule-confirm-hosts")).toBeNull();
     expect(setScheduleEnabled).toHaveBeenCalledWith("s1", true, false);
   });
 
   it("the global switch pauses all schedules", async () => {
-    render([view({ enabled: true, confirmedAt: "x" })]);
+    await render([view({ enabled: true, confirmedAt: "x" })]);
     await act(async () => query("schedules-pause-toggle")!.click());
     expect(setSchedulesPaused).toHaveBeenCalledWith(true);
   });
 
-  it("shows paused, running and disabled states and the last result", () => {
-    render(
+  it("shows paused, running and disabled states and the last result", async () => {
+    await render(
       [
         view({ id: "a", enabled: true, confirmedAt: "x" }),
         view({ id: "b", enabled: true, confirmedAt: "x", running: true }),
@@ -165,7 +170,7 @@ describe("SchedulesSection (PROD-043)", () => {
     );
   });
 
-  it("expands a schedule to its recent attempts, including skips and their reasons", () => {
+  it("expands a schedule to its recent attempts, including skips and their reasons", async () => {
     const now = Date.now();
     const iso = (minsAgo: number) => new Date(now - minsAgo * 60_000).toISOString();
     const history = [
@@ -185,7 +190,7 @@ describe("SchedulesSection (PROD-043)", () => {
       },
       { at: iso(20), outcome: "skipped" as const, message: "Missed the run due at 09:00" },
     ];
-    render([view({ lastResult: history[0], history })]);
+    await render([view({ lastResult: history[0], history })]);
 
     expect(query("schedule-attempts-s1")).toBeNull();
     const toggle = query("schedule-attempts-toggle-s1")!;
@@ -210,27 +215,27 @@ describe("SchedulesSection (PROD-043)", () => {
     expect(query("schedule-attempts-s1")).toBeNull();
   });
 
-  it("links a scheduled macro attempt to its macro run-history record (#3543)", () => {
+  it("links a scheduled macro attempt to its macro run-history record (#3543)", async () => {
     const attempt = {
       at: new Date().toISOString(),
       outcome: "completed" as const,
       message: "Ran on 1 terminal",
       macroRunIds: ["mrun-1"],
     };
-    render([view({ lastResult: attempt, history: [attempt] })]);
+    await render([view({ lastResult: attempt, history: [attempt] })]);
 
     act(() => query("schedule-attempts-toggle-s1")!.click());
     expect(query("schedule-attempt-runs-s1-0")!.textContent).toBe("1 macro run in history");
     expect(query("schedule-attempt-runs-s1-0")!.getAttribute("title")).toBe("mrun-1");
   });
 
-  it("offers no attempts toggle before the first attempt", () => {
-    render([view()]);
+  it("offers no attempts toggle before the first attempt", async () => {
+    await render([view()]);
     expect(query("schedule-attempts-toggle-s1")).toBeNull();
   });
 
   it("edits and deletes a schedule", async () => {
-    render([view()]);
+    await render([view()]);
     act(() => query("schedule-edit-s1")!.click());
     expect(openScheduleEditor).toHaveBeenCalledWith({ scheduleId: "s1" });
     act(() => query("schedule-delete-s1")!.click());
