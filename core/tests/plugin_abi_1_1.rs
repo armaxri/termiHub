@@ -13,10 +13,12 @@
 //!   directory.
 #![cfg(feature = "plugin")]
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+mod plugin_fixture;
+use plugin_fixture::{artifact_name, fixture_library, Variant};
 
 use termihub_core::connection::{plugin_type_id, ConnectionType, ConnectionTypeRegistry};
 use termihub_core::plugin::{
@@ -25,43 +27,6 @@ use termihub_core::plugin::{
     PermissionSet, PluginConnectionType, PluginHost, PluginPermission, PluginState,
     ToolchainIncompatibility, CURRENT_PLUGIN_ABI_VERSION, PLUGIN_DATA_DIR_NAME,
 };
-
-fn artifact_name() -> String {
-    format!(
-        "{}termihub_test_plugin{}",
-        std::env::consts::DLL_PREFIX,
-        std::env::consts::DLL_SUFFIX
-    )
-}
-
-/// Build the fixture (optionally as a faithful ABI 1.0 plugin) and copy the
-/// artifact to a unique path, since both variants share one output name.
-fn build_fixture(work: &Path, abi_1_0: bool) -> PathBuf {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join("test-plugin")
-        .join("Cargo.toml");
-    let target_dir = work.join("target");
-    let mut cmd = Command::new(env!("CARGO"));
-    cmd.arg("build")
-        .arg("--manifest-path")
-        .arg(manifest)
-        .arg("--target-dir")
-        .arg(&target_dir);
-    if abi_1_0 {
-        cmd.arg("--features").arg("abi-1-0");
-    }
-    let status = cmd.status().expect("spawn cargo to build the fixture");
-    assert!(
-        status.success(),
-        "building the fixture failed (abi_1_0={abi_1_0})"
-    );
-    let tag = if abi_1_0 { "v1_0" } else { "v1_1" };
-    let out = work.join(format!("{tag}-{}", artifact_name()));
-    std::fs::copy(target_dir.join("debug").join(artifact_name()), &out).expect("copy artifact");
-    out
-}
 
 fn connection(lib: &Arc<LoadedLibrary>) -> PluginConnectionType {
     PluginConnectionType::new(
@@ -114,7 +79,7 @@ async fn abi_1_1_end_to_end() {
 
 async fn abi_1_1_plugin_toolchain_and_host_context_round_trip() {
     let work = tempfile::TempDir::new().unwrap();
-    let lib_path = build_fixture(work.path(), false);
+    let lib_path = fixture_library(Variant::Default, work.path());
 
     // --- Toolchain enforcement across a real dlopen. ---
     let detail = expect_toolchain_refusal(with_env(
@@ -234,8 +199,8 @@ fn session(registry: &Arc<Mutex<ConnectionTypeRegistry>>, id: &str) -> Box<dyn C
 
 async fn host_hands_a_1_1_plugin_its_context_and_keeps_a_1_0_plugin_unchanged() {
     let work = tempfile::TempDir::new().unwrap();
-    let v1_1 = build_fixture(work.path(), false);
-    let v1_0 = build_fixture(work.path(), true);
+    let v1_1 = fixture_library(Variant::Default, work.path());
+    let v1_0 = fixture_library(Variant::Abi10, work.path());
     let root = work.path().join("plugins");
     let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
     let host = PluginHost::new(&root, Arc::clone(&registry)).with_host_version("9.8.7");
