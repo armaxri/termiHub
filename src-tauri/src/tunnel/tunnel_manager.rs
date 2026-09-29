@@ -27,6 +27,7 @@ use super::config::{
     ReachableFrom, TunnelConfig, TunnelState, TunnelStats, TunnelStatus, TunnelStore, TunnelType,
 };
 use super::connecting::{ConnectingTracker, FinishOutcome};
+use super::connection_refs::{ConnectionRefs, LiveConnections, TunnelControl};
 use super::dynamic_forward::DynamicForwarder;
 use super::local_forward::LocalForwarder;
 use super::remote_forward::RemoteForwarder;
@@ -235,11 +236,12 @@ fn companion_action(parent_status: &TunnelStatus, companion_running: bool) -> Co
             }
         }
         // Parent is not connected (connecting / reconnecting / disconnected /
-        // error) → hold the companion down so it never dangles at a dead port.
+        // error / its SSH connection deleted) → hold the companion down so it never dangles at a dead port.
         TunnelStatus::Connecting
         | TunnelStatus::Reconnecting
         | TunnelStatus::Disconnected
-        | TunnelStatus::Error => {
+        | TunnelStatus::Error
+        | TunnelStatus::MissingConnection => {
             if companion_running {
                 CompanionAction::Stop
             } else {
@@ -551,6 +553,10 @@ pub struct TunnelManager {
     /// supervisor (death-watch + reconnect backoff) are spawned through it and
     /// stop on its cancellation token, so app teardown awaits them (bounded).
     tasks: AppTasks,
+    /// The live saved-connection ids, for the tunnels whose SSH connection was
+    /// deleted (#2850): such a tunnel is stopped, rests as `MissingConnection`
+    /// and refuses to start until it is repointed.
+    connection_refs: ConnectionRefs,
 }
 
 impl TunnelManager {
@@ -578,6 +584,7 @@ impl TunnelManager {
             stats_emitter: Arc::new(Mutex::new(None)),
             agent_stats_poller: AgentStatusPoller::with_tasks(tasks.clone()),
             tasks,
+            connection_refs: ConnectionRefs::default(),
         })
     }
 
@@ -697,6 +704,15 @@ impl TunnelManager {
         Ok(())
     }
 
+    /// Reconcile the tunnels against the live saved-connection ids (#2850):
+    /// every running tunnel whose SSH connection is gone is stopped, and every
+    /// tunnel whose SSH connection is gone rests as `MissingConnection` until it
+    /// is repointed. Returns the stopped tunnel ids. The caller republishes the
+    /// `tunnels` region.
+    pub fn reconcile_connections(&self, live: LiveConnections) -> Vec<String> {
+        self.connection_refs.reconcile(live, self)
+    }
+
     /// Get the current status of all tunnels.
     pub fn get_statuses(&self) -> Result<Vec<TunnelState>, TerminalError> {
         let store = self
@@ -751,6 +767,10 @@ impl TunnelManager {
                         None,
                         TunnelStats::default(),
                     )
+                } else if let Some(status) = self.connection_refs.resting_status(config) {
+                    // Its SSH connection was deleted (#2850): it rests in the
+                    // explicit unresolved state until it is repointed.
+                    TunnelState::desktop(config.id.clone(), status, None, TunnelStats::default())
                 } else {
                     // A tunnel that is neither active nor connecting rests as
                     // either `Disconnected` (never failed) or `Error` (its last
@@ -786,6 +806,11 @@ impl TunnelManager {
                     TerminalError::TunnelError(format!("Tunnel not found: {}", tunnel_id))
                 })?
         };
+
+        // A tunnel whose SSH connection was deleted cannot resolve its handshake;
+        // refuse it until the user repoints it (#2850). Not recorded as a last
+        // error: the tunnel keeps resting in its `MissingConnection` state.
+        self.connection_refs.ensure_resolved(&config)?;
 
         // A chained companion cannot bind usefully until its parent's listen
         // socket exists, so starting a companion first ensures the parent is up
@@ -1643,6 +1668,22 @@ impl TunnelManager {
     /// Emit a tunnel status change event to the frontend.
     fn emit_status(&self, tunnel_id: &str, status: TunnelStatus, error: Option<String>) {
         emit_tunnel_status(&self.app_handle, tunnel_id, status, error);
+    }
+}
+
+impl TunnelControl for TunnelManager {
+    fn tunnel_configs(&self) -> Vec<TunnelConfig> {
+        self.get_tunnels().unwrap_or_default()
+    }
+
+    fn is_running(&self, tunnel_id: &str) -> bool {
+        self.is_tunnel_active(tunnel_id)
+    }
+
+    fn stop(&self, tunnel_id: &str) {
+        if let Err(e) = self.stop_tunnel(tunnel_id) {
+            tracing::warn!("Failed to stop tunnel {tunnel_id} of a deleted connection: {e}");
+        }
     }
 }
 

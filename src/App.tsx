@@ -57,6 +57,7 @@ import { useAppStore } from "@/store/appStore";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { getCliWorkspace } from "@/services/workspaceApi";
+import { CLI_WORKSPACE_REQUESTED_EVENT, launchWorkspaceByName } from "@/utils/cliWorkspace";
 import { resolveRestoreMode } from "@/utils/restoreMode";
 import { MAIN_WINDOW_LABEL } from "@/types/window";
 import { listWindows } from "@/services/api";
@@ -163,14 +164,7 @@ function App() {
       try {
         const cliWorkspaceName = await getCliWorkspace();
         if (cliWorkspaceName) {
-          const { workspaces, launchWorkspace } = useAppStore.getState();
-          const ws = workspaces.find(
-            (w) => w.name.toLowerCase() === cliWorkspaceName.toLowerCase()
-          );
-          if (ws) {
-            await launchWorkspace(ws.id);
-            handledByCli = true;
-          }
+          handledByCli = await launchWorkspaceByName(cliWorkspaceName);
         }
       } catch {
         // CLI plugin not available (e.g., browser dev mode)
@@ -238,6 +232,19 @@ function App() {
   // workspace switch (from any window) applies its theme / font overrides live.
   useEffect(() => {
     const unlistenPromise = initActiveWorkspaceSync();
+    return () => {
+      void unlistenPromise.then((fn) => fn());
+    };
+  }, []);
+
+  // A second launch with `--workspace` / `--workspace-file` is forwarded to this
+  // running instance (#3101); launch it as if it had been passed at startup. Only
+  // the main window acts, so a multi-window app opens it once.
+  useEffect(() => {
+    if (getCurrentWindow().label !== MAIN_WINDOW_LABEL) return;
+    const unlistenPromise = listen<string>(CLI_WORKSPACE_REQUESTED_EVENT, (event) => {
+      void launchWorkspaceByName(event.payload, { reload: true });
+    });
     return () => {
       void unlistenPromise.then((fn) => fn());
     };

@@ -1,6 +1,9 @@
 pub mod agent_crash_notice;
 pub mod agent_crash_reports;
 pub mod config_paths;
+/// Exclusive OS lock on the portable `data/` dir so the same portable folder
+/// cannot run twice and clobber its own config (#3100).
+pub mod data_dir_lock;
 pub mod diagnostics_bundle;
 pub mod docker_detect;
 pub mod download;

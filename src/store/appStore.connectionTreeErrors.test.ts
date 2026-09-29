@@ -306,7 +306,7 @@ describe("connectionTree — deleteConnection guard + error branches", () => {
     );
   });
 
-  it("warns via toast.info about every tunnel referencing the deleted connection (plural)", async () => {
+  it("leaves tunnels referencing the deleted connection to the backend cascade (#2850)", async () => {
     seedConnectionsRegion({ connections: [makeConnection()] });
     useAppStore.setState({
       tunnels: [makeTunnel("t1", "conn-1"), makeTunnel("t2", "conn-1")],
@@ -315,10 +315,10 @@ describe("connectionTree — deleteConnection guard + error branches", () => {
     useAppStore.getState().deleteConnection("conn-1");
     await flush();
 
-    expect(toastMock.info).toHaveBeenCalledWith(
-      "2 tunnels now reference a deleted SSH connection",
-      expect.objectContaining({ description: expect.stringContaining("Tunnel t1") })
-    );
+    // The backend stops them and projects `missingConnection`; the client raises
+    // no toast of its own and keeps the projected list untouched.
+    expect(toastMock.info).not.toHaveBeenCalled();
+    expect(useAppStore.getState().tunnels).toHaveLength(2);
   });
 });
 
