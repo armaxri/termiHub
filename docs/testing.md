@@ -4909,6 +4909,12 @@ the dev-agent (or any saved) connection so one terminal is open and connected.
 are unit-tested (`src/utils/connectSavedConnection.unattended.test.ts`,
 `src/store/scheduledConnect.test.ts`, `core/src/backends/ssh/*unattended*`,
 `src-tauri/src/schedules/manager_connect_tests.rs`); this checks the real app.
+Agent-hosted targets (#3877) are covered agent-side against an in-process SSH
+server (`agent/src/session/unattended_tests.rs`: one-time code, host key,
+password, passphrase, key-auth success), by the routing/gating tests
+(`agent/src/handler/dispatch/tests/unattended_tests.rs`,
+`src-tauri/src/session/remote_proxy/tests/unattended_tests.rs`) and the
+frontend agent-target cases of the unattended suite.
 
 1. Edit the schedule, tick **Connect if not connected**, Save. Expected: the
    schedule is disabled again; enabling asks for confirmation and says it also
@@ -4920,6 +4926,11 @@ are unit-tested (`src/utils/connectSavedConnection.unattended.test.ts`,
    host whose key you never trusted) and wait a minute. Expected: no prompt or
    dialog appears; the **Last** line reads `skipped — <name>: needs a password`
    (or `host key not trusted`).
+4. Point the schedule at an agent-hosted SSH connection with key auth on a
+   connected agent and close its tab. Expected: a tab opens on the agent,
+   `date` runs, and it closes again. On an agent older than protocol 0.23.0
+   the **Last** line reads `skipped — <name>: agent too old for unattended
+connect` (#3877).
 
 ### Workflow editor menus are clickable inside the modal (#1868)
 
