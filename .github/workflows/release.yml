@@ -16,7 +16,9 @@ jobs:
   # that still says 0.1.0 would publish termiHub-0.2.0-* assets whose bundle
   # reports 0.1.0 (and breaks update-available detection). Reuses
   # release-check.sh --versions-only so the manual and automatic checks agree.
-  # Every other job depends on create-release, which depends on this job.
+  # Every other job depends on create-release, which depends on this job; every
+  # build job (app bundles, agent binaries, notices, SBOM) also lists it directly
+  # in its needs (CI-009, #3901) so the gate survives a refactor of that chain.
   verify-version:
     name: Verify Version
     runs-on: ubuntu-latest
@@ -263,7 +265,7 @@ jobs:
     name: Build and Upload - ${{ matrix.platform }}
     # third-party-notices generates the THIRD_PARTY_NOTICES.txt every installer
     # bundles (PKG-009) — generated once so all platforms ship the same file.
-    needs: [create-release, third-party-notices]
+    needs: [verify-version, create-release, third-party-notices]
     runs-on: ${{ matrix.os }}
     # A job-level block REPLACES the workflow-level one, so contents: write is
     # restated. id-token + attestations are granted only to the jobs that
@@ -534,7 +536,7 @@ jobs:
   # Build and upload Linux agent binaries as release assets (static musl)
   agent-binaries-linux:
     name: Agent Binary (${{ matrix.target }})
-    needs: create-release
+    needs: [verify-version, create-release]
     runs-on: ubuntu-latest
     # Same scoped attestation grant as build-and-upload (CI-022).
     permissions:
@@ -616,7 +618,7 @@ jobs:
   # Build and upload macOS agent binaries as release assets (native build)
   agent-binaries-macos:
     name: Agent Binary (${{ matrix.target }})
-    needs: create-release
+    needs: [verify-version, create-release]
     runs-on: macos-latest
     # Same scoped attestation grant as build-and-upload (CI-022).
     permissions:
@@ -682,7 +684,7 @@ jobs:
   # must ship for those hosts to install the agent (#3060).
   agent-binaries-windows:
     name: Agent Binary (${{ matrix.target }})
-    needs: create-release
+    needs: [verify-version, create-release]
     runs-on: windows-latest
     # Same scoped attestation grant as build-and-upload (CI-022).
     permissions:
@@ -746,7 +748,7 @@ jobs:
   # Needs no build — cargo-about reads the lockfiles and crate sources only.
   third-party-notices:
     name: Generate Third-Party Notices
-    needs: create-release
+    needs: [verify-version, create-release]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -819,7 +821,7 @@ jobs:
   #     npm-shaped node_modules from the same frozen lockfile).
   sbom:
     name: Generate SBOMs
-    needs: create-release
+    needs: [verify-version, create-release]
     runs-on: ubuntu-latest
     permissions:
       contents: write
