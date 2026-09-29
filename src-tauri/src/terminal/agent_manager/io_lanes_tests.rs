@@ -634,6 +634,7 @@ fn connection(
             session_processes: false,
             session_monitoring: false,
             session_files: false,
+            unattended_connect: false,
             agent_version: String::new(),
         },
         ki_activity: crate::terminal::agent_ki_prompt::AgentPromptActivity::new(),

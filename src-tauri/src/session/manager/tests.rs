@@ -1503,6 +1503,7 @@ impl AgentRpcClient for RetainAgent {
         definition_id: Option<&str>,
         _owner: Option<&str>,
         correlation_id: Option<&str>,
+        _unattended: bool,
     ) -> Result<AgentSessionInfo, TerminalError> {
         self.correlation_ids
             .lock()

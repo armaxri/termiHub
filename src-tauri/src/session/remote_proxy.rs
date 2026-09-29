@@ -25,6 +25,10 @@ const MONITORING_STATUS_CHANNEL_CAPACITY: usize = 8;
 /// [`RemoteProxy`] forwards as `connection.create`'s `correlation_id` (#3085).
 pub(crate) const CORRELATION_ID_KEY: &str = "correlationId";
 
+/// Why an unattended connect of an agent-hosted target was refused on an agent
+/// older than protocol 0.23.0 (#3877), tagged `agent_outdated`.
+pub(crate) const AGENT_TOO_OLD_FOR_UNATTENDED: &str = "agent too old for unattended connect";
+
 /// Grace added on top of the collection interval before a *missing* agent
 /// sample counts as one failed collect (SM-012).
 ///
@@ -447,6 +451,15 @@ impl CreateSlot {
 }
 
 impl RemoteProxy {
+    /// Whether this proxy's agent connects unattended on request
+    /// (`unattendedConnect`, protocol 0.23.0, #3877). Unknown capabilities (an
+    /// agent not connected) read as "no".
+    fn agent_connects_unattended(&self) -> bool {
+        self.agent_manager
+            .get_capabilities(self.agent_id())
+            .is_some_and(|caps| caps.unattended_connect)
+    }
+
     /// Run the agent connect handshake (create session, register + attach
     /// output, query capabilities) and populate the proxy's state.
     ///
@@ -512,6 +525,18 @@ impl RemoteProxy {
             .and_then(|v| v.as_str())
             .map(String::from);
 
+        // An unattended connect (a scheduled run, #3877) runs this handshake
+        // inside core's never-prompt scope. The agent honors it only from
+        // protocol 0.23.0 (`unattendedConnect`); an older agent would ignore the
+        // flag and connect attended, so it is never asked.
+        let unattended = termihub_core::backends::ssh::unattended::is_unattended();
+        if unattended && !self.agent_connects_unattended() {
+            return Err(SessionError::SpawnFailed(crate::utils::errors::with_code(
+                crate::utils::errors::codes::AGENT_OUTDATED,
+                AGENT_TOO_OLD_FOR_UNATTENDED,
+            )));
+        }
+
         // Store the remote type for metadata.
         if let Ok(mut t) = self.remote_type_id.lock() {
             *t = session_type.clone();
@@ -544,6 +569,7 @@ impl RemoteProxy {
                 definition_id_owned.as_deref(),
                 owner.as_deref(),
                 correlation_id_owned.as_deref(),
+                unattended,
             )?;
             // Publish the created session ID so a concurrent cancellation can
             // tear it down (no orphan) even though we have not finished
@@ -1696,6 +1722,11 @@ mod tests {
         /// When set, `get_capabilities` reports an agent with this
         /// `session_files` flag (#3242).
         session_files: Option<bool>,
+        /// When set, `get_capabilities` reports an agent with this
+        /// `unattended_connect` flag (#3877).
+        unattended_connect: Option<bool>,
+        /// The `unattended` flag of every owned create, in order (#3877).
+        created_unattended: Mutex<Vec<bool>>,
     }
 
     impl MockAgentRpcClient {
@@ -1709,6 +1740,8 @@ mod tests {
                 session_processes: None,
                 session_monitoring: None,
                 session_files: None,
+                unattended_connect: None,
+                created_unattended: Mutex::new(Vec::new()),
             }
         }
 
@@ -1722,6 +1755,8 @@ mod tests {
                 session_processes: None,
                 session_monitoring: None,
                 session_files: None,
+                unattended_connect: None,
+                created_unattended: Mutex::new(Vec::new()),
             }
         }
     }
@@ -1747,6 +1782,7 @@ mod tests {
                     session_processes: false,
                     session_monitoring: false,
                     session_files: false,
+                    unattended_connect: false,
                     agent_version: "mock".to_string(),
                 },
                 agent_version: "mock".to_string(),
@@ -1769,6 +1805,7 @@ mod tests {
             if self.session_processes.is_none()
                 && self.session_monitoring.is_none()
                 && self.session_files.is_none()
+                && self.unattended_connect.is_none()
             {
                 return None;
             }
@@ -1780,6 +1817,7 @@ mod tests {
             caps.session_processes = self.session_processes.unwrap_or(false);
             caps.session_monitoring = self.session_monitoring.unwrap_or(false);
             caps.session_files = self.session_files.unwrap_or(false);
+            caps.unattended_connect = self.unattended_connect.unwrap_or(false);
             Some(caps)
         }
 
@@ -1805,6 +1843,21 @@ mod tests {
                 .send_request_result
                 .clone()
                 .unwrap_or(serde_json::Value::Null))
+        }
+
+        fn create_session_owned(
+            &self,
+            agent_id: &str,
+            session_type: &str,
+            config: serde_json::Value,
+            title: Option<&str>,
+            definition_id: Option<&str>,
+            _owner: Option<&str>,
+            _correlation_id: Option<&str>,
+            unattended: bool,
+        ) -> Result<AgentSessionInfo, TerminalError> {
+            self.created_unattended.lock().unwrap().push(unattended);
+            self.create_session(agent_id, session_type, config, title, definition_id)
         }
 
         fn create_session(
@@ -2697,6 +2750,7 @@ mod tests {
             definition_id: Option<&str>,
             owner: Option<&str>,
             correlation_id: Option<&str>,
+            _unattended: bool,
         ) -> Result<AgentSessionInfo, TerminalError> {
             self.create_owners
                 .lock()
@@ -3972,6 +4026,9 @@ mod tests {
 
     /// File browsing of agent-hosted sessions (#3242).
     mod files_tests;
+
+    /// Unattended connects of agent-hosted targets: routing + gating (#3877).
+    mod unattended_tests;
 
     /// #3408: a process RPC is "not supported" by the agent's code (surfaced as
     /// `AgentUnsupported`), never by message text.

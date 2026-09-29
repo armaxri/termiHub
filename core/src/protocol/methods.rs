@@ -2583,7 +2583,10 @@ mod tests {
         };
         let v = serde_json::to_value(&params).unwrap();
         assert!(v.get("correlation_id").is_none());
-        assert!(v.get("unattended").is_none(), "attended keeps the legacy shape");
+        assert!(
+            v.get("unattended").is_none(),
+            "attended keeps the legacy shape"
+        );
         assert_eq!(
             v,
             json!({"type": "local", "config": {"shell": "/bin/bash"}, "title": "Build"})

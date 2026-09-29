@@ -50,6 +50,13 @@ sessionMonitoring?: boolean,
  */
 sessionFiles?: boolean, 
 /**
+ * Whether the agent connects unattended on request — a
+ * `connection.create` with `unattended: true` never prompts and refuses
+ * with a typed kind instead (protocol 0.23.0, #3877). `false` for older
+ * agents, which a scheduled run skips as "agent too old".
+ */
+unattendedConnect?: boolean, 
+/**
  * Agent binary version string, e.g. "1.4.2".
  */
 agentVersion?: string, };
