@@ -123,6 +123,21 @@ if ($RealBundle) {
     Assert-Result 'usage: unknown --only section' ([pscustomobject]@{ Code = $LASTEXITCODE; Text = ($r -join "`n") }) 2 `
         -Expect @('error: --only needs one of: integration, markers, bundle')
 
+    # ----------------------------------------------------------------- versions
+    # Not one of the #3750 gates, but every mode parses the argument block and
+    # this is the mode the release workflow runs; with and without the flag.
+    $version = (Get-Content -Raw package.json | ConvertFrom-Json).version
+    $r = & cmd.exe /d /c 'scripts\release-check.cmd --versions-only' 2>&1 | ForEach-Object { "$_" }
+    Assert-Result 'versions-only' ([pscustomobject]@{ Code = $LASTEXITCODE; Text = ($r -join "`n") }) 0 `
+        -Expect @("PASS: All 5 files agree on version $version", 'ok    tauri (', 'RESULT: version checks passed') `
+        -Reject @('FAIL:')
+    $r = & cmd.exe /d /c "scripts\release-check.cmd --versions-only --expect-version v$version" 2>&1 | ForEach-Object { "$_" }
+    Assert-Result 'versions-only --expect-version v<ver>' ([pscustomobject]@{ Code = $LASTEXITCODE; Text = ($r -join "`n") }) 0 `
+        -Expect @("matches the expected version $version", 'RESULT: version checks passed') -Reject @('FAIL:')
+    $r = & cmd.exe /d /c 'scripts\release-check.cmd --versions-only --expect-version 0.0.0-harness' 2>&1 | ForEach-Object { "$_" }
+    Assert-Result 'versions-only --expect-version mismatch' ([pscustomobject]@{ Code = $LASTEXITCODE; Text = ($r -join "`n") }) 1 `
+        -Expect @("does not match the expected version '0.0.0-harness'", 'RESULT: version checks FAILED')
+
     # ------------------------------------------------------------------ markers
     $r = Invoke-ReleaseCheck 'markers'
     Assert-Result 'markers: clean tree' $r 0 `
