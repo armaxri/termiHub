@@ -19,6 +19,7 @@
 // unit-tested — see emit-release-notes.test.mjs.
 
 import { readFileSync } from "node:fs";
+import { isMainModule } from "./is-main-module.mjs";
 
 /** The exact string src-tauri/src/commands/update.rs greps for. Keep in sync. */
 export const SECURITY_MARKER = "<!-- security -->";
@@ -64,7 +65,7 @@ export function buildReleaseNotes(notes, { force = false } = {}) {
 // CLI mode: read notes from the file named in argv[2] (or stdin when it is "-"),
 // honour TERMIHUB_SECURITY_RELEASE as the force override, and print the possibly
 // marked notes to stdout so the workflow can redirect them back into the file.
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   const source = process.argv[2] ?? "-";
   const raw = readFileSync(source === "-" ? 0 : source, "utf8");
   const forceValue = (process.env.TERMIHUB_SECURITY_RELEASE ?? "").trim().toLowerCase();

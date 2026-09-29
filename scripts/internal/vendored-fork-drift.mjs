@@ -29,6 +29,7 @@ import { appendFileSync, readFileSync, writeFileSync } from "fs";
 import { createHash } from "crypto";
 import { fileURLToPath } from "url";
 import path from "path";
+import { isMainModule } from "./is-main-module.mjs";
 
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const MANIFEST = "vendor/vendored-forks.json";
@@ -379,7 +380,7 @@ async function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   main(process.argv.slice(2)).then(
     (code) => {
       process.exitCode = code;

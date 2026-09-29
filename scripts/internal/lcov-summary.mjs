@@ -8,8 +8,7 @@
 // (functions), BRF/BRH (branches). Summing each across every record in the
 // merged file yields whole-app totals. Usage: node lcov-summary.mjs <file.lcov>
 import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { isMainModule } from "./is-main-module.mjs";
 
 /** Sum LF/LH/FNF/FNH/BRF/BRH across every record of an lcov text. */
 export function summarizeLcov(text) {
@@ -49,6 +48,6 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

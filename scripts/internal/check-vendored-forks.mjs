@@ -31,6 +31,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { fileURLToPath } from "url";
 import path from "path";
+import { isMainModule } from "./is-main-module.mjs";
 
 /** Repository root, derived from this file's location (scripts/internal/). */
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -368,6 +369,6 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

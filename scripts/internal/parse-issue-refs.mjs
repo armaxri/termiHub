@@ -11,6 +11,8 @@
 // The parsing logic lives here (rather than inline in the workflow YAML) so it
 // can be unit-tested — see parse-issue-refs.test.mjs.
 
+import { isMainModule } from "./is-main-module.mjs";
+
 /**
  * The full set of GitHub issue-closing keywords, matched case-insensitively.
  * Mirrors https://docs.github.com/issues/tracking-your-work-with-issues/linking-a-pull-request-to-an-issue
@@ -123,7 +125,7 @@ export function parseIssueRefs(text) {
 
 // CLI mode: read PR_TITLE and PR_BODY from the environment and print one issue
 // number per line on stdout so the workflow can iterate over them in bash.
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   const combined = `${process.env.PR_TITLE ?? ""}\n${process.env.PR_BODY ?? ""}`;
   for (const num of parseIssueRefs(combined)) {
     process.stdout.write(`${num}\n`);

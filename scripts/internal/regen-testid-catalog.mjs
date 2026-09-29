@@ -27,7 +27,8 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { isMainModule } from "./is-main-module.mjs";
 
 /** Filename suffixes that are tests/fixtures/decls, not app UI (mirrors the Python scanner). */
 const SKIP_SUFFIXES = [".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx", ".d.ts"];
@@ -201,7 +202,7 @@ export function runGenerator(pythonArgv, scriptPath) {
 // CLI mode: `node regen-testid-catalog.mjs <edited-file>`. Best-effort and
 // quiet — any failure (no Python, unreadable file) is swallowed so the hook
 // never blocks an edit; CI's freshness check remains the correctness backstop.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url)) {
   const filePath = process.argv[2];
   if (filePath) {
     try {

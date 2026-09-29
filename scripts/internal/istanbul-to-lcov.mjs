@@ -25,8 +25,8 @@
 // Exits 0 with no output file when --in-dir holds no dumps.
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { normalizePath } from "./lcov-merge.mjs";
+import { isMainModule } from "./is-main-module.mjs";
 
 /** Sum `counts` into `into` (both `{id: n}` or `{id: [n...]}` maps). */
 function addCounts(into, counts) {
@@ -170,6 +170,6 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isMainModule(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

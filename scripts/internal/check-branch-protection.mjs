@@ -42,6 +42,7 @@ import { execFileSync } from "child_process";
 import { appendFileSync, readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import path from "path";
+import { isMainModule } from "./is-main-module.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -521,6 +522,6 @@ async function main() {
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   process.exitCode = await main();
 }
