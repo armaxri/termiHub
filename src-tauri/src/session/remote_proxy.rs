@@ -633,18 +633,27 @@ impl RemoteProxy {
                 // Set up monitoring proxy if supported.
                 if parsed.monitoring {
                     // Local sessions are monitored on the agent host itself
-                    // via the "self" sentinel; SSH sessions use the session ID.
-                    let monitoring_host = if session_type == "local" {
+                    // via the "self" sentinel; SSH/Docker/WSL sessions use the
+                    // session ID, which a 0.21.0+ agent (`sessionMonitoring`,
+                    // #3871) serves through that session's own backend. On an
+                    // older agent the status bar says to update the agent.
+                    let is_local = session_type == "local";
+                    let monitoring_host = if is_local {
                         "self".to_string()
                     } else {
                         remote_sid.clone()
                     };
+                    let agent_monitors_session = self
+                        .agent_manager
+                        .get_capabilities(self.agent_id())
+                        .is_some_and(|caps| caps.session_monitoring);
                     self.monitoring_proxy = Some(Arc::new(RemoteMonitoringProxy {
                         agent_id: self.agent_id.clone(),
                         monitoring_host,
                         agent_manager: self.agent_manager.clone(),
                         interval_ms: Arc::new(AtomicU64::new(DEFAULT_MONITORING_INTERVAL_MS)),
                         paused_tx: tokio::sync::watch::channel(false).0,
+                        agent_outdated: !is_local && !agent_monitors_session,
                     }));
                     // A host that can be monitored can also have its processes
                     // listed/killed (PROD-0028). For a local agent session the
@@ -1115,7 +1124,15 @@ pub struct RemoteMonitoringProxy {
     /// channel so a `set_paused` on the provider steers the running driver
     /// immediately (each `subscribe` takes a fresh receiver).
     paused_tx: tokio::sync::watch::Sender<bool>,
+    /// The agent predates agent-hosted session monitoring (#3871): `subscribe`
+    /// fails with the `agent_outdated` code — the status bar says to update the
+    /// agent — without a request the agent would only reject.
+    agent_outdated: bool,
 }
+
+/// Message of the `agent_outdated` subscribe failure (#3871).
+const MONITORING_AGENT_OUTDATED: &str =
+    "the remote agent is too old to monitor this session; update the agent";
 
 impl RemoteMonitoringProxy {
     /// Build a proxy that monitors a chosen agent's **own** host — the "self"
@@ -1133,6 +1150,7 @@ impl RemoteMonitoringProxy {
             agent_manager,
             interval_ms: Arc::new(AtomicU64::new(DEFAULT_MONITORING_INTERVAL_MS)),
             paused_tx: tokio::sync::watch::channel(false).0,
+            agent_outdated: false,
         }
     }
 
@@ -1407,6 +1425,12 @@ async fn next_report(
 #[async_trait::async_trait]
 impl MonitoringProvider for RemoteMonitoringProxy {
     async fn subscribe(&self) -> Result<MonitoringSubscription, CoreError> {
+        if self.agent_outdated {
+            return Err(CoreError::Other(termihub_core::errors::with_code(
+                crate::utils::errors::codes::AGENT_OUTDATED,
+                MONITORING_AGENT_OUTDATED,
+            )));
+        }
         // Raw channel fed directly by the agent's monitoring notifications. A
         // status-derivation driver (below) is interposed between this and the
         // consumer so the reported `MonitorStatus` follows the *actual* sample
@@ -1478,6 +1502,10 @@ impl MonitoringProvider for RemoteMonitoringProxy {
     }
 
     async fn unsubscribe(&self) -> Result<(), CoreError> {
+        if self.agent_outdated {
+            // Never subscribed (#3871): nothing to stop.
+            return Ok(());
+        }
         // Unregister monitoring channel before telling the agent to stop.
         let _ = self
             .agent_manager
@@ -1499,6 +1527,9 @@ impl MonitoringProvider for RemoteMonitoringProxy {
         // interval in place (#1233). The output channel stays registered.
         let ms = (interval.as_millis() as u64).max(1);
         self.interval_ms.store(ms, Ordering::SeqCst);
+        if self.agent_outdated {
+            return;
+        }
         if let Err(e) = self
             .rpc(
                 termihub_core::protocol::methods::CONNECTION_MONITORING_SUBSCRIBE,
@@ -1514,6 +1545,10 @@ impl MonitoringProvider for RemoteMonitoringProxy {
     }
 
     async fn set_paused(&self, paused: bool) {
+        if self.agent_outdated {
+            self.paused_tx.send_replace(paused);
+            return;
+        }
         // Propagate pause/resume to the agent so its remote poller actually
         // stops sampling/streaming while paused, instead of only being honoured
         // on the desktop (#3001). This reuses the existing subscribe/unsubscribe
@@ -1627,8 +1662,12 @@ mod tests {
         /// Records remote_session_id for every register_monitoring_output call.
         registered_monitoring_hosts: Mutex<Vec<String>>,
         /// When set, `get_capabilities` reports an agent with this
-        /// `session_processes` flag (#3210); `None` reports no capabilities.
+        /// `session_processes` flag (#3210); `None` reports no capabilities
+        /// unless `session_monitoring` is set.
         session_processes: Option<bool>,
+        /// When set, `get_capabilities` reports an agent with this
+        /// `session_monitoring` flag (#3871).
+        session_monitoring: Option<bool>,
     }
 
     impl MockAgentRpcClient {
@@ -1640,6 +1679,7 @@ mod tests {
                 sent_requests: Mutex::new(Vec::new()),
                 registered_monitoring_hosts: Mutex::new(Vec::new()),
                 session_processes: None,
+                session_monitoring: None,
             }
         }
 
@@ -1651,6 +1691,7 @@ mod tests {
                 sent_requests: Mutex::new(Vec::new()),
                 registered_monitoring_hosts: Mutex::new(Vec::new()),
                 session_processes: None,
+                session_monitoring: None,
             }
         }
     }
@@ -1674,6 +1715,7 @@ mod tests {
                     tool_streaming: false,
                     embedded_server_activity: false,
                     session_processes: false,
+                    session_monitoring: false,
                     agent_version: "mock".to_string(),
                 },
                 agent_version: "mock".to_string(),
@@ -1693,13 +1735,16 @@ mod tests {
         }
 
         fn get_capabilities(&self, _agent_id: &str) -> Option<AgentCapabilities> {
-            let session_processes = self.session_processes?;
+            if self.session_processes.is_none() && self.session_monitoring.is_none() {
+                return None;
+            }
             let mut caps: AgentCapabilities = serde_json::from_value(json!({
                 "connectionTypes": [],
                 "maxSessions": 10,
             }))
             .expect("minimal capabilities parse");
-            caps.session_processes = session_processes;
+            caps.session_processes = self.session_processes.unwrap_or(false);
+            caps.session_monitoring = self.session_monitoring.unwrap_or(false);
             Some(caps)
         }
 
@@ -2198,7 +2243,7 @@ mod tests {
 
     #[tokio::test]
     async fn monitoring_proxy_uses_session_id_for_ssh_session() {
-        let mock = Arc::new(MockAgentRpcClient::with_capabilities(json!({
+        let mut mock = MockAgentRpcClient::with_capabilities(json!({
             "types": [
                 {
                     "typeId": "ssh",
@@ -2213,7 +2258,10 @@ mod tests {
                     }
                 }
             ]
-        })));
+        }));
+        // A 0.21.0+ agent monitors its sessions (#3871).
+        mock.session_monitoring = Some(true);
+        let mock = Arc::new(mock);
         let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
 
         proxy
@@ -3883,6 +3931,9 @@ mod tests {
 
     /// Agent-hosted process list + kill routing and the old-agent fallback (#3210).
     mod process_tests;
+
+    /// Agent-hosted session monitoring routing and the old-agent fallback (#3871).
+    mod monitoring_tests;
 
     /// #3408: a process RPC is "not supported" by the agent's code (surfaced as
     /// `AgentUnsupported`), never by message text.

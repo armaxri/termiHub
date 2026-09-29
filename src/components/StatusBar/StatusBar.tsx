@@ -29,6 +29,8 @@ import { useProjectedSessionLifecycle } from "@/store/useSessionLifecycle";
 import { currentMonitorsView } from "@/store/systemMonitorBridge";
 import { resolveHighlightingConfig } from "@/services/syntaxHighlightingConfig";
 import { frontendLog } from "@/utils/frontendLog";
+import { parseBackendError } from "@/utils/backendErrorCode";
+import type { IpcErrorCode } from "@/types/generated/IpcErrorCode";
 import { useDesktopVersion } from "@/hooks/useDesktopVersion";
 import { useWindowInfo } from "@/hooks/useWindowInfo";
 import { summarizeAgentUpdates } from "@/utils/agentVersion";
@@ -61,6 +63,12 @@ import { UpdateIndicator } from "./UpdateIndicator";
 import { BroadcastStatus } from "./BroadcastStatus";
 import { ScheduleStatus } from "./ScheduleStatus";
 import { PluginStatusBarWidgets } from "./PluginStatusBarWidgets";
+
+/**
+ * Backend code for a monitor whose remote agent is too old to monitor an
+ * agent-hosted session (#3871) — the fix is updating the agent, not retrying.
+ */
+const AGENT_OUTDATED_CODE: IpcErrorCode = "agent_outdated";
 import { monitorOfflineLabel, monitorOfflineReasonText } from "@/utils/monitorStatusReason";
 import { isFrozenMonitorBadge, monitorStatusBadge } from "@/utils/reconnectStatus";
 import "./StatusBar.css";
@@ -739,6 +747,21 @@ function MonitoringStatus() {
     // failed-connect error with a reachable Retry (audit gaps G7 + G9). When
     // there is nothing to show, render nothing and let auto-connect run.
     if (!monitoringLoading && !monitoringError) return null;
+
+    // The session's agent predates agent-hosted session monitoring (#3871): say
+    // so instead of a generic error, and offer no Retry that could only fail.
+    const parsedError = monitoringError ? parseBackendError(monitoringError) : null;
+    if (!monitoringLoading && parsedError?.code === AGENT_OUTDATED_CODE) {
+      return (
+        <span
+          className="status-bar__item monitoring-status__error"
+          title="This session runs on a remote agent that is too old to monitor it. Update the agent on this host to see its system stats."
+          data-testid="monitoring-agent-outdated"
+        >
+          Update agent to monitor
+        </span>
+      );
+    }
 
     const showRetry = !monitoringLoading && monitoringError !== null;
 

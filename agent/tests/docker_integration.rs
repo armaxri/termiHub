@@ -41,6 +41,11 @@ const MSG_ERROR: u8 = 0x84;
 const MSG_READY: u8 = 0x85;
 /// Optional-feature flags a daemon sends before Ready (#3210).
 const MSG_CAPABILITIES: u8 = 0x88;
+/// Agent → daemon monitoring request, and its replies / samples (#3871).
+const MSG_MONITORING_REQUEST: u8 = 0x08;
+const MSG_MONITORING_EVENT: u8 = 0x89;
+/// [`MSG_CAPABILITIES`] flag: the daemon serves monitoring (#3871).
+const CAP_MONITORING: u8 = 0x02;
 
 const HEADER_SIZE: usize = 5;
 
@@ -512,4 +517,195 @@ async fn test_docker_kill() {
         got_exited_or_eof || daemon_exited,
         "Expected Exited frame / EOF or daemon exit after kill"
     );
+}
+
+// ── Session monitoring through the daemon (#3871) ─────────────────
+
+/// A distroless image: no shell, no `/proc` tooling (the #3202 fixture).
+const DISTROLESS: &str = "gcr.io/distroless/python3-debian12:latest";
+
+/// A long-lived container started with the docker CLI; removed on drop.
+struct Container(String);
+
+impl Drop for Container {
+    fn drop(&mut self) {
+        let _ = Command::new("docker")
+            .args(["rm", "-f", &self.0])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+}
+
+/// Start `image` running `args` in the background, or `None` to skip.
+fn start_container(label: &str, image: &str, args: &[&str]) -> Option<Container> {
+    let name = format!("termihub-3871-{label}-{}", std::process::id());
+    let ok = Command::new("docker")
+        .args(["run", "-d", "--name", &name, "--entrypoint", args[0], image])
+        .args(&args[1..])
+        .stdout(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ok {
+        Some(Container(name))
+    } else {
+        let _ = Container(name);
+        None
+    }
+}
+
+/// Spawn a daemon attached to an existing container through `shell`.
+fn spawn_existing_container_daemon(
+    session_id: &str,
+    socket_path: &Path,
+    container: &str,
+    shell: &str,
+) -> DaemonHandle {
+    let settings = serde_json::json!({
+        "containerMode": "existing",
+        "existingContainer": container,
+        "shell": shell,
+    });
+    let mut child = Command::new(agent_binary())
+        .arg("--daemon")
+        .arg(session_id)
+        .env("TERMIHUB_SOCKET_PATH", socket_path)
+        .env("TERMIHUB_TYPE_ID", "docker")
+        .env("TERMIHUB_BUFFER_SIZE", "65536")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn_guarded()
+        .expect("Failed to spawn daemon process");
+    write_settings_to_stdin(&mut child, &settings);
+    DaemonHandle {
+        child,
+        socket_path: socket_path.to_path_buf(),
+    }
+}
+
+/// Connect and complete the handshake, returning the capability flags.
+async fn connect_with_capabilities(
+    socket_path: &Path,
+) -> (FrameReader, tokio::net::unix::OwnedWriteHalf, u8) {
+    let stream = UnixStream::connect(socket_path)
+        .await
+        .expect("Failed to connect to daemon socket");
+    let (reader, writer) = stream.into_split();
+    let mut reader = FrameReader::new(reader);
+    let mut flags = 0;
+    loop {
+        let frame = reader
+            .next_frame(Duration::from_secs(30))
+            .await
+            .expect("Error reading handshake frame")
+            .expect("Unexpected EOF during handshake");
+        match frame.msg_type {
+            MSG_READY => break,
+            MSG_CAPABILITIES => flags = frame.payload.first().copied().unwrap_or(0),
+            _ => {}
+        }
+    }
+    (reader, writer, flags)
+}
+
+/// Subscribe the session's monitor and return the first sample's JSON.
+async fn first_monitoring_sample(
+    reader: &mut FrameReader,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> serde_json::Value {
+    let request = serde_json::json!({"id": 1, "op": "subscribe"});
+    write_frame(
+        writer,
+        MSG_MONITORING_REQUEST,
+        request.to_string().as_bytes(),
+    )
+    .await
+    .expect("Failed to send the subscribe");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let frame = reader
+            .next_frame(remaining)
+            .await
+            .expect("a monitoring event in time")
+            .expect("the daemon stays up");
+        if frame.msg_type != MSG_MONITORING_EVENT {
+            continue;
+        }
+        let event: serde_json::Value = serde_json::from_slice(&frame.payload).expect("event JSON");
+        match event["event"].as_str() {
+            Some("reply") => assert!(
+                event.get("error").is_none(),
+                "the subscribe failed: {event}"
+            ),
+            Some("stats") => return event["stats"].clone(),
+            _ => {}
+        }
+    }
+}
+
+/// A distroless container monitored through an agent-hosted session falls
+/// back to the Docker Engine stats API (#3202), end to end through the
+/// session daemon (#3871).
+#[tokio::test]
+#[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
+async fn test_docker_session_monitoring_distroless_uses_docker_stats() {
+    if !docker_available() {
+        eprintln!("Skipping test: Docker not available");
+        return;
+    }
+    let args = ["/usr/bin/python3", "-c", "import time; time.sleep(300)"];
+    let Some(container) = start_container("distroless", DISTROLESS, &args) else {
+        eprintln!("Skipping test: could not start a {DISTROLESS} container");
+        return;
+    };
+
+    let (_dir, socket_path) = temp_socket_path("docker-mon-distroless");
+    let _daemon =
+        spawn_existing_container_daemon("docker-mon-dl", &socket_path, &container.0, args[0]);
+    assert!(
+        wait_for_socket(&socket_path, Duration::from_secs(30)).await,
+        "Daemon socket did not appear"
+    );
+
+    let (mut reader, mut writer, flags) = connect_with_capabilities(&socket_path).await;
+    assert_ne!(flags & CAP_MONITORING, 0, "the daemon serves monitoring");
+
+    let sample = first_monitoring_sample(&mut reader, &mut writer).await;
+    assert_eq!(sample["source"], "dockerStats", "{sample}");
+    assert!(
+        sample["memoryTotalKb"].as_u64().unwrap_or(0) > 0,
+        "{sample}"
+    );
+}
+
+/// A `/proc`-capable container keeps the richer `/proc` source.
+#[tokio::test]
+#[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
+async fn test_docker_session_monitoring_proc_container_uses_proc() {
+    if !docker_available() {
+        eprintln!("Skipping test: Docker not available");
+        return;
+    }
+    let Some(container) = start_container("proc", "alpine:latest", &["sleep", "300"]) else {
+        eprintln!("Skipping test: could not start an alpine container");
+        return;
+    };
+
+    let (_dir, socket_path) = temp_socket_path("docker-mon-proc");
+    let _daemon =
+        spawn_existing_container_daemon("docker-mon-proc", &socket_path, &container.0, "/bin/sh");
+    assert!(
+        wait_for_socket(&socket_path, Duration::from_secs(30)).await,
+        "Daemon socket did not appear"
+    );
+
+    let (mut reader, mut writer, flags) = connect_with_capabilities(&socket_path).await;
+    assert_ne!(flags & CAP_MONITORING, 0, "the daemon serves monitoring");
+
+    let sample = first_monitoring_sample(&mut reader, &mut writer).await;
+    assert_ne!(sample["source"], "dockerStats", "{sample}");
+    assert!(sample["diskTotalKb"].as_u64().unwrap_or(0) > 0, "{sample}");
 }

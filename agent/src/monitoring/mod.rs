@@ -1,13 +1,15 @@
 //! System monitoring: periodic stats collection and notification streaming.
 //!
-//! Supports monitoring the agent's own host ("self") and remote SSH
-//! jump targets (by connection ID). Stats are collected at a configurable
+//! Supports monitoring the agent's own host ("self"), remote SSH jump targets
+//! (by connection ID), and — since #3871 — an agent-hosted session (by session
+//! ID) through its backend's own monitoring provider (see [`session`]). Stats are collected at a configurable
 //! interval and sent as `connection.monitoring.data` JSON-RPC notifications.
 //! Every collect-loop status transition is also sent as a
 //! `connection.monitoring.status` notification (#3321), so the desktop can
 //! mirror the agent's own status instead of inferring it from missing samples.
 
 pub mod collector;
+pub mod session;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,7 +23,7 @@ use tracing::{debug, info, warn};
 
 use termihub_core::errors::CoreError;
 use termihub_core::monitoring::{
-    BackoffSchedule, CollectLoopState, MonitorStatus, DEFAULT_COLLECT_TIMEOUT,
+    BackoffSchedule, CollectLoopState, MonitorStatus, MonitoringProvider, DEFAULT_COLLECT_TIMEOUT,
     DEFAULT_MONITORING_INTERVAL_MS,
 };
 
@@ -68,6 +70,16 @@ pub trait MonitoringManagerApi: Send + Sync + 'static {
     /// Start monitoring a host (or replace an existing subscription).
     async fn subscribe(&self, host: &str, interval_ms: Option<u64>) -> Result<()>;
 
+    /// Start monitoring an agent-hosted session through its backend's own
+    /// `provider` (#3871), streaming under `host` (the session id). Replaces an
+    /// existing subscription for `host`.
+    async fn subscribe_provider(
+        &self,
+        host: &str,
+        provider: Arc<dyn MonitoringProvider + Send + Sync>,
+        interval_ms: Option<u64>,
+    ) -> Result<()>;
+
     /// Stop monitoring a host.
     async fn unsubscribe(&self, host: &str);
 
@@ -89,6 +101,22 @@ pub struct MonitoringManager {
 struct Subscription {
     cancel: CancellationToken,
     join_handle: JoinHandle<()>,
+    /// The session backend's provider this subscription streams from (#3871);
+    /// `None` for the agent's own collectors.
+    provider: Option<Arc<dyn MonitoringProvider + Send + Sync>>,
+}
+
+impl Subscription {
+    /// Stop the streaming task and, for a session provider, the provider's own
+    /// loop. Called with the subscriptions lock released: the provider may
+    /// make a round trip to the session daemon.
+    async fn stop(self) {
+        self.cancel.cancel();
+        self.join_handle.abort();
+        if let Some(provider) = self.provider {
+            session::stop_provider(provider.as_ref()).await;
+        }
+    }
 }
 
 impl MonitoringManager {
@@ -116,14 +144,7 @@ impl MonitoringManager {
             .max(MIN_INTERVAL_MS);
 
         // If already subscribed, cancel the old subscription first
-        {
-            let mut subs = self.subscriptions.lock().await;
-            if let Some(old) = subs.remove(host) {
-                old.cancel.cancel();
-                old.join_handle.abort();
-                debug!("Replaced existing monitoring subscription for '{host}'");
-            }
-        }
+        self.remove(host).await;
 
         // Build a collector *factory* so the monitoring task can re-dial the
         // transport in place after a sustained drop (#1230, gap G2). The
@@ -196,31 +217,90 @@ impl MonitoringManager {
             Subscription {
                 cancel,
                 join_handle,
+                provider: None,
             },
         );
 
         Ok(())
     }
 
+    /// Start monitoring an agent-hosted session through its backend's own
+    /// `provider` (#3871). See [`MonitoringManagerApi::subscribe_provider`].
+    ///
+    /// The desktop changes the interval and pauses by re-subscribing /
+    /// unsubscribing, so a repeat subscribe restarts the provider in place.
+    pub async fn subscribe_provider(
+        &self,
+        host: &str,
+        provider: Arc<dyn MonitoringProvider + Send + Sync>,
+        interval_ms: Option<u64>,
+    ) -> Result<()> {
+        let interval = interval_ms
+            .unwrap_or(DEFAULT_MONITORING_INTERVAL_MS)
+            .max(MIN_INTERVAL_MS);
+        self.remove(host).await;
+
+        // Subscribe up front so a connect failure (an unreachable host, a
+        // container without `/proc` and no stats fallback) is the RPC's error.
+        let subscription = provider
+            .subscribe()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        provider.set_interval(Duration::from_millis(interval)).await;
+
+        let cancel = CancellationToken::new();
+        let join_handle = tokio::spawn(session::forward_provider(
+            host.to_string(),
+            subscription,
+            self.notification_tx.clone(),
+            cancel.clone(),
+        ));
+        info!("Started session monitoring for '{host}' (interval: {interval}ms)");
+
+        let replaced = self.subscriptions.lock().await.insert(
+            host.to_string(),
+            Subscription {
+                cancel,
+                join_handle,
+                provider: Some(provider),
+            },
+        );
+        // A concurrent subscribe for the same host raced this one; the later
+        // insert wins and the earlier stream is stopped.
+        if let Some(old) = replaced {
+            old.stop().await;
+        }
+        Ok(())
+    }
+
+    /// Remove and stop the subscription for `host`, if any.
+    async fn remove(&self, host: &str) -> bool {
+        let removed = self.subscriptions.lock().await.remove(host);
+        match removed {
+            Some(sub) => {
+                sub.stop().await;
+                debug!("Stopped monitoring subscription for '{host}'");
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Stop monitoring a host. Returns `true` if a subscription existed.
     pub async fn unsubscribe(&self, host: &str) -> bool {
-        let mut subs = self.subscriptions.lock().await;
-        if let Some(sub) = subs.remove(host) {
-            sub.cancel.cancel();
-            sub.join_handle.abort();
+        let existed = self.remove(host).await;
+        if existed {
             info!("Stopped monitoring subscription for '{host}'");
-            true
-        } else {
-            false
         }
+        existed
     }
 
     /// Cancel all active subscriptions (called during agent shutdown).
     pub async fn shutdown(&self) {
-        let mut subs = self.subscriptions.lock().await;
-        for (host, sub) in subs.drain() {
-            sub.cancel.cancel();
-            sub.join_handle.abort();
+        let drained: Vec<(String, Subscription)> =
+            self.subscriptions.lock().await.drain().collect();
+        for (host, sub) in drained {
+            sub.stop().await;
             debug!("Shutdown: cancelled monitoring for '{host}'");
         }
     }
@@ -232,6 +312,15 @@ impl MonitoringManager {
 impl MonitoringManagerApi for MonitoringManager {
     async fn subscribe(&self, host: &str, interval_ms: Option<u64>) -> Result<()> {
         MonitoringManager::subscribe(self, host, interval_ms).await
+    }
+
+    async fn subscribe_provider(
+        &self,
+        host: &str,
+        provider: Arc<dyn MonitoringProvider + Send + Sync>,
+        interval_ms: Option<u64>,
+    ) -> Result<()> {
+        MonitoringManager::subscribe_provider(self, host, provider, interval_ms).await
     }
 
     async fn unsubscribe(&self, host: &str) {

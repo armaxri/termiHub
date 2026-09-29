@@ -79,7 +79,9 @@ pub struct Docker {
     /// System-monitoring provider, created on connect (#3182). Reads `/proc`
     /// inside the container via `docker exec` through the shared exec-based
     /// provider.
-    monitoring_provider: Option<ExecMonitoringProvider>,
+    /// Shared (`Arc`) so [`monitoring_handle`](ConnectionType::monitoring_handle)
+    /// can hand it out — the agent's session daemon runs it (#3871).
+    monitoring_provider: Option<Arc<ExecMonitoringProvider>>,
     /// Process manager (list / kill via `docker exec`), created on connect
     /// (PROD-0028). Held in an `Arc` so [`process_manager`](ConnectionType::process_manager)
     /// hands out an owned clone.
@@ -1259,10 +1261,10 @@ impl ConnectionType for Docker {
 
         // Create the system-monitoring provider (#3182): reads `/proc` inside the
         // container via `docker exec`.
-        self.monitoring_provider = Some(docker_monitoring_provider(
+        self.monitoring_provider = Some(Arc::new(docker_monitoring_provider(
             client.clone(),
             container_id.clone(),
-        ));
+        )));
 
         // Create the process manager (PROD-0028): lists / kills via `docker exec`.
         self.process_manager = Some(Arc::new(docker_process_manager(
@@ -1360,7 +1362,13 @@ impl ConnectionType for Docker {
     fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
         self.monitoring_provider
             .as_ref()
-            .map(|p| p as &dyn MonitoringProvider)
+            .map(|p| p.as_ref() as &dyn MonitoringProvider)
+    }
+
+    fn monitoring_handle(&self) -> Option<Arc<dyn MonitoringProvider + Send + Sync>> {
+        self.monitoring_provider
+            .as_ref()
+            .map(|p| p.clone() as Arc<dyn MonitoringProvider + Send + Sync>)
     }
 
     fn file_browser(&self) -> Option<&dyn FileBrowser> {
