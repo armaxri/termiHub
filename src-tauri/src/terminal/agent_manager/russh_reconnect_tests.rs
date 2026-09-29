@@ -105,7 +105,14 @@ fn ephemeral_port_floor() -> u16 {
 /// sequence is spread by PID and a per-process counter so concurrent instances
 /// (in this process or a parallel checkout's) start on different ports, and a
 /// port already held by something else is skipped.
-fn sshd_port() -> u16 {
+///
+/// The spread alone still let two harness instances share a port (#3129): an
+/// instance's port is free during its stop → restart gap and before its sshd
+/// first binds, so another instance's probe could pick it (or hold it for the
+/// instant of its probe bind, failing this sshd's bind). Every harness port is
+/// therefore also [`PortLease`]d for the instance's lifetime, and a leased port
+/// is never probed.
+fn sshd_port() -> (u16, PortLease) {
     use std::sync::atomic::{AtomicU32, Ordering};
     static NEXT: AtomicU32 = AtomicU32::new(0);
 
@@ -121,8 +128,98 @@ fn sshd_port() -> u16 {
         .wrapping_add(NEXT.fetch_add(1, Ordering::Relaxed).wrapping_mul(104_729));
     (0..span)
         .map(|i| RANGE_START + ((seed.wrapping_add(i) % span) as u16))
-        .find(|&port| std::net::TcpListener::bind(("127.0.0.1", port)).is_ok())
+        .find_map(|port| {
+            let lease = PortLease::try_acquire(port)?;
+            std::net::TcpListener::bind(("127.0.0.1", port))
+                .is_ok()
+                .then_some((port, lease))
+        })
         .expect("no free non-ephemeral loopback port for sshd")
+}
+
+/// A host-wide claim on one sshd port, held for a harness instance's whole
+/// lifetime so no other instance — in this process, a helper process or a
+/// parallel checkout — picks it, even while this instance's sshd is down
+/// (#3129). It is an exclusive `flock` on a per-port file: the kernel drops the
+/// lock when the file closes or the process dies, so a killed test run never
+/// leaves a stale claim behind. The lock files themselves are left in place;
+/// an unlocked file claims nothing.
+struct PortLease {
+    _file: std::fs::File,
+}
+
+impl PortLease {
+    /// Claim `port`, or `None` if another instance holds it.
+    fn try_acquire(port: u16) -> Option<Self> {
+        use std::os::unix::io::AsRawFd;
+        // Safety: `getuid` only reads the calling process's real user id.
+        let uid = unsafe { libc::getuid() };
+        let dir = std::env::temp_dir().join(format!("termihub-russh-sshd-ports-{uid}"));
+        std::fs::create_dir_all(&dir).ok()?;
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.join(format!("{port}.lock")))
+            .ok()?;
+        // Safety: `flock` on a descriptor this function owns. Rust opens it
+        // close-on-exec, so no child process inherits the lock.
+        let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        (rc == 0).then_some(Self { _file: file })
+    }
+}
+
+/// Write the harness `sshd_config`: `template` with its `Port 0` placeholder
+/// set to `port`.
+fn write_sshd_config(path: &Path, template: &str, port: u16) -> std::io::Result<()> {
+    std::fs::write(
+        path,
+        template.replacen("Port 0", &format!("Port {port}"), 1),
+    )
+}
+
+/// The start of one sshd's stderr log, drained on a thread so sshd (and its
+/// per-connection children, which share the pipe) never block on a full pipe.
+/// Keeps only the first lines: the start-up and bind messages are all
+/// `start()` needs, and memory stays bounded however long the sshd runs.
+#[derive(Clone, Default)]
+struct SshdLog(Arc<std::sync::Mutex<Vec<String>>>);
+
+impl SshdLog {
+    const MAX_LINES: usize = 200;
+
+    fn drain(stderr: std::process::ChildStderr) -> Self {
+        use std::io::BufRead;
+        let log = Self::default();
+        let sink = log.clone();
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(stderr)
+                .lines()
+                .map_while(Result::ok)
+            {
+                let mut lines = sink
+                    .0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if lines.len() < Self::MAX_LINES {
+                    lines.push(line);
+                }
+            }
+        });
+        log
+    }
+
+    fn text(&self) -> String {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .join("\n")
+    }
+}
+
+/// Whether an sshd log shows it exited because its port was taken.
+fn is_bind_failure(log: &str) -> bool {
+    log.contains("Address already in use") || log.contains("Cannot bind any address")
 }
 
 /// A process-unique suffix for per-instance temp dirs.
@@ -565,6 +662,18 @@ struct LocalAgentSshd {
     /// Absolute `LLVM_PROFILE_FILE` forwarded to every agent this sshd
     /// launches, so an instrumented agent never writes into `$HOME` (#3831).
     profile_file: PathBuf,
+    /// `(pid, comm)` of every process that was under the sshd master when
+    /// [`close_listener`](Self::close_listener) killed only the master. They
+    /// are reparented to init, so `Drop` reaps them by exact PID (#3129).
+    orphans: Vec<(u32, String)>,
+    /// Claim on `port` for this instance's lifetime (#3129).
+    lease: PortLease,
+    /// The `sshd_config` text with a `Port 0` placeholder, so a first start
+    /// that loses its port can move to another one.
+    config_template: String,
+    /// Whether an sshd of this instance ever listened. Until then the port is
+    /// not yet load-bearing and a lost bind can move to another one.
+    listened: bool,
 }
 
 impl LocalAgentSshd {
@@ -622,7 +731,9 @@ impl LocalAgentSshd {
             "PasswordAuthentication no".to_string(),
             "PubkeyAuthentication yes".to_string(),
             "StrictModes no".to_string(),
-            "LogLevel ERROR".to_string(),
+            // INFO so sshd's stderr log carries the `Server listening` line
+            // that `start()` uses to confirm it is OUR sshd on the port.
+            "LogLevel INFO".to_string(),
             format!(
                 "SetEnv TERMIHUB_REGISTRY_ENDPOINT={} XDG_CONFIG_HOME={} \
                  TERMIHUB_REGISTRY_IDLE_TIMEOUT_SECS=15 \
@@ -638,9 +749,8 @@ impl LocalAgentSshd {
         .join("\n");
         // The port is fixed for the lifetime of the instance (drop/restore
         // must reuse it), so pick it now and write the final config.
-        let port = sshd_port();
-        let config_body = config_body.replacen("Port 0", &format!("Port {port}"), 1);
-        std::fs::write(&config, config_body)?;
+        let (port, lease) = sshd_port();
+        write_sshd_config(&config, &config_body, port)?;
 
         let agent_comm = agent_bin
             .file_name()
@@ -660,33 +770,90 @@ impl LocalAgentSshd {
             daemon_pids: Arc::new(std::sync::Mutex::new(Vec::new())),
             guard: None,
             profile_file,
+            orphans: Vec::new(),
+            lease,
+            config_template: config_body,
+            listened: false,
         })
     }
 
     /// Launch sshd (foreground `-D` so we own the tree) and wait until it
-    /// accepts a TCP connection.
+    /// is listening on `port`.
+    ///
+    /// "Something accepts on the port" is not enough (#3129): if another
+    /// process holds the port, our sshd exits on its failed bind while the
+    /// probe connects to the stranger, and the test's first connect then gets
+    /// a reset or a refusal. So this waits for our own sshd to log that it is
+    /// listening. If the very first start loses its port, the instance moves to
+    /// a fresh one; a restart must keep its port, so losing it there panics.
     fn start(&mut self) {
         assert!(self.child.is_none(), "already running");
-        let child = Command::new(&self.sshd)
+        for _ in 0..5 {
+            match self.spawn_and_confirm_listening() {
+                Ok(()) => {
+                    self.listened = true;
+                    return;
+                }
+                Err(log) if !self.listened && is_bind_failure(&log) => {
+                    let (port, lease) = sshd_port();
+                    write_sshd_config(&self.config, &self.config_template, port)
+                        .expect("rewrite sshd_config for a fresh port");
+                    self.port = port;
+                    self.lease = lease;
+                }
+                Err(log) => panic!("sshd on 127.0.0.1:{} did not start:\n{log}", self.port),
+            }
+        }
+        panic!("sshd could not bind a port after 5 tries");
+    }
+
+    /// One sshd start: `Ok` once our sshd logs that it listens on `port` and
+    /// the port accepts; `Err(log)` if sshd exited first.
+    ///
+    /// sshd logs to stderr (`-e`), drained by a thread into memory rather than
+    /// written to a file: its per-connection children inherit the log target,
+    /// and a log file in the instance dir would be re-created by a late child
+    /// after the parent-death guard removed the dir.
+    fn spawn_and_confirm_listening(&mut self) -> Result<(), String> {
+        let mut child = Command::new(&self.sshd)
             .arg("-D")
+            .arg("-e")
             .arg("-f")
             .arg(&self.config)
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .expect("spawn sshd");
         // Arm before anything can panic, so even a failed start is covered.
         self.guard = Some(SshdParentGuard::arm(child.id(), &self.dir).expect("arm sshd guard"));
+        let log = SshdLog::drain(child.stderr.take().expect("sshd stderr"));
         self.child = Some(child);
 
+        let listening = format!("Server listening on 127.0.0.1 port {}.", self.port);
         let deadline = Instant::now() + Duration::from_secs(15);
         while Instant::now() < deadline {
-            if is_listening(self.port) {
-                return;
+            let exited = self
+                .child
+                .as_mut()
+                .and_then(|c| c.try_wait().ok())
+                .flatten();
+            if let Some(status) = exited {
+                if let Some(guard) = self.guard.take() {
+                    guard.disarm();
+                }
+                self.child = None;
+                return Err(format!("sshd exited ({status}):\n{}", log.text()));
+            }
+            if log.text().contains(&listening) && is_listening(self.port) {
+                return Ok(());
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        panic!("sshd did not listen on 127.0.0.1:{} in time", self.port);
+        panic!(
+            "sshd did not listen on 127.0.0.1:{} in time:\n{}",
+            self.port,
+            log.text()
+        );
     }
 
     /// Kill the sshd tree (SIGKILL) — an abrupt server-side drop that severs
@@ -708,6 +875,70 @@ impl LocalAgentSshd {
                 return;
             }
             std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// Close the listening port while keeping every established connection up
+    /// (#3129): SIGKILL only the `-D` master. Its per-connection handlers and
+    /// the agents they launched are separate processes that survive, so an
+    /// agent transport stays connected; only new connections are refused.
+    ///
+    /// This makes a later transport drop a deterministic *permanent* loss. The
+    /// alternative, severing first and then `stop()`, races the reconnect: once
+    /// the sever lands, the first backoff (as short as 500 ms with jitter) can
+    /// dial the master before `stop()` has snapshotted and killed the subtree,
+    /// and a handler forked after that snapshot survives the kill.
+    ///
+    /// The survivors are recorded now, while they are still descendants, and
+    /// reaped by exact PID in `Drop`.
+    fn close_listener(&mut self) {
+        if let Some(guard) = self.guard.take() {
+            guard.disarm();
+        }
+        if let Some(mut child) = self.child.take() {
+            self.orphans = descendant_pids(child.id())
+                .into_iter()
+                .map(|pid| (pid, comm_of(pid)))
+                .filter(|(_, comm)| !comm.is_empty())
+                .collect();
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            if !is_listening(self.port) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        panic!(
+            "sshd still listening on 127.0.0.1:{} after close",
+            self.port
+        );
+    }
+
+    /// Reap what [`close_listener`](Self::close_listener) left running. The
+    /// handlers and `--stdio` agents exit on their own once the transport is
+    /// gone, so give them [`AGENT_EXIT_GRACE`] (a SIGKILL mid-exit would
+    /// truncate an instrumented agent's coverage profile, #3831), then SIGKILL
+    /// whatever is left. Every signal re-checks that the PID still runs the
+    /// recorded command, so a recycled PID is never touched.
+    fn reap_orphans(&mut self) {
+        let orphans = std::mem::take(&mut self.orphans);
+        let still_running = |o: &(u32, String)| !is_zombie(o.0) && comm_of(o.0) == o.1;
+        wait_until_gone(AGENT_EXIT_GRACE, || {
+            orphans
+                .iter()
+                .filter(|o| !is_session_leader(o.0) && still_running(o))
+                .map(|o| o.0)
+                .collect()
+        });
+        for orphan in orphans.iter().filter(|o| still_running(o)) {
+            // Safety: `kill` signals an existing pid whose identity was just
+            // re-checked; the result is ignored (best-effort teardown).
+            unsafe {
+                libc::kill(orphan.0 as libc::pid_t, libc::SIGKILL);
+            }
         }
     }
 
@@ -812,6 +1043,7 @@ impl Drop for LocalAgentSshd {
     fn drop(&mut self) {
         // The test may have just disconnected its agent (#3831).
         self.stop_after_disconnect();
+        self.reap_orphans();
         // Reap any setsid'd session daemon a continuity sever spared — by the
         // exact PID captured while it was a live descendant, never a name
         // pattern (which could hit a parallel checkout's daemon) (#2580).
@@ -1674,31 +1906,146 @@ use termihub_core::connection::ConnectionTypeRegistry;
 
 /// A [`ReconnectScheduler`] that records the tabs it was asked to arm, so a test
 /// can assert the transient-break fold does NOT arm the backend redrive (#2556).
+///
+/// The timer driver calls `schedule` or `cancel` after every server-side
+/// lifecycle fold, so when built with [`observing`](Self::observing) it also
+/// records the tab's status at each of those calls: an ordered history of every
+/// fold, which a test reads instead of polling for a transient state it could
+/// miss under load (#3129). `ever_armed` likewise keeps a tab that was armed
+/// and later cancelled.
 #[derive(Default)]
 struct RecordingScheduler {
     armed: std::sync::Mutex<std::collections::HashMap<String, Box<dyn FnOnce() + Send>>>,
+    ever_armed: std::sync::Mutex<std::collections::HashSet<String>>,
+    observed: Option<Arc<SessionLifecycleStore>>,
+    history: std::sync::Mutex<Vec<(String, Option<SessionStatus>)>>,
 }
 impl RecordingScheduler {
-    fn is_armed(&self, key: &str) -> bool {
-        self.armed
+    fn observing(store: Arc<SessionLifecycleStore>) -> Self {
+        Self {
+            observed: Some(store),
+            ..Self::default()
+        }
+    }
+    fn record(&self, key: &str) {
+        if let Some(store) = &self.observed {
+            let status = store.get(key).map(|s| s.status);
+            self.history
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push((key.to_string(), status));
+        }
+    }
+    /// Whether `key` was armed at any point, even if later cancelled.
+    fn was_ever_armed(&self, key: &str) -> bool {
+        self.ever_armed
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains_key(key)
+            .contains(key)
+    }
+    /// Every status `key` was folded to, in fold order.
+    fn statuses(&self, key: &str) -> Vec<SessionStatus> {
+        self.history
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter(|(k, _)| k == key)
+            .filter_map(|(_, status)| *status)
+            .collect()
     }
 }
 impl ReconnectScheduler for RecordingScheduler {
     fn schedule(&self, key: String, _delay_ms: u64, task: Box<dyn FnOnce() + Send>) {
+        self.record(&key);
+        self.ever_armed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key.clone());
         self.armed
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(key, task);
     }
     fn cancel(&self, key: &str) {
+        self.record(key);
         self.armed
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(key);
     }
+}
+
+/// Every `agent-state-change` state emitted for one agent, in emission order
+/// (#3129). `emit_agent_state_with_error` folds the `agents` region and emits
+/// this event for each transition, so the log is the full transition history.
+/// Tests wait on it rather than polling the store, which can miss a transient
+/// `Reconnecting` when the poller is descheduled on a loaded runner.
+#[derive(Clone, Default)]
+struct AgentStateLog(Arc<(std::sync::Mutex<Vec<String>>, std::sync::Condvar)>);
+
+impl AgentStateLog {
+    /// Start recording `agent_id`'s transitions on `handle`.
+    fn attach<R: tauri::Runtime>(handle: &tauri::AppHandle<R>, agent_id: &str) -> Self {
+        use tauri::Listener;
+        let log = Self::default();
+        let (sink, agent_id) = (log.clone(), agent_id.to_string());
+        handle.listen_any("agent-state-change", move |event| {
+            let Ok(payload) = serde_json::from_str::<Value>(event.payload()) else {
+                return;
+            };
+            if payload["session_id"].as_str() != Some(agent_id.as_str()) {
+                return;
+            }
+            if let Some(state) = payload["state"].as_str() {
+                let (states, changed) = &*sink.0;
+                states
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(state.to_string());
+                changed.notify_all();
+            }
+        });
+        log
+    }
+
+    /// The states recorded so far.
+    fn states(&self) -> Vec<String> {
+        self.0
+             .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Block until `done` holds for the recorded states, or `deadline` passes.
+    /// Returns whether it held.
+    fn wait_until(&self, deadline: Instant, done: impl Fn(&[String]) -> bool) -> bool {
+        let (states, changed) = &*self.0;
+        let mut guard = states
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        loop {
+            if done(&guard) {
+                return true;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return false;
+            }
+            guard = changed
+                .wait_timeout(guard, deadline - now)
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .0;
+        }
+    }
+}
+
+/// Whether `states` holds `first` and, later, `then`.
+fn saw_in_order(states: &[String], first: &str, then: &str) -> bool {
+    states
+        .iter()
+        .position(|s| s == first)
+        .is_some_and(|i| states[i + 1..].iter().any(|s| s == then))
 }
 
 /// Poll `probe` every 25ms on the current (blocking) thread until it yields
@@ -1782,12 +2129,10 @@ struct SeverObservations {
 ///
 /// Requires `cargo build -p termihub-agent` and a local `sshd`; skips otherwise.
 ///
-/// QUARANTINE (#3129): timing-flaky on ALL CI runners under load — the real/mock
-/// sshd reconnect timing intermittently overruns the fold deadline (observed on
-/// macOS, Windows, AND ubuntu, so a per-platform gate is insufficient). Ignored on
-/// every platform but kept (not deleted) for the local/manual reconnect grade; the
-/// deterministic fix stays tracked in #3129.
-#[ignore = "flaky under CI timing on all platforms, see #3129"]
+/// Was quarantined as flaky (#3129). Every recorded CI failure was the setup
+/// connect reaching a stranger on the harness sshd's port, not the reconnect
+/// itself; the harness now leases and verifies its port, and the transient
+/// `Reconnecting` states are read from ordered transition logs, not polled.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn manager_test_sever_drives_reconnect_and_region_folds_headlessly() {
     let Some(sshd) = find_sshd() else {
@@ -1823,6 +2168,7 @@ async fn manager_test_sever_drives_reconnect_and_region_folds_headlessly() {
         serde_json::json!({}),
     );
     handle.manage(agents_store.clone());
+    let agent_states = AgentStateLog::attach(&handle, &agent_id);
 
     let lifecycle_store = Arc::new(SessionLifecycleStore::new());
     lifecycle_store.set_rand_for_test(Box::new(|| 0.0));
@@ -1836,7 +2182,7 @@ async fn manager_test_sever_drives_reconnect_and_region_folds_headlessly() {
     let store_for_publish = lifecycle_store.clone();
     handle.manage(projection);
 
-    let scheduler = Arc::new(RecordingScheduler::default());
+    let scheduler = Arc::new(RecordingScheduler::observing(lifecycle_store.clone()));
     let driver = Arc::new(ReconnectTimerDriver::new(
         lifecycle_store.clone(),
         scheduler.clone() as Arc<dyn ReconnectScheduler>,
@@ -1961,37 +2307,26 @@ async fn manager_test_sever_drives_reconnect_and_region_folds_headlessly() {
             // ── THE SHIPPED PATH UNDER TEST: command → task → reconnect.
             let sever_accepted = manager.test_sever_transport(&agent_id);
 
-            // The real task folds both regions Reconnecting BEFORE it re-establishes
-            // (which takes seconds over a real sshd), so a poll reliably catches the
-            // transient state — and the redrive timer must never be armed for it.
-            let mut saw_tab_reconnecting = false;
-            let mut saw_agents_reconnecting = false;
-            let mut armed_during_reconnect = false;
-            poll_blocking(deadline, || {
-                if lifecycle_store.get("tab-1").map(|s| s.status)
-                    == Some(SessionStatus::Reconnecting)
-                {
-                    saw_tab_reconnecting = true;
-                    armed_during_reconnect = armed_during_reconnect || scheduler.is_armed("tab-1");
-                }
-                if agents_store.get(&agent_id).map(|a| a.connection_state)
-                    == Some(AgentConnectionState::Reconnecting)
-                {
-                    saw_agents_reconnecting = true;
-                }
-                (saw_tab_reconnecting && saw_agents_reconnecting).then_some(())
-            });
+            // The real task folds the hosted tab, then the agents region,
+            // Reconnecting BEFORE it re-establishes. Read both from the ordered
+            // transition histories rather than polling the stores: a poller
+            // descheduled on a loaded runner can miss the transient state
+            // entirely (#3129).
+            let saw_agents_reconnecting =
+                agent_states.wait_until(deadline, |s| s.iter().any(|st| st == "reconnecting"));
+            // The tab fold lands before the agents emit, so it is already recorded.
+            let saw_tab_reconnecting = scheduler
+                .statuses("tab-1")
+                .contains(&SessionStatus::Reconnecting);
 
             let sshd_listening_after_sever = sshd_up_before && is_listening(port);
 
             // Wait for the real task to finish the reconnect (agents region back
-            // to Connected).
-            let agents_reconnected = poll_blocking(deadline, || {
-                (agents_store.get(&agent_id).map(|a| a.connection_state)
-                    == Some(AgentConnectionState::Connected))
-                .then_some(())
-            })
-            .is_some();
+            // to Connected after the Reconnecting fold).
+            let agents_reconnected = agent_states
+                .wait_until(deadline, |s| saw_in_order(s, "reconnecting", "connected"))
+                && agents_store.get(&agent_id).map(|a| a.connection_state)
+                    == Some(AgentConnectionState::Connected);
 
             // Re-attach the continuity session and prove the process CONTINUED —
             // a counter value strictly beyond the pre-drop one (neither reset to 0
@@ -2011,6 +2346,10 @@ async fn manager_test_sever_drives_reconnect_and_region_folds_headlessly() {
 
             let _ = manager.close_session(&agent_id, &cont_sid);
             wait_for_closed_session_daemon(&daemon_sink, &cont_sid, &agent_comm);
+
+            // Armed at ANY point, not just while a poll happened to look: the
+            // transient break is owned by the in-task loop (#2556).
+            let armed_during_reconnect = scheduler.was_ever_armed("tab-1");
 
             SeverObservations {
                 sever_accepted,
@@ -2077,15 +2416,9 @@ async fn manager_test_sever_drives_reconnect_and_region_folds_headlessly() {
 ///
 /// Requires `cargo build -p termihub-agent` and a local `sshd`; skips otherwise.
 ///
-/// QUARANTINE (#3129): timing-flaky on ubuntu/linux CI runners under load (the
-/// park-vs-cancel settle timing intermittently races). Ignored on linux only;
-/// kept full-strength on macOS + Windows, where it is stable, so the park/cancel
-/// distinction still gates every PR on at least one platform. The deterministic
-/// fix stays tracked in #3129 — do NOT delete or blanket-ignore.
-#[cfg_attr(
-    target_os = "linux",
-    ignore = "flaky under CI timing on ubuntu/linux, see #3129"
-)]
+/// Was quarantined on linux as flaky (#3129); see the test above for the cause.
+/// The endpoint is also closed before the sever, so the first reconnect attempt
+/// can never beat the teardown and turn the permanent drop into a reconnect.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn manager_user_cancel_settles_distinct_from_a_parked_permanent_drop() {
     let Some(sshd) = find_sshd() else {
@@ -2117,6 +2450,7 @@ async fn manager_user_cancel_settles_distinct_from_a_parked_permanent_drop() {
         serde_json::json!({}),
     );
     handle.manage(agents_store.clone());
+    let agent_states = AgentStateLog::attach(&handle, &agent_id);
 
     let manager = Arc::new(AgentConnectionManager::new(handle.clone()));
     let config = sshd.agent_config();
@@ -2143,29 +2477,29 @@ async fn manager_user_cancel_settles_distinct_from_a_parked_permanent_drop() {
         let agents_store = agents_store.clone();
         let agent_id = agent_id.clone();
         tokio::task::spawn_blocking(move || {
-            // Sever, then take the endpoint permanently down.
+            // Take the endpoint permanently down FIRST, keeping the live
+            // transport up, then sever it. The reverse order (sever, then
+            // `stop()`) raced the task's first reconnect attempt against the
+            // teardown and could reconnect before the endpoint was gone (#3129).
+            sshd.close_listener();
             let severed = manager.test_sever_transport(&agent_id);
             assert!(severed, "sever must be accepted for a live agent");
-            sshd.stop();
 
             // PARK: the task folds Reconnecting and keeps retrying the dead
-            // endpoint. Over the window it must reach Reconnecting and never settle
-            // to Disconnected, and the agent must stay alive (the task is parked in
-            // its reconnect loop, not torn down).
-            let park_deadline = Instant::now() + Duration::from_secs(5);
-            let mut reached_reconnecting = false;
-            let mut settled_disconnected_early = false;
-            while Instant::now() < park_deadline {
-                match agents_store.get(&agent_id).map(|a| a.connection_state) {
-                    Some(AgentConnectionState::Reconnecting) => reached_reconnecting = true,
-                    Some(AgentConnectionState::Disconnected) => {
-                        settled_disconnected_early = true;
-                        break;
-                    }
-                    _ => {}
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
+            // endpoint. Wait for that fold on the ordered transition log, then
+            // hold for a window spanning several backoff attempts: the region
+            // must never leave Reconnecting (no Disconnected, no Connected) and
+            // the agent must stay alive (parked in its reconnect loop).
+            let reached_reconnecting = agent_states
+                .wait_until(Instant::now() + Duration::from_secs(10), |s| {
+                    s.iter().any(|st| st == "reconnecting")
+                });
+            std::thread::sleep(Duration::from_secs(5));
+            let parked_states = agent_states.states();
+            let left_reconnecting = parked_states
+                .iter()
+                .skip_while(|st| *st != "reconnecting")
+                .any(|st| st != "reconnecting");
             let still_alive_parked = manager.is_connected(&agent_id);
 
             // User-cancel is the DISTINCT settle: it tears the agent down and folds
@@ -2174,17 +2508,16 @@ async fn manager_user_cancel_settles_distinct_from_a_parked_permanent_drop() {
                 .disconnect_agent(&agent_id)
                 .expect("user disconnect of a live-but-parked agent");
             let settled_disconnected =
-                poll_blocking(Instant::now() + Duration::from_secs(5), || {
-                    (agents_store.get(&agent_id).map(|a| a.connection_state)
-                        == Some(AgentConnectionState::Disconnected))
-                    .then_some(())
-                })
-                .is_some();
+                agent_states.wait_until(Instant::now() + Duration::from_secs(5), |s| {
+                    s.last().map(String::as_str) == Some("disconnected")
+                }) && agents_store.get(&agent_id).map(|a| a.connection_state)
+                    == Some(AgentConnectionState::Disconnected);
             let torn_down = !manager.is_connected(&agent_id);
+            drop(sshd);
 
             (
                 reached_reconnecting,
-                !settled_disconnected_early,
+                !left_reconnecting,
                 still_alive_parked,
                 settled_disconnected,
                 torn_down,
