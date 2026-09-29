@@ -33,6 +33,7 @@
       "embeddedServerActivity": false,
       "maxSessions": 16,
       "monitoringSupported": true,
+      "sessionFiles": false,
       "sessionMonitoring": false,
       "sessionProcesses": false,
       "toolStreaming": true
@@ -51,6 +52,7 @@
       "embeddedServerActivity": false,
       "maxSessions": 4,
       "monitoringSupported": false,
+      "sessionFiles": false,
       "sessionMonitoring": false,
       "sessionProcesses": false,
       "toolStreaming": false

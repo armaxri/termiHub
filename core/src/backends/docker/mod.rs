@@ -75,7 +75,7 @@ pub struct Docker {
     /// the replacement on its next iteration.
     output_tx: Arc<Mutex<Option<OutputSender>>>,
     /// File browser provider, created on connect.
-    file_browser_provider: Option<DockerFileBrowser>,
+    file_browser_provider: Option<Arc<DockerFileBrowser>>,
     /// System-monitoring provider, created on connect (#3182). Reads `/proc`
     /// inside the container via `docker exec` through the shared exec-based
     /// provider.
@@ -1256,8 +1256,10 @@ impl ConnectionType for Docker {
         };
 
         // Create file browser provider.
-        self.file_browser_provider =
-            Some(DockerFileBrowser::new(client.clone(), container_id.clone()));
+        self.file_browser_provider = Some(Arc::new(DockerFileBrowser::new(
+            client.clone(),
+            container_id.clone(),
+        )));
 
         // Create the system-monitoring provider (#3182): reads `/proc` inside the
         // container via `docker exec`.
@@ -1374,7 +1376,13 @@ impl ConnectionType for Docker {
     fn file_browser(&self) -> Option<&dyn FileBrowser> {
         self.file_browser_provider
             .as_ref()
-            .map(|p| p as &dyn FileBrowser)
+            .map(|p| p.as_ref() as &dyn FileBrowser)
+    }
+
+    fn file_browser_handle(&self) -> Option<Arc<dyn FileBrowser + Send + Sync>> {
+        self.file_browser_provider
+            .as_ref()
+            .map(|p| p.clone() as Arc<dyn FileBrowser + Send + Sync>)
     }
 
     fn process_manager(&self) -> Option<Arc<dyn ProcessManager + Send + Sync>> {
@@ -1481,6 +1489,7 @@ mod tests {
     fn file_browser_none_when_disconnected() {
         let docker = Docker::new();
         assert!(docker.file_browser().is_none());
+        assert!(docker.file_browser_handle().is_none());
     }
 
     #[tokio::test]

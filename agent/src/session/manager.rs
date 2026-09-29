@@ -30,6 +30,7 @@ use crate::session::types::{
 use crate::transport::JsonRpcOutputSink;
 use termihub_core::buffer::DEFAULT_BUFFER_CAPACITY;
 use termihub_core::connection::{ConnectionTypeRegistry, OutputReceiver};
+use termihub_core::files::{FileBrowser, LocalFileBrowser};
 use termihub_core::monitoring::{LocalProcessManager, MonitoringProvider, ProcessManager};
 use termihub_core::session::pump::{run_output_pump, PumpEnd, PumpOptions};
 use termihub_core::session::registry::{Reservations, Sessions};
@@ -146,6 +147,25 @@ pub trait SessionManagerApi: Send + Sync + 'static {
         Err(SessionProcessError::Unknown)
     }
 
+    /// The file browser of a session this worker holds (#3242).
+    ///
+    /// File operations only ever reach the session's own context: a local
+    /// session the agent host, an SSH / Docker / FTP / WSL session its remote
+    /// host, container, server or distribution — through the backend's own
+    /// file browser (run in the session daemon for a persistent session).
+    /// Refused, with the same reasons as
+    /// [`session_process_manager`](Self::session_process_manager), unless the
+    /// session exists, is running and is held by this worker.
+    ///
+    /// The default knows no sessions, so a session manager without it keeps
+    /// the historical resolution (local sessions and saved connections only).
+    async fn session_file_browser(
+        &self,
+        _session_id: &str,
+    ) -> Result<Arc<dyn FileBrowser + Send + Sync>, SessionProcessError> {
+        Err(SessionProcessError::Unknown)
+    }
+
     /// Close a session; returns `true` if found and removed.
     async fn close(&self, session_id: &str) -> bool;
 
@@ -211,8 +231,9 @@ pub trait SessionManagerApi: Send + Sync + 'static {
     ) -> Result<(), String>;
 }
 
-/// Why [`SessionManagerApi::session_process_manager`] (#3210) or
-/// [`SessionManagerApi::session_monitoring`] (#3871) refused a session.
+/// Why [`SessionManagerApi::session_process_manager`] (#3210),
+/// [`SessionManagerApi::session_monitoring`] (#3871) or
+/// [`SessionManagerApi::session_file_browser`] (#3242) refused a session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionProcessError {
     /// This worker has no session with that id.
@@ -1440,6 +1461,44 @@ impl SessionManager {
         }
     }
 
+    /// See [`SessionManagerApi::session_file_browser`] (#3242).
+    ///
+    /// Like [`session_process_manager`](Self::session_process_manager), the
+    /// handle is cloned out under the `sessions` lock and used after it is
+    /// released, so a slow SFTP round-trip or a large read never blocks other
+    /// sessions.
+    pub async fn session_file_browser(
+        &self,
+        session_id: &str,
+    ) -> Result<Arc<dyn FileBrowser + Send + Sync>, SessionProcessError> {
+        let mut sessions = self.sessions.lock().await;
+        let info = held_session(&mut sessions, session_id)?;
+        // A local session runs on the agent host itself, so it browses the
+        // agent host's filesystem (as before #3242).
+        if matches!(info.type_id.as_str(), "local" | "shell") {
+            return Ok(Arc::new(LocalFileBrowser::new()));
+        }
+        let unsupported = || {
+            format!(
+                "File browsing is not supported for '{}' sessions",
+                info.type_id
+            )
+        };
+        match &info.backend {
+            SessionBackend::Daemon(client) => client.file_browser().ok_or_else(|| {
+                SessionProcessError::Unsupported(format!(
+                    "{}, or the session was started by an older agent — reopen it",
+                    unsupported()
+                ))
+            }),
+            SessionBackend::InProcess { connection, .. } => connection
+                .file_browser_handle()
+                .ok_or_else(|| SessionProcessError::Unsupported(unsupported())),
+            #[cfg(test)]
+            SessionBackend::Stub { .. } => Err(SessionProcessError::Unsupported(unsupported())),
+        }
+    }
+
     /// Close (remove) a session by ID.
     ///
     /// Disconnects the backend before removing the session.
@@ -2362,6 +2421,13 @@ impl SessionManagerApi for SessionManager {
         session_id: &str,
     ) -> Result<Arc<dyn MonitoringProvider + Send + Sync>, SessionProcessError> {
         SessionManager::session_monitoring(self, session_id).await
+    }
+
+    async fn session_file_browser(
+        &self,
+        session_id: &str,
+    ) -> Result<Arc<dyn FileBrowser + Send + Sync>, SessionProcessError> {
+        SessionManager::session_file_browser(self, session_id).await
     }
 
     async fn close(&self, session_id: &str) -> bool {
@@ -4942,4 +5008,7 @@ mod tests {
 
     /// Resolving a held session's monitoring provider (#3871).
     mod monitoring_tests;
+
+    /// Resolving a held session's file browser (#3242).
+    mod files_tests;
 }
