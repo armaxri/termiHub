@@ -1,11 +1,20 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+import React, { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import {
   foldMonitorSample,
+  historiesFromRegionSamples,
   initialMonitorHistoryState,
+  monitorMetricValues,
   MONITOR_HISTORY_CAP,
+  useMonitorHistory,
+  type MonitorHistories,
   type MonitorHistoryState,
   type MonitorMetricValues,
+  type UseMonitorHistoryOptions,
 } from "./useMonitorHistory";
+import type { MonitorHistorySample, SystemStats } from "@/types/monitoring";
+import { fakeStats } from "@/test/systemMonitorHarness";
 
 /** A metric-values record where every metric shares one value (test convenience). */
 function all(value: number | null): MonitorMetricValues {
@@ -134,5 +143,141 @@ describe("foldMonitorSample (multi-metric)", () => {
     const { series, key } = foldSequence([{ key: null, sampleCount: 3, values: all(50) }]);
     expect(key).toBeNull();
     expect(series.cpu).toEqual([]);
+  });
+});
+
+/** A region history sample: the Nth sample on the connection with a given CPU. */
+function regionSample(
+  sampleCount: number,
+  cpu: number,
+  overrides: Partial<SystemStats> = {}
+): MonitorHistorySample {
+  return { sampleCount, stats: { ...fakeStats("host", cpu), ...overrides } };
+}
+
+describe("monitorMetricValues", () => {
+  it("records the priming first sample as a gap for CPU and network", () => {
+    const values = monitorMetricValues(fakeStats("h", 40), 1);
+    expect(values.cpu).toBeNull();
+    expect(values.netRx).toBeNull();
+    expect(values.netTx).toBeNull();
+    expect(values.memory).toBe(50);
+    expect(values.swap).toBe(25);
+  });
+
+  it("reports every metric once primed", () => {
+    const values = monitorMetricValues(fakeStats("h", 40), 2);
+    expect(values).toEqual({ cpu: 40, memory: 50, swap: 25, netRx: 1024, netTx: 512 });
+  });
+
+  it("leaves swap empty on a host without swap", () => {
+    expect(monitorMetricValues({ ...fakeStats("h"), swapTotalKb: 0 }, 3).swap).toBeNull();
+  });
+
+  it("renders a metric the sample could not supply as a gap, not a zero", () => {
+    const values = monitorMetricValues(
+      { ...fakeStats("h", 0), source: "dockerStats", unavailableMetrics: ["cpu", "network"] },
+      5
+    );
+    expect(values.cpu).toBeNull();
+    expect(values.netRx).toBeNull();
+    expect(values.netTx).toBeNull();
+    expect(values.memory).toBe(50);
+  });
+
+  it("is all gaps without stats", () => {
+    expect(monitorMetricValues(null, 4)).toEqual(all(null));
+  });
+});
+
+describe("historiesFromRegionSamples", () => {
+  it("maps the retained ring to per-metric series, oldest first", () => {
+    const series = historiesFromRegionSamples([
+      regionSample(1, 10),
+      regionSample(2, 20),
+      regionSample(3, 30),
+    ]);
+    // Sample #1 is the priming sample, so CPU starts with a gap.
+    expect(series.cpu).toEqual([null, 20, 30]);
+    expect(series.memory).toEqual([50, 50, 50]);
+  });
+
+  it("keeps only the newest `capacity` samples", () => {
+    const samples = Array.from({ length: 6 }, (_, i) => regionSample(i + 1, (i + 1) * 10));
+    expect(historiesFromRegionSamples(samples, 3).cpu).toEqual([40, 50, 60]);
+  });
+
+  it("is empty for an empty ring", () => {
+    expect(historiesFromRegionSamples([])).toEqual({
+      cpu: [],
+      memory: [],
+      swap: [],
+      netRx: [],
+      netTx: [],
+    });
+  });
+});
+
+describe("useMonitorHistory (region-preferred)", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  let latest: MonitorHistories;
+
+  function Probe(props: UseMonitorHistoryOptions) {
+    latest = useMonitorHistory(props);
+    return null;
+  }
+
+  function render(props: UseMonitorHistoryOptions) {
+    act(() => root.render(React.createElement(Probe, props)));
+  }
+
+  function mount() {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  }
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("shows the region's retained history on first render (a remount / new window)", () => {
+    mount();
+    render({
+      key: "sess-1",
+      sampleCount: 4,
+      values: all(99),
+      regionSamples: [
+        regionSample(1, 10),
+        regionSample(2, 20),
+        regionSample(3, 30),
+        regionSample(4, 40),
+      ],
+    });
+    // The client-side window would hold a single seeded point (99); the region
+    // supplies the whole retained history instead.
+    expect(latest.cpu).toEqual([null, 20, 30, 40]);
+  });
+
+  it("prefers the region over the local window as samples arrive", () => {
+    mount();
+    const ring = [regionSample(1, 10), regionSample(2, 20)];
+    render({ key: "sess-1", sampleCount: 2, values: all(1), regionSamples: ring });
+    render({
+      key: "sess-1",
+      sampleCount: 3,
+      values: all(2),
+      regionSamples: [...ring, regionSample(3, 30)],
+    });
+    expect(latest.cpu).toEqual([null, 20, 30]);
+  });
+
+  it("falls back to the client-side window when the region has no history", () => {
+    mount();
+    render({ key: "sess-1", sampleCount: 1, values: all(5), regionSamples: undefined });
+    render({ key: "sess-1", sampleCount: 2, values: all(6), regionSamples: undefined });
+    expect(latest.cpu).toEqual([5, 6]);
   });
 });
