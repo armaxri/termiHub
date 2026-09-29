@@ -10,7 +10,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { ProcessTablePanel } from "./ProcessTablePanel";
-import type { ProcessInfo } from "@/types/monitoring";
+import { TooltipProvider } from "@/components/ui/Tooltip";
+import type { KillSignal, ProcessInfo } from "@/types/monitoring";
 
 const listProcesses = vi.fn();
 const killProcess = vi.fn();
@@ -18,6 +19,11 @@ const killProcess = vi.fn();
 vi.mock("@/services/api", () => ({
   listProcesses: (...args: unknown[]) => listProcesses(...args),
   killProcess: (...args: unknown[]) => killProcess(...args),
+}));
+
+const platformMock = vi.hoisted(() => ({ value: "linux" as "linux" | "macos" | "windows" }));
+vi.mock("@/utils/platform", () => ({
+  getPlatform: () => platformMock.value,
 }));
 
 vi.mock("@/components/ui/Toast", () => ({
@@ -59,6 +65,7 @@ describe("ProcessTablePanel (PROD-0028)", () => {
     vi.clearAllMocks();
     listProcesses.mockResolvedValue(SAMPLE);
     killProcess.mockResolvedValue(undefined);
+    platformMock.value = "linux";
   });
 
   afterEach(() => {
@@ -66,10 +73,53 @@ describe("ProcessTablePanel (PROD-0028)", () => {
     container.remove();
   });
 
-  async function render() {
+  async function render(connectionType: string | null = "ssh") {
     await act(async () => {
       root.render(
-        <ProcessTablePanel open host="myhost" sessionId="sess-1" onOpenChange={() => {}} />
+        <TooltipProvider>
+          <ProcessTablePanel
+            open
+            host="myhost"
+            sessionId="sess-1"
+            connectionType={connectionType}
+            onOpenChange={() => {}}
+          />
+        </TooltipProvider>
+      );
+    });
+    await flush();
+  }
+
+  async function openKillConfirm(pid = 4321) {
+    await act(async () => {
+      byTestId(`process-kill-${pid}`)?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+  }
+
+  /** Open the signal picker and return its options. */
+  function openSignalMenu(): HTMLElement[] {
+    const trigger = byTestId("confirm-kill-process-signal") as HTMLButtonElement;
+    act(() => {
+      trigger.focus();
+      trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    return Array.from(document.querySelectorAll<HTMLElement>('[role="option"]'));
+  }
+
+  function chooseSignal(signal: KillSignal) {
+    const option = openSignalMenu().find((o) => o.dataset.value === signal);
+    expect(option, `option ${signal}`).toBeDefined();
+    act(() => {
+      option?.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+      option?.click();
+    });
+  }
+
+  async function confirm() {
+    await act(async () => {
+      byTestId("confirm-kill-process-confirm")?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
       );
     });
     await flush();
@@ -126,5 +176,102 @@ describe("ProcessTablePanel (PROD-0028)", () => {
     await flush();
 
     expect(killProcess).not.toHaveBeenCalled();
+  });
+
+  it("offers every common signal on a POSIX host", async () => {
+    await render("ssh");
+    await openKillConfirm();
+    const options = openSignalMenu();
+    expect(options.map((o) => o.dataset.value)).toEqual([
+      "term",
+      "kill",
+      "int",
+      "hup",
+      "quit",
+      "stop",
+      "cont",
+      "usr1",
+      "usr2",
+    ]);
+    expect(options.every((o) => !o.hasAttribute("data-disabled"))).toBe(true);
+  });
+
+  it("offers every signal for a local session on a non-Windows desktop", async () => {
+    platformMock.value = "macos";
+    await render("local");
+    await openKillConfirm();
+    const options = openSignalMenu();
+    expect(options).toHaveLength(9);
+    expect(options.every((o) => !o.hasAttribute("data-disabled"))).toBe(true);
+    expect(byTestId("confirm-kill-process-windows-hint")).toBeNull();
+  });
+
+  it("limits a Windows local session to TERM and KILL, explaining why", async () => {
+    platformMock.value = "windows";
+    await render("local");
+    await openKillConfirm();
+    expect(byTestId("confirm-kill-process-windows-hint")?.textContent).toContain("Windows");
+    const options = openSignalMenu();
+    const enabled = options.filter((o) => !o.hasAttribute("data-disabled"));
+    expect(enabled.map((o) => o.dataset.value)).toEqual(["term", "kill"]);
+    expect(options).toHaveLength(9);
+  });
+
+  it("keeps the full menu for a remote session even on a Windows desktop", async () => {
+    platformMock.value = "windows";
+    await render("ssh");
+    await openKillConfirm();
+    const options = openSignalMenu();
+    expect(options.every((o) => !o.hasAttribute("data-disabled"))).toBe(true);
+    expect(byTestId("confirm-kill-process-windows-hint")).toBeNull();
+  });
+
+  it.each(["kill", "stop"] as const)(
+    "warns that %s is destructive and still waits for confirmation",
+    async (signal) => {
+      await render();
+      await openKillConfirm();
+      expect(byTestId("confirm-kill-process-destructive")).toBeNull();
+      chooseSignal(signal);
+      await flush();
+      const warning = byTestId("confirm-kill-process-destructive");
+      expect(warning).not.toBeNull();
+      expect(warning?.textContent).toContain(signal === "kill" ? "SIGKILL" : "SIGSTOP");
+      expect(killProcess).not.toHaveBeenCalled();
+      await confirm();
+      expect(killProcess).toHaveBeenCalledWith("sess-1", 4321, signal);
+    }
+  );
+
+  it.each(["term", "kill", "int", "hup", "quit", "stop", "cont", "usr1", "usr2"] as const)(
+    "dispatches %s as the chosen signal value",
+    async (signal) => {
+      await render();
+      await openKillConfirm();
+      chooseSignal(signal);
+      await flush();
+      expect(byTestId("confirm-kill-process-confirm")?.textContent).toContain(
+        `SIG${signal.toUpperCase()}`
+      );
+      await confirm();
+      expect(killProcess).toHaveBeenCalledTimes(1);
+      expect(killProcess).toHaveBeenCalledWith("sess-1", 4321, signal);
+    }
+  );
+
+  it("resets to TERM each time the kill action is opened", async () => {
+    await render();
+    await openKillConfirm();
+    chooseSignal("usr1");
+    await flush();
+    await act(async () => {
+      byTestId("confirm-kill-process-cancel")?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+    });
+    await flush();
+    await openKillConfirm(1);
+    await confirm();
+    expect(killProcess).toHaveBeenCalledWith("sess-1", 1, "term");
   });
 });

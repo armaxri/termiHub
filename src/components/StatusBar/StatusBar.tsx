@@ -831,6 +831,7 @@ function MonitoringStatus() {
         stats={monitoringStats}
         loading={monitoringLoading}
         monitorKey={activeMonitorKey}
+        connectionType={activeTabConnectionType}
         status={monitoringStatus}
         statusReason={monitoringStatusReason}
         paused={monitoringPaused}
@@ -986,6 +987,8 @@ interface MonitoringDetailDropdownProps {
   loading: boolean;
   /** Active monitor key, or null when none is resolvable. */
   monitorKey: string | null;
+  /** Connection type of the active tab; limits the kill signal menu (#3209). */
+  connectionType: string | null;
   /** Observable collector-loop status of the active monitor. */
   status: MonitorStatus | null;
   /** Why the active monitor left `live` (#3301), or `null`. */
@@ -1018,6 +1021,7 @@ function MonitoringDetailDropdown({
   stats,
   loading,
   monitorKey,
+  connectionType,
   status,
   statusReason,
   paused,
@@ -1272,6 +1276,7 @@ function MonitoringDetailDropdown({
           onOpenChange={setProcessesOpen}
           host={host}
           sessionId={monitorKey}
+          connectionType={connectionType}
         />
       )}
     </>

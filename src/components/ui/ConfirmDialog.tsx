@@ -199,6 +199,10 @@ export function ConfirmDialog({
         if (e.key === "Enter") {
           if (!confirmOnEnter) return;
           if (document.activeElement === cancelBtnRef.current) return;
+          // Enter on a Select in the body opens or picks in that control; it
+          // must not also confirm the dialog (#3209).
+          const target = e.target as HTMLElement | null;
+          if (target?.closest?.('[role="combobox"], [role="listbox"]')) return;
           e.preventDefault();
           onConfirm();
         }

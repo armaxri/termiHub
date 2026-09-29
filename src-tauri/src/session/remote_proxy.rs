@@ -974,8 +974,8 @@ pub struct RemoteProcessProxy {
 /// Return the shared `core::protocol::methods` param DTOs (DUP-001), so the
 /// desktop and agent share one definition of each `connection.processes.*`
 /// request shape; the `wire_contract` tests pin the bytes. Both use snake_case
-/// defaults; `signal` serializes as the camelCase `KillSignal` (`"term"` /
-/// `"kill"`).
+/// defaults; `signal` serializes as the camelCase `KillSignal` (`"term"`,
+/// `"kill"`, `"usr1"`, …).
 mod processes_params {
     use termihub_core::monitoring::KillSignal;
     use termihub_core::protocol::methods::{ProcessKillParams, ProcessesListParams};
