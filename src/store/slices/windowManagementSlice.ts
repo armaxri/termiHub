@@ -50,9 +50,9 @@ let windowLayoutReportTimer: ReturnType<typeof setTimeout> | null = null;
  * Cross-domain calls (`hydrateHandoffTab`, `endWindowSessions`,
  * `clearMovingSession`, `refreshSessionOwners`) go through `get()`, so call order
  * is unchanged. The three actions that rewrite the tab trees (`moveTabToWindow`,
- * `hydrateHandoffTab` and `receivePendingWindowRestore`) stay in the root store:
- * they commit through the root-local `setAndReseed` layout reseed (#2562), which
- * belongs to the core tabs/layout domain.
+ * `hydrateHandoffTab` and `receivePendingWindowRestore`) live in TabGroupsSlice:
+ * they commit through the `setAndReseed` layout reseed (#2562), which belongs to
+ * the core tabs/layout domain.
  */
 export interface WindowManagementSlice {
   // ── Multi-window foundation (#1900) ──
