@@ -124,6 +124,12 @@ pub const UPDATE_DOWNGRADE_REFUSED: i64 = -32027;
 /// connection routed through the agent, #3241) failed to open.
 pub const FORWARD_CONNECT_FAILED: i64 = -32028;
 
+/// The `--listen` TCP transport's pre-RPC auth handshake was refused: the
+/// first line was not an `auth` request carrying this agent instance's token
+/// (missing, malformed, or wrong). The agent closes the connection right after
+/// sending it (AGT-002, #3745).
+pub const LISTEN_AUTH_REJECTED: i64 = -32029;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,10 +170,52 @@ mod tests {
             UPDATE_UNAUTHORIZED,
             UPDATE_DOWNGRADE_REFUSED,
             FORWARD_CONNECT_FAILED,
+            LISTEN_AUTH_REJECTED,
         ];
         for code in codes {
             assert!(code < 0, "Error code {code} should be negative");
         }
+    }
+
+    /// No two distinct errors may share a code (#3745: the `--listen`
+    /// handshake rejection used to reuse `UPDATE_SIGNATURE_REJECTED`'s).
+    #[test]
+    fn application_codes_are_unique() {
+        let mut codes = vec![
+            SESSION_NOT_FOUND,
+            VERSION_NOT_SUPPORTED,
+            SESSION_CREATION_FAILED,
+            SESSION_LIMIT_REACHED,
+            INVALID_CONFIGURATION,
+            SESSION_NOT_RUNNING,
+            NOT_INITIALIZED,
+            CONNECTION_NOT_FOUND,
+            FOLDER_NOT_FOUND,
+            FILE_NOT_FOUND,
+            PERMISSION_DENIED,
+            FILE_OPERATION_FAILED,
+            FILE_BROWSING_NOT_SUPPORTED,
+            MONITORING_ERROR,
+            SHUTDOWN_ERROR,
+            DEFERRED_UPDATE_FAILED,
+            TUNNEL_START_FAILED,
+            SERVICE_START_FAILED,
+            PROCESS_OPERATION_FAILED,
+            PROCESS_NOT_SUPPORTED,
+            UPDATE_SIGNATURE_REJECTED,
+            TOOL_RUN_REJECTED,
+            SESSION_HELD_BY_OTHER,
+            AUTH_CANCELLED,
+            SECOND_FACTOR_FAILED,
+            UPDATE_UNAUTHORIZED,
+            UPDATE_DOWNGRADE_REFUSED,
+            FORWARD_CONNECT_FAILED,
+            LISTEN_AUTH_REJECTED,
+        ];
+        let n = codes.len();
+        codes.sort_unstable();
+        codes.dedup();
+        assert_eq!(codes.len(), n, "application error codes must be unique");
     }
 
     #[test]
@@ -217,6 +265,7 @@ mod tests {
             UPDATE_UNAUTHORIZED,
             UPDATE_DOWNGRADE_REFUSED,
             FORWARD_CONNECT_FAILED,
+            LISTEN_AUTH_REJECTED,
         ];
         for code in app_codes {
             assert!(
