@@ -988,6 +988,15 @@ slot for `service.status`, and the desktop's status poller records each fresh re
 into history and re-emits it to the toasts, so they are observed while the agent is
 connected.
 
+Once the desktop disconnects, nothing reads those results, so the agent idles the monitor
+(#3896). On `deregister_client`, `AgentServiceRegistry::detach_client` drops the drain
+task of every service that idles when unobserved (only the HTTP monitor). With no
+subscriber left, the observer gate stops the checks. The last drained result stays in
+the latest-result slot, so `service.status` still reports it. On `initialize`,
+`attach_client` subscribes again, and the monitor checks within one interval. Embedded
+servers keep their drain, because they serve their own clients whether or not a desktop
+is attached.
+
 ### Graphical Backend Parity: VNC Has No Audio (PROD-020)
 
 The two graphical backends share the framebuffer, input, clipboard and auto-reconnect
