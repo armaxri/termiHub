@@ -47,6 +47,7 @@ jobs:
       markdown: ${{ steps.detect.outputs.markdown }}
       agent: ${{ steps.detect.outputs.agent }}
       workflows: ${{ steps.detect.outputs.workflows }}
+      rustdoc: ${{ steps.detect.outputs.rustdoc }}
       test_matrix: ${{ steps.detect.outputs.test_matrix }}
 
     steps:
@@ -518,14 +519,22 @@ jobs:
   # default and the --all-features build of termihub-core are checked: its
   # backends are feature-gated, so each build sees a different set of items.
   #
-  # POST-MERGE ONLY (#3325): a full doc build of the desktop crate is heavy
-  # (it compiles every dependency's metadata) for a docs-only signal, so it does
-  # not spend a PR runner slot. On a PR it reports skipped (a PR Gate pass); a
-  # push to develop/main fails the post-merge run — watch develop's own runs.
+  # On a PR it runs whenever workspace Rust changes, code or comment-only
+  # (`rustdoc` area, #3903): #3899 showed a broken intra-doc link reaching
+  # develop because this was post-merge only. It restores develop's cache, so
+  # the doc build compiles only first-party crates.
+  #
+  # It also runs `cargo fmt --check`: a comment-only Rust PR (every changed .rs
+  # line a whole-line `//` comment) skips Rust Code Quality and every Rust
+  # test/build lane, so this job is its only Rust check (fmt reflows comments
+  # too). On a full Rust PR the fmt step repeats Rust Code Quality's (seconds).
+  # What a comment-only PR does NOT get: clippy's doc lints and doctests are
+  # left to the post-merge run (doctest lines are classified as code anyway).
   rustdoc:
     name: Rustdoc (-D warnings)
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.rustdoc != 'false' }}
 
     steps:
       - name: Checkout code
@@ -533,6 +542,11 @@ jobs:
 
       - name: Setup Rust toolchain
         uses: ./.github/actions/setup-rust
+        with:
+          components: rustfmt
+
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
 
       - name: Install system dependencies
         run: |
@@ -548,7 +562,7 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          # Push-only job, so it only ever runs on develop/main (see rust-quality).
+          # Reader/writer split, same as rust-quality: PRs restore, pushes save.
           save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Build docs with -D warnings

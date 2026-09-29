@@ -192,17 +192,29 @@ each job runs only if the PR can affect it:
 | RDP Sidecar Quality                                       | `rdp-sidecar/` changed                                    |
 | Shell Script Quality                                      | a shell/cmd script changed                                |
 | Workflow Lint (actionlint)                                | a `.github/` file changed                                 |
+| Rustdoc (-D warnings) + `cargo fmt`                       | Rust changed, including comment-only Rust changes         |
 | System-Test Harness / Test-ID Drift Guard                 | `tests/system/` changed (drift guard: also frontend)      |
 | Security Audit                                            | a dependency manifest/lockfile changed                    |
 | Vendored Forks Consistency                                | `vendor/**`, a lockfile or `docs/supply-chain.md` changed |
-| Agent — Linux musl cross-builds                           | `agent/`, `core/` or `Cargo.toml` changed                 |
+| Agent — Linux musl cross-builds                           | `agent/`, `core/` or `Cargo.toml` changed (not comments)  |
 | Plugin Packaging (ubuntu + windows, merge)                | the plugin surface changed (API, host, packer, examples)  |
+| Integration (Docker fixtures)                             | a backend/fixture path changed (not comment-only Rust)    |
 | Lint Commit Messages                                      | always                                                    |
 
 A skipped check reports as **skipped**, which is a pass. The classifier is
 **fail-open**: an unrecognised path, any `.github/` change, or a failure of the
 detection job itself runs every per-PR job. An `audit/**`-only PR runs only
 commit-lint; a docs-only PR runs commit-lint plus the Markdown checks.
+
+**Comment-only Rust changes (#3903).** A workspace `.rs` file whose changed lines
+(added and removed) are **all** whole-line `//`, `///` or `//!` comments counts
+as a docs change, not a Rust change: the PR runs `cargo fmt --check` and Rustdoc
+(`-D warnings`) and skips Clippy, the Rust tests, the agent cross-builds, Plugin
+Packaging and the Docker fixtures. Code with a trailing comment, a `//` line
+inside a string or block comment, a doctest line (inside a doc code fence), a
+file that uses ts-rs (its docs flow into `src/types/generated`), and an added,
+deleted or renamed file all keep the full Rust lane. Clippy's doc lints on a
+comment-only change surface post-merge.
 
 **Required checks.** The intended branch protection is committed in
 [`.github/branch-protection.json`](../.github/branch-protection.json); see
@@ -217,7 +229,7 @@ coverage floors pass (on Linux); the app release-compiles and Vite-bundles on Li
 and Linux arm64 (Dev Build); the Windows and macOS agent builds; the workspace
 `cargo audit`/`cargo deny`/`pnpm audit` gate for PRs that do not touch
 dependencies; unified coverage; bundle size; the rustdoc intra-doc link gate
-(`cargo doc -D warnings`, #3812); the macOS leg of plugin package-then-load (PLG-011).
+(`cargo doc -D warnings`, #3812) for PRs that do not touch Rust; the macOS leg of plugin package-then-load (PLG-011).
 
 **Post-merge lane.** Every push to `develop` or `main` runs **every** job above
 on **every** platform — Code Quality with the full three-OS test matrix, Security
