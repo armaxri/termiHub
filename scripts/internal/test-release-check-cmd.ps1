@@ -55,14 +55,33 @@ Set-Location $RepoRoot
 
 $script:Failures = 0
 
-# Run release-check.cmd, streaming each line as it arrives (so a hung or
-# timed-out build still leaves its log) and collecting it for the assertions.
+# Run release-check.cmd with its output going to a log file, echoing new lines
+# while it runs (so a hung or timed-out build still leaves its log) and
+# returning the whole text for the assertions. Not a pipe: build.cmd leaves
+# processes behind (mspdbsrv.exe, the smoke-tested app on a failure) that
+# inherit a pipe's write end and would keep a reader waiting forever.
 function Invoke-Raw([string]$Arguments) {
     Write-Host ""
     Write-Host ">>>>> release-check.cmd $Arguments"
-    $lines = & cmd.exe /d /c "scripts\release-check.cmd $Arguments" 2>&1 |
-        ForEach-Object { $line = "$_"; Write-Host $line; $line }
-    return [pscustomobject]@{ Code = $LASTEXITCODE; Text = ($lines -join "`n") }
+    $log = Join-Path ([IO.Path]::GetTempPath()) "release-check-$PID-$([guid]::NewGuid().ToString('N')).log"
+    $proc = Start-Process -FilePath 'cmd.exe' -NoNewWindow -PassThru `
+        -ArgumentList '/d', '/c', "scripts\release-check.cmd $Arguments > `"$log`" 2>&1"
+    $null = $proc.Handle  # cache the handle, or ExitCode reads back empty
+    $shown = 0
+    $text = ''
+    while ($true) {
+        $done = $proc.WaitForExit(2000)
+        $all = $null
+        try { $all = @(Get-Content -LiteralPath $log -ErrorAction Stop) } catch { $all = $null }
+        if ($null -ne $all) {
+            for ($i = $shown; $i -lt $all.Count; $i++) { Write-Host $all[$i] }
+            $shown = $all.Count
+            $text = $all -join "`n"
+        }
+        if ($done) { break }
+    }
+    Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
+    return [pscustomobject]@{ Code = $proc.ExitCode; Text = $text }
 }
 
 function Invoke-ReleaseCheck {
