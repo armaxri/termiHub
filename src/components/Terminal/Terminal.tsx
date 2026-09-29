@@ -129,6 +129,11 @@ function resolveTabTitle(tabId: string): string {
   return tab?.title?.trim() || "Session";
 }
 
+/** The saved connection a tab was opened from, if any (#3876). */
+function resolveTabConnectionId(tabId: string): string | undefined {
+  return getAllTabsAcrossGroupTrees().find((t) => t.id === tabId)?.connectionId;
+}
+
 /**
  * Wait until the xterm element is sitting in a real slot (large parent
  * container) AND xterm has at least `MIN_REATTACH_COLS` columns.
@@ -739,11 +744,15 @@ export function Terminal({
                 // `session.dropped`, converging with `setTerminalExited`. Computed
                 // from the live store the same way the client's drop path does.
                 const resilientReconnect = isResilientReconnectTabId(tabId);
+                // Name the saved connection (#3876) so a file transfer on this
+                // session can be resumed after the session is gone.
                 resolved = await createTerminal(
                   sessionConfig,
                   connectId,
                   spawned,
-                  resilientReconnect
+                  resilientReconnect,
+                  undefined,
+                  resolveTabConnectionId(tabId)
                 );
               } finally {
                 connectInFlightRef.current.delete(connectId);

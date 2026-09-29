@@ -36,7 +36,8 @@ function statusLabel(entry: TransferEntry): string {
     case "queued":
       return "queued";
     case "paused":
-      return "paused";
+      // A relaunch that needs credentials (#3876) says why it is still paused.
+      return entry.error ?? "paused";
     case "completed":
       return "done";
     case "cancelled":
