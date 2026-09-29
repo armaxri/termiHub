@@ -10,7 +10,7 @@ import {
   groupContainersByComposeProject,
 } from "./dockerContainerGroups";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
-import { Button, Input, Modal, NumberInput, Select, Toggle } from "@/components/ui";
+import { Button, Field, Input, Modal, NumberInput, Select, Toggle } from "@/components/ui";
 import { fieldPlatformLimitation } from "@/utils/platformFieldSupport";
 import { backendErrorMessage } from "@/utils/backendErrorCode";
 
@@ -55,7 +55,20 @@ interface DynamicFieldProps {
 }
 
 /**
- * Renders a single settings field based on its `fieldType`.
+ * Field types whose widget has no single labelable control (a Radix switch
+ * named via `aria-label`, or a list of rows), so the label renders without
+ * `htmlFor`.
+ */
+const LABELLESS_FIELD_TYPES: ReadonlySet<FieldType["type"]> = new Set([
+  "boolean",
+  "keyValueList",
+  "objectList",
+]);
+
+/**
+ * Renders a single settings field based on its `fieldType`, inside the shared
+ * {@link Field} scaffold (label row with required marker and "?" help, inline
+ * error).
  *
  * Dispatches to the appropriate input widget (text, password, number,
  * boolean toggle, select, port, file path, key-value list, object list).
@@ -106,52 +119,57 @@ export function DynamicField({
   const a11y: FieldA11y = { id: controlId, describedBy, invalid: hasError };
 
   return (
-    <div className="settings-form__field" data-testid={`dynamic-${testIdBase}`}>
-      {renderFieldInput(
-        field,
-        field.fieldType,
-        value,
-        onChange,
-        a11y,
-        testIdBase,
-        availablePorts,
-        onBlur,
-        platformNote != null,
-        containerContext
-      )}
-      {error && (
-        <p
-          id={errorId}
-          role="alert"
-          className="settings-form__hint settings-form__hint--error"
-          data-testid={`${testIdBase}-error`}
-        >
-          {error}
-        </p>
-      )}
-      {field.description && (
-        <p id={descriptionId} className="settings-form__hint">
-          {field.description}
-        </p>
-      )}
-      {platformNote && (
-        <p
-          id={platformNoteId}
-          className="settings-form__hint settings-form__hint--warning"
-          data-testid={`${testIdBase}-platform-note`}
-        >
-          {platformNote}
-        </p>
-      )}
-      {credentialSaved && (
-        <p
-          className="settings-form__hint settings-form__hint--success"
-          data-testid={`${testIdBase}-credential-saved`}
-        >
-          Password saved in credential store
-        </p>
-      )}
-    </div>
+    <Field
+      variant="settings"
+      data-testid={`dynamic-${testIdBase}`}
+      label={field.label}
+      htmlFor={LABELLESS_FIELD_TYPES.has(field.fieldType.type) ? undefined : controlId}
+      required={field.required}
+      labelAccessory={<FieldHelp field={field} testIdBase={testIdBase} />}
+      error={error || undefined}
+      errorId={errorId}
+      errorTestId={`${testIdBase}-error`}
+    >
+      {/* Fragment: each input widget wires its own id / aria-describedby (the
+          error, description and platform-note ids above), so Field only renders
+          the label row and the inline error. */}
+      <>
+        {renderFieldInput(
+          field,
+          field.fieldType,
+          value,
+          onChange,
+          a11y,
+          testIdBase,
+          availablePorts,
+          onBlur,
+          platformNote != null,
+          containerContext
+        )}
+        {field.description && (
+          <p id={descriptionId} className="settings-form__hint">
+            {field.description}
+          </p>
+        )}
+        {platformNote && (
+          <p
+            id={platformNoteId}
+            className="settings-form__hint settings-form__hint--warning"
+            data-testid={`${testIdBase}-platform-note`}
+          >
+            {platformNote}
+          </p>
+        )}
+        {credentialSaved && (
+          <p
+            className="settings-form__hint settings-form__hint--success"
+            data-testid={`${testIdBase}-credential-saved`}
+          >
+            Password saved in credential store
+          </p>
+        )}
+      </>
+    </Field>
   );
 }
 
@@ -381,40 +399,6 @@ function FieldHelp({ field, testIdBase }: { field: SettingsField; testIdBase: st
   );
 }
 
-/**
- * Field label with a required marker for required fields, plus the shared "?"
- * help affordance when the field declares `helpText` (UX-009). Renders a real
- * `<label htmlFor>` so screen readers associate the visible name with the
- * control (WCAG 1.3.1 / 3.3.2); the help {@link Button} sits *beside* the label
- * (not nested inside it) so it is a separate interactive target. List/group
- * fields with no single control omit `htmlFor`. The asterisk is `aria-hidden`
- * (decorative); inputs also carry `aria-required` for assistive tech.
- */
-function FieldLabel({
-  field,
-  htmlFor,
-  testIdBase,
-}: {
-  field: SettingsField;
-  htmlFor?: string;
-  testIdBase: string;
-}) {
-  return (
-    <div className="settings-form__label-row">
-      <label className="settings-form__label" htmlFor={htmlFor}>
-        {field.label}
-        {field.required && (
-          <span className="settings-form__required" aria-hidden="true">
-            {" "}
-            *
-          </span>
-        )}
-      </label>
-      <FieldHelp field={field} testIdBase={testIdBase} />
-    </div>
-  );
-}
-
 function TextField({
   field,
   value,
@@ -425,7 +409,6 @@ function TextField({
 }: FieldProps & { onBlur?: () => void; a11y: FieldA11y; testIdBase: string }) {
   return (
     <>
-      <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
       <Input
         id={a11y.id}
         type="text"
@@ -451,7 +434,6 @@ function PasswordField({
 }: FieldProps & { a11y: FieldA11y; testIdBase: string }) {
   return (
     <>
-      <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
       <PasswordInput
         id={a11y.id}
         value={(value as string) ?? ""}
@@ -479,7 +461,6 @@ function NumberField({
 }) {
   return (
     <>
-      <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
       <NumberInput
         id={a11y.id}
         value={value != null ? Number(value) : ""}
@@ -506,9 +487,6 @@ function BooleanField({
 }: FieldProps & { a11y: FieldA11y; testIdBase: string; disabled?: boolean }) {
   return (
     <>
-      {/* No `htmlFor`: the Toggle is a Radix switch associated via `aria-label`,
-          so the shared label/help row carries the text without wiring a label. */}
-      <FieldLabel field={field} testIdBase={testIdBase} />
       <Toggle
         id={a11y.id}
         checked={(value as boolean) ?? (field.default as boolean) ?? false}
@@ -537,7 +515,6 @@ function SelectField({
   const isLocked = fieldType.options.length <= 1;
   return (
     <>
-      <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
       <Select
         id={a11y.id}
         value={(value as string) || undefined}
@@ -563,7 +540,6 @@ function PortField({
 }: FieldProps & { a11y: FieldA11y; testIdBase: string }) {
   return (
     <>
-      <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
       <NumberInput
         id={a11y.id}
         aria-describedby={a11y.describedBy}
@@ -608,7 +584,6 @@ function SerialPortField({
 
   return (
     <>
-      <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
       <Input
         id={a11y.id}
         type="text"
@@ -754,7 +729,6 @@ function DockerContainerField({
   if (!listingEnabled) {
     return (
       <>
-        <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
         {input}
         <p className="settings-form__hint" data-testid={`${testIdBase}-listing-unavailable`}>
           Container listing is not available for agent connections — type {typedFallback}.
@@ -766,7 +740,6 @@ function DockerContainerField({
   if (list.status === "unsupported") {
     return (
       <>
-        <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
         {input}
         <p className="settings-form__hint" data-testid={`${testIdBase}-listing-unsupported`}>
           This agent version cannot list containers — update the agent, or type {typedFallback}.
@@ -778,7 +751,6 @@ function DockerContainerField({
   const containers = list.status === "loaded" ? list.containers : [];
   const header = (
     <>
-      <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
       <div className="settings-form__file-row">
         {input}
         <Button
@@ -996,7 +968,6 @@ function FilePathField({
   if (field.key === "keyPath") {
     return (
       <>
-        <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
         <KeyPathInput
           id={a11y.id}
           value={(value as string) ?? ""}
@@ -1023,7 +994,6 @@ function FilePathField({
 
   return (
     <>
-      <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
       <div className="settings-form__file-row">
         <Input
           id={a11y.id}
@@ -1055,12 +1025,7 @@ interface KeyValuePair {
   value: string;
 }
 
-function KeyValueListField({
-  field,
-  value,
-  onChange,
-  testIdBase,
-}: FieldProps & { testIdBase: string }) {
+function KeyValueListField({ value, onChange, testIdBase }: FieldProps & { testIdBase: string }) {
   const items = (value as KeyValuePair[]) ?? [];
 
   const handleAdd = () => {
@@ -1079,7 +1044,6 @@ function KeyValueListField({
 
   return (
     <>
-      <FieldLabel field={field} testIdBase={testIdBase} />
       {items.map((item, index) => (
         <div key={index} className="settings-form__list-row">
           <Input
@@ -1125,7 +1089,6 @@ function KeyValueListField({
 }
 
 function ObjectListField({
-  field,
   value,
   onChange,
   fieldType,
@@ -1169,7 +1132,6 @@ function ObjectListField({
 
   return (
     <>
-      <FieldLabel field={field} testIdBase={testIdBase} />
       {items.map((item, index) => (
         <div key={index} className="settings-form__list-row">
           {fieldType.fields.map((subField) => {
