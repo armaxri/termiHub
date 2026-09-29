@@ -209,7 +209,25 @@ impl TransferPersistenceManager {
             session_id: session_id.to_string(),
             path: path.to_string(),
             saved_connection_id: saved_connection_id.map(str::to_string),
+            container_id: None,
         });
+        store.upsert(entry);
+        self.schedule_write(&store);
+    }
+
+    /// Attach the source container of a remote-to-remote copy whose source is
+    /// a Docker session (#3586), so a relaunch re-attaches to that exact
+    /// container by id. A no-op for an unknown id or one without a recorded
+    /// source (never fabricates a record).
+    pub fn record_remote_source_container(&self, transfer_id: &str, container_id: &str) {
+        let mut store = self.lock();
+        let Some(mut entry) = store.get(transfer_id).cloned() else {
+            return;
+        };
+        let Some(source) = entry.remote_source.as_mut() else {
+            return;
+        };
+        source.container_id = Some(container_id.to_string());
         store.upsert(entry);
         self.schedule_write(&store);
     }
@@ -548,6 +566,55 @@ mod tests {
         assert_eq!(rehydrated[0].resume_offset, CHECKPOINT_BYTES + 1);
     }
 
+    /// The source container of a Docker-sourced remote-to-remote copy (#3586)
+    /// is kept with its source endpoint and survives rehydration, next to the
+    /// destination container; it is never attached to a record without a
+    /// recorded source.
+    #[test]
+    fn remote_source_container_survives_rehydration() {
+        let (_d, m) = mgr();
+        for id in ["r2r", "plain"] {
+            m.record_registration(
+                id,
+                "sess-dst",
+                TransferDirection::Upload,
+                "data.csv",
+                "/dst/data.csv",
+                None,
+                0,
+            );
+        }
+        m.record_remote_source("r2r", "sess-src", "/src/data.csv", None);
+        m.record_remote_source_container("r2r", "src-c0ffee");
+        m.record_docker_target("r2r", "dst-c0ffee");
+        m.record_remote_source_container("plain", "src-c0ffee");
+        m.record_remote_source_container("ghost", "src-c0ffee");
+        for id in ["r2r", "plain"] {
+            m.note_progress(
+                id,
+                PersistedTransferStatus::Active,
+                CHECKPOINT_BYTES + 1,
+                2048,
+                false,
+                None,
+            );
+        }
+        let rehydrated = m.load_incomplete_as_paused();
+        let r2r = rehydrated.iter().find(|r| r.transfer_id == "r2r").unwrap();
+        let source = r2r.remote_source.as_ref().unwrap();
+        assert_eq!(source.container_id.as_deref(), Some("src-c0ffee"));
+        assert_eq!(
+            r2r.docker.as_ref().map(|d| d.container_id.as_str()),
+            Some("dst-c0ffee")
+        );
+        let plain = rehydrated
+            .iter()
+            .find(|r| r.transfer_id == "plain")
+            .unwrap();
+        assert_eq!(plain.remote_source, None, "no source fabricated");
+        assert_eq!(rehydrated.len(), 2, "no record fabricated for `ghost`");
+    }
+
     /// A remote-to-remote copy's source endpoint (#3206) survives progress
     /// checkpoints and rehydration; attaching it to an unknown id never
     /// fabricates a record.
@@ -581,6 +648,7 @@ mod tests {
                 session_id: "sess-src".to_string(),
                 path: "/src/data.csv".to_string(),
                 saved_connection_id: Some("conn-src".to_string()),
+                container_id: None,
             })
         );
         assert_eq!(rehydrated[0].resume_offset, CHECKPOINT_BYTES + 1);

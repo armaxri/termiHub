@@ -14,7 +14,8 @@
 //!   session at resume time, server-side, and is never written to (or read
 //!   from) `transfers.json`;
 //! - a **remote-to-remote** copy (PROD-0013) re-attaches both its source and its
-//!   destination SFTP sessions.
+//!   destination: an SFTP session through the path above, a Docker session by
+//!   its persisted container id (#3586).
 //!
 //! When the session is gone — typically after a restart — the saved connection
 //! is used instead: a session the user reopened for it, or the connection
@@ -43,6 +44,7 @@ use super::registry::{TransferHandle, TransferRegistry};
 use super::relaunch_credentials::{
     resolve_sftp_endpoint, RelaunchBlocked, RelaunchSources, SavedSource,
 };
+use super::remote_copy::RemoteCopyEndpoint;
 use super::{ProgressSink, TransferDirection};
 use crate::connection::manager::ConnectionManager;
 use crate::credential::{CredentialStore, NullStore};
@@ -223,31 +225,55 @@ pub(crate) async fn run_session_target(
     }
 }
 
-/// One end of a relaunched remote-to-remote copy: its session and the saved
-/// connection that session was opened for.
+/// One end of a relaunched remote-to-remote copy: its session, the saved
+/// connection that session was opened for, and — for a Docker end (#3586) —
+/// the container it streamed through.
 pub(crate) struct CopyEnd<'a> {
     pub session_id: &'a str,
     pub saved_connection_id: Option<&'a str>,
+    pub container_id: Option<&'a str>,
 }
 
-/// Resolve both SFTP ends of a remote-to-remote copy (#3206, #3876): the source
-/// first, then the destination. A failure names which end is unavailable; a
-/// missing secret on either end keeps the row paused.
+/// Resolve one end of a remote-to-remote copy: a Docker end by its persisted
+/// container id (see [`super::relaunch_docker`]), any other end as an SFTP
+/// session (#3206, #3876).
+async fn resolve_copy_end(
+    sources: &AppSources<'_>,
+    end: CopyEnd<'_>,
+) -> Result<RemoteCopyEndpoint, RelaunchBlocked> {
+    match end.container_id {
+        Some(container_id) => super::relaunch_docker::resolve_docker_target(
+            sources.manager,
+            end.session_id,
+            container_id,
+        )
+        .await
+        .map(RemoteCopyEndpoint::Docker)
+        .map_err(RelaunchBlocked::Failed),
+        None => resolve_sftp_endpoint(sources, end.session_id, end.saved_connection_id)
+            .await
+            .map(RemoteCopyEndpoint::Sftp),
+    }
+}
+
+/// Resolve both ends of a remote-to-remote copy (#3206, #3876, #3586): the
+/// source first, then the destination. A failure names which end is
+/// unavailable; a missing secret on either end keeps the row paused.
 pub(crate) async fn resolve_remote_copy(
     sources: &AppSources<'_>,
     src: CopyEnd<'_>,
     dst: CopyEnd<'_>,
-) -> Result<(Arc<SftpFileBrowser>, Arc<SftpFileBrowser>), RelaunchBlocked> {
+) -> Result<(RemoteCopyEndpoint, RemoteCopyEndpoint), RelaunchBlocked> {
     let end = |which: &str, blocked: RelaunchBlocked| match blocked {
         RelaunchBlocked::Failed(message) => {
             RelaunchBlocked::Failed(format!("{message} (the {which} of the copy)"))
         }
         needs => needs,
     };
-    let src = resolve_sftp_endpoint(sources, src.session_id, src.saved_connection_id)
+    let src = resolve_copy_end(sources, src)
         .await
         .map_err(|e| end("source", e))?;
-    let dst = resolve_sftp_endpoint(sources, dst.session_id, dst.saved_connection_id)
+    let dst = resolve_copy_end(sources, dst)
         .await
         .map_err(|e| end("destination", e))?;
     Ok((src, dst))
