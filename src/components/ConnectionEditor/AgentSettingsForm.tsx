@@ -7,9 +7,10 @@
  * a hint when the agent is not connected.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { AgentCapabilities, AgentSettings } from "@/types/connection";
-import { Input, NumberInput, Select, Toggle } from "@/components/ui";
+import { Field, Input, NumberInput, Select, Toggle } from "@/components/ui";
+import { SettingsField } from "@/components/Settings/SettingsField";
 
 const LOG_LEVELS = ["error", "warn", "info", "debug", "trace"] as const;
 
@@ -28,6 +29,12 @@ interface AgentSettingsFormProps {
 }
 
 export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSettingsFormProps) {
+  // Control ids so each field's `<label htmlFor>` names and activates its control.
+  const fieldIdBase = useId();
+  const shellId = `${fieldIdBase}-shell`;
+  const startDirId = `${fieldIdBase}-start-dir`;
+  const scrollbackId = `${fieldIdBase}-scrollback`;
+  const logLevelId = `${fieldIdBase}-log-level`;
   const availableShells = capabilities?.availableShells ?? [];
   const isConnected = availableShells.length > 0;
 
@@ -59,145 +66,139 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
       <div className="settings-panel__category">
         <h3 className="settings-panel__category-title">Features</h3>
 
-        <div className="settings-form__field">
-          <span className="settings-form__label">System Monitoring</span>
+        <SettingsField
+          label="System Monitoring"
+          hint="Collect CPU, memory, and disk usage from the remote host."
+        >
           <Toggle
             checked={settings.enableMonitoring}
             onCheckedChange={(v) => update("enableMonitoring", v)}
-            aria-label="System Monitoring"
           />
-          <span className="settings-form__hint">
-            Collect CPU, memory, and disk usage from the remote host.
-          </span>
-        </div>
+        </SettingsField>
 
-        <div className="settings-form__field">
-          <span className="settings-form__label">File Browser (SFTP)</span>
+        <SettingsField
+          label="File Browser (SFTP)"
+          hint="Browse and transfer files on the remote host via SFTP."
+        >
           <Toggle
             checked={settings.enableFileBrowser}
             onCheckedChange={(v) => update("enableFileBrowser", v)}
-            aria-label="File Browser (SFTP)"
           />
-          <span className="settings-form__hint">
-            Browse and transfer files on the remote host via SFTP.
-          </span>
-        </div>
+        </SettingsField>
 
-        <div className="settings-form__field">
-          <span className="settings-form__label">Docker Sessions</span>
+        <SettingsField
+          label="Docker Sessions"
+          hint="Open terminal sessions directly inside Docker containers on the remote host."
+        >
           <Toggle
             checked={settings.enableDocker}
             onCheckedChange={(v) => update("enableDocker", v)}
-            aria-label="Docker Sessions"
           />
-          <span className="settings-form__hint">
-            Open terminal sessions directly inside Docker containers on the remote host.
-          </span>
-        </div>
+        </SettingsField>
       </div>
 
       <div className="settings-panel__category">
         <h3 className="settings-panel__category-title">Session Defaults</h3>
 
-        <label className="settings-form__field">
-          <span className="settings-form__label">
-            Default Shell
-            {!isConnected && (
+        <Field
+          variant="settings"
+          label="Default Shell"
+          htmlFor={shellId}
+          hint="Shell used for new sessions. Leave empty to auto-detect."
+          labelAccessory={
+            !isConnected ? (
               <span
-                className="settings-form__hint settings-form__hint--warning"
-                style={{ display: "inline", marginLeft: "6px", fontStyle: "normal" }}
+                className="settings-form__hint settings-form__hint--warning agent-settings__shell-warning"
                 title="Connect to query available shells"
               >
                 ⚠ Connect to query shells
               </span>
-            )}
-          </span>
+            ) : undefined
+          }
+        >
           {isConnected ? (
             <Select
               value={settings.defaultShell ?? AUTO_DETECT_SHELL}
               onChange={(v) => update("defaultShell", v === AUTO_DETECT_SHELL ? null : v)}
+              id={shellId}
               options={[
                 { value: AUTO_DETECT_SHELL, label: "Auto-detect" },
                 ...availableShells.map((shell) => ({ value: shell, label: shell })),
               ]}
-              aria-label="Default Shell"
             />
           ) : (
             <Input
+              id={shellId}
               type="text"
               placeholder="Auto-detect"
               value={settings.defaultShell ?? ""}
               onChange={(e) => update("defaultShell", e.target.value || null)}
             />
           )}
-          <span className="settings-form__hint">
-            Shell used for new sessions. Leave empty to auto-detect.
-          </span>
-        </label>
+        </Field>
 
-        <label className="settings-form__field">
-          <span className="settings-form__label">Starting Directory</span>
+        <SettingsField
+          label="Starting Directory"
+          htmlFor={startDirId}
+          hint="Working directory for new sessions. Leave empty for the shell default."
+        >
           <Input
+            id={startDirId}
             type="text"
             value={settings.startingDirectory}
             onChange={(e) => update("startingDirectory", e.target.value)}
             placeholder="~"
           />
-          <span className="settings-form__hint">
-            Working directory for new sessions. Leave empty for the shell default.
-          </span>
-        </label>
+        </SettingsField>
       </div>
 
       <div className="settings-panel__category">
         <h3 className="settings-panel__category-title">Persistent Sessions</h3>
 
-        <label className="settings-form__field">
-          <span className="settings-form__label">Persistent Scrollback Buffer</span>
+        <SettingsField
+          label="Persistent Scrollback Buffer"
+          htmlFor={scrollbackId}
+          hint="Size of the ring buffer kept on the agent for persistent sessions (1–64 MiB). Changes apply to newly started sessions."
+        >
           <NumberInput
+            id={scrollbackId}
             min={1}
             max={64}
             step={1}
             value={scrollbackMb}
             onValueChange={handleScrollbackChange}
           />
-          <span className="settings-form__hint">
-            Size of the ring buffer kept on the agent for persistent sessions (1–64 MiB). Changes
-            apply to newly started sessions.
-          </span>
-        </label>
+        </SettingsField>
       </div>
 
       <div className="settings-panel__category">
         <h3 className="settings-panel__category-title">Diagnostics</h3>
 
-        <label className="settings-form__field">
-          <span className="settings-form__label">Log Level</span>
+        <SettingsField
+          label="Log Level"
+          htmlFor={logLevelId}
+          hint="Controls the verbosity of agent-side log output."
+        >
           <Select
+            id={logLevelId}
             value={settings.logLevel}
             onChange={(v) => update("logLevel", v as AgentSettings["logLevel"])}
             options={LOG_LEVELS.map((level) => ({
               value: level,
               label: level.charAt(0).toUpperCase() + level.slice(1),
             }))}
-            aria-label="Log Level"
           />
-          <span className="settings-form__hint">
-            Controls the verbosity of agent-side log output.
-          </span>
-        </label>
+        </SettingsField>
 
-        <div className="settings-form__field">
-          <span className="settings-form__label">Verbose Protocol Tracing</span>
+        <SettingsField
+          label="Verbose Protocol Tracing"
+          hint="Log every JSON-RPC message. Useful for debugging connection issues."
+        >
           <Toggle
             checked={settings.verboseTracing}
             onCheckedChange={(v) => update("verboseTracing", v)}
-            aria-label="Verbose Protocol Tracing"
           />
-          <span className="settings-form__hint">
-            Log every JSON-RPC message. Useful for debugging connection issues.
-          </span>
-        </div>
+        </SettingsField>
       </div>
     </div>
   );

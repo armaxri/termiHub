@@ -10,6 +10,15 @@ export type FieldVariant = "default" | "settings";
 /** Visual variant applied to the field's hint text. */
 export type FieldHintVariant = "default" | "warning";
 
+/** Field layout. `"stack"` renders label above control (the default);
+ * `"checkbox"` renders a single-row `<label>` with the control first and the
+ * label text beside it, so clicking the text toggles the control. */
+export type FieldLayout = "stack" | "checkbox";
+
+/** Where the hint renders: below the control (default) or directly under the
+ * label, e.g. for a list whose description belongs above its rows. */
+export type FieldHintPosition = "afterControl" | "afterLabel";
+
 /**
  * Props for the presentational {@link Field} wrapper: a label, a control slot,
  * and an optional inline hint and/or error message.
@@ -40,9 +49,40 @@ export interface FieldProps {
   hint?: React.ReactNode;
   /** Hint styling — `"warning"` colors the hint as a caution. Defaults to `"default"`. */
   hintVariant?: FieldHintVariant;
+  /** Hint placement. Defaults to `"afterControl"`. */
+  hintPosition?: FieldHintPosition;
   /** Visual field style. Defaults to `"default"`. */
   variant?: FieldVariant;
-  /** The control element (e.g. an {@link Input} or {@link Select}). */
+  /** Field layout. Defaults to `"stack"`. */
+  layout?: FieldLayout;
+  /**
+   * Marks the field as required with a decorative (`aria-hidden`) asterisk after
+   * the label text. Set `aria-required` on the control for assistive tech.
+   */
+  required?: boolean;
+  /**
+   * Interactive affordance rendered *beside* the label (not inside it), e.g. a
+   * "?" help button or an "Add" action. When set, the label and accessory share
+   * a label row.
+   */
+  labelAccessory?: React.ReactNode;
+  /** Decorative icon rendered before the label text. */
+  labelIcon?: React.ReactNode;
+  /** Extra class names for the label element. */
+  labelClassName?: string;
+  /**
+   * Overrides the error message id (defaults to `{htmlFor}-error`, or a
+   * generated id). Use when the control already points its `aria-describedby`
+   * at a known id.
+   */
+  errorId?: string;
+  /** Overrides the error message `data-testid` (defaults per variant). */
+  errorTestId?: string;
+  /**
+   * The control element (e.g. an {@link Input} or {@link Select}). A single
+   * element receives the injected label/error wiring. A fragment is treated as
+   * a composite control that wires its own accessibility and is left untouched.
+   */
   children: React.ReactNode;
   /** Extra class names for the wrapper. */
   className?: string;
@@ -60,18 +100,33 @@ interface InjectedControlProps {
 /** Per-variant class families and error test hook. */
 const VARIANT_CLASSES: Record<
   FieldVariant,
-  { field: string; label: string; hint: string; hintWarning: string; errorTestId: string }
+  {
+    field: string;
+    checkbox: string;
+    label: string;
+    labelRow: string;
+    required: string;
+    hint: string;
+    hintWarning: string;
+    errorTestId: string;
+  }
 > = {
   default: {
     field: "ui-field",
+    checkbox: "ui-field--checkbox",
     label: "ui-field__label",
+    labelRow: "ui-field__label-row",
+    required: "ui-field__required",
     hint: "ui-field__hint",
     hintWarning: "ui-field__hint--warning",
     errorTestId: "field-error",
   },
   settings: {
     field: "settings-form__field",
+    checkbox: "settings-form__field--checkbox",
     label: "settings-form__label",
+    labelRow: "settings-form__label-row",
+    required: "settings-form__required",
     hint: "settings-form__hint",
     hintWarning: "settings-form__hint--warning",
     errorTestId: "settings-field-error",
@@ -111,7 +166,15 @@ export function Field({
   error,
   hint,
   hintVariant = "default",
+  hintPosition = "afterControl",
   variant = "default",
+  layout = "stack",
+  required = false,
+  labelAccessory,
+  labelIcon,
+  labelClassName,
+  errorId: errorIdOverride,
+  errorTestId,
   children,
   className,
   ...rest
@@ -119,14 +182,14 @@ export function Field({
   const generatedId = useId();
   const classes = VARIANT_CLASSES[variant];
   const hasError = error !== undefined && error !== null && error !== false && error !== "";
-  const errorId = htmlFor ? `${htmlFor}-error` : generatedId;
+  const errorId = errorIdOverride ?? (htmlFor ? `${htmlFor}-error` : generatedId);
   const hasHint = hint !== undefined && hint !== null && hint !== false;
 
   // Propagate label association and error state onto the wrapped control. Only
   // clone when a prop actually changes, so callers that need nothing injected
   // keep their element untouched.
   let control = children;
-  if (React.isValidElement(children)) {
+  if (React.isValidElement(children) && children.type !== React.Fragment) {
     const childProps = children.props as InjectedControlProps;
     const injected: InjectedControlProps = {};
     // Without an explicit `htmlFor` there is no `<label for>`, so derive the
@@ -143,28 +206,77 @@ export function Field({
     }
   }
 
-  const wrapperClasses = [classes.field, className ?? ""].filter(Boolean).join(" ");
+  const isCheckbox = layout === "checkbox";
+  const wrapperClasses = [classes.field, isCheckbox ? classes.checkbox : "", className ?? ""]
+    .filter(Boolean)
+    .join(" ");
   const hintClasses = [classes.hint, hintVariant === "warning" ? classes.hintWarning : ""]
     .filter(Boolean)
     .join(" ");
+  const labelClasses = [classes.label, labelClassName ?? ""].filter(Boolean).join(" ");
+
+  const labelContent = (
+    <>
+      {labelIcon}
+      {label}
+      {required ? (
+        <span className={classes.required} aria-hidden="true">
+          {" "}
+          *
+        </span>
+      ) : null}
+    </>
+  );
+
+  const hintNode = hasHint ? <span className={hintClasses}>{hint}</span> : null;
+  const errorNode = hasError ? (
+    <span
+      className="ui-field__msg"
+      id={errorId}
+      role="alert"
+      data-testid={errorTestId ?? classes.errorTestId}
+    >
+      <AlertCircle className="ui-field__msg-icon" aria-hidden="true" />
+      {error}
+    </span>
+  ) : null;
+
+  if (isCheckbox) {
+    // The wrapper itself is the `<label>`, so clicking the text toggles the
+    // control; the visible text is a span to avoid nesting labels.
+    return (
+      <label className={wrapperClasses} htmlFor={htmlFor} {...rest}>
+        {control}
+        <span className={labelClasses}>{labelContent}</span>
+        {labelAccessory}
+        {hintNode}
+        {errorNode}
+      </label>
+    );
+  }
+
+  const labelNode = htmlFor ? (
+    <label className={labelClasses} htmlFor={htmlFor}>
+      {labelContent}
+    </label>
+  ) : (
+    <span className={labelClasses}>{labelContent}</span>
+  );
 
   return (
     <div className={wrapperClasses} {...rest}>
-      {htmlFor ? (
-        <label className={classes.label} htmlFor={htmlFor}>
-          {label}
-        </label>
+      {labelAccessory !== undefined && labelAccessory !== null && labelAccessory !== false ? (
+        <div className={classes.labelRow}>
+          {labelNode}
+          {labelAccessory}
+        </div>
       ) : (
-        <span className={classes.label}>{label}</span>
+        labelNode
       )}
+      {hintPosition === "afterLabel" ? hintNode : null}
       {control}
-      {hasHint ? <span className={hintClasses}>{hint}</span> : null}
-      {hasError ? (
-        <span className="ui-field__msg" id={errorId} role="alert" data-testid={classes.errorTestId}>
-          <AlertCircle className="ui-field__msg-icon" aria-hidden="true" />
-          {error}
-        </span>
-      ) : null}
+      {hintPosition === "afterControl" ? hintNode : null}
+      {errorNode}
     </div>
   );
 }

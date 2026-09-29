@@ -12,6 +12,12 @@ export interface SettingsFieldProps {
    * `aria-label` at each call site.
    */
   label: string;
+  /**
+   * Optional `id` of the control. When set, a real `<label htmlFor>` points at
+   * it (so clicking the label focuses/activates the control) and the control's
+   * accessible name comes from that label instead of a derived `aria-label`.
+   */
+  htmlFor?: string;
   /** Optional explanatory hint rendered below the control. */
   hint?: ReactNode;
   /** Hint styling — `"warning"` colors the hint as a caution. Defaults to `"default"`. */
@@ -33,19 +39,27 @@ export interface SettingsFieldProps {
 /**
  * Thin settings-panel binding of the shared {@link Field} primitive: renders the
  * `settings-form__field` label/control/hint scaffold and wires the control's
- * accessible name from the label. It is `Field` with `variant="settings"` and no
- * `htmlFor`, kept as a named wrapper so the many Settings call sites read as
+ * accessible name from the label. It is `Field` with `variant="settings"` (and an
+ * optional `htmlFor`), kept as a named wrapper so the many Settings call sites read as
  * `<SettingsField>` and share a single field implementation.
  */
 export function SettingsField({
   label,
+  htmlFor,
   hint,
   hintVariant = "default",
   error,
   children,
 }: SettingsFieldProps): ReactElement {
   return (
-    <Field variant="settings" label={label} hint={hint} hintVariant={hintVariant} error={error}>
+    <Field
+      variant="settings"
+      label={label}
+      htmlFor={htmlFor}
+      hint={hint}
+      hintVariant={hintVariant}
+      error={error}
+    >
       {children}
     </Field>
   );

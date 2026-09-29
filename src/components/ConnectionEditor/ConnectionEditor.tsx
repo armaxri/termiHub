@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, useId } from "react";
 import { Controller, useController, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import * as RadixSelect from "@radix-ui/react-select";
@@ -56,7 +56,8 @@ import {
   SshConfigImportConnection,
 } from "@/types/connection";
 import { SettingsNav } from "@/components/Settings";
-import { Button, Input, Select, SelectItem, Toggle, toast } from "@/components/ui";
+import { Button, Field, Input, Select, SelectItem, Toggle, toast } from "@/components/ui";
+import { SettingsField } from "@/components/Settings/SettingsField";
 import { ConnectionSettingsForm, AGENT_SCHEMA } from "@/components/DynamicForm";
 import {
   buildDefaults,
@@ -1426,6 +1427,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
   // Autofocus (and select any prefilled name when editing) the primary field.
   const nameRef = useAutofocusSelect<HTMLInputElement>();
+  const nameInputId = useId();
+  const typeSelectId = useId();
 
   const enabledExternalFiles = settings.externalConnectionFiles.filter((f) => f.enabled);
 
@@ -1495,14 +1498,20 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     <>
       <div className="settings-panel__category">
         <h3 className="settings-panel__category-title">General</h3>
-        <label className="settings-form__field">
-          <span className="settings-form__label">Name</span>
-          <Controller
-            name="name"
-            control={topLevelControl}
-            render={({ field }) => (
+        <Controller
+          name="name"
+          control={topLevelControl}
+          render={({ field }) => (
+            <Field
+              variant="settings"
+              label="Name"
+              htmlFor={nameInputId}
+              error={nameError || undefined}
+              errorTestId="connection-editor-name-error"
+            >
               <Input
                 ref={nameRef}
+                id={nameInputId}
                 type="text"
                 value={field.value ?? ""}
                 onChange={(e) => field.onChange(e.target.value)}
@@ -1511,21 +1520,13 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
                 error={!!nameError}
                 data-testid="connection-editor-name-input"
               />
-            )}
-          />
-          {nameError && (
-            <p
-              className="settings-form__hint settings-form__hint--error"
-              data-testid="connection-editor-name-error"
-            >
-              {nameError}
-            </p>
+            </Field>
           )}
-        </label>
+        />
         {!isAgentTransportMode && (
-          <label className="settings-form__field">
-            <span className="settings-form__label">Type</span>
+          <Field variant="settings" label="Type" htmlFor={typeSelectId}>
             <Select
+              id={typeSelectId}
               value={selectedType}
               onChange={handleTypeChange}
               disabled={isAgentDefinitionMode ? !!existingAgentDef : false}
@@ -1561,7 +1562,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
                 </RadixSelect.Group>
               )}
             </Select>
-          </label>
+          </Field>
         )}
         {!isAgentTransportMode && (
           <p className="settings-form__hint">
@@ -1576,12 +1577,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           </p>
         )}
         {!isAnyAgentMode && enabledExternalFiles.length > 0 && (
-          <label className="settings-form__field">
-            <span className="settings-form__label">Storage File</span>
-            <Controller
-              name="sourceFile"
-              control={topLevelControl}
-              render={({ field }) => (
+          <Controller
+            name="sourceFile"
+            control={topLevelControl}
+            render={({ field }) => (
+              <SettingsField label="Storage File">
                 <Select
                   value={field.value ?? DEFAULT_STORAGE_FILE}
                   onChange={(v) => field.onChange(v === DEFAULT_STORAGE_FILE ? null : v)}
@@ -1589,12 +1589,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
                     { value: DEFAULT_STORAGE_FILE, label: "Default (connections.json)" },
                     ...enabledExternalFiles.map((f) => ({ value: f.path, label: f.path })),
                   ]}
-                  aria-label="Storage File"
                   data-testid="connection-editor-source-file"
                 />
-              )}
-            />
-          </label>
+              </SettingsField>
+            )}
+          />
         )}
       </div>
 
@@ -1696,19 +1695,22 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       {showAgentForwarding && (
         <div className="settings-panel__category" data-testid="ssh-agent-forwarding-section">
           <h3 className="settings-panel__category-title">SSH Agent Forwarding</h3>
-          <div className="settings-form__field">
-            <span className="settings-form__label">Forward SSH agent</span>
+          <SettingsField
+            label="Forward SSH agent"
+            hint={
+              <>
+                Make your local <code>ssh-agent</code> keys available on the target — and through
+                the jump-host chain — so onward SSH from the host works without copying private
+                keys.
+              </>
+            }
+          >
             <Toggle
               checked={(connSettings as SshEditorSettings).forwardAgent === true}
               onCheckedChange={handleForwardAgentChange}
-              aria-label="Forward SSH agent"
               data-testid="connection-editor-forward-agent"
             />
-            <span className="settings-form__hint">
-              Make your local <code>ssh-agent</code> keys available on the target — and through the
-              jump-host chain — so onward SSH from the host works without copying private keys.
-            </span>
-          </div>
+          </SettingsField>
         </div>
       )}
 
@@ -1735,24 +1737,22 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       {isAgentDefinitionMode && !isAgentTunnelledGraphical && (
         <div className="settings-panel__category">
           <h3 className="settings-panel__category-title">Session</h3>
-          <div className="settings-form__field">
-            <span className="settings-form__label">Persistent session</span>
-            <Controller
-              name="persistent"
-              control={topLevelControl}
-              render={({ field }) => (
+          <Controller
+            name="persistent"
+            control={topLevelControl}
+            render={({ field }) => (
+              <SettingsField
+                label="Persistent session"
+                hint="Keep the session alive when the tab is closed"
+              >
                 <Toggle
                   checked={field.value ?? false}
                   onCheckedChange={field.onChange}
-                  aria-label="Persistent session"
                   data-testid="connection-editor-persistent"
                 />
-              )}
-            />
-            <span className="settings-form__hint">
-              Keep the session alive when the tab is closed
-            </span>
-          </div>
+              </SettingsField>
+            )}
+          />
         </div>
       )}
 
