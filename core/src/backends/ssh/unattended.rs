@@ -12,6 +12,14 @@
 //! - a keyboard-interactive round the saved password cannot answer →
 //!   [`InteractionRequired`](crate::errors::ConnectFailureKind::InteractionRequired).
 //!
+//! - a password auth with no password, or an encrypted key with no
+//!   passphrase → [`InteractionRequired`](crate::errors::ConnectFailureKind::InteractionRequired)
+//!   too (#3877): the attended flow would have asked for the secret.
+//!
+//! The same scope runs agent-side for an agent-hosted connect whose
+//! `connection.create` carries `unattended: true` (#3877): in the agent's own
+//! process for an in-process session, or in the session daemon.
+//!
 //! The mode is a **task-local scope** set around the connect with
 //! [`run_unattended`], so it reaches the auth code without threading a flag
 //! through every connection type and call site — the same shape as the
@@ -20,6 +28,8 @@
 //! reads the mode when it is built (on the connecting task) and carries it.
 
 use std::future::Future;
+
+use crate::errors::{ConnectFailureKind, SessionError};
 
 tokio::task_local! {
     /// Set while an unattended connect runs on this task.
@@ -34,6 +44,26 @@ pub async fn run_unattended<F: Future>(fut: F) -> F::Output {
 /// Whether the current task runs inside [`run_unattended`].
 pub fn is_unattended() -> bool {
     UNATTENDED.try_with(|_| ()).is_ok()
+}
+
+/// The typed refusal of an unattended connect whose password auth has no
+/// password to send (#3877): the attended flow would have asked for it.
+pub(crate) fn password_required(host: &str) -> SessionError {
+    SessionError::classified(
+        ConnectFailureKind::InteractionRequired,
+        format!("No password is stored for {host}, and an unattended connect cannot ask for one"),
+    )
+}
+
+/// The typed refusal of an unattended connect whose private key is encrypted
+/// and has no stored passphrase (#3877).
+pub(crate) fn passphrase_required(key_path: &str) -> SessionError {
+    SessionError::classified(
+        ConnectFailureKind::InteractionRequired,
+        format!(
+            "The key {key_path} needs a passphrase, and an unattended connect cannot ask for one"
+        ),
+    )
 }
 
 #[cfg(test)]

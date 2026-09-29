@@ -92,6 +92,30 @@ pub trait SessionManagerApi: Send + Sync + 'static {
         self.create(type_id, title, settings, definition_id).await
     }
 
+    /// [`create_correlated`](Self::create_correlated), connecting **unattended**
+    /// when `unattended` (#3877): nothing the connect runs may prompt the
+    /// desktop, and each point that would fails fast with a typed kind.
+    ///
+    /// The default serves attended creates only and refuses an unattended one,
+    /// so a test double can never silently connect attended in its place.
+    async fn create_with_mode(
+        &self,
+        type_id: &str,
+        title: String,
+        settings: serde_json::Value,
+        definition_id: Option<String>,
+        correlation_id: Option<&str>,
+        unattended: bool,
+    ) -> Result<SessionSnapshot, SessionCreateError> {
+        if unattended {
+            return Err(SessionCreateError::InvalidConfig(
+                "unattended connect is not supported".to_string(),
+            ));
+        }
+        self.create_correlated(type_id, title, settings, definition_id, correlation_id)
+            .await
+    }
+
     /// List all sessions as snapshots.
     async fn list(&self) -> Vec<SessionSnapshot>;
 
@@ -420,6 +444,10 @@ pub struct LaunchExtras {
     /// typed reason to (#3751), exported as [`CONNECT_REPORT_ENDPOINT_ENV`].
     /// Set for every launch whose relay could bind, prompts or not.
     pub connect_report_endpoint: Option<String>,
+    /// Connect unattended (#3877): exported as
+    /// [`UNATTENDED_ENV`](crate::session::unattended::UNATTENDED_ENV), so the
+    /// daemon runs its connect in the never-prompt scope.
+    pub unattended: bool,
 }
 
 /// The keyboard-interactive relay half of [`LaunchExtras`].
@@ -552,6 +580,7 @@ impl DaemonLauncher for SystemDaemonLauncher {
         );
         export_correlation_id(&mut command, extras.correlation_id.as_deref());
         export_connect_report_endpoint(&mut command, extras.connect_report_endpoint.as_deref());
+        crate::session::unattended::export(&mut command, extras.unattended);
         crate::daemon::spawn::configure_detached_stderr(&mut command, daemon_log(session_id));
         crate::daemon::spawn::configure_detachment(&mut command);
 
@@ -918,6 +947,31 @@ impl SessionManager {
         definition_id: Option<String>,
         correlation_id: Option<&str>,
     ) -> Result<SessionSnapshot, SessionCreateError> {
+        self.create_with_mode(
+            type_id,
+            title,
+            settings,
+            definition_id,
+            correlation_id,
+            false,
+        )
+        .await
+    }
+
+    /// [`create_correlated`](Self::create_correlated), connecting **unattended**
+    /// when `unattended` (#3877) — see [`crate::session::unattended`]. The mode
+    /// reaches both backends: an in-process connect runs in the never-prompt
+    /// scope here, a daemon-backed one in its daemon, which then also gets no
+    /// keyboard-interactive prompt relay.
+    pub async fn create_with_mode(
+        &self,
+        type_id: &str,
+        title: String,
+        settings: serde_json::Value,
+        definition_id: Option<String>,
+        correlation_id: Option<&str>,
+        unattended: bool,
+    ) -> Result<SessionSnapshot, SessionCreateError> {
         let correlation_id = correlation_id
             .filter(|id| termihub_core::protocol::methods::is_valid_correlation_id(id));
         // Check the type exists and get capabilities up front — cheap, in-memory,
@@ -956,6 +1010,7 @@ impl SessionManager {
                 &settings,
                 capabilities.persistent,
                 correlation_id,
+                unattended,
             )
             .await
         {
@@ -1029,14 +1084,15 @@ impl SessionManager {
         settings: &serde_json::Value,
         persistent: bool,
         correlation_id: Option<&str>,
+        unattended: bool,
     ) -> Result<SessionBackend, anyhow::Error> {
         if persistent {
             return self
-                .spawn_daemon_backend(session_id, type_id, settings, correlation_id)
+                .spawn_daemon_backend(session_id, type_id, settings, correlation_id, unattended)
                 .await;
         }
 
-        self.create_in_process_backend(session_id, type_id, settings)
+        self.create_in_process_backend(session_id, type_id, settings, unattended)
             .await
     }
 
@@ -1047,6 +1103,7 @@ impl SessionManager {
         type_id: &str,
         settings: &serde_json::Value,
         correlation_id: Option<&str>,
+        unattended: bool,
     ) -> Result<SessionBackend, anyhow::Error> {
         let buffer_size = self.persistent_buffer_size.load(Ordering::Relaxed);
 
@@ -1064,7 +1121,8 @@ impl SessionManager {
         // keyboard-interactive (OTP / 2FA) prompts (#3375). Held only for the
         // launch: the daemon's connect is over once it accepts connections.
         let ki_relay = self.start_launch_relay(session_id).await;
-        let relay_prompts = self.relays_prompts(type_id);
+        // An unattended connect never relays a prompt (#3877).
+        let relay_prompts = !unattended && self.relays_prompts(type_id);
 
         let mut result = self
             .launcher
@@ -1084,6 +1142,7 @@ impl SessionManager {
                     }),
                     correlation_id: correlation_id.map(str::to_string),
                     connect_report_endpoint: ki_relay.as_ref().map(|r| r.endpoint().to_string()),
+                    unattended,
                 },
             )
             .await;
@@ -1192,28 +1251,31 @@ impl SessionManager {
         session_id: &str,
         type_id: &str,
         settings: &serde_json::Value,
+        unattended: bool,
     ) -> Result<SessionBackend, anyhow::Error> {
         let mut connection = self
             .registry
             .create(type_id)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-        connection.connect(settings.clone()).await.map_err(|e| {
-            // Keep a cancelled prompt / rejected one-time code (#3375), a
-            // classified connect failure (#3751) and a rejected credential
-            // (#3089) typed.
-            match (
-                KiFailureKind::from_session_error(&e),
-                relayed_connect_failure_kind(&e),
-            ) {
-                (Some(kind), _) => anyhow::Error::new(KiConnectFailure(kind)),
-                (None, Some(kind)) => anyhow::Error::new(ClassifiedConnectFailure {
-                    kind,
-                    message: format!("Connection failed: {e}"),
-                }),
-                (None, None) => anyhow::anyhow!("Connection failed: {e}"),
-            }
-        })?;
+        crate::session::unattended::connect(connection.as_mut(), settings.clone(), unattended)
+            .await
+            .map_err(|e| {
+                // Keep a cancelled prompt / rejected one-time code (#3375), a
+                // classified connect failure (#3751) and a rejected credential
+                // (#3089) typed.
+                match (
+                    KiFailureKind::from_session_error(&e),
+                    relayed_connect_failure_kind(&e),
+                ) {
+                    (Some(kind), _) => anyhow::Error::new(KiConnectFailure(kind)),
+                    (None, Some(kind)) => anyhow::Error::new(ClassifiedConnectFailure {
+                        kind,
+                        message: format!("Connection failed: {e}"),
+                    }),
+                    (None, None) => anyhow::anyhow!("Connection failed: {e}"),
+                }
+            })?;
 
         let output_rx = connection.subscribe_output();
         let alive = Arc::new(AtomicBool::new(true));
@@ -2393,6 +2455,27 @@ impl SessionManagerApi for SessionManager {
             settings,
             definition_id,
             correlation_id,
+        )
+        .await
+    }
+
+    async fn create_with_mode(
+        &self,
+        type_id: &str,
+        title: String,
+        settings: serde_json::Value,
+        definition_id: Option<String>,
+        correlation_id: Option<&str>,
+        unattended: bool,
+    ) -> Result<SessionSnapshot, SessionCreateError> {
+        SessionManager::create_with_mode(
+            self,
+            type_id,
+            title,
+            settings,
+            definition_id,
+            correlation_id,
+            unattended,
         )
         .await
     }
@@ -5002,6 +5085,9 @@ mod tests {
 
     /// The desktop's correlation id reaches the daemon launch (#3782).
     mod correlation_tests;
+
+    /// An unattended create reaches the daemon launch, relay-free (#3877).
+    mod unattended_tests;
 
     /// Resolving a held session's process manager (#3210).
     mod process_tests;
