@@ -6,7 +6,12 @@ use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 /// A saved connection configuration that survives agent restarts.
+///
+/// Deserialization goes through [`RawConnection`] so the type-scoped legacy
+/// settings keys (FTP's `timeoutSecs`, #2901) are rewritten with the
+/// connection's `session_type` in hand; only the unified keys are persisted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "RawConnection")]
 pub struct Connection {
     pub id: String,
     pub name: String,
@@ -36,6 +41,45 @@ pub struct Connection {
     pub icon: Option<String>,
 }
 
+/// On-disk shape of [`Connection`], read before the type-scoped legacy-key
+/// renames are applied (see [`Connection::normalize_settings`]).
+#[derive(Deserialize)]
+struct RawConnection {
+    id: String,
+    name: String,
+    session_type: String,
+    #[serde(
+        default,
+        with = "termihub_core::connection::auto_reconnect::settings_bag"
+    )]
+    config: serde_json::Value,
+    #[serde(default)]
+    persistent: bool,
+    #[serde(default)]
+    folder_id: Option<String>,
+    #[serde(default)]
+    terminal_options: Option<serde_json::Value>,
+    #[serde(default)]
+    icon: Option<String>,
+}
+
+impl From<RawConnection> for Connection {
+    fn from(raw: RawConnection) -> Self {
+        let mut conn = Self {
+            id: raw.id,
+            name: raw.name,
+            session_type: raw.session_type,
+            config: raw.config,
+            persistent: raw.persistent,
+            folder_id: raw.folder_id,
+            terminal_options: raw.terminal_options,
+            icon: raw.icon,
+        };
+        conn.normalize_settings();
+        conn
+    }
+}
+
 /// Read-only snapshot returned by list/create/update operations.
 ///
 /// This IS the shared wire DTO defined once in `termihub-core`
@@ -50,6 +94,15 @@ pub use termihub_core::protocol::methods::{
 };
 
 impl Connection {
+    /// Rewrite type-scoped legacy settings keys (FTP's `timeoutSecs` →
+    /// `connectTimeoutSecs`, #2901) in place, keeping the user's value.
+    fn normalize_settings(&mut self) {
+        termihub_core::connection::normalize_connection_settings(
+            &self.session_type,
+            &mut self.config,
+        );
+    }
+
     fn snapshot(&self) -> ConnectionSnapshot {
         ConnectionSnapshot {
             id: self.id.clone(),
@@ -208,7 +261,8 @@ impl ConnectionStore {
     }
 
     /// Create a new connection. Returns the snapshot.
-    pub async fn create(&self, conn: Connection) -> ConnectionSnapshot {
+    pub async fn create(&self, mut conn: Connection) -> ConnectionSnapshot {
+        conn.normalize_settings();
         let snapshot = conn.snapshot();
         let mut defs = self.definitions.lock().await;
         defs.connections.insert(conn.id.clone(), conn);
@@ -253,6 +307,7 @@ impl ConnectionStore {
         if let Some(icon) = icon {
             conn.icon = icon;
         }
+        conn.normalize_settings();
 
         let snapshot = conn.snapshot();
         self.save_to_disk(&defs);
@@ -460,7 +515,7 @@ impl ConnectionStore {
                     let connections: HashMap<String, Connection> = defs
                         .into_iter()
                         .map(|d| {
-                            let conn = Connection {
+                            let mut conn = Connection {
                                 id: d.id.clone(),
                                 name: d.name,
                                 session_type: d.session_type,
@@ -470,6 +525,7 @@ impl ConnectionStore {
                                 terminal_options: None,
                                 icon: None,
                             };
+                            conn.normalize_settings();
                             (d.id, conn)
                         })
                         .collect();
