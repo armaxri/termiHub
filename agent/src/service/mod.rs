@@ -384,6 +384,147 @@ mod tests {
         reg.stop("mon-1").await;
     }
 
+    /// A mock HTTP target for the monitor that counts the checks it receives.
+    async fn counting_target() -> wiremock::MockServer {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::any())
+            .respond_with(wiremock::ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    /// Checks the monitor has made against `server` so far.
+    async fn check_count(server: &wiremock::MockServer) -> usize {
+        server.received_requests().await.map_or(0, |r| r.len())
+    }
+
+    /// Poll `cond` every 50 ms for up to `within`, returning whether it held.
+    async fn eventually<F, Fut>(within: std::time::Duration, mut cond: F) -> bool
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = bool>,
+    {
+        let deadline = tokio::time::Instant::now() + within;
+        while tokio::time::Instant::now() < deadline {
+            if cond().await {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        cond().await
+    }
+
+    /// The `timestampMs` of the check `service.status` currently reports.
+    async fn reported_timestamp(reg: &AgentServiceRegistry, id: &str) -> Option<u64> {
+        let snap = reg.status(id).await?;
+        snap.state?.get("timestampMs")?.as_u64()
+    }
+
+    /// #3896: while no desktop is attached the agent-hosted monitor makes no
+    /// checks, `service.status` still reports the last result, and on re-attach
+    /// it checks again within one interval.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn monitor_idles_while_no_client_is_attached_and_resumes_on_attach() {
+        use std::time::Duration;
+
+        let target = counting_target().await;
+        let reg = monitor_registry();
+        reg.start(
+            "mon-1",
+            "http_monitor",
+            serde_json::json!({
+                "id": "mon-1",
+                "url": format!("{}/health", target.uri()),
+                "intervalMs": 1_000,
+                "method": "GET",
+                "expectedStatus": 200,
+                "timeoutMs": 500,
+                "allowPrivateNetwork": true,
+            }),
+        )
+        .await
+        .expect("monitor hosts on the agent");
+
+        // Attached (the default): it checks, and the result reaches the status.
+        assert!(
+            eventually(Duration::from_secs(3), || async {
+                reported_timestamp(&reg, "mon-1").await.is_some()
+            })
+            .await,
+            "an attached monitor checks and reports its result"
+        );
+
+        reg.detach_client().await;
+        // Let a check that was already in flight at detach land.
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        let idle_from = check_count(&target).await;
+        let last = reported_timestamp(&reg, "mon-1").await;
+        assert!(last.is_some(), "the last result survives the detach");
+
+        tokio::time::sleep(Duration::from_millis(2_500)).await;
+        assert_eq!(
+            check_count(&target).await,
+            idle_from,
+            "no checks while no desktop is attached"
+        );
+        assert_eq!(
+            reported_timestamp(&reg, "mon-1").await,
+            last,
+            "status keeps reporting the last cached result while detached"
+        );
+        assert_eq!(
+            reg.status("mon-1").await.expect("still hosted").status,
+            ServiceStatus::Running,
+            "an idle monitor stays hosted"
+        );
+
+        reg.attach_client().await;
+        assert!(
+            eventually(Duration::from_millis(1_800), || async {
+                check_count(&target).await > idle_from
+                    && reported_timestamp(&reg, "mon-1").await > last
+            })
+            .await,
+            "re-attach resumes checking within one interval, with a fresh result"
+        );
+
+        reg.stop("mon-1").await;
+    }
+
+    /// #3896: the attach gate only idles services that idle when unobserved (the
+    /// HTTP monitor). An embedded server keeps serving and streaming its state.
+    #[tokio::test]
+    async fn detach_leaves_embedded_servers_running() {
+        let reg = registry();
+        reg.start("inst-1", SERVICE_ID_HTTP, http_config(0))
+            .await
+            .expect("start");
+        reg.detach_client().await;
+        let snap = reg.status("inst-1").await.expect("still hosted");
+        assert_eq!(snap.status, ServiceStatus::Running);
+        assert!(reg.local_addr("inst-1").await.is_some(), "still listening");
+        reg.attach_client().await;
+        reg.stop("inst-1").await;
+    }
+
+    /// Attach/detach are idempotent and survive stopping an idle monitor.
+    #[tokio::test]
+    async fn repeated_attach_detach_and_stop_while_detached() {
+        let reg = monitor_registry();
+        reg.start("mon-1", "http_monitor", monitor_config())
+            .await
+            .expect("monitor hosts on the agent");
+        reg.detach_client().await;
+        reg.detach_client().await;
+        reg.attach_client().await;
+        reg.attach_client().await;
+        reg.detach_client().await;
+        assert!(reg.stop("mon-1").await, "an idle monitor can still be stopped");
+        assert_eq!(reg.active_count().await, 0);
+        reg.attach_client().await;
+    }
+
     #[tokio::test]
     async fn pause_and_resume_unknown_instance_return_false() {
         let reg = monitor_registry();
