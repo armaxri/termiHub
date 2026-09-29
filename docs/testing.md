@@ -4903,6 +4903,22 @@ the dev-agent (or any saved) connection so one terminal is open and connected.
    no run fires; turning it off resumes from the next slot without replaying
    the paused ones.
 
+**Connect if not connected (#3527).** The refusal paths and the connect-run-close
+are unit-tested (`src/utils/connectSavedConnection.unattended.test.ts`,
+`src/store/scheduledConnect.test.ts`, `core/src/backends/ssh/*unattended*`,
+`src-tauri/src/schedules/manager_connect_tests.rs`); this checks the real app.
+
+1. Edit the schedule, tick **Connect if not connected**, Save. Expected: the
+   schedule is disabled again; enabling asks for confirmation and says it also
+   connects the hosts.
+2. Close the connection's tab and wait a minute. Expected: a tab for the
+   connection opens, `date` runs in it, and the tab closes again; the **Last**
+   line reads `completed`. A tab you had open yourself stays open.
+3. Point the schedule at a password connection without a saved password (or a
+   host whose key you never trusted) and wait a minute. Expected: no prompt or
+   dialog appears; the **Last** line reads `skipped — <name>: needs a password`
+   (or `host key not trusted`).
+
 ### Workflow editor menus are clickable inside the modal (#1868)
 
 The workflow editor is a modal Radix `Dialog`, which sets `pointer-events: none`
