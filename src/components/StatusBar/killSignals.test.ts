@@ -58,10 +58,7 @@ describe("killSignals (#3209)", () => {
   });
 
   it("makes only TERM and KILL available on a terminate-only host", () => {
-    expect(KILL_SIGNALS.filter((s) => isSignalAvailable(s, true)).sort()).toEqual([
-      "kill",
-      "term",
-    ]);
+    expect(KILL_SIGNALS.filter((s) => isSignalAvailable(s, true)).sort()).toEqual(["kill", "term"]);
     expect(KILL_SIGNALS.every((s) => isSignalAvailable(s, false))).toBe(true);
   });
 });

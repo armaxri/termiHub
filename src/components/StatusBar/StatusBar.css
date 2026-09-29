@@ -556,6 +556,27 @@
   justify-content: flex-end;
 }
 
+/* Signal picker inside the kill confirmation (#3209). */
+.process-kill-signal {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.process-kill-signal__hint,
+.process-kill-signal__warning {
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+.process-kill-signal__hint {
+  color: var(--text-secondary);
+}
+
+.process-kill-signal__warning {
+  color: var(--color-error);
+}
+
 .process-table__sort {
   background: none;
   border: none;
