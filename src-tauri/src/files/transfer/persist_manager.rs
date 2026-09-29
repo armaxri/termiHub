@@ -529,8 +529,8 @@ mod tests {
             None,
             0,
         );
-        m.record_remote_source("r2r", "sess-src", "/src/data.csv");
-        m.record_remote_source("ghost", "sess-src", "/src/data.csv");
+        m.record_remote_source("r2r", "sess-src", "/src/data.csv", Some("conn-src"));
+        m.record_remote_source("ghost", "sess-src", "/src/data.csv", None);
         m.note_progress(
             "r2r",
             PersistedTransferStatus::Active,
@@ -546,10 +546,37 @@ mod tests {
             Some(PersistedRemoteSource {
                 session_id: "sess-src".to_string(),
                 path: "/src/data.csv".to_string(),
+                saved_connection_id: Some("conn-src".to_string()),
             })
         );
         assert_eq!(rehydrated[0].resume_offset, CHECKPOINT_BYTES + 1);
         assert_eq!(rehydrated[0].source_mtime, Some(7));
+    }
+
+    /// The saved connection a session transfer was started on (#3876) survives
+    /// progress checkpoints and rehydration, so a relaunch after a restart can
+    /// re-source its secret; attaching it to an unknown id never fabricates a
+    /// record.
+    #[test]
+    fn saved_connection_survives_progress_and_rehydration() {
+        let (_d, m) = mgr();
+        register(&m, "t1");
+        m.record_saved_connection("t1", "Work/files");
+        m.record_saved_connection("ghost", "Work/files");
+        m.note_progress(
+            "t1",
+            PersistedTransferStatus::Active,
+            CHECKPOINT_BYTES + 1,
+            2048,
+            false,
+            None,
+        );
+        let rehydrated = m.load_incomplete_as_paused();
+        assert_eq!(rehydrated.len(), 1, "no record fabricated for `ghost`");
+        assert_eq!(
+            rehydrated[0].saved_connection_id.as_deref(),
+            Some("Work/files")
+        );
     }
 
     #[test]

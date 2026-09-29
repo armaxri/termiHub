@@ -690,6 +690,7 @@ mod tests {
             folder_paste_id: None,
             source_mtime: None,
             remote_source: None,
+            saved_connection_id: None,
         }
     }
 
@@ -704,11 +705,14 @@ mod tests {
 
     #[test]
     fn plan_for_a_download_or_upload_is_relaunchable_from_the_offset() {
-        let plan = plan_from_record(&record("t1", Some("/home/user/data.csv")));
+        let mut rec = record("t1", Some("/home/user/data.csv"));
+        rec.saved_connection_id = Some("Work/files".to_string());
+        let plan = plan_from_record(&rec);
         assert_eq!(
             plan,
             RelaunchPlan::Session {
                 session_id: "sess-a".to_string(),
+                saved_connection_id: Some("Work/files".to_string()),
                 direction: TransferDirection::Download,
                 remote_path: "/remote/data.csv".to_string(),
                 local_path: "/home/user/data.csv".to_string(),
@@ -813,13 +817,17 @@ mod tests {
         rec.remote_source = Some(crate::files::transfer::persist::PersistedRemoteSource {
             session_id: "sess-src".to_string(),
             path: "/src/data.csv".to_string(),
+            saved_connection_id: Some("conn-src".to_string()),
         });
+        rec.saved_connection_id = Some("conn-dst".to_string());
         assert_eq!(
             plan_from_record(&rec),
             RelaunchPlan::RemoteCopy {
                 src_session_id: "sess-src".to_string(),
+                src_saved_connection_id: Some("conn-src".to_string()),
                 src_path: "/src/data.csv".to_string(),
                 dst_session_id: "sess-dst".to_string(),
+                dst_saved_connection_id: Some("conn-dst".to_string()),
                 dst_path: "/dst/data.csv".to_string(),
                 offset: 4096,
                 total: 8192,
@@ -843,7 +851,7 @@ mod tests {
             None,
             0,
         );
-        persist.record_remote_source("r2r", "sess-src", "/src/data.csv");
+        persist.record_remote_source("r2r", "sess-src", "/src/data.csv", None);
 
         match decide_resume("r2r", &registry, &persist) {
             ResumeDecision::Relaunch(rec) => assert!(matches!(
@@ -907,6 +915,26 @@ mod tests {
             assert!(
                 !json.contains(needle),
                 "the Failed event leaked a `{needle}`"
+            );
+        }
+    }
+
+    /// A relaunch that cannot re-source credentials unattended (#3876) keeps the
+    /// row **paused** with the reason — built from metadata only, never
+    /// carrying a credential.
+    #[test]
+    fn paused_progress_keeps_the_row_paused_with_a_reason_and_no_credentials() {
+        let reason = super::super::relaunch_credentials::NEEDS_CREDENTIALS;
+        let progress = paused_progress(&record("t1", Some("/l")), reason.to_string());
+        assert_eq!(progress.state, TransferStateTag::Paused);
+        assert_eq!(progress.message.as_deref(), Some(reason));
+        assert_eq!(progress.transferred, 4096, "progress so far is kept");
+
+        let json = serde_json::to_string(&progress).unwrap().to_lowercase();
+        for needle in ["password", "passphrase", "secret", "privatekey"] {
+            assert!(
+                !json.contains(needle),
+                "the paused event leaked a `{needle}`"
             );
         }
     }
