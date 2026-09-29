@@ -7,8 +7,9 @@
 //! `run_docker_transfer`, and byte-verifies the result against `sha256sum`
 //! inside the container. The container is force-removed afterwards even when
 //! the test body panics. Skips when no Linux-capable container daemon is
-//! reachable — including a Windows-container-mode daemon (see `client()`; see
-//! `docker_spawn.rs` for why it observes through bollard, not the CLI).
+//! reachable — including a Windows-container-mode daemon (see `client()`). The
+//! client is resolved through the backend's own `connect_to_runtime` so it
+//! reaches the daemon a session would (see `support/container.rs`, #3888).
 //!
 //! Killing the streaming process is made deterministic by arming an in-
 //! container killer loop *before* resuming: it SIGKILLs the first `tail` /
@@ -135,8 +136,11 @@ impl Fixture {
 /// manifest"). A Linux-capable daemon (Linux, Docker Desktop / Podman on
 /// macOS) always runs the tests, so a real failure there stays a failure.
 async fn client() -> Result<bollard::Docker, String> {
-    let client = bollard::Docker::connect_with_local_defaults()
-        .map_err(|e| format!("no container daemon configured ({e})"))?;
+    let client = termihub_core::backends::docker::connect_to_runtime(
+        &termihub_core::config::ContainerRuntime::Auto,
+    )
+    .await
+    .map_err(|e| format!("no container daemon reachable ({e})"))?;
     client
         .ping()
         .await
