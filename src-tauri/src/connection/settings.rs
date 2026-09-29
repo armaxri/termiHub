@@ -150,48 +150,240 @@ impl Default for UpdateSettings {
     }
 }
 
+/// Deserialize an optional settings field leniently: a value of the wrong shape
+/// (e.g. an out-of-range union string written by a newer build, or a malformed
+/// broadcast group) resolves to `None` — the frontend default — instead of
+/// failing the whole `settings.json` load, which would back the file up and
+/// reset *every* setting. Mirrors the frontend's "invalid value → default"
+/// guards (#3802).
+fn lenient<'de, D, T>(deserializer: D) -> std::result::Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|v| serde_json::from_value(v).ok()))
+}
+
+/// A settings string union modelled as a Rust enum with a stable wire string.
+pub trait SettingsUnion: Sized + Copy {
+    /// The persisted wire string for this value.
+    fn as_str(self) -> &'static str;
+    /// Parse the persisted wire string; `None` for an unknown value.
+    fn parse(value: &str) -> Option<Self>;
+}
+
+/// Define a settings string union as a Rust enum with a stable wire string.
+///
+/// Each variant's serde/ts-rs name is spelled out so the persisted JSON stays
+/// byte-identical to the former plain-`String` field, and [`SettingsUnion`]
+/// gives the few Rust callers the same string they used to read.
+macro_rules! settings_union {
+    (
+        $(#[$meta:meta])*
+        $name:ident { $( $(#[$vmeta:meta])* $variant:ident = $wire:literal ),+ $(,)? }
+    ) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+        #[cfg_attr(test, derive(ts_rs::TS))]
+        #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+        pub enum $name {
+            $( $(#[$vmeta])* #[serde(rename = $wire)] $variant ),+
+        }
+
+        impl SettingsUnion for $name {
+            fn as_str(self) -> &'static str {
+                match self {
+                    $( Self::$variant => $wire ),+
+                }
+            }
+
+            fn parse(value: &str) -> Option<Self> {
+                match value {
+                    $( $wire => Some(Self::$variant), )+
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+
+settings_union! {
+    /// Terminal cursor shape.
+    CursorStyle {
+        /// Solid block cursor.
+        Block = "block",
+        /// Underline cursor.
+        Underline = "underline",
+        /// Vertical bar cursor.
+        Bar = "bar",
+    }
+}
+
+settings_union! {
+    /// How the previous session is restored on startup.
+    RestoreLastSessionMode {
+        /// Start fresh, never restore.
+        Never = "never",
+        /// Show a dialog offering to restore (the default).
+        Ask = "ask",
+        /// Restore silently.
+        Always = "always",
+    }
+}
+
+settings_union! {
+    /// Where credentials are persisted.
+    CredentialStorageMode {
+        /// Encrypted with a user-provided master password.
+        MasterPassword = "master_password",
+        /// The native OS credential store.
+        OsKeychain = "os_keychain",
+        /// Not persisted.
+        None = "none",
+    }
+}
+
+settings_union! {
+    /// What a right-click in the terminal does.
+    RightClickBehavior {
+        /// Open the context menu.
+        ContextMenu = "contextMenu",
+        /// Copy the selection, or paste when nothing is selected.
+        QuickAction = "quickAction",
+    }
+}
+
+settings_union! {
+    /// Line ending sent on Enter and used to normalize pasted text.
+    LineEnding {
+        /// Carriage return (`\r`).
+        Cr = "cr",
+        /// Line feed (`\n`).
+        Lf = "lf",
+        /// Carriage return + line feed (`\r\n`).
+        Crlf = "crlf",
+    }
+}
+
+settings_union! {
+    /// Durable log-file verbosity (OBS-009). Mirrors
+    /// [`crate::utils::file_log::SELECTABLE_FILE_LOG_LEVELS`].
+    FileLogLevel {
+        /// File log disabled.
+        Off = "off",
+        /// Errors only.
+        Error = "error",
+        /// Warnings and errors.
+        Warn = "warn",
+        /// Informational (the default).
+        Info = "info",
+        /// Debug detail.
+        Debug = "debug",
+        /// Everything.
+        Trace = "trace",
+    }
+}
+
+/// A persistent named broadcast group (PROD-061, #3443).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct BroadcastGroup {
+    /// Stable group id.
+    pub id: String,
+    /// User-visible group name (unique, case-insensitive).
+    pub name: String,
+    /// Saved-connection ids that belong to the group.
+    pub connection_ids: Vec<String>,
+}
+
 /// Application-wide settings persisted to disk.
+///
+/// The TypeScript `AppSettings` is generated from this struct via ts-rs (audit
+/// DUP-030, #3802). Two kinds of ts-rs override keep the generated type equal to
+/// the frontend contract without any change to the persisted JSON:
+///
+/// - Flags/values with a serde default (`default = "default_true"` etc.) are
+///   always present on the Rust side, but a frontend-built settings object may
+///   omit them (the frontend applies the same default), so they are emitted as
+///   optional via `ts(as = "Option<…>", optional)`.
+/// - Values the backend stores opaquely (`customThemes`, `syntaxHighlighting`)
+///   or whose TS type is owned elsewhere (`theme`, `shellIntegration`) are
+///   typed via `ts(type = …)`, pointing at the frontend-owned type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(default, rename_all = "camelCase")]
 pub struct AppSettings {
     pub version: String,
     pub external_connection_files: Vec<ExternalFileConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub default_user: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub default_ssh_key_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub default_shell: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        test,
+        ts(
+            optional,
+            type = "\"dark\" | \"light\" | \"solarized-dark\" | \"solarized-light\" | \"system\" | `custom:${string}`"
+        )
+    )]
     pub theme: Option<String>,
     /// User-defined custom color themes (#1879). The full shape is owned by the
     /// frontend (`src/themes/types.ts` / `ThemeDefinition[]`); the backend only
     /// persists it verbatim, so it is stored as an opaque JSON value rather than
     /// mirrored as a typed struct. Absent → no custom themes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        test,
+        ts(
+            optional,
+            type = "Array<import(\"../../themes/types\").ThemeDefinition>"
+        )
+    )]
     pub custom_themes: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub font_family: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub font_size: Option<u32>,
     /// Terminal line-height multiplier (e.g. `1.0`–`2.0`). `None` → the
     /// frontend default (`1.0`). Owned by the frontend `AppSettings.lineHeight`;
     /// the backend only persists it so it survives a restart (#1735).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub line_height: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub default_horizontal_scrolling: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub scrollback_buffer: Option<u32>,
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(test, ts(optional))]
+    pub cursor_style: Option<CursorStyle>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cursor_style: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub cursor_blink: Option<bool>,
     /// Enable xterm's screen-reader mode (#2071). `None`/`Some(false)` keeps it
     /// off (the frontend default) — it is an opt-in accessibility aid. Owned by
     /// the frontend `AppSettings.screenReaderMode`; the backend only persists it
     /// so the toggle survives a restart (#2261).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub screen_reader_mode: Option<bool>,
     #[serde(default = "default_true")]
     pub power_monitoring_enabled: bool,
@@ -200,6 +392,7 @@ pub struct AppSettings {
     /// Show a confirmation dialog when the user presses the close-tab or
     /// close-tab-group keyboard shortcut. The X-button on a tab is not affected.
     #[serde(default = "default_true")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub confirm_close_tab_on_shortcut: bool,
     /// Show a confirmation dialog before closing a tab or split panel that holds
     /// a live session (via the tab X, middle-click, or panel close button). The
@@ -208,6 +401,7 @@ pub struct AppSettings {
     /// `AppSettings.confirmCloseLiveSession`; the backend only persists it so the
     /// opt-out survives a restart (#1735).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub confirm_close_live_session: Option<bool>,
     /// Show a one-time notice when closing a tab attached to a persistent
     /// background session, reassuring the user that the session keeps running.
@@ -215,11 +409,13 @@ pub struct AppSettings {
     /// `true`. Owned by the frontend `AppSettings.confirmCloseAttachedTab`; the
     /// backend only persists it so the opt-out survives a restart (#2261).
     #[serde(default = "default_true")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub confirm_close_attached_tab: bool,
     /// When true (default), saving terminal content to a file shows a dialog
     /// offering to open the saved file in a Monaco editor tab. When false, the
     /// file is saved silently and no dialog or editor tab is opened.
     #[serde(default = "default_true")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub ask_open_saved_file_in_tab: bool,
     /// Show a warning before starting a Port Scanner scan whose estimated probe
     /// count is very large. The warning's "Don't warn again" opt-out flips this
@@ -227,52 +423,67 @@ pub struct AppSettings {
     /// `AppSettings.warnLargePortScan`; persisted here so it survives a restart
     /// (#2261).
     #[serde(default = "default_true")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub warn_large_port_scan: bool,
     /// Show a warning before starting a Ping Sweep across a very large number of
     /// hosts. The warning's "Don't warn again" opt-out flips this to `false`.
     /// Defaults to `true`. Owned by the frontend `AppSettings.warnLargePingSweep`;
     /// persisted here so it survives a restart (#2261).
     #[serde(default = "default_true")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub warn_large_ping_sweep: bool,
     /// Default value for Shell Integration toggle in new SSH connections.
     #[serde(default = "default_true")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub default_shell_integration: bool,
     /// Default value for X11 Forwarding toggle in new SSH connections.
     #[serde(default = "default_true")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub default_x11_forwarding: bool,
     /// Whether termiHub automatically provides a local X server for SSH X11
     /// forwarding (epic #1047). `None` means "use the platform default":
     /// prompt-then-download on Windows, off elsewhere. See
     /// [`crate::terminal::xserver::resolve_provide_automatically`].
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub provide_x_server_automatically: Option<bool>,
     /// Whether a termiHub-managed X server is stopped once its last X11 session
     /// closes (idle shutdown). Defaults to `true`.
     #[serde(default = "default_true")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub stop_x_server_when_idle: bool,
     /// When `true` (default), the open tab groups and layout are auto-saved on
     /// every change and restored on the next startup. When `false`, the app
     /// always starts with a fresh empty session.
     #[serde(default = "default_true")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub restore_last_session_on_startup: bool,
     /// How the previous session is restored on startup: `"never"`, `"ask"`, or
     /// `"always"`. `None` migrates from `restore_last_session_on_startup`
     /// (`false` → `"never"`, otherwise the frontend default `"ask"`). The
     /// frontend owns the resolution (`resolveRestoreMode`); the backend only
     /// persists the chosen value.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub restore_last_session_mode: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(test, ts(optional))]
+    pub restore_last_session_mode: Option<RestoreLastSessionMode>,
     /// When true (default), every terminal session opened is recorded to the
     /// browsable session history (`session-history.json`). Turning it off stops
     /// all automatic recording (existing entries are kept).
     #[serde(default = "default_true")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub session_history_enabled: bool,
     /// Maximum number of history entries to retain. When the limit is reached,
     /// the least-recently-used unpinned entry is evicted. Defaults to 50.
     #[serde(default = "default_session_history_limit")]
+    #[cfg_attr(test, ts(as = "Option<u32>", optional))]
     pub session_history_limit: u32,
     /// When true (default), the "Recent Sessions" sidebar panel is shown.
     #[serde(default = "default_true")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub show_recent_sessions: bool,
     /// When true (default), every finished network-tool run (ping, traceroute,
     /// port scan, …) is recorded to the local run history
@@ -280,71 +491,105 @@ pub struct AppSettings {
     /// the monitor check history (`http-monitor-history.json`, #3462). Turning
     /// it off stops recording (existing entries are kept until cleared).
     #[serde(default = "default_true")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub network_tool_history_enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub layout: Option<LayoutConfig>,
     /// Credential storage mode: "master_password" or "none".
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub credential_storage_mode: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(test, ts(optional))]
+    pub credential_storage_mode: Option<CredentialStorageMode>,
     /// Auto-lock timeout in minutes for master password mode. None = never.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub credential_auto_lock_minutes: Option<u32>,
     /// Right-click behavior: "contextMenu" or "quickAction". None = platform default.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub right_click_behavior: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(test, ts(optional))]
+    pub right_click_behavior: Option<RightClickBehavior>,
     /// Default line ending sent on Enter and used to normalize pasted text:
     /// "cr", "lf", or "crlf". None = frontend default ("lf").
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_line_ending: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(test, ts(optional))]
+    pub default_line_ending: Option<LineEnding>,
     /// User-customized keybinding overrides.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub keybinding_overrides: Option<Vec<KeybindingOverrideEntry>>,
     /// When `true` (default), application shortcuts that collide with standard
     /// shell, tmux, vim, or SSH-to-remote keys are suppressed while the
     /// terminal pane is focused so the keystroke reaches the PTY.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub terminal_key_passthrough: Option<bool>,
     /// When `true` (default), an active editor or input-bearing tab handles its
     /// own editing shortcuts (Find, Replace, Select All) — the global keyboard
     /// dispatcher steps aside so the focused widget receives the key.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub editor_shortcut_delegation: Option<bool>,
     /// User-defined file extension / filename → language ID mappings.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "Record<string, string>"))]
     pub file_language_mappings: Option<std::collections::HashMap<String, String>>,
     /// IDs of user-installed Shiki language packages.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub installed_language_packages: Option<Vec<String>>,
     /// User-imported custom TextMate grammars (stored inline).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub custom_language_grammars: Option<Vec<CustomLanguageGrammar>>,
     /// Whether experimental features are enabled.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub experimental_features_enabled: Option<bool>,
     /// Experimental opt-in for executing frontend (JavaScript) plugins (#2048).
     /// `None`/`Some(false)` keeps the full-IPC plugin JS surface off by default.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub frontend_plugins_enabled: Option<bool>,
     /// Opt-in periodic plugin update check (PROD-051). `None`/`Some(false)` keeps
     /// it off: plugins with an `updateUrl` are only checked when the user asks.
     /// A check never installs anything.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub plugin_update_check_enabled: Option<bool>,
     /// URL of the curated plugin index browsed in Settings → Plugins
     /// (PROD-048). `None` (or empty) uses the maintainer-hosted default. Must be
     /// `https://`; the index is fetched only when the user asks.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub plugin_index_url: Option<String>,
     /// Update checker configuration and state.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<UpdateSettings>", optional))]
     pub updates: UpdateSettings,
     /// Linux `/dev` prefixes scanned to discover serial ports not found by the
     /// `serialport` crate. `None` means use all built-in defaults (all enabled).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub serial_port_scan_prefixes: Option<Vec<SerialPortScanPrefix>>,
     /// Shell context-menu / CLI-spawn integration configuration (epic #1363).
     /// `#[serde(default)]` keeps older settings files forward-compatible.
     #[serde(default)]
+    #[cfg_attr(
+        test,
+        ts(optional, type = "import(\"../connection\").ShellIntegrationSettings")
+    )]
     pub shell_integration: ShellIntegrationSettings,
     /// Terminal output syntax-highlighting configuration (epic #1696).
     ///
@@ -354,6 +599,13 @@ pub struct AppSettings {
     /// value here rather than mirrored as a typed struct. Absent → the frontend
     /// resolves the built-in defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        test,
+        ts(
+            optional,
+            type = "import(\"../syntaxHighlighting\").SyntaxHighlightingConfig"
+        )
+    )]
     pub syntax_highlighting: Option<serde_json::Value>,
     /// Master opt-in for the guarded `run-local-process` workflow step (#1857).
     ///
@@ -364,6 +616,7 @@ pub struct AppSettings {
     /// so a step can never run without opt-in. `#[serde(default)]` keeps older
     /// settings files forward-compatible (missing → `false`).
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub workflow_local_process_enabled: bool,
     /// Programs the user has chosen to always allow a `run-local-process` step
     /// to spawn without re-confirming (#1857). Owned by the frontend
@@ -371,6 +624,7 @@ pub struct AppSettings {
     /// authorization survives a restart. Independent of workflow data, so an
     /// imported workflow can never add an entry.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
     pub workflow_local_process_allowlist: Vec<String>,
     /// Durable log file verbosity chosen in Settings (OBS-009).
     ///
@@ -379,13 +633,49 @@ pub struct AppSettings {
     /// built-in default (INFO). The backend only persists it; it is applied to
     /// `termihub.log` at startup and live via the `set_file_log_level` command.
     /// The `TERMIHUB_FILE_LOG` env var overrides it at startup.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub file_log_level: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(test, ts(optional))]
+    pub file_log_level: Option<FileLogLevel>,
     /// Show the next-start notice after a crash (OBS-010). `None` → shown (the
     /// default); the notice's "Don't show again" persists `false`. Owned by the
     /// frontend `AppSettings.showCrashReportNotice`; the backend only persists it.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub show_crash_report_notice: Option<bool>,
+    /// Persistent named broadcast groups (PROD-061, #3443). Formerly carried in
+    /// [`Self::extra`]; promoted to a typed field for the ts-rs mirror (#3802).
+    ///
+    /// The three promoted fields sit last, in key order, so a file that held
+    /// them in the (sorted) catch-all serializes byte-identically.
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(test, ts(optional))]
+    pub broadcast_groups: Option<Vec<BroadcastGroup>>,
+    /// Show a success/failure mark in the terminal gutter next to each finished
+    /// command (OSC 133, #3415). `None` → the frontend default (on).
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(test, ts(optional))]
+    pub terminal_command_decorations: Option<bool>,
+    /// Render inline images (SIXEL / iTerm2) in the terminal (PROD-057).
+    /// `None` → the frontend default (on).
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(test, ts(optional))]
+    pub terminal_inline_images: Option<bool>,
     /// Forward-compatibility catch-all (#2311).
     ///
     /// Preserves any field the frontend `AppSettings` interface
@@ -396,13 +686,9 @@ pub struct AppSettings {
     /// #2309. Unknown keys round-trip verbatim instead. Empty by default, so a
     /// flattened empty map contributes nothing to the serialized output.
     #[serde(flatten)]
+    #[cfg_attr(test, ts(skip))]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
-
-/// The `AppSettings` key holding the persistent named broadcast groups
-/// (PROD-061). Frontend-owned and round-tripped through [`AppSettings::extra`];
-/// each group is `{ id, name, connectionIds: [...] }`.
-pub const BROADCAST_GROUPS_KEY: &str = "broadcastGroups";
 
 impl AppSettings {
     /// Re-point the saved-connection references these settings hold along
@@ -415,16 +701,8 @@ impl AppSettings {
                 changed |= remap.apply(id);
             }
         }
-        if let Some(serde_json::Value::Array(groups)) = self.extra.get_mut(BROADCAST_GROUPS_KEY) {
-            for group in groups {
-                if let Some(serde_json::Value::Array(ids)) = group.get_mut("connectionIds") {
-                    let ids = ids.iter_mut().filter_map(|id| match id {
-                        serde_json::Value::String(id) => Some(id),
-                        _ => None,
-                    });
-                    changed |= remap.apply_all(ids);
-                }
-            }
+        for group in self.broadcast_groups.iter_mut().flatten() {
+            changed |= remap.apply_all(group.connection_ids.iter_mut());
         }
         changed
     }
@@ -489,6 +767,9 @@ impl Default for AppSettings {
             workflow_local_process_allowlist: Vec::new(),
             file_log_level: None,
             show_crash_report_notice: None,
+            broadcast_groups: None,
+            terminal_command_decorations: None,
+            terminal_inline_images: None,
             extra: serde_json::Map::new(),
         }
     }
@@ -716,7 +997,7 @@ mod tests {
         let settings: AppSettings = serde_json::from_str(json).unwrap();
         assert_eq!(settings.default_user.as_deref(), Some("admin"));
         assert_eq!(settings.font_size, Some(16));
-        assert_eq!(settings.cursor_style.as_deref(), Some("underline"));
+        assert_eq!(settings.cursor_style.map(SettingsUnion::as_str), Some("underline"));
         assert_eq!(settings.cursor_blink, Some(false));
         assert_eq!(settings.scrollback_buffer, Some(10000));
         assert_eq!(settings.default_horizontal_scrolling, Some(true));
@@ -798,14 +1079,14 @@ mod tests {
 
         // A set value survives a serialize/deserialize round-trip.
         let settings = AppSettings {
-            restore_last_session_mode: Some("ask".to_string()),
+            restore_last_session_mode: SettingsUnion::parse("ask"),
             ..Default::default()
         };
         let json = serde_json::to_string(&settings).unwrap();
         assert!(json.contains("restoreLastSessionMode"));
         let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(
-            deserialized.restore_last_session_mode.as_deref(),
+            deserialized.restore_last_session_mode.map(SettingsUnion::as_str),
             Some("ask")
         );
 
@@ -988,7 +1269,7 @@ mod tests {
         }"#;
         let settings: AppSettings = serde_json::from_str(json).unwrap();
         assert_eq!(
-            settings.credential_storage_mode.as_deref(),
+            settings.credential_storage_mode.map(SettingsUnion::as_str),
             Some("master_password")
         );
         assert_eq!(settings.credential_auto_lock_minutes, Some(15));
@@ -998,7 +1279,7 @@ mod tests {
     fn credential_fields_round_trip_all_modes() {
         for mode in &["master_password", "none"] {
             let settings = AppSettings {
-                credential_storage_mode: Some(mode.to_string()),
+                credential_storage_mode: SettingsUnion::parse(mode),
                 credential_auto_lock_minutes: Some(30),
                 ..Default::default()
             };
@@ -1006,7 +1287,7 @@ mod tests {
             let json = serde_json::to_string(&settings).unwrap();
             let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
 
-            assert_eq!(deserialized.credential_storage_mode.as_deref(), Some(*mode));
+            assert_eq!(deserialized.credential_storage_mode.map(SettingsUnion::as_str), Some(*mode));
             assert_eq!(deserialized.credential_auto_lock_minutes, Some(30));
         }
     }
@@ -1035,7 +1316,7 @@ mod tests {
         }"#;
         let settings: AppSettings = serde_json::from_str(json).unwrap();
         assert_eq!(
-            settings.right_click_behavior.as_deref(),
+            settings.right_click_behavior.map(SettingsUnion::as_str),
             Some("quickAction")
         );
     }
@@ -1044,14 +1325,14 @@ mod tests {
     fn right_click_behavior_round_trip() {
         for mode in &["contextMenu", "quickAction"] {
             let settings = AppSettings {
-                right_click_behavior: Some(mode.to_string()),
+                right_click_behavior: SettingsUnion::parse(mode),
                 ..Default::default()
             };
 
             let json = serde_json::to_string(&settings).unwrap();
             let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
 
-            assert_eq!(deserialized.right_click_behavior.as_deref(), Some(*mode));
+            assert_eq!(deserialized.right_click_behavior.map(SettingsUnion::as_str), Some(*mode));
         }
     }
 
@@ -1214,13 +1495,13 @@ mod tests {
 
         // A chosen level survives a serialize/deserialize round-trip.
         let settings = AppSettings {
-            file_log_level: Some("debug".to_string()),
+            file_log_level: SettingsUnion::parse("debug"),
             ..Default::default()
         };
         let json = serde_json::to_string(&settings).unwrap();
         assert!(json.contains("fileLogLevel"));
         let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.file_log_level.as_deref(), Some("debug"));
+        assert_eq!(deserialized.file_log_level.map(SettingsUnion::as_str), Some("debug"));
 
         // A legacy file without the key deserializes to None.
         let legacy = r#"{"version":"1","externalConnectionFiles":[]}"#;
