@@ -76,6 +76,23 @@ const NEWER_VERSION: &str = "9.9.9";
 /// and the staged update is kept (`run_check_once` in `agent/src/update/mod.rs`).
 const FAILED_APPLY_LOG: &str = "keeping it staged for retry";
 
+/// How long to wait for the self-update pipeline to reach a stage, apply or
+/// failed-apply outcome after the agent starts.
+///
+/// The pipeline downloads the ~100 MB debug agent, hashes it, scans it for its
+/// build version, and on apply re-hashes, re-scans and copies it twice. That is
+/// all CPU- and IO-bound work in an unoptimised build, so its wall time scales
+/// with host load. From the first poll to `staged` alone, measured on macOS
+/// with this suite's agents running in parallel: about 6 s at a load average
+/// near 40, 25–28 s near 250, and 43 s near 450. At load ~450 the apply began
+/// only 63 s after the poll and had not finished swapping 120 s in. The old
+/// 30 s budget was already too short at load ~250 (#3811). This is not a
+/// queue that a longer timeout only postpones, like the first-exec check (see
+/// [`prewarm_first_exec`]). The work is finite and just runs slower, so the
+/// budget has to cover it. The value is a ceiling, not a wait: a passing run
+/// returns as soon as the outcome is observed.
+const UPDATE_PIPELINE_TIMEOUT: Duration = Duration::from_secs(240);
+
 // ── Binary + hashing helpers ────────────────────────────────────────────────
 
 /// Path to the freshly built agent binary under test.
@@ -160,6 +177,47 @@ async fn mount_release(server: &MockServer, agent_bytes: &[u8]) {
 
 // ── Live agent process ──────────────────────────────────────────────────────
 
+/// Execute a freshly written agent copy once with `--version`, so the OS's
+/// first-exec check is paid here, before any test deadline starts (#3811).
+///
+/// **Why.** On macOS the first exec of a newly written executable is held while
+/// the system assesses it. For the ~100 MB debug agent that takes about 2 s, and
+/// the assessments run one at a time host-wide. Every [`LiveAgent`] runs its own
+/// copy, so with the suite's agents starting in parallel the n-th one used to
+/// reach `main` only after about 2n s, all of it inside its startup budget.
+/// Under load, or with other checkouts' suites in the same queue, that pushed
+/// agents past the budget. The sibling suite hit exactly this (#3796).
+///
+/// **Why not one shared, pre-warmed copy, as `deferred_update_hook_integration`
+/// does.** These agents really swap their binary, and the tests assert on the
+/// copy's inode and make its directory read-only, so each agent needs its own
+/// file. Copying from an already-warmed copy does not help either: the check is
+/// per file, not per content. Measured on macOS, three trials each: a fresh
+/// `cp` of the build artifact took 1.96–2.24 s on first exec, a `cp` of an
+/// already-warmed copy 2.24–2.34 s, a hard link to a warmed copy 0.77–0.80 s,
+/// and a rename of a warmed copy 0.03 s, the same as a warm exec. So each copy
+/// is warmed itself.
+///
+/// The swapped-in binary that the agent writes and re-execs is a new file too,
+/// and pays the check once more. That cost is part of the self-update the tests
+/// exercise and stays inside their budgets.
+fn prewarm_first_exec(bin_path: &Path) {
+    // `spawn` forks, so it takes the fork lock (#1597). The wait does not: the
+    // check can take seconds, and siblings must be free to fork meanwhile.
+    let mut child = {
+        let _fork_guard = common::fork_guard();
+        Command::new(bin_path)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("run agent copy --version")
+    };
+    let status = child.wait().expect("wait for agent copy --version");
+    assert!(status.success(), "agent copy --version failed: {status}");
+}
+
 /// A running `termihub-agent --listen` child, pointed at the mock GitHub server,
 /// running from a throwaway copy of the binary so its self-replace is contained.
 struct LiveAgent {
@@ -191,14 +249,21 @@ impl LiveAgent {
         let stderr_path = stderr_file.path().to_path_buf();
         let (stderr_handle, _keep) = stderr_file.keep().expect("persist stderr file");
 
-        // Everything from the copy to the spawn runs under the fork lock: a
-        // sibling thread forking mid-copy inherits our write fd and makes our
-        // own execve fail with ETXTBSY (#1597). See `common::fork_guard`.
-        let fork_guard = common::fork_guard();
-        std::fs::copy(agent_binary(), &bin_path).expect("copy agent binary");
-        std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o755))
-            .expect("chmod agent copy");
+        // The copy runs under the fork lock: a sibling thread forking mid-copy
+        // inherits our write fd and makes a later execve of this file fail
+        // with ETXTBSY (#1597). See `common::fork_guard`. Once the copy is
+        // done the fd is closed, so the lock can be dropped until the next
+        // fork.
+        {
+            let _fork_guard = common::fork_guard();
+            std::fs::copy(agent_binary(), &bin_path).expect("copy agent binary");
+            std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod agent copy");
+        }
+        prewarm_first_exec(&bin_path);
 
+        // The spawn is a fork site, so it takes the fork lock (#1597).
+        let fork_guard = common::fork_guard();
         let child = Command::new(&bin_path)
             .arg("--listen")
             // Port 0: the agent binds an OS-assigned port and announces it; the
@@ -547,12 +612,12 @@ async fn deferred_strategy_auto_applies_on_idle_and_comes_back() {
 
     // The self-apply atomically renames a fresh file over the running binary, so
     // its inode changes — the structural proof the swap happened.
-    let swapped = wait_until(Duration::from_secs(30), || {
+    let swapped = wait_until(UPDATE_PIPELINE_TIMEOUT, || {
         inode(&agent.bin_path).is_some_and(|i| i != bin_inode_before)
     });
     assert!(
         swapped,
-        "agent did not swap its binary on idle within 30s.\n--- agent stderr ---\n{}",
+        "agent did not swap its binary on idle within {UPDATE_PIPELINE_TIMEOUT:?}.\n--- agent stderr ---\n{}",
         agent.stderr()
     );
 
@@ -615,12 +680,12 @@ async fn applied_update_does_not_re_exec_on_the_next_idle() {
     let bin_inode_before = inode(&agent.bin_path).expect("binary present before apply");
 
     // Let the self-apply happen (inode changes on the atomic replace).
-    let swapped = wait_until(Duration::from_secs(30), || {
+    let swapped = wait_until(UPDATE_PIPELINE_TIMEOUT, || {
         inode(&agent.bin_path).is_some_and(|i| i != bin_inode_before)
     });
     assert!(
         swapped,
-        "agent did not swap its binary on idle within 30s.\n--- agent stderr ---\n{}",
+        "agent did not swap its binary on idle within {UPDATE_PIPELINE_TIMEOUT:?}.\n--- agent stderr ---\n{}",
         agent.stderr()
     );
 
@@ -682,7 +747,7 @@ async fn coordinated_strategy_stages_without_applying() {
     let bin_inode_before = inode(&agent.bin_path).expect("binary present");
 
     // Wait until the poll has staged the update into persisted state.
-    let staged = wait_until(Duration::from_secs(30), || {
+    let staged = wait_until(UPDATE_PIPELINE_TIMEOUT, || {
         !agent.state()["update"]["pending_update"].is_null()
     });
     assert!(
@@ -740,7 +805,7 @@ async fn failed_apply_keeps_pending_update() {
     // it touches the install dir. Restoring perms on `pending_update` alone
     // raced that window — a slow (coverage-instrumented) agent reached the swap
     // after the restore, applied for real and re-execed onto a new port.
-    let apply_failed = wait_until(Duration::from_secs(30), || {
+    let apply_failed = wait_until(UPDATE_PIPELINE_TIMEOUT, || {
         agent.stderr().contains(FAILED_APPLY_LOG)
     });
     // Restore write perms so the TempDir can be cleaned up on drop.

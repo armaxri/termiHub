@@ -19,7 +19,7 @@
 //! ```text
 //! → {"jsonrpc":"2.0","id":0,"method":"auth","params":{"token":"<token>"}}
 //! ← {"jsonrpc":"2.0","id":0,"result":{"authenticated":true}}      // then proceed
-//! ← {"jsonrpc":"2.0","id":0,"error":{"code":-32021,"message":...}} // then the socket closes
+//! ← {"jsonrpc":"2.0","id":0,"error":{"code":-32029,"message":...}} // then the socket closes
 //! ```
 //!
 //! On a missing, malformed, or wrong token the agent writes the error line (best
@@ -64,12 +64,11 @@ const TOKEN_FILE_NAME: &str = "listen-auth.token";
 
 /// JSON-RPC error code returned when authentication fails.
 ///
-/// Defined locally (rather than in the shared `termihub_core::protocol::errors`
-/// enum) because this is a **transport-level, pre-RPC** rejection specific to the
-/// `--listen` path — it is refused before the method dispatcher ever runs. It
-/// uses the next free application-error slot after the dispatcher's codes
-/// (`…-32020`), in the JSON-RPC implementation-defined range `-32000..=-32099`.
-const UNAUTHORIZED_CODE: i64 = -32021;
+/// This is a **transport-level, pre-RPC** rejection specific to the `--listen`
+/// path — it is refused before the method dispatcher ever runs — but it lives in
+/// the shared `termihub_core::protocol::errors` table so no other error can
+/// reuse it (it used to share `-32021` with `UPDATE_SIGNATURE_REJECTED`, #3745).
+const UNAUTHORIZED_CODE: i64 = crate::protocol::errors::LISTEN_AUTH_REJECTED;
 
 /// Cap on the auth line. The auth request is tiny (a token plus JSON-RPC
 /// envelope), so a small cap bounds how much an unauthenticated peer can make the
@@ -440,6 +439,16 @@ mod tests {
         let response: serde_json::Value =
             serde_json::from_slice(out.split(|&b| b == b'\n').next().unwrap()).unwrap();
         assert_eq!(response["error"]["code"], UNAUTHORIZED_CODE);
+    }
+
+    /// The handshake rejection has its own code (#3745): a client must be able
+    /// to tell "wrong listen token" from "update signature rejected".
+    #[test]
+    fn handshake_rejection_code_is_distinct_from_the_signature_code() {
+        use crate::protocol::errors;
+        assert_eq!(UNAUTHORIZED_CODE, errors::LISTEN_AUTH_REJECTED);
+        assert_ne!(UNAUTHORIZED_CODE, errors::UPDATE_SIGNATURE_REJECTED);
+        assert_ne!(UNAUTHORIZED_CODE, errors::UPDATE_UNAUTHORIZED);
     }
 
     #[tokio::test]

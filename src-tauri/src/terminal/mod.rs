@@ -3,6 +3,7 @@ pub mod agent_cancel;
 pub mod agent_config_store;
 pub mod agent_deploy;
 pub mod agent_forward;
+pub mod agent_graphical_secrets;
 pub mod agent_install;
 pub mod agent_ki_prompt;
 pub mod agent_manager;

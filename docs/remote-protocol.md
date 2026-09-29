@@ -3282,6 +3282,7 @@ For serial sessions:
 | `-32026` | Update unauthorized         | An agent update RPC lacked the instance's update auth token (missing or wrong), or the agent has none (AGT-003)             |
 | `-32027` | Update downgrade refused    | An agent update was refused by the downgrade policy: an unpinned downgrade, a mismatched pin, or an unknown version         |
 | `-32028` | Forward connect failed      | `agent.forward.connect` could not reach its target from the agent host (refused, unresolvable, timed out)                   |
+| `-32029` | Listen auth rejected        | The `--listen` pre-RPC `auth` handshake was refused (missing, malformed, or wrong token); the agent closes the connection   |
 
 ---
 
@@ -3399,9 +3400,18 @@ that could reach the port had full agent access — which this handshake closes.
   ```
 
   The agent verifies the token with a **constant-time** comparison. On a missing,
-  malformed, or wrong token it writes a JSON-RPC error (code `-32021`) and
-  **closes the connection** — fail closed, no session or RPC access. Each
-  sequential client re-authenticates.
+  malformed, or wrong token it writes a JSON-RPC error (code
+  [`-32029` Listen auth rejected](#application-errors)) and **closes the
+  connection** — fail closed, no session or RPC access. Each sequential client
+  re-authenticates.
+
+- **Error code change (#3745)**: agents before this change sent `-32021` here,
+  the code that also means "update signature rejected". The handshake now has
+  its own code. This is **not** a protocol version change: the handshake runs
+  before `initialize`, so no negotiated version could gate it. It stays a hard
+  failure for every client, old or new: an error response followed by a closed
+  socket. A client must treat _any_ error response to `auth` as a rejection and
+  must not match on the code alone.
 
 ### Agent Security
 

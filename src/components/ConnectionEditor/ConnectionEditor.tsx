@@ -94,6 +94,7 @@ import {
   isAgentTunnelledGraphicalType,
   withAgentTunnelledTypes,
 } from "@/utils/agentGraphicalTunnel";
+import { resolveAgentGraphicalSettings } from "@/utils/agentGraphicalSecret";
 import { partitionConnectionTypes } from "@/utils/pluginConnectionTypes";
 import { isWindows } from "@/utils/platform";
 import "./ConnectionEditor.css";
@@ -1180,10 +1181,22 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       }
       if (isAgentTunnelledGraphicalType(selectedType)) {
         // VNC/RDP under an agent runs here and tunnels through the agent (#3241).
+        // A password not typed into the form comes from this computer's
+        // credential store or a prompt — never from the agent host (#3803).
+        const resolved = await resolveAgentGraphicalSettings({
+          agentId: existingAgent.id,
+          definitionId: existingAgentDef?.id ?? null,
+          settings: connSettings,
+          requestPassword,
+        });
+        if (resolved.status === "canceled") {
+          toast.info("Connect canceled — your changes were saved.");
+          throw new PromptCanceledError();
+        }
         addTab(
           name.trim(),
           selectedType,
-          agentGraphicalTabConfig(existingAgent.id, selectedType, connSettings),
+          agentGraphicalTabConfig(existingAgent.id, selectedType, resolved.settings),
           { contentType: "remote-desktop" }
         );
         closeThisTab();
@@ -1265,6 +1278,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     isAgentDefinitionMode,
     isAgentTransportMode,
     existingAgent,
+    existingAgentDef,
     saveAgentDefinition,
     saveConnection,
     requestPassword,
