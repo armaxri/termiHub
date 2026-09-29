@@ -13,6 +13,7 @@ import { useAppStore } from "@/store/appStore";
 import { StatusBar } from "./StatusBar";
 import type { ConnectionConfig, TerminalTab } from "@/types/terminal";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
+import { flushAsync } from "@/test/flushAsync";
 
 function setActiveTab(tab: Partial<TerminalTab> & { config: ConnectionConfig }) {
   const leafId = layoutState().rootPanel.id;
@@ -50,12 +51,13 @@ describe("StatusBar — remote-desktop segment", () => {
 
   const query = () => container.querySelector('[data-testid="status-bar-remote-desktop"]');
 
-  it("shows host:port and colour depth for an active RDP tab", () => {
+  it("shows host:port and colour depth for an active RDP tab", async () => {
     setActiveTab({
       config: { type: "rdp", config: { host: "kiosk", port: 5901, colorDepth: "32" } },
     });
 
     act(() => root.render(React.createElement(StatusBar)));
+    await flushAsync();
 
     const item = query();
     expect(item).not.toBeNull();
@@ -63,7 +65,7 @@ describe("StatusBar — remote-desktop segment", () => {
     expect(item!.textContent).toContain("32-bit");
   });
 
-  it("includes the live framebuffer resolution once it is surfaced to the store", () => {
+  it("includes the live framebuffer resolution once it is surfaced to the store", async () => {
     setActiveTab({
       sessionId: "vnc-1",
       config: { type: "rdp", config: { host: "kiosk", port: 5901, colorDepth: "16" } },
@@ -71,6 +73,7 @@ describe("StatusBar — remote-desktop segment", () => {
     act(() => useAppStore.getState().setRemoteDesktopResolution("vnc-1", 1920, 1080));
 
     act(() => root.render(React.createElement(StatusBar)));
+    await flushAsync();
 
     const item = query();
     expect(item).not.toBeNull();
@@ -78,12 +81,13 @@ describe("StatusBar — remote-desktop segment", () => {
     expect(item!.textContent).toContain("16-bit");
   });
 
-  it("shows the negotiated 16-bit colour depth for VNC (#3464)", () => {
+  it("shows the negotiated 16-bit colour depth for VNC (#3464)", async () => {
     setActiveTab({
       config: { type: "vnc", config: { host: "kiosk", port: 5901, colorDepth: "16" } },
     });
 
     act(() => root.render(React.createElement(StatusBar)));
+    await flushAsync();
 
     const item = query();
     expect(item).not.toBeNull();
@@ -91,37 +95,40 @@ describe("StatusBar — remote-desktop segment", () => {
     expect(item!.textContent).toContain("16-bit");
   });
 
-  it("shows a stale VNC colour depth as the 32-bit it connects at", () => {
+  it("shows a stale VNC colour depth as the 32-bit it connects at", async () => {
     setActiveTab({
       config: { type: "vnc", config: { host: "kiosk", port: 5901, colorDepth: "24" } },
     });
 
     act(() => root.render(React.createElement(StatusBar)));
+    await flushAsync();
 
     const item = query();
     expect(item!.textContent).toContain("32-bit");
     expect(item!.textContent).not.toContain("24-bit");
   });
 
-  it("omits the colour depth for a VNC config saved without one", () => {
+  it("omits the colour depth for a VNC config saved without one", async () => {
     setActiveTab({
       config: { type: "vnc", config: { host: "kiosk", port: 5901 } },
     });
 
     act(() => root.render(React.createElement(StatusBar)));
+    await flushAsync();
 
     const item = query();
     expect(item!.textContent).toContain("kiosk:5901");
     expect(item!.textContent).not.toContain("-bit");
   });
 
-  it("hides the resolution before the first frame arrives", () => {
+  it("hides the resolution before the first frame arrives", async () => {
     setActiveTab({
       sessionId: "vnc-2",
       config: { type: "vnc", config: { host: "kiosk", port: 5901, colorDepth: "24" } },
     });
 
     act(() => root.render(React.createElement(StatusBar)));
+    await flushAsync();
 
     const item = query();
     expect(item).not.toBeNull();
@@ -129,7 +136,7 @@ describe("StatusBar — remote-desktop segment", () => {
     expect(item!.textContent).not.toContain("×");
   });
 
-  it("renders nothing when the active tab is not a remote-desktop tab", () => {
+  it("renders nothing when the active tab is not a remote-desktop tab", async () => {
     setActiveTab({
       connectionType: "ssh",
       contentType: "terminal",
@@ -137,6 +144,7 @@ describe("StatusBar — remote-desktop segment", () => {
     });
 
     act(() => root.render(React.createElement(StatusBar)));
+    await flushAsync();
 
     expect(query()).toBeNull();
   });

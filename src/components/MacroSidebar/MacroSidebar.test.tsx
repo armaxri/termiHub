@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
+import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { MacroSidebar } from "./MacroSidebar";
 import { withTooltip } from "@/test/tooltip";
@@ -124,28 +125,29 @@ describe("MacroSidebar", () => {
     container.remove();
   });
 
-  function render() {
-    act(() => {
+  async function render() {
+    await act(async () => {
       root.render(withTooltip(<MacroSidebar />));
     });
+    await flushAsync();
   }
 
-  it("shows the empty message when no macros exist", () => {
-    render();
+  it("shows the empty message when no macros exist", async () => {
+    await render();
     expect(query("macro-empty-message")).not.toBeNull();
     expect(query("macro-list")).toBeNull();
   });
 
-  it("renders a row for each macro", () => {
+  it("renders a row for each macro", async () => {
     useAppStore.setState({ macros: sampleMacros });
-    render();
+    await render();
     expect(query("macro-list")).not.toBeNull();
     expect(query("macro-item-macro-1")).not.toBeNull();
     expect(query("macro-item-macro-2")).not.toBeNull();
     expect(query("macro-name-macro-1")?.textContent).toBe("Deploy sequence");
   });
 
-  it("narrows the run history to a macro from its Recent runs action (#3543)", () => {
+  it("narrows the run history to a macro from its Recent runs action (#3543)", async () => {
     const base = {
       startedAt: "2026-09-20T00:00:00Z",
       endedAt: "2026-09-20T00:00:01Z",
@@ -163,7 +165,7 @@ describe("MacroSidebar", () => {
         { ...base, id: "r2", macroId: "macro-2", macroName: "Login banner" },
       ],
     });
-    render();
+    await render();
     expect(query("macro-run-r1")).not.toBeNull();
     expect(query("macro-run-r2")).not.toBeNull();
 
@@ -175,9 +177,9 @@ describe("MacroSidebar", () => {
     expect(query("macro-run-r1")).not.toBeNull();
   });
 
-  it("filters the list by the search query across name/description/tags", () => {
+  it("filters the list by the search query across name/description/tags", async () => {
     useAppStore.setState({ macros: sampleMacros });
-    render();
+    await render();
 
     setSearch("login");
     expect(query("macro-item-macro-2")).not.toBeNull();
@@ -189,26 +191,26 @@ describe("MacroSidebar", () => {
     expect(query("macro-item-macro-2")).toBeNull();
   });
 
-  it("shows a no-results state when the query matches nothing", () => {
+  it("shows a no-results state when the query matches nothing", async () => {
     useAppStore.setState({ macros: sampleMacros });
-    render();
+    await render();
     setSearch("nonexistent");
     expect(query("macro-no-results")).not.toBeNull();
     expect(query("macro-list")).toBeNull();
   });
 
-  it("starts recording when the record button is clicked", () => {
+  it("starts recording when the record button is clicked", async () => {
     const startMacroRecording = vi.fn();
     useAppStore.setState({ macros: [], startMacroRecording });
-    render();
+    await render();
     act(() => (query("macro-record-btn") as HTMLButtonElement).click());
     expect(startMacroRecording).toHaveBeenCalledTimes(1);
   });
 
-  it("plays a macro when its Play action is clicked", () => {
+  it("plays a macro when its Play action is clicked", async () => {
     const playMacro = vi.fn().mockResolvedValue(undefined);
     useAppStore.setState({ macros: sampleMacros, playMacro });
-    render();
+    await render();
     act(() => (query("macro-play-macro-1") as HTMLButtonElement).click());
     expect(playMacro).toHaveBeenCalledWith("macro-1");
   });
@@ -216,7 +218,7 @@ describe("MacroSidebar", () => {
   it("duplicates a macro through the backend and reports success", async () => {
     const saveMacroToBackend = vi.fn().mockResolvedValue(undefined);
     useAppStore.setState({ macros: sampleMacros, saveMacroToBackend });
-    render();
+    await render();
 
     act(() => (query("macro-duplicate-macro-1") as HTMLButtonElement).click());
     await flush();
@@ -229,10 +231,10 @@ describe("MacroSidebar", () => {
     expect(toastSuccess).toHaveBeenCalledTimes(1);
   });
 
-  it("asks for confirmation before deleting and does not delete on click alone", () => {
+  it("asks for confirmation before deleting and does not delete on click alone", async () => {
     const deleteMacroFromBackend = vi.fn().mockResolvedValue(undefined);
     useAppStore.setState({ macros: [sampleMacros[0]], deleteMacroFromBackend });
-    render();
+    await render();
 
     expect(query("confirm-delete-dialog")).toBeNull();
     act(() => (query("macro-delete-macro-1") as HTMLButtonElement).click());
@@ -243,7 +245,7 @@ describe("MacroSidebar", () => {
   it("deletes and reports success when the user confirms", async () => {
     const deleteMacroFromBackend = vi.fn().mockResolvedValue(undefined);
     useAppStore.setState({ macros: [sampleMacros[0]], deleteMacroFromBackend });
-    render();
+    await render();
 
     act(() => (query("macro-delete-macro-1") as HTMLButtonElement).click());
     act(() => (query("confirm-delete-confirm") as HTMLButtonElement).click());
@@ -254,9 +256,9 @@ describe("MacroSidebar", () => {
     expect(toastError).not.toHaveBeenCalled();
   });
 
-  it("opens the editor dialog when a macro's Edit action is clicked", () => {
+  it("opens the editor dialog when a macro's Edit action is clicked", async () => {
     useAppStore.setState({ macros: sampleMacros });
-    render();
+    await render();
     expect(query("macro-editor-dialog")).toBeNull();
     act(() => (query("macro-edit-macro-1") as HTMLButtonElement).click());
     expect(query("macro-editor-dialog")).not.toBeNull();
@@ -266,7 +268,7 @@ describe("MacroSidebar", () => {
   it("authors a new macro by hand from the New button and saves it (PROD-039)", async () => {
     const saveMacroToBackend = vi.fn().mockResolvedValue(undefined);
     useAppStore.setState({ macros: sampleMacros, saveMacroToBackend });
-    render();
+    await render();
 
     act(() => (query("macro-new-btn") as HTMLButtonElement).click());
     expect(query("macro-editor-dialog")).not.toBeNull();
@@ -290,8 +292,8 @@ describe("MacroSidebar", () => {
     expect(query("macro-editor-dialog")).toBeNull();
   });
 
-  it("offers hand-authoring from the empty state", () => {
-    render();
+  it("offers hand-authoring from the empty state", async () => {
+    await render();
     act(() => (query("macro-empty-new-link") as HTMLButtonElement).click());
     expect(query("macro-editor-dialog")).not.toBeNull();
   });
@@ -299,7 +301,7 @@ describe("MacroSidebar", () => {
   it("keeps the new-macro dialog open when the save fails", async () => {
     const saveMacroToBackend = vi.fn().mockRejectedValue(new Error("disk full"));
     useAppStore.setState({ macros: [], saveMacroToBackend });
-    render();
+    await render();
     act(() => (query("macro-new-btn") as HTMLButtonElement).click());
     setInputValue("macro-editor-name", "X");
     setInputValue("macro-editor-step-data-0", "x");
@@ -311,8 +313,8 @@ describe("MacroSidebar", () => {
     expect((query("macro-editor-step-data-0") as HTMLInputElement).value).toBe("x");
   });
 
-  it("disables Export All when there are no macros", () => {
-    render();
+  it("disables Export All when there are no macros", async () => {
+    await render();
     expect((query("macro-export-all-btn") as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -320,7 +322,7 @@ describe("MacroSidebar", () => {
     useAppStore.setState({ macros: sampleMacros });
     dialogSave.mockResolvedValue("/tmp/macros.json");
     fsWriteTextFile.mockResolvedValue(undefined);
-    render();
+    await render();
 
     act(() => (query("macro-export-all-btn") as HTMLButtonElement).click());
     await flush();
@@ -336,7 +338,7 @@ describe("MacroSidebar", () => {
     useAppStore.setState({ macros: sampleMacros });
     dialogSave.mockResolvedValue("/tmp/macro.json");
     fsWriteTextFile.mockResolvedValue(undefined);
-    render();
+    await render();
 
     act(() => (query("macro-export-macro-1") as HTMLButtonElement).click());
     await flush();
@@ -351,7 +353,7 @@ describe("MacroSidebar", () => {
   it("shows no toast when the export dialog is cancelled", async () => {
     useAppStore.setState({ macros: sampleMacros });
     dialogSave.mockResolvedValue(null);
-    render();
+    await render();
 
     act(() => (query("macro-export-all-btn") as HTMLButtonElement).click());
     await flush();
@@ -366,7 +368,7 @@ describe("MacroSidebar", () => {
     useAppStore.setState({ macros: [], importMacros });
     dialogOpen.mockResolvedValue("/tmp/macros.json");
     fsReadTextFile.mockResolvedValue('{"version":1,"macros":[]}');
-    render();
+    await render();
 
     act(() => (query("macro-import-btn") as HTMLButtonElement).click());
     await flush();
@@ -381,7 +383,7 @@ describe("MacroSidebar", () => {
     useAppStore.setState({ macros: [], importMacros });
     dialogOpen.mockResolvedValue("/tmp/bad.json");
     fsReadTextFile.mockResolvedValue("{not json");
-    render();
+    await render();
 
     act(() => (query("macro-import-btn") as HTMLButtonElement).click());
     await flush();
@@ -394,7 +396,7 @@ describe("MacroSidebar", () => {
     const importMacros = vi.fn().mockResolvedValue(0);
     useAppStore.setState({ macros: [], importMacros });
     dialogOpen.mockResolvedValue(null);
-    render();
+    await render();
 
     act(() => (query("macro-import-btn") as HTMLButtonElement).click());
     await flush();

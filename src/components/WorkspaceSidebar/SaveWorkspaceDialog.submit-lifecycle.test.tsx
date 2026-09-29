@@ -104,7 +104,11 @@ describe("SaveWorkspaceDialog — submit lifecycle parity (#1469)", () => {
 
     expect(onSave).toHaveBeenCalledWith("My Layout", "all", undefined);
     expect(isPending(get<HTMLButtonElement>("save-workspace-confirm"))).toBe(true);
-    gate.resolve();
+    // Settle the pending save inside act so its state update is not stray (#3860).
+    await act(async () => {
+      gate.resolve();
+      await gate.promise;
+    });
   });
 
   it("pressing Enter drives the SAME pending affordance as clicking", async () => {
@@ -117,7 +121,11 @@ describe("SaveWorkspaceDialog — submit lifecycle parity (#1469)", () => {
 
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(isPending(get<HTMLButtonElement>("save-workspace-confirm"))).toBe(true);
-    gate.resolve();
+    // Settle the pending save inside act so its state update is not stray (#3860).
+    await act(async () => {
+      gate.resolve();
+      await gate.promise;
+    });
   });
 
   it("shares one gate: an empty name runs neither Enter nor click", async () => {

@@ -5,7 +5,10 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { TooltipProvider } from "@/components/ui";
-import { LanguagePackagesSettings } from "./LanguagePackagesSettings";
+import {
+  LanguagePackagesSettings,
+  resetPendingLanguagePackageUninstalls,
+} from "./LanguagePackagesSettings";
 
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
@@ -49,6 +52,7 @@ describe("LanguagePackagesSettings", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
+    resetPendingLanguagePackageUninstalls();
   });
 
   afterEach(() => {
@@ -142,17 +146,58 @@ describe("LanguagePackagesSettings", () => {
     expect(settings.installedLanguagePackages ?? []).not.toContain("astro");
   });
 
-  it("shows restart required badge after uninstalling", () => {
+  function restartBadgeIn(el: Element | null): boolean {
+    return Array.from(el?.querySelectorAll(".settings-panel__badge") ?? []).some(
+      (b) => b.textContent === "restart required"
+    );
+  }
+
+  it("shows restart required badge after uninstalling", async () => {
     seedSettings({ installedLanguagePackages: ["astro"] });
     render();
 
     click("lang-pkg-uninstall-astro");
+    await act(async () => {});
+
+    // The settings update has landed: astro is no longer installed...
+    expect(currentSettingsView().installedLanguagePackages ?? []).not.toContain("astro");
+    // ...but its grammar stays loaded until restart, so the row stays with the badge.
+    const row = query("lang-pkg-installed-astro");
+    expect(row).not.toBeNull();
+    expect(restartBadgeIn(row)).toBe(true);
+    // Already uninstalled: no second uninstall button, and no empty state.
+    expect(query("lang-pkg-uninstall-astro")).toBeNull();
+    expect(container.textContent).not.toContain("No additional packages installed.");
+  });
+
+  it("keeps the restart required row after the panel is closed and reopened", async () => {
+    seedSettings({ installedLanguagePackages: ["astro"] });
     render();
 
-    const restartBadges = Array.from(container.querySelectorAll(".settings-panel__badge")).filter(
-      (b) => b.textContent === "restart required"
-    );
-    expect(restartBadges.length).toBeGreaterThan(0);
+    click("lang-pkg-uninstall-astro");
+    await act(async () => {});
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    render();
+
+    expect(restartBadgeIn(query("lang-pkg-installed-astro"))).toBe(true);
+  });
+
+  it("reinstalling a package pending uninstall clears the restart badge", async () => {
+    seedSettings({ installedLanguagePackages: ["astro"] });
+    render();
+
+    click("lang-pkg-uninstall-astro");
+    await act(async () => {});
+    click("lang-pkg-install-astro");
+    await act(async () => {});
+
+    expect(currentSettingsView().installedLanguagePackages).toContain("astro");
+    const row = query("lang-pkg-installed-astro");
+    expect(row).not.toBeNull();
+    expect(restartBadgeIn(row)).toBe(false);
+    expect(query("lang-pkg-uninstall-astro")).not.toBeNull();
   });
 
   it("filters packages by search query", () => {

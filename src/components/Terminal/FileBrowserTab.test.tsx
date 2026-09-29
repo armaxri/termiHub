@@ -52,6 +52,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Unmount so a still-mounted tab does not re-render on the next test's store reset.
+  act(() => root.unmount());
   vi.useRealTimers();
   container.remove();
 });

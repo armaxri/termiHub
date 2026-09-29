@@ -30,6 +30,7 @@ import {
   type FakeMonitorTransport,
 } from "@/test/systemMonitorHarness";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+import { flushAsync } from "@/test/flushAsync";
 
 vi.mock("@/components/CredentialStoreIndicator", () => ({ CredentialStoreIndicator: () => null }));
 vi.mock("./PortableBadge", () => ({ PortableBadge: () => null }));
@@ -114,18 +115,19 @@ describe("StatusBar — monitoring auto-connect feedback (#1148, G7/G8/G9)", () 
     teardownMonitors();
   });
 
-  function renderStatusBar() {
-    act(() =>
-      root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)))
-    );
+  async function renderStatusBar() {
+    await act(async () => {
+      root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)));
+    });
+    await flushAsync();
   }
 
-  it("(G7) shows a Retry control when monitoring is in the error state", () => {
+  it("(G7) shows a Retry control when monitoring is in the error state", async () => {
     // A no-op connect prevents the mount auto-connect effect from mutating the
     // error/cancelled state we set up for the render assertions.
     setActiveMonitor({ error: "Connection refused" });
     useAppStore.setState({ connectMonitoring: vi.fn(() => Promise.resolve()) });
-    renderStatusBar();
+    await renderStatusBar();
 
     const err = container.querySelector('[data-testid="monitoring-error"]');
     expect(err).not.toBeNull();
@@ -138,7 +140,7 @@ describe("StatusBar — monitoring auto-connect feedback (#1148, G7/G8/G9)", () 
     const connectSpy = vi.fn(() => Promise.resolve());
     setActiveMonitor({ error: "Connection refused" });
     useAppStore.setState({ connectMonitoring: connectSpy });
-    renderStatusBar();
+    await renderStatusBar();
     // Let any mount auto-connect microtasks settle before counting.
     await act(async () => {
       await Promise.resolve();

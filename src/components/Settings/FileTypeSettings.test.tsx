@@ -18,8 +18,8 @@ const mockedInvoke = vi.mocked(invoke);
 let container: HTMLDivElement;
 let root: Root;
 
-function render(props: { visibleFields?: Set<string> } = {}) {
-  act(() => {
+async function render(props: { visibleFields?: Set<string> } = {}) {
+  await act(async () => {
     root.render(
       <TooltipProvider delayDuration={0}>
         <FileTypeSettings {...props} />
@@ -57,25 +57,25 @@ describe("FileTypeSettings", () => {
     container.remove();
   });
 
-  it("renders the settings panel", () => {
-    render();
+  it("renders the settings panel", async () => {
+    await render();
     expect(query("settings-editor")).not.toBeNull();
   });
 
-  it("shows empty state when no custom mappings are configured", () => {
-    render();
+  it("shows empty state when no custom mappings are configured", async () => {
+    await render();
     expect(container.textContent).toContain("No custom mappings configured.");
   });
 
-  it("shows add inputs and button", () => {
-    render();
+  it("shows add inputs and button", async () => {
+    await render();
     expect(query("file-type-pattern-input")).not.toBeNull();
     expect(query("file-type-language-input")).not.toBeNull();
     expect(query("file-type-add-btn")).not.toBeNull();
   });
 
-  it("renders the add inputs via the shared ui/Input primitive (UISF-013)", () => {
-    render();
+  it("renders the add inputs via the shared ui/Input primitive (UISF-013)", async () => {
+    await render();
     const pattern = query("file-type-pattern-input") as HTMLInputElement;
     const language = query("file-type-language-input") as HTMLInputElement;
     expect(pattern.tagName).toBe("INPUT");
@@ -86,15 +86,15 @@ describe("FileTypeSettings", () => {
     expect(language.getAttribute("list")).toBe("file-type-language-list");
   });
 
-  it("add button is disabled when inputs are empty", () => {
-    render();
+  it("add button is disabled when inputs are empty", async () => {
+    await render();
     const btn = query("file-type-add-btn") as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
   });
 
-  it("displays existing custom mappings from settings", () => {
+  it("displays existing custom mappings from settings", async () => {
     seedSettings({ fileLanguageMappings: { Jenkinsfile: "groovy", ".conf": "nginx" } });
-    render();
+    await render();
 
     expect(container.textContent).toContain("Jenkinsfile");
     expect(container.textContent).toContain("groovy");
@@ -102,16 +102,16 @@ describe("FileTypeSettings", () => {
     expect(container.textContent).toContain("nginx");
   });
 
-  it("shows remove button for each custom mapping", () => {
+  it("shows remove button for each custom mapping", async () => {
     seedSettings({ fileLanguageMappings: { Jenkinsfile: "groovy" } });
-    render();
+    await render();
 
     expect(query("file-type-remove-Jenkinsfile")).not.toBeNull();
   });
 
-  it("renders remove buttons as shared ghost Button primitives (not the bespoke shell)", () => {
+  it("renders remove buttons as shared ghost Button primitives (not the bespoke shell)", async () => {
     seedSettings({ fileLanguageMappings: { Jenkinsfile: "groovy" } });
-    render();
+    await render();
 
     const btn = query("file-type-remove-Jenkinsfile") as HTMLButtonElement;
     expect(btn.classList.contains("ui-btn")).toBe(true);
@@ -119,8 +119,8 @@ describe("FileTypeSettings", () => {
     expect(btn.classList.contains("settings-panel__file-remove")).toBe(false);
   });
 
-  it("renders built-in copy buttons as shared ghost Button primitives (not the bespoke shell)", () => {
-    render();
+  it("renders built-in copy buttons as shared ghost Button primitives (not the bespoke shell)", async () => {
+    await render();
 
     const btn = query("file-type-copy-Dockerfile") as HTMLButtonElement;
     expect(btn.classList.contains("ui-btn")).toBe(true);
@@ -130,11 +130,11 @@ describe("FileTypeSettings", () => {
 
   it("removes a custom mapping when trash button is clicked", async () => {
     seedSettings({ fileLanguageMappings: { Jenkinsfile: "groovy" } });
-    render();
+    await render();
 
     click("file-type-remove-Jenkinsfile");
     await act(async () => {});
-    render();
+    await render();
 
     const settings = currentSettingsView();
     expect(settings.fileLanguageMappings).toBeUndefined();
@@ -142,9 +142,9 @@ describe("FileTypeSettings", () => {
     expect(query("file-type-remove-Jenkinsfile")).toBeNull();
   });
 
-  it("shows Reset All button when custom mappings exist", () => {
+  it("shows Reset All button when custom mappings exist", async () => {
     seedSettings({ fileLanguageMappings: { Jenkinsfile: "groovy" } });
-    render();
+    await render();
 
     const resetBtn = Array.from(container.querySelectorAll("button")).find((b) =>
       b.textContent?.includes("Reset All")
@@ -154,7 +154,7 @@ describe("FileTypeSettings", () => {
 
   it("reset all button removes all custom mappings", async () => {
     seedSettings({ fileLanguageMappings: { Jenkinsfile: "groovy", ".conf": "nginx" } });
-    render();
+    await render();
 
     const resetBtn = Array.from(container.querySelectorAll("button")).find((b) =>
       b.textContent?.includes("Reset All")
@@ -163,21 +163,21 @@ describe("FileTypeSettings", () => {
       resetBtn.click();
     });
     await act(async () => {});
-    render();
+    await render();
 
     const settings = currentSettingsView();
     expect(settings.fileLanguageMappings).toBeUndefined();
   });
 
-  it("shows the built-in defaults reference section", () => {
-    render();
+  it("shows the built-in defaults reference section", async () => {
+    await render();
     expect(container.textContent).toContain("Built-in Defaults");
     expect(container.textContent).toContain("Dockerfile");
     expect(container.textContent).toContain("dockerfile");
   });
 
-  it("built-in defaults are sorted alphabetically (leading dot ignored)", () => {
-    render();
+  it("built-in defaults are sorted alphabetically (leading dot ignored)", async () => {
+    await render();
     const items = Array.from(
       container.querySelectorAll(
         ".settings-panel__file-list li .settings-panel__file-path:first-child"
@@ -192,13 +192,13 @@ describe("FileTypeSettings", () => {
     }
   });
 
-  it("built-in defaults show .gitignore with correct leading dot", () => {
-    render();
+  it("built-in defaults show .gitignore with correct leading dot", async () => {
+    await render();
     expect(container.textContent).toContain(".gitignore");
   });
 
-  it("built-in defaults show CMakeLists.txt mapped to cmake", () => {
-    render();
+  it("built-in defaults show CMakeLists.txt mapped to cmake", async () => {
+    await render();
     const text = container.textContent ?? "";
     const cmakeIdx = text.indexOf("CMakeLists.txt");
     expect(cmakeIdx).toBeGreaterThan(-1);
@@ -206,8 +206,8 @@ describe("FileTypeSettings", () => {
     expect(text.slice(cmakeIdx).indexOf("cmake")).toBeGreaterThan(-1);
   });
 
-  it("language input has a datalist with Monaco language IDs", () => {
-    render();
+  it("language input has a datalist with Monaco language IDs", async () => {
+    await render();
     const input = query("file-type-language-input") as HTMLInputElement;
     expect(input.getAttribute("list")).toBe("file-type-language-list");
     const datalist = container.querySelector("#file-type-language-list");
@@ -218,14 +218,14 @@ describe("FileTypeSettings", () => {
     expect(options).toContain("cmake");
   });
 
-  it("built-in rows have a copy button", () => {
-    render();
+  it("built-in rows have a copy button", async () => {
+    await render();
     expect(query("file-type-copy-Dockerfile")).not.toBeNull();
     expect(query("file-type-copy-.gitignore")).not.toBeNull();
   });
 
-  it("clicking a built-in copy button pre-fills the add form", () => {
-    render();
+  it("clicking a built-in copy button pre-fills the add form", async () => {
+    await render();
     click("file-type-copy-Dockerfile");
     const patternInput = query("file-type-pattern-input") as HTMLInputElement;
     const languageInput = query("file-type-language-input") as HTMLInputElement;
@@ -233,16 +233,16 @@ describe("FileTypeSettings", () => {
     expect(languageInput.value).toBe("dockerfile");
   });
 
-  it("shows overridden badge on a built-in row when it has a custom mapping", () => {
+  it("shows overridden badge on a built-in row when it has a custom mapping", async () => {
     seedSettings({ fileLanguageMappings: { Dockerfile: "groovy" } });
-    render();
+    await render();
     expect(query("file-type-overridden-badge-Dockerfile")).not.toBeNull();
     // A non-overridden row should not have the badge
     expect(query("file-type-overridden-badge-Makefile")).toBeNull();
   });
 
-  it("hides all content when fileLanguageMappings not in visibleFields", () => {
-    render({ visibleFields: new Set(["someOtherField"]) });
+  it("hides all content when fileLanguageMappings not in visibleFields", async () => {
+    await render({ visibleFields: new Set(["someOtherField"]) });
     // The inner content is conditionally rendered based on show()
     expect(query("file-type-pattern-input")).toBeNull();
     expect(query("file-type-add-btn")).toBeNull();

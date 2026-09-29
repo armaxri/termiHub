@@ -7,3 +7,4 @@ pub mod process_rpc;
 pub mod protocol;
 pub mod spawn;
 pub mod transport;
+pub mod worker_sink;

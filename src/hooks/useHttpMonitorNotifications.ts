@@ -20,6 +20,11 @@ import { frontendLog } from "@/utils/frontendLog";
  * (there is no previous state to diff against). Steady-state polls (up→up,
  * down→down) are silent, so a persistently-down endpoint is reported once, not
  * on every interval.
+ *
+ * Because this listener is app-wide, every started monitor is *observed* even
+ * with the Network Tools UI closed, so the backend keeps checking it in the
+ * background (#2811) — that is what makes these toasts possible. Pause or stop a
+ * monitor to stop its checks.
  */
 export function useHttpMonitorNotifications(): void {
   useEffect(() => {

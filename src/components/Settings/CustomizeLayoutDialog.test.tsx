@@ -67,8 +67,8 @@ function query(testId: string): HTMLElement | null {
   return document.querySelector(`[data-testid="${testId}"]`);
 }
 
-function renderDialog() {
-  act(() => {
+async function renderDialog() {
+  await act(async () => {
     root.render(<CustomizeLayoutDialog />);
   });
 }
@@ -111,8 +111,8 @@ describe("CustomizeLayoutDialog", () => {
 
   // --- Opening/closing ---
 
-  it("renders dialog content when open", () => {
-    renderDialog();
+  it("renders dialog content when open", async () => {
+    await renderDialog();
 
     expect(query("layout-preset-default")).not.toBeNull();
     expect(query("layout-preset-focus")).not.toBeNull();
@@ -125,43 +125,45 @@ describe("CustomizeLayoutDialog", () => {
     expect(query("layout-preview")).not.toBeNull();
   });
 
-  it("does not render dialog content when closed", () => {
-    useAppStore.setState({ layoutDialogOpen: false });
-    renderDialog();
+  it("does not render dialog content when closed", async () => {
+    act(() => {
+      useAppStore.setState({ layoutDialogOpen: false });
+    });
+    await renderDialog();
 
     expect(query("layout-preset-default")).toBeNull();
   });
 
   // --- Preset buttons ---
 
-  it("applies Focus preset when clicked (hides sidebar, keeps AB and statusbar)", () => {
-    renderDialog();
+  it("applies Focus preset when clicked (hides sidebar, keeps AB and statusbar)", async () => {
+    await renderDialog();
     clickTestId("layout-preset-focus");
 
     const state = useAppStore.getState();
     expect(state.layoutConfig).toEqual(LAYOUT_PRESETS.focus);
   });
 
-  it("applies Zen preset when clicked (hides AB, sidebar, statusbar)", () => {
-    renderDialog();
+  it("applies Zen preset when clicked (hides AB, sidebar, statusbar)", async () => {
+    await renderDialog();
     clickTestId("layout-preset-zen");
 
     const state = useAppStore.getState();
     expect(state.layoutConfig).toEqual(LAYOUT_PRESETS.zen);
   });
 
-  it("applies Default preset when clicked (restores all elements)", () => {
+  it("applies Default preset when clicked (restores all elements)", async () => {
     // Start from Zen
     useAppStore.setState({ layoutConfig: { ...LAYOUT_PRESETS.zen } });
-    renderDialog();
+    await renderDialog();
     clickTestId("layout-preset-default");
 
     const state = useAppStore.getState();
     expect(state.layoutConfig).toEqual(LAYOUT_PRESETS.default);
   });
 
-  it("shows active accent class on the matching preset card", () => {
-    renderDialog();
+  it("shows active accent class on the matching preset card", async () => {
+    await renderDialog();
 
     const defaultBtn = query("layout-preset-default");
     expect(defaultBtn?.className).toContain("--active");
@@ -170,12 +172,12 @@ describe("CustomizeLayoutDialog", () => {
     expect(focusBtn?.className).not.toContain("--active");
   });
 
-  it("updates active preset indicator after switching presets", () => {
-    renderDialog();
+  it("updates active preset indicator after switching presets", async () => {
+    await renderDialog();
     clickTestId("layout-preset-focus");
 
     // Re-render to pick up state change
-    renderDialog();
+    await renderDialog();
 
     const focusBtn = query("layout-preset-focus");
     expect(focusBtn?.className).toContain("--active");
@@ -186,8 +188,8 @@ describe("CustomizeLayoutDialog", () => {
 
   // --- Activity Bar visibility ---
 
-  it("unchecking Activity Bar visibility hides it", () => {
-    renderDialog();
+  it("unchecking Activity Bar visibility hides it", async () => {
+    await renderDialog();
     expect(isChecked("layout-ab-visible")).toBe(true);
 
     clickTestId("layout-ab-visible");
@@ -196,37 +198,37 @@ describe("CustomizeLayoutDialog", () => {
     expect(state.layoutConfig.activityBarPosition).toBe("hidden");
   });
 
-  it("re-checking Activity Bar visibility restores last position", () => {
+  it("re-checking Activity Bar visibility restores last position", async () => {
     // Set to right, then hide, then re-show
     useAppStore.setState({
       layoutConfig: { ...DEFAULT_LAYOUT, activityBarPosition: "right" },
     });
-    renderDialog();
+    await renderDialog();
 
     // Hide
     clickTestId("layout-ab-visible");
     expect(useAppStore.getState().layoutConfig.activityBarPosition).toBe("hidden");
 
     // Re-render with hidden state
-    renderDialog();
+    await renderDialog();
 
     // Show again — should restore to "right", not "left"
     clickTestId("layout-ab-visible");
     expect(useAppStore.getState().layoutConfig.activityBarPosition).toBe("right");
   });
 
-  it("disables position radios when Activity Bar is hidden", () => {
-    renderDialog();
+  it("disables position radios when Activity Bar is hidden", async () => {
+    await renderDialog();
     clickTestId("layout-ab-visible");
-    renderDialog();
+    await renderDialog();
 
     expect(isDisabled("layout-ab-left")).toBe(true);
     expect(isDisabled("layout-ab-right")).toBe(true);
     expect(isDisabled("layout-ab-top")).toBe(true);
   });
 
-  it("enables position radios when Activity Bar is visible", () => {
-    renderDialog();
+  it("enables position radios when Activity Bar is visible", async () => {
+    await renderDialog();
 
     expect(isDisabled("layout-ab-left")).toBe(false);
     expect(isDisabled("layout-ab-right")).toBe(false);
@@ -235,15 +237,15 @@ describe("CustomizeLayoutDialog", () => {
 
   // --- Activity Bar position ---
 
-  it("selects Right position for Activity Bar", () => {
-    renderDialog();
+  it("selects Right position for Activity Bar", async () => {
+    await renderDialog();
     clickTestId("layout-ab-right");
 
     expect(useAppStore.getState().layoutConfig.activityBarPosition).toBe("right");
   });
 
-  it("selects Top position for Activity Bar", () => {
-    renderDialog();
+  it("selects Top position for Activity Bar", async () => {
+    await renderDialog();
     clickTestId("layout-ab-top");
 
     expect(useAppStore.getState().layoutConfig.activityBarPosition).toBe("top");
@@ -251,8 +253,8 @@ describe("CustomizeLayoutDialog", () => {
 
   // --- Sidebar visibility ---
 
-  it("unchecking Sidebar visibility hides it", () => {
-    renderDialog();
+  it("unchecking Sidebar visibility hides it", async () => {
+    await renderDialog();
     expect(isChecked("layout-sidebar-visible")).toBe(true);
 
     clickTestId("layout-sidebar-visible");
@@ -260,21 +262,21 @@ describe("CustomizeLayoutDialog", () => {
     expect(useAppStore.getState().layoutConfig.sidebarVisible).toBe(false);
   });
 
-  it("re-checking Sidebar visibility shows it", () => {
+  it("re-checking Sidebar visibility shows it", async () => {
     useAppStore.setState({
       layoutConfig: { ...DEFAULT_LAYOUT, sidebarVisible: false },
     });
-    renderDialog();
+    await renderDialog();
 
     clickTestId("layout-sidebar-visible");
 
     expect(useAppStore.getState().layoutConfig.sidebarVisible).toBe(true);
   });
 
-  it("disables Sidebar position radios when sidebar is hidden", () => {
-    renderDialog();
+  it("disables Sidebar position radios when sidebar is hidden", async () => {
+    await renderDialog();
     clickTestId("layout-sidebar-visible");
-    renderDialog();
+    await renderDialog();
 
     expect(isDisabled("layout-sidebar-left")).toBe(true);
     expect(isDisabled("layout-sidebar-right")).toBe(true);
@@ -282,8 +284,8 @@ describe("CustomizeLayoutDialog", () => {
 
   // --- Sidebar position ---
 
-  it("selects Right position for Sidebar", () => {
-    renderDialog();
+  it("selects Right position for Sidebar", async () => {
+    await renderDialog();
     clickTestId("layout-sidebar-right");
 
     expect(useAppStore.getState().layoutConfig.sidebarPosition).toBe("right");
@@ -291,8 +293,8 @@ describe("CustomizeLayoutDialog", () => {
 
   // --- Status Bar visibility ---
 
-  it("unchecking Status Bar visibility hides it", () => {
-    renderDialog();
+  it("unchecking Status Bar visibility hides it", async () => {
+    await renderDialog();
     expect(isChecked("layout-statusbar-visible")).toBe(true);
 
     clickTestId("layout-statusbar-visible");
@@ -302,9 +304,9 @@ describe("CustomizeLayoutDialog", () => {
 
   // --- Reset to Default ---
 
-  it("Reset to Default restores DEFAULT_LAYOUT from any config", () => {
+  it("Reset to Default restores DEFAULT_LAYOUT from any config", async () => {
     useAppStore.setState({ layoutConfig: { ...LAYOUT_PRESETS.zen } });
-    renderDialog();
+    await renderDialog();
 
     clickTestId("layout-reset-default");
 
@@ -313,8 +315,8 @@ describe("CustomizeLayoutDialog", () => {
 
   // --- Close button ---
 
-  it("Close button closes the dialog", () => {
-    renderDialog();
+  it("Close button closes the dialog", async () => {
+    await renderDialog();
     clickTestId("layout-close");
 
     // The Radix dialog calls onOpenChange(false) → setLayoutDialogOpen(false)
@@ -323,8 +325,8 @@ describe("CustomizeLayoutDialog", () => {
 
   // --- Layout Preview integration ---
 
-  it("renders LayoutPreview inside the dialog", () => {
-    renderDialog();
+  it("renders LayoutPreview inside the dialog", async () => {
+    await renderDialog();
 
     expect(query("layout-preview")).not.toBeNull();
     expect(query("preview-ab")).not.toBeNull();
@@ -333,10 +335,10 @@ describe("CustomizeLayoutDialog", () => {
     expect(query("preview-statusbar")).not.toBeNull();
   });
 
-  it("LayoutPreview updates when Activity Bar position changes to Right", () => {
-    renderDialog();
+  it("LayoutPreview updates when Activity Bar position changes to Right", async () => {
+    await renderDialog();
     clickTestId("layout-ab-right");
-    renderDialog();
+    await renderDialog();
 
     // AB should now be on the right side of the terminal in the preview
     const main = query("preview-main");
@@ -349,36 +351,36 @@ describe("CustomizeLayoutDialog", () => {
     expect(abIndex).toBeGreaterThan(termIndex);
   });
 
-  it("LayoutPreview updates when Activity Bar position changes to Top", () => {
-    renderDialog();
+  it("LayoutPreview updates when Activity Bar position changes to Top", async () => {
+    await renderDialog();
     clickTestId("layout-ab-top");
-    renderDialog();
+    await renderDialog();
 
     expect(query("preview-ab-top")).not.toBeNull();
     expect(query("preview-ab")).toBeNull();
   });
 
-  it("LayoutPreview hides AB when Activity Bar visibility is unchecked", () => {
-    renderDialog();
+  it("LayoutPreview hides AB when Activity Bar visibility is unchecked", async () => {
+    await renderDialog();
     clickTestId("layout-ab-visible");
-    renderDialog();
+    await renderDialog();
 
     expect(query("preview-ab")).toBeNull();
     expect(query("preview-ab-top")).toBeNull();
   });
 
-  it("LayoutPreview hides sidebar when Sidebar visibility is unchecked", () => {
-    renderDialog();
+  it("LayoutPreview hides sidebar when Sidebar visibility is unchecked", async () => {
+    await renderDialog();
     clickTestId("layout-sidebar-visible");
-    renderDialog();
+    await renderDialog();
 
     expect(query("preview-sidebar")).toBeNull();
   });
 
-  it("LayoutPreview moves sidebar to right when Sidebar position changes", () => {
-    renderDialog();
+  it("LayoutPreview moves sidebar to right when Sidebar position changes", async () => {
+    await renderDialog();
     clickTestId("layout-sidebar-right");
-    renderDialog();
+    await renderDialog();
 
     const main = query("preview-main");
     expect(main).not.toBeNull();
@@ -392,18 +394,18 @@ describe("CustomizeLayoutDialog", () => {
     expect(sbIndex).toBeGreaterThan(termIndex);
   });
 
-  it("LayoutPreview hides status bar when Status Bar visibility is unchecked", () => {
-    renderDialog();
+  it("LayoutPreview hides status bar when Status Bar visibility is unchecked", async () => {
+    await renderDialog();
     clickTestId("layout-statusbar-visible");
-    renderDialog();
+    await renderDialog();
 
     expect(query("preview-statusbar")).toBeNull();
   });
 
-  it("LayoutPreview shows only terminal in Zen preset", () => {
-    renderDialog();
+  it("LayoutPreview shows only terminal in Zen preset", async () => {
+    await renderDialog();
     clickTestId("layout-preset-zen");
-    renderDialog();
+    await renderDialog();
 
     expect(query("preview-ab")).toBeNull();
     expect(query("preview-ab-top")).toBeNull();
@@ -412,12 +414,12 @@ describe("CustomizeLayoutDialog", () => {
     expect(query("preview-terminal")).not.toBeNull();
   });
 
-  it("LayoutPreview restores all elements when returning to Default preset", () => {
-    renderDialog();
+  it("LayoutPreview restores all elements when returning to Default preset", async () => {
+    await renderDialog();
     clickTestId("layout-preset-zen");
-    renderDialog();
+    await renderDialog();
     clickTestId("layout-preset-default");
-    renderDialog();
+    await renderDialog();
 
     expect(query("preview-ab")).not.toBeNull();
     expect(query("preview-sidebar")).not.toBeNull();
@@ -427,19 +429,23 @@ describe("CustomizeLayoutDialog", () => {
 
   // --- Reopen reflects current state ---
 
-  it("reflects current layout state when dialog is reopened", () => {
+  it("reflects current layout state when dialog is reopened", async () => {
     // Apply zen preset while dialog is open
-    renderDialog();
+    await renderDialog();
     clickTestId("layout-preset-zen");
 
     // Close dialog
-    useAppStore.setState({ layoutDialogOpen: false });
-    renderDialog();
+    act(() => {
+      useAppStore.setState({ layoutDialogOpen: false });
+    });
+    await renderDialog();
     expect(query("layout-preset-zen")).toBeNull();
 
     // Reopen
-    useAppStore.setState({ layoutDialogOpen: true });
-    renderDialog();
+    act(() => {
+      useAppStore.setState({ layoutDialogOpen: true });
+    });
+    await renderDialog();
 
     // Zen should still be the active preset
     const zenBtn = query("layout-preset-zen");

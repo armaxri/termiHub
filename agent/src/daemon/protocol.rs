@@ -406,6 +406,17 @@ where
     Ok(())
 }
 
+/// Encode one frame — header and payload — into a single buffer, the exact bytes
+/// [`write_frame_async`] puts on the wire. Lets a frame be queued and written
+/// later by another task (#3890).
+pub fn encode_frame(msg_type: u8, payload: &[u8]) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(HEADER_SIZE + payload.len());
+    frame.push(msg_type);
+    frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    frame.extend_from_slice(payload);
+    frame
+}
+
 // ── Helper: encode resize payload ───────────────────────────────────
 
 /// Encode cols and rows into a 4-byte resize payload.

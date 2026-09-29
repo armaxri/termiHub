@@ -958,6 +958,36 @@ small and scales only with live monitors, and the UI draws exactly this many poi
 Steady-state wire cost per sample is one sample (~0.6 KB) plus a ~20-byte eviction
 op. Resending the ring would cost ~54 KB.
 
+### HTTP Monitor Background Polling (#2811)
+
+An HTTP monitor's poll loop (`core/src/monitoring/http_monitor.rs`) has an
+**observer gate** (PERF-008): each tick it checks only when it is not paused and at
+least one subscriber holds its event channel. With no subscriber it does no HTTP work,
+keeps its cached `last_result` (so `list_http_monitors` still shows the last status),
+and re-evaluates every base interval, so checks resume within one interval of an
+observer returning.
+
+"Observed" means _something consumes the results_, not _the Network Tools UI is open_.
+Two consumers work with the UI closed:
+
+- the app-wide up/down toasts (`useHttpMonitorNotifications`, mounted at the app root);
+- the backend check history (#3462), recorded by the desktop bridge.
+
+So the desktop bridge (`spawn_event_bridge`) stays subscribed for a monitor's whole
+lifetime, and a monitor the user **started keeps checking in the background** until it
+is paused or stopped. That is deliberate — scoping the subscription to the open panel
+would silently drop both down-alerts and history. There is no per-monitor
+"run in background" flag: starting a monitor is the opt-in, and Pause / Stop are the
+opt-out.
+
+The resource saving PERF-008 targets comes from launch instead: saved monitors load
+**stopped** (listed, no network work) and only poll once the user starts them.
+
+Agent-hosted monitors behave the same way. The agent's drain task keeps a latest-result
+slot for `service.status`, and the desktop's status poller records each fresh result
+into history and re-emits it to the toasts, so they are observed while the agent is
+connected.
+
 ### Graphical Backend Parity: VNC Has No Audio (PROD-020)
 
 The two graphical backends share the framebuffer, input, clipboard and auto-reconnect

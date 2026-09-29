@@ -33,6 +33,7 @@ import {
 import type { ConnectionTypeInfo } from "@/types/connection";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+import { flushAsync } from "@/test/flushAsync";
 
 vi.mock("@/components/CredentialStoreIndicator", () => ({ CredentialStoreIndicator: () => null }));
 vi.mock("./PortableBadge", () => ({ PortableBadge: () => null }));
@@ -141,20 +142,21 @@ describe("StatusBar — monitoring Reconnecting indicator (SM-014)", () => {
     teardownMonitors();
   });
 
-  function renderStatusBar() {
-    act(() =>
-      root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)))
-    );
+  async function renderStatusBar() {
+    await act(async () => {
+      root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)));
+    });
+    await flushAsync();
   }
 
-  it("shows a Reconnecting badge and dims the stats when status is 'reconnecting'", () => {
+  it("shows a Reconnecting badge and dims the stats when status is 'reconnecting'", async () => {
     setActiveMonitor({
       monitorSessionId: "sess-1",
       stats: makeStats(),
       sampleCount: 3,
       status: "reconnecting",
     });
-    renderStatusBar();
+    await renderStatusBar();
 
     // The Reconnecting badge is present.
     const badge = container.querySelector('[data-testid="monitoring-reconnecting"]');
@@ -172,28 +174,28 @@ describe("StatusBar — monitoring Reconnecting indicator (SM-014)", () => {
     expect(disk!.className).toContain("monitoring-status__stat--stale");
   });
 
-  it("does not show the Reconnecting badge when status is 'live'", () => {
+  it("does not show the Reconnecting badge when status is 'live'", async () => {
     setActiveMonitor({
       monitorSessionId: "sess-1",
       stats: makeStats(),
       sampleCount: 3,
       status: "live",
     });
-    renderStatusBar();
+    await renderStatusBar();
 
     expect(container.querySelector('[data-testid="monitoring-reconnecting"]')).toBeNull();
     const cpu = container.querySelector('[data-testid="monitoring-cpu"]');
     expect(cpu!.className).not.toContain("monitoring-status__stat--stale");
   });
 
-  it("does not show the Reconnecting badge when status is 'stale'", () => {
+  it("does not show the Reconnecting badge when status is 'stale'", async () => {
     setActiveMonitor({
       monitorSessionId: "sess-1",
       stats: makeStats(),
       sampleCount: 3,
       status: "stale",
     });
-    renderStatusBar();
+    await renderStatusBar();
 
     // Stale is its own arm; the reconnecting badge must not also appear.
     expect(container.querySelector('[data-testid="monitoring-reconnecting"]')).toBeNull();
