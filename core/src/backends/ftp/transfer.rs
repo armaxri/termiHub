@@ -14,8 +14,10 @@
 //! pause, and cancel possible; `suppaftp`'s `retr_as_stream` / `put_with_stream`
 //! expose the data connection as an async reader/writer for exactly this.
 
+use std::collections::HashMap;
 use std::io::SeekFrom;
 use tokio::io::AsyncSeekExt;
+use tracing::{debug, warn};
 
 use crate::config::FtpConfig;
 use crate::errors::SessionError;
@@ -57,6 +59,82 @@ pub enum AttemptOutcome {
         transferred: u64,
         reason: StopReason,
     },
+    /// The server refused `REST <offset>` for a non-zero offset, so the
+    /// transfer cannot continue from it; the caller restarts from byte zero.
+    /// Nothing was transferred.
+    ResumeRejected,
+}
+
+/// What an FTP server advertises in its `FEAT` reply (RFC 2389) that matters
+/// for resuming a transfer (#3206).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FtpServerCaps {
+    /// The server answered `FEAT`. When it did not (a legacy server), nothing
+    /// is known and both `REST` and `MDTM` are simply tried.
+    pub feat_answered: bool,
+    /// `REST STREAM` (RFC 3659): a `RETR`/`STOR` can restart at a byte offset.
+    pub rest_stream: bool,
+    /// `MDTM` (RFC 3659): the server reports a file's modification time.
+    pub mdtm: bool,
+}
+
+impl FtpServerCaps {
+    /// Capabilities of a server that did not answer `FEAT`.
+    pub fn unknown() -> Self {
+        Self {
+            feat_answered: false,
+            rest_stream: false,
+            mdtm: false,
+        }
+    }
+
+    /// Read the capabilities from a parsed `FEAT` reply. Feature names and
+    /// values are compared case-insensitively; only `REST STREAM` counts as
+    /// offset restart support.
+    pub fn from_features(features: &HashMap<String, Option<String>>) -> Self {
+        let mut caps = Self {
+            feat_answered: true,
+            rest_stream: false,
+            mdtm: false,
+        };
+        for (name, value) in features {
+            if name.eq_ignore_ascii_case("MDTM") {
+                caps.mdtm = true;
+            } else if name.eq_ignore_ascii_case("REST") {
+                caps.rest_stream = value.as_deref().is_some_and(|v| {
+                    v.split_whitespace()
+                        .any(|m| m.eq_ignore_ascii_case("STREAM"))
+                });
+            }
+        }
+        caps
+    }
+
+    /// Whether a transfer may try to continue from a non-zero offset: the
+    /// server advertised `REST STREAM`, or it did not answer `FEAT` (then a
+    /// refused `REST` falls back to a restart from zero).
+    pub fn may_resume(&self) -> bool {
+        !self.feat_answered || self.rest_stream
+    }
+
+    /// Whether to ask the server for a modification time (`MDTM`): advertised,
+    /// or unknown because `FEAT` went unanswered.
+    pub fn may_query_mtime(&self) -> bool {
+        !self.feat_answered || self.mdtm
+    }
+}
+
+/// A remote file as seen by [`probe_remote_file`]: the server's capabilities
+/// plus the file's size and modification time, where known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FtpRemoteFile {
+    /// What the server advertised in `FEAT`.
+    pub caps: FtpServerCaps,
+    /// `SIZE` of the file; `None` when absent or `SIZE` is unsupported.
+    pub size: Option<u64>,
+    /// `MDTM` of the file in Unix seconds; `None` when absent or `MDTM` is
+    /// unsupported (a resume then falls back to a size-only check).
+    pub mtime: Option<u64>,
 }
 
 /// Convert a `u64` resume offset into the `usize` that `suppaftp`'s
@@ -83,6 +161,40 @@ pub async fn probe_remote_size(config: &FtpConfig, remote_path: &str) -> Option<
     size
 }
 
+/// Probe `remote_path` and the server on one throwaway connection (#3206):
+/// `FEAT` for the capabilities, then `SIZE`, then `MDTM` when the server may
+/// support it. Only the connection itself failing is an error; an unanswered
+/// `FEAT`, `SIZE` or `MDTM` just leaves that part unknown.
+pub async fn probe_remote_file(
+    config: &FtpConfig,
+    remote_path: &str,
+) -> Result<FtpRemoteFile, SessionError> {
+    let mut stream = establish(config)
+        .await
+        .map_err(|e| SessionError::SpawnFailed(format!("FTP connect for transfer probe: {e}")))?;
+    let caps = match stream.feat().await {
+        Ok(features) => FtpServerCaps::from_features(&features),
+        Err(e) => {
+            debug!(error = %e, "FTP server did not answer FEAT; capabilities unknown");
+            FtpServerCaps::unknown()
+        }
+    };
+    let size = stream.size(remote_path).await.ok().map(|s| s as u64);
+    let mtime = if caps.may_query_mtime() {
+        match stream.mdtm(remote_path).await {
+            Ok(at) => u64::try_from(at.and_utc().timestamp()).ok(),
+            Err(e) => {
+                debug!(error = %e, remote_path, "FTP MDTM unavailable");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let _ = stream.quit().await;
+    Ok(FtpRemoteFile { caps, size, mtime })
+}
+
 /// Run one FTP transfer attempt on a dedicated connection, resuming from
 /// `offset` bytes via `REST` when `offset > 0`.
 ///
@@ -91,8 +203,11 @@ pub async fn probe_remote_size(config: &FtpConfig, remote_path: &str) -> Option<
 /// - `should_stop()` is polled before each chunk; returning `Some(reason)`
 ///   stops the attempt promptly and yields [`AttemptOutcome::Stopped`].
 ///
-/// I/O or protocol errors bubble up as [`SessionError`]; the caller decides
-/// whether to retry (using the bytes already reported via `on_progress`).
+/// A server refusing `REST` for a non-zero `offset` yields
+/// [`AttemptOutcome::ResumeRejected`] (nothing is transferred) so the caller
+/// can restart from zero. Other I/O or protocol errors bubble up as
+/// [`SessionError`]; the caller decides whether to retry (using the bytes
+/// already reported via `on_progress`).
 pub async fn run_attempt<P, S>(
     config: &FtpConfig,
     direction: FtpDirection,
@@ -112,10 +227,11 @@ where
 
     if offset > 0 {
         let rest = resume_offset_to_usize(offset)?;
-        stream
-            .resume_transfer(rest)
-            .await
-            .map_err(|e| SessionError::SpawnFailed(format!("FTP REST {offset}: {e}")))?;
+        if let Err(e) = stream.resume_transfer(rest).await {
+            warn!(offset, error = %e, "FTP server rejected REST; the transfer restarts from zero");
+            let _ = stream.quit().await;
+            return Ok(AttemptOutcome::ResumeRejected);
+        }
     }
 
     let outcome = match direction {

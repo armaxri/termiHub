@@ -140,6 +140,25 @@ pub struct PersistedTransfer {
     /// relaunch then falls back to the size-only check.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_mtime: Option<u64>,
+    /// The source endpoint of a remote-to-remote copy (#3206) — the session
+    /// reference and path it reads from. `session_id` / `remote_path` describe
+    /// the destination. Absent for every other transfer and for records
+    /// written before it existed; such a remote-to-remote record cannot be
+    /// relaunched after a restart. References and paths only, never secrets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_source: Option<PersistedRemoteSource>,
+}
+
+/// Where a remote-to-remote copy reads from (#3206): a session **reference**
+/// (re-attached through the normal session path, which supplies credentials at
+/// resume time) and the source path. Not a secret.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedRemoteSource {
+    /// The source session id.
+    pub session_id: String,
+    /// The source file's path on that session.
+    pub path: String,
 }
 
 /// The persisted identity of a Docker transfer's container (#3585).
@@ -408,6 +427,7 @@ mod tests {
             group_id: None,
             folder_paste_id: None,
             source_mtime: None,
+            remote_source: None,
         }
     }
 
@@ -457,6 +477,46 @@ mod tests {
         assert_eq!(serde_json::to_string(&rec).unwrap(), legacy);
     }
 
+    /// A remote-to-remote copy round-trips its source endpoint (#3206) as a
+    /// session reference plus a path — nothing else.
+    #[test]
+    fn remote_source_round_trips_as_a_reference_and_path_only() {
+        let mut entry = sample("t1", PersistedTransferStatus::Paused);
+        entry.local_path = None;
+        entry.remote_source = Some(PersistedRemoteSource {
+            session_id: "sess-src".to_string(),
+            path: "/src/data.csv".to_string(),
+        });
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains(r#""remoteSource":{"sessionId":"sess-src","path":"/src/data.csv"}"#));
+        let parsed: PersistedTransfer = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, entry);
+    }
+
+    /// `transfers.json` files written before #3206 — an FTP download (which
+    /// persisted like any session transfer) and a remote-to-remote copy that
+    /// kept only its destination — still load, and re-serialize byte-for-byte.
+    #[test]
+    fn legacy_ftp_and_remote_copy_records_load_unchanged() {
+        let legacy = concat!(
+            r#"{"version":"1","transfers":["#,
+            r#"{"transferId":"ftp-1","sessionId":"ftp-sess","direction":"download","#,
+            r#""fileName":"f.bin","remotePath":"/pub/f.bin","localPath":"/home/u/f.bin","#,
+            r#""status":"paused","transferred":4096,"total":8192,"resumeOffset":4096,"#,
+            r#""createdAtMs":1,"updatedAtMs":2,"sourceMtime":1704110400},"#,
+            r#"{"transferId":"r2r-1","sessionId":"dst-sess","direction":"upload","#,
+            r#""fileName":"g.bin","remotePath":"/dst/g.bin","status":"paused","#,
+            r#""transferred":10,"total":20,"resumeOffset":10,"createdAtMs":3,"updatedAtMs":4}"#,
+            r#"]}"#
+        );
+        let parsed: PersistedTransferStore = serde_json::from_str(legacy).unwrap();
+        assert_eq!(parsed.transfers.len(), 2);
+        assert_eq!(parsed.transfers[0].source_mtime, Some(1_704_110_400));
+        assert_eq!(parsed.transfers[1].local_path, None);
+        assert_eq!(parsed.transfers[1].remote_source, None, "legacy: no source");
+        assert_eq!(serde_json::to_string(&parsed).unwrap(), legacy);
+    }
+
     /// A Docker record round-trips its container identity (#3585), and a
     /// record written before the field existed still loads (as non-Docker).
     #[test]
@@ -487,6 +547,10 @@ mod tests {
         entry.docker = Some(PersistedDockerTarget {
             container_id: "0123456789abcdef".repeat(4),
         });
+        entry.remote_source = Some(PersistedRemoteSource {
+            session_id: "sess-src".to_string(),
+            path: "/src/data.csv".to_string(),
+        });
         let value = serde_json::to_value(&entry).unwrap();
         let obj = value.as_object().unwrap();
         for forbidden in [
@@ -513,6 +577,14 @@ mod tests {
             docker.keys().collect::<Vec<_>>(),
             ["containerId"],
             "the Docker reference carries only the container id"
+        );
+        // The remote-to-remote source is a session reference and a path.
+        let mut source_keys: Vec<_> = obj["remoteSource"].as_object().unwrap().keys().collect();
+        source_keys.sort();
+        assert_eq!(
+            source_keys,
+            ["path", "sessionId"],
+            "the remote source carries only a session reference and a path"
         );
         // Whole-JSON belt-and-braces: none of the secret-ish substrings appear.
         let json = serde_json::to_string(&entry).unwrap().to_lowercase();

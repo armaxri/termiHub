@@ -38,7 +38,12 @@ pub mod state;
 // (`crate::backends::ssh`); the local-disk executor on `local-transfer`. The
 // public executors return `()` — no error escapes.
 // Shared attempt orchestration for the offset-resuming executors (PARITY-004).
-#[cfg(any(feature = "ssh", feature = "docker", feature = "local-transfer"))]
+#[cfg(any(
+    feature = "ssh",
+    feature = "docker",
+    feature = "local-transfer",
+    feature = "ftp"
+))]
 mod attempt;
 #[cfg(feature = "docker")]
 pub mod docker;

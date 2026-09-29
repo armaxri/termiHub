@@ -164,7 +164,8 @@ pub async fn session_copy_remote(
     );
     // Durable queue (PROD-0011): persist metadata only (references/paths, never
     // credentials) so a restart rehydrates this remote-to-remote copy as paused.
-    // A remote-to-remote copy has no local endpoint, so `local_path` is None.
+    // A remote-to-remote copy has no local endpoint, so `local_path` is None;
+    // its source session reference + path are kept so it can relaunch (#3206).
     if let Some(pm) = app_handle.try_state::<TransferPersistenceManager>() {
         pm.record_registration(
             &transfer_id,
@@ -175,6 +176,7 @@ pub async fn session_copy_remote(
             None,
             0,
         );
+        pm.record_remote_source(&transfer_id, &src_session, &src_path);
     }
     let registry = (*registry).clone();
     let sink = transfer::app_progress_sink(app_handle);
@@ -188,6 +190,7 @@ pub async fn session_copy_remote(
             registry,
             sink,
             transfer::sftp::DEFAULT_RESUME_MODE,
+            0,
         )
         .await;
     });
@@ -330,6 +333,7 @@ pub async fn ftp_download(
                 handle,
                 registry,
                 sink,
+                0,
             )
             .await;
         });
@@ -409,6 +413,7 @@ pub async fn ftp_upload(
                 handle,
                 registry,
                 sink,
+                0,
             )
             .await;
         });

@@ -52,10 +52,15 @@ use std::sync::Arc;
 use common::{port_ftp, require_docker};
 
 use termihub_core::backends::ftp::{
-    probe_remote_size, run_attempt, AttemptOutcome, Ftp, FtpDirection, StopReason,
+    probe_remote_file, probe_remote_size, run_attempt, AttemptOutcome, Ftp, FtpDirection,
+    StopReason,
 };
 use termihub_core::config::FtpConfig;
 use termihub_core::connection::ConnectionType;
+use termihub_core::files::transfer::ftp::run_ftp_transfer;
+use termihub_core::files::transfer::{
+    ProgressSink, TransferDirection, TransferProgress, TransferRegistry, TransferStateTag,
+};
 
 // ── Known seeded fixture facts (must match generate-test-data.sh) ────────────
 
@@ -305,6 +310,7 @@ async fn ftp_transfer_03_download_rest_resume() {
             transferred
         }
         AttemptOutcome::Completed { .. } => panic!("expected a mid-flight stop, got Completed"),
+        AttemptOutcome::ResumeRejected => panic!("expected a mid-flight stop, got ResumeRejected"),
     };
     assert!(
         transferred >= stop_after && transferred < DATASET_1M_SIZE,
@@ -397,6 +403,7 @@ async fn ftp_transfer_04_upload_rest_resume() {
             transferred
         }
         AttemptOutcome::Completed { .. } => panic!("expected a mid-flight stop, got Completed"),
+        AttemptOutcome::ResumeRejected => panic!("expected a mid-flight stop, got ResumeRejected"),
     };
     assert!(transferred >= stop_after, "upload stopped mid-flight");
 
@@ -527,4 +534,110 @@ async fn ftp_transfer_05_concurrent_separate_connections() {
     assert!(bytes_b.iter().all(|&x| x == 0), "B zero-filled");
 
     ftp.disconnect().await.expect("disconnect");
+}
+
+// ── FTP-XFER-07: relaunch after a restart (#3206) ─────────────────────────────
+
+/// ProFTPD advertises `REST STREAM` and `MDTM` in `FEAT`, and reports a
+/// file's size and modification time — what a relaunch verifies against.
+#[tokio::test]
+async fn ftp_transfer_07_probe_reports_caps_size_and_mtime() {
+    require_docker!(port_ftp());
+
+    let file = probe_remote_file(&ftpuser_config(), DATASET_1M)
+        .await
+        .expect("probe");
+    assert!(file.caps.feat_answered, "ProFTPD answers FEAT");
+    assert!(file.caps.rest_stream, "ProFTPD advertises REST STREAM");
+    assert!(file.caps.mdtm, "ProFTPD advertises MDTM");
+    assert_eq!(file.size, Some(DATASET_1M_SIZE));
+    assert!(file.mtime.is_some(), "MDTM reports a modification time");
+}
+
+/// An upload relaunched from its checkpoint after an app restart resumes the
+/// remote partial via `REST` and lands byte-exact (#3206).
+#[tokio::test]
+async fn ftp_transfer_07_upload_relaunch_resumes_via_rest() {
+    require_docker!(port_ftp());
+
+    let cfg = ftpuser_config();
+    let remote = upload_path("relaunch");
+    let data = payload(1024 * 1024 + 123);
+    let offset = 512 * 1024;
+    let tmp = tempfile::tempdir().expect("tempdir");
+
+    // The previous run uploaded a prefix before the app quit.
+    let prefix = tmp.path().join("prefix.bin");
+    std::fs::write(&prefix, &data[..offset]).expect("write prefix");
+    run_attempt(
+        &cfg,
+        FtpDirection::Upload,
+        &remote,
+        prefix.to_str().expect("utf8"),
+        0,
+        no_progress,
+        never_stop,
+    )
+    .await
+    .expect("seed the remote partial");
+
+    // Relaunch from the persisted checkpoint (total + source mtime).
+    let local = tmp.path().join("full.bin");
+    std::fs::write(&local, &data).expect("write source");
+    let mtime = std::fs::metadata(&local)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|d| u64::try_from(d.as_nanos()).ok());
+    let registry = TransferRegistry::new();
+    let handle = registry.enqueue(
+        "ftp-relaunch",
+        "ftp-session",
+        TransferDirection::Upload,
+        "full.bin",
+        &remote,
+        data.len() as u64,
+    );
+    handle.set_source_mtime(mtime);
+    let first = Arc::new(std::sync::Mutex::new(None));
+    let seen = first.clone();
+    let sink: ProgressSink = Arc::new(move |p: &TransferProgress| {
+        seen.lock().expect("lock").get_or_insert(p.transferred);
+    });
+
+    run_ftp_transfer(
+        cfg.clone(),
+        FtpDirection::Upload,
+        remote.clone(),
+        local.to_str().expect("utf8").to_string(),
+        handle.clone(),
+        registry,
+        sink,
+        offset as u64,
+    )
+    .await;
+
+    assert_eq!(handle.state().tag(), TransferStateTag::Completed);
+    assert_eq!(
+        *first.lock().expect("lock"),
+        Some(offset as u64),
+        "resumed from the checkpoint"
+    );
+    let back = tmp.path().join("back.bin");
+    run_attempt(
+        &cfg,
+        FtpDirection::Download,
+        &remote,
+        back.to_str().expect("utf8"),
+        0,
+        no_progress,
+        never_stop,
+    )
+    .await
+    .expect("download back");
+    assert!(
+        std::fs::read(&back).expect("read back") == data,
+        "the resumed upload is byte-exact"
+    );
+    cleanup_remote(&remote).await;
 }
