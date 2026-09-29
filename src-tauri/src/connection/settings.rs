@@ -322,7 +322,7 @@ pub struct BroadcastGroup {
 ///   omit them (the frontend applies the same default), so they are emitted as
 ///   optional via `ts(as = "Option<…>", optional)`.
 /// - Values the backend stores opaquely (`customThemes`, `syntaxHighlighting`)
-///   or whose TS type is owned elsewhere (`theme`, `shellIntegration`) are
+///   or whose TS type is owned elsewhere (`theme`) are
 ///   typed via `ts(type = …)`, pointing at the frontend-owned type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -578,10 +578,7 @@ pub struct AppSettings {
     /// Shell context-menu / CLI-spawn integration configuration (epic #1363).
     /// `#[serde(default)]` keeps older settings files forward-compatible.
     #[serde(default)]
-    #[cfg_attr(
-        test,
-        ts(optional, type = "import(\"../connection\").ShellIntegrationSettings")
-    )]
+    #[cfg_attr(test, ts(as = "Option<ShellIntegrationSettings>", optional))]
     pub shell_integration: ShellIntegrationSettings,
     /// Terminal output syntax-highlighting configuration (epic #1696).
     ///

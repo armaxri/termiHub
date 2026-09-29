@@ -1,28 +1,13 @@
 /**
- * A directory bookmarked in the file browser (PROD-007, #3558). Mirrors the
- * backend `FileBookmark` in `src-tauri/src/files/bookmarks.rs`.
+ * A directory bookmarked in the file browser (PROD-007, #3558), generated from
+ * the Rust `FileBookmark` (`src-tauri/src/files/bookmarks.rs`) via ts-rs
+ * (audit DUP-030, #3088). `scope` is the connection scope the bookmark belongs
+ * to — see `fileBookmarkScope` (`local`, `connection:<id>`, `agent:…`, `host:…`).
  */
-export interface FileBookmark {
-  /** Unique identifier. */
-  id: string;
-  /**
-   * The connection scope the bookmark belongs to — see
-   * `fileBookmarkScope` (`local`, `connection:<id>`, `agent:…`, `host:…`).
-   */
-  scope: string;
-  /** The bookmarked directory, exactly as the file browser navigates to it. */
-  path: string;
-  /** Display name (the directory's base name unless renamed). */
-  name: string;
-  /** RFC 3339 timestamp of when the bookmark was added. */
-  createdAt: string;
-}
+export type { FileBookmark } from "./generated/FileBookmark";
 
 /**
  * Bookmarks in scope `from` moved to scope `to` — a saved connection's id
- * changed on a rename or move (#3569). Mirrors the backend `ScopeRekey`.
+ * changed on a rename or move (#3569). Generated from the Rust `ScopeRekey`.
  */
-export interface FileBookmarkScopeRekey {
-  from: string;
-  to: string;
-}
+export type { FileBookmarkScopeRekey } from "./generated/FileBookmarkScopeRekey";

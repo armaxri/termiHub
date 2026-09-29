@@ -1,0 +1,100 @@
+{
+  "futureTopLevel": {
+    "kept": true
+  },
+  "version": "2",
+  "workspaces": [
+    {
+      "description": "Prod boxes",
+      "id": "ws-1",
+      "name": "Prod",
+      "settings": {
+        "defaultWorkingDirectory": "/srv",
+        "envVars": [
+          {
+            "key": "A",
+            "value": "1"
+          }
+        ],
+        "fontFamily": "Fira Code",
+        "fontSize": 14,
+        "futureSetting": 42,
+        "theme": "dark"
+      },
+      "tabGroups": [
+        {
+          "color": "#ff6b6b",
+          "layout": {
+            "children": [
+              {
+                "tabs": [
+                  {
+                    "connectionRef": "Work/web-1",
+                    "initialCommand": "htop",
+                    "title": "web"
+                  }
+                ],
+                "type": "leaf"
+              },
+              {
+                "tabs": [
+                  {
+                    "agentRef": {
+                      "agentId": "agent-1",
+                      "definitionId": "def-1"
+                    }
+                  },
+                  {
+                    "inlineConfig": {
+                      "config": {
+                        "shell": "zsh"
+                      },
+                      "type": "local"
+                    }
+                  }
+                ],
+                "type": "leaf"
+              }
+            ],
+            "direction": "horizontal",
+            "sizes": [
+              40.0,
+              60.0
+            ],
+            "type": "split"
+          },
+          "name": "Main"
+        },
+        {
+          "layout": {
+            "tabs": [],
+            "type": "leaf"
+          },
+          "name": "Second",
+          "windowId": "win-a"
+        }
+      ],
+      "windows": [
+        {
+          "id": "main"
+        },
+        {
+          "id": "win-a"
+        }
+      ]
+    },
+    {
+      "id": "ws-2",
+      "name": "Minimal",
+      "tabGroups": [
+        {
+          "layout": {
+            "tabs": [],
+            "type": "leaf"
+          },
+          "name": "Only"
+        }
+      ]
+    }
+  ]
+}

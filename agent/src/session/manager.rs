@@ -19,7 +19,8 @@ use tracing::{debug, info, warn};
 
 use crate::io::transport::NotificationSender;
 use crate::ki_prompt::relay::{
-    KiConnectFailure, KiFailureKind, KiRelaySession, KI_PROMPT_ENDPOINT_ENV,
+    ClassifiedConnectFailure, KiConnectFailure, KiFailureKind, KiRelaySession,
+    CONNECT_REPORT_ENDPOINT_ENV, KI_PROMPT_ENDPOINT_ENV,
 };
 use crate::ki_prompt::{KiPromptHub, PromptActivity};
 use crate::session::agent_forward::AgentForwardRelay;
@@ -193,11 +194,19 @@ pub enum SessionCreateError {
     /// A user-typed later SSH factor (one-time code) was rejected after an
     /// earlier factor was accepted (#3375, #3376).
     SecondFactorFailed(String),
+    /// The backend failed to connect for a typed reason (a core
+    /// `ConnectFailureKind`, #3751) — relayed to the desktop in the error
+    /// `data` so it shows the matching hint.
+    ConnectFailed(ClassifiedConnectFailure),
 }
 
 impl SessionCreateError {
-    /// Classify a backend bring-up failure, keeping the typed prompt outcomes.
+    /// Classify a backend bring-up failure, keeping the typed prompt outcomes
+    /// and connect-failure kinds.
     fn from_backend(e: anyhow::Error) -> Self {
+        if let Some(classified) = e.downcast_ref::<ClassifiedConnectFailure>() {
+            return Self::ConnectFailed(classified.clone());
+        }
         match e.downcast_ref::<KiConnectFailure>() {
             Some(KiConnectFailure(KiFailureKind::AuthCancelled)) => {
                 Self::AuthCancelled(e.to_string())
@@ -216,6 +225,7 @@ impl fmt::Display for SessionCreateError {
             Self::LimitReached => write!(f, "Session limit reached (max {MAX_SESSIONS})"),
             Self::InvalidConfig(msg) => write!(f, "Invalid configuration: {msg}"),
             Self::BackendFailed(msg) => write!(f, "Backend failed: {msg}"),
+            Self::ConnectFailed(failure) => write!(f, "Backend failed: {}", failure.message),
             Self::AuthCancelled(msg) | Self::SecondFactorFailed(msg) => write!(f, "{msg}"),
         }
     }
@@ -338,6 +348,10 @@ pub struct LaunchExtras {
     /// [`CORRELATION_ID_ENV`](crate::daemon::process::CORRELATION_ID_ENV) so
     /// the daemon logs its session under the same `agent_session` span.
     pub correlation_id: Option<String>,
+    /// The per-session relay endpoint the daemon reports a failed connect's
+    /// typed reason to (#3751), exported as [`CONNECT_REPORT_ENDPOINT_ENV`].
+    /// Set for every launch whose relay could bind, prompts or not.
+    pub connect_report_endpoint: Option<String>,
 }
 
 /// The keyboard-interactive relay half of [`LaunchExtras`].
@@ -417,6 +431,16 @@ fn build_daemon_command(
     command
 }
 
+/// Export the connect-failure report endpoint to the daemon (#3751), or clear
+/// it so an inherited value can never point a daemon at another session's
+/// relay.
+fn export_connect_report_endpoint(command: &mut std::process::Command, endpoint: Option<&str>) {
+    match endpoint {
+        Some(endpoint) => command.env(CONNECT_REPORT_ENDPOINT_ENV, endpoint),
+        None => command.env_remove(CONNECT_REPORT_ENDPOINT_ENV),
+    };
+}
+
 /// Export the session's correlation id to the daemon (#3782), or clear it.
 ///
 /// The id is non-secret and already validated by the caller; the daemon
@@ -459,6 +483,7 @@ impl DaemonLauncher for SystemDaemonLauncher {
             extras.ki_prompt.as_ref().map(|k| k.endpoint.as_str()),
         );
         export_correlation_id(&mut command, extras.correlation_id.as_deref());
+        export_connect_report_endpoint(&mut command, extras.connect_report_endpoint.as_deref());
         crate::daemon::spawn::configure_detached_stderr(&mut command, daemon_log(session_id));
         crate::daemon::spawn::configure_detachment(&mut command);
 
@@ -966,10 +991,12 @@ impl SessionManager {
             .start_agent_forward(session_id, type_id, settings)
             .await;
 
-        // Relay the daemon's SSH keyboard-interactive (OTP / 2FA) prompts to the
-        // desktop when it can show them (#3375). Held only for the launch: the
-        // daemon's SSH auth is over once it accepts connections.
-        let ki_relay = self.start_ki_relay(session_id, type_id).await;
+        // The per-launch relay: it carries the daemon's typed connect-failure
+        // report (#3751) and — for SSH with a desktop that can show them — its
+        // keyboard-interactive (OTP / 2FA) prompts (#3375). Held only for the
+        // launch: the daemon's connect is over once it accepts connections.
+        let ki_relay = self.start_launch_relay(session_id).await;
+        let relay_prompts = self.relays_prompts(type_id);
 
         let mut result = self
             .launcher
@@ -981,20 +1008,24 @@ impl SessionManager {
                 buffer_size,
                 LaunchExtras {
                     ssh_auth_sock: ssh_auth_sock.clone(),
-                    ki_prompt: ki_relay.as_ref().map(|r| KiPromptLaunch {
-                        endpoint: r.endpoint().to_string(),
-                        activity: r.activity(),
+                    ki_prompt: ki_relay.as_ref().filter(|_| relay_prompts).map(|r| {
+                        KiPromptLaunch {
+                            endpoint: r.endpoint().to_string(),
+                            activity: r.activity(),
+                        }
                     }),
                     correlation_id: correlation_id.map(str::to_string),
+                    connect_report_endpoint: ki_relay.as_ref().map(|r| r.endpoint().to_string()),
                 },
             )
             .await;
 
-        // A cancelled prompt or a rejected one-time code must reach the desktop
-        // typed, not as an opaque "daemon exited" (#3375).
+        // A cancelled prompt, a rejected one-time code (#3375) or a classified
+        // connect failure such as a busy serial port (#3751) must reach the
+        // desktop typed, not as an opaque "daemon exited".
         if result.is_err() {
-            if let Some(kind) = ki_relay.as_ref().and_then(|r| r.failure()) {
-                result = Err(anyhow::Error::new(KiConnectFailure(kind)));
+            if let Some(typed) = ki_relay.as_ref().and_then(KiRelaySession::failure_error) {
+                result = Err(typed);
             }
         }
         drop(ki_relay);
@@ -1016,18 +1047,23 @@ impl SessionManager {
         result
     }
 
-    /// Start the keyboard-interactive prompt relay for an SSH session daemon
-    /// when a prompt-capable desktop is attached (#3375). `None` keeps the
-    /// daemon on the auto-answer-only behavior.
-    async fn start_ki_relay(&self, session_id: &str, type_id: &str) -> Option<KiRelaySession> {
-        if type_id != "ssh" || !self.ki_hub.is_available() {
-            return None;
-        }
+    /// Whether a daemon of `type_id` gets the keyboard-interactive prompt
+    /// relay: SSH only, and only while a prompt-capable desktop is attached
+    /// (#3375). Otherwise the daemon keeps the auto-answer-only behavior.
+    fn relays_prompts(&self, type_id: &str) -> bool {
+        type_id == "ssh" && self.ki_hub.is_available()
+    }
+
+    /// Start the per-launch relay a session daemon reports its connect failure
+    /// to (#3751) and, when [`relays_prompts`](Self::relays_prompts), sends its
+    /// prompts through. Best-effort: `None` if it cannot bind, and the launch
+    /// then just loses the typed failure reason.
+    async fn start_launch_relay(&self, session_id: &str) -> Option<KiRelaySession> {
         let endpoint = crate::daemon::transport::ki_prompt_endpoint(session_id);
         match KiRelaySession::start(self.ki_hub.clone(), session_id, endpoint).await {
             Ok(relay) => Some(relay),
             Err(e) => {
-                warn!("failed to start keyboard-interactive prompt relay for {session_id}: {e}");
+                warn!("failed to start the daemon launch relay for {session_id}: {e}");
                 None
             }
         }
@@ -1095,10 +1131,18 @@ impl SessionManager {
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         connection.connect(settings.clone()).await.map_err(|e| {
-            // Keep a cancelled prompt / rejected one-time code typed (#3375).
-            match KiFailureKind::from_session_error(&e) {
-                Some(kind) => anyhow::Error::new(KiConnectFailure(kind)),
-                None => anyhow::anyhow!("Connection failed: {e}"),
+            // Keep a cancelled prompt / rejected one-time code (#3375) and a
+            // classified connect failure (#3751) typed.
+            match (
+                KiFailureKind::from_session_error(&e),
+                e.connect_failure_kind(),
+            ) {
+                (Some(kind), _) => anyhow::Error::new(KiConnectFailure(kind)),
+                (None, Some(kind)) => anyhow::Error::new(ClassifiedConnectFailure {
+                    kind,
+                    message: format!("Connection failed: {e}"),
+                }),
+                (None, None) => anyhow::anyhow!("Connection failed: {e}"),
             }
         })?;
 
@@ -2400,6 +2444,23 @@ mod tests {
         );
         assert!(dispatch
             .contains("if p.takeover {\n            session_manager.reclaim(&p.session_id).await"));
+    }
+
+    /// The connect-failure report endpoint (#3751) is exported when set and
+    /// explicitly cleared otherwise, so an inherited value never leaks in.
+    #[test]
+    fn connect_report_endpoint_is_exported_or_cleared() {
+        let exe = std::path::Path::new("/usr/bin/termihub-agent");
+        let mut command = build_daemon_command(exe, "s", "serial", "/tmp/s.sock", 1, None, None);
+        export_connect_report_endpoint(&mut command, Some("/tmp/report.sock"));
+        assert!(command.get_envs().any(|(k, v)| {
+            k == CONNECT_REPORT_ENDPOINT_ENV && v == Some("/tmp/report.sock".as_ref())
+        }));
+        let mut command = build_daemon_command(exe, "s", "serial", "/tmp/s.sock", 1, None, None);
+        export_connect_report_endpoint(&mut command, None);
+        assert!(command
+            .get_envs()
+            .any(|(k, v)| k == CONNECT_REPORT_ENDPOINT_ENV && v.is_none()));
     }
 
     /// AGT-021: the spawned daemon command must never carry the connection

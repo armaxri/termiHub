@@ -8,8 +8,8 @@ export type OpenPort = { protocol: PortProtocol, localAddr: string,
 /**
  * Owning process ID, if available.
  */
-pid?: number, 
+pid?: number | null, 
 /**
  * Owning process name, if available.
  */
-process?: string, };
+process?: string | null, };

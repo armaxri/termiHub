@@ -73,6 +73,7 @@ fn parse_host_sessions_reply_maps_method_not_found_to_unsupported() {
     let old_agent = AgentRpcFailure {
         code: Some(errors::METHOD_NOT_FOUND),
         message: "Method not found".to_string(),
+        connect_failure: None,
     };
     let old = parse_host_sessions_reply(Err(old_agent.into_terminal_error()))
         .expect("an older agent is not an error");
@@ -83,6 +84,7 @@ fn parse_host_sessions_reply_maps_method_not_found_to_unsupported() {
     let reworded = AgentRpcFailure {
         code: Some(-32601),
         message: "Methode nicht gefunden".to_string(),
+        connect_failure: None,
     };
     let parsed =
         parse_host_sessions_reply(Err(reworded.into_terminal_error())).expect("classified by code");
@@ -92,6 +94,7 @@ fn parse_host_sessions_reply_maps_method_not_found_to_unsupported() {
     let same_text = AgentRpcFailure {
         code: Some(errors::INTERNAL_ERROR),
         message: "Method not found".to_string(),
+        connect_failure: None,
     };
     assert!(parse_host_sessions_reply(Err(same_text.into_terminal_error())).is_err());
 
@@ -116,6 +119,7 @@ fn agent_rpc_failure_maps_unsupported_codes_to_a_typed_error() {
         let err = AgentRpcFailure {
             code: Some(code),
             message: "nope".to_string(),
+            connect_failure: None,
         }
         .into_terminal_error();
         assert!(
@@ -129,6 +133,7 @@ fn agent_rpc_failure_maps_unsupported_codes_to_a_typed_error() {
     let generic = AgentRpcFailure {
         code: Some(errors::FILE_BROWSING_NOT_SUPPORTED),
         message: "Method not found".to_string(),
+        connect_failure: None,
     };
     assert!(matches!(
         generic.into_terminal_error(),
@@ -144,6 +149,7 @@ fn agent_rpc_failure_maps_the_held_code_to_a_typed_error() {
     let held = AgentRpcFailure {
         code: Some(termihub_core::protocol::errors::SESSION_HELD_BY_OTHER),
         message: "anything".to_string(),
+        connect_failure: None,
     };
     assert!(matches!(
         held.into_terminal_error(),
@@ -154,6 +160,7 @@ fn agent_rpc_failure_maps_the_held_code_to_a_typed_error() {
     let not_found = AgentRpcFailure {
         code: Some(termihub_core::protocol::errors::SESSION_NOT_FOUND),
         message: "Session is held by another desktop".to_string(),
+        connect_failure: None,
     };
     assert!(matches!(
         not_found.into_terminal_error(),
@@ -1659,6 +1666,7 @@ fn relayed_prompt_outcomes_map_to_typed_errors() {
     let cancelled = AgentRpcFailure {
         code: Some(AUTH_CANCELLED),
         message: "Authentication was cancelled".into(),
+        connect_failure: None,
     };
     assert!(matches!(
         cancelled.into_terminal_error(),
@@ -1667,11 +1675,86 @@ fn relayed_prompt_outcomes_map_to_typed_errors() {
     let otp = AgentRpcFailure {
         code: Some(SECOND_FACTOR_FAILED),
         message: "rejected".into(),
+        connect_failure: None,
     };
     assert!(matches!(
         otp.into_terminal_error(),
         TerminalError::SecondFactorFailed
     ));
+}
+
+/// The agent→desktop path for an agent-hosted connect failure (#3751): the
+/// exact error line a 0.18.0 agent writes for `connection.create` is parsed,
+/// and the typed kind reaches the IPC envelope `code` the overlay picks its
+/// hint from, with the human message unchanged.
+#[test]
+fn agent_hosted_connect_failure_kind_reaches_the_ipc_code() {
+    use crate::utils::errors::IpcErrorCode;
+    use termihub_core::errors::ConnectFailureKind as K;
+    let cases = [
+        (K::Timeout, IpcErrorCode::Timeout),
+        (K::AgentAuthFailed, IpcErrorCode::AgentAuthFailed),
+        (K::NotFound, IpcErrorCode::NotFound),
+        (K::PermissionDenied, IpcErrorCode::PermissionDenied),
+        (K::Busy, IpcErrorCode::Busy),
+    ];
+    for (kind, code) in cases {
+        let line = json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "error": {
+                "code": termihub_core::protocol::errors::SESSION_CREATION_FAILED,
+                "message": "Spawn failed: Serial port '/dev/ttyUSB0' is busy",
+                "data": { "connect_failure": kind.code() },
+            },
+        })
+        .to_string();
+        let crate::terminal::jsonrpc::JsonRpcMessage::Error {
+            code: rpc_code,
+            message,
+            data,
+            ..
+        } = crate::terminal::jsonrpc::parse_message(&line).unwrap()
+        else {
+            panic!("expected an error response");
+        };
+        let err = AgentRpcFailure::from_error_response(rpc_code, message, data.as_ref())
+            .into_terminal_error();
+        assert_eq!(err.code(), code);
+        let envelope = serde_json::to_value(&err).unwrap();
+        assert_eq!(envelope["code"], kind.code());
+        assert_eq!(
+            envelope["message"],
+            "Remote agent error: Spawn failed: Serial port '/dev/ttyUSB0' is busy"
+        );
+    }
+}
+
+/// An older agent sends no `data` (and a newer one may send a kind this build
+/// does not know): the failure keeps today's generic `remote_error`.
+#[test]
+fn agent_connect_failure_without_a_known_kind_stays_remote_error() {
+    use crate::utils::errors::IpcErrorCode;
+    let create_failed = Some(termihub_core::protocol::errors::SESSION_CREATION_FAILED);
+    for data in [
+        None,
+        Some(json!({})),
+        Some(json!({ "connect_failure": "from_the_future" })),
+    ] {
+        let err = AgentRpcFailure::from_error_response(
+            create_failed,
+            "Daemon exited before its endpoint was ready".into(),
+            data.as_ref(),
+        )
+        .into_terminal_error();
+        assert!(matches!(err, TerminalError::RemoteError(_)));
+        assert_eq!(err.code(), IpcErrorCode::RemoteError);
+        let envelope = serde_json::to_value(&err).unwrap();
+        assert_eq!(
+            envelope["message"],
+            "Remote agent error: Daemon exited before its endpoint was ready"
+        );
+    }
 }
 
 /// Answers for a dropped agent's rounds are secrets for a round that no

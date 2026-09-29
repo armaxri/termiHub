@@ -14,7 +14,6 @@ import type { CustomLanguageGrammar } from "./generated/CustomLanguageGrammar";
 import type { UpdateSettings } from "./generated/UpdateSettings";
 import type { AppSettings } from "./generated/AppSettings";
 import type { AgentCapabilities } from "./generated/AgentCapabilities";
-import type { SavedContainerRuntime, SpawnKind } from "./spawn";
 
 /**
  * Live state of a single in-flight SFTP transfer, keyed by its `transferId` in
@@ -251,129 +250,17 @@ export const LAYOUT_PRESETS: Record<string, LayoutConfig> = {
   },
 };
 
-/** Windows context-menu visibility for a shell-integration entry. */
-export type ShellEntryVisibility = "always" | "extended";
-
-/** Fallback behaviour when no shell-integration entry resolves a spawn request. */
-export type ShellIntegrationFallback = "picker" | "systemDefaultShell";
-
-/** Which right-click targets a shell-integration entry is offered for. */
-export interface ShowForTargets {
-  /** Right-click on a folder. */
-  folders: boolean;
-  /** Right-click on a file (opens a terminal in the parent directory). */
-  files: boolean;
-  /** Right-click on the folder background (empty space). */
-  folderBackground: boolean;
-}
-
-/** A single configurable "Open in termiHub" quick-access entry. */
-export interface ShellEntry {
-  /** Stable identifier embedded in the registered command (`--entry-id`). */
-  id: string;
-  /** Display name shown in the file-manager context menu. */
-  name: string;
-  /** Saved connection this entry opens. Omitted → the entry shows the session picker. */
-  connectionId?: string;
-  /** Windows context-menu visibility (Always / Extended-only). */
-  visibility: ShellEntryVisibility;
-  /** Which right-click targets this entry is registered for. */
-  showFor: ShowForTargets;
-  /**
-   * Saved per-entry container-image preference (e.g. `"alpine:3"`). Used when
-   * this entry opens a "new container" spawn and no explicit `--container-image`
-   * is given, ahead of the built-in default. Omitted → no saved preference.
-   */
-  containerImage?: string;
-  /**
-   * Saved per-entry in-container mount-target preference (e.g. `"/src"`). Same
-   * priority as {@link containerImage}: honored for a container spawn when no
-   * explicit `--container-mount` is given.
-   */
-  containerMount?: string;
-  /**
-   * The kind of session this entry opens — written by the Session Picker's
-   * "Remember this choice" (#1561). `"auto"` (the default) means no remembered
-   * choice, keeping the presence-based inference. Anything else is emitted as
-   * `--kind <token>` at registration time and pins how a context-menu click
-   * resolves.
-   */
-  spawnKind?: SpawnKind;
-  /**
-   * Saved per-entry shell preference in the backend's single-string encoding: a
-   * local shell name (`"zsh"`) or a WSL distribution as `"wsl:<distro>"`.
-   * Honored for a local/WSL spawn when no explicit shell is passed.
-   */
-  shell?: string;
-  /**
-   * Saved per-entry container-runtime preference — the Docker/Podman section the
-   * user picked. `"auto"` (the default) keeps detecting whichever runtime is
-   * installed.
-   */
-  containerRuntime?: SavedContainerRuntime;
-}
-
-/** Linux per-file-manager install toggles (Linux-only in effect). */
-export interface LinuxFileManagerToggles {
-  /** Install Nautilus (GNOME) scripts. */
-  nautilus: boolean;
-  /** Install the KDE (Dolphin) service menu. */
-  kde: boolean;
-  /** Install the Thunar (XFCE) custom action. */
-  thunar: boolean;
-}
-
-/** Persisted shell context-menu / CLI-spawn integration settings (epic #1363). */
-export interface ShellIntegrationSettings {
-  /** Configured quick-access entries, in display / priority order. */
-  entries: ShellEntry[];
-  /** What to do when no entry resolves a request. */
-  fallback: ShellIntegrationFallback;
-  /** Open spawned sessions in a new window instead of the running instance. */
-  openInNewWindow: boolean;
-  /** Whether the OS context-menu integration is currently registered. */
-  registered: boolean;
-  /** Absolute executable path recorded at registration time (staleness check). */
-  registeredExePath?: string;
-  /** Linux per-file-manager install toggles. */
-  linuxFileManagers: LinuxFileManagerToggles;
-  /** Whether the user dismissed the first-launch install banner. */
-  firstLaunchBannerDismissed: boolean;
-}
-
-/** A file manager detected on the host, reported by the status command. */
-export interface DetectedFileManager {
-  /** Stable id (`"nautilus"`, `"kde"`, `"thunar"`, …). */
-  id: string;
-  /** Human-readable display name. */
-  name: string;
-  /** Whether the manager was found on this host. */
-  detected: boolean;
-  /** Detected version string, when known. */
-  version?: string;
-}
-
-/** Registration + staleness status reported to the shell-integration settings UI. */
-export interface ShellIntegrationStatus {
-  /** Whether the OS context-menu integration is currently registered. */
-  registered: boolean;
-  /** Executable path recorded at registration time, if any. */
-  registeredExePath?: string;
-  /** The current executable path, if resolvable. */
-  currentExePath?: string;
-  /** Whether the registered path matches the current executable. */
-  exePathMatches: boolean;
-  /** True when registered but the executable moved — re-registration needed. */
-  stale: boolean;
-  /** Whether the app runs in portable mode (where staleness is expected). */
-  portable: boolean;
-  /**
-   * File managers detected on the host. On Linux this lists Nautilus, Dolphin
-   * (KDE) and Thunar with their versions where available; on macOS/Windows the
-   * native manager (Finder / File Explorer).
-   */
-  detectedFileManagers: DetectedFileManager[];
-}
+// Shell context-menu / CLI-spawn integration settings and status (epic #1363),
+// generated from `src-tauri/src/connection/shell_integration.rs` via ts-rs
+// (audit DUP-030, #3088).
+export type { ShellEntryVisibility } from "./generated/ShellEntryVisibility";
+export type { ShellIntegrationFallback } from "./generated/ShellIntegrationFallback";
+export type { ShowForTargets } from "./generated/ShowForTargets";
+export type { ShellEntry } from "./generated/ShellEntry";
+export type { LinuxFileManagerToggles } from "./generated/LinuxFileManagerToggles";
+export type { ShellIntegrationSettings } from "./generated/ShellIntegrationSettings";
+export type { DetectedFileManager } from "./generated/DetectedFileManager";
+export type { ShellIntegrationStatus } from "./generated/ShellIntegrationStatus";
 
 // Generated from the Rust `AppSettings` (`src-tauri/src/connection/settings.rs`)
 // via ts-rs (audit DUP-030, #3802). Frontend-owned shapes the backend stores
@@ -381,62 +268,26 @@ export interface ShellIntegrationStatus {
 // through ts-rs overrides that point back at their frontend definitions.
 export type { AppSettings };
 
-/** Result of an update check returned from the backend. */
-export interface UpdateInfo {
-  available: boolean;
-  latestVersion: string;
-  releaseUrl: string;
-  releaseNotes: string;
-  isSecurity: boolean;
-}
+/** Result of an update check (generated from `commands/update.rs` via ts-rs). */
+export type { UpdateInfo } from "./generated/UpdateInfo";
 
-/** Current app mode returned by the backend. */
-export interface AppModeInfo {
-  isPortable: boolean;
-  /** Absolute path to the portable data directory, or null in installed mode. */
-  dataDir: string | null;
-}
+/** Current app mode (generated from `commands/portable.rs` via ts-rs). */
+export type { AppModeInfo } from "./generated/AppModeInfo";
 
-/** Status of a single config file in a directory. */
-export interface ConfigFileStatus {
-  name: string;
-  present: boolean;
-}
+/** Status of a single config file in a directory (generated via ts-rs). */
+export type { ConfigFileStatus } from "./generated/ConfigFileStatus";
 
-/** Result of a config export or import operation. */
-export interface ConfigMigrationResult {
-  filesCopied: string[];
-  warnings: string[];
-}
+/** Result of a config export or import operation (generated via ts-rs). */
+export type { ConfigMigrationResult } from "./generated/ConfigMigrationResult";
 
-export interface FileEntry {
-  name: string;
-  path: string;
-  isDirectory: boolean;
-  size: number;
-  modified: string;
-  permissions: string | null;
-  /**
-   * Cheap, conservative writability hint derived from `permissions`:
-   * `false` only when no class may write, `true` when at least one may,
-   * `null` when unknown (permissions absent or the backend does not derive it,
-   * e.g. local/docker/agent browsers). The authoritative per-file answer comes
-   * from the `sftp_check_writable` command.
-   */
-  writable: boolean | null;
-  /**
-   * True when this entry is a symbolic link. Populated by backends that can tell
-   * cheaply (the FTP listing parser and the local/SFTP browsers); `false`
-   * otherwise. Optional so payloads persisted before the field existed decode.
-   */
-  isSymlink?: boolean;
-  /**
-   * The link target when the backend could determine it cheaply (e.g. the
-   * `-> target` suffix of a Unix `ls -l` FTP line). `null`/absent for non-links
-   * and for formats that do not carry a target (MLSD `type=link`, SFTP readdir).
-   */
-  symlinkTarget?: string | null;
-}
+/**
+ * A file browser directory entry, generated from the core `FileEntry`
+ * (`core/src/files/mod.rs`) via ts-rs. `writable` is a cheap, conservative hint
+ * (`null` when unknown); the authoritative per-file answer comes from the
+ * `sftp_check_writable` command. `isSymlink`/`symlinkTarget` are optional so
+ * payloads persisted before those fields existed still decode.
+ */
+export type { FileEntry } from "./generated/FileEntry";
 
 /**
  * Authoritative writability of a specific remote file, decided by a

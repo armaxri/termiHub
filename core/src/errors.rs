@@ -64,7 +64,12 @@ pub fn with_code(code: &str, message: impl std::fmt::Display) -> String {
 /// SSH agent socket refusing) — so consumers never have to recover it by
 /// matching English or OS-localized message text. The frontend's connection
 /// overlay picks its per-backend hint from `(backend family, kind)` alone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Serializes as its [`code`](Self::code) slug, which is how an agent carries
+/// the kind of an agent-hosted connect failure to the desktop in the
+/// `connection.create` error `data` (protocol 0.18.0, #3751).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ConnectFailureKind {
     /// The connect/handshake did not finish within its deadline.
     Timeout,
@@ -101,6 +106,13 @@ impl ConnectFailureKind {
             Self::PermissionDenied => "permission_denied",
             Self::Busy => "busy",
         }
+    }
+
+    /// The kind named by a wire slug (the inverse of [`code`](Self::code)), or
+    /// `None` for a slug this build does not know — e.g. a kind added by a
+    /// newer peer, which the consumer then treats as unclassified.
+    pub fn from_code(code: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.code() == code)
     }
 }
 
@@ -290,6 +302,21 @@ mod tests {
         );
         assert_eq!(ConnectFailureKind::Busy.code(), "busy");
         assert_eq!(with_code("busy", "held"), "[thub-code:busy] held");
+    }
+
+    /// The serde wire name of every kind is its `code()` slug, and `from_code`
+    /// inverts it, so the agent's `connection.create` error data and the
+    /// desktop's IPC code agree on one spelling (#3751).
+    #[test]
+    fn connect_failure_kind_serde_name_is_its_code() {
+        for kind in ConnectFailureKind::ALL {
+            let json = serde_json::to_value(kind).expect("serialize");
+            assert_eq!(json, serde_json::Value::String(kind.code().to_string()));
+            let back: ConnectFailureKind = serde_json::from_value(json).expect("deserialize");
+            assert_eq!(back, kind);
+            assert_eq!(ConnectFailureKind::from_code(kind.code()), Some(kind));
+        }
+        assert_eq!(ConnectFailureKind::from_code("frobnicated"), None);
     }
 
     #[test]

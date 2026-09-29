@@ -5,7 +5,7 @@
  *
  * This and [`HttpCheckResult`] / [`HttpMonitorState`] generate the frontend
  * DTOs via ts-rs (audit DUP-030, #3802); see `crate::network::types` for the
- * `Option` → `field?: T` convention used.
+ * `Option` → `field?: T | null` convention used.
  */
 export type HttpMonitorConfig = { id: string, url: string, intervalMs: number, method: string, expectedStatus: number, timeoutMs: number, 
 /**
