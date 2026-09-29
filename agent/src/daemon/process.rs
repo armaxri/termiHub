@@ -420,7 +420,18 @@ async fn daemon_loop(
     // detach — starts the clock without having to remember to.
     let mut detached_since: Option<tokio::time::Instant> = None;
 
+    // Newcomers that connected while a worker held the session, each on its
+    // own task reading the attach intent (#3928): a slow newcomer never stalls
+    // this loop, and its intent is decided here against the session as it is
+    // when the intent arrives. Dropped with the loop, so no read outlives it.
+    let mut pending_intents: tokio::task::JoinSet<Option<Newcomer>> = tokio::task::JoinSet::new();
+
     loop {
+        // A connection that is ready to be decided this turn: taken straight
+        // from accept when nobody holds the session, or once its intent read
+        // finishes.
+        let mut arrived: Option<Newcomer> = None;
+
         detached_since = next_detached_since(agent_writer.is_some(), detached_since);
         monitor_owner = release_monitor_if_unheld(
             monitor_owner,
@@ -493,106 +504,37 @@ async fn daemon_loop(
             // New agent connection
             conn = listener.accept() => {
                 match conn {
-                    Ok((mut read_half, write_half)) => {
+                    Ok((read_half, write_half)) => {
                         info!(session_id, "Agent connected");
-
-                        // AGT-015: `state.json` is shared per-user across every
-                        // `--stdio` worker (one per attached desktop, ADR-11). A
-                        // worker recovering sessions on startup must never evict a
-                        // session another *live* worker is actively attached to —
-                        // otherwise opening a second desktop steals the first
-                        // desktop's live terminals. When a writer is already
-                        // attached, consult the newcomer's declared intent: a
-                        // recovery connect is refused (its live owner keeps the
-                        // session); a takeover connect evicts as before.
-                        let decision = if agent_writer.is_some() {
-                            let intent = read_attach_intent(&mut read_half).await;
-                            decide_attach(true, intent)
+                        if agent_writer.is_none() {
+                            // Nobody to protect: attach at once. The intent,
+                            // if sent, is skipped by the reader task.
+                            arrived = Some(Newcomer { read_half, write_half, intent: None });
+                        } else if pending_intents.len() >= MAX_PENDING_INTENTS {
+                            // Never evict on a flood of silent connects: the
+                            // safe answer to one too many is a refusal.
+                            warn!(
+                                session_id,
+                                "Refusing a connect: too many newcomers still owe their \
+                                 attach intent"
+                            );
+                            tokio::spawn(refuse_connection(read_half, write_half));
                         } else {
-                            AttachDecision::FreshAttach
-                        };
-                        match decision {
-                            AttachDecision::RefuseOwnedByLivePeer => {
-                                // OBS-012: log the ownership decision so a
-                                // "my session vanished" report is explicable —
-                                // here the incumbent live writer keeps it.
-                                info!(
-                                    session_id,
-                                    "Refusing recovery connect: a live writer is still \
-                                     attached, leaving the session with its owner (AGT-015)"
-                                );
-                                // Off the loop, bounded (#3890): the refused
-                                // peer may not be reading either.
-                                tokio::spawn(refuse_connection(read_half, write_half));
-                                // Keep the existing writer and do NOT bump the
-                                // generation; the refused connection is closed
-                                // once the refused worker has read the refusal.
-                                continue;
-                            }
-                            AttachDecision::EvictAndTakeover => {
-                                // OBS-012: a takeover is about to displace the
-                                // current live writer (another desktop taking the
-                                // session over). Record it at WARN so the loser's
-                                // "session disappeared" is traceable to a
-                                // deliberate takeover, not a crash.
-                                warn!(
-                                    session_id,
-                                    "Takeover connect is evicting the current live writer \
-                                     for this session (OBS-012)"
-                                );
-                                // SM-003 (single-attach): tell the incumbent it was
-                                // evicted *before* its connection is dropped below,
-                                // so its desktop folds an explicit "taken over"
-                                // state rather than an ambiguous drop.
-                                notify_evicted(&mut agent_writer);
-                            }
-                            AttachDecision::FreshAttach => {}
+                            pending_intents.spawn(read_newcomer_intent(read_half, write_half));
                         }
-
-                        // Bump the generation so any in-flight Disconnected from
-                        // the previous connection is treated as stale.
-                        connection_gen += 1;
-                        let gen = connection_gen;
-
-                        // Drop the old connection (its writer task is aborted)
-                        drop(agent_writer.take());
-                        abort_reader(&mut reader_task);
-                        while agent_cmd_rx.try_recv().is_ok() {}
-                        // Its unfinished writes will never get their data.
-                        uploads.clear();
-
-                        // The handshake goes through the worker's queue like
-                        // everything after it (#3890), so even a 16 MiB replay
-                        // to a newcomer that never reads cannot stall the loop;
-                        // a failed handshake surfaces as a finished sink.
-                        let sink = WorkerSink::spawn(write_half);
-
-                        // Send buffer replay
-                        let buffered = ring_buffer.read_all();
-                        if !buffered.is_empty() {
-                            sink.send(MSG_BUFFER_REPLAY, &buffered);
-                        }
-
-                        // Advertise optional features before Ready (#3210). A
-                        // pre-#3210 worker skips the unknown handshake frame.
-                        if capability_flags != 0 {
-                            sink.send(MSG_CAPABILITIES, &[capability_flags]);
-                        }
-
-                        // Send ready signal
-                        sink.send(MSG_READY, &[]);
-
-                        agent_writer = Some(sink);
-
-                        // Spawn reader task for agent commands
-                        let tx = agent_cmd_tx.clone();
-                        reader_task = Some(tokio::spawn(async move {
-                            agent_reader_loop(read_half, tx, gen).await;
-                        }));
                     }
                     Err(e) => {
                         warn!("Listener accept error: {e}");
                     }
+                }
+            }
+
+            // A newcomer's attach intent is in (#3928), or its bound passed.
+            Some(joined) = pending_intents.join_next() => {
+                match joined {
+                    Ok(Some(newcomer)) => arrived = Some(newcomer),
+                    Ok(None) => debug!("A newcomer hung up before declaring its intent"),
+                    Err(e) => warn!("Attach-intent read failed: {e}"),
                 }
             }
 
@@ -747,6 +689,104 @@ async fn daemon_loop(
                 }
             }
         }
+
+        let Some(Newcomer {
+            read_half,
+            write_half,
+            intent,
+        }) = arrived
+        else {
+            continue;
+        };
+        // AGT-015: `state.json` is shared per-user across every `--stdio` worker
+        // (one per attached desktop, ADR-11). A worker recovering sessions on
+        // startup must never evict a session another *live* worker is actively
+        // attached to — otherwise opening a second desktop steals the first
+        // desktop's live terminals. When a writer is attached, consult the
+        // newcomer's declared intent: a recovery connect is refused (its live
+        // owner keeps the session); a takeover connect evicts as before.
+        //
+        // The intent was read off the loop (#3928), so decide against whether a
+        // writer is attached *now*: the holder may have left meanwhile.
+        let decision = decide_attach(agent_writer.is_some(), intent.unwrap_or(INTENT_TAKEOVER));
+        match decision {
+            AttachDecision::RefuseOwnedByLivePeer => {
+                // OBS-012: log the ownership decision so a
+                // "my session vanished" report is explicable —
+                // here the incumbent live writer keeps it.
+                info!(
+                    session_id,
+                    "Refusing recovery connect: a live writer is still \
+                     attached, leaving the session with its owner (AGT-015)"
+                );
+                // Off the loop, bounded (#3890): the refused
+                // peer may not be reading either.
+                tokio::spawn(refuse_connection(read_half, write_half));
+                // Keep the existing writer and do NOT bump the
+                // generation; the refused connection is closed
+                // once the refused worker has read the refusal.
+                continue;
+            }
+            AttachDecision::EvictAndTakeover => {
+                // OBS-012: a takeover is about to displace the
+                // current live writer (another desktop taking the
+                // session over). Record it at WARN so the loser's
+                // "session disappeared" is traceable to a
+                // deliberate takeover, not a crash.
+                warn!(
+                    session_id,
+                    "Takeover connect is evicting the current live writer \
+                     for this session (OBS-012)"
+                );
+                // SM-003 (single-attach): tell the incumbent it was
+                // evicted *before* its connection is dropped below,
+                // so its desktop folds an explicit "taken over"
+                // state rather than an ambiguous drop.
+                notify_evicted(&mut agent_writer);
+            }
+            AttachDecision::FreshAttach => {}
+        }
+
+        // Bump the generation so any in-flight Disconnected from
+        // the previous connection is treated as stale.
+        connection_gen += 1;
+        let gen = connection_gen;
+
+        // Drop the old connection (its writer task is aborted)
+        drop(agent_writer.take());
+        abort_reader(&mut reader_task);
+        while agent_cmd_rx.try_recv().is_ok() {}
+        // Its unfinished writes will never get their data.
+        uploads.clear();
+
+        // The handshake goes through the worker's queue like
+        // everything after it (#3890), so even a 16 MiB replay
+        // to a newcomer that never reads cannot stall the loop;
+        // a failed handshake surfaces as a finished sink.
+        let sink = WorkerSink::spawn(write_half);
+
+        // Send buffer replay
+        let buffered = ring_buffer.read_all();
+        if !buffered.is_empty() {
+            sink.send(MSG_BUFFER_REPLAY, &buffered);
+        }
+
+        // Advertise optional features before Ready (#3210). A
+        // pre-#3210 worker skips the unknown handshake frame.
+        if capability_flags != 0 {
+            sink.send(MSG_CAPABILITIES, &[capability_flags]);
+        }
+
+        // Send ready signal
+        sink.send(MSG_READY, &[]);
+
+        agent_writer = Some(sink);
+
+        // Spawn reader task for agent commands
+        let tx = agent_cmd_tx.clone();
+        reader_task = Some(tokio::spawn(async move {
+            agent_reader_loop(read_half, tx, gen).await;
+        }));
     }
 }
 
@@ -1077,24 +1117,64 @@ fn decide_attach(writer_attached: bool, intent: u8) -> AttachDecision {
     }
 }
 
-/// How long a newcomer has to declare its [`MSG_ATTACH_INTENT`] before it is
-/// treated as a pre-AGT-015 worker (which never sends one).
-const ATTACH_INTENT_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long a newcomer that connects while a worker holds the session has to
+/// declare its [`MSG_ATTACH_INTENT`] before it is taken for a pre-AGT-015
+/// worker, which never sends one and so falls back to a takeover.
+///
+/// A current worker writes its intent right after connecting, so this bound is
+/// only ever reached by a worker that is descheduled between the two — and a
+/// recovery worker misread that way would evict the live holder (#3928). The
+/// read runs off the daemon loop, so the bound costs nobody else anything and
+/// can be generous: it is 2.5× the historical inline 2 s that CI load was seen
+/// to exceed. It must stay well under the worker's own 15 s wait for
+/// `MSG_READY` (unchanged since before AGT-015), so a legacy takeover still
+/// completes.
+const ATTACH_INTENT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How many newcomers may be owed their attach intent at once. Past this, a
+/// further connect is refused rather than read: a flood of silent connects must
+/// neither grow without bound nor end in an eviction.
+const MAX_PENDING_INTENTS: usize = 8;
+
+/// A newly-accepted worker connection, ready to be decided by the loop.
+struct Newcomer {
+    read_half: BoxedReader,
+    write_half: BoxedWriter,
+    /// Its declared attach intent; `None` when it was attached without one
+    /// because no writer held the session.
+    intent: Option<u8>,
+}
+
+/// Read a newcomer's attach intent off the daemon loop (#3928) and hand the
+/// connection back for the loop to decide. `None` if it hung up first.
+async fn read_newcomer_intent(
+    mut read_half: BoxedReader,
+    write_half: BoxedWriter,
+) -> Option<Newcomer> {
+    let intent = read_attach_intent(&mut read_half).await?;
+    Some(Newcomer {
+        read_half,
+        write_half,
+        intent: Some(intent),
+    })
+}
 
 /// Read a newly-connected worker's [`MSG_ATTACH_INTENT`] to learn whether it is
 /// a recovery connect (refuse if a live writer is attached) or a takeover.
 ///
-/// The current worker always sends this frame first, so the read returns
-/// immediately. Defaults to [`INTENT_TAKEOVER`] — preserving the historical
-/// evict-on-accept behavior — if the frame is absent, malformed, or does not
-/// arrive within a short window (a pre-AGT-015 worker never sends it). The short
-/// timeout also bounds how long the daemon's event loop can stall here.
-async fn read_attach_intent(reader: &mut BoxedReader) -> u8 {
+/// The current worker always sends this frame first, so the read normally
+/// returns at once. Defaults to [`INTENT_TAKEOVER`] — preserving the historical
+/// evict-on-accept behaviour — if the first frame is another one, or if none
+/// arrives within [`ATTACH_INTENT_TIMEOUT`] (a pre-AGT-015 worker never sends
+/// it). Returns `None` if the connection ends or fails first: there is nobody
+/// to hand the session to, so a vanished newcomer must never evict the holder.
+async fn read_attach_intent(reader: &mut BoxedReader) -> Option<u8> {
     match tokio::time::timeout(ATTACH_INTENT_TIMEOUT, protocol::read_frame_async(reader)).await {
         Ok(Ok(Some(frame))) if frame.msg_type == MSG_ATTACH_INTENT => {
-            frame.payload.first().copied().unwrap_or(INTENT_TAKEOVER)
+            Some(frame.payload.first().copied().unwrap_or(INTENT_TAKEOVER))
         }
-        _ => INTENT_TAKEOVER,
+        Ok(Ok(Some(_))) | Err(_) => Some(INTENT_TAKEOVER),
+        Ok(Ok(None)) | Ok(Err(_)) => None,
     }
 }
 
