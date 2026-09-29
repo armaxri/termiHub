@@ -46,6 +46,7 @@ jobs:
       harness: ${{ steps.detect.outputs.harness }}
       markdown: ${{ steps.detect.outputs.markdown }}
       agent: ${{ steps.detect.outputs.agent }}
+      workflows: ${{ steps.detect.outputs.workflows }}
       test_matrix: ${{ steps.detect.outputs.test_matrix }}
 
     steps:
@@ -603,6 +604,59 @@ jobs:
       - name: Headless smoke of shell scripts (--help paths)
         run: ./scripts/internal/check-script-headless.sh
 
+  # Workflow lint (#3327). actionlint type-checks every workflow under
+  # .github/workflows (expressions, `needs`/outputs wiring, runner labels,
+  # action inputs) and runs shellcheck over each `run:` script. Nothing linted
+  # workflow files before, so shell bugs in release-only steps (quoting,
+  # `ls | grep`) sat unseen until the rare run that exercised them. BLOCKING;
+  # PR lane only when .github/ changes (the `workflows` area), post-merge always.
+  #
+  # Both binaries are pinned and SHA256-verified (same rationale as the
+  # shellcheck pin above and the cross-rs pin in release.yml, CI-004): a floating
+  # version would let a new release add a finding that reds every workflow PR.
+  # shellcheck matches the Shell Script Quality job's v0.11.0. Fix findings; an
+  # inline `# shellcheck disable=` needs a written reason next to it.
+  actionlint:
+    name: Workflow Lint (actionlint)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.workflows != 'false' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Install pinned actionlint and shellcheck
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+          ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+          SHELLCHECK_VERSION: "0.11.0"
+          SHELLCHECK_SHA256: "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/lint-bin"
+          mkdir -p "$bin"
+          al="$RUNNER_TEMP/actionlint.tar.gz"
+          curl -fsSL -o "$al" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  $al" | sha256sum -c -
+          tar xzf "$al" -C "$bin" actionlint
+          sc="$RUNNER_TEMP/shellcheck.tar.xz"
+          curl -fsSL -o "$sc" \
+            "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          echo "${SHELLCHECK_SHA256}  $sc" | sha256sum -c -
+          tar xJf "$sc" -C "$bin" --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          echo "$bin" >> "$GITHUB_PATH"
+
+      - name: Run actionlint
+        run: |
+          set -euo pipefail
+          shellcheck --version
+          actionlint -version
+          # -shellcheck pins the binary we verified above rather than whatever
+          # the runner image has on PATH first.
+          actionlint -color -shellcheck "$RUNNER_TEMP/lint-bin/shellcheck"
+
   # Windows .cmd smoke (#3340). The Shell Script Quality job above runs on
   # Ubuntu, so it can compare the flags a .cmd parses but never RUNS one. This
   # cheap job (no Rust/Node setup, no build) executes build-agents.cmd's
@@ -1099,6 +1153,7 @@ jobs:
       - rdp-sidecar-quality
       - frontend-quality
       - shellcheck
+      - actionlint
       - cmd-scripts-windows
       - tests
       - agent-live-windows
