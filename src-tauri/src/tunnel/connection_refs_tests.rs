@@ -199,7 +199,10 @@ fn a_bulk_delete_cascades_to_every_referencing_tunnel() {
             "{id} references a deleted connection"
         );
     }
-    assert!(control.is_running("t4"), "the unrelated tunnel keeps running");
+    assert!(
+        control.is_running("t4"),
+        "the unrelated tunnel keeps running"
+    );
     assert_eq!(refs.resting_status(&control.config("t4")), None);
 }
 
@@ -257,6 +260,38 @@ fn a_connection_that_comes_back_resolves_the_tunnel() {
     refs.reconcile(ids(&["ext-ssh"]), &control);
 
     assert!(!refs.is_unresolved("ext-ssh"));
+}
+
+#[test]
+fn an_unreadable_connection_file_is_not_a_delete() {
+    // A transient parse failure drops the file's rows from the view, but its
+    // connections were not deleted: the tunnel keeps running and resolved.
+    let refs = ConnectionRefs::default();
+    let control = FakeControl::new(vec![tunnel("t1", "ext-ssh")], &["t1"]);
+    refs.reconcile(
+        LiveConnections {
+            ids: vec![("ext-ssh".to_string(), Some("/shared.json".to_string()))],
+            unreadable_files: HashSet::new(),
+        },
+        &control,
+    );
+
+    let stopped = refs.reconcile(
+        LiveConnections {
+            ids: Vec::new(),
+            unreadable_files: ids(&["/shared.json"]),
+        },
+        &control,
+    );
+
+    assert!(stopped.is_empty());
+    assert!(control.is_running("t1"));
+    assert!(!refs.is_unresolved("ext-ssh"));
+
+    // Once the file loads again without the connection, it was deleted.
+    let stopped = refs.reconcile(LiveConnections::default(), &control);
+    assert_eq!(stopped, vec!["t1".to_string()]);
+    assert!(refs.is_unresolved("ext-ssh"));
 }
 
 // ── The `tunnels` projection ─────────────────────────────────────────────────
