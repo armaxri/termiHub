@@ -268,6 +268,24 @@ pub trait ConnectionType: Send {
     /// Returns `None` when [`Capabilities::file_browser`] is `false`.
     fn file_browser(&self) -> Option<&dyn FileBrowser>;
 
+    /// An owned, shareable handle to this connection's file browser, if the
+    /// type supports file browsing (#3242).
+    ///
+    /// The analogue of [`process_manager`](Self::process_manager) and
+    /// [`monitoring_handle`](Self::monitoring_handle): an agent session
+    /// daemon and the agent's in-process sessions clone it out from under the
+    /// lock that guards the connection, then `await` a possibly slow SFTP /
+    /// FTP / `docker exec` round-trip without holding that lock (CONC-007).
+    ///
+    /// **Contract:** a backend that returns `Some` from
+    /// [`file_browser`](Self::file_browser) and can be hosted by an agent
+    /// should return the same browser here. The default returns `None`, so a
+    /// backend without it is reported as "file browsing not supported" when
+    /// agent-hosted; the SSH (SFTP), Docker, FTP and WSL backends override it.
+    fn file_browser_handle(&self) -> Option<Arc<dyn FileBrowser + Send + Sync>> {
+        None
+    }
+
     /// An owned, shareable handle to this connection's process manager
     /// (PROD-0028), if the type supports listing / terminating processes.
     ///

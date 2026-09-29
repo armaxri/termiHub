@@ -81,7 +81,7 @@ pub struct Ssh {
     /// (CONC-007).
     monitoring_provider: Option<Arc<SshMonitoringProvider>>,
     /// File browser provider (SFTP), created on connect.
-    file_browser_provider: Option<SftpFileBrowser>,
+    file_browser_provider: Option<Arc<SftpFileBrowser>>,
     /// Process manager (list / kill via SSH exec), created on connect
     /// (PROD-0028). Held in an `Arc` so [`process_manager`](ConnectionType::process_manager)
     /// hands out an owned clone that keeps the cached exec session alive across
@@ -800,7 +800,7 @@ impl ConnectionType for Ssh {
         // Create monitoring, file browser, and process-manager providers.
         self.monitoring_provider = Some(Arc::new(SshMonitoringProvider::new(config.clone())));
         self.process_manager = Some(Arc::new(process::ssh_process_manager(config.clone())));
-        self.file_browser_provider = Some(SftpFileBrowser::new(config));
+        self.file_browser_provider = Some(Arc::new(SftpFileBrowser::new(config)));
 
         self.state = Some(ConnectedState {
             write: handle.write,
@@ -884,7 +884,13 @@ impl ConnectionType for Ssh {
     fn file_browser(&self) -> Option<&dyn FileBrowser> {
         self.file_browser_provider
             .as_ref()
-            .map(|p| p as &dyn FileBrowser)
+            .map(|p| p.as_ref() as &dyn FileBrowser)
+    }
+
+    fn file_browser_handle(&self) -> Option<Arc<dyn FileBrowser + Send + Sync>> {
+        self.file_browser_provider
+            .as_ref()
+            .map(|p| p.clone() as Arc<dyn FileBrowser + Send + Sync>)
     }
 
     fn process_manager(&self) -> Option<Arc<dyn ProcessManager + Send + Sync>> {
@@ -1095,6 +1101,7 @@ mod tests {
     fn file_browser_none_when_disconnected() {
         let ssh = Ssh::new();
         assert!(ssh.file_browser().is_none());
+        assert!(ssh.file_browser_handle().is_none());
     }
 
     // --- Schema tests ---
