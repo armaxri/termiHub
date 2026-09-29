@@ -52,7 +52,7 @@ async function render() {
 }
 
 /** Update the store while the palette is mounted, flushing the re-render in `act()`. */
-function setStore(partial: Parameters<typeof useAppStore.setState>[0]) {
+function setStore(partial: Partial<ReturnType<typeof useAppStore.getState>>) {
   act(() => {
     useAppStore.setState(partial);
   });
