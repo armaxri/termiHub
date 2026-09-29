@@ -18,7 +18,7 @@ use tauri::AppHandle;
 
 use super::persist::{
     FolderPasteEndpoint, FolderPasteOperation, PersistedDockerTarget, PersistedFolderPaste,
-    PersistedTransfer, PersistedTransferStatus, PersistedTransferStore,
+    PersistedRemoteSource, PersistedTransfer, PersistedTransferStatus, PersistedTransferStore,
 };
 use super::persist_storage::TransferPersistenceStorage;
 use super::TransferDirection;
@@ -173,6 +173,23 @@ impl TransferPersistenceManager {
         };
         entry.docker = Some(PersistedDockerTarget {
             container_id: container_id.to_string(),
+        });
+        store.upsert(entry);
+        self.schedule_write(&store);
+    }
+
+    /// Attach the source endpoint of a remote-to-remote copy to a registered
+    /// transfer (#3206), so a relaunch after a restart can re-attach both
+    /// sessions. References and paths only — never credentials. A no-op for
+    /// an unknown id (never fabricates a record).
+    pub fn record_remote_source(&self, transfer_id: &str, session_id: &str, path: &str) {
+        let mut store = self.lock();
+        let Some(mut entry) = store.get(transfer_id).cloned() else {
+            return;
+        };
+        entry.remote_source = Some(PersistedRemoteSource {
+            session_id: session_id.to_string(),
+            path: path.to_string(),
         });
         store.upsert(entry);
         self.schedule_write(&store);

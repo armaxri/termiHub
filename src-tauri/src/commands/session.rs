@@ -934,6 +934,7 @@ fn spawn_session_transfer(
                     handle,
                     registry,
                     sink,
+                    0,
                 )
                 .await;
             });

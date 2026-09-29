@@ -305,6 +305,7 @@ async fn ftp_transfer_03_download_rest_resume() {
             transferred
         }
         AttemptOutcome::Completed { .. } => panic!("expected a mid-flight stop, got Completed"),
+        AttemptOutcome::ResumeRejected => panic!("expected a mid-flight stop, got ResumeRejected"),
     };
     assert!(
         transferred >= stop_after && transferred < DATASET_1M_SIZE,
@@ -397,6 +398,7 @@ async fn ftp_transfer_04_upload_rest_resume() {
             transferred
         }
         AttemptOutcome::Completed { .. } => panic!("expected a mid-flight stop, got Completed"),
+        AttemptOutcome::ResumeRejected => panic!("expected a mid-flight stop, got ResumeRejected"),
     };
     assert!(transferred >= stop_after, "upload stopped mid-flight");
 

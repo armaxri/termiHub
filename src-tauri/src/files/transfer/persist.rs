@@ -140,6 +140,25 @@ pub struct PersistedTransfer {
     /// relaunch then falls back to the size-only check.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_mtime: Option<u64>,
+    /// The source endpoint of a remote-to-remote copy (#3206) — the session
+    /// reference and path it reads from. `session_id` / `remote_path` describe
+    /// the destination. Absent for every other transfer and for records
+    /// written before it existed; such a remote-to-remote record cannot be
+    /// relaunched after a restart. References and paths only, never secrets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_source: Option<PersistedRemoteSource>,
+}
+
+/// Where a remote-to-remote copy reads from (#3206): a session **reference**
+/// (re-attached through the normal session path, which supplies credentials at
+/// resume time) and the source path. Not a secret.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedRemoteSource {
+    /// The source session id.
+    pub session_id: String,
+    /// The source file's path on that session.
+    pub path: String,
 }
 
 /// The persisted identity of a Docker transfer's container (#3585).
