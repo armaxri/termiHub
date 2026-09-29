@@ -1,7 +1,7 @@
 import type { StateCreator } from "zustand";
 
+import type { AppState } from "../appStore";
 import {
-  type AppState,
   getComposedLayout,
   type LayoutAwareState,
   type LayoutReducerResult,
@@ -9,7 +9,7 @@ import {
   postLayoutSnapshot,
   revertCoupledField,
   withComposedLayout,
-} from "../appStore";
+} from "../layoutHelpers";
 import { type ComposedLayoutState, reseedLayoutRegion } from "@/store/layoutBridge";
 
 /** The layout commit helpers a layout-writing slice closes over (#2562 / #3256). */

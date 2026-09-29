@@ -1,15 +1,13 @@
 import { StateCreator } from "zustand";
 
+import type { AppState } from "../appStore";
 import {
   buildTransferAwareHandoff,
-  collectWindowTabs,
   currentWindowLabel,
-  getComposedLayout,
-  LAST_SESSION_SAVE_DEBOUNCE_MS,
   pruneForeignTransfers,
-  withComposedLayout,
-  type AppState,
-} from "../appStore";
+} from "../windowHelpers";
+import { collectWindowTabs, getComposedLayout, withComposedLayout } from "../layoutHelpers";
+import { LAST_SESSION_SAVE_DEBOUNCE_MS } from "../restoreHelpers";
 import {
   closeTerminal as apiCloseTerminal,
   detachPersistentTab as apiDetachPersistentTab,

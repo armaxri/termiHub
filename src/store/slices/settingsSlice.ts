@@ -1,6 +1,7 @@
 import { StateCreator } from "zustand";
 
-import { getActiveTab, type AppState } from "../appStore";
+import type { AppState } from "../appStore";
+import { getActiveTab } from "../layoutHelpers";
 import type {
   AppSettings,
   ShellIntegrationSettings,

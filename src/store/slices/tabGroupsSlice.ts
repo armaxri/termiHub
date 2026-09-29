@@ -1,18 +1,16 @@
 import { StateCreator } from "zustand";
 
+import type { AppState } from "../appStore";
+import { beginRestoreGuard, collectRestoreCohort } from "../restoreHelpers";
+import { buildTransferAwareHandoff, removeTransferSessionsFromWindow } from "../windowHelpers";
 import {
-  type AppState,
-  beginRestoreGuard,
-  buildTransferAwareHandoff,
-  collectRestoreCohort,
   currentLayoutSnapshot,
   generateGroupId,
   postLayoutSnapshot,
   removeTabFromLeaf,
-  removeTransferSessionsFromWindow,
   setTabContentEntry,
   tabContentFromGroups,
-} from "../appStore";
+} from "../layoutHelpers";
 import { TerminalTab, TabGroup } from "@/types/terminal";
 import { openWindow, sendHandoffToWindow, takePendingWindowRestore } from "@/services/api";
 import type { MoveWindowTarget, TabHandoffRecord, WindowRestorePayload } from "@/types/window";

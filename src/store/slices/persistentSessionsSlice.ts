@@ -1,6 +1,7 @@
 import { StateCreator } from "zustand";
 
-import { collectLiveTabs, getComposedLayout, type AppState } from "../appStore";
+import type { AppState } from "../appStore";
+import { collectLiveTabs, getComposedLayout } from "../layoutHelpers";
 import type { PersistentSessionEntry } from "@/types/connection";
 import {
   AgentDefinitionInfo,
