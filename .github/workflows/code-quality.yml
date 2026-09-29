@@ -289,6 +289,16 @@ jobs:
       - name: Run Clippy on Windows (linter)
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+      # #3319: the workspace lint above runs with --all-features, so feature
+      # unification masks gate bugs in core's Windows-only `wsl` feature — core
+      # can compile only because src-tauri turns on another feature for it.
+      # Before #3314, `wsl` alone failed with E0433 (`backends` not compiled).
+      # Lint core with just `wsl` so such a gap fails here. It mirrors the
+      # per-feature isolation step in `rust-quality` (#1499, #3318). That step
+      # runs on Linux, where `wsl` code is `cfg(windows)`-gated out.
+      - name: Core clippy with wsl feature in isolation (guards #3314, #3319)
+        run: cargo clippy -p termihub-core --no-default-features --features wsl --all-targets -- -D warnings
+
   # RDP Sidecar Quality + Supply-Chain Checks (PKG-013)
   #
   # The RDP sidecar (`termihub-rdp-helper`, #1747) is a workspace-EXCLUDED crate
