@@ -4,15 +4,21 @@ const mocks = vi.hoisted(() => ({
   ackScheduleRun: vi.fn(() => Promise.resolve()),
   reportScheduleRun: vi.fn(),
   executeScheduledRun: vi.fn(),
+  claimedTargetIds: vi.fn((): string[] => []),
+  scheduleRunCoverage: vi.fn(() => Promise.resolve({ settled: true, connectedElsewhere: ["c"] })),
 }));
 vi.mock("@/services/scheduleApi", () => ({
   reportScheduleRun: mocks.reportScheduleRun,
   ackScheduleRun: mocks.ackScheduleRun,
+  scheduleRunCoverage: mocks.scheduleRunCoverage,
   registerScheduleWindow: vi.fn(() => Promise.resolve()),
   onScheduleFire: vi.fn(() => Promise.resolve(() => {})),
   onSchedulesChanged: vi.fn(() => Promise.resolve(() => {})),
 }));
-vi.mock("@/store/scheduledRuns", () => ({ executeScheduledRun: mocks.executeScheduledRun }));
+vi.mock("@/store/scheduledRuns", () => ({
+  executeScheduledRun: mocks.executeScheduledRun,
+  claimedTargetIds: mocks.claimedTargetIds,
+}));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ label: "main" }) }));
 
 import { handleScheduleFire } from "./useScheduledRuns";
@@ -38,9 +44,10 @@ describe("handleScheduleFire (PROD-043)", () => {
     mocks.executeScheduledRun.mockResolvedValue(report);
     mocks.reportScheduleRun.mockResolvedValue(undefined);
     await handleScheduleFire(fire);
-    expect(mocks.ackScheduleRun).toHaveBeenCalledWith("tok");
+    expect(mocks.ackScheduleRun).toHaveBeenCalledWith("tok", []);
     expect(mocks.executeScheduledRun).toHaveBeenCalledWith(fire, expect.any(Object), {
       connectMissing: undefined,
+      connectedElsewhere: undefined,
     });
     expect(mocks.reportScheduleRun).toHaveBeenCalledWith("tok", report);
   });
@@ -53,15 +60,34 @@ describe("handleScheduleFire (PROD-043)", () => {
     expect(mocks.executeScheduledRun).toHaveBeenLastCalledWith(
       expect.objectContaining({ connectWindow: "main" }),
       expect.any(Object),
-      { connectMissing: expect.any(Function) }
+      { connectMissing: expect.any(Function), connectedElsewhere: expect.any(Function) }
     );
 
     await handleScheduleFire({ ...fire, connectWindow: "aux-1" });
     expect(mocks.executeScheduledRun).toHaveBeenLastCalledWith(
       expect.objectContaining({ connectWindow: "aux-1" }),
       expect.any(Object),
-      { connectMissing: undefined }
+      { connectMissing: undefined, connectedElsewhere: undefined }
     );
+  });
+
+  it("acknowledges with the targets it runs on itself (#3878)", async () => {
+    mocks.claimedTargetIds.mockReturnValueOnce(["c"]);
+    mocks.executeScheduledRun.mockResolvedValue({ outcome: "completed", targetsRun: 1 });
+    mocks.reportScheduleRun.mockResolvedValue(undefined);
+    await handleScheduleFire(fire);
+    expect(mocks.ackScheduleRun).toHaveBeenLastCalledWith("tok", ["c"]);
+  });
+
+  it("the connect window asks which targets the other windows hold (#3878)", async () => {
+    mocks.executeScheduledRun.mockResolvedValue({ outcome: "completed", targetsRun: 1 });
+    mocks.reportScheduleRun.mockResolvedValue(undefined);
+    await handleScheduleFire({ ...fire, connectWindow: "main" });
+    const options = mocks.executeScheduledRun.mock.calls.at(-1)![2] as {
+      connectedElsewhere: () => Promise<string[]>;
+    };
+    await expect(options.connectedElsewhere()).resolves.toEqual(["c"]);
+    expect(mocks.scheduleRunCoverage).toHaveBeenCalledWith("tok");
   });
 
   it("swallows a failed report (logged, never thrown)", async () => {
