@@ -747,7 +747,10 @@ jobs:
           triple="$(rustc -vV | sed -n 's/^host: //p' | tr -d '\r')"
           staged="src-tauri/binaries/termihub-rdp-helper-${triple}.exe"
           test -s "$staged" || { echo "::error::not staged: $staged"; exit 1; }
-          cmp rdp-sidecar/target/release/termihub-rdp-helper.exe "$staged"
+          # --tauri-externalbin resolves the host triple and passes --target (as the .sh
+          # does), so cargo output lands in the per-target dir.
+          built="rdp-sidecar/target/${triple}/release/termihub-rdp-helper.exe"
+          cmp "$built" "$staged"
           # The .sha256 must be "<hex>  <name>" + LF, byte-identical to what the .sh
           # (sha256sum text mode) writes -- never empty (#3475).
           hex="$(sha256sum <"$staged" | cut -c1-64)"
@@ -758,7 +761,7 @@ jobs:
           fi
           (cd src-tauri/binaries && sha256sum -c "termihub-rdp-helper-${triple}.exe.sha256")
           out="$(cygpath -u "$RUNNER_TEMP")/rdp-out/termihub-rdp-helper.exe"
-          cmp rdp-sidecar/target/release/termihub-rdp-helper.exe "$out"
+          cmp "$built" "$out"
           test -s rdp-sidecar/target/aarch64-pc-windows-msvc/debug/termihub-rdp-helper.exe
           bad="src-tauri/binaries/termihub-rdp-helper-bad'triple-pc-windows-msvc.exe"
           test -f "$bad" || { echo "::error::failure scenario never reached staging"; exit 1; }
