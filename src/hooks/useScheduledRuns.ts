@@ -7,9 +7,11 @@ import {
   onSchedulesChanged,
   registerScheduleWindow,
   reportScheduleRun,
+  scheduleRunCoverage,
 } from "@/services/scheduleApi";
 import { useAppStore } from "@/store/appStore";
-import { executeScheduledRun } from "@/store/scheduledRuns";
+import { awaitRunCoverage } from "@/store/scheduledConnect";
+import { claimedTargetIds, executeScheduledRun } from "@/store/scheduledRuns";
 import { connectSavedConnection } from "@/utils/connectSavedConnection";
 import type { SavedConnection } from "@/types/connection";
 import type { ScheduleFire } from "@/types/schedule";
@@ -36,9 +38,11 @@ function connectUnattended(connection: SavedConnection) {
 /** Execute one fired schedule in this window and report the outcome. */
 export async function handleScheduleFire(fire: ScheduleFire): Promise<void> {
   frontendLog("schedules", `schedule ${fire.scheduleId} fired (run ${fire.token})`);
-  // Acknowledge first, so the scheduler waits for this window's report.
+  // Acknowledge first, so the scheduler waits for this window's report — with
+  // the targets this window runs on itself, so the connect window leaves them
+  // alone (#3878).
   try {
-    await ackScheduleRun(fire.token);
+    await ackScheduleRun(fire.token, claimedTargetIds(fire, useAppStore.getState()));
   } catch (err) {
     frontendLog("schedules", `Failed to acknowledge scheduled run: ${errorMessage(err)}`);
   }
@@ -48,7 +52,12 @@ export async function handleScheduleFire(fire: ScheduleFire): Promise<void> {
   const report = await executeScheduledRun(
     fire,
     { getState: useAppStore.getState, setState: useAppStore.setState },
-    { connectMissing: isConnectWindow ? connectUnattended : undefined }
+    {
+      connectMissing: isConnectWindow ? connectUnattended : undefined,
+      connectedElsewhere: isConnectWindow
+        ? () => awaitRunCoverage(() => scheduleRunCoverage(fire.token))
+        : undefined,
+    }
   );
   frontendLog(
     "schedules",

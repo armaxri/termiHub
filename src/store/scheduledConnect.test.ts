@@ -47,8 +47,8 @@ import { seedConnectionsRegion, setupConnectionsRegion } from "@/test/connection
 import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { installSessionLifecycleHarness } from "@/test/sessionLifecycleRegionTestHarness";
 import { useAppStore } from "./appStore";
-import { executeScheduledRun } from "./scheduledRuns";
-import type { UnattendedConnector } from "./scheduledConnect";
+import { claimedTargetIds, executeScheduledRun } from "./scheduledRuns";
+import { awaitRunCoverage, type UnattendedConnector } from "./scheduledConnect";
 
 setupConnectionsRegion();
 
@@ -237,5 +237,121 @@ describe("scheduled runs — connect if not connected (#3527)", () => {
 
     expect(connector.calls).toEqual([]);
     expect(report.message).toBe("conn-gone: the saved connection no longer exists");
+  });
+
+  describe("a target connected in another window (#3878)", () => {
+    /** The other windows' coverage, as the backend answers the connect window. */
+    const elsewhere = (ids: string[]) => () => Promise.resolve(ids);
+
+    it("is not connected again by the connect window, so it runs once — there", async () => {
+      const connector = openingConnector();
+
+      // Window B holds conn-b and claims it when it acknowledges the fire…
+      const report = await executeScheduledRun(fire(["conn-b"]), store, {
+        connectMissing: connector,
+        connectedElsewhere: elsewhere(["conn-b"]),
+      });
+
+      // …so the connect window opens no second session and runs nothing on it.
+      expect(connector.calls).toEqual([]);
+      expect(injected).toEqual([]);
+      expect(report).toMatchObject({ outcome: "skipped", targetsRun: 0 });
+      expect(liveTabIds()).toEqual(["tab-user-a"]);
+    });
+
+    it("connects a target connected nowhere exactly once", async () => {
+      const connector = openingConnector();
+
+      const report = await executeScheduledRun(fire(["conn-b"]), store, {
+        connectMissing: connector,
+        connectedElsewhere: elsewhere([]),
+      });
+
+      expect(connector.calls).toEqual(["conn-b"]);
+      expect(injected).toHaveLength(1);
+      expect(report).toMatchObject({ outcome: "completed", targetsRun: 1 });
+    });
+
+    it("connects only the target no window holds when one of two is held elsewhere", async () => {
+      const connector = openingConnector();
+
+      const report = await executeScheduledRun(fire(["conn-b", "conn-c"]), store, {
+        connectMissing: connector,
+        connectedElsewhere: elsewhere(["conn-b"]),
+      });
+
+      expect(connector.calls).toEqual(["conn-c"]);
+      expect(injected).toHaveLength(1);
+      expect(report).toMatchObject({ outcome: "completed", targetsRun: 1 });
+      expect(liveTabIds()).toEqual(["tab-user-a"]);
+    });
+
+    it("still runs on its own connected tab of a target also held elsewhere", async () => {
+      const connector = openingConnector();
+
+      const report = await executeScheduledRun(fire(["conn-a"]), store, {
+        connectMissing: connector,
+        connectedElsewhere: elsewhere(["conn-a"]),
+      });
+
+      expect(connector.calls).toEqual([]);
+      expect(injected.map((i) => i.tabId)).toEqual(["tab-user-a"]);
+      expect(report).toMatchObject({ outcome: "completed", targetsRun: 1 });
+    });
+  });
+
+  describe("claimedTargetIds (#3878)", () => {
+    it("claims the targets connected in this window", () => {
+      expect(claimedTargetIds(fire(["conn-a", "conn-b"]), useAppStore.getState())).toEqual([
+        "conn-a",
+      ]);
+    });
+
+    it("claims nothing while this window is busy (it will skip the run)", () => {
+      useAppStore.setState({
+        macroPlayback: {} as ReturnType<typeof useAppStore.getState>["macroPlayback"],
+      });
+      expect(claimedTargetIds(fire(["conn-a"]), useAppStore.getState())).toEqual([]);
+    });
+
+    it("claims nothing when the broadcast group is gone", () => {
+      const groupFire: ScheduleFire = {
+        ...fire([]),
+        targets: { kind: "broadcast-group", groupId: "gone" },
+      };
+      expect(claimedTargetIds(groupFire, useAppStore.getState())).toEqual([]);
+    });
+  });
+
+  describe("awaitRunCoverage (#3878)", () => {
+    it("waits until every other window acknowledged, then returns their targets", async () => {
+      const answers = [
+        { settled: false, connectedElsewhere: [] },
+        { settled: false, connectedElsewhere: ["conn-b"] },
+        { settled: true, connectedElsewhere: ["conn-b", "conn-c"] },
+      ];
+      const fetch = vi.fn(() => Promise.resolve(answers.shift()!));
+
+      const ids = await awaitRunCoverage(fetch, { pollMs: 0, timeoutMs: 1_000 });
+
+      expect(ids).toEqual(["conn-b", "conn-c"]);
+      expect(fetch).toHaveBeenCalledTimes(3);
+    });
+
+    it("gives up waiting after the timeout with what it knows", async () => {
+      const fetch = vi.fn(() =>
+        Promise.resolve({ settled: false, connectedElsewhere: ["conn-b"] })
+      );
+
+      const ids = await awaitRunCoverage(fetch, { pollMs: 0, timeoutMs: 0 });
+
+      expect(ids).toEqual(["conn-b"]);
+    });
+
+    it("treats a failed query as nothing covered elsewhere", async () => {
+      const fetch = vi.fn(() => Promise.reject(new Error("no backend")));
+
+      await expect(awaitRunCoverage(fetch, { pollMs: 0, timeoutMs: 0 })).resolves.toEqual([]);
+    });
   });
 });

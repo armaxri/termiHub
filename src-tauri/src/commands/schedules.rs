@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::schedules::manager::{
-    ScheduleInput, ScheduleManager, ScheduleView, SchedulerState, WindowRunReport,
+    RunCoverage, ScheduleInput, ScheduleManager, ScheduleView, SchedulerState, WindowRunReport,
 };
 use crate::schedules::runner::EVENT_SCHEDULES_CHANGED;
 use crate::utils::errors::TerminalError;
@@ -105,12 +105,25 @@ pub fn register_schedule_window(window: tauri::Window, manager: State<'_, Arc<Sc
     manager.mark_window_ready(window.label());
 }
 
-/// This window received the fired run `token` and will report its outcome.
+/// This window received the fired run `token` and will report its outcome;
+/// `connected` are the target connection ids it runs on itself (#3878).
 #[tauri::command]
 pub fn ack_schedule_run(
     token: String,
+    connected: Vec<String>,
     window: tauri::Window,
     manager: State<'_, Arc<ScheduleManager>>,
 ) {
-    manager.ack(&token, window.label());
+    manager.ack(&token, window.label(), &connected);
+}
+
+/// The targets the other windows of run `token` connect themselves (#3878),
+/// asked by the fire's connect window before it connects anything.
+#[tauri::command]
+pub fn schedule_run_coverage(
+    token: String,
+    window: tauri::Window,
+    manager: State<'_, Arc<ScheduleManager>>,
+) -> RunCoverage {
+    manager.coverage(&token, window.label())
 }

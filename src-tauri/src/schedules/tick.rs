@@ -2,7 +2,7 @@
 //! when it is due — pause-skip, missed-skip, overlap-skip, wait for a window,
 //! or fire. See the execution rules in [`super::manager`].
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, TimeZone, Utc};
 
@@ -150,6 +150,7 @@ pub(super) fn step<Tz: TimeZone>(
         catch_up: missed,
         pending: ctx.audience.clone(),
         acked: BTreeSet::new(),
+        claims: BTreeMap::new(),
         reports: Vec::new(),
     });
     s.last_run_at = Some(now.to_rfc3339());

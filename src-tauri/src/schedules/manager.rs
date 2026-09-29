@@ -26,7 +26,7 @@
 //! ([`ScheduleFire::connect_window`]) that connects the missing targets
 //! unattended — never prompting — and closes the tabs it opened afterwards.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
@@ -39,7 +39,8 @@ use super::tick::{self, TickContext};
 use super::timing::next_run_after;
 use super::wire::{aggregate, err, validate_input};
 pub use super::wire::{
-    ScheduleFire, ScheduleInput, ScheduleView, SchedulerState, TickResult, WindowRunReport,
+    RunCoverage, ScheduleFire, ScheduleInput, ScheduleView, SchedulerState, TickResult,
+    WindowRunReport,
 };
 use crate::connection::recovery::RecoveryWarning;
 use crate::utils::errors::TerminalError;
@@ -66,6 +67,9 @@ pub(super) struct ActiveRun {
     pub(super) pending: BTreeSet<String>,
     /// Windows that acknowledged receiving the fire.
     pub(super) acked: BTreeSet<String>,
+    /// Per acknowledging window, the target connection ids it has connected
+    /// and runs on itself (#3878) — the connect window leaves these alone.
+    pub(super) claims: BTreeMap<String, Vec<String>>,
     pub(super) reports: Vec<WindowRunReport>,
 }
 
@@ -482,15 +486,53 @@ impl ScheduleManager {
     }
 
     /// A window acknowledges it received the fired run `token` (it will
-    /// report). Unknown tokens are ignored.
-    pub fn ack(&self, token: &str, window: &str) {
+    /// report), naming the target connection ids it has connected and runs on
+    /// itself (#3878). Unknown tokens are ignored.
+    pub fn ack(&self, token: &str, window: &str, connected: &[String]) {
         let Ok(mut inner) = self.inner.lock() else {
             return;
         };
         for rt in inner.runtime.values_mut() {
             if let Some(active) = rt.active.as_mut().filter(|a| a.token == token) {
                 active.acked.insert(window.to_string());
+                active.claims.insert(window.to_string(), connected.to_vec());
             }
+        }
+    }
+
+    /// The targets the other windows of run `token` have connected (#3878),
+    /// asked by the fire's `connectWindow` before it connects anything, so a
+    /// target connected in another window is not connected a second time. The
+    /// answer is `settled` once every other window acknowledged the run (or
+    /// already reported); an unknown or settled run covers nothing.
+    pub fn coverage(&self, token: &str, window: &str) -> RunCoverage {
+        let nothing = RunCoverage {
+            settled: true,
+            connected_elsewhere: Vec::new(),
+        };
+        let Ok(inner) = self.inner.lock() else {
+            return nothing;
+        };
+        let Some(active) = inner
+            .runtime
+            .values()
+            .find_map(|rt| rt.active.as_ref().filter(|a| a.token == token))
+        else {
+            return nothing;
+        };
+        let settled = active
+            .pending
+            .iter()
+            .all(|w| w == window || active.acked.contains(w));
+        let elsewhere: BTreeSet<&String> = active
+            .claims
+            .iter()
+            .filter(|(w, _)| w.as_str() != window)
+            .flat_map(|(_, ids)| ids)
+            .collect();
+        RunCoverage {
+            settled,
+            connected_elsewhere: elsewhere.into_iter().cloned().collect(),
         }
     }
 

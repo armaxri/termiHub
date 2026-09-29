@@ -133,3 +133,91 @@ fn every_target_refused_records_a_skip_with_each_reason() {
     assert_eq!(res.outcome, ScheduleRunOutcome::Skipped);
     assert_eq!(res.message.as_deref(), Some(reason));
 }
+
+/// A connecting schedule fired to `labels`, returning its token.
+fn fire_connecting(m: &ScheduleManager, labels: &[&str]) -> String {
+    let mut i = input("s1", every(10));
+    i.connect_if_needed = true;
+    m.save(i, t(10, 0), &Utc).unwrap();
+    m.set_enabled("s1", true, true, t(10, 0), &Utc).unwrap();
+    m.tick_all(t(10, 10), &Utc, &windows(labels)).fires[0]
+        .token
+        .clone()
+}
+
+fn ids(list: &[&str]) -> Vec<String> {
+    list.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn a_target_connected_in_another_window_is_covered_there() {
+    let dir = TempDir::new().unwrap();
+    let m = ScheduleManager::new_test(dir.path());
+    let token = fire_connecting(&m, &["main", "win-1"]);
+    m.ack(&token, "win-1", &ids(&["conn-b"]));
+    m.ack(&token, "main", &ids(&["conn-a"]));
+    let cov = m.coverage(&token, "main");
+    assert!(cov.settled);
+    // The asker's own connected targets are not "elsewhere".
+    assert_eq!(cov.connected_elsewhere, ids(&["conn-b"]));
+}
+
+#[test]
+fn a_target_connected_nowhere_is_not_covered() {
+    let dir = TempDir::new().unwrap();
+    let m = ScheduleManager::new_test(dir.path());
+    let token = fire_connecting(&m, &["main", "win-1"]);
+    m.ack(&token, "win-1", &[]);
+    let cov = m.coverage(&token, "main");
+    assert!(cov.settled);
+    assert!(cov.connected_elsewhere.is_empty());
+}
+
+#[test]
+fn coverage_is_unsettled_until_every_other_window_acknowledged() {
+    let dir = TempDir::new().unwrap();
+    let m = ScheduleManager::new_test(dir.path());
+    let token = fire_connecting(&m, &["main", "win-1", "win-2"]);
+    m.ack(&token, "win-1", &ids(&["conn-b"]));
+    let cov = m.coverage(&token, "main");
+    assert!(!cov.settled, "win-2 has not acknowledged yet");
+    assert_eq!(cov.connected_elsewhere, ids(&["conn-b"]));
+    m.ack(&token, "win-2", &ids(&["conn-b", "conn-c"]));
+    let cov = m.coverage(&token, "main");
+    assert!(cov.settled);
+    assert_eq!(cov.connected_elsewhere, ids(&["conn-b", "conn-c"]));
+}
+
+#[test]
+fn a_window_that_already_reported_still_covers_its_targets() {
+    let dir = TempDir::new().unwrap();
+    let m = ScheduleManager::new_test(dir.path());
+    let token = fire_connecting(&m, &["main", "win-1"]);
+    m.ack(&token, "win-1", &ids(&["conn-b"]));
+    m.report(&token, "win-1", completed(1), t(10, 10)).unwrap();
+    let cov = m.coverage(&token, "main");
+    assert!(cov.settled);
+    assert_eq!(cov.connected_elsewhere, ids(&["conn-b"]));
+}
+
+#[test]
+fn an_unknown_run_is_settled_with_nothing_covered() {
+    let dir = TempDir::new().unwrap();
+    let m = ScheduleManager::new_test(dir.path());
+    let cov = m.coverage("nope", "main");
+    assert!(cov.settled);
+    assert!(cov.connected_elsewhere.is_empty());
+}
+
+#[test]
+fn the_coverage_serializes_in_camel_case() {
+    let json = serde_json::to_value(RunCoverage {
+        settled: true,
+        connected_elsewhere: ids(&["conn-b"]),
+    })
+    .unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({"settled": true, "connectedElsewhere": ["conn-b"]})
+    );
+}
