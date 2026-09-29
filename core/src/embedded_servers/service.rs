@@ -1065,6 +1065,23 @@ mod tests {
     }
 
     #[test]
+    fn ftp_port_zero_reports_real_local_addr() {
+        // FTP owns the socket it confirms, so like HTTP/TFTP it must report the
+        // OS-assigned port for a port-0 config (#3549).
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut cfg = http_config(0);
+        cfg.server_type = ServerType::Ftp;
+        cfg.root_directory = dir.path().to_string_lossy().into_owned();
+
+        let mut svc = EmbeddedServerService::new(ServerType::Ftp);
+        svc.start_with(cfg).expect("start");
+        let addr = svc.local_addr().expect("FTP must report its bound address");
+        assert_ne!(addr.port(), 0);
+        std::net::TcpStream::connect(addr).expect("connect to the reported port");
+        svc.shutdown();
+    }
+
+    #[test]
     fn start_with_rejects_busy_port() {
         // Hold a port, then a start against it must fail the pre-flight bind check
         // and return an error (matching the original manager: the interactive

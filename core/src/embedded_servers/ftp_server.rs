@@ -668,6 +668,140 @@ mod tests {
         );
     }
 
+    // ── Bound-port reporting (#3549) ──────────────────────────────────────────
+
+    /// Start a real FTP server thread for `config` and wait for its bind
+    /// confirmation. Returns the confirmed address, the shutdown signal and the
+    /// thread handle.
+    fn start_confirmed(
+        config: EmbeddedServerConfig,
+    ) -> (
+        Option<std::net::SocketAddr>,
+        ShutdownSignal,
+        std::thread::JoinHandle<Result<()>>,
+    ) {
+        use crate::embedded_servers::service::BindSignal;
+        use std::time::Duration;
+
+        let shutdown = ShutdownSignal::new();
+        let (ready, ready_rx) = BindSignal::for_test();
+        let server_shutdown = shutdown.clone();
+        let handle = std::thread::spawn(move || {
+            start_ftp_server(&config, server_shutdown, AtomicServerStats::new(), ready)
+        });
+        let bind = ready_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("server should confirm its bind")
+            .expect("bind should succeed");
+        (bind, shutdown, handle)
+    }
+
+    /// A port-0 config must confirm the OS-assigned port the server actually
+    /// serves on, and a client connecting to it must get the FTP greeting.
+    #[test]
+    fn port_zero_confirms_real_bound_port_and_serves_on_it() {
+        use std::io::{BufRead, BufReader};
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (addr, shutdown, handle) = start_confirmed(ftp_test_config(dir.path()));
+
+        let addr = addr.expect("FTP must report its real bound address");
+        assert_ne!(addr.port(), 0, "reported port must be the OS-assigned one");
+        assert!(
+            addr.ip().is_loopback(),
+            "bound to the configured host: {addr}"
+        );
+
+        let stream = std::net::TcpStream::connect(addr).expect("connect to reported port");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("read timeout");
+        let mut greeting = String::new();
+        BufReader::new(stream)
+            .read_line(&mut greeting)
+            .expect("read greeting");
+        assert!(
+            greeting.starts_with("220"),
+            "expected FTP greeting on the reported port, got {greeting:?}"
+        );
+
+        shutdown.trigger();
+        handle.join().expect("no panic").expect("clean exit");
+    }
+
+    /// No TOCTOU window: at the moment the bind is confirmed, the server already
+    /// owns the socket, so a competing bind of the same address must fail.
+    #[test]
+    fn confirmed_port_is_already_held_by_the_server() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (addr, shutdown, handle) = start_confirmed(ftp_test_config(dir.path()));
+        let addr = addr.expect("FTP must report its real bound address");
+
+        let competitor = std::net::TcpListener::bind(addr);
+        assert!(
+            competitor.is_err(),
+            "the confirmed port {addr} must already be held by the FTP server"
+        );
+
+        shutdown.trigger();
+        handle.join().expect("no panic").expect("clean exit");
+    }
+
+    /// Concurrent starts on the same fixed port: exactly one may confirm, the
+    /// other must fail its bind rather than report a server it never serves.
+    #[test]
+    fn concurrent_starts_on_same_port_confirm_at_most_one() {
+        use crate::embedded_servers::service::BindSignal;
+        use std::time::Duration;
+
+        // Reserve a concrete port number, then release it for the race.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("bind")
+            .local_addr()
+            .expect("addr")
+            .port();
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let mut runs = Vec::new();
+        for _ in 0..2 {
+            let mut config = ftp_test_config(dir.path());
+            config.port = port;
+            let shutdown = ShutdownSignal::new();
+            let (ready, ready_rx) = BindSignal::for_test();
+            let server_shutdown = shutdown.clone();
+            let barrier = Arc::clone(&barrier);
+            let handle = std::thread::spawn(move || {
+                barrier.wait();
+                start_ftp_server(&config, server_shutdown, AtomicServerStats::new(), ready)
+            });
+            runs.push((shutdown, ready_rx, handle));
+        }
+
+        let outcomes: Vec<_> = runs
+            .iter()
+            .map(|(_, rx, _)| rx.recv_timeout(Duration::from_secs(5)).expect("signal"))
+            .collect();
+        let confirmed = outcomes.iter().filter(|o| o.is_ok()).count();
+        assert!(
+            confirmed <= 1,
+            "two servers confirmed the same port {port}: {outcomes:?}"
+        );
+        for outcome in outcomes.iter().flatten() {
+            assert_eq!(
+                outcome.map(|a| a.port()),
+                Some(port),
+                "a confirmed server must report the port it serves on"
+            );
+        }
+
+        for (shutdown, _, handle) in runs {
+            shutdown.trigger();
+            let _ = handle.join().expect("no panic");
+        }
+    }
+
     // ── FtpAuthenticator ──────────────────────────────────────────────────────
 
     /// An authenticator recording into a fresh, throwaway activity log.
