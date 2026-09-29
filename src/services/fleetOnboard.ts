@@ -1,7 +1,7 @@
 /**
  * Pure helpers for **fleet onboarding** (#1961): stamp many saved connections
  * from one existing connection used as a **template**, sourcing hosts from a CSV
- * / simple inventory file or from network-scanner results.
+ * / simple inventory file.
  *
  * A "template" here is just an existing {@link SavedConnection}: its
  * `config.type` and `config.config` (shared creds / auth / jump-host chain) are
@@ -10,25 +10,12 @@
  * connections go through the same `bulkAddConnections` path as the SSH-config
  * bulk import, which strips inline secrets before saving.
  *
- * Kept side-effect free so the mapping, dedupe, and scan-result conversion are
+ * Kept side-effect free so the mapping, dedupe, and template eligibility are
  * unit-testable independently of the dialog and store.
  */
 
-import type { InventoryHost, SavedConnection } from "@/types/connection";
+import type { ConnectionTypeInfo, InventoryHost, SavedConnection } from "@/types/connection";
 import { uniqueConnectionName } from "@/services/sshConfigImport";
-
-/** Minimal ping-sweep row this module needs (a responding host). */
-export interface SweepHost {
-  host: string;
-  hostname?: string;
-}
-
-/** Minimal port-scan row this module needs (a probed host/port and its state). */
-export interface ScannedPort {
-  host: string;
-  port: number;
-  state: string;
-}
 
 /** The result of building templated connections from inventory rows. */
 export interface FleetBuildResult {
@@ -139,37 +126,15 @@ export function buildTemplatedConnections(
 }
 
 /**
- * Map ping-sweep results (responding hosts) to inventory rows. The reverse-DNS
- * `hostname`, when present, becomes the label so the created connections read
- * better than a bare IP; otherwise the address is used.
+ * Whether `conn` can serve as a fleet template: its connection type must have a
+ * `host` setting, since onboarding stamps each row's host into it. Derived from
+ * the connection-type registry's schema; when the registry does not (yet) know
+ * the type, fall back to whether the saved settings carry a `host` key.
  */
-export function pingSweepResultsToRows(results: SweepHost[]): InventoryHost[] {
-  return results.map((r) => ({
-    host: r.host,
-    label: r.hostname && r.hostname.trim() !== "" ? r.hostname : r.host,
-  }));
-}
-
-/**
- * Map port-scan results to inventory rows. A scan can report several open ports
- * for one host; this collapses them to one row per host, and — when every open
- * port for a host is the same single port — carries that port as a per-row
- * override so the created connection targets it.
- */
-export function portScanResultsToRows(results: ScannedPort[]): InventoryHost[] {
-  const openByHost = new Map<string, Set<number>>();
-  const order: string[] = [];
-  for (const r of results) {
-    if (r.state !== "open") continue;
-    if (!openByHost.has(r.host)) {
-      openByHost.set(r.host, new Set());
-      order.push(r.host);
-    }
-    openByHost.get(r.host)!.add(r.port);
+export function isHostTemplate(conn: SavedConnection, types: ConnectionTypeInfo[]): boolean {
+  const info = types.find((t) => t.typeId === conn.config.type);
+  if (info) {
+    return info.schema.groups.some((g) => g.fields.some((f) => f.key === "host"));
   }
-  return order.map((host) => {
-    const ports = openByHost.get(host)!;
-    const port = ports.size === 1 ? [...ports][0] : undefined;
-    return { host, label: host, ...(port !== undefined ? { port } : {}) };
-  });
+  return Object.prototype.hasOwnProperty.call(conn.config.config ?? {}, "host");
 }

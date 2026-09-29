@@ -1,11 +1,9 @@
 import { useState, useCallback, useMemo } from "react";
-import { Download, Play, ServerCog, StopCircle } from "lucide-react";
+import { Download, Play, StopCircle } from "lucide-react";
 import { Button, ConfirmDialog, Field, Input, NumberInput } from "@/components/ui";
 import { exportNetworkResults, portScanResultsTable, portScanResultsToCsv } from "./exportResults";
 import { NetworkToolHistory } from "./NetworkToolHistory";
 import { paramNumber, paramString, useRecordRunOnFinish, useRerunAfterUpdate } from "./runHistory";
-import { FleetOnboardDialog } from "@/components/Sidebar/FleetOnboardDialog";
-import { portScanResultsToRows } from "@/services/fleetOnboard";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import {
   networkPortScan,
@@ -166,7 +164,6 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
   // Live open-port tally so the running footer surfaces progress, not just the
   // number of ports checked.
   const liveOpen = useMemo(() => results.filter((r) => r.state === "open").length, [results]);
-  const [onboardOpen, setOnboardOpen] = useState(false);
 
   const handleExport = useCallback(async () => {
     await exportNetworkResults(`port-scan-${host || "results"}`, portScanResultsToCsv(results));
@@ -214,17 +211,6 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
           >
             Export
           </Button>
-          {liveOpen > 0 && status !== "running" && (
-            <Button
-              variant="secondary"
-              size="sm"
-              icon={<ServerCog size={14} />}
-              onClick={() => setOnboardOpen(true)}
-              data-testid="port-scanner-onboard"
-            >
-              Add as connections
-            </Button>
-          )}
           {status === "running" ? (
             <Button
               variant="danger"
@@ -355,13 +341,6 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
         }}
         onConfirm={handleConfirmLargeScan}
         onCancel={handleCancelLargeScan}
-      />
-
-      <FleetOnboardDialog
-        open={onboardOpen}
-        onOpenChange={setOnboardOpen}
-        rows={portScanResultsToRows(results)}
-        sourceLabel="the open ports found"
       />
     </form>
   );
