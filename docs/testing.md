@@ -379,6 +379,13 @@ suite flakes only under load, add its module path to `HEAVY_FILTERS` in the scri
 then run `scripts/internal/ci-rust-tests.sh list` to confirm the partition is still
 exact.
 
+All phases share one build: a later phase must find every workspace crate fresh. The
+bulk phase builds first and fails if a workspace build script emits a
+`rerun-if-changed` path that does not exist, because cargo treats a missing path as
+always stale and would recompile that crate, and every crate above it, on each cargo
+invocation (#3909). To see why cargo rebuilds a crate, run the same command again with
+`CARGO_LOG=cargo::core::compiler::fingerprint=info`.
+
 ## 4. Visual Regression Testing (Optional)
 
 **What it does**: Detects unintended UI changes

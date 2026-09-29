@@ -131,6 +131,58 @@ cores() {
   getconf _NPROCESSORS_ONLN 2>/dev/null || echo "${NUMBER_OF_PROCESSORS:-unknown}"
 }
 
+# Fail when a workspace build script watches a path that does not exist.
+# Cargo treats such a `rerun-if-changed` path as permanently stale, so the script
+# re-runs on EVERY cargo invocation and its crate -- and everything above it --
+# recompiles: each Run Tests leg rebuilt core/agent/termihub three times (#3909).
+# Builds the phase's selection (the test run after it is then a no-op build) and
+# checks each workspace package's build-script `output`. Skipped on Windows,
+# where the paths are native and the check would need a path translation; the
+# bug class is not platform-specific, so Linux/macOS catch it.
+check_build_script_watches() {
+  if [ "${OS:-}" = "Windows_NT" ]; then
+    cargo test "${selection[@]}" "${targets[@]}" --no-run
+    return
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    if [ -n "${CI:-}" ]; then
+      echo "check_build_script_watches: jq is required on CI" >&2
+      exit 1
+    fi
+    echo "note: jq not found; skipping the build-script watch check (#3909)"
+    cargo test "${selection[@]}" "${targets[@]}" --no-run
+    return
+  fi
+  local plan
+  plan="$(mktemp)"
+  cargo test "${selection[@]}" "${targets[@]}" --no-run --message-format=json-render-diagnostics >"$plan"
+  local missing=0 pkg_dir out_dir line path
+  while IFS=$'\t' read -r pkg_dir out_dir; do
+    [ -f "$out_dir/../output" ] || continue
+    while IFS= read -r line; do
+      path="${line#*rerun-if-changed=}"
+      case "$path" in
+        /*) ;;
+        *) path="$pkg_dir/$path" ;;
+      esac
+      if [ ! -e "$path" ]; then
+        echo "build script of ${pkg_dir} watches a missing path: ${line}" >&2
+        missing=$((missing + 1))
+      fi
+    done < <(grep -E '^cargo::?rerun-if-changed=' "$out_dir/../output" || true)
+  done < <(
+    jq -r 'select(.reason == "build-script-executed")
+      | select(.package_id | startswith("path+file://"))
+      | [(.package_id | sub("^path\\+file://"; "") | sub("#.*$"; "")), .out_dir] | @tsv' "$plan"
+  )
+  rm -f "$plan"
+  if [ "$missing" -ne 0 ]; then
+    echo "A missing rerun-if-changed path re-runs its build script and recompiles the" >&2
+    echo "crate on every cargo invocation (#3909). Watch a path that exists instead." >&2
+    exit 1
+  fi
+}
+
 # `cargo test -- --list` output reduced to sorted "<binary> <test>" lines, so
 # identical test names in different binaries stay distinct.
 list_tests() {
@@ -146,6 +198,7 @@ case "$phase" in
     if [ "$SPLIT_SERIAL" = "1" ]; then
       echo "  also skipping the serial set (runs in its own job): ${SERIAL_FILTERS[*]}"
     fi
+    check_build_script_watches
     cargo test "${selection[@]}" "${targets[@]}" -- "${skip_args[@]}" ${serial_skip_args[@]+"${serial_skip_args[@]}"}
     cargo test "${selection[@]}" --all-features --doc
     ;;

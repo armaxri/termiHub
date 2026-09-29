@@ -88,8 +88,11 @@ tests/system/test-inventory.json
 /rdp-sidecar/target/
 
 # RDP sidecar binaries staged for Tauri `externalBin` bundling (#1754). Built by
-# scripts/build-rdp-sidecar.sh --tauri-externalbin; never checked in.
-/src-tauri/binaries/
+# scripts/build-rdp-sidecar.sh --tauri-externalbin; never checked in. The
+# directory itself is kept (via .gitkeep) because core/build.rs watches it: a
+# missing watched path makes cargo rebuild termihub-core every time (#3909).
+/src-tauri/binaries/*
+!/src-tauri/binaries/.gitkeep
 
 # Generated when the host-loader round-trip test builds its cdylib fixture (#1995)
 core/tests/fixtures/test-plugin/Cargo.lock

@@ -1,0 +1,2 @@
+# Keeps src-tauri/binaries/ in git: core/build.rs watches this directory for a
+# staged RDP sidecar, and cargo treats a missing watched path as always stale (#3909).
