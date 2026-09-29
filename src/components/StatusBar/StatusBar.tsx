@@ -52,6 +52,9 @@ import { MonitoringHistoryPanel } from "./MonitoringHistoryPanel";
 import { ProcessTablePanel } from "./ProcessTablePanel";
 import { buildMetricBlocks, latestValue } from "./monitoringHistoryModel";
 import { PerCoreCpuBars } from "./PerCoreCpuBars";
+import { MonitoringHostInfo } from "./MonitoringHostInfo";
+import { UnavailableStat } from "./UnavailableStat";
+import { isMetricUnavailable, unavailableTitle } from "./monitoringAvailability";
 import { severityLevel } from "./monitoringSeverity";
 import { PortableBadge } from "./PortableBadge";
 import { UpdateIndicator } from "./UpdateIndicator";
@@ -63,16 +66,6 @@ import { isFrozenMonitorBadge, monitorStatusBadge } from "@/utils/reconnectStatu
 import "./StatusBar.css";
 
 const INDENT_SIZES = [1, 2, 4, 8] as const;
-
-/** Format seconds into a human-readable uptime string. */
-function formatUptime(seconds: number): string {
-  const days = Math.floor(seconds / 86400);
-  const hours = Math.floor((seconds % 86400) / 3600);
-  const mins = Math.floor((seconds % 3600) / 60);
-  if (days > 0) return `${days}d ${hours}h ${mins}m`;
-  if (hours > 0) return `${hours}h ${mins}m`;
-  return `${mins}m`;
-}
 
 /** Format a monitoring refresh interval (ms) as a compact label like "2s" (#1233). */
 function formatIntervalLabel(intervalMs: number): string {
@@ -913,7 +906,14 @@ function MonitoringStatus() {
             not mistaken for a real 0% reading. Memory and disk are correct on
             the first sample and always render numerically.
           */}
-          {monitoringSampleCount < 2 ? (
+          {isMetricUnavailable(monitoringStats, "cpu") ? (
+            <UnavailableStat
+              label="CPU"
+              stats={monitoringStats}
+              testId="monitoring-cpu"
+              staleModifier={staleModifier}
+            />
+          ) : monitoringSampleCount < 2 ? (
             <span
               className={`status-bar__item monitoring-status__stat monitoring-status__stat--priming${staleModifier}`}
               title="CPU: priming (waiting for second sample)"
@@ -930,27 +930,45 @@ function MonitoringStatus() {
               CPU {monitoringStats.cpuUsagePercent.toFixed(0)}%
             </span>
           )}
-          <span
-            className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.memoryUsedPercent)}${staleModifier}`}
-            title={`Memory: ${formatKb(monitoringStats.memoryTotalKb - monitoringStats.memoryAvailableKb)} / ${formatKb(monitoringStats.memoryTotalKb)}`}
-            data-testid="monitoring-mem"
-          >
-            Mem {monitoringStats.memoryUsedPercent.toFixed(0)}%
-          </span>
-          <span
-            className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.diskUsedPercent)}${staleModifier}`}
-            title={`Disk: ${formatKb(monitoringStats.diskUsedKb)} / ${formatKb(monitoringStats.diskTotalKb)}`}
-            data-testid="monitoring-disk"
-          >
-            Disk {monitoringStats.diskUsedPercent.toFixed(0)}%
-          </span>
+          {isMetricUnavailable(monitoringStats, "memory") ? (
+            <UnavailableStat
+              label="Mem"
+              stats={monitoringStats}
+              testId="monitoring-mem"
+              staleModifier={staleModifier}
+            />
+          ) : (
+            <span
+              className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.memoryUsedPercent)}${staleModifier}`}
+              title={`Memory: ${formatKb(monitoringStats.memoryTotalKb - monitoringStats.memoryAvailableKb)} / ${formatKb(monitoringStats.memoryTotalKb)}`}
+              data-testid="monitoring-mem"
+            >
+              Mem {monitoringStats.memoryUsedPercent.toFixed(0)}%
+            </span>
+          )}
+          {isMetricUnavailable(monitoringStats, "disk") ? (
+            <UnavailableStat
+              label="Disk"
+              stats={monitoringStats}
+              testId="monitoring-disk"
+              staleModifier={staleModifier}
+            />
+          ) : (
+            <span
+              className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.diskUsedPercent)}${staleModifier}`}
+              title={`Disk: ${formatKb(monitoringStats.diskUsedKb)} / ${formatKb(monitoringStats.diskTotalKb)}`}
+              data-testid="monitoring-disk"
+            >
+              Disk {monitoringStats.diskUsedPercent.toFixed(0)}%
+            </span>
+          )}
           {/*
             Swap is only shown when the host actually has swap configured — a
             swapless host reports swapTotalKb 0, and a "Swap 0%" token would be
             noise. Older agents / non-Linux SSH remotes also report 0 here and
             so render nothing.
           */}
-          {monitoringStats.swapTotalKb > 0 && (
+          {monitoringStats.swapTotalKb > 0 && !isMetricUnavailable(monitoringStats, "swap") && (
             <span
               className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.swapUsedPercent)}${staleModifier}`}
               title={`Swap: ${formatKb(monitoringStats.swapUsedKb)} / ${formatKb(monitoringStats.swapTotalKb)}`}
@@ -963,17 +981,26 @@ function MonitoringStatus() {
             Network throughput (rates). formatRate returns "" for a zero/idle
             rate, so a quiet link falls back to "0 B/s" rather than a blank.
           */}
-          <span
-            className={`status-bar__item monitoring-status__stat${staleModifier}`}
-            title={`Network: ${formatRate(monitoringStats.netRxBytesPerSec) || "0 B/s"} down / ${
-              formatRate(monitoringStats.netTxBytesPerSec) || "0 B/s"
-            } up`}
-            data-testid="monitoring-net"
-          >
-            {`Net ↓${formatRate(monitoringStats.netRxBytesPerSec) || "0 B/s"} ↑${
-              formatRate(monitoringStats.netTxBytesPerSec) || "0 B/s"
-            }`}
-          </span>
+          {isMetricUnavailable(monitoringStats, "network") ? (
+            <UnavailableStat
+              label="Net"
+              stats={monitoringStats}
+              testId="monitoring-net"
+              staleModifier={staleModifier}
+            />
+          ) : (
+            <span
+              className={`status-bar__item monitoring-status__stat${staleModifier}`}
+              title={`Network: ${formatRate(monitoringStats.netRxBytesPerSec) || "0 B/s"} down / ${
+                formatRate(monitoringStats.netTxBytesPerSec) || "0 B/s"
+              } up`}
+              data-testid="monitoring-net"
+            >
+              {`Net ↓${formatRate(monitoringStats.netRxBytesPerSec) || "0 B/s"} ↑${
+                formatRate(monitoringStats.netTxBytesPerSec) || "0 B/s"
+              }`}
+            </span>
+          )}
         </>
       )}
     </>
@@ -1077,28 +1104,7 @@ function MonitoringDetailDropdown({
           >
             {stats && (
               <>
-                <div className="monitoring-menu__info">
-                  <div className="monitoring-menu__row">
-                    <span className="monitoring-menu__label">Host</span>
-                    <span className="monitoring-menu__value">{stats.hostname}</span>
-                  </div>
-                  <div className="monitoring-menu__row">
-                    <span className="monitoring-menu__label">OS</span>
-                    <span className="monitoring-menu__value">{stats.osInfo}</span>
-                  </div>
-                  <div className="monitoring-menu__row">
-                    <span className="monitoring-menu__label">Uptime</span>
-                    <span className="monitoring-menu__value">
-                      {formatUptime(stats.uptimeSeconds)}
-                    </span>
-                  </div>
-                  <div className="monitoring-menu__row">
-                    <span className="monitoring-menu__label">Load</span>
-                    <span className="monitoring-menu__value">
-                      {stats.loadAverage.map((v) => v.toFixed(2)).join(" ")}
-                    </span>
-                  </div>
-                </div>
+                <MonitoringHostInfo stats={stats} />
                 <DropdownMenu.Separator className="monitoring-menu__separator" />
               </>
             )}
@@ -1167,14 +1173,27 @@ function MonitoringDetailDropdown({
             {/* Process list + kill (PROD-0028) — opens the process table panel. */}
             {monitorKey && (
               <>
-                <DropdownMenu.Item
-                  className="monitoring-menu__action"
-                  onSelect={() => setProcessesOpen(true)}
-                  data-testid="monitoring-processes-open"
-                >
-                  <ListTree size={14} />
-                  View processes
-                </DropdownMenu.Item>
+                {stats && isMetricUnavailable(stats, "processes") ? (
+                  // The stats fallback cannot list processes (#3202): say so
+                  // rather than open a panel that can only fail.
+                  <DropdownMenu.Item
+                    className="monitoring-menu__action"
+                    disabled
+                    data-testid="monitoring-processes-unavailable"
+                  >
+                    <ListTree size={14} />
+                    {unavailableTitle("Processes", stats)}
+                  </DropdownMenu.Item>
+                ) : (
+                  <DropdownMenu.Item
+                    className="monitoring-menu__action"
+                    onSelect={() => setProcessesOpen(true)}
+                    data-testid="monitoring-processes-open"
+                  >
+                    <ListTree size={14} />
+                    View processes
+                  </DropdownMenu.Item>
+                )}
                 <DropdownMenu.Separator className="monitoring-menu__separator" />
               </>
             )}
