@@ -72,11 +72,9 @@ const ALLOW_LIST: Record<string, Record<string, AllowedSource>> = {
   },
   "worker-src": {
     "'self'": { reason: "Monaco's bundled workers (#3632) and the plugin sandbox worker" },
-    "blob:": { reason: "no known consumer since #3632; removal tracked in #3639" },
   },
   "child-src": {
     "'self'": { reason: "worker fallback for engines without worker-src" },
-    "blob:": { reason: "worker fallback for engines without worker-src" },
   },
   "object-src": { "'none'": { reason: "no plugins/embeds" } },
   "frame-src": { "'none'": { reason: "no frames" } },
@@ -163,9 +161,9 @@ describe.each(CSP_PLATFORMS)("production CSP on %s", (platform) => {
     expect(csp["frame-src"]).toEqual(["'none'"]);
   });
 
-  it("keeps the worker substrate (worker-src / child-src 'self' blob:) available", () => {
-    expect(csp["worker-src"]).toEqual(["'self'", "blob:"]);
-    expect(csp["child-src"]).toEqual(["'self'", "blob:"]);
+  it("allows workers only from 'self' — no blob: workers (#3639)", () => {
+    expect(csp["worker-src"]).toEqual(["'self'"]);
+    expect(csp["child-src"]).toEqual(["'self'"]);
   });
 });
 
