@@ -852,9 +852,7 @@ fn incremental_publish_replace_matches_the_whole_region_diff() {
 
 /// A seeded region with one live monitor `s1` and one subscriber, the seed's
 /// dirty set already drained.
-fn history_region(
-    store: &Arc<SystemMonitorStore>,
-) -> (Arc<Projector>, Arc<VecSink>, ClientCache) {
+fn history_region(store: &Arc<SystemMonitorStore>) -> (Arc<Projector>, Arc<VecSink>, ClientCache) {
     store.open("s1", Some("host-a".to_string()), None);
     store.opened("s1");
     let projector = Arc::new(Projector::new());
@@ -931,7 +929,10 @@ fn a_sample_appends_one_entry_without_resending_the_ring() {
     );
     match ops[1] {
         DiffOp::Add { path, value } => {
-            assert_eq!(path, &format!("/history/s1/{}", MONITOR_HISTORY_CAPACITY - 1));
+            assert_eq!(
+                path,
+                &format!("/history/s1/{}", MONITOR_HISTORY_CAPACITY - 1)
+            );
             assert_eq!(value["stats"]["cpuUsagePercent"], json!(999.0));
         }
         other => panic!("expected an append, got {other:?}"),

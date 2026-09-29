@@ -223,13 +223,17 @@ describe("useMonitorHistory (region-preferred)", () => {
   let root: Root;
   let latest: MonitorHistories;
 
-  function Probe(props: UseMonitorHistoryOptions) {
-    latest = useMonitorHistory(props);
+  // `key` is reserved by React, so the options travel under one prop.
+  function Probe({ opts }: { opts: UseMonitorHistoryOptions }) {
+    latest = useMonitorHistory(opts);
     return null;
   }
 
-  function render(props: UseMonitorHistoryOptions) {
-    act(() => root.render(React.createElement(Probe, props)));
+  async function render(opts: UseMonitorHistoryOptions) {
+    // The client fold runs in an effect; an async act flushes it before reading.
+    await act(async () => {
+      root.render(React.createElement(Probe, { opts }));
+    });
   }
 
   function mount() {
@@ -243,9 +247,9 @@ describe("useMonitorHistory (region-preferred)", () => {
     container.remove();
   });
 
-  it("shows the region's retained history on first render (a remount / new window)", () => {
+  it("shows the region's retained history on first render (a remount / new window)", async () => {
     mount();
-    render({
+    await render({
       key: "sess-1",
       sampleCount: 4,
       values: all(99),
@@ -261,11 +265,11 @@ describe("useMonitorHistory (region-preferred)", () => {
     expect(latest.cpu).toEqual([null, 20, 30, 40]);
   });
 
-  it("prefers the region over the local window as samples arrive", () => {
+  it("prefers the region over the local window as samples arrive", async () => {
     mount();
     const ring = [regionSample(1, 10), regionSample(2, 20)];
-    render({ key: "sess-1", sampleCount: 2, values: all(1), regionSamples: ring });
-    render({
+    await render({ key: "sess-1", sampleCount: 2, values: all(1), regionSamples: ring });
+    await render({
       key: "sess-1",
       sampleCount: 3,
       values: all(2),
@@ -274,10 +278,10 @@ describe("useMonitorHistory (region-preferred)", () => {
     expect(latest.cpu).toEqual([null, 20, 30]);
   });
 
-  it("falls back to the client-side window when the region has no history", () => {
+  it("falls back to the client-side window when the region has no history", async () => {
     mount();
-    render({ key: "sess-1", sampleCount: 1, values: all(5), regionSamples: undefined });
-    render({ key: "sess-1", sampleCount: 2, values: all(6), regionSamples: undefined });
+    await render({ key: "sess-1", sampleCount: 1, values: all(5), regionSamples: undefined });
+    await render({ key: "sess-1", sampleCount: 2, values: all(6), regionSamples: undefined });
     expect(latest.cpu).toEqual([5, 6]);
   });
 });

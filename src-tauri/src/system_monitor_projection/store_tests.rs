@@ -310,7 +310,11 @@ fn a_replace_seed_without_a_reason_still_deserializes() {
     }))
     .expect("an entry without statusReason must deserialize");
     let store = SystemMonitorStore::new();
-    store.replace(monitors, std::collections::HashMap::new());
+    store.replace(
+        monitors,
+        std::collections::HashMap::new(),
+        std::collections::HashMap::new(),
+    );
     assert_eq!(store.get("s1").unwrap().status_reason, None);
 }
 
@@ -355,7 +359,10 @@ fn stats_append_to_the_history_ring_with_their_sample_ordinal() {
         store.snapshot()["history"]["s1"][2]["stats"]["cpuUsagePercent"],
         json!(3.0)
     );
-    assert_eq!(store.snapshot()["history"]["s1"][2]["sampleCount"], json!(3));
+    assert_eq!(
+        store.snapshot()["history"]["s1"][2]["sampleCount"],
+        json!(3)
+    );
 }
 
 #[test]
@@ -479,11 +486,14 @@ fn the_drained_history_delta_is_append_only_between_resets() {
     store.stats("s1", sample("h", 2.0));
     let delta = store.drain_delta();
     match delta.history.as_slice() {
-        [(key, HistoryDelta::Append {
-            evicted,
-            start,
-            appended,
-        })] => {
+        [(
+            key,
+            HistoryDelta::Append {
+                evicted,
+                start,
+                appended,
+            },
+        )] => {
             assert_eq!(key, "s1");
             assert_eq!((*evicted, *start, appended.len()), (0, 0, 2));
         }
@@ -495,11 +505,14 @@ fn the_drained_history_delta_is_append_only_between_resets() {
     let _ = store.drain_delta();
     store.stats("s1", sample("h", 4.0));
     match store.drain_delta().history.as_slice() {
-        [(_, HistoryDelta::Append {
-            evicted,
-            start,
-            appended,
-        })] => {
+        [(
+            _,
+            HistoryDelta::Append {
+                evicted,
+                start,
+                appended,
+            },
+        )] => {
             assert_eq!((*evicted, *start, appended.len()), (1, 2, 1));
             assert_eq!(appended[0]["stats"]["cpuUsagePercent"], json!(4.0));
         }

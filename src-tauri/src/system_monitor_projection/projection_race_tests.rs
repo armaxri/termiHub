@@ -193,8 +193,11 @@ fn draining_outside_the_region_lock_would_resurrect_a_closed_monitor() {
     let (store, projector, _sink, _view, _version) = seeded();
     // The collector's sample…
     store.stats("m1", stats(42.0));
-    // …old publish, step 1: drain outside the region lock.
-    let stale_delta = store.drain_delta();
+    // …old publish, step 1: drain outside the region lock. (Its history append
+    // is dropped: the ring's own misfit guard would notice that half and
+    // resync, which is not the entry-resurrection hazard pinned here.)
+    let mut stale_delta = store.drain_delta();
+    stale_delta.history.clear();
     // A racing command closes the monitor and publishes the removal.
     store.close("m1");
     release_publish(&projector, &store);
@@ -480,8 +483,7 @@ fn an_append_that_does_not_fit_the_held_ring_resyncs_the_region() {
         )],
         ..RegionDelta::default()
     };
-    let (ops, divergence) =
-        apply_monitor_delta(&mut view, &torn, None, || truth.clone());
+    let (ops, divergence) = apply_monitor_delta(&mut view, &torn, None, || truth.clone());
     assert!(divergence.is_some(), "the torn append is reported");
     assert_eq!(view, truth, "resynced to the store");
     assert_eq!(ops, compute_ops(&old_full, &truth));

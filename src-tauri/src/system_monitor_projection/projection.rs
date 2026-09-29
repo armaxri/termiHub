@@ -15,8 +15,19 @@
 //! monitor. The view model:
 //!
 //! ```json
-//! { "monitors": { "<key>": MonitorEntry, ... }, "statsCache": { "<key>": SystemStats } }
+//! {
+//!   "history": { "<key>": [MonitorHistorySample, ...] },
+//!   "monitors": { "<key>": MonitorEntry, ... },
+//!   "statsCache": { "<key>": SystemStats }
+//! }
 //! ```
+//!
+//! `history` is the bounded per-monitor ring of recent samples (#3204), so a
+//! new window or a remounted status bar draws the existing metric history from
+//! its first snapshot. It is published **append-only**: a sample adds one
+//! `add /history/<key>/<index>` (plus one `remove /history/<key>/0` per
+//! eviction once the ring is full) — the ring is never resent per sample. See
+//! [`apply_history_delta`].
 //!
 //! # Intents
 //!
@@ -31,7 +42,7 @@
 //! | `monitor.setInterval`  | `{ key, intervalMs }`         | change refresh cadence (#1233)           |
 //! | `monitor.clearError`   | `{ key }`                     | dismiss the error banner                 |
 //! | `monitor.close`        | `{ key }`                     | disconnect and drop the entry            |
-//! | `monitor.replace`      | `{ monitors, statsCache }`    | overwrite the whole map (render mirror)  |
+//! | `monitor.replace`      | `{ monitors, statsCache, history? }` | overwrite the whole region        |
 //!
 //! # Authoritative — drives the live UI (#2224)
 //!
@@ -53,10 +64,12 @@ use termihub_core::monitoring::{MonitorStatus, MonitorStatusReason, SystemStats}
 
 use crate::commands::projection::ProjectionState;
 use crate::projection::{
-    compute_ops, optional_str, perf006_divergence, report_perf006_divergence, required_bool,
-    required_str, DiffOp, HandlerRegistry, Intent, ProducedRegion, Projector,
+    apply_ops, compute_ops, optional_str, perf006_divergence, report_perf006_divergence,
+    required_bool, required_str, DiffOp, HandlerRegistry, Intent, ProducedRegion, Projector,
 };
-use crate::system_monitor_projection::store::{MonitorEntry, RegionDelta, SystemMonitorStore};
+use crate::system_monitor_projection::store::{
+    HistoryDelta, MonitorEntry, MonitorHistorySample, RegionDelta, SystemMonitorStore,
+};
 
 /// The projection region id for the system-monitor domain (shared, per Open
 /// Design Decision #4).
@@ -165,6 +178,7 @@ fn apply_monitor_delta(
     // byte-for-byte. Production always seeds the region in `lib.rs::setup()`.
     if !view.get("monitors").is_some_and(Value::is_object)
         || !view.get("statsCache").is_some_and(Value::is_object)
+        || !view.get("history").is_some_and(Value::is_object)
     {
         let full = truth.cloned().unwrap_or_else(snapshot);
         let ops = compute_ops(view, &full);
@@ -172,23 +186,207 @@ fn apply_monitor_delta(
         return (ops, None);
     }
 
+    // An append that does not fit the held ring (a dirty-tracking bug — drains
+    // are applied in order under the region lock, so it cannot happen by
+    // interleaving) must never be spliced into a torn ring. Resync the whole
+    // region instead, before anything is mutated.
+    if let Some(reason) = history_misfit(view, &delta.history) {
+        let old = view.clone();
+        let full = truth.cloned().unwrap_or_else(snapshot);
+        let ops = compute_ops(&old, &full);
+        *view = full;
+        return (ops, Some(reason));
+    }
+
     let old_full = truth.map(|_| view.clone());
+
+    // `history` sorts first among the top-level keys, so its ops lead — the
+    // same position the whole-region differ gives them.
+    let mut ops = apply_history_delta(view, &delta.history);
 
     let reduced_old = reduced_from_view(view, delta);
     let reduced_new = reduced_from_delta(delta);
-    let ops = compute_ops(&reduced_old, &reduced_new);
+    ops.extend(compute_ops(&reduced_old, &reduced_new));
 
     splice_subtrees(view, "monitors", &delta.monitors);
     splice_subtrees(view, "statsCache", &delta.stats_cache);
 
     if let (Some(truth), Some(old_full)) = (truth, old_full) {
-        if let Some(reason) = perf006_divergence(&ops, &old_full, view, truth) {
+        if let Some(reason) = monitor_divergence(&ops, &old_full, view, truth) {
             *view = truth.clone();
             return (compute_ops(&old_full, truth), Some(reason));
         }
     }
 
     (ops, None)
+}
+
+/// The PERF-006 cross-check for this region (#3204). `monitors` / `statsCache`
+/// keep the byte-identical guarantee: their ops must equal the whole-region
+/// diff with `history` stripped. The `history` ops are append-only by design —
+/// a whole-region differ would instead re-diff every shifted ring index — so
+/// they are checked by effect: replaying *all* the ops onto the old view must
+/// reproduce `truth`, and the spliced view must equal it too.
+fn monitor_divergence(
+    ops: &[DiffOp],
+    old_full: &Value,
+    view: &Value,
+    truth: &Value,
+) -> Option<String> {
+    let rest: Vec<DiffOp> = ops
+        .iter()
+        .filter(|op| !is_history_op(op))
+        .cloned()
+        .collect();
+    if let Some(reason) = perf006_divergence(
+        &rest,
+        &without_history(old_full),
+        &without_history(view),
+        &without_history(truth),
+    ) {
+        return Some(reason);
+    }
+    if view != truth {
+        return Some(format!("spliced view {view} != store snapshot {truth}"));
+    }
+    let mut replayed = old_full.clone();
+    if let Err(e) = apply_ops(&mut replayed, ops) {
+        return Some(format!(
+            "incremental ops do not apply to the held view: {e}"
+        ));
+    }
+    if &replayed != truth {
+        return Some(format!(
+            "incremental ops replay to {replayed} != store snapshot {truth}"
+        ));
+    }
+    None
+}
+
+/// Whether a diff op addresses the `history` subtree.
+fn is_history_op(op: &DiffOp) -> bool {
+    match op {
+        DiffOp::Add { path, .. } | DiffOp::Replace { path, .. } | DiffOp::Remove { path } => {
+            path == "/history" || path.starts_with("/history/")
+        }
+        DiffOp::Semantic { .. } => false,
+    }
+}
+
+/// A copy of a region view without its `history` subtree.
+fn without_history(view: &Value) -> Value {
+    let mut out = view.clone();
+    if let Some(obj) = out.as_object_mut() {
+        obj.remove("history");
+    }
+    out
+}
+
+/// Escape one RFC 6901 JSON-pointer reference token.
+fn pointer_token(key: &str) -> String {
+    key.replace('~', "~0").replace('/', "~1")
+}
+
+/// Why a drained history delta cannot be applied to the held `view`, if so: an
+/// append whose ring is missing, too short for its evictions, or whose start
+/// index does not match the ring left after them.
+fn history_misfit(view: &Value, delta: &[(String, HistoryDelta)]) -> Option<String> {
+    for (key, change) in delta {
+        let HistoryDelta::Append { evicted, start, .. } = change else {
+            continue;
+        };
+        let held = view
+            .get("history")
+            .and_then(|h| h.get(key))
+            .and_then(Value::as_array)
+            .map(Vec::len);
+        match held {
+            Some(len) if len >= *evicted && len - evicted == *start => {}
+            other => {
+                return Some(format!(
+                    "history append for '{key}' (evict {evicted}, start {start}) does not fit \
+                     the held ring (len {other:?})"
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// Splice a drained history delta into `view["history"]` in place and return
+/// the ops that describe it (#3204) — the append-only half of the publish.
+///
+/// Ordered like the whole-region differ orders an object: every present
+/// (reset-to-a-value or appended) key in sorted order first, then every removed
+/// key in sorted order. Per key:
+///
+/// - **Append** → `remove /history/<key>/0` once per eviction, then
+///   `add /history/<key>/<start + i>` per new sample. Below the bound this is
+///   exactly the whole-region differ's own output; once the ring is full it is
+///   one remove + one add per sample instead of the differ's re-diff of every
+///   shifted index.
+/// - **Reset to a value** → `add` (new key) or `replace` (existing key, if the
+///   value changed) of the whole ring — once per open / replace, not per sample.
+/// - **Reset to absent** → `remove /history/<key>` if the key was present.
+///
+/// The caller has already checked every append fits ([`history_misfit`]).
+fn apply_history_delta(view: &mut Value, delta: &[(String, HistoryDelta)]) -> Vec<DiffOp> {
+    let Some(history) = view.get_mut("history").and_then(Value::as_object_mut) else {
+        return Vec::new();
+    };
+    let mut ops = Vec::new();
+    let mut removals = Vec::new();
+    for (key, change) in delta {
+        let base = format!("/history/{}", pointer_token(key));
+        match change {
+            HistoryDelta::Reset(None) => {
+                if history.remove(key).is_some() {
+                    removals.push(DiffOp::Remove { path: base });
+                }
+            }
+            HistoryDelta::Reset(Some(ring)) => match history.get(key) {
+                Some(held) if held == ring => {}
+                Some(_) => {
+                    history.insert(key.clone(), ring.clone());
+                    ops.push(DiffOp::Replace {
+                        path: base,
+                        value: ring.clone(),
+                    });
+                }
+                None => {
+                    history.insert(key.clone(), ring.clone());
+                    ops.push(DiffOp::Add {
+                        path: base,
+                        value: ring.clone(),
+                    });
+                }
+            },
+            HistoryDelta::Append {
+                evicted,
+                start,
+                appended,
+            } => {
+                let Some(ring) = history.get_mut(key).and_then(Value::as_array_mut) else {
+                    continue;
+                };
+                ring.drain(..*evicted);
+                for _ in 0..*evicted {
+                    ops.push(DiffOp::Remove {
+                        path: format!("{base}/0"),
+                    });
+                }
+                for (i, sample) in appended.iter().enumerate() {
+                    ring.push(sample.clone());
+                    ops.push(DiffOp::Add {
+                        path: format!("{base}/{}", start + i),
+                        value: sample.clone(),
+                    });
+                }
+            }
+        }
+    }
+    ops.extend(removals);
+    ops
 }
 
 /// Build the reduced *old* view: the held `view`'s subtrees for exactly the
@@ -372,8 +570,8 @@ pub fn register_monitor_intents(registry: &mut HandlerRegistry, app_handle: AppH
     let handle = app_handle;
     registry.route("monitor.replace", move |intent, projector| {
         let store = store_of(&handle)?;
-        let (monitors, stats_cache) = required_replace(intent)?;
-        store.replace(monitors, stats_cache);
+        let (monitors, stats_cache, history) = required_replace(intent)?;
+        store.replace(monitors, stats_cache, history);
         Ok(publish_monitors(projector, &store))
     });
 }
@@ -415,15 +613,20 @@ fn required_stats(intent: &Intent) -> Result<SystemStats, (String, String)> {
         .map_err(|e| ("bad_payload".to_string(), format!("invalid stats: {e}")))
 }
 
-/// Parse a `monitor.replace` payload into the whole-map snapshot the render-cut
-/// mirror carries: `{ monitors: { <key>: MonitorEntry }, statsCache: { <key>:
-/// SystemStats } }`. Either field absent is treated as an empty map, so a mirror
-/// that clears all monitors is expressible; a present-but-malformed field is a
-/// `bad_payload` rejection that advances nothing.
-#[allow(clippy::type_complexity)]
-fn required_replace(
-    intent: &Intent,
-) -> Result<(HashMap<String, MonitorEntry>, HashMap<String, SystemStats>), (String, String)> {
+/// The whole-region snapshot a `monitor.replace` carries.
+type ReplacePayload = (
+    HashMap<String, MonitorEntry>,
+    HashMap<String, SystemStats>,
+    HashMap<String, Vec<MonitorHistorySample>>,
+);
+
+/// Parse a `monitor.replace` payload into the whole-region snapshot the
+/// render-cut mirror carries: `{ monitors: { <key>: MonitorEntry }, statsCache:
+/// { <key>: SystemStats }, history?: { <key>: [MonitorHistorySample] } }`. Any
+/// field absent is treated as an empty map, so a mirror that clears all
+/// monitors is expressible; a present-but-malformed field is a `bad_payload`
+/// rejection that advances nothing.
+fn required_replace(intent: &Intent) -> Result<ReplacePayload, (String, String)> {
     let monitors = match intent.payload.get("monitors") {
         None | Some(Value::Null) => HashMap::new(),
         Some(value) => serde_json::from_value(value.clone())
@@ -438,7 +641,12 @@ fn required_replace(
             )
         })?,
     };
-    Ok((monitors, stats_cache))
+    let history = match intent.payload.get("history") {
+        None | Some(Value::Null) => HashMap::new(),
+        Some(value) => serde_json::from_value(value.clone())
+            .map_err(|e| ("bad_payload".to_string(), format!("invalid history: {e}")))?,
+    };
+    Ok((monitors, stats_cache, history))
 }
 
 /// Parse the required `status` field as a [`MonitorStatus`].
