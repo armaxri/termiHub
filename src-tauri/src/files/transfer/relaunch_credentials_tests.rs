@@ -163,7 +163,11 @@ impl RelaunchSources for FakeSources {
         self.key_encrypted
     }
 
-    fn resolve_jump_hosts(&self, _settings: &mut Value, _connection_id: &str) -> Result<(), String> {
+    fn resolve_jump_hosts(
+        &self,
+        _settings: &mut Value,
+        _connection_id: &str,
+    ) -> Result<(), String> {
         Ok(())
     }
 
@@ -294,8 +298,8 @@ async fn an_ftp_password_resolved_from_the_store_resumes() {
 #[cfg(feature = "ftp")]
 #[tokio::test]
 async fn an_anonymous_ftp_connection_resumes_without_the_store() {
-    let src = FakeSources::new(locked(RecordingStore::default()))
-        .with_connection(ftp("conn-f", true));
+    let src =
+        FakeSources::new(locked(RecordingStore::default())).with_connection(ftp("conn-f", true));
 
     let target = resolve_session_target(&src, "sess-old", Some("conn-f"))
         .await
@@ -423,8 +427,11 @@ async fn a_failed_unattended_connect_fails_with_the_error() {
 /// A saved connection of a type that has no file transfer fails honestly.
 #[tokio::test]
 async fn a_saved_connection_without_file_transfer_fails() {
-    let src = FakeSources::new(RecordingStore::default())
-        .with_connection(saved("conn-t", "telnet", json!({ "host": "h" })));
+    let src = FakeSources::new(RecordingStore::default()).with_connection(saved(
+        "conn-t",
+        "telnet",
+        json!({ "host": "h" }),
+    ));
 
     let err = resolve_session_target(&src, "sess-old", Some("conn-t"))
         .await
