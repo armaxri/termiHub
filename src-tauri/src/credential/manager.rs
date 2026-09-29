@@ -27,6 +27,43 @@ enum StoreBackend {
     OsKeychain(OsKeychainStore),
 }
 
+/// A store switch in progress: the new backend is active, the previous one is
+/// held here (unlocked, if it was) until the switch is committed or rolled
+/// back. See [`CredentialManager::begin_switch`] (#3323).
+pub struct PendingStoreSwitch {
+    previous: StoreBackend,
+}
+
+impl PendingStoreSwitch {
+    /// The storage mode that was active before the switch began.
+    pub fn previous_mode(&self) -> StorageMode {
+        match self.previous {
+            StoreBackend::Null(_) => StorageMode::None,
+            StoreBackend::MasterPassword(_) => StorageMode::MasterPassword,
+            StoreBackend::OsKeychain(_) => StorageMode::OsKeychain,
+        }
+    }
+
+    /// Whether the previous store is usable (a master-password store is
+    /// unlocked; the other backends have no lock state).
+    pub fn previous_is_unlocked(&self) -> bool {
+        match self.previous {
+            StoreBackend::MasterPassword(ref s) => s.is_unlocked(),
+            _ => true,
+        }
+    }
+
+    /// Remove one credential from the previous store. Used when switching to
+    /// `none`, so the secrets the user chose to discard do not linger (#3323).
+    pub fn remove_from_previous(&self, key: &CredentialKey) -> Result<()> {
+        match self.previous {
+            StoreBackend::Null(ref s) => s.remove(key),
+            StoreBackend::MasterPassword(ref s) => s.remove(key),
+            StoreBackend::OsKeychain(ref s) => s.remove(key),
+        }
+    }
+}
+
 /// Manages the active credential store backend and allows runtime switching.
 ///
 /// Wraps the active [`CredentialStore`] implementation behind a [`RwLock`]
@@ -91,19 +128,38 @@ impl CredentialManager {
     ///
     /// Locks the current store (if master password), then replaces the backend.
     /// Callers are responsible for migrating credentials before switching.
+    /// Equivalent to [`Self::begin_switch`] immediately followed by
+    /// [`Self::commit_switch`].
     pub fn switch_store(&self, new_mode: StorageMode) -> Result<()> {
+        let pending = self.begin_switch(new_mode);
+        self.commit_switch(pending);
+        Ok(())
+    }
+
+    /// Start a reversible store switch (#3323).
+    ///
+    /// Installs the backend for `new_mode` as the active store, but keeps the
+    /// previous backend alive — **still unlocked** if it is a master-password
+    /// store — inside the returned [`PendingStoreSwitch`]. The caller then
+    /// either [`commit_switch`](Self::commit_switch)es (locking and dropping the
+    /// previous store) or [`rollback_switch`](Self::rollback_switch)es (putting
+    /// the previous store back exactly as it was, without a re-unlock prompt).
+    pub fn begin_switch(&self, new_mode: StorageMode) -> PendingStoreSwitch {
         let new_backend = Self::create_backend(&new_mode, &self.config_dir);
         let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
+        let previous = std::mem::replace(&mut *inner, new_backend);
+        PendingStoreSwitch { previous }
+    }
 
-        // Lock the old master password store if applicable
-        if let StoreBackend::MasterPassword(ref old_store) = *inner {
+    /// Finish a store switch started by [`Self::begin_switch`]: lock the
+    /// previous master-password store (zeroizing its secrets) and drop it.
+    pub fn commit_switch(&self, pending: PendingStoreSwitch) {
+        let leaving_master_password = matches!(pending.previous, StoreBackend::MasterPassword(_))
+            && self.get_mode() != StorageMode::MasterPassword;
+        if let StoreBackend::MasterPassword(ref old_store) = pending.previous {
             old_store.lock();
         }
-
-        let leaving_master_password = matches!(*inner, StoreBackend::MasterPassword(_))
-            && new_mode != StorageMode::MasterPassword;
-        *inner = new_backend;
-        drop(inner);
+        drop(pending);
 
         // The biometric-unlock enrollment belongs to the master-password store
         // being left; it must not survive a store switch (PROD-064).
@@ -112,7 +168,16 @@ impl CredentialManager {
                 warn!(error = %e, "failed to remove biometric unlock after a store switch");
             }
         }
-        Ok(())
+    }
+
+    /// Undo a store switch started by [`Self::begin_switch`]: reinstall the
+    /// previous backend (in the lock state it had) and drop the new one, which
+    /// locks it if it is a master-password store.
+    pub fn rollback_switch(&self, pending: PendingStoreSwitch) {
+        let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
+        let abandoned = std::mem::replace(&mut *inner, pending.previous);
+        drop(inner);
+        drop(abandoned);
     }
 
     /// Execute a closure with a reference to the inner [`MasterPasswordStore`],
@@ -567,6 +632,62 @@ mod tests {
 
         mgr.switch_store(StorageMode::None).unwrap();
         assert_eq!(mgr.get_mode(), StorageMode::None);
+    }
+
+    fn unlocked_master_password_manager(dir: &Path) -> (CredentialManager, CredentialKey) {
+        let mgr = CredentialManager::new(StorageMode::MasterPassword, dir.to_path_buf());
+        mgr.with_master_password_store(|s| s.setup("master-pw"))
+            .unwrap()
+            .unwrap();
+        let key = CredentialKey::new("conn-pending", CredentialType::Password);
+        mgr.set(&key, "secret").unwrap();
+        (mgr, key)
+    }
+
+    #[test]
+    fn rollback_switch_restores_previous_store_still_unlocked() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mgr, key) = unlocked_master_password_manager(dir.path());
+
+        let pending = mgr.begin_switch(StorageMode::None);
+        assert_eq!(mgr.get_mode(), StorageMode::None);
+        assert_eq!(pending.previous_mode(), StorageMode::MasterPassword);
+        assert!(pending.previous_is_unlocked());
+
+        mgr.rollback_switch(pending);
+        assert_eq!(mgr.get_mode(), StorageMode::MasterPassword);
+        assert_eq!(mgr.status(), CredentialStoreStatus::Unlocked);
+        assert_eq!(mgr.get(&key).unwrap(), Some("secret".to_string()));
+    }
+
+    #[test]
+    fn commit_switch_locks_previous_master_password_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mgr, key) = unlocked_master_password_manager(dir.path());
+
+        let pending = mgr.begin_switch(StorageMode::None);
+        mgr.commit_switch(pending);
+        assert_eq!(mgr.get_mode(), StorageMode::None);
+
+        // Re-opening the file-backed store still finds the credential: commit
+        // locks the old store but never deletes its data.
+        mgr.switch_store(StorageMode::MasterPassword).unwrap();
+        assert_eq!(mgr.status(), CredentialStoreStatus::Locked);
+        mgr.with_master_password_store(|s| s.unlock("master-pw"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(mgr.get(&key).unwrap(), Some("secret".to_string()));
+    }
+
+    #[test]
+    fn remove_from_previous_clears_the_source_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mgr, key) = unlocked_master_password_manager(dir.path());
+
+        let pending = mgr.begin_switch(StorageMode::None);
+        pending.remove_from_previous(&key).unwrap();
+        mgr.rollback_switch(pending);
+        assert_eq!(mgr.get(&key).unwrap(), None);
     }
 
     #[test]

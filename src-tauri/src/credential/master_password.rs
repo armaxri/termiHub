@@ -561,15 +561,28 @@ impl CredentialStore for MasterPasswordStore {
     }
 
     fn remove(&self, key: &CredentialKey) -> Result<()> {
-        let changed = {
+        let map_key = key.to_string();
+        let removed = {
             let mut creds_guard = self.credentials.write().unwrap_or_else(|e| e.into_inner());
             let map = creds_guard
                 .as_mut()
                 .context("Store is locked — unlock before accessing credentials")?;
-            map.remove(&key.to_string()).is_some()
+            map.remove(&map_key)
         };
-        if changed {
-            self.save_to_disk()?;
+        if let Some(value) = removed {
+            if let Err(e) = self.save_to_disk() {
+                // The entry is still on disk: put it back in memory so the
+                // store keeps reflecting what is actually stored (#3323).
+                if let Some(map) = self
+                    .credentials
+                    .write()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .as_mut()
+                {
+                    map.insert(map_key, value);
+                }
+                return Err(e);
+            }
         }
         Ok(())
     }
