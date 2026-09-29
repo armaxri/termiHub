@@ -24,6 +24,7 @@ jobs:
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
       frontend: ${{ steps.detect.outputs.frontend }}
+      tests: ${{ steps.detect.outputs.tests }}
 
     steps:
       - name: Checkout code
@@ -51,8 +52,10 @@ jobs:
     name: Build on ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
     needs: changes
+    # Also skipped when the PR head commit carries [skip-tests] (#3915).
     if: >-
-      ${{ !cancelled() && (needs.changes.outputs.rust != 'false' ||
+      ${{ !cancelled() && needs.changes.outputs.tests != 'false' &&
+      (needs.changes.outputs.rust != 'false' ||
       needs.changes.outputs.frontend != 'false') }}
 
     strategy:

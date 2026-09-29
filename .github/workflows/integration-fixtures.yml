@@ -95,6 +95,7 @@ jobs:
       rust: ${{ steps.detect.outputs.rust }}
       sidecar: ${{ steps.detect.outputs.sidecar }}
       scripts: ${{ steps.detect.outputs.scripts }}
+      tests: ${{ steps.detect.outputs.tests }}
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -112,9 +113,11 @@ jobs:
     needs: changes
     # Skipped on a PR whose matching changes are comment-only Rust (#3903): the
     # path filter's other inputs map to rust (core/, polkit), sidecar
-    # (rdp-sidecar/) or scripts (tests/docker/).
+    # (rdp-sidecar/) or scripts (tests/docker/). Also skipped when the PR head
+    # commit carries [skip-tests] (#3915).
     if: >-
-      ${{ !cancelled() && (needs.changes.outputs.rust != 'false' ||
+      ${{ !cancelled() && needs.changes.outputs.tests != 'false' &&
+      (needs.changes.outputs.rust != 'false' ||
       needs.changes.outputs.sidecar != 'false' ||
       needs.changes.outputs.scripts != 'false') }}
     # The instrumented (coverage) build on nightly/manual runs is slower than a
@@ -383,9 +386,11 @@ jobs:
     needs: changes
     # Skipped on a PR whose matching changes are comment-only Rust (#3903): the
     # path filter's other inputs map to rust (core/, polkit), sidecar
-    # (rdp-sidecar/) or scripts (tests/docker/).
+    # (rdp-sidecar/) or scripts (tests/docker/). Also skipped when the PR head
+    # commit carries [skip-tests] (#3915).
     if: >-
-      ${{ !cancelled() && (needs.changes.outputs.rust != 'false' ||
+      ${{ !cancelled() && needs.changes.outputs.tests != 'false' &&
+      (needs.changes.outputs.rust != 'false' ||
       needs.changes.outputs.sidecar != 'false' ||
       needs.changes.outputs.scripts != 'false') }}
     timeout-minutes: 20
