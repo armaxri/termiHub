@@ -435,7 +435,9 @@ impl CredentialManager {
                 let file_path = config_dir.join("credentials.enc");
                 StoreBackend::MasterPassword(MasterPasswordStore::new(file_path))
             }
-            StorageMode::OsKeychain => StoreBackend::OsKeychain(OsKeychainStore::new()),
+            StorageMode::OsKeychain => StoreBackend::OsKeychain(OsKeychainStore::with_index_file(
+                config_dir.join(super::keychain_index::FILE_NAME),
+            )),
             StorageMode::None => StoreBackend::Null(NullStore),
         }
     }
@@ -526,6 +528,13 @@ impl CredentialStore for CredentialManager {
         drop(inner);
         self.record_activity();
         result
+    }
+
+    fn seed_key_index(&self, candidates: &[CredentialKey]) {
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
+        if let StoreBackend::OsKeychain(ref s) = *inner {
+            s.seed_key_index(candidates);
+        }
     }
 
     fn set_many(&self, entries: &[(CredentialKey, String)]) -> Result<()> {

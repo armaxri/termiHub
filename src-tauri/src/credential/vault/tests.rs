@@ -447,6 +447,44 @@ fn collect_entries_probes_known_owner_ids() {
 }
 
 #[test]
+fn keychain_export_includes_non_connection_credentials() {
+    // #3434: the file editor saves `sudo_password` under a host label, which
+    // is no saved connection id. The keychain lists it from its key index.
+    let _mock = crate::credential::os_keychain::test_support::install_mock();
+    let dir = tempfile::tempdir().unwrap();
+    let store = crate::credential::OsKeychainStore::with_index_file(
+        dir.path()
+            .join(crate::credential::keychain_index::FILE_NAME),
+    );
+    store
+        .set(&key("conn-x", CredentialType::Password), "conn-secret")
+        .unwrap();
+    store
+        .set(
+            &key("db.example.com", CredentialType::SudoPassword),
+            "sudo-secret",
+        )
+        .unwrap();
+    store
+        .set(
+            &key("agent-graphical:agent-1:rdp-1", CredentialType::Password),
+            "rdp-secret",
+        )
+        .unwrap();
+
+    let entries = collect_entries(&store, &["conn-x".to_string()]).unwrap();
+    let keys: Vec<String> = entries.iter().map(|(k, _)| k.to_string()).collect();
+    assert_eq!(
+        keys,
+        vec![
+            "agent-graphical:agent-1:rdp-1:password",
+            "conn-x:password",
+            "db.example.com:sudo_password",
+        ]
+    );
+}
+
+#[test]
 fn export_passphrase_rules() {
     assert!(matches!(
         validate_export_passphrase("short", None),

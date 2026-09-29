@@ -1,6 +1,7 @@
 pub mod auto_lock;
 pub mod biometric_unlock;
 pub mod crypto;
+pub mod keychain_index;
 pub mod manager;
 pub mod master_password;
 pub mod named;
@@ -39,6 +40,16 @@ pub trait CredentialStore: Send + Sync {
 
     /// List all stored credential keys.
     fn list_keys(&self) -> Result<Vec<CredentialKey>>;
+
+    /// Record which of `candidates` exist, for backends that cannot enumerate
+    /// their contents and keep their own key index (the OS keychain, #3434).
+    ///
+    /// Called with every key termiHub can derive (saved connections, agents,
+    /// shared named credentials, embedded servers, agent graphical secrets) so
+    /// items written before the index existed become listable. Best effort:
+    /// failures are logged, never returned. The default is a no-op for
+    /// backends that can list their keys themselves.
+    fn seed_key_index(&self, _candidates: &[CredentialKey]) {}
 
     /// Return the current status of the credential store.
     fn status(&self) -> CredentialStoreStatus;
