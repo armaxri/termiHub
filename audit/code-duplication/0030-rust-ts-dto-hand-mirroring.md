@@ -11,8 +11,8 @@ evidence:
   - core/src/files/mod.rs:16
   - src/types/embeddedServer.ts:2
   - src/services/api.ts:1197
-status: partial
-resolution: "#3087, #3775, #3798, #3804, #3822 — ts-rs codegen across all major DTO clusters incl. AppSettings (typed, byte-compatible legacy round-trip), AgentCapabilities, network DTOs; DUP-008 resolved. Remaining hand-written mirrors listed on #3088 (shell-integration, update/app-mode, workspace/LastSession, window/diagnostics/macro, bookmarks, AgentConnectResult)"
+status: fixed
+resolution: "#3087, #3775, #3798, #3804, #3822, #3826, #3830 — all Rust<->TS DTO mirrors generated via ts-rs with CI staleness gate (connection/config/protocol/agent/command/projection/event/settings/workspace/...); remaining hand-written types are documented intentional exceptions (#3088 closing comment)"
 ---
 
 ## What
