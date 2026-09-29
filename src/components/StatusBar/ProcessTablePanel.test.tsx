@@ -26,8 +26,9 @@ vi.mock("@/utils/platform", () => ({
   getPlatform: () => platformMock.value,
 }));
 
+const toastMock = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("@/components/ui/Toast", () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: toastMock,
 }));
 
 const SAMPLE: ProcessInfo[] = [
@@ -273,5 +274,48 @@ describe("ProcessTablePanel (PROD-0028)", () => {
     await openKillConfirm(1);
     await confirm();
     expect(killProcess).toHaveBeenCalledWith("sess-1", 1, "term");
+  });
+
+  describe("agent-hosted sessions (#3210)", () => {
+    it("lists and kills in an agent-hosted session with the full signal menu", async () => {
+      platformMock.value = "windows";
+      await render("remote-session");
+      expect(listProcesses).toHaveBeenCalledWith("sess-1");
+      expect(byTestId("process-row-4321")).not.toBeNull();
+      await openKillConfirm();
+      const options = openSignalMenu();
+      expect(options.every((o) => !o.hasAttribute("data-disabled"))).toBe(true);
+      chooseSignal("hup");
+      await flush();
+      await confirm();
+      expect(killProcess).toHaveBeenCalledWith("sess-1", 4321, "hup");
+    });
+
+    it("tells the user to update an outdated agent, without a retry or an error toast", async () => {
+      listProcesses.mockRejectedValue({
+        code: "process_agent_outdated",
+        message: "the agent must be updated",
+        details: null,
+      });
+      await render("remote-session");
+      const notice = byTestId("monitoring-processes-agent-outdated");
+      expect(notice).not.toBeNull();
+      expect(notice?.textContent).toContain("Update the agent");
+      expect(byTestId("monitoring-processes-retry")).toBeNull();
+      expect(byTestId("monitoring-processes-error")).toBeNull();
+      expect(toastMock.error).not.toHaveBeenCalled();
+    });
+
+    it("shows a structured backend error's message", async () => {
+      listProcesses.mockRejectedValue({
+        code: "process_list_failed",
+        message: "failed to list processes: ps missing",
+        details: null,
+      });
+      await render("remote-session");
+      const error = byTestId("monitoring-processes-error");
+      expect(error?.textContent).toContain("ps missing");
+      expect(byTestId("monitoring-processes-agent-outdated")).toBeNull();
+    });
   });
 });

@@ -631,6 +631,7 @@ fn connection(
             monitoring_supported: false,
             tool_streaming: false,
             embedded_server_activity: false,
+            session_processes: false,
             agent_version: String::new(),
         },
         ki_activity: crate::terminal::agent_ki_prompt::AgentPromptActivity::new(),

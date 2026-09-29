@@ -15,10 +15,15 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn, Instrument};
 
+use crate::daemon::process_rpc::{self, ProcessRequest, ProcessResponse};
 use crate::daemon::protocol::{self, *};
 use crate::daemon::transport::{self, BoxedReader, BoxedWriter, DaemonListener};
 use termihub_core::buffer::{RingBuffer, DEFAULT_BUFFER_CAPACITY};
 use termihub_core::connection::{ConnectionType, OutputReceiver};
+
+/// Process requests the daemon runs at once (#3210). The desktop refreshes one
+/// table every few seconds, so this is a safety bound, never a working limit.
+const MAX_PROCESS_REQUESTS_IN_FLIGHT: usize = 4;
 
 /// Default ring buffer size (1 MiB); derived from the shared core default so the
 /// daemon and core agree on a single value (DUP-006).
@@ -283,6 +288,8 @@ enum AgentCommand {
     Kill,
     /// Agent requested current buffer contents without reconnecting.
     QueryBuffer,
+    /// Agent requested a process list / kill in this session's backend (#3210).
+    Process(ProcessRequest),
     /// Agent disconnected (EOF or error).
     ///
     /// Carries the connection generation that produced this disconnect so the
@@ -317,6 +324,20 @@ async fn daemon_loop(
 
     // Channel for receiving commands from the agent reader task.
     let (agent_cmd_tx, mut agent_cmd_rx) = mpsc::channel::<AgentCommand>(64);
+
+    // The session backend's process manager (#3210). Captured once: a backend
+    // builds it on connect. Operations run on spawned tasks so a slow `ps` over
+    // SSH never stalls output forwarding; each reply comes back tagged with the
+    // connection generation that asked, and is dropped if that connection has
+    // since been replaced (single-attach: only the requester hears it).
+    let process_manager = connection.process_manager();
+    let capability_flags = if process_manager.is_some() {
+        CAP_PROCESSES
+    } else {
+        0
+    };
+    let (process_tx, mut process_rx) = mpsc::channel::<(u64, ProcessResponse)>(16);
+    let mut processes_in_flight: usize = 0;
 
     // When the current unattached stretch began (`None` while a worker is
     // attached). Recomputed from `agent_writer` at the top of every iteration,
@@ -459,6 +480,21 @@ async fn daemon_loop(
                             continue;
                         }
 
+                        // Advertise optional features before Ready (#3210). A
+                        // pre-#3210 worker skips the unknown handshake frame.
+                        if capability_flags != 0
+                            && protocol::write_frame_async(
+                                &mut write_half,
+                                MSG_CAPABILITIES,
+                                &[capability_flags],
+                            )
+                            .await
+                            .is_err()
+                        {
+                            warn!("Failed to send capabilities");
+                            continue;
+                        }
+
                         // Send ready signal
                         if protocol::write_frame_async(&mut write_half, MSG_READY, &[])
                             .await
@@ -479,6 +515,34 @@ async fn daemon_loop(
                     Err(e) => {
                         warn!("Listener accept error: {e}");
                     }
+                }
+            }
+
+            // A finished process request (#3210): reply to the connection that
+            // asked, if it still holds the session.
+            Some((gen, response)) = process_rx.recv() => {
+                processes_in_flight = processes_in_flight.saturating_sub(1);
+                if gen != connection_gen {
+                    debug!("Dropping process reply for a replaced connection");
+                    continue;
+                }
+                let Some(ref mut writer) = agent_writer else {
+                    continue;
+                };
+                let payload = match serde_json::to_vec(&response) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!("Failed to encode process reply: {e}");
+                        continue;
+                    }
+                };
+                if protocol::write_frame_async(writer, MSG_PROCESS_RESPONSE, &payload)
+                    .await
+                    .is_err()
+                {
+                    debug!("Agent connection lost on process reply");
+                    agent_writer = None;
+                    abort_reader(&mut reader_task);
                 }
             }
 
@@ -519,6 +583,33 @@ async fn daemon_loop(
                                 agent_writer = None;
                                 abort_reader(&mut reader_task);
                             }
+                        }
+                    }
+                    Some(AgentCommand::Process(request)) => {
+                        let gen = connection_gen;
+                        if processes_in_flight >= MAX_PROCESS_REQUESTS_IN_FLIGHT {
+                            let busy = ProcessResponse {
+                                id: request.id,
+                                outcome: process_rpc::ProcessOutcome::Failed {
+                                    error: process_rpc::WireProcessError::ListFailed {
+                                        message: "too many process requests in flight".into(),
+                                    },
+                                },
+                            };
+                            let _ = process_tx.send((gen, busy)).await;
+                        } else {
+                            processes_in_flight += 1;
+                            let manager = process_manager.clone();
+                            let tx = process_tx.clone();
+                            tokio::spawn(async move {
+                                let outcome =
+                                    process_rpc::serve(manager.as_ref(), request.op).await;
+                                let response = ProcessResponse {
+                                    id: request.id,
+                                    outcome,
+                                };
+                                let _ = tx.send((gen, response)).await;
+                            });
                         }
                     }
                     Some(AgentCommand::Disconnected(gen)) => {
@@ -588,6 +679,14 @@ async fn agent_reader_loop(mut reader: BoxedReader, tx: mpsc::Sender<AgentComman
                     MSG_DETACH => AgentCommand::Detach,
                     MSG_KILL => AgentCommand::Kill,
                     MSG_QUERY_BUFFER => AgentCommand::QueryBuffer,
+                    MSG_PROCESS_REQUEST => match serde_json::from_slice(&frame.payload) {
+                        Ok(request) => AgentCommand::Process(request),
+                        Err(e) => {
+                            // Without a parsable id there is nobody to answer.
+                            debug!("Malformed process request from agent: {e}");
+                            continue;
+                        }
+                    },
                     // AGT-015: an attach-intent hint is only meaningful at accept
                     // time. On the fast path (no writer was attached) it is read
                     // here as the first frame instead — ignore it.
@@ -1080,6 +1179,9 @@ pub(crate) mod tests {
         handle.abort();
         drop(client);
     }
+
+    /// Process list + kill through the daemon, end to end (#3210).
+    mod process_rpc_e2e;
 
     // ── AGT-015: owner-scoped recovery guard ────────────────────────────
     //

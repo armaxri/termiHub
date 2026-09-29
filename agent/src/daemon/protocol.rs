@@ -44,6 +44,12 @@ pub const MSG_QUERY_BUFFER: u8 = 0x05;
 /// old daemon still works (the guard simply does not apply there).
 pub const MSG_ATTACH_INTENT: u8 = 0x06;
 
+/// Agent → Daemon: a process list / kill request for this session's backend
+/// (#3210). Payload: JSON [`ProcessRequest`](super::process_rpc::ProcessRequest).
+/// Sent only to a daemon that advertised [`CAP_PROCESSES`] in
+/// [`MSG_CAPABILITIES`]; a pre-#3210 daemon would ignore it.
+pub const MSG_PROCESS_REQUEST: u8 = 0x07;
+
 /// [`MSG_ATTACH_INTENT`] payload: evict any writer currently attached — the
 /// historical accept behavior. Used by the spawn-path connect and explicit
 /// re-attach.
@@ -79,6 +85,20 @@ pub const MSG_READY: u8 = 0x85;
 /// type and then observes the EOF exactly as before; a pre-SM-003 daemon never
 /// sends it, so a current worker falls back to the historical EOF handling.
 pub const MSG_EVICTED: u8 = 0x86;
+/// Daemon → Agent: the reply to a [`MSG_PROCESS_REQUEST`] (#3210). Payload:
+/// JSON [`ProcessResponse`](super::process_rpc::ProcessResponse), carrying the
+/// request's id. Only the connection that sent the request receives it.
+pub const MSG_PROCESS_RESPONSE: u8 = 0x87;
+/// Daemon → Agent: the optional features this daemon serves (#3210), sent in
+/// the connect handshake just before [`MSG_READY`]. Payload: one flag byte
+/// ([`CAP_PROCESSES`]). Append-only and backward compatible: a pre-#3210 worker
+/// skips the unknown handshake frame; a pre-#3210 daemon never sends it, so a
+/// current worker reads "no optional features".
+pub const MSG_CAPABILITIES: u8 = 0x88;
+
+/// [`MSG_CAPABILITIES`] flag: the daemon serves [`MSG_PROCESS_REQUEST`] through
+/// its session backend's process manager.
+pub const CAP_PROCESSES: u8 = 0x01;
 
 /// Maximum allowed frame payload size (16 MiB).
 const MAX_PAYLOAD_SIZE: u32 = 16 * 1024 * 1024;
