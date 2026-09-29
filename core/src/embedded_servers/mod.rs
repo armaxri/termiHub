@@ -29,7 +29,7 @@ use crate::service::ServiceRegistry;
 use config::ServerType;
 use service::{display_name_for, service_id_for, EmbeddedServerService};
 
-/// Build a [`ServiceRegistry`](crate::service::ServiceRegistry) populated with
+/// Build a [`ServiceRegistry`] populated with
 /// the HTTP/FTP/TFTP embedded-server factories.
 ///
 /// Shared by the desktop host ([`EmbeddedServerManager`]) and the agent so both

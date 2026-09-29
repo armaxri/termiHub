@@ -83,7 +83,7 @@ connectionPolicy?: ConnectionPolicyManifest,
 settings?: { [key in string]: PluginSettingSchema }, 
 /**
  * Optional HTTPS URL of the plugin's update document (PROD-051), used by
- * the opt-in "Check for updates" — see [`super::update_check`]. Absent
+ * the opt-in "Check for updates" — see `super::update_check`. Absent
  * means the plugin never reports updates. Never triggers an install by
  * itself.
  */

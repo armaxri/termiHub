@@ -187,7 +187,7 @@ pub fn mkdir_all_sync(path: &str) -> std::io::Result<()> {
 /// Delete a file or directory.
 ///
 /// `is_directory` selects `remove_dir_all` (recursive) vs `remove_file`. The
-/// desktop passes the frontend's flag directly; the [`FileBrowser`] impl derives
+/// desktop passes the frontend's flag directly; the `FileBrowser` impl derives
 /// it from a prior `stat`.
 pub fn delete_sync(path: &str, is_directory: bool) -> std::io::Result<()> {
     if is_directory {
@@ -255,7 +255,7 @@ pub fn create_symlink_sync(target: &str, link_path: &str) -> std::io::Result<()>
 ///
 /// For a file, uses [`std::fs::copy`], first creating any missing parent
 /// directories of `dest`. For a directory, recursively copies the tree via
-/// [`copy_dir_recursive`], preserving the structure.
+/// `copy_dir_recursive`, preserving the structure.
 ///
 /// This is the single home for the recursive local copy that previously lived
 /// only in `src-tauri`, off the shared [`FileBrowser`](super::browser::FileBrowser)

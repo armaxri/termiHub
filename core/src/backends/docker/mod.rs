@@ -1,4 +1,4 @@
-//! Docker backend implementing [`ConnectionType`](crate::connection::ConnectionType).
+//! Docker backend implementing [`ConnectionType`].
 //!
 //! Provides terminal I/O to Docker containers with in-container file
 //! browsing via `docker exec`. Uses the [`bollard`] crate for async

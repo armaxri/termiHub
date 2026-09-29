@@ -87,7 +87,7 @@ pub fn follow_connection_renames<R: Runtime>(app: &AppHandle<R>, changes: &[Conn
 }
 
 /// Central file-browser bookmark manager. Mirrors
-/// [`crate::network::tool_history_manager::NetworkToolHistoryManager`].
+/// `crate::network::tool_history_manager::NetworkToolHistoryManager`.
 pub struct FileBookmarkManager {
     store: Mutex<FileBookmarkStore>,
     storage: FileBookmarkStorage,

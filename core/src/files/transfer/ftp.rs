@@ -1,7 +1,7 @@
 //! FTP transfer executor — drives the queue state machine around the core
 //! streaming primitive (issue #1336).
 //!
-//! `core`'s [`run_attempt`](crate::backends::ftp::run_attempt) moves the
+//! `core`'s [`run_attempt`] moves the
 //! bytes for one attempt on its own connection; this module wraps it with the
 //! desktop's orchestration: acquire a per-session concurrency slot, stream with
 //! throttled progress + ETA, auto-retry with exponential backoff on error,

@@ -1,6 +1,6 @@
 //! Subnet / IP-range ping sweep.
 //!
-//! Enumerates the hosts of an IP range (via [`parse_target_spec`]) and ICMP-pings
+//! Enumerates the hosts of an IP range (via `parse_target_spec`) and ICMP-pings
 //! each concurrently, streaming the responders back as they arrive. Reuses the
 //! single-host ICMP implementation from [`super::ping`] (which transparently
 //! falls back to a TCP connect probe where raw ICMP sockets need privileges),

@@ -133,7 +133,7 @@ impl Default for EventChannel {
 ///
 /// - **`Lagged`** — the receiver fell behind and the channel dropped the oldest
 ///   buffered values. Service status/stats events are advisory (see
-///   [`EVENT_CHANNEL_CAPACITY`]), so the drain silently skips the gap and keeps
+///   `EVENT_CHANNEL_CAPACITY`), so the drain silently skips the gap and keeps
 ///   going; the lag count is not surfaced.
 /// - **`Closed`** — all senders have been dropped, so no further value can
 ///   arrive and the drain terminates.

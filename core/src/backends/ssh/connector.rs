@@ -6,13 +6,13 @@
 //!
 //! # Production path
 //!
-//! [`RusshSshConnector`] calls [`connect_and_authenticate`] and uses
+//! [`RusshSshConnector`] calls `connect_and_authenticate` and uses
 //! russh to open a PTY shell channel with optional X11 forwarding.
 //!
 //! # Test path
 //!
 //! Inject any `Box<dyn SshConnector>` implementation that returns in-memory
-//! pipes. [`MockSshConnector`] (in `#[cfg(test)]`) provides this.
+//! pipes. `MockSshConnector` (in `#[cfg(test)]`) provides this.
 
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};

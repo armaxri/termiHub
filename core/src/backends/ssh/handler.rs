@@ -66,7 +66,7 @@ pub struct IncomingChannel {
 ///
 /// Keyed by the bound port on the SSH server (as returned by
 /// [`SshSession::tcpip_forward`]). The value is a sender whose receiver
-/// is owned by the corresponding [`RemoteForwarder`] or X11 event loop.
+/// is owned by the corresponding `RemoteForwarder` or X11 event loop.
 pub type ForwardedChannelRegistry = Arc<Mutex<HashMap<u32, UnboundedSender<IncomingChannel>>>>;
 
 /// termiHub's russh client handler.
@@ -222,7 +222,7 @@ impl russh::client::Handler for TermiHubHandler {
     ///
     /// The server opens an `auth-agent@openssh.com` channel when a program on the
     /// target contacts its `$SSH_AUTH_SOCK`. We hand it to
-    /// [`spawn_forwarded_agent_bridge`](super::agent_forward::spawn_forwarded_agent_bridge),
+    /// `spawn_forwarded_agent_bridge`,
     /// which pumps bytes between it and the local `ssh-agent`. When forwarding was
     /// not requested the channel is dropped (closed), so a server can never reach
     /// the local agent unsolicited.

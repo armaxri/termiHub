@@ -46,7 +46,7 @@ fn fits(schema: &PluginSettingSchema, value: &Value) -> bool {
 }
 
 /// Reconcile a plugin's `stored` settings against the `schema` declared by the
-/// version being installed. See the [module docs](self) for the contract.
+/// version being installed. See the module docs for the contract.
 #[must_use]
 pub fn migrate_settings(
     stored: Map<String, Value>,

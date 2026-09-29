@@ -160,7 +160,7 @@ pub enum PluginPackageError {
         max: u64,
     },
 
-    /// The archive declares more entries than [`MAX_PACKAGE_ENTRIES`].
+    /// The archive declares more entries than `MAX_PACKAGE_ENTRIES`.
     #[error("plugin package has {actual} entries, exceeding the {max}-entry limit")]
     TooManyEntries {
         /// The number of entries the archive declares.

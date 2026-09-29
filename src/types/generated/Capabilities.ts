@@ -15,7 +15,7 @@ fileBrowser: boolean,
  * Defaults to `false` (via `#[serde(default)]`) so capabilities serialized
  * before this field existed deserialize as non-graphical. A graphical type
  * (VNC, RDP) sets `graphical: true` **and** `terminal: false`; the desktop
- * routes it through the [`GraphicalSessionManager`] and opens it straight
+ * routes it through the `GraphicalSessionManager` and opens it straight
  * into a `remote-desktop` canvas tab, the same way `terminal: false` opens
  * FTP into a browser-only tab. Access the framebuffer surface via
  * [`ConnectionType::graphical()`].

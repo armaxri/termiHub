@@ -9,7 +9,7 @@ use std::time::Duration;
 ///
 /// The budget covers the whole connect — DNS resolution, the TCP connect, and
 /// the SSH handshake all run inside it (see
-/// [`crate::backends::ssh::connect_and_authenticate`]). It was raised from the
+/// `crate::backends::ssh::connect_and_authenticate`). It was raised from the
 /// original 20 s (#2087): a host that resolves slowly on the first attempt of
 /// the day (cold DNS, e.g. a home Raspberry Pi) could spend most of a 20 s
 /// budget in resolution alone and fail before ever connecting. 45 s leaves room
@@ -717,9 +717,9 @@ pub struct FtpConfig {
     ///
     /// FTP liveness uses this application-level `NOOP` rather than the OS TCP
     /// keepalive shared by the SSH/telnet stream backends
-    /// ([`crate::net::TcpKeepalivePolicy`]): idle FTP control connections are
+    /// (`crate::net::TcpKeepalivePolicy`): idle FTP control connections are
     /// commonly dropped by servers, so a protocol-level probe is required. See
-    /// the per-backend liveness policy documented in [`crate::net`] (PARITY-012).
+    /// the per-backend liveness policy documented in `crate::net` (PARITY-012).
     #[serde(default = "default_ftp_keep_alive_secs")]
     pub keep_alive_secs: u64,
     /// When set, the plain-FTP insecure-connection warning is suppressed for

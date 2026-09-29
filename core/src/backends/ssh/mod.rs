@@ -1,4 +1,4 @@
-//! SSH backend implementing [`ConnectionType`](crate::connection::ConnectionType).
+//! SSH backend implementing [`ConnectionType`].
 //!
 //! Provides terminal I/O over SSH with optional monitoring (via SSH exec)
 //! and file browsing (SFTP). This is the canonical SSH implementation,

@@ -38,7 +38,7 @@ const TAIL_LIMIT: usize = 256;
 /// end-of-line is `CR LF` (RFC 854).
 const EOL: &[u8] = b"\r\n";
 
-/// Configuration for [`AutoLogin`].
+/// Configuration for `AutoLogin`.
 #[derive(Clone)]
 pub struct AutoLoginConfig {
     /// Username sent at the login prompt. Empty = stop at the login prompt.
