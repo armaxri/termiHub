@@ -37,8 +37,8 @@ jobs:
           else
             TAG="dev-${BRANCH}-latest"
           fi
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
 
   # ── 2. Build and stage desktop app artifacts ───────────────────────────────
   build-app:
@@ -185,7 +185,8 @@ jobs:
           mkdir "$MOUNT"
 
           hdiutil attach "$DMG" -mountpoint "$MOUNT" -nobrowse -quiet
-          APP_NAME=$(ls "$MOUNT" | grep '\.app$' | head -n 1)
+          APP_PATH=$(find "$MOUNT" -mindepth 1 -maxdepth 1 -name '*.app' | head -n 1)
+          APP_NAME=$(basename "$APP_PATH")
           ditto "$MOUNT/$APP_NAME" "$WORKDIR/$APP_NAME"
           hdiutil detach "$MOUNT" -quiet
 
