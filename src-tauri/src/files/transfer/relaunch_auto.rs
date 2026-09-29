@@ -57,6 +57,7 @@ impl CredentialWaits {
     }
 
     /// Whether `transfer_id` waits for credentials.
+    #[cfg(test)]
     pub(crate) fn contains(&self, transfer_id: &str) -> bool {
         self.lock().contains_key(transfer_id)
     }
