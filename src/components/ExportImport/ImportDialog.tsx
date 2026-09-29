@@ -6,6 +6,7 @@ import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Modal, Button } from "@/components/ui";
 import "./ImportDialog.css";
 import { errorMessage } from "@/utils/errorMessage";
+import { isImeComposing } from "@/utils/imeComposition";
 
 export function ImportDialog() {
   const open = useAppStore((s) => s.importDialogOpen);
@@ -84,6 +85,7 @@ export function ImportDialog() {
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (isImeComposing(e)) return;
       if (e.key === "Enter" && preview?.hasEncryptedCredentials && password) {
         handleImport(true);
       }

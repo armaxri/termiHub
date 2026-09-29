@@ -41,6 +41,16 @@
 //! immediate `close`, the relay endpoint closes, and the daemon's bridge drops
 //! the forwarded channel — matching #1719's no-agent behaviour.
 //!
+//! # Desktop-initiated TCP streams (#3241)
+//!
+//! The same stream protocol also carries a **desktop-side port forward**: the
+//! desktop asks the agent to [`connect_tcp`](AgentForwardRelay::connect_tcp) to a
+//! `host:port` target with the **request** `agent.forward.connect`
+//! `{stream_id, host, port}`, and the resulting TCP connection is then relayed
+//! with the very same `data` / `close` messages. This is how a VNC/RDP
+//! connection hosted under an agent reaches its server: the desktop keeps
+//! running the graphical backend and only its TCP transport rides the agent.
+//!
 //! Both unix and Windows agent hosts relay (#1727 shipped unix; #2038 added the
 //! Windows named-pipe path). Only truly exotic targets with neither a Unix socket
 //! nor a named pipe fall back to #1719's host-local model; [`should_relay`] gates
@@ -65,6 +75,11 @@ pub use crate::protocol::methods::AGENT_FORWARD_CLOSE;
 pub use crate::protocol::methods::AGENT_FORWARD_DATA;
 /// agent → desktop: a forwarded ssh-agent connection opened on the agent host.
 pub use crate::protocol::methods::AGENT_FORWARD_OPEN;
+
+/// How long [`AgentForwardRelay::connect_tcp`] waits for the target to accept
+/// before reporting it unreachable (#3241). Bounded so a black-holed target
+/// fails the desktop's connect promptly instead of hanging it.
+const TCP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Sender that feeds desktop→socket bytes to one accepted relay connection.
 type StreamSink = tokio::sync::mpsc::UnboundedSender<Vec<u8>>;
@@ -92,6 +107,10 @@ pub struct AgentForwardRelay {
     notification_tx: NotificationSender,
     /// `stream_id` → sink writing bytes into that connection (desktop → socket).
     streams: Mutex<HashMap<String, StreamSink>>,
+    /// Reader tasks of desktop-initiated TCP streams (#3241), so a desktop
+    /// `close` stops reading the target too (not only writing to it) and the
+    /// target connection is released at once.
+    tcp_readers: Mutex<HashMap<String, tokio::task::AbortHandle>>,
     /// `session_id` → its listener, so [`stop_listener`](Self::stop_listener)
     /// can drop the endpoint when the session ends. Present on every relaying
     /// platform (unix socket / Windows pipe).
@@ -105,6 +124,7 @@ impl AgentForwardRelay {
         Arc::new(Self {
             notification_tx,
             streams: Mutex::new(HashMap::new()),
+            tcp_readers: Mutex::new(HashMap::new()),
             #[cfg(any(unix, windows))]
             listeners: Mutex::new(HashMap::new()),
         })
@@ -144,6 +164,53 @@ impl AgentForwardRelay {
     /// shuts the socket's write side so the daemon's bridge sees EOF.
     pub async fn close_stream(&self, stream_id: &str) {
         self.streams.lock().await.remove(stream_id);
+        // A desktop-initiated TCP stream also stops reading its target, so the
+        // connection to it closes now rather than when the target hangs up.
+        if let Some(reader) = self.tcp_readers.lock().await.remove(stream_id) {
+            reader.abort();
+        }
+    }
+
+    /// Open a TCP connection from the agent host to `host:port` and relay it to
+    /// the desktop as stream `stream_id` (#3241) — the agent end of a desktop
+    /// port forward. Bytes then flow with the ordinary `agent.forward.data` /
+    /// `agent.forward.close` messages in both directions.
+    ///
+    /// Fails (and registers nothing) when the id is already in use, or the
+    /// target refuses, is unresolvable, or does not answer within
+    /// [`TCP_CONNECT_TIMEOUT`]; the error text is what the desktop shows.
+    pub async fn connect_tcp(
+        self: &Arc<Self>,
+        stream_id: &str,
+        host: &str,
+        port: u16,
+    ) -> Result<(), String> {
+        if self.streams.lock().await.contains_key(stream_id) {
+            return Err(format!("forward stream {stream_id} is already open"));
+        }
+        let conn = tokio::time::timeout(
+            TCP_CONNECT_TIMEOUT,
+            tokio::net::TcpStream::connect((host, port)),
+        )
+        .await
+        .map_err(|_| format!("timed out connecting to {host}:{port} from the agent host"))?
+        .map_err(|e| format!("cannot reach {host}:{port} from the agent host: {e}"))?;
+        let _ = conn.set_nodelay(true);
+        let (read_half, write_half) = conn.into_split();
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+        self.streams.lock().await.insert(stream_id.to_string(), tx);
+        tokio::spawn(write_socket(write_half, rx));
+
+        let relay = Arc::clone(self);
+        let sid = stream_id.to_string();
+        let reader = tokio::spawn(async move { relay.read_socket(read_half, sid).await });
+        self.tcp_readers
+            .lock()
+            .await
+            .insert(stream_id.to_string(), reader.abort_handle());
+        debug!(stream_id, host, port, "opened desktop port-forward stream");
+        Ok(())
     }
 
     /// Start a per-session ssh-agent relay listener and return the socket path
@@ -313,7 +380,6 @@ impl AgentForwardRelay {
 
     /// Pump endpoint → desktop: forward each read as a data notification, and on
     /// EOF/error deregister the stream and tell the desktop it closed.
-    #[cfg(any(unix, windows))]
     async fn read_socket<R>(self: Arc<Self>, mut read_half: R, stream_id: String)
     where
         R: tokio::io::AsyncRead + Unpin + Send + 'static,
@@ -338,7 +404,77 @@ impl AgentForwardRelay {
             }
         }
         self.streams.lock().await.remove(&stream_id);
+        self.tcp_readers.lock().await.remove(&stream_id);
         self.notify(AGENT_FORWARD_CLOSE, json!({ "stream_id": stream_id }));
+    }
+}
+
+/// The desktop-initiated TCP streams (`agent.forward.connect`, #3241) one client
+/// connection opened, so they close when that client disconnects.
+///
+/// A `--listen` agent shares one [`AgentForwardRelay`] across every client it
+/// serves, so a vanished desktop's port forwards would otherwise keep their
+/// target connections open (and a single-client VNC server would then refuse
+/// the reconnect). Scoped per connection, not per relay, so one desktop leaving
+/// never cuts another's streams.
+pub struct ClientForwardStreams {
+    session_manager: Arc<dyn crate::session::manager::SessionManagerApi>,
+    ids: std::sync::Mutex<std::collections::HashSet<String>>,
+}
+
+impl ClientForwardStreams {
+    /// Track streams for one client connection of `session_manager`'s relay.
+    pub fn new(session_manager: Arc<dyn crate::session::manager::SessionManagerApi>) -> Arc<Self> {
+        Arc::new(Self {
+            session_manager,
+            ids: std::sync::Mutex::new(std::collections::HashSet::new()),
+        })
+    }
+
+    /// Record a stream this client opened.
+    pub fn track(&self, stream_id: &str) {
+        self.ids
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(stream_id.to_string());
+    }
+
+    /// Forget a stream this client closed itself.
+    pub fn untrack(&self, stream_id: &str) {
+        self.ids
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(stream_id);
+    }
+
+    /// Number of streams currently tracked.
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.ids.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
+
+    /// Close every stream this client still has open (it disconnected). Runs on
+    /// a spawned task because the caller (the transport's disconnect path) is
+    /// synchronous; a no-op outside a Tokio runtime or with nothing open.
+    pub fn close_all(&self) {
+        let ids: Vec<String> = self
+            .ids
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain()
+            .collect();
+        if ids.is_empty() {
+            return;
+        }
+        let Ok(rt) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let session_manager = Arc::clone(&self.session_manager);
+        rt.spawn(async move {
+            for id in ids {
+                session_manager.agent_forward_close(&id).await;
+            }
+        });
     }
 }
 
@@ -351,7 +487,6 @@ fn stream_prefix(session_id: &str) -> String {
 /// the desktop closes the stream (sink dropped), then shut the write side so the
 /// daemon's bridge sees EOF. Generic over the connection's write half so the unix
 /// socket and Windows pipe share one body.
-#[cfg(any(unix, windows))]
 async fn write_socket<W>(mut write_half: W, mut rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>)
 where
     W: tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -407,6 +542,110 @@ mod tests {
         let (relay, _rx) = test_relay();
         relay.write("nope#1", b"data".to_vec()).await;
         relay.close_stream("nope#1").await;
+    }
+
+    /// Wait for the next notification of `method`, skipping others.
+    async fn next_of(
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<JsonRpcNotification>,
+        method: &str,
+    ) -> serde_json::Value {
+        loop {
+            let n = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .expect("notification in time")
+                .expect("channel open");
+            if n.method == method {
+                return n.params;
+            }
+        }
+    }
+
+    /// A desktop-initiated TCP stream (#3241) relays both ways: desktop bytes
+    /// reach the target, target bytes come back as `data` notifications, and a
+    /// desktop `close` releases the target connection (it reads EOF).
+    #[tokio::test]
+    async fn connect_tcp_relays_both_ways_and_close_releases_the_target() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let target = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = target.local_addr().unwrap().port();
+        let (relay, mut rx) = test_relay();
+
+        relay
+            .connect_tcp("gfx#1", "127.0.0.1", port)
+            .await
+            .expect("connect to a listening target");
+        let (mut server, _) = target.accept().await.unwrap();
+
+        // desktop → target
+        relay.write("gfx#1", b"RFB?".to_vec()).await;
+        let mut buf = [0u8; 4];
+        server.read_exact(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"RFB?");
+
+        // target → desktop
+        server.write_all(b"RFB 003.008\n").await.unwrap();
+        let params = next_of(&mut rx, AGENT_FORWARD_DATA).await;
+        assert_eq!(params["stream_id"], "gfx#1");
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let data = b64.decode(params["data"].as_str().unwrap()).unwrap();
+        assert_eq!(data, b"RFB 003.008\n");
+
+        // desktop close → the target sees EOF and nothing stays registered.
+        relay.close_stream("gfx#1").await;
+        let mut rest = Vec::new();
+        let n = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            server.read_to_end(&mut rest),
+        )
+        .await
+        .expect("target released in time")
+        .unwrap();
+        assert_eq!(n, 0);
+        assert!(relay.streams.lock().await.is_empty());
+        assert!(relay.tcp_readers.lock().await.is_empty());
+    }
+
+    /// The target hanging up closes the stream toward the desktop.
+    #[tokio::test]
+    async fn connect_tcp_target_hangup_notifies_close() {
+        let target = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = target.local_addr().unwrap().port();
+        let (relay, mut rx) = test_relay();
+        relay.connect_tcp("gfx#2", "127.0.0.1", port).await.unwrap();
+        let (server, _) = target.accept().await.unwrap();
+        drop(server);
+
+        let params = next_of(&mut rx, AGENT_FORWARD_CLOSE).await;
+        assert_eq!(params["stream_id"], "gfx#2");
+        assert!(relay.streams.lock().await.is_empty());
+    }
+
+    /// An unreachable target fails the connect with a readable reason and
+    /// registers nothing; a duplicate stream id is refused.
+    #[tokio::test]
+    async fn connect_tcp_unreachable_target_errors_and_duplicate_is_refused() {
+        // Bind then drop to get a port nothing listens on.
+        let port = {
+            let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let (relay, _rx) = test_relay();
+        let err = relay
+            .connect_tcp("gfx#3", "127.0.0.1", port)
+            .await
+            .unwrap_err();
+        assert!(err.contains("from the agent host"), "{err}");
+        assert!(relay.streams.lock().await.is_empty());
+
+        let target = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let live = target.local_addr().unwrap().port();
+        relay.connect_tcp("gfx#4", "127.0.0.1", live).await.unwrap();
+        let dup = relay
+            .connect_tcp("gfx#4", "127.0.0.1", live)
+            .await
+            .unwrap_err();
+        assert!(dup.contains("already open"), "{dup}");
     }
 
     /// An accepted connection announces itself with an `open` notification and

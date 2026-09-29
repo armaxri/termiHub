@@ -61,9 +61,12 @@ pub fn validate_plugin(
 /// friendly "not available for this computer" explanation and the list of
 /// platforms it does support. Installing it is still refused by the manager.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct PluginPackagePreview {
     /// The package's validated manifest.
+    #[cfg_attr(test, ts(type = "import(\"./PluginManifest\").PluginManifest"))]
     pub manifest: PluginManifest,
     /// This host's Rust target triple (e.g. `aarch64-apple-darwin`).
     pub host_platform: String,
@@ -102,9 +105,15 @@ pub fn get_plugin_host_platform() -> String {
 /// The trust state of a package, flattened for the install dialog's provenance
 /// banner. Built from a core [`TrustAssessment`].
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct PluginTrustInfo {
     /// `"untrusted"` | `"signed"` | `"verified"` | `"tampered"`.
+    #[cfg_attr(
+        test,
+        ts(type = "\"untrusted\" | \"signed\" | \"verified\" | \"tampered\"")
+    )]
     pub level: String,
     /// User-facing warning (empty for a verified publisher).
     pub warning: String,
@@ -158,11 +167,14 @@ pub fn assess_plugin_trust(
 /// uncomparable version and needs the user's explicit confirmation first
 /// (PLG-012). Serialized with a `status` tag so the frontend can switch on it.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum InstallPluginResult {
     /// The plugin was installed.
     Installed {
         /// The installed plugin record (boxed: it dwarfs the other variant).
+        #[cfg_attr(test, ts(type = "import(\"./InstalledPlugin\").InstalledPlugin"))]
         plugin: Box<InstalledPlugin>,
     },
     /// Nothing was changed; re-issue the install with `confirm_version_change`
@@ -170,6 +182,10 @@ pub enum InstallPluginResult {
     /// `incoming_version`.
     ConfirmationRequired {
         /// Both versions and the kind of change, for the confirm dialog.
+        #[cfg_attr(
+            test,
+            ts(type = "import(\"./PluginVersionChange\").PluginVersionChange")
+        )]
         change: VersionChange,
     },
     /// Nothing was changed: the package is signed by a different key than the
@@ -179,9 +195,14 @@ pub enum InstallPluginResult {
     /// `confirm_version_change` — once the user has explicitly agreed.
     SignerConfirmationRequired {
         /// Both signer fingerprints and the kind of change.
+        #[cfg_attr(test, ts(type = "import(\"./PluginSignerChange\").PluginSignerChange"))]
         signer: SignerChange,
         /// A version change for the same install that also still needs
         /// confirmation, so both can be asked in one prompt.
+        #[cfg_attr(
+            test,
+            ts(type = "import(\"./PluginVersionChange\").PluginVersionChange | null")
+        )]
         version: Option<VersionChange>,
     },
 }
@@ -339,6 +360,8 @@ pub fn update_plugin_settings(
 /// One recorded native-plugin trust acknowledgment, flattened for the settings
 /// surface. Mirrors core `NativeAck` plus the plugin id it keys.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct NativeAckInfo {
     /// The plugin id this acknowledgment is for.
@@ -356,6 +379,8 @@ pub struct NativeAckInfo {
 /// ARCH-008): the global default-off switch, the informed-consent disclosure to
 /// show, and the per-plugin acknowledgments recorded so far.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct NativePluginTrust {
     /// Whether native (in-process) plugins are enabled globally. `false` by

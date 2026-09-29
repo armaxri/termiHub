@@ -27,6 +27,6 @@ export function backendPlugin(
       },
     },
     state,
-    installedAt: "2026-01-01T00:00:00Z",
+    installedAt: 1767225600000,
   };
 }

@@ -121,7 +121,7 @@ function frontendPlugin(id: string, state: PluginState = "active"): InstalledPlu
       },
     },
     state,
-    installedAt: "2026-07-26T00:00:00Z",
+    installedAt: 1785024000000,
   };
 }
 
@@ -153,7 +153,7 @@ function makePlugin(
         : { theme: { themes: [{ id: "t", name: "T", file: "t.json" }] } },
     },
     state,
-    installedAt: "2026-07-26T00:00:00Z",
+    installedAt: 1785024000000,
   };
 }
 

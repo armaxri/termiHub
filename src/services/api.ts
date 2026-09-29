@@ -59,6 +59,10 @@ import type { ConnectionUpdateParams } from "@/types/generated/ConnectionUpdateP
 import type { FolderUpdateParams } from "@/types/generated/FolderUpdateParams";
 import type { DockerContainerInfo } from "@/types/generated/DockerContainerInfo";
 import type { AgentDockerContainersResult } from "@/types/generated/AgentDockerContainersResult";
+import type { TransferPhase } from "@/types/generated/TransferPhase";
+import type { TransferQueueState } from "@/types/generated/TransferQueueState";
+import type { TransferProgress } from "@/types/generated/TransferProgress";
+import type { TransferSnapshot } from "@/types/generated/TransferSnapshot";
 import type { ContainerRuntime, SpawnTarget } from "@/types/spawn";
 import type {
   TabHandoffRecord,
@@ -1524,80 +1528,11 @@ export async function reloadExternalConnections(): Promise<SavedConnection[]> {
 // cancellation (`sftpCancelTransfer`) and the transfer event/queue types remain
 // under the `sftp` name, as they are protocol-agnostic (SFTP and FTP).
 
-/** Lifecycle phase of an SFTP transfer (see `transfer-progress` event). */
-export type TransferPhase = "transferring" | "done" | "cancelled" | "error";
-
-/**
- * Rich queue state of a transfer (#1336). Emitted alongside the legacy
- * {@link TransferPhase} `phase`; the queue-aware UI prefers `state`.
- */
-export type TransferQueueState =
-  | "queued"
-  | "active"
-  | "paused"
-  | "completed"
-  | "failed"
-  | "cancelled";
-
-/**
- * Payload of the `transfer-progress` event emitted per transfer.
- *
- * The #1245 fields (`phase`, `total`, …) are unchanged for backward
- * compatibility with the existing SFTP consumers. The queue model (#1336) adds
- * the optional `state`/`speed`/`totalBytes`/`etaSecs`/`attempt`/`maxAttempts`
- * fields, populated for both SFTP (derived) and FTP (measured) transfers.
- */
-export interface TransferProgress {
-  transferId: string;
-  sessionId: string;
-  direction: "download" | "upload";
-  fileName: string;
-  /** Remote path of the transferred file (e.g. `/uploads/data.csv`), when the
-   * backend supplies one — shown in the Transfer Queue row (#1531). */
-  path?: string;
-  transferred: number;
-  total: number;
-  phase: TransferPhase;
-  message?: string;
-  /** Rich queue state (#1336). */
-  state?: TransferQueueState;
-  /** Throughput in bytes/sec (`0` = unknown). */
-  speed?: number;
-  /** Total size in bytes (mirror of `total`; `0` = indeterminate). */
-  totalBytes?: number;
-  /** Estimated seconds remaining, when a speed is known. */
-  etaSecs?: number;
-  /** Retry attempt number (0 when not retrying). */
-  attempt?: number;
-  /** Maximum retry attempts before permanent failure. */
-  maxAttempts?: number;
-}
-
-/**
- * A snapshot of one queued transfer, returned by {@link transferList} (#1336).
- */
-export interface TransferSnapshot {
-  transferId: string;
-  sessionId: string;
-  direction: "download" | "upload";
-  fileName: string;
-  /** Remote path of the transferred file, when the backend supplies one (#1531). */
-  path?: string;
-  state: TransferQueueState;
-  /**
-   * Whether this snapshot is a *genuinely* settled outcome the reconcile may
-   * fold into a stuck row (#1657). Stricter than `isTerminalTransferState`: a
-   * live rich (FTP) transfer that is momentarily `failed` mid auto-retry — or
-   * awaiting a manual retry — reports `state: "failed"` with `settled: false`,
-   * so a transient failure is never reconciled into a terminal `failed` row.
-   */
-  settled: boolean;
-  transferred: number;
-  total: number;
-  speed: number;
-  attempt: number;
-  maxAttempts: number;
-}
+// The transfer event/queue DTOs are generated via ts-rs (audit DUP-030, #3088)
+// from the projection mirrors in `src-tauri/src/transfers_projection/store.rs`,
+// which deserialize exactly what core's `transfer-progress` / `transfer_list`
+// payloads emit. The #1336 rich `transfer-progress` fields stay optional.
+export type { TransferPhase, TransferQueueState, TransferProgress, TransferSnapshot };
 
 /**
  * Rejection raised by {@link awaitTransfer} when a transfer settles via a

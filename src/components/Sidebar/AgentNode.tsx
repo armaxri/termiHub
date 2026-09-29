@@ -36,6 +36,10 @@ import {
   Power,
 } from "lucide-react";
 import { ConnectionIcon } from "@/utils/connectionIcons";
+import {
+  agentGraphicalTabConfig,
+  isAgentTunnelledGraphicalType,
+} from "@/utils/agentGraphicalTunnel";
 import { Button, StatusDot, Tooltip, toast } from "@/components/ui";
 import type { StatusTone } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
@@ -1006,6 +1010,17 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
 
   const handleOpenDefinition = useCallback(
     (def: AgentDefinitionInfo) => {
+      if (isAgentTunnelledGraphicalType(def.sessionType)) {
+        // VNC/RDP under an agent runs on this computer and tunnels through the
+        // agent's port forwarding (#3241) — a remote-desktop tab, not a session.
+        addTab(
+          def.name,
+          def.sessionType,
+          agentGraphicalTabConfig(agent.id, def.sessionType, def.config),
+          { contentType: "remote-desktop" }
+        );
+        return;
+      }
       addTab(
         def.name,
         "remote-session",

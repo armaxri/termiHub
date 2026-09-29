@@ -119,6 +119,11 @@ pub const UPDATE_UNAUTHORIZED: i64 = -32026;
 /// or the binary's version cannot be determined.
 pub const UPDATE_DOWNGRADE_REFUSED: i64 = -32027;
 
+/// `agent.forward.connect` could not reach its target from the agent host
+/// (refused, unresolvable, or timed out) — a desktop port forward (a VNC/RDP
+/// connection routed through the agent, #3241) failed to open.
+pub const FORWARD_CONNECT_FAILED: i64 = -32028;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,6 +163,7 @@ mod tests {
             SECOND_FACTOR_FAILED,
             UPDATE_UNAUTHORIZED,
             UPDATE_DOWNGRADE_REFUSED,
+            FORWARD_CONNECT_FAILED,
         ];
         for code in codes {
             assert!(code < 0, "Error code {code} should be negative");
@@ -210,6 +216,7 @@ mod tests {
             SECOND_FACTOR_FAILED,
             UPDATE_UNAUTHORIZED,
             UPDATE_DOWNGRADE_REFUSED,
+            FORWARD_CONNECT_FAILED,
         ];
         for code in app_codes {
             assert!(

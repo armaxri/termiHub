@@ -5,6 +5,7 @@ import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { validateSshKey, SshKeyValidation } from "@/services/api";
 import { Input, Tooltip } from "@/components/ui";
 import "./KeyPathInput.css";
+import { isImeComposing } from "@/utils/imeComposition";
 
 /** Debounce (ms) before validating a typed key path against the backend. */
 const VALIDATION_DEBOUNCE_MS = 300;
@@ -108,6 +109,7 @@ export function KeyPathInput({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (isImeComposing(e)) return;
       if (!isOpen || filtered.length === 0) return;
 
       switch (e.key) {

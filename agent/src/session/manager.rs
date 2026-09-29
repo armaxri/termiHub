@@ -74,6 +74,21 @@ pub trait SessionManagerApi: Send + Sync + 'static {
         definition_id: Option<String>,
     ) -> Result<SessionSnapshot, SessionCreateError>;
 
+    /// [`create`](Self::create), carrying the desktop's `correlation_id` so a
+    /// daemon-backed session's daemon can log under it (#3782). Defaults to
+    /// `create` (dropping the id) so test doubles need not implement it.
+    async fn create_correlated(
+        &self,
+        type_id: &str,
+        title: String,
+        settings: serde_json::Value,
+        definition_id: Option<String>,
+        correlation_id: Option<&str>,
+    ) -> Result<SessionSnapshot, SessionCreateError> {
+        let _ = correlation_id;
+        self.create(type_id, title, settings, definition_id).await
+    }
+
     /// List all sessions as snapshots.
     async fn list(&self) -> Vec<SessionSnapshot>;
 
@@ -152,6 +167,16 @@ pub trait SessionManagerApi: Send + Sync + 'static {
 
     /// Close a forwarded ssh-agent stream the desktop reports as ended (#1727).
     async fn agent_forward_close(&self, stream_id: &str);
+
+    /// Open a desktop-initiated TCP stream from this host to `host:port`
+    /// (`agent.forward.connect`, #3241), relayed over the agent-forward stream
+    /// protocol. The error text says why the target could not be reached.
+    async fn agent_forward_connect(
+        &self,
+        stream_id: &str,
+        host: &str,
+        port: u16,
+    ) -> Result<(), String>;
 }
 
 /// Errors that can occur during session creation.
@@ -309,6 +334,10 @@ pub struct LaunchExtras {
     /// the launch's connect wait from timing out while the user answers a
     /// one-time-code prompt.
     pub ki_prompt: Option<KiPromptLaunch>,
+    /// The desktop's already-validated `correlation_id` (#3782), exported as
+    /// [`CORRELATION_ID_ENV`](crate::daemon::process::CORRELATION_ID_ENV) so
+    /// the daemon logs its session under the same `agent_session` span.
+    pub correlation_id: Option<String>,
 }
 
 /// The keyboard-interactive relay half of [`LaunchExtras`].
@@ -388,6 +417,20 @@ fn build_daemon_command(
     command
 }
 
+/// Export the session's correlation id to the daemon (#3782), or clear it.
+///
+/// The id is non-secret and already validated by the caller; the daemon
+/// re-validates it anyway. With no id the variable is explicitly removed, so a
+/// value that happens to sit in the worker's own environment can never label
+/// an uncorrelated session.
+fn export_correlation_id(command: &mut std::process::Command, correlation_id: Option<&str>) {
+    use crate::daemon::process::CORRELATION_ID_ENV;
+    match correlation_id {
+        Some(id) => command.env(CORRELATION_ID_ENV, id),
+        None => command.env_remove(CORRELATION_ID_ENV),
+    };
+}
+
 /// Production [`DaemonLauncher`] that spawns real `termihub-agent --daemon` processes.
 pub struct SystemDaemonLauncher;
 
@@ -415,6 +458,7 @@ impl DaemonLauncher for SystemDaemonLauncher {
             extras.ssh_auth_sock.as_deref(),
             extras.ki_prompt.as_ref().map(|k| k.endpoint.as_str()),
         );
+        export_correlation_id(&mut command, extras.correlation_id.as_deref());
         crate::daemon::spawn::configure_detached_stderr(&mut command, daemon_log(session_id));
         crate::daemon::spawn::configure_detachment(&mut command);
 
@@ -764,6 +808,25 @@ impl SessionManager {
         settings: serde_json::Value,
         definition_id: Option<String>,
     ) -> Result<SessionSnapshot, SessionCreateError> {
+        self.create_correlated(type_id, title, settings, definition_id, None)
+            .await
+    }
+
+    /// [`create`](Self::create), carrying the desktop's `correlation_id`.
+    ///
+    /// A daemon-backed session hands a well-formed id to its daemon at launch
+    /// so the daemon's own log lines carry it (#3782, OBS-004); a malformed id
+    /// is dropped. In-process sessions already log under the caller's span.
+    pub async fn create_correlated(
+        &self,
+        type_id: &str,
+        title: String,
+        settings: serde_json::Value,
+        definition_id: Option<String>,
+        correlation_id: Option<&str>,
+    ) -> Result<SessionSnapshot, SessionCreateError> {
+        let correlation_id = correlation_id
+            .filter(|id| termihub_core::protocol::methods::is_valid_correlation_id(id));
         // Check the type exists and get capabilities up front — cheap, in-memory,
         // and done before any lock so an invalid type never reserves a slot.
         let capabilities = {
@@ -794,7 +857,13 @@ impl SessionManager {
         // WITHOUT holding `sessions`, so one slow or hung connect can't freeze
         // write_input/resize/list/close for every other live session (CONC-004).
         let backend = match self
-            .create_backend(&id, type_id, &settings, capabilities.persistent)
+            .create_backend(
+                &id,
+                type_id,
+                &settings,
+                capabilities.persistent,
+                correlation_id,
+            )
             .await
         {
             Ok(backend) => backend,
@@ -866,10 +935,11 @@ impl SessionManager {
         type_id: &str,
         settings: &serde_json::Value,
         persistent: bool,
+        correlation_id: Option<&str>,
     ) -> Result<SessionBackend, anyhow::Error> {
         if persistent {
             return self
-                .spawn_daemon_backend(session_id, type_id, settings)
+                .spawn_daemon_backend(session_id, type_id, settings, correlation_id)
                 .await;
         }
 
@@ -883,6 +953,7 @@ impl SessionManager {
         session_id: &str,
         type_id: &str,
         settings: &serde_json::Value,
+        correlation_id: Option<&str>,
     ) -> Result<SessionBackend, anyhow::Error> {
         let buffer_size = self.persistent_buffer_size.load(Ordering::Relaxed);
 
@@ -914,6 +985,7 @@ impl SessionManager {
                         endpoint: r.endpoint().to_string(),
                         activity: r.activity(),
                     }),
+                    correlation_id: correlation_id.map(str::to_string),
                 },
             )
             .await;
@@ -2063,6 +2135,25 @@ impl SessionManagerApi for SessionManager {
         SessionManager::create(self, type_id, title, settings, definition_id).await
     }
 
+    async fn create_correlated(
+        &self,
+        type_id: &str,
+        title: String,
+        settings: serde_json::Value,
+        definition_id: Option<String>,
+        correlation_id: Option<&str>,
+    ) -> Result<SessionSnapshot, SessionCreateError> {
+        SessionManager::create_correlated(
+            self,
+            type_id,
+            title,
+            settings,
+            definition_id,
+            correlation_id,
+        )
+        .await
+    }
+
     async fn list(&self) -> Vec<SessionSnapshot> {
         SessionManager::list(self).await
     }
@@ -2214,6 +2305,15 @@ impl SessionManagerApi for SessionManager {
 
     async fn agent_forward_close(&self, stream_id: &str) {
         self.agent_forward.close_stream(stream_id).await;
+    }
+
+    async fn agent_forward_connect(
+        &self,
+        stream_id: &str,
+        host: &str,
+        port: u16,
+    ) -> Result<(), String> {
+        self.agent_forward.connect_tcp(stream_id, host, port).await
     }
 }
 
@@ -4618,4 +4718,7 @@ mod tests {
 
     /// Keyboard-interactive prompt relay through daemon launches (#3375).
     mod ki_prompt_tests;
+
+    /// The desktop's correlation id reaches the daemon launch (#3782).
+    mod correlation_tests;
 }
