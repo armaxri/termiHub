@@ -426,26 +426,69 @@ mod tests {
 
     // ── KillSignal mapping ──────────────────────────────────────────────
 
+    /// Every signal with its `kill -s` name and its camelCase wire value.
+    const SIGNAL_TABLE: [(KillSignal, &str, &str); 9] = [
+        (KillSignal::Term, "TERM", "term"),
+        (KillSignal::Kill, "KILL", "kill"),
+        (KillSignal::Int, "INT", "int"),
+        (KillSignal::Hup, "HUP", "hup"),
+        (KillSignal::Quit, "QUIT", "quit"),
+        (KillSignal::Stop, "STOP", "stop"),
+        (KillSignal::Cont, "CONT", "cont"),
+        (KillSignal::Usr1, "USR1", "usr1"),
+        (KillSignal::Usr2, "USR2", "usr2"),
+    ];
+
     #[test]
-    fn kill_signal_names_and_numbers() {
-        assert_eq!(KillSignal::Term.as_name(), "TERM");
-        assert_eq!(KillSignal::Kill.as_name(), "KILL");
-        assert_eq!(KillSignal::Term.as_number(), 15);
-        assert_eq!(KillSignal::Kill.as_number(), 9);
+    fn kill_signal_names_are_the_kill_s_names() {
+        for (signal, name, _) in SIGNAL_TABLE {
+            assert_eq!(signal.as_name(), name, "{signal:?}");
+        }
+    }
+
+    #[test]
+    fn kill_signal_all_lists_every_signal_once_with_term_first() {
+        assert_eq!(KillSignal::ALL.len(), SIGNAL_TABLE.len());
+        for (signal, _, _) in SIGNAL_TABLE {
+            assert_eq!(
+                KillSignal::ALL.iter().filter(|s| **s == signal).count(),
+                1,
+                "{signal:?}"
+            );
+        }
+        // TERM is the default quick action, so it leads the menu.
+        assert_eq!(KillSignal::ALL[0], KillSignal::Term);
+        assert_eq!(KillSignal::default(), KillSignal::Term);
     }
 
     #[test]
     fn kill_signal_serde_is_camel_case() {
-        assert_eq!(
-            serde_json::to_string(&KillSignal::Term).unwrap(),
-            "\"term\""
-        );
-        assert_eq!(
-            serde_json::to_string(&KillSignal::Kill).unwrap(),
-            "\"kill\""
-        );
-        let s: KillSignal = serde_json::from_str("\"kill\"").unwrap();
-        assert_eq!(s, KillSignal::Kill);
+        for (signal, _, wire) in SIGNAL_TABLE {
+            assert_eq!(
+                serde_json::to_string(&signal).unwrap(),
+                format!("\"{wire}\"")
+            );
+            let back: KillSignal = serde_json::from_str(&format!("\"{wire}\"")).unwrap();
+            assert_eq!(back, signal);
+        }
+        // An unknown signal is rejected at deserialization, never coerced.
+        assert!(serde_json::from_str::<KillSignal>("\"segv\"").is_err());
+    }
+
+    #[test]
+    fn only_kill_and_stop_are_destructive() {
+        for (signal, _, _) in SIGNAL_TABLE {
+            let expected = matches!(signal, KillSignal::Kill | KillSignal::Stop);
+            assert_eq!(signal.is_destructive(), expected, "{signal:?}");
+        }
+    }
+
+    #[test]
+    fn only_term_and_kill_are_supported_on_windows() {
+        for (signal, _, _) in SIGNAL_TABLE {
+            let expected = matches!(signal, KillSignal::Term | KillSignal::Kill);
+            assert_eq!(signal.supported_on_windows(), expected, "{signal:?}");
+        }
     }
 
     // ── build_kill_command targets the EXACT pid + signal ───────────────
@@ -460,6 +503,16 @@ mod tests {
             build_kill_command(9, KillSignal::Kill),
             "export LC_ALL=C LANG=C; kill -s KILL 9"
         );
+    }
+
+    #[test]
+    fn build_kill_command_carries_every_signal_name() {
+        for (signal, name, _) in SIGNAL_TABLE {
+            assert_eq!(
+                build_kill_command(77, signal),
+                format!("export LC_ALL=C LANG=C; kill -s {name} 77")
+            );
+        }
     }
 
     #[test]
@@ -580,7 +633,7 @@ garbage line with too few
             exit_status: Some(1),
         };
         assert_eq!(
-            classify_kill_failure(4321, &out),
+            classify_kill_failure(4321, KillSignal::Term, &out),
             ProcessError::NotFound(4321)
         );
     }
@@ -593,7 +646,7 @@ garbage line with too few
             exit_status: Some(1),
         };
         matches!(
-            classify_kill_failure(1, &out),
+            classify_kill_failure(1, KillSignal::Term, &out),
             ProcessError::PermissionDenied(_)
         )
         .then_some(())
@@ -607,9 +660,31 @@ garbage line with too few
             stderr: "kill: something weird".into(),
             exit_status: Some(2),
         };
-        match classify_kill_failure(7, &out) {
+        match classify_kill_failure(7, KillSignal::Term, &out) {
             ProcessError::KillFailed { pid, .. } => assert_eq!(pid, 7),
             other => panic!("expected KillFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_kill_failure_maps_invalid_signal_to_unsupported() {
+        for stderr in [
+            "sh: kill: USR1: invalid signal specification",
+            "kill: unknown signal USR1; valid signals:",
+            "kill: bad signal name USR1",
+        ] {
+            let out = ProcessCommandOutput {
+                stdout: String::new(),
+                stderr: stderr.into(),
+                exit_status: Some(1),
+            };
+            match classify_kill_failure(9, KillSignal::Usr1, &out) {
+                ProcessError::UnsupportedSignal { signal, reason } => {
+                    assert_eq!(signal, KillSignal::Usr1);
+                    assert!(reason.contains(stderr.trim()), "{reason}");
+                }
+                other => panic!("expected UnsupportedSignal for {stderr:?}, got {other:?}"),
+            }
         }
     }
 
@@ -752,6 +827,66 @@ garbage line with too few
         assert!(json.contains("\"code\":\"process_not_found\""), "{json}");
         // The human message carries the pid.
         assert!(json.contains("42"), "{json}");
+    }
+
+    #[test]
+    fn unsupported_signal_error_names_the_signal_and_reason() {
+        let err = ProcessError::UnsupportedSignal {
+            signal: KillSignal::Usr1,
+            reason: "Windows can only terminate processes".into(),
+        };
+        assert_eq!(err.code(), "process_signal_not_supported");
+        let msg = err.to_string();
+        assert!(msg.contains("SIGUSR1"), "{msg}");
+        assert!(msg.contains("Windows can only terminate processes"), "{msg}");
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(
+            json.contains("\"code\":\"process_signal_not_supported\""),
+            "{json}"
+        );
+    }
+
+    #[tokio::test]
+    async fn exec_manager_kill_sends_non_terminating_signal_by_name() {
+        let src = Arc::new(FakeExecSource::new(
+            "",
+            ProcessCommandOutput {
+                exit_status: Some(0),
+                ..Default::default()
+            },
+        ));
+        let mgr = ExecProcessManager::new(src.clone());
+        mgr.kill_process(5555, KillSignal::Cont)
+            .await
+            .expect("signal");
+        let cmds = src.commands.lock().unwrap();
+        assert_eq!(cmds[0], "export LC_ALL=C LANG=C; kill -s CONT 5555");
+    }
+
+    #[tokio::test]
+    async fn exec_manager_kill_maps_invalid_signal_to_unsupported() {
+        // A remote whose `kill` does not know the signal name (a stripped-down
+        // shell) must surface a clear unsupported-signal error.
+        let src = Arc::new(FakeExecSource::new(
+            "",
+            ProcessCommandOutput {
+                stderr: "sh: kill: USR2: invalid signal specification".into(),
+                exit_status: Some(1),
+                ..Default::default()
+            },
+        ));
+        let mgr = ExecProcessManager::new(src);
+        let err = mgr.kill_process(5555, KillSignal::Usr2).await.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ProcessError::UnsupportedSignal {
+                    signal: KillSignal::Usr2,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
     }
 
     #[test]

@@ -172,8 +172,60 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn signal_mapping_is_exact() {
-        assert_eq!(to_sysinfo_signal(KillSignal::Term), sysinfo::Signal::Term);
-        assert_eq!(to_sysinfo_signal(KillSignal::Kill), sysinfo::Signal::Kill);
+        use sysinfo::Signal;
+        let expected = [
+            (KillSignal::Term, Signal::Term),
+            (KillSignal::Kill, Signal::Kill),
+            (KillSignal::Int, Signal::Interrupt),
+            (KillSignal::Hup, Signal::Hangup),
+            (KillSignal::Quit, Signal::Quit),
+            (KillSignal::Stop, Signal::Stop),
+            (KillSignal::Cont, Signal::Continue),
+            (KillSignal::Usr1, Signal::User1),
+            (KillSignal::Usr2, Signal::User2),
+        ];
+        assert_eq!(expected.len(), KillSignal::ALL.len());
+        for (signal, sys) in expected {
+            assert_eq!(to_sysinfo_signal(signal), sys, "{signal:?}");
+        }
+    }
+
+    #[test]
+    fn windows_accepts_only_terminating_signals() {
+        for signal in KillSignal::ALL {
+            let result = check_windows_signal(signal);
+            if signal.supported_on_windows() {
+                assert_eq!(result, Ok(()), "{signal:?}");
+            } else {
+                match result {
+                    Err(ProcessError::UnsupportedSignal { signal: s, reason }) => {
+                        assert_eq!(s, signal);
+                        assert!(reason.contains("Windows"), "{reason}");
+                    }
+                    other => panic!("{signal:?} must be unsupported on Windows, got {other:?}"),
+                }
+            }
+        }
+    }
+
+    /// End-to-end on a real child: the requested signal (not a fallback
+    /// terminate) is what the process receives.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn kill_delivers_the_requested_signal_to_a_real_process() {
+        use std::os::unix::process::ExitStatusExt;
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id();
+        LocalProcessManager::new()
+            .kill_process(pid, KillSignal::Hup)
+            .await
+            .expect("deliver SIGHUP");
+        let status = child.wait().expect("wait for child");
+        // SIGHUP is 1 on every Unix.
+        assert_eq!(status.signal(), Some(1), "{status:?}");
     }
 
     #[tokio::test]
