@@ -25,8 +25,10 @@ export function OpenPortsPanel() {
   const [filter, setFilter] = useState("");
   const [protocolFilter, setProtocolFilter] = useState<PortProtocol | "All">("All");
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const inFlight = useRef<Promise<void> | null>(null);
 
-  const handleRefresh = useCallback(async () => {
+  const runListing = useCallback(async () => {
     setError(null);
     const startedAt = new Date().toISOString();
     try {
@@ -55,6 +57,20 @@ export function OpenPortsPanel() {
       throw err; // keep the async Button in its error path (no false success flash)
     }
   }, []);
+
+  // One listing at a time (#3814): a Refresh or history re-run while the
+  // mount-load (or an earlier Refresh) is still in flight joins that run
+  // instead of stacking a second backend listing.
+  const handleRefresh = useCallback((): Promise<void> => {
+    if (inFlight.current) return inFlight.current;
+    setLoading(true);
+    const run = runListing().finally(() => {
+      inFlight.current = null;
+      setLoading(false);
+    });
+    inFlight.current = run;
+    return run;
+  }, [runListing]);
 
   // Auto-load listening ports on mount so the panel opens populated; Refresh
   // remains for an explicit re-fetch. The handler throws to keep the Refresh
@@ -117,9 +133,11 @@ export function OpenPortsPanel() {
             pendingLabel="Refreshing…"
             errorToast={false}
             onClick={handleRefresh}
+            disabled={loading}
+            aria-busy={loading || undefined}
             data-testid="open-ports-refresh"
           >
-            Refresh
+            {loading ? "Refreshing…" : "Refresh"}
           </Button>
         </div>
       </div>
@@ -152,7 +170,9 @@ export function OpenPortsPanel() {
       {error && <div className="network-panel__error">{error}</div>}
 
       {!loaded && (
-        <div className="network-panel__placeholder">Click Refresh to list listening ports</div>
+        <div className="network-panel__placeholder" data-testid="open-ports-placeholder">
+          {loading ? "Listing listening ports…" : "Click Refresh to list listening ports"}
+        </div>
       )}
 
       <DiagnosticResultsTable
@@ -165,7 +185,11 @@ export function OpenPortsPanel() {
         }
       />
 
-      <NetworkToolHistory tool="open-ports" onRerun={() => void handleRefresh().catch(() => {})} />
+      <NetworkToolHistory
+        tool="open-ports"
+        onRerun={() => void handleRefresh().catch(() => {})}
+        rerunDisabled={loading}
+      />
     </div>
   );
 }

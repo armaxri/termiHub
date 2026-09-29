@@ -20,6 +20,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, info, warn, Instrument};
 
 use termihub_core::tool::{CollectingHost, ToolRegistry};
+use termihub_core::util::no_window::no_window_command;
 use tokio_util::sync::CancellationToken;
 
 use crate::client_registry::ConnectionRegistry;
@@ -2909,7 +2910,8 @@ fn docker_probe_timeout() -> Duration {
 /// failure or non-zero exit reports "unavailable" — Docker container spawning
 /// is simply disabled, never a hard error that could fail `initialize`.
 async fn probe_docker_available(program: &str, timeout: Duration) -> bool {
-    let mut cmd = tokio::process::Command::new(program);
+    // No console window on a Windows agent (#3814).
+    let mut cmd = tokio::process::Command::from(no_window_command(program));
     cmd.arg("info");
     match run_docker_probe(cmd, timeout).await {
         Ok(()) => true,
@@ -3022,7 +3024,7 @@ async fn detect_docker_available() -> bool {
 }
 
 fn detect_docker_images() -> Vec<String> {
-    let output = std::process::Command::new("docker")
+    let output = no_window_command("docker")
         .args(["images", "--format", "{{.Repository}}:{{.Tag}}"])
         .output();
 

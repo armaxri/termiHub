@@ -560,7 +560,8 @@ pub fn probe_tcp_x_server_at(addr: std::net::SocketAddr, timeout: std::time::Dur
 /// is found. A termiHub-managed server's cookie is known up front and threaded
 /// through [`ResolvedXServer`] instead, so this is only the user-run path.
 pub fn read_local_xauth_cookie(display_number: u32) -> Option<String> {
-    let output = std::process::Command::new("xauth")
+    // No console window if an `xauth.exe` exists on Windows (#3814).
+    let output = crate::util::no_window::no_window_command("xauth")
         .args(["list", &format!(":{display_number}")])
         .output()
         .ok()?;
