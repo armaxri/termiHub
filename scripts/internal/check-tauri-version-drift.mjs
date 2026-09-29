@@ -135,7 +135,9 @@ export function checkRepo() {
 
 // CLI mode: print a per-pair report and exit non-zero on drift so callers
 // (release-check, CI) can gate on it.
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Compare paths, not `file://${argv[1]}`: on Windows argv[1] is "D:\\...", so
+// the string form never matched and release-check.cmd got a silent exit 0 (#3753).
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const { ok, drift, skipped } = checkRepo();
 
   for (const p of ok) {
