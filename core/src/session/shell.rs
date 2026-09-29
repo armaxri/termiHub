@@ -339,7 +339,8 @@ pub fn parse_wsl_output(raw: &[u8]) -> Vec<String> {
 /// Returns an empty list if the command fails or WSL is not installed.
 #[cfg(windows)]
 pub fn detect_wsl_distros() -> Vec<String> {
-    let output = std::process::Command::new("wsl.exe")
+    // No console window from the GUI-subsystem app (#3814).
+    let output = crate::util::no_window::no_window_command("wsl.exe")
         .args(["--list", "--quiet"])
         .output();
 

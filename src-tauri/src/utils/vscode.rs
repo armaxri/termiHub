@@ -5,14 +5,16 @@ use std::process::Command;
 ///
 /// On Windows, `code` is installed as `code.cmd` which
 /// `CreateProcessW` cannot resolve directly. We delegate to
-/// `cmd.exe /c code` so the shell handles `.cmd` extension lookup.
+/// `cmd.exe /c code` so the shell handles `.cmd` extension lookup, spawned
+/// with `CREATE_NO_WINDOW` so the intermediate `cmd.exe` never flashes a
+/// console window (#3814).
 fn vscode_command() -> Command {
     vscode_command_impl()
 }
 
 #[cfg(windows)]
 fn vscode_command_impl() -> Command {
-    let mut cmd = Command::new("cmd");
+    let mut cmd = termihub_core::util::no_window::no_window_command("cmd");
     cmd.args(["/c", "code"]);
     cmd
 }
