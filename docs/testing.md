@@ -262,6 +262,41 @@ violation). The seed covers the shared `ui/` primitives plus key dialogs
 must be fixed, never suppressed**: if one is too large to fix in scope, leave that component
 out of the net and file a `Ready2Implement` follow-up rather than shipping a red suite.
 
+### Console output guard and `act()` (#3356)
+
+Component tests drive React directly (`createRoot` + `act` from `"react"`).
+`src/test/setup.ts` sets `IS_REACT_ACT_ENVIRONMENT = true` once for the whole suite;
+do not toggle it per file. Before #3356 the flag was unset, and the resulting
+"not configured to support act(...)" warnings (~1 GB of stderr per run) pushed the
+Windows `Run Tests` CI log past 900 MB.
+
+`src/test/consoleGuard.ts` (installed from the setup file) keeps the log from
+regrowing:
+
+- a test **fails** if it logs an environment-misconfiguration warning (the
+  act-environment warning above);
+- a test **file fails** when its combined console output exceeds a per-file
+  budget (512 KiB). A budget rather than zero-tolerance, because React's
+  "update … not wrapped in act(...)" warning is timing-dependent and a strict
+  check would flake on a loaded Windows runner.
+
+Output a test silences on purpose (`vi.spyOn(console, "error").mockImplementation(…)`)
+is not counted. When a file goes over budget, rerun it with
+`TERMIHUB_TEST_CONSOLE_TRACE=1` to append the JavaScript stack to every console
+call. For an "update … not wrapped in act(...)" warning, that stack names the
+promise, timer, or subscription that updated state after `act()` returned. The
+usual fixes are:
+
+- mount inside `await act(async () => root.render(…))` followed by `await flushAsync()`
+  (from `src/test/flushAsync.ts`) so mount-time async work (region subscriptions,
+  fetches) settles inside `act`;
+- resolve a test-controlled deferred promise inside `act`, not after the last assertion;
+- wrap store updates (`useAppStore.setState`) and dispatched DOM events that
+  re-render a mounted component in `act`.
+
+Locally, vitest hides console output of passing tests when it detects an AI agent
+(`AI_AGENT`, `CLAUDECODE`); use `--reporter=default` to see what CI prints.
+
 ## 3. Rust Backend Tests
 
 **What it does**: Unit and integration tests for Rust code

@@ -30,7 +30,7 @@ import { afterAll, afterEach } from "vitest";
 
 /**
  * Max bytes of console output one test file may emit across all its tests.
- * The noisiest file measured 0.23 MB after the #3356 cleanup; the budget
+ * The noisiest file measured ~0.1 MB after the #3356 cleanup; the budget
  * leaves ~2x headroom for timing-dependent warnings on a loaded runner.
  */
 export const CONSOLE_BYTES_PER_FILE_BUDGET = 512 * 1024;
@@ -51,9 +51,9 @@ const trace = Boolean(process.env.TERMIHUB_TEST_CONSOLE_TRACE);
 let fileBytes = 0;
 let fatalHits: string[] = [];
 
-/** Test-only: the bytes counted so far for the current file (used by the guard's own test). */
-export function consoleBytesThisFile(): number {
-  return fileBytes;
+/** Whether a formatted console message is one of the {@link FATAL_CONSOLE_PATTERNS}. */
+export function isFatalConsoleMessage(text: string): boolean {
+  return FATAL_CONSOLE_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 /**
@@ -67,7 +67,7 @@ export function installConsoleGuard(): void {
     console[method] = (...args: unknown[]): void => {
       const text = format(...args);
       fileBytes += text.length + 1;
-      if (FATAL_CONSOLE_PATTERNS.some((pattern) => pattern.test(text))) {
+      if (isFatalConsoleMessage(text)) {
         fatalHits.push(text.split("\n", 1)[0]);
       }
       if (trace) {
