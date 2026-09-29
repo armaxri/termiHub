@@ -6,8 +6,8 @@ import { installVirtualListSizing, setElementSize } from "./virtualListSize";
 
 /**
  * Tests for the opt-in jsdom virtual-list sizing helper (audit finding MOCK-008)
- * and a regression guard for the `@tanstack/virtual-core` debounce-timer leak the
- * global `onscrollend` shim in `src/test/setup.ts` compensates for.
+ * and a regression guard that `@tanstack/virtual-core` clears its scroll-reset
+ * debounce timer on unmount without any global `onscrollend` shim (#3056).
  */
 
 let root: Root | null = null;
@@ -35,8 +35,8 @@ function install(...args: Parameters<typeof installVirtualListSizing>): () => vo
 /**
  * Minimal virtualized list built on the real `useVirtualizer`, so the regression
  * exercises the same scroll-listener/debounce machinery the FileBrowser uses. The
- * `useScrollendEvent` flag lets a test pick the native-scrollend path (what the
- * FileBrowser opts into) or the debounce fallback (the leaky default).
+ * `useScrollendEvent` flag lets a test pick the native-scrollend opt-in (what the
+ * FileBrowser uses) or the plain debounce default.
  */
 function VirtualProbe({ useScrollendEvent }: { useScrollendEvent: boolean }) {
   const parentRef = useRef<HTMLDivElement>(null);
@@ -126,12 +126,35 @@ describe("virtualListSize helper (MOCK-008)", () => {
   });
 });
 
-describe("react-virtual scroll-timer leak (MOCK-008 / onscrollend shim)", () => {
-  it("leaves no pending debounce timer after unmount on the scrollend path", () => {
-    // The FileBrowser sets useScrollendEvent: true and setup.ts advertises
-    // `onscrollend`, so virtual-core resets isScrolling from the native scrollend
-    // event and never arms the leaky 150ms debounce. Assert that: a scroll then
-    // an unmount leaves zero pending timers.
+describe("react-virtual scroll-timer cleanup (#3056)", () => {
+  // `@tanstack/virtual-core` < 3.17.8 armed a 150ms `isScrolling` reset debounce
+  // on every scroll whose unmount cleanup never cleared it, so a list unmounted
+  // mid-scroll left a timer that later fired on a torn-down tree (under jsdom: an
+  // unhandled "window is not defined"). We used to steer every virtualizer onto
+  // the native-scrollend path with a global `onscrollend` shim in
+  // `src/test/setup.ts`; the pinned version now cancels the debounce in its own
+  // cleanup, so the plain debounce path is safe on its own and the shim is gone.
+  it("unmounting mid-scroll leaves no pending timers on the debounce path", () => {
+    vi.useFakeTimers();
+    const el = render(<VirtualProbe useScrollendEvent={false} />);
+    const scroll = el.querySelector('[data-testid="scroll"]') as HTMLElement;
+    expect(vi.getTimerCount()).toBe(0);
+
+    act(() => {
+      scroll.dispatchEvent(new Event("scroll"));
+    });
+    // The scroll armed the isScrolling reset debounce — we are mid-scroll.
+    expect(vi.getTimerCount()).toBe(1);
+
+    act(() => root!.unmount());
+    root = null;
+    // Unmount cancelled it: nothing is left to fire on the torn-down tree.
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("unmounting mid-scroll leaves no pending timers on the scrollend path", () => {
+    // What the FileBrowser opts into. jsdom implements `onscrollend` natively, so
+    // no debounce is armed at all — asserted without any shim in setup.ts.
     vi.useFakeTimers();
     const el = render(<VirtualProbe useScrollendEvent={true} />);
     const scroll = el.querySelector('[data-testid="scroll"]') as HTMLElement;
@@ -139,7 +162,6 @@ describe("react-virtual scroll-timer leak (MOCK-008 / onscrollend shim)", () => 
     act(() => {
       scroll.dispatchEvent(new Event("scroll"));
     });
-    // No debounce timer is armed on the scrollend path.
     expect(vi.getTimerCount()).toBe(0);
 
     act(() => root!.unmount());
@@ -147,13 +169,7 @@ describe("react-virtual scroll-timer leak (MOCK-008 / onscrollend shim)", () => 
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("documents the dependency leak: the debounce fallback survives unmount", () => {
-    // Control case proving the leak is real and lives in virtual-core, not our
-    // code: with the debounce fallback (useScrollendEvent: false), a scroll arms a
-    // setTimeout whose cleanup on unmount never clears it — the timer outlives the
-    // component. In the running app this fires a state update on a torn-down tree;
-    // under jsdom, once the environment is disposed between test files, it throws
-    // an unhandled "window is not defined". The onscrollend shim steers around it.
+  it("still resets isScrolling after the debounce while mounted", () => {
     vi.useFakeTimers();
     const el = render(<VirtualProbe useScrollendEvent={false} />);
     const scroll = el.querySelector('[data-testid="scroll"]') as HTMLElement;
@@ -161,14 +177,12 @@ describe("react-virtual scroll-timer leak (MOCK-008 / onscrollend shim)", () => 
     act(() => {
       scroll.dispatchEvent(new Event("scroll"));
     });
-    // The scroll armed the debounce timer.
     expect(vi.getTimerCount()).toBe(1);
 
-    act(() => root!.unmount());
-    root = null;
-    // Unmount did NOT clear it — this is the leak the shim compensates for.
-    expect(vi.getTimerCount()).toBe(1);
-
-    vi.clearAllTimers();
+    // Letting the debounce elapse while mounted fires it normally.
+    act(() => {
+      vi.advanceTimersByTime(150);
+    });
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
