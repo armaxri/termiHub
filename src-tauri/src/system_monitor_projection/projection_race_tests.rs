@@ -26,7 +26,7 @@ use crate::projection::{
 use crate::system_monitor_projection::projection::{
     apply_monitor_delta, publish_monitors, SYSTEM_MONITORS_REGION,
 };
-use crate::system_monitor_projection::store::{RegionDelta, SystemMonitorStore};
+use crate::system_monitor_projection::store::{HistoryDelta, RegionDelta, SystemMonitorStore};
 
 struct RecordingSink {
     frames: Mutex<Vec<ProjectionFrame>>,
@@ -193,8 +193,11 @@ fn draining_outside_the_region_lock_would_resurrect_a_closed_monitor() {
     let (store, projector, _sink, _view, _version) = seeded();
     // The collector's sample…
     store.stats("m1", stats(42.0));
-    // …old publish, step 1: drain outside the region lock.
-    let stale_delta = store.drain_delta();
+    // …old publish, step 1: drain outside the region lock. (Its history append
+    // is dropped: the ring's own misfit guard would notice that half and
+    // resync, which is not the entry-resurrection hazard pinned here.)
+    let mut stale_delta = store.drain_delta();
+    stale_delta.history.clear();
     // A racing command closes the monitor and publishes the removal.
     store.close("m1");
     release_publish(&projector, &store);
@@ -306,6 +309,7 @@ fn the_cross_check_catches_a_real_divergence_and_resyncs() {
             .filter(|(key, _)| key != "b")
             .collect(),
         stats_cache: full_delta.stats_cache,
+        history: full_delta.history,
     };
 
     let (ops, divergence) =
@@ -330,6 +334,7 @@ fn the_cross_check_catches_a_real_divergence_and_resyncs() {
             ("b".to_string(), truth["monitors"].get("b").cloned()),
         ],
         stats_cache: vec![("b".to_string(), truth["statsCache"].get("b").cloned())],
+        history: Vec::new(),
     };
     let (_, divergence) = apply_monitor_delta(&mut view, &stale, Some(&truth), || unreachable!());
     assert!(
@@ -354,4 +359,132 @@ fn the_cross_check_accepts_a_consistent_delta() {
     assert_eq!(divergence, None);
     assert_eq!(ops, compute_ops(&old_full, &truth));
     assert_eq!(view, truth);
+}
+
+// ── History ring (#3204) ─────────────────────────────────────────────────────
+
+/// The #3792 convergence shape for the history ring: N threads stream samples
+/// (with the lifecycle folds mixed in) into a **small** ring, so eviction runs
+/// constantly and appends from different threads coalesce between drains. The
+/// subscriber, fed only the append-only diffs, must still end equal to the
+/// store — ring contents, order, and bound.
+#[test]
+fn concurrent_sample_streams_converge_the_history_ring_on_the_store() {
+    const THREADS: usize = 6;
+    const ITERS: usize = 300;
+    const CAP: usize = 4;
+    let store = Arc::new(SystemMonitorStore::with_history_capacity(CAP));
+    for key in ["m0", "m1", "m2"] {
+        store.open(key, None, None);
+        store.opened(key);
+    }
+    let projector = Arc::new(Projector::new());
+    projector.register_region(SYSTEM_MONITORS_REGION, store.snapshot());
+    let sink = Arc::new(RecordingSink::new());
+    let base = projector.subscribe(SYSTEM_MONITORS_REGION, "sub", "A", sink.clone());
+    assert!(publish_monitors(&projector, &store).is_empty());
+
+    let barrier = Arc::new(Barrier::new(THREADS));
+    let handles: Vec<_> = (0..THREADS)
+        .map(|t| {
+            let store = store.clone();
+            let projector = projector.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERS {
+                    let key = format!("m{}", (t + i) % 3);
+                    // Mostly samples (the hot path), with an occasional
+                    // reconnect / close so resets race the appends too.
+                    match (t * ITERS + i) % 23 {
+                        0 => store.open(&key, None, None),
+                        11 => store.close(&key),
+                        _ => {
+                            store.opened(&key);
+                            store.stats(&key, stats((t * ITERS + i) as f64));
+                        }
+                    }
+                    publish_monitors(&projector, &store);
+                }
+            })
+        })
+        .collect();
+    for h in handles {
+        h.join().expect("publisher thread must not panic");
+    }
+
+    let truth = store.snapshot();
+    let converged = replay(&sink, base.view.clone(), base.version);
+    assert_eq!(converged, truth, "subscriber must converge on the store");
+    assert_eq!(
+        projector.snapshot(SYSTEM_MONITORS_REGION).view,
+        truth,
+        "region view must converge on the store"
+    );
+    for ring in truth["history"].as_object().unwrap().values() {
+        assert!(ring.as_array().unwrap().len() <= CAP, "ring stays bounded");
+    }
+    // Eviction genuinely ran (the test would be vacuous otherwise).
+    let evicted = sink.diffs().iter().any(|d| {
+        d.ops.iter().any(|op| {
+            matches!(op, crate::projection::DiffOp::Remove { path }
+                if path.starts_with("/history/") && path.ends_with("/0"))
+        })
+    });
+    assert!(evicted, "the small ring must have evicted under load");
+}
+
+/// A sample landing after a publish drained its (append) delta is carried by
+/// the next publish — neither lost nor appended twice.
+#[test]
+fn a_sample_landing_after_the_drain_is_appended_exactly_once() {
+    let (store, projector, sink, view, version) = seeded();
+    store.stats("m1", stats(1.0));
+    let s = store.clone();
+    publish_hook::set_after_drain(move || s.stats("m1", stats(2.0)));
+
+    publish_monitors(&projector, &store);
+    let after_first = replay(&sink, view.clone(), version);
+    assert_eq!(after_first["history"]["m1"].as_array().unwrap().len(), 1);
+
+    publish_monitors(&projector, &store);
+    let converged = replay(&sink, view, version);
+    let cpus: Vec<f64> = converged["history"]["m1"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["stats"]["cpuUsagePercent"].as_f64().unwrap())
+        .collect();
+    assert_eq!(cpus, vec![1.0, 2.0]);
+    assert_eq!(converged, store.snapshot());
+}
+
+/// The release-path guard: an append delta that does not fit the held ring
+/// (a dirty-tracking bug) is not spliced blindly — the publish resyncs the
+/// whole region instead, so subscribers never hold a torn ring.
+#[test]
+fn an_append_that_does_not_fit_the_held_ring_resyncs_the_region() {
+    let store = SystemMonitorStore::new();
+    store.open("a", None, None);
+    let (_, mut view) = store.drain_delta_with_snapshot();
+    let old_full = view.clone();
+    store.stats("a", stats(1.0));
+    let (_, truth) = store.drain_delta_with_snapshot();
+
+    // Claim the append starts at index 5 of a ring the view holds as empty.
+    let torn = RegionDelta {
+        history: vec![(
+            "a".to_string(),
+            HistoryDelta::Append {
+                evicted: 0,
+                start: 5,
+                appended: vec![truth["history"]["a"][0].clone()],
+            },
+        )],
+        ..RegionDelta::default()
+    };
+    let (ops, divergence) = apply_monitor_delta(&mut view, &torn, None, || truth.clone());
+    assert!(divergence.is_some(), "the torn append is reported");
+    assert_eq!(view, truth, "resynced to the store");
+    assert_eq!(ops, compute_ops(&old_full, &truth));
 }

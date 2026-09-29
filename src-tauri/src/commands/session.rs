@@ -59,6 +59,12 @@ use crate::workspace::settings::apply_session_defaults;
 /// agent-hosted connect carries the flag to the agent, which then never relays
 /// a prompt (#3877); an agent older than protocol 0.23.0 cannot honor it and is
 /// refused with the `agent_outdated` code. Defaults to `false`.
+///
+/// `saved_connection_id` names the saved connection the session is opened for
+/// (#3876), absent for an unsaved configuration. The session is bound to it so
+/// a transfer on the session can be relaunched after the session is gone —
+/// through a session reopened for the same connection, or with the connection's
+/// secret re-sourced from the credential store. The id only, never a secret.
 // Tauri command: the argument list is the IPC surface (typed params + injected
 // State), so it cannot be collapsed into a struct without losing the command
 // binding — the arity lint does not apply here.
@@ -72,6 +78,7 @@ pub async fn create_connection(
     spawned: Option<bool>,
     resilient_reconnect: Option<bool>,
     unattended: Option<bool>,
+    saved_connection_id: Option<String>,
     app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
     conn_manager: State<'_, ConnectionManager>,
@@ -146,6 +153,14 @@ pub async fn create_connection(
             store.connected(tab_id);
             store.set_backend_session_id(tab_id, Some(session_id.clone()));
         });
+    }
+    // Remember which saved connection this session was opened for (#3876): a
+    // transfer on it records the connection, so a relaunch after the session
+    // is gone can find a reopened session or re-source the secret.
+    if let (Some(connection_id), Ok(session_id)) = (&saved_connection_id, &result) {
+        manager
+            .bind_saved_connection(session_id, connection_id)
+            .await;
     }
     result
 }
@@ -1027,6 +1042,16 @@ async fn start_session_transfer(
         // after a restart can re-attach to the same container (#3585).
         if let SessionTransferTarget::Docker(docker) = &target {
             pm.record_docker_target(&transfer_id, docker.container_id());
+        } else {
+            // An SFTP/FTP transfer records the saved connection behind its
+            // session, so a relaunch after a restart can re-source its secret
+            // from the credential store (#3876).
+            crate::files::transfer::relaunch_session::record_saved_connection(
+                &pm,
+                &manager,
+                &transfer_id,
+                &session_id,
+            );
         }
     }
     let registry = (*registry).clone();

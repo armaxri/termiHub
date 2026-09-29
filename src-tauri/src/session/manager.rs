@@ -583,6 +583,11 @@ pub struct SessionManager {
     /// terminal-loop / session-end path (the mandatory secret-lifetime
     /// mitigation). See [`super::retained_request`].
     pub(super) retained_requests: RetainedRequestStore,
+    /// Backend `session_id` → the id of the saved connection it was opened for
+    /// (#3876). Populated by the `create_connection` command when the caller
+    /// names one; entries of ended sessions are pruned lazily. See
+    /// [`saved_connections`](self::saved_connections).
+    pub(super) saved_connections: Arc<StdMutex<HashMap<String, String>>>,
 }
 
 /// Removes a `connect_id` from the [`SessionManager::connecting`] map when the
@@ -697,6 +702,7 @@ impl SessionManager {
             session_loggers: Arc::new(StdMutex::new(HashMap::new())),
             session_tab_ids: Arc::new(StdMutex::new(HashMap::new())),
             retained_requests: RetainedRequestStore::new(),
+            saved_connections: Arc::new(StdMutex::new(HashMap::new())),
         }
     }
 
@@ -2316,6 +2322,9 @@ mod file_ops;
 /// Session-monitoring seam (monitoring lifecycle family) carved out of this
 /// file (ARCH-002 / TAURI-009); a second `impl SessionManager` block lives there.
 mod monitoring;
+
+/// Session → saved-connection bindings for relaunched transfers (#3876).
+mod saved_connections;
 
 #[cfg(test)]
 mod tests;

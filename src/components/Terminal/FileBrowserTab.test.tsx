@@ -57,18 +57,32 @@ afterEach(() => {
 });
 
 /** Create a file-browser tab in the store and return its id. */
-function addFileBrowserTab(): string {
+function addFileBrowserTab(connectionId?: string): string {
   return useAppStore
     .getState()
     .addTab(
       "My FTP Server",
       "ftp",
       { type: "ftp", config: { host: "ftp.example.com" } },
-      { contentType: "file-browser" }
+      { contentType: "file-browser", connectionId }
     );
 }
 
 describe("FileBrowserTab", () => {
+  it("names the saved connection the tab was opened from (#3876)", async () => {
+    const tabId = addFileBrowserTab("Work/ftp");
+
+    await act(async () => {
+      root.render(React.createElement(FileBrowserTab, { tabId, isVisible: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockedCreateTerminal).toHaveBeenCalledOnce();
+    expect(mockedCreateTerminal.mock.calls[0][5]).toBe("Work/ftp");
+  });
+
   it("mints a session on mount and attaches it to the tab", async () => {
     const tabId = addFileBrowserTab();
     expect(tabSessionId(tabId)).toBeNull();
@@ -81,10 +95,11 @@ describe("FileBrowserTab", () => {
     });
 
     expect(mockedCreateTerminal).toHaveBeenCalledOnce();
-    expect(mockedCreateTerminal).toHaveBeenCalledWith({
+    expect(mockedCreateTerminal.mock.calls[0][0]).toEqual({
       type: "ftp",
       config: { host: "ftp.example.com" },
     });
+    expect(mockedCreateTerminal.mock.calls[0][5]).toBeUndefined();
     expect(tabSessionId(tabId)).toBe("ftp-session-1");
     expect(container.querySelector('[data-testid="file-browser-tab"]')).not.toBeNull();
     expect(container.textContent).toContain("No terminal for this connection");

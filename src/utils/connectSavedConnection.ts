@@ -226,7 +226,14 @@ export async function connectSavedConnection(
     tabConfig: ConnectionConfig
   ): Promise<ConnectSavedConnectionResult> => {
     try {
-      const sessionId = await createTerminal(tabConfig, undefined, false, false, true);
+      const sessionId = await createTerminal(
+        tabConfig,
+        undefined,
+        false,
+        false,
+        true,
+        connection.id
+      );
       return openTab(tabConfig, { terminalOptions: connection.terminalOptions, sessionId });
     } catch (err) {
       frontendLog(
@@ -370,7 +377,14 @@ export async function connectSavedConnection(
         });
       }
       try {
-        const sessionId = await createTerminal(preConfig);
+        const sessionId = await createTerminal(
+          preConfig,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          connection.id
+        );
         // Stored credential worked — open tab with existing session
         return openTab(preConfig, {
           terminalOptions: connection.terminalOptions,

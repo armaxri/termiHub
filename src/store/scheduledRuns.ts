@@ -16,7 +16,10 @@
  *   connected" (#3527) and this is the fire's `connectWindow`: then the targets
  *   with no connected terminal here are connected **unattended** first (never
  *   prompting; a target that would need input is skipped with the reason), and
- *   the tabs this opened are closed when the run ends, whatever its outcome;
+ *   the tabs this opened are closed when the run ends, whatever its outcome.
+ *   A target another window runs on itself is never connected here (#3878):
+ *   each window acknowledges the fire with {@link claimedTargetIds}, and the
+ *   connect window skips those, so each target runs once, where it is held;
  * - it never supersedes something the user started: if a workflow run (or a
  *   macro playback) is already in flight in this window, the run is skipped.
  *
@@ -43,7 +46,12 @@ import {
   type FanoutOutcome,
 } from "./slices/workflowFanout";
 import { newMacroRunId } from "./slices/macroRunHistory";
-import { closeRunTabs, connectMissingTargets, type UnattendedConnector } from "./scheduledConnect";
+import {
+  closeRunTabs,
+  connectedIds,
+  connectMissingTargets,
+  type UnattendedConnector,
+} from "./scheduledConnect";
 import { activeWorkflowRunCount, runWorkflowOnTarget } from "./slices/workflowRunOnTarget";
 
 /** The store access a scheduled run needs. */
@@ -95,6 +103,18 @@ function targetTabIds(state: AppState, connectionIds: readonly string[]): string
   return collectLiveTabs(state)
     .filter((t) => t.contentType === "terminal" && !!t.connectionId && members.has(t.connectionId))
     .map((t) => t.id);
+}
+
+/**
+ * The target connection ids this window will run the fire on itself — the
+ * ones with a connected terminal here — sent with its acknowledgement so the
+ * connect window does not connect them again (#3878). Empty when this window
+ * will skip the run (busy, or its broadcast group is gone).
+ */
+export function claimedTargetIds(fire: ScheduleFire, state: AppState): string[] {
+  if (busyReason(state)) return [];
+  const connectionIds = resolveTargetConnectionIds(fire.targets, currentBroadcastGroups());
+  return connectionIds === null ? [] : connectedIds(state, connectionIds);
 }
 
 /**
@@ -230,6 +250,11 @@ export interface ScheduledRunOptions {
    * connector to connect the targets not connected here with, before running.
    */
   connectMissing?: UnattendedConnector;
+  /**
+   * With `connectMissing`: the targets the run's other windows run on
+   * themselves, which this window must not connect again (#3878).
+   */
+  connectedElsewhere?: () => Promise<readonly string[]>;
   /** How long an opened tab may take to attach (a test seam). */
   readyTimeoutMs?: number;
 }
@@ -278,9 +303,10 @@ export async function executeScheduledRun(
     if (!options.connectMissing) {
       return await runAction(fire, targetTabIds(store.getState(), connectionIds), store);
     }
+    const elsewhere = new Set(options.connectedElsewhere ? await options.connectedElsewhere() : []);
     const connected = await connectMissingTargets(
       store.getState,
-      connectionIds,
+      connectionIds.filter((id) => !elsewhere.has(id)),
       options.connectMissing,
       options.readyTimeoutMs
     );

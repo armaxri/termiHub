@@ -24,7 +24,11 @@ import { useAppStore, getActiveTab, monitorKeyForTab } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedMonitors } from "@/store/useProjectedMonitors";
-import { useMonitorHistory, type MonitorHistories } from "@/store/useMonitorHistory";
+import {
+  monitorMetricValues,
+  useMonitorHistory,
+  type MonitorHistories,
+} from "@/store/useMonitorHistory";
 import { useProjectedSessionLifecycle } from "@/store/useSessionLifecycle";
 import { currentMonitorsView } from "@/store/systemMonitorBridge";
 import { resolveHighlightingConfig } from "@/services/syntaxHighlightingConfig";
@@ -565,7 +569,7 @@ function MonitoringStatus() {
   // region when it faithfully mirrors `appStore`, else `appStore` verbatim
   // (#2224 render cut). Picking the active key stays a per-client (presentation)
   // concern under partial projection.
-  const { monitors: projectedMonitors } = useProjectedMonitors();
+  const { monitors: projectedMonitors, history: projectedHistory } = useProjectedMonitors();
   const activeMonitor = activeMonitorKey ? (projectedMonitors[activeMonitorKey] ?? null) : null;
   const monitoringConnected = !!activeMonitor?.monitorSessionId;
   const monitoringHost = activeMonitor?.host ?? null;
@@ -711,25 +715,17 @@ function MonitoringStatus() {
     }
   }, [activeMonitorKey, cancelMonitoring]);
 
-  // Client-side rolling history for the active monitor (PROD-0030). The region
-  // retains only the latest sample, so the per-metric windows are reconstructed
-  // here from the `sampleCount`-gated stream. CPU and the network rates report a
-  // priming/zero first sample (no prior delta, audit gap G10), so sample #1 is
-  // recorded as a gap (`null`) for those — matching the "CPU —" placeholder
-  // rather than a misleading 0. Memory is correct from the first sample; swap is
-  // `null` when the host has no swap so its window stays empty (chart omitted).
-  const historyStats = monitoringStats;
-  const primingReady = monitoringSampleCount >= 2 && historyStats != null;
+  // Rolling history for the active monitor (PROD-0030). Preferred source is the
+  // region's retained ring (#3204), so a remounted status bar or a new window
+  // shows the existing history at once; without it the per-metric windows are
+  // reconstructed client-side from the `sampleCount`-gated stream. Both paths
+  // map a sample through `monitorMetricValues` (priming gaps, no-swap, and
+  // unavailable metrics as gaps).
   const monitorHistories = useMonitorHistory({
     key: activeMonitorKey,
     sampleCount: monitoringSampleCount,
-    values: {
-      cpu: primingReady && historyStats ? historyStats.cpuUsagePercent : null,
-      memory: historyStats ? historyStats.memoryUsedPercent : null,
-      swap: historyStats && historyStats.swapTotalKb > 0 ? historyStats.swapUsedPercent : null,
-      netRx: primingReady && historyStats ? historyStats.netRxBytesPerSec : null,
-      netTx: primingReady && historyStats ? historyStats.netTxBytesPerSec : null,
-    },
+    values: monitorMetricValues(monitoringStats, monitoringSampleCount),
+    regionSamples: activeMonitorKey ? projectedHistory?.[activeMonitorKey] : undefined,
   });
 
   // Hide monitoring UI when disabled or when active tab doesn't support monitoring

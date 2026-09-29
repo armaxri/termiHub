@@ -170,6 +170,12 @@ describe("connectSavedConnection — unattended success (#3527)", () => {
     expect(useAppStore.getState().passwordPromptOpen).toBe(false);
   });
 
+  it("names the saved connection the session is opened for (#3876)", async () => {
+    mockedResolveCredential.mockResolvedValue("s3cret");
+    await connectSavedConnection(ssh("password"), unattended);
+    expect(mockedCreateTerminal.mock.calls[0][5]).toBe("conn-1");
+  });
+
   it("connects key / agent auth that needs no secret with the never-prompt flag", async () => {
     const result = await connectSavedConnection(ssh("agent"), unattended);
     expect(result.status).toBe("opened");

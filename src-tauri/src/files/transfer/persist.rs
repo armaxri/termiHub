@@ -147,6 +147,14 @@ pub struct PersistedTransfer {
     /// relaunched after a restart. References and paths only, never secrets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_source: Option<PersistedRemoteSource>,
+    /// The id of the saved connection the owning session was opened for
+    /// (#3876) — absent for a session opened from an unsaved configuration and
+    /// for records written before it existed. When the session is gone after a
+    /// restart, a relaunch looks the connection up by this id and re-sources
+    /// its password or key passphrase from the credential store under the
+    /// connection's existing store key. The id only — never a secret.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_connection_id: Option<String>,
 }
 
 /// Where a remote-to-remote copy reads from (#3206): a session **reference**
@@ -159,6 +167,11 @@ pub struct PersistedRemoteSource {
     pub session_id: String,
     /// The source file's path on that session.
     pub path: String,
+    /// The saved connection the source session was opened for (#3876), so a
+    /// relaunch can re-source the source end's secret when its session is
+    /// gone. The id only — never a secret.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_connection_id: Option<String>,
 }
 
 /// The persisted identity of a Docker transfer's container (#3585).
@@ -428,7 +441,28 @@ mod tests {
             folder_paste_id: None,
             source_mtime: None,
             remote_source: None,
+            saved_connection_id: None,
         }
+    }
+
+    /// The saved-connection reference (#3876) round-trips, and a record written
+    /// before it existed still loads (with no reference).
+    #[test]
+    fn saved_connection_round_trips_and_old_records_still_load() {
+        let mut entry = sample("t1", PersistedTransferStatus::Paused);
+        entry.saved_connection_id = Some("Work/files".to_string());
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"savedConnectionId\":\"Work/files\""));
+        let parsed: PersistedTransfer = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, entry);
+
+        let legacy = serde_json::to_string(&sample("t2", PersistedTransferStatus::Paused)).unwrap();
+        assert!(
+            !legacy.contains("savedConnectionId"),
+            "absent field is not written"
+        );
+        let parsed: PersistedTransfer = serde_json::from_str(&legacy).unwrap();
+        assert_eq!(parsed.saved_connection_id, None);
     }
 
     #[test]
@@ -486,6 +520,7 @@ mod tests {
         entry.remote_source = Some(PersistedRemoteSource {
             session_id: "sess-src".to_string(),
             path: "/src/data.csv".to_string(),
+            saved_connection_id: None,
         });
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains(r#""remoteSource":{"sessionId":"sess-src","path":"/src/data.csv"}"#));
@@ -550,7 +585,10 @@ mod tests {
         entry.remote_source = Some(PersistedRemoteSource {
             session_id: "sess-src".to_string(),
             path: "/src/data.csv".to_string(),
+            saved_connection_id: Some("Work/source".to_string()),
         });
+        // The saved-connection reference (#3876) is an id, never its secret.
+        entry.saved_connection_id = Some("Work/files".to_string());
         let value = serde_json::to_value(&entry).unwrap();
         let obj = value.as_object().unwrap();
         for forbidden in [
@@ -583,9 +621,11 @@ mod tests {
         source_keys.sort();
         assert_eq!(
             source_keys,
-            ["path", "sessionId"],
-            "the remote source carries only a session reference and a path"
+            ["path", "savedConnectionId", "sessionId"],
+            "the remote source carries only session/connection references and a path"
         );
+        // The saved connection is a bare id string — no settings, no secret.
+        assert_eq!(obj["savedConnectionId"], "Work/files");
         // Whole-JSON belt-and-braces: none of the secret-ish substrings appear.
         let json = serde_json::to_string(&entry).unwrap().to_lowercase();
         for needle in ["password", "passphrase", "secret", "privatekey"] {

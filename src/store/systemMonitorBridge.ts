@@ -37,7 +37,7 @@ import {
   type IntentAck,
   type Transport,
 } from "@/services/transport";
-import type { MonitoringEntry, SystemStats } from "@/types/monitoring";
+import type { MonitorHistorySample, MonitoringEntry, SystemStats } from "@/types/monitoring";
 import { frontendLog } from "@/utils/frontendLog";
 import { makeVersionGuard } from "./bridgeVersionGuard";
 import { errorMessage } from "@/utils/errorMessage";
@@ -48,13 +48,21 @@ export const SYSTEM_MONITORS_REGION = "system-monitors";
 
 /**
  * The `system-monitors` region view model — a twin of the Rust store snapshot:
- * `{ monitors: { <key>: MonitorEntry }, statsCache: { <key>: SystemStats } }`.
- * The projected `MonitorEntry` shape matches the frontend {@link MonitoringEntry}
- * one-to-one, so consumers read it directly.
+ * `{ history: { <key>: MonitorHistorySample[] }, monitors: { <key>: MonitorEntry },
+ * statsCache: { <key>: SystemStats } }`. The projected `MonitorEntry` shape
+ * matches the frontend {@link MonitoringEntry} one-to-one, so consumers read it
+ * directly.
  */
 export interface SystemMonitorsView {
   monitors: Record<string, MonitoringEntry>;
   statsCache: Record<string, SystemStats>;
+  /**
+   * The bounded ring of recent samples per live monitor, oldest first (#3204).
+   * Retained by the backend so a new window or a remounted status bar draws the
+   * existing history at once; absent when the region carries none, in which
+   * case consumers fall back to their client-side rolling window.
+   */
+  history?: Record<string, MonitorHistorySample[]>;
 }
 
 /** The empty view a fresh region reports (twin of the empty store snapshot). */
@@ -141,7 +149,11 @@ export function ensureMonitorsSubscribed(): Promise<ProjectionClient> {
     client.onChange((state) => {
       const view = (state.view ?? EMPTY_VIEW) as Partial<SystemMonitorsView>;
       commitMonitorsView(
-        { monitors: view.monitors ?? {}, statsCache: view.statsCache ?? {} },
+        {
+          monitors: view.monitors ?? {},
+          statsCache: view.statsCache ?? {},
+          ...(view.history ? { history: view.history } : {}),
+        },
         state.version
       );
     });

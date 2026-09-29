@@ -58,7 +58,9 @@ speedBytesPerSec: number | null,
  */
 etaSeconds: number | null, 
 /**
- * Human-readable error, only populated for the `failed` state.
+ * Human-readable error for the `failed` state — or, for a `paused` row, the
+ * reason it cannot continue on its own (a relaunch that needs credentials,
+ * #3876). Absent otherwise.
  */
 error?: string, 
 /**

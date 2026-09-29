@@ -163,6 +163,20 @@ describe("wire contract: session create", () => {
       expect.objectContaining({ typeId: "serial", agentId: "agent-pi" })
     );
   });
+
+  it("names the saved connection a session is opened for, and only then (#3876)", async () => {
+    respondWith(sessionFixture.createConnection);
+    await createTerminal({ type: "ssh", config: {} }, undefined, false, false, false, "Work/files");
+    expect(mockedInvoke).toHaveBeenLastCalledWith(
+      "create_connection",
+      expect.objectContaining({ typeId: "ssh", savedConnectionId: "Work/files" })
+    );
+
+    respondWith(sessionFixture.createConnection);
+    await createTerminal({ type: "local", config: {} });
+    const args = mockedInvoke.mock.lastCall?.[1] as Record<string, unknown>;
+    expect(args).not.toHaveProperty("savedConnectionId");
+  });
 });
 
 describe("wire contract: agent connect / definitions", () => {

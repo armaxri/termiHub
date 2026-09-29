@@ -157,6 +157,7 @@ impl TransferPersistenceManager {
             folder_paste_id: None,
             source_mtime: None,
             remote_source: None,
+            saved_connection_id: None,
         };
         let mut store = self.lock();
         store.upsert(entry);
@@ -180,9 +181,16 @@ impl TransferPersistenceManager {
 
     /// Attach the source endpoint of a remote-to-remote copy to a registered
     /// transfer (#3206), so a relaunch after a restart can re-attach both
-    /// sessions. References and paths only — never credentials. A no-op for
-    /// an unknown id (never fabricates a record).
-    pub fn record_remote_source(&self, transfer_id: &str, session_id: &str, path: &str) {
+    /// sessions — with the saved connection the source session was opened for
+    /// (#3876), when known. References and paths only — never credentials. A
+    /// no-op for an unknown id (never fabricates a record).
+    pub fn record_remote_source(
+        &self,
+        transfer_id: &str,
+        session_id: &str,
+        path: &str,
+        saved_connection_id: Option<&str>,
+    ) {
         let mut store = self.lock();
         let Some(mut entry) = store.get(transfer_id).cloned() else {
             return;
@@ -190,7 +198,22 @@ impl TransferPersistenceManager {
         entry.remote_source = Some(PersistedRemoteSource {
             session_id: session_id.to_string(),
             path: path.to_string(),
+            saved_connection_id: saved_connection_id.map(str::to_string),
         });
+        store.upsert(entry);
+        self.schedule_write(&store);
+    }
+
+    /// Attach the saved connection a registered transfer's session was opened
+    /// for (#3876), so a relaunch after a restart can re-source its secret from
+    /// the credential store. The id only — never a secret. A no-op for an
+    /// unknown id (never fabricates a record).
+    pub fn record_saved_connection(&self, transfer_id: &str, connection_id: &str) {
+        let mut store = self.lock();
+        let Some(mut entry) = store.get(transfer_id).cloned() else {
+            return;
+        };
+        entry.saved_connection_id = Some(connection_id.to_string());
         store.upsert(entry);
         self.schedule_write(&store);
     }
@@ -529,8 +552,8 @@ mod tests {
             None,
             0,
         );
-        m.record_remote_source("r2r", "sess-src", "/src/data.csv");
-        m.record_remote_source("ghost", "sess-src", "/src/data.csv");
+        m.record_remote_source("r2r", "sess-src", "/src/data.csv", Some("conn-src"));
+        m.record_remote_source("ghost", "sess-src", "/src/data.csv", None);
         m.note_progress(
             "r2r",
             PersistedTransferStatus::Active,
@@ -546,10 +569,37 @@ mod tests {
             Some(PersistedRemoteSource {
                 session_id: "sess-src".to_string(),
                 path: "/src/data.csv".to_string(),
+                saved_connection_id: Some("conn-src".to_string()),
             })
         );
         assert_eq!(rehydrated[0].resume_offset, CHECKPOINT_BYTES + 1);
         assert_eq!(rehydrated[0].source_mtime, Some(7));
+    }
+
+    /// The saved connection a session transfer was started on (#3876) survives
+    /// progress checkpoints and rehydration, so a relaunch after a restart can
+    /// re-source its secret; attaching it to an unknown id never fabricates a
+    /// record.
+    #[test]
+    fn saved_connection_survives_progress_and_rehydration() {
+        let (_d, m) = mgr();
+        register(&m, "t1");
+        m.record_saved_connection("t1", "Work/files");
+        m.record_saved_connection("ghost", "Work/files");
+        m.note_progress(
+            "t1",
+            PersistedTransferStatus::Active,
+            CHECKPOINT_BYTES + 1,
+            2048,
+            false,
+            None,
+        );
+        let rehydrated = m.load_incomplete_as_paused();
+        assert_eq!(rehydrated.len(), 1, "no record fabricated for `ghost`");
+        assert_eq!(
+            rehydrated[0].saved_connection_id.as_deref(),
+            Some("Work/files")
+        );
     }
 
     #[test]

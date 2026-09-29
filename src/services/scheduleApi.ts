@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
+  RunCoverage,
   ScheduleFire,
   ScheduleInput,
   ScheduleView,
@@ -49,9 +50,20 @@ export async function registerScheduleWindow(): Promise<void> {
   await invoke("register_schedule_window");
 }
 
-/** Acknowledge receipt of a fired run (this window will report on it). */
-export async function ackScheduleRun(token: string): Promise<void> {
-  await invoke("ack_schedule_run", { token });
+/**
+ * Acknowledge receipt of a fired run (this window will report on it), naming
+ * the target connection ids this window runs on itself (#3878).
+ */
+export async function ackScheduleRun(token: string, connected: readonly string[]): Promise<void> {
+  await invoke("ack_schedule_run", { token, connected: [...connected] });
+}
+
+/**
+ * The targets the run's other windows run on themselves, and whether all of
+ * them acknowledged it yet — asked by the fire's connect window (#3878).
+ */
+export async function scheduleRunCoverage(token: string): Promise<RunCoverage> {
+  return await invoke<RunCoverage>("schedule_run_coverage", { token });
 }
 
 /** Report this window's outcome of a fired run. */

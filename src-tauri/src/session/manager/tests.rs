@@ -4229,6 +4229,9 @@ async fn test_connection_is_cancellable_when_the_connect_hangs() {
 /// Tab close vs. session ownership (#3401).
 mod close_ownership;
 
+/// Session → saved-connection bindings for relaunched transfers (#3876).
+mod saved_connections;
+
 // ── tab close cancels the connect's OTP prompt (#3437) ─────────────────
 
 mod ki_prompt_owner {

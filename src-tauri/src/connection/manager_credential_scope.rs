@@ -59,6 +59,30 @@ impl ConnectionManager {
         CredentialKey::new(&owner_id(connection_id, scope.as_deref()), credential_type)
     }
 
+    /// The saved connection a relaunched transfer names (#3876) — looked up
+    /// like a jump-host reference (a unique id resolves wherever it lives, an
+    /// ambiguous one is refused) — and the owner id its per-connection secrets
+    /// are stored under.
+    pub(crate) fn transfer_connection(&self, id: &str) -> Result<(SavedConnection, String)> {
+        let conn = self.resolve_saved_connection(
+            id,
+            crate::connection::jump_host_resolver::ReferenceRole::TransferConnection,
+        )?;
+        let owner = self
+            .connection_credential_key(
+                &conn.id,
+                conn.source_file.as_deref(),
+                CredentialType::Password,
+            )
+            .connection_id;
+        Ok((conn, owner))
+    }
+
+    /// The credential store saved connections' secrets live in.
+    pub(crate) fn credential_store(&self) -> &dyn crate::credential::CredentialStore {
+        &*self.credential_store
+    }
+
     /// Migrate the pre-#3591 secrets of every configured external file that
     /// has not been migrated yet, then delete the bare keys kept only because
     /// a file could not be read once nothing may need them (see
