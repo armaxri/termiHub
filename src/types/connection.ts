@@ -1,4 +1,4 @@
-import { BroadcastGroup, RemoteAgentConfig, LineEnding } from "./terminal";
+import { RemoteAgentConfig } from "./terminal";
 // DTOs generated from their Rust source of truth via ts-rs (audit DUP-030 /
 // MOCK-005). Imported here so this module can both re-export them (below) and
 // reference them locally (e.g. the tree-node union, DEFAULT_AGENT_SETTINGS).
@@ -12,10 +12,8 @@ import type { LayoutConfig } from "./generated/LayoutConfig";
 import type { SerialPortScanPrefix } from "./generated/SerialPortScanPrefix";
 import type { CustomLanguageGrammar } from "./generated/CustomLanguageGrammar";
 import type { UpdateSettings } from "./generated/UpdateSettings";
-import { KeybindingOverrideEntry } from "./keybindings";
+import type { AppSettings } from "./generated/AppSettings";
 import type { SavedContainerRuntime, SpawnKind } from "./spawn";
-import type { SyntaxHighlightingConfig } from "./syntaxHighlighting";
-import type { ThemeDefinition } from "@/themes/types";
 
 /**
  * Live state of a single in-flight SFTP transfer, keyed by its `transferId` in
@@ -228,8 +226,7 @@ export interface PersistentSessionEntry {
 export type { LayoutConfig };
 
 // Settings sub-DTOs generated from `src-tauri/src/connection/settings.rs` via
-// ts-rs (audit DUP-030, #3088). `AppSettings` itself stays hand-written (see
-// the note on it below).
+// ts-rs (audit DUP-030, #3088).
 export type { SerialPortScanPrefix, CustomLanguageGrammar, UpdateSettings };
 
 /** Where the activity bar sits. */
@@ -393,264 +390,11 @@ export interface ShellIntegrationStatus {
   detectedFileManagers: DetectedFileManager[];
 }
 
-// `AppSettings` stays hand-written (DUP-030, #3088): the Rust struct keeps
-// `broadcastGroups`, `terminalCommandDecorations` and `terminalInlineImages` in a
-// flattened catch-all map, types several unions as plain `String`, and makes the
-// default-`true` flags required, so it is not a structural mirror of this type.
-export interface AppSettings {
-  version: string;
-  externalConnectionFiles: ExternalFileConfig[];
-  defaultUser?: string;
-  defaultSshKeyPath?: string;
-  defaultShell?: string;
-  /**
-   * Active color theme. Built-in values plus `custom:<id>`, which selects a
-   * user-defined theme from {@link AppSettings.customThemes} by its `id`.
-   * Defaults to `"dark"` when absent (backward compatible).
-   */
-  theme?: "dark" | "light" | "solarized-dark" | "solarized-light" | "system" | `custom:${string}`;
-  /**
-   * User-defined custom color themes. Each entry is a full, self-contained
-   * {@link ThemeDefinition} (all colors resolved) with an optional `baseTheme`
-   * recording the built-in theme it was derived from. Serializable as-is so
-   * import/export (#1880) can build on this shape. Absent → no custom themes.
-   */
-  customThemes?: ThemeDefinition[];
-  fontFamily?: string;
-  fontSize?: number;
-  lineHeight?: number;
-  defaultHorizontalScrolling?: boolean;
-  scrollbackBuffer?: number;
-  cursorStyle?: "block" | "underline" | "bar";
-  cursorBlink?: boolean;
-  /**
-   * Enable xterm's screen-reader mode (#2071). When on, xterm mirrors terminal
-   * output into an off-screen live region so assistive technology (VoiceOver,
-   * NVDA, JAWS, Narrator) can read it. Off by default because it adds rendering
-   * overhead — it is an opt-in accessibility aid. Applied at terminal
-   * construction and updated live on open terminals.
-   */
-  screenReaderMode?: boolean;
-  powerMonitoringEnabled: boolean;
-  fileBrowserEnabled: boolean;
-  /**
-   * Show a confirmation dialog when the user closes a tab via the
-   * close-tab or close-tab-group keyboard shortcut. Defaults to true.
-   */
-  confirmCloseTabOnShortcut?: boolean;
-  /**
-   * Show a confirmation dialog before closing a tab or split panel that holds a
-   * live session (SSH/serial/local shell/telnet) via the tab X, middle-click, or
-   * the panel close button. Defaults to true. The dialog's "Don't ask again"
-   * opt-out flips this off; it can be re-enabled from General settings.
-   */
-  confirmCloseLiveSession?: boolean;
-  /**
-   * Show a one-time notice when closing a tab attached to a persistent
-   * background session (via the tab X or middle-click), reassuring the user that
-   * the session keeps running and can be stopped from the sidebar. Defaults to
-   * true. The notice's "Don't show again" opt-out flips this off; it can be
-   * re-enabled from General settings.
-   */
-  confirmCloseAttachedTab?: boolean;
-  /**
-   * When true (default), saving terminal content to a file shows a dialog
-   * offering to open the saved file in a Monaco editor tab. When false, the
-   * file is saved silently and no dialog or editor tab is opened.
-   */
-  askOpenSavedFileInTab?: boolean;
-  /**
-   * Show a subtle success/failure mark in the terminal's left gutter next to
-   * each finished command, when the shell emits OSC 133 command marks (shell
-   * integration). Defaults to true (#3415).
-   */
-  terminalCommandDecorations?: boolean;
-  /**
-   * Persistent named broadcast groups (PROD-061, #3443). Frontend-owned; the
-   * backend round-trips the key verbatim through `AppSettings.extra`.
-   */
-  broadcastGroups?: BroadcastGroup[];
-  /**
-   * Render inline images in the terminal (PROD-057): SIXEL graphics and the
-   * iTerm2 inline image protocol, via the lazily-loaded xterm image addon with
-   * conservative per-terminal memory caps. Defaults to true. Updated live.
-   */
-  terminalInlineImages?: boolean;
-  /**
-   * Show a warning before starting a Port Scanner scan whose estimated probe
-   * count is very large (many host/port combinations). Defaults to true. The
-   * warning dialog's "Don't warn again" opt-out flips this off; it can be
-   * re-enabled from General settings.
-   */
-  warnLargePortScan?: boolean;
-  /**
-   * Show a warning before starting a Ping Sweep across a very large number of
-   * hosts (e.g. a wide CIDR block). Defaults to true. The warning dialog's
-   * "Don't warn again" opt-out flips this off; it can be re-enabled from
-   * General settings.
-   */
-  warnLargePingSweep?: boolean;
-  defaultShellIntegration?: boolean;
-  defaultX11Forwarding?: boolean;
-  /** Start/provide a local X server automatically for SSH X11 forwarding. Unset → platform default (on for Windows). */
-  provideXServerAutomatically?: boolean;
-  /** Stop the auto-provided X server once no connection is using it. */
-  stopXServerWhenIdle?: boolean;
-  /**
-   * @deprecated Superseded by {@link restoreLastSessionMode}. Retained for
-   * backward-compatible migration: `false` maps to `"never"`, otherwise the
-   * effective mode falls through to the `"ask"` default. New code should read
-   * the mode via `resolveRestoreMode` rather than this boolean.
-   *
-   * When true (default), the open tab groups and layout are auto-saved on every
-   * change and restored on the next startup. When false, the app always starts
-   * with a fresh empty session.
-   */
-  restoreLastSessionOnStartup?: boolean;
-  /**
-   * How the previous session is restored on startup:
-   * - `"never"` — start fresh, never restore;
-   * - `"ask"` — show a dialog offering to restore (default);
-   * - `"always"` — restore silently.
-   *
-   * Unset migrates from the legacy {@link restoreLastSessionOnStartup} boolean
-   * (`false` → `"never"`, otherwise `"ask"`). Resolve via `resolveRestoreMode`.
-   */
-  restoreLastSessionMode?: "never" | "ask" | "always";
-  /**
-   * When true (default), every terminal session opened is recorded to the
-   * browsable session history. Turning it off stops all automatic recording;
-   * existing entries are kept.
-   */
-  sessionHistoryEnabled?: boolean;
-  /**
-   * Maximum number of session-history entries to retain (default 50, range
-   * 10–500). When the limit is reached the least-recently-used unpinned entry
-   * is evicted; pinned entries are exempt.
-   */
-  sessionHistoryLimit?: number;
-  /** When true (default), the "Recent Sessions" sidebar panel is shown. */
-  showRecentSessions?: boolean;
-  /**
-   * Record finished network-tool runs (ping, traceroute, port scan, …) to the
-   * local run history (PROD-032). Unset → on.
-   */
-  networkToolHistoryEnabled?: boolean;
-  layout?: LayoutConfig;
-  credentialStorageMode?: "master_password" | "os_keychain" | "none";
-  credentialAutoLockMinutes?: number;
-  rightClickBehavior?: "contextMenu" | "quickAction";
-  /**
-   * Default line ending sent on Enter and used to normalize pasted text for
-   * new terminals. Per-connection `terminalOptions.lineEnding` overrides this.
-   * Defaults to `lf` when unset.
-   */
-  defaultLineEnding?: LineEnding;
-  keybindingOverrides?: KeybindingOverrideEntry[];
-  /**
-   * When true (default), application shortcuts that collide with standard
-   * shell, tmux, vim, or SSH-to-remote keys are suppressed while the terminal
-   * pane is focused so the keystroke reaches the PTY. Toggle off to make
-   * every shortcut fire regardless of focus.
-   */
-  terminalKeyPassthrough?: boolean;
-  /**
-   * When true (default), an active editor or input-bearing tab handles its own
-   * editing shortcuts (Find, Replace, Select All, …) — the global keyboard
-   * dispatcher steps aside so the focused widget receives the key. Toggle off to
-   * restore the old global-first behavior where app shortcuts fire regardless of
-   * the active tab's content.
-   */
-  editorShortcutDelegation?: boolean;
-  /**
-   * User-defined file-type overrides for the built-in language mapping.
-   * Keys are exact filenames (e.g. `"Jenkinsfile"`) or extensions (e.g. `".conf"`).
-   * Values are Monaco language IDs (e.g. `"groovy"`, `"ini"`).
-   * These take precedence over the built-in defaults.
-   */
-  fileLanguageMappings?: Record<string, string>;
-  /**
-   * Additional Shiki language package IDs to load for syntax highlighting.
-   * Values are Shiki bundled language IDs (e.g. `"astro"`, `"svelte"`, `"zig"`).
-   * The built-in packages (cmake, toml, nginx, nix) are always loaded regardless.
-   */
-  installedLanguagePackages?: string[];
-  /**
-   * User-imported custom TextMate grammar definitions for languages not in Shiki's
-   * bundled set. Each entry stores the full grammar JSON so it works without the
-   * original file being present.
-   */
-  customLanguageGrammars?: CustomLanguageGrammar[];
-  experimentalFeaturesEnabled?: boolean;
-  /**
-   * Experimental opt-in for executing **frontend (JavaScript) plugins** (#2048).
-   * Defaults to `false` (off). Frontend plugins are injected into the main
-   * WebView and run with full IPC/command access and no per-plugin permission
-   * enforcement (tracked in #2001), so for the first release their execution is
-   * gated behind this explicit, security-framed toggle. When off, no frontend
-   * plugin JS is loaded regardless of a plugin's enabled state; theme and
-   * backend-only plugins are unaffected. Toggling it live loads/unloads the
-   * injected plugin scripts (see `reconcileFrontendPlugins`).
-   */
-  frontendPluginsEnabled?: boolean;
-  /**
-   * Opt-in periodic plugin update check (PROD-051). Defaults to `false` (off):
-   * plugins that declare an `updateUrl` are then only checked when the user
-   * clicks "Check for updates". A check never installs anything.
-   */
-  pluginUpdateCheckEnabled?: boolean;
-  /**
-   * URL of the curated plugin index browsed in Settings → Plugins (PROD-048).
-   * Unset or blank → the maintainer-hosted default. Must be `https://`; the
-   * backend fetches it only when the user opens or refreshes Browse.
-   */
-  pluginIndexUrl?: string;
-  updates?: UpdateSettings;
-  /**
-   * Durable log-file verbosity (OBS-009). Controls how much detail termiHub
-   * writes to `termihub.log`. Unset → the built-in default (`"info"`). Applied
-   * live via `set_file_log_level` and re-applied from this persisted value at
-   * startup; the `TERMIHUB_FILE_LOG` environment variable overrides it at
-   * startup. `"off"` disables the file log entirely.
-   */
-  fileLogLevel?: "off" | "error" | "warn" | "info" | "debug" | "trace";
-  /**
-   * Show a non-blocking notice on the next start after a crash, offering to view
-   * or export the local crash report (OBS-010). Defaults to true; the notice's
-   * "Don't show again" turns it off. Can be re-enabled from General settings.
-   */
-  showCrashReportNotice?: boolean;
-  /** Linux `/dev` prefixes used when scanning for serial ports. Always present after `get_settings` (expanded from built-in defaults if never saved). */
-  serialPortScanPrefixes?: SerialPortScanPrefix[];
-  /** Shell context-menu / CLI-spawn integration configuration (epic #1363). */
-  shellIntegration?: ShellIntegrationSettings;
-  /**
-   * Terminal output syntax-highlighting configuration (epic #1696). Absent
-   * config resolves to the built-in defaults (see
-   * `services/syntaxHighlightingConfig.ts` → `defaultHighlightingConfig`),
-   * which keeps older settings files forward-compatible.
-   */
-  syntaxHighlighting?: SyntaxHighlightingConfig;
-  /**
-   * Master opt-in for the guarded `run-local-process` workflow step (#1857).
-   * Defaults to `false` (off): a workflow that contains a `run-local-process`
-   * step cannot spawn a local program on the user's machine until this is
-   * explicitly enabled. This is the primary security guardrail — imported
-   * workflows carry such steps but are **never** auto-authorized, so an
-   * imported step stays inert until the user turns this on **and** authorizes
-   * the specific program (see {@link workflowLocalProcessAllowlist}). Enforced
-   * again in the backend spawn command as defence-in-depth.
-   */
-  workflowLocalProcessEnabled?: boolean;
-  /**
-   * Programs the user has chosen to always allow a `run-local-process` step to
-   * spawn without re-confirming (#1857). A program not on this list triggers a
-   * per-run confirmation dialog; "Always allow" appends it here. Independent of
-   * workflow data, so importing a workflow can never add an entry — an imported
-   * step is unauthorized until the user confirms it interactively.
-   */
-  workflowLocalProcessAllowlist?: string[];
-}
+// Generated from the Rust `AppSettings` (`src-tauri/src/connection/settings.rs`)
+// via ts-rs (audit DUP-030, #3802). Frontend-owned shapes the backend stores
+// opaquely (`customThemes`, `syntaxHighlighting`, `shellIntegration`) are typed
+// through ts-rs overrides that point back at their frontend definitions.
+export type { AppSettings };
 
 /** Result of an update check returned from the backend. */
 export interface UpdateInfo {

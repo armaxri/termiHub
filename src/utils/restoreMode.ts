@@ -12,8 +12,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings, SavedConnection } from "@/types/connection";
 import type { LastSession } from "@/types/lastSession";
 
-/** The three restore modes. */
-export type RestoreLastSessionMode = "never" | "ask" | "always";
+/** The three restore modes (generated from the Rust settings enum, #3802). */
+export type RestoreLastSessionMode = NonNullable<AppSettings["restoreLastSessionMode"]>;
 
 /**
  * Reachability of a restorable tab's connection target, resolved by an
