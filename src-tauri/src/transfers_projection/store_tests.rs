@@ -235,6 +235,30 @@ fn failed_without_a_message_uses_the_default() {
     );
 }
 
+/// A relaunch that needs credentials (#3876) keeps the row paused and shows why.
+#[test]
+fn paused_with_a_reason_records_the_reason() {
+    let store = TransferStore::new();
+    let mut p = progress("t1", TransferQueueState::Paused, 300);
+    p.message = Some("Needs credentials — open the connection to resume".to_string());
+    store.progress(&p, 1_000);
+
+    let entry = store.get("t1").unwrap();
+    assert_eq!(entry.state, TransferQueueState::Paused);
+    assert_eq!(
+        entry.error.as_deref(),
+        Some("Needs credentials — open the connection to resume")
+    );
+}
+
+/// A plain pause carries no reason.
+#[test]
+fn paused_without_a_reason_has_no_error() {
+    let store = TransferStore::new();
+    store.progress(&progress("t1", TransferQueueState::Paused, 300), 1_000);
+    assert_eq!(store.get("t1").unwrap().error, None);
+}
+
 #[test]
 fn legacy_phase_drives_state_when_rich_state_is_absent() {
     let store = TransferStore::new();

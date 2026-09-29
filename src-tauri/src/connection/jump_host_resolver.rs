@@ -225,6 +225,8 @@ pub(crate) enum ReferenceRole {
     /// The saved connection a CLI/context-menu spawn names with `--connection`
     /// (#3624).
     SpawnTarget,
+    /// The saved connection a relaunched transfer was started on (#3876).
+    TransferConnection,
 }
 
 impl ReferenceRole {
@@ -233,6 +235,7 @@ impl ReferenceRole {
             Self::JumpHost => "jump host connection",
             Self::TunnelHost => "tunnel SSH connection",
             Self::SpawnTarget => "spawn connection",
+            Self::TransferConnection => "transfer connection",
         }
     }
 
@@ -241,6 +244,7 @@ impl ReferenceRole {
             Self::JumpHost => "use it as a jump host",
             Self::TunnelHost => "host tunnels on it",
             Self::SpawnTarget => "spawn sessions with it",
+            Self::TransferConnection => "resume transfers on it",
         }
     }
 
@@ -249,6 +253,7 @@ impl ReferenceRole {
             Self::JumpHost => "configure the hop inline",
             Self::TunnelHost => "pick another SSH connection for the tunnel",
             Self::SpawnTarget => "pass a --connection id held by only one connection file",
+            Self::TransferConnection => "open the connection and resume the transfer",
         }
     }
 
@@ -257,6 +262,7 @@ impl ReferenceRole {
             Self::JumpHost => "Pick an existing SSH connection or switch to inline configuration.",
             Self::TunnelHost => "Pick an existing SSH connection for the tunnel.",
             Self::SpawnTarget => "Pass the id of an existing saved connection to --connection.",
+            Self::TransferConnection => "Start the transfer again from an existing connection.",
         }
     }
 }
@@ -494,7 +500,10 @@ fn build_inline_hop(
 /// **only** that credential — never its own per-connection secret — under the
 /// same precedence as the desktop connect flow. A named credential of the
 /// other kind has no secret under this type, so it resolves to nothing.
-fn resolve_credential(
+///
+/// Also re-sources the secret of a relaunched transfer's saved connection when
+/// its session is gone (#3876), so both unattended lookups share one rule.
+pub(crate) fn resolve_credential(
     ref_id: &str,
     owner: Option<&str>,
     settings: &Value,

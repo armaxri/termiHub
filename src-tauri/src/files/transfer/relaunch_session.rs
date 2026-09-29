@@ -1,9 +1,10 @@
 //! Session re-attachment for relaunched SFTP, FTP and remote-to-remote
-//! transfers (#3199, #3206).
+//! transfers (#3199, #3206, #3876).
 //!
-//! A rehydrated session transfer persists only a session **reference**, paths
-//! and progress — never credentials (PROD-0011). Relaunching one re-attaches the
-//! live session behind that reference through the normal session path:
+//! A rehydrated session transfer persists only a session **reference** (plus
+//! the id of the saved connection that session was opened for), paths and
+//! progress — never credentials (PROD-0011). Relaunching one gets a connection
+//! through the normal session path when it can:
 //!
 //! - an **SFTP** session yields its SFTP browser, which carries the connection
 //!   the session machinery authenticated;
@@ -15,20 +16,36 @@
 //! - a **remote-to-remote** copy (PROD-0013) re-attaches both its source and its
 //!   destination SFTP sessions.
 //!
-//! A session that is not connected fails the row with a message; the persisted
-//! record is kept, so a **Retry** after reconnecting re-runs this resolution.
+//! When the session is gone — typically after a restart — the saved connection
+//! is used instead: a session the user reopened for it, or the connection
+//! itself with its secret re-sourced from the unlocked credential store. The
+//! resolution order and the never-prompt rules live in
+//! [`super::relaunch_credentials`]; this module supplies the app's side of it
+//! ([`AppSources`]). A secret that cannot be resolved unattended keeps the row
+//! paused with a reason; any other failure fails the row with a message. The
+//! persisted record is kept either way, so **Resume** / **Retry** re-runs this
+//! resolution.
+//!
 //! The executor then starts from the persisted offset: it keeps the checkpoint
 //! only while the source still matches the persisted size and mtime (#3572) and,
 //! for FTP, the server supports `REST STREAM`.
 
 use std::sync::Arc;
 
+use termihub_core::backends::ssh::unattended::run_unattended;
 use termihub_core::backends::ssh::SftpFileBrowser;
 #[cfg(feature = "ftp")]
 use termihub_core::config::FtpConfig;
+use termihub_core::config::SshConfig;
 
+use super::persist_manager::TransferPersistenceManager;
 use super::registry::{TransferHandle, TransferRegistry};
+use super::relaunch_credentials::{
+    resolve_sftp_endpoint, RelaunchBlocked, RelaunchSources, SavedSource,
+};
 use super::{ProgressSink, TransferDirection};
+use crate::connection::manager::ConnectionManager;
+use crate::credential::{CredentialStore, NullStore};
 use crate::session::manager::SessionManager;
 use crate::utils::errors::TerminalError;
 
@@ -45,7 +62,7 @@ pub(crate) enum SessionTarget {
 /// Resolve the live session `session_id` to the executor its transfer runs on:
 /// SFTP first, then FTP. A session that is neither (or not connected) surfaces
 /// the SFTP resolution error.
-pub(crate) async fn resolve_session_target(
+async fn live_session_target(
     manager: &SessionManager,
     session_id: &str,
 ) -> Result<SessionTarget, TerminalError> {
@@ -58,6 +75,103 @@ pub(crate) async fn resolve_session_target(
         return Ok(SessionTarget::Ftp(config));
     }
     Err(sftp_err)
+}
+
+/// The running app as a [`RelaunchSources`]: live sessions from the
+/// [`SessionManager`], saved connections and the credential store from the
+/// [`ConnectionManager`] (absent in a run without one — then only live
+/// sessions can be used).
+pub(crate) struct AppSources<'a> {
+    pub manager: &'a SessionManager,
+    pub connections: Option<&'a ConnectionManager>,
+}
+
+impl RelaunchSources for AppSources<'_> {
+    async fn live_target(&self, session_id: &str) -> Result<SessionTarget, TerminalError> {
+        live_session_target(self.manager, session_id).await
+    }
+
+    async fn sessions_for_saved_connection(&self, connection_id: &str) -> Vec<String> {
+        self.manager
+            .sessions_for_saved_connection(connection_id)
+            .await
+    }
+
+    fn saved_connection(&self, connection_id: &str) -> Result<SavedSource, String> {
+        let connections = self
+            .connections
+            .ok_or_else(|| "saved connections are unavailable".to_string())?;
+        let (connection, owner) = connections
+            .transfer_connection(connection_id)
+            .map_err(|e| e.to_string())?;
+        Ok(SavedSource {
+            connection,
+            owner: Some(owner),
+        })
+    }
+
+    fn credential_store(&self) -> &dyn CredentialStore {
+        match self.connections {
+            Some(connections) => connections.credential_store(),
+            None => &NO_STORE,
+        }
+    }
+
+    fn key_is_encrypted(&self, key_path: &str) -> bool {
+        crate::utils::ssh_key_validate::is_ssh_key_encrypted(key_path).unwrap_or(true)
+    }
+
+    fn resolve_jump_hosts(
+        &self,
+        settings: &mut serde_json::Value,
+        connection_id: &str,
+    ) -> Result<(), String> {
+        match self.connections {
+            Some(connections) => connections
+                .resolve_jump_host_refs(settings, Some(connection_id))
+                .map_err(|e| e.to_string()),
+            None => Ok(()),
+        }
+    }
+
+    async fn connect_sftp(&self, config: SshConfig) -> Result<Arc<SftpFileBrowser>, String> {
+        let browser = SftpFileBrowser::new(config);
+        // Connect eagerly inside the never-prompt scope: the browser keeps this
+        // connection, so the executor's later operations never connect again
+        // (outside the scope) and never prompt.
+        run_unattended(browser.connect())
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(Arc::new(browser))
+    }
+}
+
+/// Record on a registered transfer the saved connection its session
+/// `session_id` was opened for (#3876), so a relaunch after the session is
+/// gone can re-source its secret. The id only; a no-op for an ad-hoc session.
+pub(crate) fn record_saved_connection(
+    persist: &TransferPersistenceManager,
+    manager: &SessionManager,
+    transfer_id: &str,
+    session_id: &str,
+) {
+    if let Some(connection_id) = manager.saved_connection_of(session_id) {
+        persist.record_saved_connection(transfer_id, &connection_id);
+    }
+}
+
+/// The store a run without a connection manager reads: it holds nothing.
+static NO_STORE: NullStore = NullStore;
+
+/// Resolve the executor a relaunched session download/upload runs on (see the
+/// module docs and [`super::relaunch_credentials`]).
+pub(crate) async fn resolve_session_target(
+    sources: &AppSources<'_>,
+    session_id: &str,
+    saved_connection_id: Option<&str>,
+) -> Result<SessionTarget, RelaunchBlocked> {
+    super::relaunch_credentials::resolve_session_target(sources, session_id, saved_connection_id)
+        .await
 }
 
 /// Run a relaunched session download/upload on `target` from `offset`.
@@ -109,20 +223,32 @@ pub(crate) async fn run_session_target(
     }
 }
 
-/// Re-attach both SFTP sessions of a remote-to-remote copy (#3206): the source
-/// first, then the destination. The error names which end is unavailable.
+/// One end of a relaunched remote-to-remote copy: its session and the saved
+/// connection that session was opened for.
+pub(crate) struct CopyEnd<'a> {
+    pub session_id: &'a str,
+    pub saved_connection_id: Option<&'a str>,
+}
+
+/// Resolve both SFTP ends of a remote-to-remote copy (#3206, #3876): the source
+/// first, then the destination. A failure names which end is unavailable; a
+/// missing secret on either end keeps the row paused.
 pub(crate) async fn resolve_remote_copy(
-    manager: &SessionManager,
-    src_session_id: &str,
-    dst_session_id: &str,
-) -> Result<(Arc<SftpFileBrowser>, Arc<SftpFileBrowser>), String> {
-    let src = manager
-        .sftp_transfer_browser(src_session_id)
+    sources: &AppSources<'_>,
+    src: CopyEnd<'_>,
+    dst: CopyEnd<'_>,
+) -> Result<(Arc<SftpFileBrowser>, Arc<SftpFileBrowser>), RelaunchBlocked> {
+    let end = |which: &str, blocked: RelaunchBlocked| match blocked {
+        RelaunchBlocked::Failed(message) => {
+            RelaunchBlocked::Failed(format!("{message} (the {which} of the copy)"))
+        }
+        needs => needs,
+    };
+    let src = resolve_sftp_endpoint(sources, src.session_id, src.saved_connection_id)
         .await
-        .map_err(|e| format!("Cannot resume: source session unavailable ({e})"))?;
-    let dst = manager
-        .sftp_transfer_browser(dst_session_id)
+        .map_err(|e| end("source", e))?;
+    let dst = resolve_sftp_endpoint(sources, dst.session_id, dst.saved_connection_id)
         .await
-        .map_err(|e| format!("Cannot resume: destination session unavailable ({e})"))?;
+        .map_err(|e| end("destination", e))?;
     Ok((src, dst))
 }

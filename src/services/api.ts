@@ -216,6 +216,12 @@ export async function getConnectionTypes(): Promise<ConnectionTypeInfo[]> {
  * untrusted host key or a keyboard-interactive round fails fast with the typed
  * `host_key_untrusted` / `interaction_required` code. Direct connections only.
  * Sent only when set, so the ordinary payload is unchanged.
+ *
+ * `savedConnectionId` names the saved connection the session is opened for
+ * (#3876). The backend binds the session to it, so a file transfer on the
+ * session can be resumed after the session is gone (e.g. after a restart) —
+ * through a session reopened for the same connection, or with the secret
+ * re-sourced from the unlocked credential store. Sent only when set.
  */
 export async function createConnection(
   typeId: string,
@@ -224,7 +230,8 @@ export async function createConnection(
   connectId?: string,
   spawned?: boolean,
   resilientReconnect?: boolean,
-  unattended?: boolean
+  unattended?: boolean,
+  savedConnectionId?: string
 ): Promise<SessionId> {
   return await invoke<string>("create_connection", {
     typeId,
@@ -234,6 +241,7 @@ export async function createConnection(
     spawned: spawned ?? false,
     resilientReconnect: resilientReconnect ?? false,
     ...(unattended ? { unattended: true } : {}),
+    ...(savedConnectionId ? { savedConnectionId } : {}),
   });
 }
 
@@ -381,13 +389,19 @@ export async function importInventoryHosts(path: string): Promise<InventoryHost[
  * `unattended` (#3527) requests a never-prompting connect; see
  * {@link createConnection}. It is direct-only, so the `remote-session` path
  * refuses it rather than connect an agent session that could prompt.
+ *
+ * `savedConnectionId` (#3876) names the saved connection the tab was opened
+ * from, so its file transfers can be resumed after the session is gone; see
+ * {@link createConnection}. Forwarded on the direct path only — an agent
+ * session's transfers do not relaunch through a saved connection.
  */
 export async function createTerminal(
   config: ConnectionConfig,
   connectId?: string,
   spawned?: boolean,
   resilientReconnect?: boolean,
-  unattended?: boolean
+  unattended?: boolean,
+  savedConnectionId?: string
 ): Promise<SessionId> {
   if (config.type === "remote-session") {
     const { agentId, sessionType, ...rest } = config.config as {
@@ -412,7 +426,8 @@ export async function createTerminal(
     connectId,
     spawned,
     resilientReconnect,
-    unattended
+    unattended,
+    savedConnectionId
   );
 }
 

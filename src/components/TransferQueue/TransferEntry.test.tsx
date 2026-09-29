@@ -129,6 +129,16 @@ describe("TransferEntryRow", () => {
     expect(query("transfer-row-status")?.textContent?.toLowerCase()).toContain("paused");
   });
 
+  it("a paused row that needs credentials shows why, with Resume still offered", () => {
+    const reason = "Needs credentials — open the connection to resume";
+    render(entry({ state: "paused", percent: 31, error: reason }));
+    const status = query("transfer-row-status");
+    expect(status?.textContent).toContain(reason);
+    expect(status?.getAttribute("title")).toBe(reason);
+    expect(query("transfer-resume")).not.toBeNull();
+    expect(query("transfer-cancel")).not.toBeNull();
+  });
+
   it("queued state shows only Cancel and a queued status", () => {
     render(entry({ state: "queued", percent: null, transferred: 0, speedBytesPerSec: null }));
     expect(query("transfer-cancel")).not.toBeNull();

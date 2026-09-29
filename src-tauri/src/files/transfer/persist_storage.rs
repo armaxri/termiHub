@@ -97,6 +97,7 @@ mod tests {
             folder_paste_id: None,
             source_mtime: None,
             remote_source: None,
+            saved_connection_id: None,
         }
     }
 

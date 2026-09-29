@@ -67,7 +67,16 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
       setPhase("connecting");
       setError(null);
       try {
-        const sessionId = await createTerminal(tab.config);
+        // Name the saved connection (#3876) so a transfer on this session can
+        // be resumed after the session is gone.
+        const sessionId = await createTerminal(
+          tab.config,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          tab.connectionId
+        );
         if (canceled) {
           // Superseded by a StrictMode remount — tear down the orphan session.
           fireAndForget(
