@@ -451,13 +451,21 @@ impl CreateSlot {
 }
 
 impl RemoteProxy {
-    /// Whether this proxy's agent connects unattended on request
-    /// (`unattendedConnect`, protocol 0.23.0, #3877). Unknown capabilities (an
-    /// agent not connected) read as "no".
-    fn agent_connects_unattended(&self) -> bool {
-        self.agent_manager
-            .get_capabilities(self.agent_id())
-            .is_some_and(|caps| caps.unattended_connect)
+    /// Refuse an unattended connect this proxy's agent cannot honor (#3877):
+    /// an agent older than protocol 0.23.0 (no `unattendedConnect`) with the
+    /// `agent_outdated` code, and an agent that is not connected (no
+    /// capabilities known) plainly — neither is asked anything.
+    fn check_unattended_supported(&self) -> Result<(), SessionError> {
+        match self.agent_manager.get_capabilities(self.agent_id()) {
+            Some(caps) if caps.unattended_connect => Ok(()),
+            Some(_) => Err(SessionError::SpawnFailed(crate::utils::errors::with_code(
+                crate::utils::errors::codes::AGENT_OUTDATED,
+                AGENT_TOO_OLD_FOR_UNATTENDED,
+            ))),
+            None => Err(SessionError::SpawnFailed(
+                "The agent is not connected".to_string(),
+            )),
+        }
     }
 
     /// Run the agent connect handshake (create session, register + attach
@@ -530,11 +538,8 @@ impl RemoteProxy {
         // protocol 0.23.0 (`unattendedConnect`); an older agent would ignore the
         // flag and connect attended, so it is never asked.
         let unattended = termihub_core::backends::ssh::unattended::is_unattended();
-        if unattended && !self.agent_connects_unattended() {
-            return Err(SessionError::SpawnFailed(crate::utils::errors::with_code(
-                crate::utils::errors::codes::AGENT_OUTDATED,
-                AGENT_TOO_OLD_FOR_UNATTENDED,
-            )));
+        if unattended {
+            self.check_unattended_supported()?;
         }
 
         // Store the remote type for metadata.
