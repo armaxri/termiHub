@@ -326,6 +326,25 @@ enum AgentCommand {
     Disconnected(u64),
 }
 
+/// Where the daemon loop takes new worker connections from: the real endpoint
+/// [`DaemonListener`], or an in-memory stand-in so tests can drive the loop in
+/// paused tokio time (#3890).
+pub(crate) trait WorkerAcceptor {
+    /// Accept the next worker connection, returning its read/write halves.
+    fn accept(
+        &mut self,
+    ) -> impl std::future::Future<Output = std::io::Result<(BoxedReader, BoxedWriter)>> + Send;
+}
+
+impl WorkerAcceptor for DaemonListener {
+    fn accept(
+        &mut self,
+    ) -> impl std::future::Future<Output = std::io::Result<(BoxedReader, BoxedWriter)>> + Send
+    {
+        DaemonListener::accept(self)
+    }
+}
+
 /// Main daemon event loop.
 ///
 /// Multiplexes between connection output, new agent connections, and
@@ -337,7 +356,7 @@ async fn daemon_loop(
     session_id: &str,
     mut connection: Box<dyn ConnectionType>,
     mut output_rx: OutputReceiver,
-    listener: &mut DaemonListener,
+    listener: &mut impl WorkerAcceptor,
     buffer_size: usize,
     detached_timeout: Option<Duration>,
 ) -> anyhow::Result<()> {
@@ -1537,7 +1556,7 @@ pub(crate) mod tests {
 
         /// Minimal in-process connection type: the daemon loop only needs it to
         /// exist and accept writes/resizes; it produces no output.
-        struct FakeConnection;
+        pub(crate) struct FakeConnection;
 
         #[async_trait::async_trait]
         impl ConnectionType for FakeConnection {
