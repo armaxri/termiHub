@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use crate::backends::ssh::{SftpFileBrowser, SftpTransferChannel};
 use crate::files::copy::run_chunked_copy;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 pub use super::attempt::STALL_TIMEOUT;
 use super::attempt::{
@@ -384,10 +384,7 @@ pub async fn run_sftp_transfer(
         (None, TransferDirection::Upload) => 0,
     };
     // A rehydrated transfer's handle was registered with its persisted total.
-    let offset = rehydrate_start_offset(start_offset, handle.snapshot().total, baseline);
-    if offset != start_offset {
-        info!(transfer_id = %handle.transfer_id, start_offset, "SFTP source changed since the checkpoint; restarting from zero");
-    }
+    let offset = rehydrate_start_offset(start_offset, &handle, baseline, BACKEND);
     handle.set_metrics(offset, total, 0);
     emit(&handle, &sink, TransferPhase::Transferring, None, None);
 

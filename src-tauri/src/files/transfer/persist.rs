@@ -131,6 +131,15 @@ pub struct PersistedTransfer {
     /// existed. An opaque id, not a secret.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub folder_paste_id: Option<String>,
+    /// Modification time of the source when the checkpointed bytes were read
+    /// (#3572), in the executor backend's own unit (SFTP: seconds; local disk:
+    /// nanoseconds; Docker: whatever its probe reports). Written together with
+    /// `resume_offset`, so a relaunch can tell a source rewritten to the same
+    /// size while the app was closed and restart from zero. Absent when the
+    /// backend reports no mtime and for records written before it existed; a
+    /// relaunch then falls back to the size-only check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_mtime: Option<u64>,
 }
 
 /// The persisted identity of a Docker transfer's container (#3585).
@@ -398,6 +407,7 @@ mod tests {
             docker: None,
             group_id: None,
             folder_paste_id: None,
+            source_mtime: None,
         }
     }
 

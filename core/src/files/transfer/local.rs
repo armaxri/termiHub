@@ -46,7 +46,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use tracing::{debug, info};
+use tracing::debug;
 
 use crate::files::copy::{run_chunked_copy, ChunkedCopyOutcome, CopyPhase};
 
@@ -310,10 +310,7 @@ pub async fn run_local_transfer(
     let part = partial_path(&dest, &handle.transfer_id);
     let baseline = local_fingerprint(&src).await;
     let total = baseline.map(|fp| fp.size).unwrap_or_default();
-    let offset = rehydrate_start_offset(start_offset, handle.snapshot().total, baseline);
-    if offset != start_offset {
-        info!(transfer_id = %handle.transfer_id, start_offset, "local source changed since the checkpoint; restarting from zero");
-    }
+    let offset = rehydrate_start_offset(start_offset, &handle, baseline, BACKEND);
     handle.set_metrics(offset, total, 0);
     emit(&handle, &sink, TransferPhase::Transferring, None, None);
 

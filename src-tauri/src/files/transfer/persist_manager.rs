@@ -155,6 +155,7 @@ impl TransferPersistenceManager {
             docker: None,
             group_id: None,
             folder_paste_id: None,
+            source_mtime: None,
         };
         let mut store = self.lock();
         store.upsert(entry);
@@ -234,6 +235,10 @@ impl TransferPersistenceManager {
     /// record. `is_teardown` marks the app-quit cancel-all sweep: the terminal
     /// transitions it induces must NOT erase in-flight records, so they can
     /// rehydrate as paused on the next launch (PROD-0011 requirement 4).
+    ///
+    /// `source_mtime` is the source mtime the executor fingerprinted for the
+    /// bytes counted in `transferred` (#3572). A change forces a write, so the
+    /// persisted mtime and resume offset always describe the same source.
     pub fn note_progress(
         &self,
         transfer_id: &str,
@@ -241,6 +246,7 @@ impl TransferPersistenceManager {
         transferred: u64,
         total: u64,
         is_teardown: bool,
+        source_mtime: Option<u64>,
     ) {
         let mut store = self.lock();
         let Some(existing) = store.get(transfer_id).cloned() else {
@@ -272,7 +278,8 @@ impl TransferPersistenceManager {
         // coarse offset checkpoint only.
         let status_changed = existing.status != status;
         let offset_jump = transferred >= existing.transferred.saturating_add(CHECKPOINT_BYTES);
-        if !status_changed && !offset_jump {
+        let mtime_changed = existing.source_mtime != source_mtime;
+        if !status_changed && !offset_jump && !mtime_changed {
             return;
         }
 
@@ -283,6 +290,7 @@ impl TransferPersistenceManager {
             updated.total = total;
         }
         updated.resume_offset = transferred;
+        updated.source_mtime = source_mtime;
         updated.updated_at_ms = now_ms();
         store.upsert(updated);
         self.schedule_write(&store);
@@ -475,6 +483,7 @@ mod tests {
             CHECKPOINT_BYTES + 1,
             2048,
             false,
+            None,
         );
         let rehydrated = m.load_incomplete_as_paused();
         assert_eq!(rehydrated.len(), 1, "no record fabricated for `ghost`");
@@ -498,6 +507,7 @@ mod tests {
             CHECKPOINT_BYTES + 1,
             2048,
             false,
+            None,
         );
         let snap = m.snapshot();
         let rec = snap.get("t1").unwrap();
@@ -522,11 +532,25 @@ mod tests {
         register(&m, "t1");
         assert_eq!(m.snapshot().get("t1").unwrap().source_mtime, None);
 
-        m.note_progress("t1", PersistedTransferStatus::Queued, 0, 2048, false, Some(7));
+        m.note_progress(
+            "t1",
+            PersistedTransferStatus::Queued,
+            0,
+            2048,
+            false,
+            Some(7),
+        );
         let rec = m.snapshot().get("t1").cloned().unwrap();
         assert_eq!(rec.source_mtime, Some(7), "an mtime change is written");
 
-        m.note_progress("t1", PersistedTransferStatus::Queued, 100, 2048, false, Some(9));
+        m.note_progress(
+            "t1",
+            PersistedTransferStatus::Queued,
+            100,
+            2048,
+            false,
+            Some(9),
+        );
         let rec = m.snapshot().get("t1").cloned().unwrap();
         assert_eq!(rec.source_mtime, Some(9));
         assert_eq!(rec.resume_offset, 100, "offset is written with its mtime");
@@ -539,11 +563,25 @@ mod tests {
     fn small_progress_does_not_checkpoint() {
         let (_d, m) = mgr();
         register(&m, "t1");
-        m.note_progress("t1", PersistedTransferStatus::Active, 1024, 2048, false);
+        m.note_progress(
+            "t1",
+            PersistedTransferStatus::Active,
+            1024,
+            2048,
+            false,
+            None,
+        );
         // Status changed (Queued→Active) so this one persists at 1024.
         assert_eq!(m.snapshot().get("t1").unwrap().transferred, 1024);
         // A tiny further advance (same status, below the checkpoint) is coalesced.
-        m.note_progress("t1", PersistedTransferStatus::Active, 1500, 2048, false);
+        m.note_progress(
+            "t1",
+            PersistedTransferStatus::Active,
+            1500,
+            2048,
+            false,
+            None,
+        );
         assert_eq!(
             m.snapshot().get("t1").unwrap().transferred,
             1024,
@@ -560,7 +598,7 @@ mod tests {
         ] {
             let (_d, m) = mgr();
             register(&m, "t1");
-            m.note_progress("t1", terminal, 2048, 2048, false);
+            m.note_progress("t1", terminal, 2048, 2048, false, None);
             assert!(
                 m.snapshot().get("t1").is_none(),
                 "{terminal:?} during the session prunes the record"
@@ -573,9 +611,23 @@ mod tests {
     fn teardown_cancel_keeps_record_for_rehydration() {
         let (_d, m) = mgr();
         register(&m, "t1");
-        m.note_progress("t1", PersistedTransferStatus::Active, 1024, 2048, false);
+        m.note_progress(
+            "t1",
+            PersistedTransferStatus::Active,
+            1024,
+            2048,
+            false,
+            None,
+        );
         // App-quit teardown cancels every in-flight transfer — must NOT erase it.
-        m.note_progress("t1", PersistedTransferStatus::Cancelled, 1024, 2048, true);
+        m.note_progress(
+            "t1",
+            PersistedTransferStatus::Cancelled,
+            1024,
+            2048,
+            true,
+            None,
+        );
         let rehydrated = m.load_incomplete_as_paused();
         assert_eq!(rehydrated.len(), 1, "teardown cancel is not pruned (req 4)");
         assert_eq!(rehydrated[0].status, PersistedTransferStatus::Paused);
@@ -586,14 +638,28 @@ mod tests {
         let (_d, m) = mgr();
         register(&m, "t1");
         // A transfer that genuinely finished at quit is done, not paused.
-        m.note_progress("t1", PersistedTransferStatus::Completed, 2048, 2048, true);
+        m.note_progress(
+            "t1",
+            PersistedTransferStatus::Completed,
+            2048,
+            2048,
+            true,
+            None,
+        );
         assert!(m.snapshot().get("t1").is_none());
     }
 
     #[test]
     fn progress_for_unknown_id_is_ignored() {
         let (_d, m) = mgr();
-        m.note_progress("ghost", PersistedTransferStatus::Active, 10, 20, false);
+        m.note_progress(
+            "ghost",
+            PersistedTransferStatus::Active,
+            10,
+            20,
+            false,
+            None,
+        );
         assert!(m.snapshot().transfers.is_empty());
     }
 
@@ -604,7 +670,14 @@ mod tests {
         // credential.
         let (_d, m) = mgr();
         register(&m, "t1");
-        m.note_progress("t1", PersistedTransferStatus::Active, 4096, 2048, false);
+        m.note_progress(
+            "t1",
+            PersistedTransferStatus::Active,
+            4096,
+            2048,
+            false,
+            None,
+        );
 
         let rec = m.get_record("t1").expect("a registered record is returned");
         assert_eq!(rec.session_id, "sess-a");
@@ -636,6 +709,7 @@ mod tests {
             CHECKPOINT_BYTES + 1,
             2048,
             false,
+            None,
         );
 
         assert_eq!(m.group_members("g1"), vec!["a", "b"]);
@@ -779,6 +853,7 @@ mod tests {
                 1024,
                 2048,
                 false,
+                None,
             );
             register(&m, "unlinked");
             register(&m, "of-finished");
@@ -792,6 +867,7 @@ mod tests {
                 1024,
                 2048,
                 true,
+                None,
             );
             paste
         };

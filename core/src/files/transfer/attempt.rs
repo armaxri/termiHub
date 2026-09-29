@@ -242,25 +242,97 @@ pub(super) struct ResumeCursor {
     pub(super) baseline: Option<SourceFingerprint>,
 }
 
-/// The offset a **rehydrated** transfer (relaunched from its persisted
-/// checkpoint, #3199) may start from. Pure.
+/// How a **rehydrated** transfer (relaunched from its persisted checkpoint,
+/// #3199) starts, decided by [`decide_rehydrate`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RehydrateStart {
+    /// Nothing to resume (the checkpoint is at byte zero).
+    Fresh,
+    /// Keep the checkpoint. `verified` is `true` when the source mtime matched
+    /// the persisted one, `false` when only the size could be compared (a
+    /// legacy record without an mtime, or a server that reports none).
+    Resume { verified: bool },
+    /// The source size no longer matches the persisted total (or the source
+    /// can no longer be stat'ed) → restart from zero.
+    RestartSizeChanged,
+    /// Same size, but the source mtime differs from the persisted one: the
+    /// file was rewritten while the app was closed (#3572) → restart from zero.
+    RestartMtimeChanged,
+}
+
+impl RehydrateStart {
+    /// The byte offset the first stint starts from, given the checkpoint.
+    pub(super) fn offset(self, start_offset: u64) -> u64 {
+        match self {
+            RehydrateStart::Resume { .. } => start_offset,
+            _ => 0,
+        }
+    }
+}
+
+/// Decide how a rehydrated transfer starts (#3199, #3572). Pure.
 ///
-/// Only size survives a relaunch (the persisted record carries `total`, not an
-/// mtime), so a source whose size no longer matches the persisted total has
-/// changed while the app was closed → restart from zero. The destination is
-/// still byte-verified before the first append.
-pub(super) fn rehydrate_start_offset(
+/// The persisted checkpoint carries the source's `total` size and, since
+/// #3572, its mtime when the checkpointed bytes were read. The source must
+/// still match both: a changed size, or a changed mtime at the same size (a
+/// same-size rewrite while the app was closed), restarts from zero instead of
+/// splicing two versions. When either side has no mtime (a legacy record, or a
+/// server that does not report one) only the size can be compared, and the
+/// resume is marked unverified. The destination is still byte-verified before
+/// the first append.
+pub(super) fn decide_rehydrate(
     start_offset: u64,
     persisted_total: u64,
+    persisted_mtime: Option<u64>,
     current: Option<SourceFingerprint>,
-) -> u64 {
+) -> RehydrateStart {
     if start_offset == 0 {
-        return 0;
+        return RehydrateStart::Fresh;
     }
     if persisted_total > 0 && current.map(|fp| fp.size) != Some(persisted_total) {
-        return 0;
+        return RehydrateStart::RestartSizeChanged;
     }
-    start_offset
+    match (persisted_mtime, current.and_then(|fp| fp.mtime)) {
+        (Some(before), Some(now)) if before != now => RehydrateStart::RestartMtimeChanged,
+        (Some(_), Some(_)) => RehydrateStart::Resume { verified: true },
+        _ => RehydrateStart::Resume { verified: false },
+    }
+}
+
+/// The offset a rehydrated transfer starts from, with the persisted total and
+/// mtime read off `handle` (seeded from the checkpoint by the relaunch). Logs
+/// why a checkpoint is discarded or only size-verified, then records the
+/// current source mtime on the handle so the next checkpoint persists it.
+/// `backend` labels the logs.
+pub(super) fn rehydrate_start_offset(
+    start_offset: u64,
+    handle: &TransferHandle,
+    current: Option<SourceFingerprint>,
+    backend: &'static str,
+) -> u64 {
+    let persisted_total = handle.snapshot().total;
+    let persisted_mtime = handle.source_mtime();
+    let start = decide_rehydrate(start_offset, persisted_total, persisted_mtime, current);
+    let id = &handle.transfer_id;
+    let current_mtime = current.and_then(|fp| fp.mtime);
+    match start {
+        RehydrateStart::Fresh | RehydrateStart::Resume { verified: true } => {}
+        RehydrateStart::Resume { verified: false } => {
+            info!(backend, transfer_id = %id, start_offset, ?persisted_mtime, ?current_mtime,
+                "resuming checkpoint with a size-only check; no source mtime to compare, \
+                 so the resume is unverified");
+        }
+        RehydrateStart::RestartSizeChanged => {
+            info!(backend, transfer_id = %id, start_offset, persisted_total, ?current,
+                "source size changed since the checkpoint; restarting from zero");
+        }
+        RehydrateStart::RestartMtimeChanged => {
+            info!(backend, transfer_id = %id, start_offset, ?persisted_mtime, ?current_mtime,
+                "source modified since the checkpoint (same size, new mtime); restarting from zero");
+        }
+    }
+    handle.set_source_mtime(current_mtime);
+    start.offset(start_offset)
 }
 
 /// Adopt `current` as the source baseline for a copy (re)starting from byte
@@ -271,6 +343,7 @@ pub(super) fn rebase_cursor(
     current: Option<SourceFingerprint>,
 ) {
     cursor.baseline = current;
+    handle.set_source_mtime(current.and_then(|fp| fp.mtime));
     if let Some(fp) = current {
         cursor.total = fp.size;
     }
@@ -764,13 +837,19 @@ mod tests {
         let (handle, _sink, _messages) = harness();
         handle.set_metrics(0, 1000, 0);
         handle.set_source_mtime(Some(7));
-        assert_eq!(rehydrate_start_offset(400, &handle, fp(1000, 7), "test"), 400);
+        assert_eq!(
+            rehydrate_start_offset(400, &handle, fp(1000, 7), "test"),
+            400
+        );
         assert_eq!(handle.source_mtime(), Some(7));
 
         assert_eq!(rehydrate_start_offset(400, &handle, fp(1000, 9), "test"), 0);
         assert_eq!(handle.source_mtime(), Some(9));
 
-        assert_eq!(rehydrate_start_offset(400, &handle, fp_no_mtime(1000), "test"), 400);
+        assert_eq!(
+            rehydrate_start_offset(400, &handle, fp_no_mtime(1000), "test"),
+            400
+        );
         assert_eq!(handle.source_mtime(), None);
     }
 
