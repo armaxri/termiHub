@@ -40,13 +40,24 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// A message to the background writer thread.
+enum WriterMsg {
+    /// Persist this store snapshot (coalesced with any later queued ones).
+    Save(PersistedTransferStore),
+    /// Acknowledge once every snapshot queued before this message is on disk.
+    /// Lets a test wait for the writer deterministically instead of polling
+    /// the file against a wall-clock deadline (#3923).
+    #[cfg(test)]
+    Flush(Sender<()>),
+}
+
 /// Persists the transfer queue to `transfers.json` and rehydrates it on startup
 /// (PROD-0011). Managed as Tauri state; every mutation is non-blocking.
 pub struct TransferPersistenceManager {
     store: Mutex<PersistedTransferStore>,
     /// Sends the latest store snapshot to the background writer. A send is
     /// non-blocking; the writer coalesces bursts into a single atomic write.
-    writer: Sender<PersistedTransferStore>,
+    writer: Sender<WriterMsg>,
     recovery_warnings: Mutex<Vec<RecoveryWarning>>,
     /// Ids of the folder pastes that were still recorded when this process
     /// started (#3630): each is a paste a previous run never finished.
@@ -73,7 +84,7 @@ impl TransferPersistenceManager {
         data: PersistedTransferStore,
         warnings: Vec<RecoveryWarning>,
     ) -> Self {
-        let (writer, rx) = mpsc::channel::<PersistedTransferStore>();
+        let (writer, rx) = mpsc::channel::<WriterMsg>();
         // Single background writer: fire-and-forget, coalescing. It drains every
         // queued snapshot and writes only the most recent, so a burst of
         // checkpoints costs one atomic write. Exits when the manager (and thus
@@ -82,12 +93,28 @@ impl TransferPersistenceManager {
             .name("transfer-persist".to_string())
             .spawn(move || {
                 while let Ok(first) = rx.recv() {
-                    let mut latest = first;
-                    while let Ok(next) = rx.try_recv() {
-                        latest = next;
+                    let mut latest = None;
+                    #[cfg(test)]
+                    let mut acks = Vec::new();
+                    let mut msg = Some(first);
+                    while let Some(m) = msg {
+                        match m {
+                            WriterMsg::Save(store) => latest = Some(store),
+                            #[cfg(test)]
+                            WriterMsg::Flush(ack) => acks.push(ack),
+                        }
+                        msg = rx.try_recv().ok();
                     }
-                    if let Err(e) = storage.save(&latest) {
-                        tracing::warn!(error = %e, "failed to persist transfer queue (PROD-0011)");
+                    if let Some(latest) = latest {
+                        if let Err(e) = storage.save(&latest) {
+                            tracing::warn!(error = %e, "failed to persist transfer queue (PROD-0011)");
+                        }
+                    }
+                    // The channel is FIFO, so every snapshot sent before a flush
+                    // request was drained in this batch and is now written.
+                    #[cfg(test)]
+                    for ack in acks {
+                        let _ = ack.send(());
                     }
                 }
             });
@@ -474,7 +501,21 @@ impl TransferPersistenceManager {
     /// fire-and-forget). A dropped writer (spawn failed / shutting down) is
     /// silently ignored — persistence degrades, it never blocks a transfer.
     fn schedule_write(&self, store: &PersistedTransferStore) {
-        let _ = self.writer.send(store.clone());
+        let _ = self.writer.send(WriterMsg::Save(store.clone()));
+    }
+
+    /// Block until every write queued so far has reached disk (test only).
+    ///
+    /// Deterministic: no deadline, so a loaded runner can only make it slower,
+    /// never make it fail (#3923).
+    #[cfg(test)]
+    fn flush(&self) {
+        let (ack, done) = mpsc::channel();
+        self.writer
+            .send(WriterMsg::Flush(ack))
+            .expect("transfer-persist writer is running");
+        done.recv()
+            .expect("transfer-persist writer acknowledged the flush");
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, PersistedTransferStore> {
@@ -957,20 +998,19 @@ mod tests {
         }
     }
 
-    /// Wait until the background writer has flushed `transfers.json`
-    /// containing `needle` (the writer is asynchronous).
-    fn wait_for_file(dir: &std::path::Path, needle: &str, present: bool) {
-        let path = dir.join("transfers.json");
-        for _ in 0..200 {
-            let has = std::fs::read_to_string(&path)
-                .map(|s| s.contains(needle))
-                .unwrap_or(false);
-            if has == present {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        panic!("transfers.json never reached the expected state for {needle}");
+    /// Assert whether `transfers.json` contains `needle`. Call only after
+    /// [`TransferPersistenceManager::flush`], so the asynchronous writer has
+    /// already landed every queued snapshot (#3923).
+    fn assert_file(dir: &std::path::Path, needle: &str, present: bool) {
+        let has = std::fs::read_to_string(dir.join("transfers.json"))
+            .map(|s| s.contains(needle))
+            .unwrap_or(false);
+        assert_eq!(
+            has,
+            present,
+            "transfers.json should {}contain {needle}",
+            if present { "" } else { "not " }
+        );
     }
 
     /// A folder paste that never ended is reported once after a "restart"
@@ -995,10 +1035,11 @@ mod tests {
                 m.take_interrupted_folder_pastes().is_empty(),
                 "this process's own pastes are not interrupted"
             );
+            m.flush();
             (unfinished, finished)
         };
-        wait_for_file(dir.path(), &unfinished, true);
-        wait_for_file(dir.path(), &finished, false);
+        assert_file(dir.path(), &unfinished, true);
+        assert_file(dir.path(), &finished, false);
 
         let relaunched = TransferPersistenceManager::new_test(dir.path());
         let taken = relaunched.take_interrupted_folder_pastes();
@@ -1054,10 +1095,11 @@ mod tests {
                 true,
                 None,
             );
+            m.flush();
             paste
         };
-        wait_for_file(dir.path(), "of-finished", true);
-        wait_for_file(dir.path(), "folderPasteId", true);
+        assert_file(dir.path(), "of-finished", true);
+        assert_file(dir.path(), "folderPasteId", true);
 
         let relaunched = TransferPersistenceManager::new_test(dir.path());
         let mut ids: Vec<String> = relaunched
@@ -1071,7 +1113,8 @@ mod tests {
         assert_eq!(taken.len(), 1, "the folder is reported as one notice");
         assert_eq!(taken[0].id, paste);
         // The drop is persisted, so a later launch never resurrects the row.
-        wait_for_file(dir.path(), "in-flight", false);
+        relaunched.flush();
+        assert_file(dir.path(), "in-flight", false);
     }
 
     #[test]
