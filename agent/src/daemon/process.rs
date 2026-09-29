@@ -713,7 +713,9 @@ fn release_monitor_if_unheld(
     }
     if let Some(commands) = commands {
         if commands.try_send(MonitorCommand::Release).is_err() {
-            warn!("Monitor worker queue full; release deferred to its next request");
+            // Keep the owner so the next loop iteration retries the release.
+            debug!("Monitor worker queue full; retrying the release");
+            return Some(owner);
         }
     }
     None
