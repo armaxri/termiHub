@@ -15,6 +15,9 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn, Instrument};
 
+use crate::daemon::files_rpc::{
+    self, FileFrame, FileJob, FileRequest, FileResponse, UploadStep, Uploads,
+};
 use crate::daemon::monitoring_rpc::{
     self, MonitorCommand, MonitoringEvent, MonitoringOp, MonitoringRequest,
 };
@@ -295,6 +298,11 @@ enum AgentCommand {
     Process(ProcessRequest),
     /// Agent sent a monitoring request for this session's backend (#3871).
     Monitoring(MonitoringRequest),
+    /// Agent sent a file request for this session's backend (#3242).
+    File(FileRequest),
+    /// Agent sent a slice of a file write's contents (#3242): the raw
+    /// [`MSG_FILE_WRITE_DATA`] payload.
+    FileData(Vec<u8>),
     /// Agent disconnected (EOF or error).
     ///
     /// Carries the connection generation that produced this disconnect so the
@@ -350,7 +358,24 @@ async fn daemon_loop(
         .map(|provider| monitoring_rpc::spawn_monitor_worker(provider, monitor_event_tx.clone()));
     let mut monitor_owner: Option<u64> = None;
 
-    let capability_flags = capability_flags(process_manager.is_some(), monitor_cmd_tx.is_some());
+    // The session backend's file browser (#3242), captured once like the
+    // process manager. One file worker serves its requests in order, each under
+    // a timeout; a read's bytes come back chunk by chunk through the small
+    // bounded event channel, so a large read waits on this loop instead of
+    // crowding out terminal output. A write's data is collected here (never
+    // blocking on the worker) and queued once complete.
+    let (file_event_tx, mut file_event_rx) =
+        mpsc::channel::<(u64, FileFrame)>(files_rpc::EVENT_CAPACITY);
+    let file_job_tx = connection
+        .file_browser_handle()
+        .map(|browser| files_rpc::spawn_file_worker(browser, file_event_tx.clone()));
+    let mut uploads = Uploads::default();
+
+    let capability_flags = capability_flags(
+        process_manager.is_some(),
+        monitor_cmd_tx.is_some(),
+        file_job_tx.is_some(),
+    );
 
     // When the current unattached stretch began (`None` while a worker is
     // attached). Recomputed from `agent_writer` at the top of every iteration,
@@ -482,6 +507,8 @@ async fn daemon_loop(
                         agent_writer = None;
                         abort_reader(&mut reader_task);
                         while agent_cmd_rx.try_recv().is_ok() {}
+                        // Its unfinished writes will never get their data.
+                        uploads.clear();
 
                         // Send buffer replay
                         let buffered = ring_buffer.read_all();
@@ -590,6 +617,33 @@ async fn daemon_loop(
                 }
             }
 
+            // A file reply or read chunk (#3242): only the connection that
+            // asked — and still holds the session — receives it. One frame per
+            // loop turn, so output interleaves with a large read.
+            Some((gen, frame)) = file_event_rx.recv() => {
+                if gen != connection_gen {
+                    continue;
+                }
+                let Some(ref mut writer) = agent_writer else {
+                    continue;
+                };
+                let (msg_type, payload) = match frame.encode() {
+                    Ok(encoded) => encoded,
+                    Err(e) => {
+                        warn!("Failed to encode file reply: {e}");
+                        continue;
+                    }
+                };
+                if protocol::write_frame_async(writer, msg_type, &payload)
+                    .await
+                    .is_err()
+                {
+                    debug!("Agent connection lost on file reply");
+                    agent_writer = None;
+                    abort_reader(&mut reader_task);
+                }
+            }
+
             // Commands from the agent reader task
             cmd = agent_cmd_rx.recv() => {
                 match cmd {
@@ -665,6 +719,18 @@ async fn daemon_loop(
                             &monitor_event_tx,
                         );
                     }
+                    Some(AgentCommand::File(request)) => {
+                        let step = if file_job_tx.is_some() {
+                            uploads.begin(connection_gen, request)
+                        } else {
+                            refuse_file(request.id, termihub_core::errors::FileError::NotSupported)
+                        };
+                        route_file_step(step, connection_gen, file_job_tx.as_ref(), &file_event_tx);
+                    }
+                    Some(AgentCommand::FileData(payload)) => {
+                        let step = uploads.append(&payload);
+                        route_file_step(step, connection_gen, file_job_tx.as_ref(), &file_event_tx);
+                    }
                     Some(AgentCommand::Disconnected(gen)) => {
                         if gen == connection_gen {
                             info!("Agent disconnected");
@@ -687,8 +753,8 @@ async fn daemon_loop(
 }
 
 /// The [`MSG_CAPABILITIES`] flags for a backend with / without a process
-/// manager (#3210) and a monitoring provider (#3871).
-fn capability_flags(processes: bool, monitoring: bool) -> u8 {
+/// manager (#3210), a monitoring provider (#3871) and a file browser (#3242).
+fn capability_flags(processes: bool, monitoring: bool, files: bool) -> u8 {
     let mut flags = 0;
     if processes {
         flags |= CAP_PROCESSES;
@@ -696,7 +762,56 @@ fn capability_flags(processes: bool, monitoring: bool) -> u8 {
     if monitoring {
         flags |= CAP_MONITORING;
     }
+    if files {
+        flags |= CAP_FILES;
+    }
     flags
+}
+
+/// A refusal of file request `id` with `error`.
+fn refuse_file(id: u64, error: termihub_core::errors::FileError) -> UploadStep {
+    UploadStep::Refused(FileResponse {
+        id,
+        outcome: files_rpc::FileOutcome::Failed {
+            error: error.into(),
+        },
+    })
+}
+
+/// Act on an [`UploadStep`] (#3242): queue a ready request for the file
+/// worker — refusing it at once when the queue is full, so this loop never
+/// waits on the worker — or send a refusal to the connection of generation
+/// `gen`.
+fn route_file_step(
+    step: UploadStep,
+    gen: u64,
+    jobs: Option<&mpsc::Sender<FileJob>>,
+    events: &mpsc::Sender<(u64, FileFrame)>,
+) {
+    let refusal = match step {
+        UploadStep::Pending => return,
+        UploadStep::Refused(response) => response,
+        UploadStep::Complete(job) => {
+            let id = job.request.id;
+            let Some(jobs) = jobs else {
+                return;
+            };
+            match jobs.try_send(job) {
+                Ok(()) => return,
+                Err(_) => FileResponse {
+                    id,
+                    outcome: files_rpc::FileOutcome::Failed {
+                        error: files_rpc::WireFileError::OperationFailed {
+                            message: "too many file requests in flight".into(),
+                        },
+                    },
+                },
+            }
+        }
+    };
+    if events.try_send((gen, FileFrame::Reply(refusal))).is_err() {
+        debug!("File event queue full; a refusal was dropped");
+    }
 }
 
 /// Stop the monitoring stream once its subscriber no longer holds the session
@@ -821,6 +936,14 @@ async fn agent_reader_loop(mut reader: BoxedReader, tx: mpsc::Sender<AgentComman
                             continue;
                         }
                     },
+                    MSG_FILE_REQUEST => match serde_json::from_slice(&frame.payload) {
+                        Ok(request) => AgentCommand::File(request),
+                        Err(e) => {
+                            debug!("Malformed file request from agent: {e}");
+                            continue;
+                        }
+                    },
+                    MSG_FILE_WRITE_DATA => AgentCommand::FileData(frame.payload),
                     // AGT-015: an attach-intent hint is only meaningful at accept
                     // time. On the fast path (no writer was attached) it is read
                     // here as the first frame instead — ignore it.
@@ -1319,6 +1442,9 @@ pub(crate) mod tests {
 
     /// Session monitoring through the daemon, end to end (#3871).
     pub(crate) mod monitoring_rpc_e2e;
+
+    /// Session file browsing through the daemon, end to end (#3242).
+    mod files_rpc_e2e;
 
     // ── AGT-015: owner-scoped recovery guard ────────────────────────────
     //
