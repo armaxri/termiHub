@@ -27,8 +27,16 @@ use crate::utils::fs::file_name_of;
 /// honest feedback instead of a blanket success toast (#1336; audit
 /// FEC-004 / UX-016).
 #[tauri::command]
-pub fn transfer_pause(transfer_id: String, registry: State<'_, TransferRegistry>) -> bool {
+pub fn transfer_pause(
+    transfer_id: String,
+    registry: State<'_, TransferRegistry>,
+    app_handle: tauri::AppHandle,
+) -> bool {
     debug!(transfer_id, "transfer pause");
+    // A row the user pauses never resumes on its own (#3883).
+    if let Some(persist) = app_handle.try_state::<TransferPersistenceManager>() {
+        persist.credential_waits().forget(&transfer_id);
+    }
     registry.pause(&transfer_id)
 }
 

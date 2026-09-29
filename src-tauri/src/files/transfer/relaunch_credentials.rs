@@ -23,9 +23,10 @@
 //! A relaunch never prompts: a **locked** store is not unlocked, and a secret
 //! that is **not stored** is not asked for. The transfer then stays **paused**
 //! with the reason [`NEEDS_CREDENTIALS`]; once the user opens the connection
-//! (step 2) or unlocks the store (step 3), **Resume** relaunches it. The
-//! secret lives only in the in-memory connection settings of the relaunch; it
-//! is never written to the transfer record.
+//! (step 2) or unlocks the store (step 3), it relaunches by itself (#3883, see
+//! [`super::relaunch_auto`]) or on **Resume**. The secret lives only in the
+//! in-memory connection settings of the relaunch; it is never written to the
+//! transfer record.
 //!
 //! [`SessionManager::sessions_for_saved_connection`]: crate::session::manager::SessionManager::sessions_for_saved_connection
 
