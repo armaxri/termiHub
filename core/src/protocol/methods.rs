@@ -1093,8 +1093,9 @@ pub struct ProcessesListResult {
 
 /// Params for `connection.processes.kill`.
 ///
-/// Targets the exact numeric `pid` — never a name match — with one of the two
-/// supported signals ([`KillSignal`], serialized `"term"` / `"kill"`).
+/// Targets the exact numeric `pid` — never a name match — with one of the named
+/// signals of [`KillSignal`] (serialized camelCase: `"term"`, `"kill"`,
+/// `"usr1"`, …). A host that cannot deliver the signal answers with an error.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessKillParams {
     /// Connection/session to scope the operation to. `None` = the agent's own
@@ -1102,7 +1103,7 @@ pub struct ProcessKillParams {
     pub connection_id: Option<String>,
     /// Exact process id to terminate.
     pub pid: u32,
-    /// Signal to deliver (SIGTERM or SIGKILL).
+    /// Signal to deliver (SIGTERM by default in the UI).
     pub signal: KillSignal,
 }
 

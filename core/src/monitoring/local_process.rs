@@ -6,10 +6,11 @@
 //! backs local monitoring.
 //!
 //! Cross-platform: `sysinfo` lists processes uniformly on every platform. Kill
-//! is the one place platforms diverge — Unix delivers the real signal
-//! (SIGTERM/SIGKILL) via [`sysinfo::Process::kill_with`]; Windows has no POSIX
-//! signals, so both [`KillSignal`] variants terminate the process
-//! ([`sysinfo::Process::kill`], which calls `TerminateProcess`). The mapping is
+//! is the one place platforms diverge — Unix delivers the exact requested
+//! signal via [`sysinfo::Process::kill_with`]; Windows has no POSIX signals, so
+//! only the terminating signals (TERM/KILL) are accepted and both terminate the
+//! process ([`sysinfo::Process::kill`], which calls `TerminateProcess`). Any
+//! other signal on Windows is a typed [`ProcessError::UnsupportedSignal`]. The mapping is
 //! isolated in small, unit-tested functions so the "right signal to the right
 //! pid" contract is verifiable without spawning a victim process.
 
@@ -88,23 +89,53 @@ fn collect_local_processes() -> Vec<ProcessInfo> {
 
 /// Map a [`KillSignal`] to the `sysinfo` signal used on Unix.
 ///
-/// Isolated + unit-tested so the "SIGTERM vs SIGKILL" choice is verifiable
-/// without terminating a real process.
+/// Isolated + unit-tested so the signal choice is verifiable without
+/// terminating a real process.
 #[cfg(unix)]
 fn to_sysinfo_signal(signal: KillSignal) -> sysinfo::Signal {
+    use sysinfo::Signal;
     match signal {
-        KillSignal::Term => sysinfo::Signal::Term,
-        KillSignal::Kill => sysinfo::Signal::Kill,
+        KillSignal::Term => Signal::Term,
+        KillSignal::Kill => Signal::Kill,
+        KillSignal::Int => Signal::Interrupt,
+        KillSignal::Hup => Signal::Hangup,
+        KillSignal::Quit => Signal::Quit,
+        KillSignal::Stop => Signal::Stop,
+        KillSignal::Cont => Signal::Continue,
+        KillSignal::Usr1 => Signal::User1,
+        KillSignal::Usr2 => Signal::User2,
+    }
+}
+
+/// Reject a signal a Windows local process cannot receive.
+///
+/// Windows has no POSIX signals; the only operation is terminate, so only
+/// signals that mean "terminate" are accepted. Compiled on every platform under
+/// test so the policy is checked on any CI host.
+#[cfg(any(windows, test))]
+fn check_windows_signal(signal: KillSignal) -> Result<(), ProcessError> {
+    if signal.supported_on_windows() {
+        Ok(())
+    } else {
+        Err(ProcessError::UnsupportedSignal {
+            signal,
+            reason: "Windows can only terminate a local process (SIGTERM or SIGKILL)".to_string(),
+        })
     }
 }
 
 /// Terminate `pid` with `signal` on the local machine (blocking `sysinfo` work).
 ///
-/// Unix delivers the exact signal via `kill_with`; if the running kernel does
-/// not support that signal (`kill_with` returns `None`) it falls back to the
-/// default terminate. Windows has no POSIX signals, so both variants terminate.
-/// Targets the exact numeric pid only — never a name match.
+/// Unix delivers the exact signal via `kill_with`; if the platform does not
+/// know that signal (`kill_with` returns `None`) it is a typed
+/// [`ProcessError::UnsupportedSignal`] — never a fallback to another signal.
+/// Windows accepts only TERM/KILL, both of which terminate. Targets the exact
+/// numeric pid only — never a name match.
 fn kill_local_process(pid: u32, signal: KillSignal) -> Result<(), ProcessError> {
+    // Reject an undeliverable signal before touching the process at all.
+    #[cfg(windows)]
+    check_windows_signal(signal)?;
+
     let mut sys = System::new();
     let sys_pid = Pid::from_u32(pid);
     sys.refresh_processes(ProcessesToUpdate::Some(&[sys_pid]), true);
@@ -115,12 +146,14 @@ fn kill_local_process(pid: u32, signal: KillSignal) -> Result<(), ProcessError> 
 
     #[cfg(unix)]
     {
-        // `kill_with` returns `None` only if the platform/kernel does not know
-        // the signal; SIGTERM/SIGKILL are universal on Unix, but fall back to
-        // the default terminate defensively rather than silently doing nothing.
-        let delivered = match proc_.kill_with(to_sysinfo_signal(signal)) {
-            Some(ok) => ok,
-            None => proc_.kill(),
+        // `kill_with` returns `None` only if the platform does not know the
+        // signal. Never substitute another signal: a user who asked for SIGCONT
+        // must not get a terminate.
+        let Some(delivered) = proc_.kill_with(to_sysinfo_signal(signal)) else {
+            return Err(ProcessError::UnsupportedSignal {
+                signal,
+                reason: "this platform does not support the signal".to_string(),
+            });
         };
         if delivered {
             Ok(())
@@ -134,8 +167,8 @@ fn kill_local_process(pid: u32, signal: KillSignal) -> Result<(), ProcessError> 
 
     #[cfg(not(unix))]
     {
-        // Windows: no POSIX signals — both TERM and KILL terminate the process.
-        let _ = signal;
+        // Windows: no POSIX signals — TERM and KILL (the only signals
+        // `check_windows_signal` lets through) both terminate the process.
         if proc_.kill() {
             Ok(())
         } else {

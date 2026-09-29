@@ -22,9 +22,10 @@
 //!
 //! Termination is destructive, so this module is deliberately conservative:
 //!
-//! * Only two signals are offered — [`KillSignal::Term`] (SIGTERM) and
-//!   [`KillSignal::Kill`] (SIGKILL). A fuller signal menu is an explicit
-//!   follow-up, not something this code invents.
+//! * Only a fixed set of named signals can be sent ([`KillSignal`]), SIGTERM
+//!   by default. A signal a host cannot deliver fails with a typed
+//!   [`ProcessError::UnsupportedSignal`] — it is never swapped for another
+//!   signal (in particular never silently escalated to a terminate).
 //! * A kill always targets an exact numeric [`pid`](ProcessInfo::pid). The pid
 //!   is a `u32`, so a kill can never degrade into a name-matched sweep, and the
 //!   remote command built by [`build_kill_command`] interpolates only that
@@ -83,36 +84,80 @@ pub struct ProcessInfo {
     pub memory_kb: Option<u64>,
 }
 
-/// The termination signal to deliver.
+/// The signal to deliver to a process (#3209).
 ///
-/// Deliberately limited to the two safe, universally-portable signals. A fuller
-/// menu (HUP, INT, USR1/2, …) is an explicit follow-up.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The common POSIX job-control and termination signals. Every variant is sent
+/// by *name* (`kill -s <NAME>` remotely, the matching `sysinfo` signal locally),
+/// never by number, because numbers such as SIGUSR1 or SIGSTOP differ between
+/// Linux and macOS. Windows local processes have no POSIX signals, so only
+/// [`KillSignal::supported_on_windows`] signals can be honoured there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub enum KillSignal {
     /// SIGTERM — polite, catchable termination request. The default.
+    #[default]
     Term,
     /// SIGKILL — forced, uncatchable termination.
     Kill,
+    /// SIGINT — interrupt, as from Ctrl+C.
+    Int,
+    /// SIGHUP — hang up; many daemons reload their configuration on it.
+    Hup,
+    /// SIGQUIT — quit, usually with a core dump.
+    Quit,
+    /// SIGSTOP — suspend the process. Uncatchable; resumed by SIGCONT.
+    Stop,
+    /// SIGCONT — resume a stopped process.
+    Cont,
+    /// SIGUSR1 — application-defined.
+    Usr1,
+    /// SIGUSR2 — application-defined.
+    Usr2,
 }
 
 impl KillSignal {
+    /// Every signal, in menu order. TERM (the default quick action) is first.
+    pub const ALL: [KillSignal; 9] = [
+        KillSignal::Term,
+        KillSignal::Kill,
+        KillSignal::Int,
+        KillSignal::Hup,
+        KillSignal::Quit,
+        KillSignal::Stop,
+        KillSignal::Cont,
+        KillSignal::Usr1,
+        KillSignal::Usr2,
+    ];
+
     /// The signal name as `kill` expects it after `-s` (e.g. `"TERM"`).
     pub fn as_name(self) -> &'static str {
         match self {
             KillSignal::Term => "TERM",
             KillSignal::Kill => "KILL",
+            KillSignal::Int => "INT",
+            KillSignal::Hup => "HUP",
+            KillSignal::Quit => "QUIT",
+            KillSignal::Stop => "STOP",
+            KillSignal::Cont => "CONT",
+            KillSignal::Usr1 => "USR1",
+            KillSignal::Usr2 => "USR2",
         }
     }
 
-    /// The POSIX signal number (SIGTERM = 15, SIGKILL = 9).
-    pub fn as_number(self) -> i32 {
-        match self {
-            KillSignal::Term => 15,
-            KillSignal::Kill => 9,
-        }
+    /// `true` for the signals the process cannot catch or ignore and that
+    /// take effect immediately (SIGKILL ends it, SIGSTOP freezes it). The UI
+    /// warns explicitly before sending one of these.
+    pub fn is_destructive(self) -> bool {
+        matches!(self, KillSignal::Kill | KillSignal::Stop)
+    }
+
+    /// `true` when a Windows local process can honour this signal. Windows has
+    /// no POSIX signals: the only thing it can do is terminate the process, so
+    /// only the two terminating signals are accepted.
+    pub fn supported_on_windows(self) -> bool {
+        matches!(self, KillSignal::Term | KillSignal::Kill)
     }
 }
 
@@ -238,6 +283,11 @@ pub enum ProcessError {
     #[error("failed to list processes: {0}")]
     ListFailed(String),
 
+    /// The host cannot deliver this signal (a Windows local process only
+    /// supports terminate, or a remote `kill` does not know the signal name).
+    #[error("signal SIG{} is not supported here: {reason}", .signal.as_name())]
+    UnsupportedSignal { signal: KillSignal, reason: String },
+
     /// Killing failed for a reason other than the specific cases above.
     #[error("failed to kill process {pid}: {message}")]
     KillFailed { pid: u32, message: String },
@@ -253,6 +303,7 @@ impl ProcessError {
             ProcessError::NotFound(_) => "process_not_found",
             ProcessError::PermissionDenied(_) => "process_permission_denied",
             ProcessError::ListFailed(_) => "process_list_failed",
+            ProcessError::UnsupportedSignal { .. } => "process_signal_not_supported",
             ProcessError::KillFailed { .. } => "process_kill_failed",
         }
     }
@@ -328,12 +379,26 @@ pub trait ProcessManager: Send + Sync {
 /// `kill` writes a diagnostic to stderr and exits non-zero. The two cases worth
 /// distinguishing for the user are "no such process" (the process already went
 /// away — effectively success from their point of view, but reported honestly)
-/// and "operation not permitted" (a privilege problem). Everything else is a
-/// generic [`ProcessError::KillFailed`].
-fn classify_kill_failure(pid: u32, output: &ProcessCommandOutput) -> ProcessError {
+/// and "operation not permitted" (a privilege problem). A `kill` that rejects
+/// the signal name maps to [`ProcessError::UnsupportedSignal`]. Everything else
+/// is a generic [`ProcessError::KillFailed`].
+fn classify_kill_failure(
+    pid: u32,
+    signal: KillSignal,
+    output: &ProcessCommandOutput,
+) -> ProcessError {
     let stderr = output.stderr.to_ascii_lowercase();
     if stderr.contains("no such process") {
         ProcessError::NotFound(pid)
+    } else if stderr.contains("invalid signal")
+        || stderr.contains("unknown signal")
+        || stderr.contains("bad signal")
+    {
+        // The remote `kill` does not know this signal name.
+        ProcessError::UnsupportedSignal {
+            signal,
+            reason: output.stderr.trim().to_string(),
+        }
     } else if stderr.contains("not permitted") || stderr.contains("permission denied") {
         ProcessError::PermissionDenied(output.stderr.trim().to_string())
     } else {
@@ -413,7 +478,7 @@ impl ProcessManager for ExecProcessManager {
         if command_succeeded(&output) {
             Ok(())
         } else {
-            Err(classify_kill_failure(pid, &output))
+            Err(classify_kill_failure(pid, signal, &output))
         }
     }
 }
@@ -838,7 +903,10 @@ garbage line with too few
         assert_eq!(err.code(), "process_signal_not_supported");
         let msg = err.to_string();
         assert!(msg.contains("SIGUSR1"), "{msg}");
-        assert!(msg.contains("Windows can only terminate processes"), "{msg}");
+        assert!(
+            msg.contains("Windows can only terminate processes"),
+            "{msg}"
+        );
         let json = serde_json::to_string(&err).unwrap();
         assert!(
             json.contains("\"code\":\"process_signal_not_supported\""),
