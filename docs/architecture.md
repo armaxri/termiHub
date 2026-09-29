@@ -1636,7 +1636,7 @@ sequenceDiagram
     L->>M: tick(now, Local, open windows)
     M-->>L: fires (due, enabled, not paused, not overlapping)
     L->>W: schedule-fire {token, action, targets}
-    W->>M: ack_schedule_run(token)
+    W->>M: ack_schedule_run(token, targets it runs on itself)
     W->>W: open + connected tabs of the target connections only
     W->>M: report_schedule_run(token, outcome)
     M->>M: all windows reported -> record lastResult + history
@@ -1683,7 +1683,10 @@ sequenceDiagram
   only), where an untrusted host key fails fast as `ConnectFailureKind::HostKeyUntrusted` and a
   keyboard-interactive round the saved password cannot answer as `InteractionRequired`. Each
   refused target is recorded in the attempt with its reason. Turning the option on needs a fresh
-  confirmation.
+  confirmation. A target connected in **another** window is not connected again (#3878): every
+  window acknowledges the fire with the target connections it runs on itself, and the connect
+  window asks `schedule_run_coverage` (waiting briefly until every other window acknowledged)
+  and skips those, so each target runs once per fire, in the window that holds it.
 - **Macro run history** (`src-tauri/src/macros/history*.rs`, #3543) — every started macro
   playback (manual, command palette, a workflow's `run-macro` step, scheduled) is recorded
   fire-and-forget in `macro-runs.json`: macro id + name, start/end, outcome, steps played,

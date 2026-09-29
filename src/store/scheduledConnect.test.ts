@@ -317,7 +317,7 @@ describe("scheduled runs — connect if not connected (#3527)", () => {
     it("claims nothing when the broadcast group is gone", () => {
       const groupFire: ScheduleFire = {
         ...fire([]),
-        targets: { kind: "broadcastGroup", groupId: "gone" },
+        targets: { kind: "broadcast-group", groupId: "gone" },
       };
       expect(claimedTargetIds(groupFire, useAppStore.getState())).toEqual([]);
     });

@@ -83,7 +83,8 @@ describe("handleScheduleFire (PROD-043)", () => {
     mocks.executeScheduledRun.mockResolvedValue({ outcome: "completed", targetsRun: 1 });
     mocks.reportScheduleRun.mockResolvedValue(undefined);
     await handleScheduleFire({ ...fire, connectWindow: "main" });
-    const options = mocks.executeScheduledRun.mock.calls.at(-1)![2] as {
+    const calls = mocks.executeScheduledRun.mock.calls;
+    const options = calls[calls.length - 1][2] as {
       connectedElsewhere: () => Promise<string[]>;
     };
     await expect(options.connectedElsewhere()).resolves.toEqual(["c"]);
