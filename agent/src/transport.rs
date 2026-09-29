@@ -11,7 +11,10 @@ use base64::Engine;
 
 use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
-use crate::protocol::methods::{CONNECTION_EXIT, CONNECTION_OUTPUT};
+use crate::protocol::methods::{
+    ConnectionErrorNotification, ConnectionExitNotification, ConnectionOutputNotification,
+    CONNECTION_ERROR, CONNECTION_EXIT, CONNECTION_OUTPUT,
+};
 use termihub_core::errors::SessionError;
 use termihub_core::session::traits::OutputSink;
 
@@ -36,13 +39,15 @@ impl OutputSink for JsonRpcOutputSink {
         let b64 = base64::engine::general_purpose::STANDARD;
         // Chunk large payloads to stay under the 1 MiB NDJSON line limit.
         for chunk in data.chunks(65536) {
-            let encoded = b64.encode(chunk);
+            // `into_params` moves the encoded chunk into the params object, so
+            // this builds no more than the old `json!` did (#3759).
             let notification = JsonRpcNotification::new(
                 CONNECTION_OUTPUT,
-                serde_json::json!({
-                    "session_id": session_id,
-                    "data": encoded,
-                }),
+                ConnectionOutputNotification {
+                    session_id: session_id.to_owned(),
+                    data: b64.encode(chunk),
+                }
+                .into_params(),
             );
             self.notification_tx.send(notification).map_err(|e| {
                 SessionError::Io(std::io::Error::new(
@@ -57,9 +62,9 @@ impl OutputSink for JsonRpcOutputSink {
     fn send_exit(&self, session_id: &str, exit_code: Option<i32>) -> Result<(), SessionError> {
         let notification = JsonRpcNotification::new(
             CONNECTION_EXIT,
-            serde_json::json!({
-                "session_id": session_id,
-                "exit_code": exit_code,
+            to_params(&ConnectionExitNotification {
+                session_id: session_id.to_owned(),
+                exit_code,
             }),
         );
         self.notification_tx.send(notification).map_err(|e| {
@@ -73,10 +78,10 @@ impl OutputSink for JsonRpcOutputSink {
 
     fn send_error(&self, session_id: &str, message: &str) -> Result<(), SessionError> {
         let notification = JsonRpcNotification::new(
-            "connection.error",
-            serde_json::json!({
-                "session_id": session_id,
-                "message": message,
+            CONNECTION_ERROR,
+            to_params(&ConnectionErrorNotification {
+                session_id: session_id.to_owned(),
+                message: message.to_owned(),
             }),
         );
         self.notification_tx.send(notification).map_err(|e| {
@@ -87,6 +92,14 @@ impl OutputSink for JsonRpcOutputSink {
         })?;
         Ok(())
     }
+}
+
+/// Serialize a notification DTO into JSON-RPC params.
+///
+/// The DTOs are plain string/number structs, so serialization cannot fail; the
+/// `Null` fallback only exists to avoid a panic path.
+pub(crate) fn to_params<T: serde::Serialize>(dto: &T) -> serde_json::Value {
+    serde_json::to_value(dto).unwrap_or(serde_json::Value::Null)
 }
 
 #[cfg(test)]

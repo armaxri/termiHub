@@ -20,7 +20,12 @@ use crate::daemon::protocol::{self, *};
 use crate::daemon::transport::{self, BoxedReader, BoxedWriter};
 use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
-use crate::protocol::methods::{CONNECTION_EVICTED, CONNECTION_EXIT, CONNECTION_OUTPUT};
+use crate::protocol::methods::{
+    ConnectionErrorNotification, ConnectionEvictedNotification, ConnectionExitNotification,
+    ConnectionOutputNotification, CONNECTION_ERROR, CONNECTION_EVICTED, CONNECTION_EXIT,
+    CONNECTION_OUTPUT,
+};
+use crate::transport::to_params;
 
 /// How long to wait for the Ready frame after connecting.
 ///
@@ -141,9 +146,9 @@ pub const EVICTED_REASON_HELD_BY_PEER: &str = "heldByPeer";
 pub(crate) fn evicted_notification(session_id: &str, reason: &str) -> JsonRpcNotification {
     JsonRpcNotification::new(
         CONNECTION_EVICTED,
-        serde_json::json!({
-            "session_id": session_id,
-            "reason": reason,
+        to_params(&ConnectionEvictedNotification {
+            session_id: session_id.to_owned(),
+            reason: reason.to_owned(),
         }),
     )
 }
@@ -918,9 +923,9 @@ async fn reader_loop_inner(
 
                     let notification = JsonRpcNotification::new(
                         CONNECTION_EXIT,
-                        serde_json::json!({
-                            "session_id": session_id,
-                            "exit_code": code,
+                        to_params(&ConnectionExitNotification {
+                            session_id: session_id.to_owned(),
+                            exit_code: Some(code),
                         }),
                     );
                     let _ = notification_tx.send(notification);
@@ -935,10 +940,10 @@ async fn reader_loop_inner(
                     warn!("Daemon error for session {session_id}: {msg}");
 
                     let notification = JsonRpcNotification::new(
-                        "connection.error",
-                        serde_json::json!({
-                            "session_id": session_id,
-                            "message": msg.to_string(),
+                        CONNECTION_ERROR,
+                        to_params(&ConnectionErrorNotification {
+                            session_id: session_id.to_owned(),
+                            message: msg.into_owned(),
                         }),
                     );
                     let _ = notification_tx.send(notification);
@@ -990,13 +995,15 @@ async fn reader_loop_inner(
 pub(crate) fn send_output_notification(tx: &NotificationSender, session_id: &str, data: &[u8]) {
     let b64 = base64::engine::general_purpose::STANDARD;
     for chunk in data.chunks(65536) {
-        let encoded = b64.encode(chunk);
+        // `into_params` moves the encoded chunk into the params object, so
+        // this builds no more than the old `json!` did (#3759).
         let notification = JsonRpcNotification::new(
             CONNECTION_OUTPUT,
-            serde_json::json!({
-                "session_id": session_id,
-                "data": encoded,
-            }),
+            ConnectionOutputNotification {
+                session_id: session_id.to_owned(),
+                data: b64.encode(chunk),
+            }
+            .into_params(),
         );
         let _ = tx.send(notification);
     }

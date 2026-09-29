@@ -60,7 +60,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use base64::Engine;
-use serde_json::json;
 use tokio::sync::Mutex;
 use tracing::debug;
 
@@ -68,6 +67,10 @@ use termihub_core::backends::ssh::agent_forward::AGENT_FORWARD_CHUNK_SIZE;
 
 use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
+use crate::protocol::methods::{
+    AgentForwardCloseParams, AgentForwardDataParams, AgentForwardOpenParams,
+};
+use crate::transport::to_params;
 
 /// Both directions: a forwarded ssh-agent stream ended.
 pub use crate::protocol::methods::AGENT_FORWARD_CLOSE;
@@ -370,7 +373,12 @@ impl AgentForwardRelay {
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
         self.streams.lock().await.insert(stream_id.clone(), tx);
-        self.notify(AGENT_FORWARD_OPEN, json!({ "stream_id": stream_id }));
+        self.notify(
+            AGENT_FORWARD_OPEN,
+            to_params(&AgentForwardOpenParams {
+                stream_id: stream_id.clone(),
+            }),
+        );
 
         tokio::spawn(write_socket(write_half, rx));
 
@@ -391,10 +399,15 @@ impl AgentForwardRelay {
             match read_half.read(&mut buf).await {
                 Ok(0) => break,
                 Ok(n) => {
-                    let encoded = b64.encode(&buf[..n]);
+                    // `into_params` moves the encoded bytes into the params
+                    // object: no more allocations than the old `json!` (#3759).
                     self.notify(
                         AGENT_FORWARD_DATA,
-                        json!({ "stream_id": stream_id, "data": encoded }),
+                        AgentForwardDataParams {
+                            stream_id: stream_id.clone(),
+                            data: b64.encode(&buf[..n]),
+                        }
+                        .into_params(),
                     );
                 }
                 Err(e) => {
@@ -405,7 +418,10 @@ impl AgentForwardRelay {
         }
         self.streams.lock().await.remove(&stream_id);
         self.tcp_readers.lock().await.remove(&stream_id);
-        self.notify(AGENT_FORWARD_CLOSE, json!({ "stream_id": stream_id }));
+        self.notify(
+            AGENT_FORWARD_CLOSE,
+            to_params(&AgentForwardCloseParams { stream_id }),
+        );
     }
 }
 
@@ -504,6 +520,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn test_relay() -> (
         Arc<AgentForwardRelay>,
