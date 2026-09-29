@@ -142,7 +142,12 @@ use termihub_core::monitoring::{
 /// Docker or WSL session id and streams that session backend's own monitoring
 /// provider. An older agent omits the flag and the desktop tells the user to
 /// update it; an older desktop ignores the flag.
-const AGENT_PROTOCOL_VERSION: &str = "0.21.0";
+/// Bumped to 0.22.0 for the additive `capabilities.sessionFiles` flag (#3242):
+/// `connection.files.*` now accept an agent-hosted SSH, Docker, FTP or WSL
+/// session id and browse inside that session through its own backend. An
+/// older agent omits the flag and the desktop tells the user to update it; an
+/// older desktop ignores the flag.
+const AGENT_PROTOCOL_VERSION: &str = "0.22.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -911,6 +916,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 embedded_server_activity: true,
                 session_processes: true,
                 session_monitoring: true,
+                session_files: true,
             },
         })
     })?;
@@ -1537,27 +1543,61 @@ fn register_connections_folders_delete(
 
 /// Resolve the [`FileBrowser`] capability for a `connection.files.*` request.
 ///
-/// Returns the single core [`LocalFileBrowser`] for local sessions/connections
-/// (and for the no-connection default). Other backends are not yet browsable
-/// from the agent. Converged onto `FileBrowser`, the one file-capability trait
-/// across core, desktop and agent — the near-duplicate `FileBackend` is retired
-/// (#2104).
+/// Resolve the [`FileBrowser`] for a `connection.files.*` operation (#3242).
+///
+/// - No `connection_id`: the agent host itself.
+/// - A session of this client: that session's own context, via
+///   [`SessionManagerApi::session_file_browser`] — the agent host for a local
+///   session, the remote host / container / FTP server / distribution for an
+///   SSH, Docker, FTP or WSL session (through the backend's own browser, run in
+///   the session daemon for a persistent session). The session must be running
+///   and held by this client: one it detached from or another desktop took
+///   over is refused with [`errors::SESSION_HELD_BY_OTHER`], so a client can
+///   never reach files through a session id that is not its own — exactly as
+///   for `connection.processes.*`.
+/// - Otherwise a saved local/shell connection resolves to the agent host; any
+///   other id is not found (it never falls back to the agent host).
+///
+/// Converged onto `FileBrowser`, the one file-capability trait across core,
+/// desktop and agent (#2104).
 async fn resolve_file_browser(
     session_manager: &Arc<dyn SessionManagerApi>,
     connection_store: &Arc<dyn ConnectionStoreApi>,
     connection_id: Option<String>,
-) -> Result<Box<dyn FileBrowser>, ErrorObjectOwned> {
+) -> Result<Arc<dyn FileBrowser + Send + Sync>, ErrorObjectOwned> {
     let id = match connection_id {
-        None => return Ok(Box::new(LocalFileBrowser::new())),
+        None => return Ok(Arc::new(LocalFileBrowser::new())),
         Some(id) => id,
     };
 
+    match session_manager.session_file_browser(&id).await {
+        Ok(browser) => return Ok(browser),
+        Err(SessionProcessError::Unknown) => {}
+        Err(SessionProcessError::Exited) => {
+            return Err(rpc_err(
+                errors::SESSION_NOT_RUNNING,
+                format!("Session {id} is not running"),
+            ))
+        }
+        Err(SessionProcessError::HeldElsewhere) => {
+            return Err(rpc_err(
+                errors::SESSION_HELD_BY_OTHER,
+                format!("Session {id} is not held by this client; attach it first"),
+            ))
+        }
+        Err(SessionProcessError::Unsupported(message)) => {
+            return Err(rpc_err(errors::FILE_BROWSING_NOT_SUPPORTED, message))
+        }
+    }
+
+    // A session manager that does not resolve session browsers (the default
+    // trait method) still serves its local sessions on the agent host.
     if let Some(type_id) = session_manager.get_session_type_id(&id).await {
         return match normalize_type_id(&type_id) {
-            "local" => Ok(Box::new(LocalFileBrowser::new())),
+            "local" => Ok(Arc::new(LocalFileBrowser::new())),
             other => Err(rpc_err(
                 errors::FILE_BROWSING_NOT_SUPPORTED,
-                format!("File browsing is not yet supported for '{other}' sessions"),
+                format!("File browsing is not supported for '{other}' sessions"),
             )),
         };
     }
@@ -1570,10 +1610,10 @@ async fn resolve_file_browser(
     })?;
 
     match connection.session_type.as_str() {
-        "local" | "shell" => Ok(Box::new(LocalFileBrowser::new())),
+        "local" | "shell" => Ok(Arc::new(LocalFileBrowser::new())),
         other => Err(rpc_err(
             errors::FILE_BROWSING_NOT_SUPPORTED,
-            format!("File browsing is not yet supported for '{other}' connections"),
+            format!("File browsing needs an open session for '{other}' connections"),
         )),
     }
 }
@@ -3641,10 +3681,11 @@ mod tests {
     /// 0.18.0 the `connection.create` error's `data.connect_failure`, and
     /// 0.19.0 its `auth_failed` kind (#3089), 0.20.0 the
     /// `sessionProcesses` capability (#3210), and 0.21.0 the
-    /// `sessionMonitoring` capability (#3871).
+    /// `sessionMonitoring` capability (#3871), and 0.22.0 the `sessionFiles`
+    /// capability (#3242).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.21.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.22.0");
     }
 
     // ── agent.forward.connect (desktop port forward, #3241) ────────
@@ -4737,11 +4778,23 @@ mod tests {
             .unwrap();
         let session_id = snapshot.id;
 
+        // A session this client does not hold is refused (#3242), exactly as
+        // for `connection.processes.*`.
         let result = dispatch(
             &handler,
             "connection.files.list",
             json!({"connection_id": session_id, "path": dir.path().to_str().unwrap()}),
             2,
+        )
+        .await;
+        assert_eq!(result["error"]["code"], errors::SESSION_HELD_BY_OTHER);
+
+        mgr.attach(&session_id).await.unwrap();
+        let result = dispatch(
+            &handler,
+            "connection.files.list",
+            json!({"connection_id": session_id, "path": dir.path().to_str().unwrap()}),
+            3,
         )
         .await;
         let entries = result["result"]["entries"].as_array().unwrap();
@@ -6570,4 +6623,7 @@ mod tests {
 
     /// `connection.monitoring.*` for agent-hosted sessions (#3871).
     mod monitoring_tests;
+
+    /// `connection.files.*` for agent-hosted sessions (#3242).
+    mod files_tests;
 }

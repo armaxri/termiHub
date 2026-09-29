@@ -52,7 +52,7 @@ pub struct Wsl {
     /// the replacement on its next iteration.
     output_tx: Arc<Mutex<Option<OutputSender>>>,
     /// File browser provider, created on connect.
-    file_browser_provider: Option<WslFileBrowser>,
+    file_browser_provider: Option<Arc<WslFileBrowser>>,
     /// System-monitoring provider, created on connect (#3182). Reads `/proc`
     /// inside the distribution via `wsl.exe -d <distro>` through the shared
     /// exec-based provider.
@@ -1201,9 +1201,9 @@ impl ConnectionType for Wsl {
         // Detect the UNC prefix once; share it between the file browser and
         // the silent setup task so we don't do the filesystem probe twice.
         let unc_prefix = wsl_unc_prefix(&distribution);
-        self.file_browser_provider = Some(WslFileBrowser {
+        self.file_browser_provider = Some(Arc::new(WslFileBrowser {
             unc_prefix: unc_prefix.clone(),
-        });
+        }));
 
         // Create the system-monitoring provider (#3182): reads `/proc` inside the
         // distribution via `wsl.exe -d <distro>`.
@@ -1325,7 +1325,13 @@ impl ConnectionType for Wsl {
     fn file_browser(&self) -> Option<&dyn FileBrowser> {
         self.file_browser_provider
             .as_ref()
-            .map(|p| p as &dyn FileBrowser)
+            .map(|p| p.as_ref() as &dyn FileBrowser)
+    }
+
+    fn file_browser_handle(&self) -> Option<Arc<dyn FileBrowser + Send + Sync>> {
+        self.file_browser_provider
+            .as_ref()
+            .map(|p| p.clone() as Arc<dyn FileBrowser + Send + Sync>)
     }
 
     fn process_manager(&self) -> Option<Arc<dyn ProcessManager + Send + Sync>> {
@@ -1604,6 +1610,7 @@ mod tests {
     fn file_browser_none_when_disconnected() {
         let wsl = Wsl::new();
         assert!(wsl.file_browser().is_none());
+        assert!(wsl.file_browser_handle().is_none());
     }
 
     // --- Drop guard (CORE-020) --------------------------------------------

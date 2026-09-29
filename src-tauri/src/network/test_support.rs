@@ -120,6 +120,7 @@ impl AgentRpcClient for FakeAgent {
             embedded_server_activity: false,
             session_processes: false,
             session_monitoring: false,
+            session_files: false,
             agent_version: "0.8.1".to_string(),
         })
     }

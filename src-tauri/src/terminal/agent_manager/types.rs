@@ -73,6 +73,13 @@ pub struct AgentCapabilities {
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub session_monitoring: bool,
+    /// Whether the agent browses files inside agent-hosted SSH, Docker, FTP
+    /// and WSL sessions through their own backends (protocol 0.22.0, #3242).
+    /// `false` for older agents, whose such sessions' file browser says to
+    /// update the agent.
+    #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub session_files: bool,
     /// Agent binary version string, e.g. "1.4.2".
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<String>", optional))]

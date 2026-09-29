@@ -622,12 +622,23 @@ impl RemoteProxy {
                 if let Ok(mut c) = self.remote_capabilities.lock() {
                     *c = parsed.clone();
                 }
-                // Set up file browser proxy if supported.
+                // Set up file browser proxy if supported. The agent browses
+                // a session by its remote session id: a local session on the
+                // agent host, an SSH/Docker/FTP/WSL session inside its own
+                // remote host, container, server or distribution — which only
+                // a 0.22.0+ agent (`sessionFiles`, #3242) serves. On an older
+                // agent the file browser says to update the agent.
                 if parsed.file_browser {
+                    let is_local = session_type == "local";
+                    let agent_browses_session = self
+                        .agent_manager
+                        .get_capabilities(self.agent_id())
+                        .is_some_and(|caps| caps.session_files);
                     self.file_browser_proxy = Some(RemoteFileBrowserProxy {
                         agent_id: self.agent_id.clone(),
                         remote_session_id: remote_sid.clone(),
                         agent_manager: self.agent_manager.clone(),
+                        agent_outdated: !is_local && !agent_browses_session,
                     });
                 }
                 // Set up monitoring proxy if supported.
@@ -701,7 +712,15 @@ pub struct RemoteFileBrowserProxy {
     agent_id: String,
     remote_session_id: String,
     agent_manager: Arc<dyn AgentRpcClient>,
+    /// The agent predates agent-hosted session file browsing (#3242): every
+    /// operation fails with the `agent_outdated` code — the file browser says
+    /// to update the agent — without a request the agent would only reject.
+    agent_outdated: bool,
 }
+
+/// Message of the `agent_outdated` file-browser failure (#3242).
+const FILES_AGENT_OUTDATED: &str =
+    "the remote agent is too old to browse files in this session; update the agent";
 
 impl RemoteFileBrowserProxy {
     /// Run a sync `send_request` on the blocking thread pool so its internal
@@ -711,6 +730,12 @@ impl RemoteFileBrowserProxy {
         method: &'static str,
         params: impl serde::Serialize,
     ) -> Result<Value, FileError> {
+        if self.agent_outdated {
+            return Err(FileError::OperationFailed(crate::utils::errors::with_code(
+                crate::utils::errors::codes::AGENT_OUTDATED,
+                FILES_AGENT_OUTDATED,
+            )));
+        }
         // Serialize the shared param DTO into the RPC `Value` here so every
         // call site stays a one-liner (DUP-001).
         let params =
@@ -1668,6 +1693,9 @@ mod tests {
         /// When set, `get_capabilities` reports an agent with this
         /// `session_monitoring` flag (#3871).
         session_monitoring: Option<bool>,
+        /// When set, `get_capabilities` reports an agent with this
+        /// `session_files` flag (#3242).
+        session_files: Option<bool>,
     }
 
     impl MockAgentRpcClient {
@@ -1680,6 +1708,7 @@ mod tests {
                 registered_monitoring_hosts: Mutex::new(Vec::new()),
                 session_processes: None,
                 session_monitoring: None,
+                session_files: None,
             }
         }
 
@@ -1692,6 +1721,7 @@ mod tests {
                 registered_monitoring_hosts: Mutex::new(Vec::new()),
                 session_processes: None,
                 session_monitoring: None,
+                session_files: None,
             }
         }
     }
@@ -1716,6 +1746,7 @@ mod tests {
                     embedded_server_activity: false,
                     session_processes: false,
                     session_monitoring: false,
+                    session_files: false,
                     agent_version: "mock".to_string(),
                 },
                 agent_version: "mock".to_string(),
@@ -1735,7 +1766,10 @@ mod tests {
         }
 
         fn get_capabilities(&self, _agent_id: &str) -> Option<AgentCapabilities> {
-            if self.session_processes.is_none() && self.session_monitoring.is_none() {
+            if self.session_processes.is_none()
+                && self.session_monitoring.is_none()
+                && self.session_files.is_none()
+            {
                 return None;
             }
             let mut caps: AgentCapabilities = serde_json::from_value(json!({
@@ -1745,6 +1779,7 @@ mod tests {
             .expect("minimal capabilities parse");
             caps.session_processes = self.session_processes.unwrap_or(false);
             caps.session_monitoring = self.session_monitoring.unwrap_or(false);
+            caps.session_files = self.session_files.unwrap_or(false);
             Some(caps)
         }
 
@@ -3934,6 +3969,9 @@ mod tests {
 
     /// Agent-hosted session monitoring routing and the old-agent fallback (#3871).
     mod monitoring_tests;
+
+    /// File browsing of agent-hosted sessions (#3242).
+    mod files_tests;
 
     /// #3408: a process RPC is "not supported" by the agent's code (surfaced as
     /// `AgentUnsupported`), never by message text.

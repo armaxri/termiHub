@@ -5,6 +5,29 @@ import { currentFileBrowsersView, mirrorFileBrowserIntent } from "@/store/fileBr
 
 import type { AppState, FileClipboard } from "../appStore";
 import { errorMessage } from "@/utils/errorMessage";
+import { parseBackendError } from "@/utils/backendErrorCode";
+import type { IpcErrorCode } from "@/types/generated/IpcErrorCode";
+
+const AGENT_OUTDATED_CODE: IpcErrorCode = "agent_outdated";
+
+/**
+ * Shown instead of a listing error when the session's remote agent predates
+ * agent-hosted session file browsing (#3242).
+ */
+export const FILES_AGENT_OUTDATED_MESSAGE =
+  "This session runs on a remote agent that is too old to browse its files. " +
+  "Update the agent on this host, then reconnect the session.";
+
+/**
+ * The message a failed session listing shows: an outdated remote agent gets
+ * an actionable "update the agent" text, anything else its own message.
+ */
+export function sessionListErrorMessage(err: unknown): string {
+  if (parseBackendError(err).code === AGENT_OUTDATED_CODE) {
+    return FILES_AGENT_OUTDATED_MESSAGE;
+  }
+  return errorMessage(err);
+}
 
 // Per-pane monotonic request sequence for the file-browser list operations
 // (SM-007). A directory listing is async: if the user navigates from folder A to
@@ -148,7 +171,7 @@ export const createFileBrowsersSlice: StateCreator<AppState, [], [], FileBrowser
       });
     } catch (err) {
       if (requestSeq !== sessionFileBrowserRequestSeq) return;
-      const message = errorMessage(err);
+      const message = sessionListErrorMessage(err);
       mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "session", error: message });
     }
   },
@@ -169,7 +192,7 @@ export const createFileBrowsersSlice: StateCreator<AppState, [], [], FileBrowser
       });
     } catch (err) {
       if (requestSeq !== sessionFileBrowserRequestSeq) return;
-      const message = errorMessage(err);
+      const message = sessionListErrorMessage(err);
       mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "session", error: message });
     }
   },

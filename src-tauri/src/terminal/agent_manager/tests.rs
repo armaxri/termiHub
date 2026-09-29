@@ -321,6 +321,7 @@ fn capabilities_round_trip_serialization() {
         embedded_server_activity: false,
         session_processes: false,
         session_monitoring: false,
+        session_files: false,
         agent_version: String::new(),
         available_shells: vec!["/bin/sh".to_string()],
         available_serial_ports: vec!["/dev/ttyS0".to_string()],
@@ -876,6 +877,7 @@ fn make_agent_connection_with_tx(command_tx: UnboundedSender<AgentIoCommand>) ->
             embedded_server_activity: false,
             session_processes: false,
             session_monitoring: false,
+            session_files: false,
             agent_version: String::new(),
         },
         ki_activity: crate::terminal::agent_ki_prompt::AgentPromptActivity::new(),
@@ -1016,6 +1018,7 @@ fn make_wedged_agent_connection() -> (AgentConnection, tokio::task::JoinHandle<(
             embedded_server_activity: false,
             session_processes: false,
             session_monitoring: false,
+            session_files: false,
             agent_version: String::new(),
         },
         ki_activity: crate::terminal::agent_ki_prompt::AgentPromptActivity::new(),
@@ -1564,6 +1567,30 @@ fn capabilities_without_session_monitoring_default_to_false() {
     assert!(caps.session_monitoring);
     assert_eq!(
         serde_json::to_value(&caps).unwrap()["sessionMonitoring"],
+        json!(true)
+    );
+}
+
+#[test]
+fn capabilities_without_session_files_default_to_false() {
+    // A pre-0.22.0 agent's `initialize` lacks `sessionFiles` (#3242) → the
+    // desktop tells the user to update the agent instead of browsing an
+    // agent-hosted SSH/Docker/FTP/WSL session it cannot serve.
+    let caps: AgentCapabilities = serde_json::from_value(json!({
+        "connectionTypes": [],
+        "maxSessions": 5,
+    }))
+    .unwrap();
+    assert!(!caps.session_files);
+    let caps: AgentCapabilities = serde_json::from_value(json!({
+        "connectionTypes": [],
+        "maxSessions": 5,
+        "sessionFiles": true,
+    }))
+    .unwrap();
+    assert!(caps.session_files);
+    assert_eq!(
+        serde_json::to_value(&caps).unwrap()["sessionFiles"],
         json!(true)
     );
 }

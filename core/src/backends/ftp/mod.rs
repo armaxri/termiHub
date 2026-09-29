@@ -79,7 +79,7 @@ pub struct Ftp {
     /// File browser bound to this connection; created on connect. It runs its
     /// own control connection (opened lazily) so it can offer the `&self`-based
     /// [`FileBrowser`] API independently of this session's mutable stream.
-    browser: Option<FtpFileBrowser>,
+    browser: Option<Arc<FtpFileBrowser>>,
     /// Background keep-alive task sending periodic `NOOP`s on the browsing
     /// connection; aborted on [`disconnect`](ConnectionType::disconnect) and on
     /// drop so no task outlives the session.
@@ -557,7 +557,7 @@ impl ConnectionType for Ftp {
         }
 
         self.client = Some(stream);
-        self.browser = Some(browser);
+        self.browser = Some(Arc::new(browser));
         Ok(())
     }
 
@@ -614,7 +614,15 @@ impl ConnectionType for Ftp {
     }
 
     fn file_browser(&self) -> Option<&dyn FileBrowser> {
-        self.browser.as_ref().map(|b| b as &dyn FileBrowser)
+        self.browser
+            .as_ref()
+            .map(|b| b.as_ref() as &dyn FileBrowser)
+    }
+
+    fn file_browser_handle(&self) -> Option<Arc<dyn FileBrowser + Send + Sync>> {
+        self.browser
+            .as_ref()
+            .map(|b| b.clone() as Arc<dyn FileBrowser + Send + Sync>)
     }
 }
 
@@ -917,8 +925,10 @@ mod tests {
         let mut ftp = Ftp::new();
         // No browser before connecting.
         assert!(ftp.file_browser().is_none());
+        assert!(ftp.file_browser_handle().is_none());
         // Once a browser is bound (as `connect` does), it is exposed.
-        ftp.browser = Some(FtpFileBrowser::new(FtpConfig::default()));
+        ftp.browser = Some(Arc::new(FtpFileBrowser::new(FtpConfig::default())));
         assert!(ftp.file_browser().is_some());
+        assert!(ftp.file_browser_handle().is_some());
     }
 }

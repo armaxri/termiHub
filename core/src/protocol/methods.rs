@@ -299,6 +299,12 @@ pub struct Capabilities {
     /// as `false`) on older agents, which monitor only `"self"` and saved SSH
     /// connections.
     pub session_monitoring: bool,
+    /// Whether the `connection.files.*` methods accept an agent-hosted SSH,
+    /// Docker, FTP or WSL **session id** as `connection_id`, browsing inside
+    /// that session's remote host, container, FTP server or distribution
+    /// through its own backend (protocol 0.22.0, #3242). Absent (read as
+    /// `false`) on older agents, which browse local sessions only.
+    pub session_files: bool,
 }
 
 /// One prompt of a [`KbdInteractivePromptNotification`] round.
@@ -2424,6 +2430,7 @@ mod tests {
                 embedded_server_activity: true,
                 session_processes: true,
                 session_monitoring: true,
+                session_files: true,
                 available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
                 available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
                 docker_available: false,
@@ -2442,6 +2449,8 @@ mod tests {
         assert_eq!(v["capabilities"]["sessionProcesses"], true);
         // #3871: agent-hosted session monitoring.
         assert_eq!(v["capabilities"]["sessionMonitoring"], true);
+        // #3242: agent-hosted session file browsing.
+        assert_eq!(v["capabilities"]["sessionFiles"], true);
         assert!(v["capabilities"]["availableDockerImages"]
             .as_array()
             .unwrap()
