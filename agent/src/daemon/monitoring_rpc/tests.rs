@@ -277,3 +277,37 @@ async fn a_detached_session_refuses_to_subscribe() {
     assert!(!channel.has_sink(), "a failed subscribe leaves no sink");
     assert_eq!(channel.pending_len(), 0);
 }
+
+/// A distroless container's docker-stats sample keeps its source and its
+/// unavailable metrics across the daemon socket and into the desktop's
+/// notification.
+#[tokio::test]
+async fn a_docker_stats_sample_keeps_its_source_end_to_end() {
+    let mut value = serde_json::to_value(stats("distroless")).unwrap();
+    value["source"] = "dockerStats".into();
+    value["unavailableMetrics"] = serde_json::json!(["disk", "loadAverage"]);
+    let sample: SystemStats = serde_json::from_value(value).unwrap();
+
+    let channel = MonitoringChannel::default();
+    let (stats_tx, mut stats_rx) = mpsc::channel(4);
+    let (status_tx, _status_rx) = mpsc::channel(4);
+    channel.install_sink(MonitorSink {
+        stats: stats_tx,
+        status: status_tx,
+    });
+    channel.deliver(&encode(&MonitoringEvent::Stats {
+        stats: Box::new(sample),
+    }));
+    let received = stats_rx.recv().await.unwrap();
+
+    let notification = serde_json::to_value(crate::protocol::methods::MonitoringData::new(
+        "sess".into(),
+        received,
+    ))
+    .unwrap();
+    assert_eq!(notification["source"], "dockerStats");
+    assert_eq!(
+        notification["unavailableMetrics"],
+        serde_json::json!(["disk", "loadAverage"])
+    );
+}
