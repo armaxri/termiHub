@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
+import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
@@ -57,8 +58,8 @@ const baseSettings = {
   experimentalFeaturesEnabled: false,
 };
 
-function render(_container: HTMLElement, root: Root) {
-  act(() => {
+async function render(_container: HTMLElement, root: Root) {
+  await act(async () => {
     root.render(
       React.createElement(TooltipProvider, {
         delayDuration: 0,
@@ -66,6 +67,7 @@ function render(_container: HTMLElement, root: Root) {
       })
     );
   });
+  await flushAsync();
 }
 
 function typeInto(input: HTMLInputElement, value: string) {
@@ -102,19 +104,19 @@ describe("ConnectionList — filter/search", () => {
     container.remove();
   });
 
-  it("renders a filter input in the Connections header", () => {
-    render(container, root);
+  it("renders a filter input in the Connections header", async () => {
+    await render(container, root);
     expect(container.querySelector('[data-testid="connection-filter-input"]')).not.toBeNull();
   });
 
-  it("live-filters connections by name", () => {
+  it("live-filters connections by name", async () => {
     seedConnectionsRegion({
       connections: [
         makeConnection({ id: "conn-1", name: "web-server" }),
         makeConnection({ id: "conn-2", name: "database" }),
       ],
     });
-    render(container, root);
+    await render(container, root);
 
     const input = container.querySelector(
       '[data-testid="connection-filter-input"]'
@@ -125,12 +127,12 @@ describe("ConnectionList — filter/search", () => {
     expect(container.querySelector('[data-testid="connection-item-conn-2"]')).toBeNull();
   });
 
-  it("auto-expands a collapsed folder that contains a match", () => {
+  it("auto-expands a collapsed folder that contains a match", async () => {
     seedConnectionsRegion({
       folders: [makeFolder({ id: "folder-1", isExpanded: false })],
       connections: [makeConnection({ id: "conn-1", name: "web-server", folderId: "folder-1" })],
     });
-    render(container, root);
+    await render(container, root);
 
     // Collapsed: nested connection not rendered yet.
     expect(container.querySelector('[data-testid="connection-item-conn-1"]')).toBeNull();
@@ -144,7 +146,7 @@ describe("ConnectionList — filter/search", () => {
     expect(container.querySelector('[data-testid="connection-item-conn-1"]')).not.toBeNull();
   });
 
-  it("Enter connects the top hit", () => {
+  it("Enter connects the top hit", async () => {
     const addTab = vi.fn();
     useAppStore.setState({ addTab });
     seedConnectionsRegion({
@@ -153,7 +155,7 @@ describe("ConnectionList — filter/search", () => {
         makeConnection({ id: "conn-2", name: "web-server" }),
       ],
     });
-    render(container, root);
+    await render(container, root);
 
     const input = container.querySelector(
       '[data-testid="connection-filter-input"]'
@@ -167,14 +169,14 @@ describe("ConnectionList — filter/search", () => {
     });
   });
 
-  it("Escape clears the query and restores all connections", () => {
+  it("Escape clears the query and restores all connections", async () => {
     seedConnectionsRegion({
       connections: [
         makeConnection({ id: "conn-1", name: "web-server" }),
         makeConnection({ id: "conn-2", name: "database" }),
       ],
     });
-    render(container, root);
+    await render(container, root);
 
     const input = container.querySelector(
       '[data-testid="connection-filter-input"]'

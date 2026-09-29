@@ -14,6 +14,7 @@ import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarn
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, ConnectionFolder } from "@/types/connection";
 import type { RemoteAgentDefinition } from "@/types/connection";
+import { flushAsync } from "@/test/flushAsync";
 
 vi.mock("@/services/api", () => ({
   listAvailableShells: vi.fn(() => Promise.resolve([])),
@@ -76,6 +77,19 @@ const baseSettings = {
 setupConnectionsRegion();
 setupSettingsRegion();
 
+/** Mount the list and let its projection subscriptions settle inside act (#3860). */
+async function renderList(root: Root): Promise<void> {
+  await act(async () => {
+    root.render(
+      React.createElement(TooltipProvider, {
+        delayDuration: 0,
+        children: React.createElement(ConnectionList),
+      })
+    );
+  });
+  await flushAsync();
+}
+
 describe("ConnectionList — multi-select", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -93,19 +107,12 @@ describe("ConnectionList — multi-select", () => {
     container.remove();
   });
 
-  it("plain click selects a single connection", () => {
+  it("plain click selects a single connection", async () => {
     seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" }), makeConnection({ id: "conn-2" })],
     });
 
-    act(() => {
-      root.render(
-        React.createElement(TooltipProvider, {
-          delayDuration: 0,
-          children: React.createElement(ConnectionList),
-        })
-      );
-    });
+    await renderList(root);
 
     const item = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
     act(() => {
@@ -117,19 +124,12 @@ describe("ConnectionList — multi-select", () => {
     expect(item2.classList.contains("connection-tree__item--selected")).toBe(false);
   });
 
-  it("plain click on a different connection moves selection", () => {
+  it("plain click on a different connection moves selection", async () => {
     seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" }), makeConnection({ id: "conn-2" })],
     });
 
-    act(() => {
-      root.render(
-        React.createElement(TooltipProvider, {
-          delayDuration: 0,
-          children: React.createElement(ConnectionList),
-        })
-      );
-    });
+    await renderList(root);
 
     const item1 = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
     const item2 = container.querySelector('[data-testid="connection-item-conn-2"]') as HTMLElement;
@@ -145,19 +145,12 @@ describe("ConnectionList — multi-select", () => {
     expect(item2.classList.contains("connection-tree__item--selected")).toBe(true);
   });
 
-  it("Ctrl+Click adds a second connection to the selection", () => {
+  it("Ctrl+Click adds a second connection to the selection", async () => {
     seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" }), makeConnection({ id: "conn-2" })],
     });
 
-    act(() => {
-      root.render(
-        React.createElement(TooltipProvider, {
-          delayDuration: 0,
-          children: React.createElement(ConnectionList),
-        })
-      );
-    });
+    await renderList(root);
 
     const item1 = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
     const item2 = container.querySelector('[data-testid="connection-item-conn-2"]') as HTMLElement;
@@ -173,19 +166,12 @@ describe("ConnectionList — multi-select", () => {
     expect(item2.classList.contains("connection-tree__item--selected")).toBe(true);
   });
 
-  it("Ctrl+Click on an already-selected connection deselects it", () => {
+  it("Ctrl+Click on an already-selected connection deselects it", async () => {
     seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" }), makeConnection({ id: "conn-2" })],
     });
 
-    act(() => {
-      root.render(
-        React.createElement(TooltipProvider, {
-          delayDuration: 0,
-          children: React.createElement(ConnectionList),
-        })
-      );
-    });
+    await renderList(root);
 
     const item1 = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
     const item2 = container.querySelector('[data-testid="connection-item-conn-2"]') as HTMLElement;
@@ -205,19 +191,12 @@ describe("ConnectionList — multi-select", () => {
     expect(item2.classList.contains("connection-tree__item--selected")).toBe(true);
   });
 
-  it("Meta+Click (macOS) also toggles selection", () => {
+  it("Meta+Click (macOS) also toggles selection", async () => {
     seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" }), makeConnection({ id: "conn-2" })],
     });
 
-    act(() => {
-      root.render(
-        React.createElement(TooltipProvider, {
-          delayDuration: 0,
-          children: React.createElement(ConnectionList),
-        })
-      );
-    });
+    await renderList(root);
 
     const item1 = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
     const item2 = container.querySelector('[data-testid="connection-item-conn-2"]') as HTMLElement;
@@ -233,7 +212,7 @@ describe("ConnectionList — multi-select", () => {
     expect(item2.classList.contains("connection-tree__item--selected")).toBe(true);
   });
 
-  it("Shift+Click selects a range of connections in order", () => {
+  it("Shift+Click selects a range of connections in order", async () => {
     seedConnectionsRegion({
       connections: [
         makeConnection({ id: "conn-1" }),
@@ -242,14 +221,7 @@ describe("ConnectionList — multi-select", () => {
       ],
     });
 
-    act(() => {
-      root.render(
-        React.createElement(TooltipProvider, {
-          delayDuration: 0,
-          children: React.createElement(ConnectionList),
-        })
-      );
-    });
+    await renderList(root);
 
     const item1 = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
     const item2 = container.querySelector('[data-testid="connection-item-conn-2"]') as HTMLElement;
@@ -267,7 +239,7 @@ describe("ConnectionList — multi-select", () => {
     expect(item3.classList.contains("connection-tree__item--selected")).toBe(true);
   });
 
-  it("Shift+Click range works in reverse direction", () => {
+  it("Shift+Click range works in reverse direction", async () => {
     seedConnectionsRegion({
       connections: [
         makeConnection({ id: "conn-1" }),
@@ -276,14 +248,7 @@ describe("ConnectionList — multi-select", () => {
       ],
     });
 
-    act(() => {
-      root.render(
-        React.createElement(TooltipProvider, {
-          delayDuration: 0,
-          children: React.createElement(ConnectionList),
-        })
-      );
-    });
+    await renderList(root);
 
     const item1 = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
     const item2 = container.querySelector('[data-testid="connection-item-conn-2"]') as HTMLElement;
@@ -301,19 +266,12 @@ describe("ConnectionList — multi-select", () => {
     expect(item3.classList.contains("connection-tree__item--selected")).toBe(true);
   });
 
-  it("Escape key clears the selection", () => {
+  it("Escape key clears the selection", async () => {
     seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" }), makeConnection({ id: "conn-2" })],
     });
 
-    act(() => {
-      root.render(
-        React.createElement(TooltipProvider, {
-          delayDuration: 0,
-          children: React.createElement(ConnectionList),
-        })
-      );
-    });
+    await renderList(root);
 
     const item1 = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
     const item2 = container.querySelector('[data-testid="connection-item-conn-2"]') as HTMLElement;
@@ -334,19 +292,12 @@ describe("ConnectionList — multi-select", () => {
     expect(container.querySelectorAll(".connection-tree__item--selected").length).toBe(0);
   });
 
-  it("clicking on empty space in the tree clears selection", () => {
+  it("clicking on empty space in the tree clears selection", async () => {
     seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" })],
     });
 
-    act(() => {
-      root.render(
-        React.createElement(TooltipProvider, {
-          delayDuration: 0,
-          children: React.createElement(ConnectionList),
-        })
-      );
-    });
+    await renderList(root);
 
     const item = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
     act(() => {
@@ -364,7 +315,7 @@ describe("ConnectionList — multi-select", () => {
     expect(item.classList.contains("connection-tree__item--selected")).toBe(false);
   });
 
-  it("connections inside expanded folders are included in Shift+Click range", () => {
+  it("connections inside expanded folders are included in Shift+Click range", async () => {
     const folder = makeFolder({ id: "folder-1", isExpanded: true });
     seedConnectionsRegion({
       folders: [folder],
@@ -375,14 +326,7 @@ describe("ConnectionList — multi-select", () => {
       ],
     });
 
-    act(() => {
-      root.render(
-        React.createElement(TooltipProvider, {
-          delayDuration: 0,
-          children: React.createElement(ConnectionList),
-        })
-      );
-    });
+    await renderList(root);
 
     const item1 = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
     const item3 = container.querySelector('[data-testid="connection-item-conn-3"]') as HTMLElement;
