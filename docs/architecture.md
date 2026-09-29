@@ -2256,8 +2256,13 @@ STREAM` and `MDTM` are supported, and `SIZE` + `MDTM` fingerprint the remote
   store under its existing store key (the jump-host resolver's rule, so named
   credentials and per-file scopes apply) and connects unattended. It never
   prompts: a locked store or a secret that is not stored keeps the row
-  **paused** with "Needs credentials — open the connection to resume"; opening
-  the connection or unlocking the store and clicking **Resume** continues it.
+  **paused** with "Needs credentials — open the connection to resume". Such a
+  row resumes by itself (#3883) when a session opens for its saved connection
+  or the credential store is unlocked: it goes through the normal resume path
+  inside the unattended scope, so it never prompts, and a secret that is still
+  missing pauses it again. Only rows paused for this reason resume on their
+  own; one the user pauses, resumes or cancels leaves the in-memory wait list
+  (`files/transfer/relaunch_auto.rs`).
   The secret lives only in the relaunch's in-memory settings, never in
   `transfers.json`.
 - **Desktop and agent** — the `ftp` cargo feature (on by default) registers the backend in both

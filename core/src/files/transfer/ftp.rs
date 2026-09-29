@@ -24,7 +24,7 @@
 //! - Without `MDTM` only the size can be compared, so a resume is size-only.
 //! - A **rehydrated** transfer (relaunched after an app restart) starts from its
 //!   persisted checkpoint when the source still matches the persisted size and
-//!   mtime (#3572) — see [`rehydrate_start_offset`].
+//!   mtime (#3572) — see `rehydrate_start_offset`.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -260,7 +260,7 @@ async fn cleanup_partial(direction: FtpDirection, local_path: &str) {
 /// transfer, the persisted `resume_offset` for a **rehydrated** transfer
 /// relaunched after an app restart (#3206). The checkpoint is kept only when the
 /// source still matches the persisted size and mtime (see
-/// [`rehydrate_start_offset`]) and the server supports `REST STREAM`; the
+/// `rehydrate_start_offset`) and the server supports `REST STREAM`; the
 /// destination is still byte-verified before the first append.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_ftp_transfer(

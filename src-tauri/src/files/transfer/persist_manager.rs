@@ -21,6 +21,7 @@ use super::persist::{
     PersistedRemoteSource, PersistedTransfer, PersistedTransferStatus, PersistedTransferStore,
 };
 use super::persist_storage::TransferPersistenceStorage;
+use super::relaunch_auto::CredentialWaits;
 use super::TransferDirection;
 use crate::connection::recovery::RecoveryWarning;
 
@@ -50,6 +51,8 @@ pub struct TransferPersistenceManager {
     /// Ids of the folder pastes that were still recorded when this process
     /// started (#3630): each is a paste a previous run never finished.
     interrupted_pastes: Mutex<Vec<String>>,
+    /// The rehydrated transfers paused for credentials (#3883), in memory only.
+    credential_waits: CredentialWaits,
 }
 
 impl TransferPersistenceManager {
@@ -106,6 +109,7 @@ impl TransferPersistenceManager {
             writer,
             recovery_warnings: Mutex::new(warnings),
             interrupted_pastes: Mutex::new(interrupted),
+            credential_waits: CredentialWaits::default(),
         };
         if dropped > 0 {
             tracing::debug!(
@@ -115,6 +119,12 @@ impl TransferPersistenceManager {
             manager.schedule_write(&manager.lock());
         }
         manager
+    }
+
+    /// The rehydrated transfers paused for credentials, waiting to resume on
+    /// their own (#3883).
+    pub(crate) fn credential_waits(&self) -> &CredentialWaits {
+        &self.credential_waits
     }
 
     /// Take ownership of any recovery warnings (only the first call returns them).
@@ -279,6 +289,7 @@ impl TransferPersistenceManager {
     /// Used to cancel a rehydrated row with no live handle: exactly one caller
     /// wins the record, so two racing cancels never both report it.
     pub fn take_record(&self, transfer_id: &str) -> Option<PersistedTransfer> {
+        self.credential_waits.forget(transfer_id);
         let mut store = self.lock();
         let record = store.get(transfer_id).cloned()?;
         store.remove(transfer_id);

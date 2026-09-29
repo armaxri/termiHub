@@ -312,6 +312,9 @@ pub(crate) async fn resume_or_relaunch(
         // No durable queue this run: only a live handle can be resumed.
         return registry.resume(transfer_id);
     };
+    // A resume by the user, or by a trigger (#3883): either way the row stops
+    // waiting for credentials. A relaunch blocked again puts it back.
+    persist.credential_waits().forget(transfer_id);
     match decide_resume(transfer_id, registry, &persist) {
         ResumeDecision::Signaled => true,
         ResumeDecision::Unknown => false,
@@ -719,6 +722,11 @@ fn sources<'a>(
 fn block_row(app_handle: &AppHandle, record: &PersistedTransfer, blocked: RelaunchBlocked) {
     match blocked {
         RelaunchBlocked::NeedsCredentials => {
+            // Resume by itself once the connection opens or the store unlocks
+            // (#3883).
+            if let Some(persist) = app_handle.try_state::<TransferPersistenceManager>() {
+                super::relaunch_auto::note_blocked(persist.credential_waits(), record, &blocked);
+            }
             fold_row(app_handle, &paused_progress(record, blocked.message()));
         }
         RelaunchBlocked::Failed(message) => fail_row(app_handle, record, message),
