@@ -7,6 +7,11 @@
  */
 
 import type { SettingsSchema, SettingsField, Condition } from "@/types/schema";
+import type { PasswordPromptInfo } from "@/types/generated/PasswordPromptInfo";
+
+// Generated via ts-rs from the Rust `PasswordPromptInfo` in
+// `core/src/connection/schema_defaults.rs` (#3088).
+export type { PasswordPromptInfo };
 
 /**
  * Build a default settings object from a schema.
@@ -75,18 +80,6 @@ function evaluateCondition(condition: Condition, settings: Record<string, unknow
   const actual = settings[condition.field];
   // Use JSON comparison for robust value matching (handles strings, numbers, booleans)
   return JSON.stringify(actual) === JSON.stringify(condition.equals);
-}
-
-/**
- * Information about a password field that should be prompted at connect time.
- */
-export interface PasswordPromptInfo {
-  /** The settings key containing the host/identifier for the prompt dialog. */
-  hostKey: string;
-  /** The settings key containing the username for the prompt dialog. */
-  usernameKey: string;
-  /** The settings key where the password value lives. */
-  passwordKey: string;
 }
 
 /**

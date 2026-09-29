@@ -72,6 +72,8 @@ pub fn is_field_visible(field: &SettingsField, settings: &Settings) -> bool {
 
 /// Information about a password field that should be prompted at connect time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct PasswordPromptInfo {
     /// The settings key containing the host/identifier for the prompt dialog.

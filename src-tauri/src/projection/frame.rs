@@ -24,6 +24,8 @@ use serde_json::Value;
 /// The result of an intent is never returned inline; it is always a projection
 /// diff on the affected region(s). The [`IntentAck`] is only a receipt.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct Intent {
     /// Client-generated ULID; correlates the ack (and any optimistic echo).
@@ -31,6 +33,7 @@ pub struct Intent {
     /// Dotted `<domain>.<action>`, e.g. `"tunnel.start"`, `"layout.moveTab"`.
     pub kind: String,
     /// Kind-specific, serialisable payload; validated backend-side.
+    #[cfg_attr(test, ts(type = "unknown"))]
     pub payload: Value,
     /// Which attached client dispatched it (fan-out / audit identity).
     pub client_id: String,
@@ -38,6 +41,8 @@ pub struct Intent {
 
 /// Whether the dispatcher accepted or rejected an [`Intent`].
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum IntentStatus {
     Accepted,
@@ -46,6 +51,9 @@ pub enum IntentStatus {
 
 /// Error detail attached to a rejected [`IntentAck`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "IntentError"))]
 #[serde(rename_all = "camelCase")]
 pub struct IntentErrorInfo {
     pub code: String,
@@ -55,14 +63,19 @@ pub struct IntentErrorInfo {
 /// A region advanced by an intent, so a client can await the confirming diff
 /// before clearing an optimistic echo.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ProducedRegion {
     pub region: String,
+    #[cfg_attr(test, ts(type = "number"))]
     pub version: u64,
 }
 
 /// Receipt for a dispatched [`Intent`] (channel 1 reply).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct IntentAck {
     /// Echoes the request's `intentId`.
@@ -70,9 +83,11 @@ pub struct IntentAck {
     pub status: IntentStatus,
     /// Present iff `status == rejected`.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub error: Option<IntentErrorInfo>,
     /// Regions this intent advanced. Empty for no-op / query intents.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub produced: Option<Vec<ProducedRegion>>,
 }
 
@@ -118,6 +133,8 @@ impl IntentAck {
 /// nothing to the wire, and the per-variant literal `kind` markers are what let
 /// deserialisation tell a snapshot from a diff.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(untagged)]
 pub enum ProjectionFrame {
     Snapshot(SnapshotFrame),
@@ -149,6 +166,8 @@ impl ProjectionFrame {
 /// deserialise into it — that mismatch is what lets the `untagged`
 /// [`ProjectionFrame`] discriminate the two frames.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum SnapshotKind {
     #[default]
@@ -158,6 +177,8 @@ pub enum SnapshotKind {
 /// The `kind` discriminator of a [`DiffFrame`] — always `"diff"`. See
 /// [`SnapshotKind`] for why this is a single-variant enum.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum DiffKind {
     #[default]
@@ -168,6 +189,8 @@ pub enum DiffKind {
 ///
 /// Emitted on attach and on resync only; steady state is [`DiffFrame`]s.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotFrame {
     /// Discriminator (`"snapshot"`); carried on the struct so the bare
@@ -178,8 +201,10 @@ pub struct SnapshotFrame {
     pub kind: SnapshotKind,
     pub region: String,
     /// `u64` monotonic; the cache adopts this as its baseline.
+    #[cfg_attr(test, ts(type = "number"))]
     pub version: u64,
     /// The complete, render-ready view model for the region.
+    #[cfg_attr(test, ts(type = "unknown"))]
     pub view: Value,
 }
 
@@ -188,6 +213,8 @@ pub struct SnapshotFrame {
 /// `baseVersion` MUST equal the cache's current version, else the client
 /// detects a gap and calls `resync`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct DiffFrame {
     /// Discriminator (`"diff"`); carried on the struct so this frame tags
@@ -197,8 +224,10 @@ pub struct DiffFrame {
     pub kind: DiffKind,
     pub region: String,
     /// MUST equal the cache's current version, else it is a gap.
+    #[cfg_attr(test, ts(type = "number"))]
     pub base_version: u64,
     /// `== base_version + 1`.
+    #[cfg_attr(test, ts(type = "number"))]
     pub version: u64,
     /// Ordered mutations to apply to the cached view model.
     pub ops: Vec<DiffOp>,
@@ -210,16 +239,30 @@ pub struct DiffFrame {
 /// `replace`). [`DiffOp::Semantic`] is the per-domain compact-op escape hatch
 /// reserved by the design; it is **unused** in Phase 1.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(tag = "op", rename_all = "lowercase")]
 pub enum DiffOp {
     /// RFC 6902 `replace`.
-    Replace { path: String, value: Value },
+    Replace {
+        path: String,
+        #[cfg_attr(test, ts(type = "unknown"))]
+        value: Value,
+    },
     /// RFC 6902 `add`.
-    Add { path: String, value: Value },
+    Add {
+        path: String,
+        #[cfg_attr(test, ts(type = "unknown"))]
+        value: Value,
+    },
     /// RFC 6902 `remove`.
     Remove { path: String },
     /// Escape hatch: a compact per-domain semantic op. Reserved, unused in
     /// Phase 1; has no RFC 6902 mapping and is never emitted by the default
     /// structural differ.
-    Semantic { name: String, data: Value },
+    Semantic {
+        name: String,
+        #[cfg_attr(test, ts(type = "unknown"))]
+        data: Value,
+    },
 }

@@ -455,6 +455,8 @@ pub async fn remote_desktop_cert_decision(
 /// One remembered RDP host and the certificate fingerprints trusted for it,
 /// for the trust-management settings UI (#1784).
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct RdpTrustedHost {
     /// Host key (`host:port`) as stored in the trust store.
     pub host: String,

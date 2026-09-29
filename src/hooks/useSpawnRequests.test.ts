@@ -85,6 +85,7 @@ function containerRequest(overrides: Partial<SpawnRequestPayload> = {}): SpawnRe
 }
 
 const SAMPLE_SHELL_SPAWN: ShellSpawn = {
+  type: "local",
   settings: { startingDirectory: "/home/user/app", shellIntegration: true },
   title: "app (Spawned)",
   spawned: true,

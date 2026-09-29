@@ -14,6 +14,7 @@ import type { CustomLanguageGrammar } from "./generated/CustomLanguageGrammar";
 import type { UpdateSettings } from "./generated/UpdateSettings";
 import type { AppSettings } from "./generated/AppSettings";
 import type { AgentCapabilities } from "./generated/AgentCapabilities";
+import type { Writability } from "./generated/Writability";
 
 /**
  * Live state of a single in-flight SFTP transfer, keyed by its `transferId` in
@@ -298,4 +299,5 @@ export type { FileEntry } from "./generated/FileEntry";
  * - `"unknown"` — the probe was inconclusive; callers treat it as writable and
  *   attempt the save so a false negative never blocks editing.
  */
-export type Writability = "writable" | "readOnly" | "unknown";
+// Generated from the Rust `Writability` via ts-rs (#3088).
+export type { Writability };

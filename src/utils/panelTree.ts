@@ -1,6 +1,8 @@
 import { LeafPanel, PanelNode, SplitContainer, DropEdge, TabGroup } from "@/types/terminal";
+import type { FocusDirection } from "@/types/generated/FocusDirection";
 
-export type FocusDirection = "up" | "down" | "left" | "right";
+// Generated from the Rust `FocusDirection` (core/src/layout/panel_tree.rs) via ts-rs (#3088).
+export type { FocusDirection };
 
 /** Total number of tabs across every leaf of a panel tree. */
 export function countTabsInTree(root: PanelNode): number {

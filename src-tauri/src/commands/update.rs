@@ -31,6 +31,8 @@ fn is_ci_dev_build() -> bool {
 
 /// Build-time information exposed to the frontend.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct AppInfo {
     /// Running version string, including `-dev` suffix for dev builds.

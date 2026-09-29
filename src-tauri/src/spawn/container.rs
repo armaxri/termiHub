@@ -29,9 +29,12 @@ pub const DEFAULT_MOUNT_TARGET: &str = "/workspace";
 /// `create_connection("docker", …)` plus a display title carrying the
 /// "Spawned" marker for the tab badge.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ContainerSpawn {
     /// Docker backend settings (camelCase JSON) for the spawned session.
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
     pub settings: serde_json::Value,
     /// Human-readable tab title, e.g. `"Container: ubuntu:22.04 (Spawned)"`.
     pub title: String,

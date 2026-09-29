@@ -35,6 +35,8 @@ const DEFAULT_REMOTE_PATH: &str = agent_install::POSIX_DEFAULT_INSTALL_PATH;
 
 /// Result of probing a remote host for the agent binary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentProbeResult {
     /// Whether the agent binary was found on the remote host.
@@ -114,9 +116,12 @@ pub fn probe_remote_agent(
 
 /// Configuration for deploying the agent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentDeployConfig {
     /// Override the remote install path (defaults to `~/.local/bin/termihub-agent`).
+    #[cfg_attr(test, ts(optional))]
     pub remote_path: Option<String>,
 }
 
@@ -135,6 +140,8 @@ pub struct AgentDeployProgress {
 /// update is requested. Surfaced to the Update dialog so the user can see who
 /// will be cut off before confirming a forced update (#1349).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectedHost {
     /// Agent-assigned id for this client connection.
@@ -155,6 +162,8 @@ pub struct ConnectedHost {
 /// connected. The desktop then shows the Update dialog's warning and may retry
 /// via `update_agent_force`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum AgentDeployResult {
     /// The binary was deployed/updated. `success` reflects the post-install
@@ -169,6 +178,7 @@ pub enum AgentDeployResult {
         /// (`%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe`) differs from the
         /// POSIX default and should be stored as the connection's agent path.
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
         installed_path: Option<String>,
     },
     /// The update was blocked by the connected-host guard: other hosts are

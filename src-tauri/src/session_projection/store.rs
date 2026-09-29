@@ -87,6 +87,8 @@ pub enum EndReason {
 /// `TerminalExitReason` (#2615, part of #2612/#2564). Serialised lowercase so the
 /// frontend keys on `"clean"` / `"dropped"` / `"killed"` directly.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum TerminalExitReason {
     /// The process exited normally (exit code 0 / graceful logout).
