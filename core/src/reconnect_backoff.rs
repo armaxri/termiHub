@@ -30,6 +30,8 @@ use serde::{Deserialize, Serialize};
 
 /// Tunables for the exponential backoff schedule.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct BackoffConfig {
     /// Delay before the first retry, in ms.
@@ -40,6 +42,7 @@ pub struct BackoffConfig {
     pub max_delay_ms: f64,
     /// Maximum number of connection attempts before giving up. `0` means retry
     /// forever (the user's Cancel is then the only way to stop).
+    #[cfg_attr(test, ts(type = "number"))]
     pub max_attempts: i64,
     /// Fraction of the computed delay that random jitter may shave off, in
     /// `[0, MAX_JITTER_RATIO]` (larger values are clamped). `0.5` draws each
@@ -223,6 +226,8 @@ pub fn worst_case_total_backoff_ms(config: &BackoffConfig) -> Option<i64> {
 /// - `Gaveup`     — attempts exhausted or the user cancelled; hand off to the
 ///   manual disconnect overlay.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum ReconnectPhase {
     Idle,
@@ -234,12 +239,16 @@ pub enum ReconnectPhase {
 
 /// Immutable snapshot of the reconnect loop for one tab.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ReconnectState {
     pub phase: ReconnectPhase,
     /// Number of connection attempts started so far in this loop.
+    #[cfg_attr(test, ts(type = "number"))]
     pub attempt: i64,
     /// Delay the current `Waiting` phase is counting down, in ms (0 otherwise).
+    #[cfg_attr(test, ts(type = "number"))]
     pub delay_ms: i64,
 }
 
@@ -252,6 +261,8 @@ pub struct ReconnectState {
 /// - `Failure` — the attempt failed; back off further or give up.
 /// - `Cancel`  — the user asked to stop retrying.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum ReconnectEvent {
     Drop,

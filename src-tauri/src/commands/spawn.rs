@@ -369,6 +369,8 @@ pub fn take_pending_spawn(pending: State<'_, PendingSpawn>) -> Option<SpawnReque
 /// matching runtime reports itself available, so a stopped daemon costs one
 /// probe instead of a hanging `images` call.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct SpawnOptions {
     /// Local shells detected on this host (e.g. `"bash"`, `"zsh"`, `"pwsh"`).

@@ -9,29 +9,15 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { LocalProcessOutcome } from "@/types/generated/LocalProcessOutcome";
+import type { LocalProcessOutputChunk } from "@/types/generated/LocalProcessOutputChunk";
+
+// Generated from the Rust `LocalProcessOutcome` / `LocalProcessOutputEvent`
+// (src-tauri/src/commands/local_process.rs) via ts-rs (#3088).
+export type { LocalProcessOutcome, LocalProcessOutputChunk };
 
 /** Tauri event name carrying one streamed line of local-process output. */
 const LOCAL_PROCESS_OUTPUT_EVENT = "workflow-local-process-output";
-
-/** One streamed line of a local process's output. */
-export interface LocalProcessOutputChunk {
-  /** The run id the line belongs to. */
-  runId: string;
-  /** Which stream produced it. */
-  stream: "stdout" | "stderr";
-  /** The line of text (no trailing newline). */
-  line: string;
-}
-
-/** The terminal outcome of a spawned local process, mirroring the Rust struct. */
-export interface LocalProcessOutcome {
-  /** Exit code, or `null` when the process was killed (cancelled/timed out). */
-  exitCode: number | null;
-  /** `true` when killed for exceeding the timeout. */
-  timedOut: boolean;
-  /** `true` when killed because the run was cancelled. */
-  cancelled: boolean;
-}
 
 /** Arguments for {@link invokeRunLocalProcess}. */
 export interface RunLocalProcessArgs {

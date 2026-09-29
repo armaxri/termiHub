@@ -48,12 +48,16 @@ pub struct ResolvedLocation {
 /// latter carrying a [`cd_path`](ShellSpawn::cd_path) to `cd` into after connect,
 /// since SSH cannot set a start cwd at spawn (#1511).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ShellSpawn {
     /// Backend session type to open: `"local"`, `"wsl"`, or `"ssh"`.
     #[serde(rename = "type")]
+    #[cfg_attr(test, ts(type = "\"local\" | \"wsl\" | \"ssh\""))]
     pub session_type: String,
     /// Backend settings (camelCase JSON) for the spawned session.
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
     pub settings: serde_json::Value,
     /// Human-readable tab title, e.g. `"Shell: project (Spawned)"`.
     pub title: String,
@@ -68,6 +72,7 @@ pub struct ShellSpawn {
     /// `cd` via `send_input`). `None` for local/WSL spawns, which set a real
     /// starting directory. (#1511)
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub cd_path: Option<String>,
 }
 

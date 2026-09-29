@@ -7,16 +7,22 @@
  * `resolve_container_spawn`), so this module describes the decision only.
  */
 
-/** The container runtime backing a "new container" choice. */
-export type ContainerRuntime = "docker" | "podman";
+import type { ContainerRuntime as CoreContainerRuntime } from "./generated/ContainerRuntime";
+import type { SpawnTarget } from "./generated/SpawnTarget";
 
 /**
- * The container runtime *saved* on a shell-integration entry (#1561). Widens
- * {@link ContainerRuntime} with `"auto"` — the default, meaning "no remembered
- * preference, detect whichever runtime is installed". Mirrors the Rust
- * `ContainerRuntime`, which carries the `Auto` variant the picker never offers.
+ * The container runtime backing a "new container" choice: the Rust
+ * `ContainerRuntime` without the `"auto"` variant the picker never offers.
  */
-export type SavedContainerRuntime = ContainerRuntime | "auto";
+export type ContainerRuntime = Exclude<CoreContainerRuntime, "auto">;
+
+/**
+ * The container runtime *saved* on a shell-integration entry (#1561) — the
+ * Rust `ContainerRuntime` (generated via ts-rs, #3088), where `"auto"` is the
+ * default, meaning "no remembered preference, detect whichever runtime is
+ * installed".
+ */
+export type SavedContainerRuntime = CoreContainerRuntime;
 
 /**
  * The kind of session a spawn targets — the wire tokens of the Rust `SpawnKind`.
@@ -26,24 +32,12 @@ export type SavedContainerRuntime = ContainerRuntime | "auto";
 export type { SpawnKind } from "./generated/SpawnKind";
 
 /**
- * The target a user picked, as a discriminated union on `kind`. The `kind`
- * values line up with the Rust `SpawnKind` wire tokens, so a choice maps onto a
- * spawn request without a translation table.
+ * The target a user picked, as a discriminated union on `kind` — generated via
+ * ts-rs from the Rust `PickedTarget` (#3088). The `kind` values line up with the
+ * Rust `SpawnKind` wire tokens, so a choice maps onto a spawn request without a
+ * translation table.
  */
-export type SpawnTarget =
-  /** A local shell, by detected shell name (e.g. `"bash"`). */
-  | { kind: "local"; shell: string }
-  /** A WSL distribution, by name (e.g. `"Ubuntu-22.04"`). Windows only. */
-  | { kind: "wsl"; distro: string }
-  /** A new container bind-mounting the spawn location at `mount`. */
-  | {
-      kind: "container";
-      runtime: ContainerRuntime;
-      /** Image reference (`repository:tag`). */
-      image: string;
-      /** In-container mount target for the spawn location (e.g. `"/workspace"`). */
-      mount: string;
-    };
+export type { SpawnTarget };
 
 /**
  * A confirmed Session Picker selection: the chosen {@link SpawnTarget} plus the

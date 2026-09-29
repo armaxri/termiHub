@@ -217,6 +217,9 @@ pub fn get_credential_store_status(
 /// recovery: a plain retry for a wrong password vs. a "reset store" affordance
 /// when the credentials file is unreadable/corrupt.
 #[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "UnlockCredentialStoreError"))]
 #[serde(rename_all = "camelCase")]
 pub struct UnlockError {
     /// Human-readable failure message.

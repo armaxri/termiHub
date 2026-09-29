@@ -51,6 +51,8 @@ pub async fn ssh_keyboard_interactive_respond(
 /// One remembered SSH host and the host-key fingerprints trusted for it, for the
 /// trust-management settings UI.
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct SshTrustedHost {
     /// Host key (`host:port`) as stored in the trust store.
     pub host: String,
