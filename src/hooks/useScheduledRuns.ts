@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import {
   ackScheduleRun,
@@ -13,6 +14,18 @@ import type { ScheduleFire } from "@/types/schedule";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 
+/**
+ * This window's label, or `null` outside Tauri (tests, a browser build) —
+ * compared with a fire's `connectWindow` (#3527).
+ */
+function currentWindowLabel(): string | null {
+  try {
+    return getCurrentWindow().label;
+  } catch {
+    return null;
+  }
+}
+
 /** Execute one fired schedule in this window and report the outcome. */
 export async function handleScheduleFire(fire: ScheduleFire): Promise<void> {
   frontendLog("schedules", `schedule ${fire.scheduleId} fired (run ${fire.token})`);
@@ -22,10 +35,14 @@ export async function handleScheduleFire(fire: ScheduleFire): Promise<void> {
   } catch (err) {
     frontendLog("schedules", `Failed to acknowledge scheduled run: ${errorMessage(err)}`);
   }
-  const report = await executeScheduledRun(fire, {
-    getState: useAppStore.getState,
-    setState: useAppStore.setState,
-  });
+  // Only the window the backend named connects missing targets (#3527).
+  const connectMissing =
+    fire.connectWindow !== undefined && fire.connectWindow === currentWindowLabel();
+  const report = await executeScheduledRun(
+    fire,
+    { getState: useAppStore.getState, setState: useAppStore.setState },
+    { connectMissing }
+  );
   frontendLog(
     "schedules",
     `schedule ${fire.scheduleId} ${report.outcome}${report.message ? `: ${report.message}` : ""}`

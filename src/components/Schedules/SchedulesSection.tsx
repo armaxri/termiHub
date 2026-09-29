@@ -226,6 +226,7 @@ export function SchedulesSection() {
         actionLabel={confirming ? labels.actionLabel(confirming.action) : ""}
         ruleLabel={confirming ? describeRule(confirming.rule) : ""}
         hosts={confirmTargets?.hosts ?? []}
+        connects={confirming?.connectIfNeeded === true}
         onConfirm={async () => {
           if (confirming) await enable(confirming, true, true);
           setConfirming(null);

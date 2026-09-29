@@ -48,6 +48,21 @@ function needsStoredCredential({
 }
 
 /**
+ * Whether a connect with these options would have to unlock the credential
+ * store first: it reads a stored secret and the store is locked behind a
+ * master password. An unattended connect (a scheduled run, #3527) cannot ask
+ * for the master password, so it checks this instead of
+ * {@link ensureCredentialStoreUnlocked} and skips when it is `true`.
+ */
+export function credentialStoreNeedsUnlock(opts: UnlockGateOptions): boolean {
+  if (!needsStoredCredential(opts)) return false;
+  const { credentialStoreStatus } = useAppStore.getState();
+  return (
+    credentialStoreStatus?.mode === "master_password" && credentialStoreStatus?.status === "locked"
+  );
+}
+
+/**
  * Ensure the credential store is unlocked before a connect resolves its stored
  * credential.
  *
@@ -60,15 +75,8 @@ function needsStoredCredential({
  *   user dismissed the unlock dialog and the connect should abort.
  */
 export async function ensureCredentialStoreUnlocked(opts: UnlockGateOptions): Promise<boolean> {
-  if (!needsStoredCredential(opts)) {
-    return true;
-  }
-
-  const { credentialStoreStatus, requestUnlock } = useAppStore.getState();
-  if (
-    credentialStoreStatus?.mode === "master_password" &&
-    credentialStoreStatus?.status === "locked"
-  ) {
+  if (credentialStoreNeedsUnlock(opts)) {
+    const { requestUnlock } = useAppStore.getState();
     frontendLog("credential", "connect gate: store locked, requesting unlock before resolve");
     const unlocked = await requestUnlock();
     if (!unlocked) {

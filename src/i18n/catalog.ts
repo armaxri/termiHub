@@ -91,6 +91,27 @@ const en = {
   "workflow.trigger.pattern.error.unsafeRegex":
     "Nested quantifiers such as (a+)+ and backreferences are not allowed, because they can make matching very slow.",
 
+  // ── Scheduled runs: "Connect if not connected" (#3527) ──────────────────
+  "schedule.connect.fieldLabel": "Targets that are not connected",
+  "schedule.connect.label": "Connect if not connected",
+  "schedule.connect.help":
+    "Before the run, connects each target that has no connected terminal, without asking anything: it uses saved passwords, key files and the SSH agent, and only hosts whose key is already trusted. A target that would need input (a password, a key passphrase, a one-time code, a new host key, or unlocking the credential store) is skipped and the reason is logged. Tabs opened for the run close when it ends; tabs that were already open stay open.",
+  "schedule.connect.confirm":
+    "It also connects any of these hosts that is not connected, using saved credentials only and never asking, and closes the tabs it opened when the run ends.",
+  "schedule.connect.skip.target": "{target}: {reason}",
+  "schedule.connect.skip.needsPassword": "needs a password",
+  "schedule.connect.skip.needsPassphrase": "needs a key passphrase",
+  "schedule.connect.skip.hostKey": "host key not trusted",
+  "schedule.connect.skip.interactive": "needs interactive input (e.g. a one-time code)",
+  "schedule.connect.skip.storeLocked": "credential store locked",
+  "schedule.connect.skip.credentialRejected": "the saved credential was rejected",
+  "schedule.connect.skip.agentHosted": "agent-hosted connections cannot be connected unattended",
+  "schedule.connect.skip.notTerminal": "not a terminal connection",
+  "schedule.connect.skip.missing": "the saved connection no longer exists",
+  "schedule.connect.skip.cancelled": "the connect was cancelled",
+  "schedule.connect.skip.failed": "could not connect: {error}",
+  "schedule.connect.skip.notReady": "the terminal did not open in time",
+
   // ── Tunnels whose SSH connection was deleted (#2850) ────────────────────
   "tunnel.missingConnection.status": "SSH connection deleted",
   "tunnel.missingConnection.detail": "SSH connection deleted — choose another",
