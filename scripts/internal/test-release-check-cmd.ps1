@@ -126,10 +126,12 @@ if ($RealBundle) {
     # ----------------------------------------------------------------- versions
     # Not one of the #3750 gates, but every mode parses the argument block and
     # this is the mode the release workflow runs; with and without the flag.
+    # '  tauri (' is the drift checker's per-crate line ("ok" or, without
+    # node_modules, "skip"): proof it ran rather than exiting 0 silently.
     $version = (Get-Content -Raw package.json | ConvertFrom-Json).version
     $r = & cmd.exe /d /c 'scripts\release-check.cmd --versions-only' 2>&1 | ForEach-Object { "$_" }
     Assert-Result 'versions-only' ([pscustomobject]@{ Code = $LASTEXITCODE; Text = ($r -join "`n") }) 0 `
-        -Expect @("PASS: All 5 files agree on version $version", 'ok    tauri (', 'RESULT: version checks passed') `
+        -Expect @("PASS: All 5 files agree on version $version", '  tauri (', 'RESULT: version checks passed') `
         -Reject @('FAIL:')
     $r = & cmd.exe /d /c "scripts\release-check.cmd --versions-only --expect-version v$version" 2>&1 | ForEach-Object { "$_" }
     Assert-Result 'versions-only --expect-version v<ver>' ([pscustomobject]@{ Code = $LASTEXITCODE; Text = ($r -join "`n") }) 0 `
