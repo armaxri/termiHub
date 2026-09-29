@@ -20,6 +20,11 @@ REM                           (TODO/FIXME/HACK scan) or bundle (build + smoke).
 REM                           Mirrors release-check.sh --only.
 REM   --help                  Show this help and exit.
 
+REM cd first: "shift" below also shifts %%0, so %%~dp0 is only the script's own
+REM directory until the first shift. After it, %%~dp0 resolved an argument
+REM such as --only against the cwd and cd'd one level above the repo (#3753).
+cd /d "%~dp0\.."
+
 set VERSIONS_ONLY=0
 set "EXPECT_VERSION="
 set "ONLY="
@@ -83,8 +88,6 @@ if not defined EXPECT_VERSION goto :expect_normalised
 if "%EXPECT_VERSION:~0,1%"=="v" set "EXPECT_VERSION=%EXPECT_VERSION:~1%"
 :expect_normalised
 
-cd /d "%~dp0\.."
-
 set FAILED=0
 set WARNINGS=0
 if defined ONLY goto :run_only
@@ -92,17 +95,14 @@ if defined ONLY goto :run_only
 REM === Version Consistency ===
 echo === Version Consistency ===
 
-for /f "tokens=2 delims=:, " %%a in ('findstr /r /c:"\"version\": *\"" package.json') do (
-    set "PKG_VER=%%~a"
-    goto :got_pkg_ver
-)
-:got_pkg_ver
-
-for /f "tokens=2 delims=:, " %%a in ('findstr /r /c:"\"version\": *\"" src-tauri\tauri.conf.json') do (
-    set "TAURI_VER=%%~a"
-    goto :got_tauri_ver
-)
-:got_tauri_ver
+REM The JSON versions come from node, not findstr: cmd does not treat \" as an
+REM escaped quote, so findstr /c:"\"version\": *\"" left an odd number of
+REM quotes, hid the closing parenthesis of the for /f and made every run a
+REM syntax error (#3753).
+set "PKG_VER="
+for /f "usebackq delims=" %%a in (`node -p "require('./package.json').version"`) do set "PKG_VER=%%a"
+set "TAURI_VER="
+for /f "usebackq delims=" %%a in (`node -p "require('./src-tauri/tauri.conf.json').version"`) do set "TAURI_VER=%%a"
 
 for /f "tokens=2 delims== " %%a in ('findstr /r /c:"^version = " src-tauri\Cargo.toml') do (
     set "TAURI_CARGO_VER=%%~a"
