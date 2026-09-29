@@ -12,7 +12,7 @@ evidence:
   - src/types/embeddedServer.ts:2
   - src/services/api.ts:1197
 status: partial
-resolution: "#3087, #3775, #3798, #3804 — ts-rs codegen across connection/config/import/tunnel/network/scheduler/events/clipboard/transfers/embedded-servers/workflows/monitoring/plugins/schema/layout clusters; DUP-008 tree-node resolved. Remaining: AppSettings (#3802), AgentCapabilities, network.ts DTOs; intentional exceptions documented"
+resolution: "#3087, #3775, #3798, #3804, #3822 — ts-rs codegen across all major DTO clusters incl. AppSettings (typed, byte-compatible legacy round-trip), AgentCapabilities, network DTOs; DUP-008 resolved. Remaining hand-written mirrors listed on #3088 (shell-integration, update/app-mode, workspace/LastSession, window/diagnostics/macro, bookmarks, AgentConnectResult)"
 ---
 
 ## What
