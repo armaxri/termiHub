@@ -70,6 +70,10 @@
         {
           "summary": "ExtendedDesktopSize pseudo-encoding (-308) with a bounded layout parser (<=16 screens, accepted sizes <=8192), DesktopLayout/DesktopLayoutUnsupported events, a validated SetDesktopSize client message (251), and refresh requests that follow the current framebuffer size",
           "refs": ["https://github.com/armaxri/termiHub/issues/3463"]
+        },
+        {
+          "summary": "Tight 24-bit TPIXELs serialised in the negotiated byte order with an opaque alpha lane for every filter (upstream: always little-endian, gradient alpha 0)",
+          "refs": ["https://github.com/armaxri/termiHub/issues/3545"]
         }
       ],
       "watch": {
