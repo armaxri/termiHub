@@ -5,6 +5,7 @@ import { saveBroadcastGroup } from "@/store/broadcastGroups";
 import type { BroadcastGroup } from "@/types/terminal";
 import { validateBroadcastGroupName } from "@/utils/broadcastGroups";
 import { errorMessage } from "@/utils/errorMessage";
+import { isImeComposing } from "@/utils/imeComposition";
 
 export interface BroadcastGroupSaveRowProps {
   /** Saved-connection ids of the current custom selection. */
@@ -74,6 +75,7 @@ export function BroadcastGroupSaveRow({
             setError(null);
           }}
           onKeyDown={(e) => {
+            if (isImeComposing(e)) return;
             if (e.key === "Enter") {
               e.preventDefault();
               void handleSave();

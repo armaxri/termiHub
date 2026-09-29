@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 /// The UI renders each group as a collapsible section in the
 /// connection settings form.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsSchema {
     /// Ordered list of field groups.
@@ -19,6 +21,8 @@ pub struct SettingsSchema {
 
 /// A named group of related settings fields.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsGroup {
     /// Machine-readable key (e.g., "connection", "authentication").
@@ -33,11 +37,14 @@ pub struct SettingsGroup {
     /// `false` (expanded), so groups that omit it are unaffected. The user can
     /// always expand it; collapsing never unregisters fields or drops values.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub collapsed: bool,
 }
 
 /// A single settings field with metadata for UI rendering and validation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsField {
     /// Machine-readable key used as the JSON property name in settings values.
@@ -46,10 +53,12 @@ pub struct SettingsField {
     pub label: String,
     /// Optional help text shown below the field.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub description: Option<String>,
     /// Optional extended help text shown in a dialog when the user clicks
     /// the help icon (?) next to the field. Supports multi-line plain text.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub help_text: Option<String>,
     /// The input type and any type-specific constraints.
     pub field_type: FieldType,
@@ -57,19 +66,24 @@ pub struct SettingsField {
     pub required: bool,
     /// Default value used when the user hasn't set one.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "unknown"))]
     pub default: Option<serde_json::Value>,
     /// Placeholder text shown in empty inputs.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub placeholder: Option<String>,
     /// Whether `${VAR}` placeholders are expanded at connect time.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub supports_env_expansion: bool,
     /// Whether `~` is expanded to the home directory at connect time.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub supports_tilde_expansion: bool,
     /// Conditional visibility: this field is only shown when the
     /// referenced field has the specified value.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub visible_when: Option<Condition>,
 }
 
@@ -78,11 +92,14 @@ pub struct SettingsField {
 /// The field is shown only when the field identified by [`field`](Condition::field)
 /// equals [`equals`](Condition::equals).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct Condition {
     /// Key of the field to check.
     pub field: String,
     /// Value that the field must equal for this field to be visible.
+    #[cfg_attr(test, ts(type = "unknown"))]
     pub equals: serde_json::Value,
 }
 
@@ -90,6 +107,8 @@ pub struct Condition {
 ///
 /// Serialized as a tagged enum: `{"type": "text"}`, `{"type": "number", "min": 0}`, etc.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum FieldType {
     /// Single-line text input.
@@ -100,9 +119,11 @@ pub enum FieldType {
     Number {
         /// Minimum allowed value (inclusive).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
         min: Option<f64>,
         /// Maximum allowed value (inclusive).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
         max: Option<f64>,
     },
     /// Boolean toggle / checkbox.
@@ -153,6 +174,8 @@ pub enum FieldType {
 
 /// Severity of a [`FieldType::Notice`] callout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum NoticeSeverity {
     /// Neutral informational note.
@@ -163,6 +186,8 @@ pub enum NoticeSeverity {
 
 /// An option in a [`FieldType::Select`] dropdown.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct SelectOption {
     /// Machine-readable value stored in settings JSON.
@@ -173,6 +198,8 @@ pub struct SelectOption {
 
 /// Kind of path accepted by a [`FieldType::FilePath`] field.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub enum FilePathKind {
     /// Only files can be selected.

@@ -7,25 +7,33 @@ use serde::{Deserialize, Serialize};
 /// Fields use `camelCase` serialization to match the JSON convention used
 /// by both the desktop frontend and the agent protocol.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct SystemStats {
     pub hostname: String,
     pub uptime_seconds: f64,
     pub load_average: [f64; 3],
     pub cpu_usage_percent: f64,
+    #[cfg_attr(test, ts(type = "number"))]
     pub memory_total_kb: u64,
+    #[cfg_attr(test, ts(type = "number"))]
     pub memory_available_kb: u64,
     pub memory_used_percent: f64,
+    #[cfg_attr(test, ts(type = "number"))]
     pub disk_total_kb: u64,
+    #[cfg_attr(test, ts(type = "number"))]
     pub disk_used_kb: u64,
     pub disk_used_percent: f64,
     pub os_info: String,
     /// Total swap space in kB. `0` when the host has no swap or the metric is
     /// unavailable (older agents / non-Linux SSH remotes) — never an error.
     #[serde(default)]
+    #[cfg_attr(test, ts(type = "number"))]
     pub swap_total_kb: u64,
     /// Used swap space in kB. `0` when unavailable (see [`Self::swap_total_kb`]).
     #[serde(default)]
+    #[cfg_attr(test, ts(type = "number"))]
     pub swap_used_kb: u64,
     /// Percentage of swap in use (0.0–100.0). `0.0` when unavailable.
     #[serde(default)]

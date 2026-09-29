@@ -175,6 +175,10 @@ pub(crate) struct Supervisor<S: GraphicalEventSink> {
     /// Held keys / buttons (#3402), released on the fresh connection after a
     /// re-dial so nothing stays stuck across the reconnect.
     pub(crate) held: SharedHeldInput,
+    /// The agent port forward's last open failure when the session is routed
+    /// through an agent (#3241): a re-dial that failed because the tunnel could
+    /// not open reports that reason instead of the backend's bare EOF.
+    pub(crate) forward_error: Option<crate::session::agent_port_forward::ForwardErrorSlot>,
     /// Backoff jitter source: [`system_jitter`](termihub_core::reconnect_backoff::system_jitter)
     /// in production, a constant under the paused-time tests.
     pub(crate) jitter: fn() -> f64,
@@ -382,6 +386,14 @@ impl<S: GraphicalEventSink> Supervisor<S> {
         );
     }
 
+    /// The tunnel failure behind a failed re-dial, if any, else `message`.
+    fn explain(&self, message: String) -> String {
+        self.forward_error
+            .as_ref()
+            .and_then(|slot| slot.lock().ok().and_then(|g| g.clone()))
+            .unwrap_or(message)
+    }
+
     /// Re-dial a fresh backend instance with the original settings, swap it
     /// into the shared connection slot, retire the dead one, and re-send the
     /// last requested size.
@@ -415,7 +427,7 @@ impl<S: GraphicalEventSink> Supervisor<S> {
                     e.to_string(),
                 ))
             }
-            Ok(Err(e)) => return Err(DialError::Retryable(e.to_string())),
+            Ok(Err(e)) => return Err(DialError::Retryable(self.explain(e.to_string()))),
             Ok(Ok(())) => {}
         }
         let generation = Generation::subscribe(fresh.as_ref()).map_err(DialError::Retryable)?;

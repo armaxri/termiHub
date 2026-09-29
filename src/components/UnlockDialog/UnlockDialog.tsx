@@ -12,6 +12,7 @@ import { Modal, Button, ConfirmDialog, toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import "./UnlockDialog.css";
 import { errorMessage } from "@/utils/errorMessage";
+import { isImeComposing } from "@/utils/imeComposition";
 
 interface UnlockDialogProps {
   open: boolean;
@@ -158,6 +159,7 @@ export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (isImeComposing(e)) return;
       if (e.key === "Enter") handleUnlock();
     },
     [handleUnlock]

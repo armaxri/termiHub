@@ -71,6 +71,7 @@ import { TreeFolderRow, TreeItemRow, treeRowPaddingLeft } from "./TreeRow";
 import { SidebarGroupHeader } from "./SidebarGroupHeader";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import "./ConnectionList.css";
+import { isImeComposing } from "@/utils/imeComposition";
 
 /**
  * Shared keyboard-navigation / filter plumbing threaded through the tree so
@@ -931,6 +932,7 @@ export function ConnectionList() {
 
   const handleFilterKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (isImeComposing(event)) return;
       if (event.key === "Enter") {
         event.preventDefault();
         // Top hit = first connection row in filter-aware visual order.
@@ -1466,6 +1468,7 @@ export function ConnectionList() {
                     value={agentFilterQuery}
                     onValueChange={setAgentFilterQuery}
                     onKeyDown={(e) => {
+                      if (isImeComposing(e)) return;
                       if (e.key === "Escape") {
                         e.preventDefault();
                         setAgentFilterQuery("");

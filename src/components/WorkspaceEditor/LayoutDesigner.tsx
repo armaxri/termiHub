@@ -13,6 +13,7 @@ import {
   updateSplitSizes,
 } from "@/utils/workspaceLayout";
 import { ConnectionPicker } from "./ConnectionPicker";
+import { isImeComposing } from "@/utils/imeComposition";
 
 /**
  * Build a map from leaf node reference to its depth-first index.
@@ -298,6 +299,7 @@ function SizeBadge({ size, isCustom, splitNode, childIndex, onUpdateSizes }: Siz
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (isImeComposing(e)) return;
     if (e.key === "Enter") handleCommit();
     if (e.key === "Escape") setEditing(false);
   };

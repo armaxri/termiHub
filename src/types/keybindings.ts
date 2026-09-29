@@ -1,3 +1,7 @@
+// Generated from the Rust `KeybindingOverrideEntry`
+// (`src-tauri/src/connection/settings.rs`) via ts-rs (audit DUP-030, #3088).
+export type { KeybindingOverrideEntry } from "./generated/KeybindingOverrideEntry";
+
 /** A single key combination (e.g., Ctrl+Shift+C). */
 export interface KeyCombo {
   key: string;
@@ -47,11 +51,4 @@ export interface KeyBinding {
 export interface KeybindingOverride {
   action: string;
   combo: KeyCombo | KeyCombo[];
-}
-
-/** Serialized form of a keybinding override for storage in AppSettings. */
-export interface KeybindingOverrideEntry {
-  action: string;
-  /** Serialized combo string, e.g., "Ctrl+Shift+C" or "Ctrl+K Ctrl+S" for chords. */
-  key: string;
 }

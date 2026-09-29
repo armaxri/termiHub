@@ -7,7 +7,11 @@ import type { AgentSettings } from "./generated/AgentSettings";
 import type { SavedConnection } from "./generated/SavedConnection";
 import type { JumpHostConfig } from "./generated/JumpHostConfig";
 import type { ExternalFileConfig } from "./generated/ExternalFileConfig";
-import { SettingsSchema, Capabilities } from "./schema";
+import type { ConnectionTypeInfo } from "./generated/ConnectionTypeInfo";
+import type { LayoutConfig } from "./generated/LayoutConfig";
+import type { SerialPortScanPrefix } from "./generated/SerialPortScanPrefix";
+import type { CustomLanguageGrammar } from "./generated/CustomLanguageGrammar";
+import type { UpdateSettings } from "./generated/UpdateSettings";
 import { KeybindingOverrideEntry } from "./keybindings";
 import type { SavedContainerRuntime, SpawnKind } from "./spawn";
 import type { SyntaxHighlightingConfig } from "./syntaxHighlighting";
@@ -110,9 +114,11 @@ export type { SshConfigImportConnection } from "./generated/SshConfigImportConne
  */
 export type { InventoryHost } from "./generated/InventoryHost";
 
-export type ConnectionTreeItem =
-  | { type: "folder"; folder: ConnectionFolder }
-  | { type: "connection"; connection: SavedConnection };
+// DUP-008: the connection tree's source of truth is the Rust on-disk
+// `ConnectionTreeNode` (`src-tauri/src/connection/config.rs`). It never crosses
+// IPC: storage flattens it into the generated `ConnectionFolder` /
+// `SavedConnection` above, which are what the frontend consumes. The former
+// hand-written `ConnectionTreeItem` mirror had no consumers and was removed.
 
 // Generated from the Rust `ExternalFileConfig` (src-tauri/src/connection/settings.rs)
 // via ts-rs (audit DUP-030). Imported at the top of this module; re-exported here.
@@ -124,14 +130,11 @@ export type { ExternalFileError } from "./generated/ExternalFileError";
 /** A warning generated during file recovery at startup (generated via ts-rs). */
 export type { RecoveryWarning } from "./generated/RecoveryWarning";
 
-/** Info about a connection type from the backend registry. */
-export interface ConnectionTypeInfo {
-  typeId: string;
-  displayName: string;
-  icon: string;
-  schema: SettingsSchema;
-  capabilities: Capabilities;
-}
+/**
+ * Info about a connection type from the backend registry. Generated from core's
+ * `ConnectionTypeInfo` (`core/src/connection/registry.rs`) via ts-rs (#3088).
+ */
+export type { ConnectionTypeInfo };
 
 // Runtime behaviour preferences for a connected remote agent.
 // Generated from the Rust `AgentSettings` (src-tauri/src/connection/config.rs)
@@ -220,26 +223,19 @@ export interface PersistentSessionEntry {
 
 // ── Layout / activity bar ─────────────────────────────────────────────────
 
-export type ActivityBarPosition = "left" | "right" | "top" | "hidden";
-export type SidebarPosition = "left" | "right";
+// The persisted layout is generated from the Rust `LayoutConfig`
+// (`src-tauri/src/connection/settings.rs`) via ts-rs (audit DUP-030, #3088).
+export type { LayoutConfig };
 
-export interface LayoutConfig {
-  activityBarPosition: ActivityBarPosition;
-  sidebarPosition: SidebarPosition;
-  sidebarVisible: boolean;
-  statusBarVisible: boolean;
-  hiddenActivityBarViews: string[];
-  /** The currently active sidebar panel. Persisted across restarts. */
-  sidebarView?: string;
-  /** Whether the sidebar is currently collapsed. Persisted across restarts. */
-  sidebarCollapsed?: boolean;
-  /**
-   * Whether the file browser shows hidden (dot-prefixed) entries. Persisted
-   * across restarts; absent/false hides them, matching the standard
-   * file-explorer default.
-   */
-  showHiddenFiles?: boolean;
-}
+// Settings sub-DTOs generated from `src-tauri/src/connection/settings.rs` via
+// ts-rs (audit DUP-030, #3088). `AppSettings` itself stays hand-written (see
+// the note on it below).
+export type { SerialPortScanPrefix, CustomLanguageGrammar, UpdateSettings };
+
+/** Where the activity bar sits. */
+export type ActivityBarPosition = LayoutConfig["activityBarPosition"];
+/** Which side the sidebar sits on. */
+export type SidebarPosition = LayoutConfig["sidebarPosition"];
 
 export const DEFAULT_LAYOUT: LayoutConfig = {
   activityBarPosition: "left",
@@ -272,14 +268,6 @@ export const LAYOUT_PRESETS: Record<string, LayoutConfig> = {
     hiddenActivityBarViews: [],
   },
 };
-
-/** A Linux `/dev` prefix entry for the serial port scanner. */
-export interface SerialPortScanPrefix {
-  prefix: string;
-  enabled: boolean;
-  /** `true` = shipped with termiHub; `false` = user-added. */
-  builtIn: boolean;
-}
 
 /** Windows context-menu visibility for a shell-integration entry. */
 export type ShellEntryVisibility = "always" | "extended";
@@ -405,6 +393,10 @@ export interface ShellIntegrationStatus {
   detectedFileManagers: DetectedFileManager[];
 }
 
+// `AppSettings` stays hand-written (DUP-030, #3088): the Rust struct keeps
+// `broadcastGroups`, `terminalCommandDecorations` and `terminalInlineImages` in a
+// flattened catch-all map, types several unions as plain `String`, and makes the
+// default-`true` flags required, so it is not a structural mirror of this type.
 export interface AppSettings {
   version: string;
   externalConnectionFiles: ExternalFileConfig[];
@@ -658,26 +650,6 @@ export interface AppSettings {
    * step is unauthorized until the user confirms it interactively.
    */
   workflowLocalProcessAllowlist?: string[];
-}
-
-/**
- * A user-imported TextMate grammar definition.
- * The `grammar` field is the parsed `.tmLanguage.json` content stored verbatim.
- */
-export interface CustomLanguageGrammar {
-  /** Monaco / Shiki language ID used in file-type mappings (e.g. `"my-lang"`). */
-  id: string;
-  /** Human-readable display name shown in the language picker. */
-  name: string;
-  /** The raw TextMate grammar object (contents of the `.tmLanguage.json` file). */
-  grammar: Record<string, unknown>;
-}
-
-/** Persisted update-checker configuration returned from the backend. */
-export interface UpdateSettings {
-  autoCheck: boolean;
-  lastCheckTime?: string;
-  skippedVersion?: string;
 }
 
 /** Result of an update check returned from the backend. */

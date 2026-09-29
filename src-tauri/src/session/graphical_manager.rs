@@ -33,10 +33,15 @@ use termihub_core::connection::{
 };
 use termihub_core::errors::SessionError;
 
+use crate::session::agent_port_forward::{
+    agent_route, rewrite_for_forward, AgentClientTransport, AgentPortForward, AgentRoute,
+    ForwardTransport,
+};
 use crate::session::frame_guard::{CursorGuard, FrameGuard, FrameVerdict};
 use crate::session::graphical_held_input::{deliver_releases, lock_held, SharedHeldInput};
 use crate::session::graphical_supervisor::{Generation, LastSize, PumpEnd, Supervisor};
 use crate::session::rdp_trust_store::{RdpTrustStore, TrustLookup};
+use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 
 /// Maximum concurrent graphical sessions.
@@ -213,6 +218,18 @@ struct GraphicalSession {
     /// Keys / pointer buttons currently held on the remote (#3402), released
     /// on takeover, reconnect, and explicit release-all.
     held: SharedHeldInput,
+    /// The agent port forward carrying this session's transport when it is
+    /// routed through an agent (#3241). Held for the session's lifetime and
+    /// dropped with it, which closes the tunnel.
+    _forward: Option<AgentPortForward>,
+}
+
+/// What an agent-routed connect hands the shared connect path (#3241).
+struct Routed {
+    forward: AgentPortForward,
+    /// The real target host, keying the RDP certificate trust store (the
+    /// backend itself dials `127.0.0.1`).
+    trust_host: String,
 }
 
 /// Manages live graphical remote-desktop sessions.
@@ -269,6 +286,78 @@ impl GraphicalSessionManager {
         settings: serde_json::Value,
         sink: S,
     ) -> Result<String, TerminalError> {
+        self.connect_inner(type_id, settings, None, sink).await
+    }
+
+    /// Connect a graphical session, routing it through an agent when its
+    /// settings name one (`agentId`, #3241) and directly otherwise.
+    ///
+    /// An agent-routed session keeps its VNC/RDP backend on this computer and
+    /// tunnels only the TCP transport: a loopback [`AgentPortForward`] whose
+    /// streams the agent connects to the target from its own host. The target
+    /// must therefore be reachable from the agent host.
+    pub async fn connect_routed<S: GraphicalEventSink>(
+        &self,
+        type_id: &str,
+        settings: serde_json::Value,
+        agents: Option<Arc<dyn AgentRpcClient>>,
+        sink: S,
+    ) -> Result<String, TerminalError> {
+        let Some(route) =
+            agent_route(type_id, &settings).map_err(TerminalError::ConnectionFailed)?
+        else {
+            return self.connect(type_id, settings, sink).await;
+        };
+        let client = agents.ok_or_else(|| {
+            TerminalError::ConnectionFailed("The agent manager is not available".to_string())
+        })?;
+        if !client.is_connected(&route.agent_id) {
+            let msg = format!(
+                "Agent tunnel to {}:{} failed: the agent is not connected — connect the agent \
+                 and retry",
+                route.target_host, route.target_port
+            );
+            return Err(TerminalError::ConnectionFailed(msg));
+        }
+        let transport = Arc::new(AgentClientTransport::new(client, route.agent_id.clone()));
+        self.connect_forwarded(type_id, settings, route, transport, sink)
+            .await
+    }
+
+    /// Open the loopback forward for `route` over `transport`, then connect the
+    /// backend through it (#3241). Split from [`connect_routed`] so tests can
+    /// drive a fake agent transport.
+    pub(crate) async fn connect_forwarded<S: GraphicalEventSink>(
+        &self,
+        type_id: &str,
+        settings: serde_json::Value,
+        route: AgentRoute,
+        transport: Arc<dyn ForwardTransport>,
+        sink: S,
+    ) -> Result<String, TerminalError> {
+        let forward =
+            AgentPortForward::start(transport, route.target_host.clone(), route.target_port)
+                .await
+                .map_err(|e| {
+                    TerminalError::ConnectionFailed(format!(
+                        "Could not open a local port for the agent tunnel: {e}"
+                    ))
+                })?;
+        let dial = rewrite_for_forward(type_id, &settings, forward.local_port());
+        let routed = Routed {
+            forward,
+            trust_host: route.target_host,
+        };
+        self.connect_inner(type_id, dial, Some(routed), sink).await
+    }
+
+    async fn connect_inner<S: GraphicalEventSink>(
+        &self,
+        type_id: &str,
+        settings: serde_json::Value,
+        routed: Option<Routed>,
+        sink: S,
+    ) -> Result<String, TerminalError> {
         if self.session_count().await >= MAX_GRAPHICAL_SESSIONS {
             return Err(TerminalError::SpawnFailed(
                 "Maximum number of graphical sessions reached".to_string(),
@@ -297,12 +386,16 @@ impl GraphicalSessionManager {
         // The host keys the certificate trust store (#1767). Read it before
         // `settings` is consumed by `connect`; default to the type id so a
         // config without a host still keys deterministically.
-        let host = settings
-            .get("host")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .unwrap_or(type_id)
-            .to_string();
+        let host = match &routed {
+            Some(r) => r.trust_host.clone(),
+            None => settings
+                .get("host")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .unwrap_or(type_id)
+                .to_string(),
+        };
+        let forward_error = routed.as_ref().map(|r| r.forward.error_slot());
 
         // Keep the settings for re-dials only when Auto-Reconnect is on (#3364),
         // so a session that never re-dials does not retain its credentials.
@@ -314,7 +407,11 @@ impl GraphicalSessionManager {
         // Authenticating → establish.
         emit_state(&sink, &session_id, GraphicalState::Authenticating, 0, None);
         if let Err(e) = connection.connect(settings).await {
-            let msg = e.to_string();
+            // A tunnel that failed to open explains the backend's EOF (#3241).
+            let msg = routed
+                .as_ref()
+                .and_then(|r| r.forward.last_error())
+                .unwrap_or_else(|| e.to_string());
             warn!(session_id = %session_id, error = %msg, "graphical connect failed");
             let mut sm = state.lock().await;
             // A rejected credential (e.g. a wrong VNC password) is a typed
@@ -369,6 +466,7 @@ impl GraphicalSessionManager {
             trust_store: self.trust_store.clone(),
             pending_cert: pending_cert.clone(),
             held: held.clone(),
+            forward_error,
             jitter: self.jitter,
             sink,
         };
@@ -384,6 +482,7 @@ impl GraphicalSessionManager {
             type_id: type_id.to_string(),
             pending_cert,
             held,
+            _forward: routed.map(|r| r.forward),
         };
         self.sessions
             .lock()

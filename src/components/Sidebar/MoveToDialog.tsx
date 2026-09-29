@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Modal, Button, Input } from "@/components/ui";
 import type { FileEntry } from "@/types/connection";
 import { describeEntries, joinDirPath, type FileTransferOperation } from "@/utils/fileDragMove";
+import { isImeComposing } from "@/utils/imeComposition";
 
 /** Resolve a typed destination: absolute (`/`, `~`, `C:`) as-is, else relative to `base`. */
 function resolveDestination(typed: string, base: string): string {
@@ -87,6 +88,7 @@ export function MoveToDialog({ request, currentPath, onSubmit, onClose }: MoveTo
             autoFocus
             onChange={(e) => setDest(e.target.value)}
             onKeyDown={(e) => {
+              if (isImeComposing(e)) return;
               if (e.key === "Enter") {
                 e.preventDefault();
                 void handleSubmit();
