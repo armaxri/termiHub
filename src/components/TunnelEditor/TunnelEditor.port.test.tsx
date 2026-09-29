@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { seedLayoutState } from "@/test/layoutState";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
@@ -38,14 +39,15 @@ const ROOT_PANEL = {
 let container: HTMLDivElement;
 let root: Root;
 
-function render() {
-  act(() => {
+async function render() {
+  await act(async () => {
     root.render(
       <TooltipProvider>
         <TunnelEditor tabId={TAB_ID} meta={{ tunnelId: null }} isVisible={true} />
       </TooltipProvider>
     );
   });
+  await flushAsync();
 }
 
 function localPortInput(): HTMLInputElement {
@@ -90,21 +92,21 @@ describe("TunnelEditor — blank port policy (#1444)", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the local port as a number input", () => {
-    render();
+  it("renders the local port as a number input", async () => {
+    await render();
     const input = localPortInput();
     expect(input.type).toBe("number");
     expect(input.value).toBe("8080");
   });
 
-  it("keeps a cleared port blank instead of snapping it back to 0", () => {
-    render();
+  it("keeps a cleared port blank instead of snapping it back to 0", async () => {
+    await render();
     setValue(localPortInput(), "");
     expect(localPortInput().value).toBe("");
   });
 
-  it("disables Save while a port is blank", () => {
-    render();
+  it("disables Save while a port is blank", async () => {
+    await render();
     setValue(localPortInput(), "");
     expect(saveButton().disabled).toBe(true);
   });

@@ -1005,6 +1005,19 @@ impl Default for NetworkManager {
 /// as a [`HTTP_MONITOR_CHECK_EVENT`] Tauri event so the frontend receives the
 /// same `HttpCheckResult` payload as before the lift. The task ends when the
 /// service is dropped (channel closed).
+///
+/// # A deliberate permanent observer (#2811)
+///
+/// The bridge holds its subscription for the monitor's whole lifetime, so the
+/// poll loop's observer gate (PERF-008) always sees a subscriber for a desktop
+/// monitor. That is intended: the forwarded results feed consumers that work
+/// with the Network Tools UI closed — the app-wide up/down toasts
+/// (`useHttpMonitorNotifications`, mounted at the app root) and the backend check
+/// history recorded below (#3462). A monitor the user started therefore keeps
+/// checking in the background until they pause or stop it; making this
+/// subscription panel-scoped would silently break both. The PERF-008 launch
+/// saving comes from loading saved monitors *stopped* instead
+/// ([`NetworkManager::load_http_monitor_stopped`]), not from this gate.
 fn spawn_event_bridge(app: AppHandle, events: termihub_core::service::ServiceEventReceiver) {
     // Not app-owned (#3105): ends when the monitor's service (and its channel) drops.
     tauri::async_runtime::spawn(async move {

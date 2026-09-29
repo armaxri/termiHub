@@ -106,7 +106,7 @@ describe("OpenConnectionsModal — Establishing / recovering section", () => {
     expect(row?.querySelector(".oc-row__badge--connecting")).toBeTruthy();
 
     const killBtn = row?.querySelector(".oc-row__kill") as HTMLButtonElement;
-    act(() => killBtn.click());
+    await act(async () => killBtn.click());
     expect(cancelConnectAgent).toHaveBeenCalledWith("a1");
   });
 
@@ -118,7 +118,7 @@ describe("OpenConnectionsModal — Establishing / recovering section", () => {
     expect(row?.querySelector(".oc-row__badge--reconnecting")).toBeTruthy();
 
     const killBtn = row?.querySelector(".oc-row__kill") as HTMLButtonElement;
-    act(() => killBtn.click());
+    await act(async () => killBtn.click());
     expect(disconnectAgent).toHaveBeenCalledWith("a2");
   });
 

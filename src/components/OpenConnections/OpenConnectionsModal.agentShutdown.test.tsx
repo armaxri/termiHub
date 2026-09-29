@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { TooltipProvider } from "@/components/ui";
 import type { RemoteAgentDefinition } from "@/types/connection";
@@ -105,7 +106,7 @@ describe("OpenConnectionsModal — agent Disconnect / Shutdown intents", () => {
     container.remove();
   });
 
-  function renderWithAgent(a: RemoteAgentDefinition) {
+  async function renderWithAgent(a: RemoteAgentDefinition) {
     useAppStore.setState({ disconnectRemoteAgent, shutdownRemoteAgent });
     seedAgentsRegion({ remoteAgents: [a] });
     act(() => {
@@ -115,6 +116,7 @@ describe("OpenConnectionsModal — agent Disconnect / Shutdown intents", () => {
         </TooltipProvider>
       );
     });
+    await flushAsync();
   }
 
   function agentRow(): Element | undefined {
@@ -123,8 +125,8 @@ describe("OpenConnectionsModal — agent Disconnect / Shutdown intents", () => {
     );
   }
 
-  it("exposes both Disconnect and Shutdown actions on a connected agent row", () => {
-    renderWithAgent(agent("a1", "build-box"));
+  it("exposes both Disconnect and Shutdown actions on a connected agent row", async () => {
+    await renderWithAgent(agent("a1", "build-box"));
     const row = agentRow();
     expect(row).toBeTruthy();
     expect(row?.querySelector('[data-testid="oc-agent-disconnect-a1"]')).toBeTruthy();
@@ -132,7 +134,7 @@ describe("OpenConnectionsModal — agent Disconnect / Shutdown intents", () => {
   });
 
   it("Disconnect invokes the detach path (disconnectRemoteAgent)", async () => {
-    renderWithAgent(agent("a1", "build-box"));
+    await renderWithAgent(agent("a1", "build-box"));
     const btn = agentRow()?.querySelector(
       '[data-testid="oc-agent-disconnect-a1"]'
     ) as HTMLButtonElement;
@@ -143,7 +145,7 @@ describe("OpenConnectionsModal — agent Disconnect / Shutdown intents", () => {
   });
 
   it("Shutdown opens a confirmation and only runs after the user confirms", async () => {
-    renderWithAgent(agent("a1", "build-box"));
+    await renderWithAgent(agent("a1", "build-box"));
     const btn = agentRow()?.querySelector(
       '[data-testid="oc-agent-shutdown-a1"]'
     ) as HTMLButtonElement;
@@ -159,7 +161,7 @@ describe("OpenConnectionsModal — agent Disconnect / Shutdown intents", () => {
 
   it("Shutdown invokes shutdownRemoteAgent and toasts the stopped-session count", async () => {
     shutdownRemoteAgent.mockResolvedValueOnce(3);
-    renderWithAgent(agent("a1", "build-box"));
+    await renderWithAgent(agent("a1", "build-box"));
     const btn = agentRow()?.querySelector(
       '[data-testid="oc-agent-shutdown-a1"]'
     ) as HTMLButtonElement;
@@ -173,7 +175,7 @@ describe("OpenConnectionsModal — agent Disconnect / Shutdown intents", () => {
 
   it("Shutdown with a single detached session uses the singular form", async () => {
     shutdownRemoteAgent.mockResolvedValueOnce(1);
-    renderWithAgent(agent("a1", "build-box"));
+    await renderWithAgent(agent("a1", "build-box"));
     const btn = agentRow()?.querySelector(
       '[data-testid="oc-agent-shutdown-a1"]'
     ) as HTMLButtonElement;
@@ -186,7 +188,7 @@ describe("OpenConnectionsModal — agent Disconnect / Shutdown intents", () => {
 
   it("Shutdown with no detached sessions still reports success", async () => {
     shutdownRemoteAgent.mockResolvedValueOnce(0);
-    renderWithAgent(agent("a1", "build-box"));
+    await renderWithAgent(agent("a1", "build-box"));
     const btn = agentRow()?.querySelector(
       '[data-testid="oc-agent-shutdown-a1"]'
     ) as HTMLButtonElement;

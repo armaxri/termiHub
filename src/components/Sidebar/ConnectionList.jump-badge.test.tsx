@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
+import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
@@ -67,9 +68,9 @@ describe("ConnectionList — jump-host hop badge", () => {
     container.remove();
   });
 
-  function render(connections: SavedConnection[]) {
+  async function render(connections: SavedConnection[]) {
     seedConnectionsRegion({ connections });
-    act(() =>
+    await act(async () =>
       root.render(
         React.createElement(TooltipProvider, {
           delayDuration: 0,
@@ -77,10 +78,11 @@ describe("ConnectionList — jump-host hop badge", () => {
         })
       )
     );
+    await flushAsync();
   }
 
-  it("renders a hop badge with the full-path tooltip for a single-hop connection", () => {
-    render([sshConnection("app-server", { proxyJump: [hop("bastion")] })]);
+  it("renders a hop badge with the full-path tooltip for a single-hop connection", async () => {
+    await render([sshConnection("app-server", { proxyJump: [hop("bastion")] })]);
 
     const badge = container.querySelector('[data-testid="connection-jump-badge-app-server"]');
     expect(badge).not.toBeNull();
@@ -89,8 +91,8 @@ describe("ConnectionList — jump-host hop badge", () => {
     expect(badge!.querySelector(".connection-tree__jump-count")).toBeNull();
   });
 
-  it("shows a hop-count label for a multi-hop connection", () => {
-    render([sshConnection("db-server", { proxyJump: [hop("edge"), hop("bastion")] })]);
+  it("shows a hop-count label for a multi-hop connection", async () => {
+    await render([sshConnection("db-server", { proxyJump: [hop("edge"), hop("bastion")] })]);
 
     const badge = container.querySelector('[data-testid="connection-jump-badge-db-server"]');
     expect(badge).not.toBeNull();
@@ -99,8 +101,8 @@ describe("ConnectionList — jump-host hop badge", () => {
     expect(count?.textContent).toBe("2");
   });
 
-  it("renders no badge for an SSH connection without a jump host", () => {
-    render([sshConnection("plain", {})]);
+  it("renders no badge for an SSH connection without a jump host", async () => {
+    await render([sshConnection("plain", {})]);
     expect(container.querySelector('[data-testid="connection-jump-badge-plain"]')).toBeNull();
   });
 });

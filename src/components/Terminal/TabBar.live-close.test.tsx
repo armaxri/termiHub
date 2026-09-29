@@ -10,6 +10,7 @@ import {
   flushSessionRegion,
   installSessionLifecycleHarness,
 } from "@/test/sessionLifecycleRegionTestHarness";
+import { flushAsync } from "@/test/flushAsync";
 
 const toastSuccess = vi.fn();
 vi.mock("@/components/ui", async (importOriginal) => {
@@ -67,8 +68,9 @@ let root: Root;
 setupSettingsRegion();
 const harness = installSessionLifecycleHarness();
 
-function render(tabs: TerminalTab[]) {
+async function render(tabs: TerminalTab[]) {
   act(() => root.render(<TabBar panelId={PANEL_ID} tabs={tabs} />));
+  await flushAsync();
 }
 
 beforeEach(() => {
@@ -86,10 +88,10 @@ afterEach(() => {
 });
 
 describe("TabBar — closing a live-session tab via the X", () => {
-  it("opens the live-session confirmation instead of closing immediately", () => {
+  it("opens the live-session confirmation instead of closing immediately", async () => {
     const closeTab = vi.fn();
     useAppStore.setState({ closeTab });
-    render([liveTerminalTab()]);
+    await render([liveTerminalTab()]);
 
     act(() => {
       (container.querySelector(`[data-testid="tab-close-${TAB_ID}"]`) as HTMLElement).click();
@@ -102,11 +104,11 @@ describe("TabBar — closing a live-session tab via the X", () => {
     expect(req?.kind === "tab" && req.reopen?.connectionType).toBe("ssh");
   });
 
-  it("closes immediately with an Undo toast when the user opted out", () => {
+  it("closes immediately with an Undo toast when the user opted out", async () => {
     const closeTab = vi.fn();
     useAppStore.setState({ closeTab });
     seedSettings({ confirmCloseLiveSession: false });
-    render([liveTerminalTab()]);
+    await render([liveTerminalTab()]);
 
     act(() => {
       (container.querySelector(`[data-testid="tab-close-${TAB_ID}"]`) as HTMLElement).click();
@@ -122,7 +124,7 @@ describe("TabBar — closing a live-session tab via the X", () => {
     useAppStore.setState({ closeTab });
     // #2625: the exited state is region-only now — seed the region.
     harness.transport.setSession(TAB_ID, disconnected());
-    render([liveTerminalTab()]);
+    await render([liveTerminalTab()]);
     await flushSessionRegion();
 
     act(() => {

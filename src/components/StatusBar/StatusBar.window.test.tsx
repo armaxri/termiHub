@@ -11,6 +11,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { StatusBar } from "./StatusBar";
 import type { WindowInfoState } from "@/hooks/useWindowInfo";
+import { flushAsync } from "@/test/flushAsync";
 
 // Stub the unrelated status-bar children so the test isolates the window item.
 vi.mock("@/components/CredentialStoreIndicator", () => ({ CredentialStoreIndicator: () => null }));
@@ -40,15 +41,17 @@ describe("StatusBar — window affordance", () => {
     container.remove();
   });
 
-  it("shows nothing when only one window is open", () => {
+  it("shows nothing when only one window is open", async () => {
     windowInfo = { label: "main", name: "Main Window", count: 1 };
     act(() => root.render(React.createElement(StatusBar)));
+    await flushAsync();
     expect(container.querySelector('[data-testid="status-bar-window"]')).toBeNull();
   });
 
-  it("shows the window name when more than one window is open", () => {
+  it("shows the window name when more than one window is open", async () => {
     windowInfo = { label: "win-1", name: "Window 1", count: 2 };
     act(() => root.render(React.createElement(StatusBar)));
+    await flushAsync();
     const item = container.querySelector('[data-testid="status-bar-window"]');
     expect(item).not.toBeNull();
     expect(item!.textContent).toContain("Window 1");

@@ -71,7 +71,7 @@ function setValue(el: HTMLInputElement, value: string) {
 }
 
 describe("GeneralSettings — rapid back-to-back edits (#2680)", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -84,7 +84,7 @@ describe("GeneralSettings — rapid back-to-back edits (#2680)", () => {
     vi.clearAllMocks();
   });
 
-  it("keeps both fields when two edits fire before a re-render", () => {
+  it("keeps both fields when two edits fire before a re-render", async () => {
     // Parent-faithful resolver: accepts either a full document or a functional
     // updater, exactly like SettingsPanel.handleSettingsChange. `settings` is held
     // FIXED (never re-fed as a prop), so GeneralSettings never re-renders with the
@@ -94,7 +94,7 @@ describe("GeneralSettings — rapid back-to-back edits (#2680)", () => {
       current = typeof update === "function" ? update(current) : update;
     };
 
-    act(() => {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <GeneralSettings settings={BASE_SETTINGS} onChange={onChange} />

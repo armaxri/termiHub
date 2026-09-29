@@ -19,6 +19,7 @@ import { StatusBar } from "./StatusBar";
 import type { ConnectionConfig, TerminalOptions, TerminalTab } from "@/types/terminal";
 import type { SyntaxHighlightingConfig } from "@/types/syntaxHighlighting";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
+import { flushAsync } from "@/test/flushAsync";
 
 function setActiveTab(tab: Partial<TerminalTab> & { config: ConnectionConfig }) {
   const leafId = layoutState().rootPanel.id;
@@ -69,55 +70,57 @@ describe("StatusBar — syntax-highlighting indicator", () => {
   });
 
   const query = () => container.querySelector('[data-testid="status-bar-highlighting"]');
-  const render = () =>
-    act(() =>
-      root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)))
-    );
+  const render = async () => {
+    await act(async () => {
+      root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)));
+    });
+    await flushAsync();
+  };
 
   const sshConfig: ConnectionConfig = { type: "ssh", config: { host: "app", username: "deploy" } };
 
-  it("is hidden while the feature is globally disabled and no override applies", () => {
+  it("is hidden while the feature is globally disabled and no override applies", async () => {
     setActiveTab({ config: sshConfig });
-    render();
+    await render();
     expect(query()).toBeNull();
   });
 
-  it("shows 'Highlighting: ON' for an active terminal session when the feature is on", () => {
+  it("shows 'Highlighting: ON' for an active terminal session when the feature is on", async () => {
     setActiveTab({ config: sshConfig });
     setGlobalHighlighting({ enabled: true });
-    render();
+    await render();
     const item = query();
     expect(item).not.toBeNull();
     expect(item!.textContent).toContain("Highlighting: ON");
   });
 
-  it("shows 'Highlighting: OFF' when a per-connection override forces it off (global on)", () => {
+  it("shows 'Highlighting: OFF' when a per-connection override forces it off (global on)", async () => {
     setActiveTab({ config: sshConfig });
     setGlobalHighlighting({ enabled: true });
     setPerConnection("tab-1", {
       syntaxHighlighting: { override: "always-off", additionalRules: [] },
     });
-    render();
+    await render();
     const item = query();
     expect(item).not.toBeNull();
     expect(item!.textContent).toContain("Highlighting: OFF");
   });
 
-  it("shows the indicator when a per-connection override forces it on while global is off", () => {
+  it("shows the indicator when a per-connection override forces it on while global is off", async () => {
     setActiveTab({ config: sshConfig });
     setPerConnection("tab-1", {
       syntaxHighlighting: { override: "always-on", additionalRules: [] },
     });
-    render();
+    await render();
     const item = query();
     expect(item).not.toBeNull();
     expect(item!.textContent).toContain("Highlighting: ON");
   });
 
-  it("clicking flips the per-session toggle without persisting", () => {
+  it("clicking flips the per-session toggle without persisting", async () => {
     setActiveTab({ config: sshConfig });
     setGlobalHighlighting({ enabled: true });
-    render();
+    await render();
 
     act(() => {
       (query() as HTMLButtonElement).click();
@@ -133,17 +136,17 @@ describe("StatusBar — syntax-highlighting indicator", () => {
     expect(query()!.textContent).toContain("Highlighting: ON");
   });
 
-  it("is hidden for a non-terminal (editor) tab", () => {
+  it("is hidden for a non-terminal (editor) tab", async () => {
     setActiveTab({ contentType: "editor", config: sshConfig });
     setGlobalHighlighting({ enabled: true });
-    render();
+    await render();
     expect(query()).toBeNull();
   });
 
-  it("is hidden when the active terminal tab has no live session", () => {
+  it("is hidden when the active terminal tab has no live session", async () => {
     setActiveTab({ sessionId: null, config: sshConfig });
     setGlobalHighlighting({ enabled: true });
-    render();
+    await render();
     expect(query()).toBeNull();
   });
 });

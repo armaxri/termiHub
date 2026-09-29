@@ -26,8 +26,8 @@ import { SessionRestoreDialog } from "./SessionRestoreDialog";
 let container: HTMLDivElement;
 let root: Root;
 
-function render() {
-  act(() => {
+async function render() {
+  await act(async () => {
     root.render(<SessionRestoreDialog />);
   });
 }
@@ -50,12 +50,12 @@ describe("SessionRestoreDialog", () => {
     container.remove();
   });
 
-  it("renders nothing when there is no pending prompt", () => {
-    render();
+  it("renders nothing when there is no pending prompt", async () => {
+    await render();
     expect(byTestId("session-restore-dialog")).toBeNull();
   });
 
-  it("shows the tab count and lists each tab with its type", () => {
+  it("shows the tab count and lists each tab with its type", async () => {
     storeState.restorePrompt = {
       tabCount: 2,
       tabs: [
@@ -63,7 +63,7 @@ describe("SessionRestoreDialog", () => {
         { title: "Local", typeLabel: "Local" },
       ],
     };
-    render();
+    await render();
 
     const dialog = byTestId("session-restore-dialog");
     expect(dialog?.textContent).toContain("You had 2 tabs open");
@@ -73,45 +73,51 @@ describe("SessionRestoreDialog", () => {
     expect(list?.textContent).toContain("Local");
   });
 
-  it("uses the singular 'tab' for a single stored tab", () => {
+  it("uses the singular 'tab' for a single stored tab", async () => {
     storeState.restorePrompt = { tabCount: 1, tabs: [{ title: "Shell", typeLabel: "Local" }] };
-    render();
+    await render();
     expect(byTestId("session-restore-dialog")?.textContent).toContain("You had 1 tab open");
   });
 
-  it("restores all tabs (without remember) when Restore is clicked", () => {
+  it("restores all tabs (without remember) when Restore is clicked", async () => {
     storeState.restorePrompt = { tabCount: 1, tabs: [{ title: "Shell", typeLabel: "Local" }] };
-    render();
+    await render();
 
-    act(() => (byTestId("session-restore-confirm") as HTMLElement).click());
+    await act(async () => {
+      (byTestId("session-restore-confirm") as HTMLElement).click();
+    });
 
     expect(confirmRestorePrompt).toHaveBeenCalledTimes(1);
     expect(confirmRestorePrompt).toHaveBeenCalledWith(false, [0]);
     expect(dismissRestorePrompt).not.toHaveBeenCalled();
   });
 
-  it("starts fresh (without remember) when Start Fresh is clicked", () => {
+  it("starts fresh (without remember) when Start Fresh is clicked", async () => {
     storeState.restorePrompt = { tabCount: 1, tabs: [{ title: "Shell", typeLabel: "Local" }] };
-    render();
+    await render();
 
-    act(() => (byTestId("session-restore-cancel") as HTMLElement).click());
+    await act(async () => {
+      (byTestId("session-restore-cancel") as HTMLElement).click();
+    });
 
     expect(dismissRestorePrompt).toHaveBeenCalledTimes(1);
     expect(dismissRestorePrompt).toHaveBeenCalledWith(false);
     expect(confirmRestorePrompt).not.toHaveBeenCalled();
   });
 
-  it("passes remember=true to confirm after ticking 'Remember my choice'", () => {
+  it("passes remember=true to confirm after ticking 'Remember my choice'", async () => {
     storeState.restorePrompt = { tabCount: 1, tabs: [{ title: "Shell", typeLabel: "Local" }] };
-    render();
+    await render();
 
     act(() => (byTestId("session-restore-remember") as HTMLElement).click());
-    act(() => (byTestId("session-restore-confirm") as HTMLElement).click());
+    await act(async () => {
+      (byTestId("session-restore-confirm") as HTMLElement).click();
+    });
 
     expect(confirmRestorePrompt).toHaveBeenCalledWith(true, [0]);
   });
 
-  it("renders a checkbox per tab", () => {
+  it("renders a checkbox per tab", async () => {
     storeState.restorePrompt = {
       tabCount: 2,
       tabs: [
@@ -119,12 +125,12 @@ describe("SessionRestoreDialog", () => {
         { title: "two", typeLabel: "Local" },
       ],
     };
-    render();
+    await render();
     expect(byTestId("session-restore-tab-checkbox-0")).not.toBeNull();
     expect(byTestId("session-restore-tab-checkbox-1")).not.toBeNull();
   });
 
-  it("restores only the checked tabs", () => {
+  it("restores only the checked tabs", async () => {
     storeState.restorePrompt = {
       tabCount: 2,
       tabs: [
@@ -132,16 +138,18 @@ describe("SessionRestoreDialog", () => {
         { title: "two", typeLabel: "Local" },
       ],
     };
-    render();
+    await render();
 
     // Uncheck the first tab, then confirm.
     act(() => (byTestId("session-restore-tab-checkbox-0") as HTMLElement).click());
-    act(() => (byTestId("session-restore-confirm") as HTMLElement).click());
+    await act(async () => {
+      (byTestId("session-restore-confirm") as HTMLElement).click();
+    });
 
     expect(confirmRestorePrompt).toHaveBeenCalledWith(false, [1]);
   });
 
-  it("shows a warning icon and starts unchecked for an unreachable tab", () => {
+  it("shows a warning icon and starts unchecked for an unreachable tab", async () => {
     storeState.restorePrompt = {
       tabCount: 2,
       tabs: [
@@ -154,7 +162,7 @@ describe("SessionRestoreDialog", () => {
         },
       ],
     };
-    render();
+    await render();
 
     const warning = byTestId("session-restore-tab-warning-1");
     expect(warning).not.toBeNull();
@@ -163,13 +171,15 @@ describe("SessionRestoreDialog", () => {
     expect(byTestId("session-restore-tab-warning-0")).toBeNull();
 
     // The unreachable tab starts unchecked, so restore excludes it by default.
-    act(() => (byTestId("session-restore-confirm") as HTMLElement).click());
+    await act(async () => {
+      (byTestId("session-restore-confirm") as HTMLElement).click();
+    });
     expect(confirmRestorePrompt).toHaveBeenCalledWith(false, [0]);
   });
 
-  it("disables the confirm button when every tab is unchecked", () => {
+  it("disables the confirm button when every tab is unchecked", async () => {
     storeState.restorePrompt = { tabCount: 1, tabs: [{ title: "Shell", typeLabel: "Local" }] };
-    render();
+    await render();
 
     act(() => (byTestId("session-restore-tab-checkbox-0") as HTMLElement).click());
 
@@ -177,12 +187,14 @@ describe("SessionRestoreDialog", () => {
     expect(confirm.disabled).toBe(true);
   });
 
-  it("passes remember=true to dismiss after ticking 'Remember my choice'", () => {
+  it("passes remember=true to dismiss after ticking 'Remember my choice'", async () => {
     storeState.restorePrompt = { tabCount: 1, tabs: [{ title: "Shell", typeLabel: "Local" }] };
-    render();
+    await render();
 
     act(() => (byTestId("session-restore-remember") as HTMLElement).click());
-    act(() => (byTestId("session-restore-cancel") as HTMLElement).click());
+    await act(async () => {
+      (byTestId("session-restore-cancel") as HTMLElement).click();
+    });
 
     expect(dismissRestorePrompt).toHaveBeenCalledWith(true);
   });

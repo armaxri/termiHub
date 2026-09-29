@@ -126,7 +126,9 @@ describe("XServerConnectConsent", () => {
     act(() => consentCallback?.(REQUEST));
     await flush();
 
-    click("x-server-connect-consent-not-now");
+    await act(async () => {
+      click("x-server-connect-consent-not-now");
+    });
     await flush();
 
     expect(xServerConnectConsentReply).toHaveBeenCalledWith("abc-123", "notNow");
