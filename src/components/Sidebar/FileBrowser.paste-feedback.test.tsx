@@ -58,7 +58,8 @@ vi.mock("@tauri-apps/plugin-fs", () => ({
   writeFile: (path: string, data: Uint8Array) => fsWriteFile(path, data),
 }));
 
-vi.mock("@/services/events", () => ({
+vi.mock("@/services/events", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/events")>()),
   onVscodeEditComplete: vi.fn(() => Promise.resolve(vi.fn())),
   onLocalDirChanged: vi.fn(() => Promise.resolve(vi.fn())),
 }));

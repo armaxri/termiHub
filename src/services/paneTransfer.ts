@@ -1,6 +1,9 @@
 /**
- * The dual-pane transfer view's copy engine (PROD-007, #3558): copy files and
- * folders between the local disk and one remote session.
+ * The one local ↔ session copy engine (PROD-007 #3558, unified in #3563):
+ * copy files and folders between the local disk and one remote session. It
+ * backs the dual-pane transfer view, the sidebar's local → session paste
+ * (`sessionFolderPaste.pasteFileLeg`) and its session → local paste
+ * (`useLocalFileSystem.pasteEntry`).
  *
  * Each file leg goes through the existing transfer machinery:
  *
@@ -21,6 +24,7 @@ import {
   sessionListFiles,
   sessionMkdir,
   sessionReadFile,
+  sessionSupportsTransferQueue,
   sessionUpload,
   sessionWriteFile,
 } from "@/services/api";
@@ -48,35 +52,80 @@ export interface PaneCopyRequest {
   remote: PaneRemote;
 }
 
-/** Copy one file; resolves to whether the leg is tracked by the transfer queue. */
-async function copyFile(
-  from: PaneSide,
-  src: string,
-  dest: string,
-  remote: PaneRemote
+/**
+ * Start a queued upload of a local file to a session, seeding its Transfer Queue
+ * row. `onRegistered` also sees the transfer id (a folder paste links it to its
+ * manifest, #3643). Resolves with the bytes transferred once it completes.
+ */
+export function startQueuedUpload(
+  sessionId: string,
+  localPath: string,
+  remotePath: string,
+  onRegistered?: (transferId: string) => void
+): Promise<number> {
+  return sessionUpload(sessionId, localPath, remotePath, (transferId) => {
+    seedTransferQueueRow({ transferId, sessionId, direction: "upload", remotePath });
+    onRegistered?.(transferId);
+  });
+}
+
+/**
+ * Copy one local file to a session: a queued upload on a queue-capable
+ * session, a byte round-trip otherwise. Resolves to whether the leg is tracked
+ * by the transfer queue (whose event path then owns the success toast).
+ */
+export async function uploadLocalFile(
+  remote: PaneRemote,
+  localPath: string,
+  remotePath: string,
+  onRegistered?: (transferId: string) => void
 ): Promise<boolean> {
-  const { sessionId, queueCapable } = remote;
-  if (from === "local") {
-    if (queueCapable) {
-      await sessionUpload(sessionId, src, dest, (transferId) =>
-        seedTransferQueueRow({ transferId, sessionId, direction: "upload", remotePath: dest })
-      );
-      return true;
-    }
-    const { readFile } = await import("@tauri-apps/plugin-fs");
-    await sessionWriteFile(sessionId, dest, await readFile(src));
-    return false;
-  }
-  if (queueCapable) {
-    await sessionDownload(sessionId, src, dest, (transferId) =>
-      seedTransferQueueRow({ transferId, sessionId, direction: "download", remotePath: src })
-    );
+  if (remote.queueCapable) {
+    await startQueuedUpload(remote.sessionId, localPath, remotePath, onRegistered);
     return true;
   }
-  const data = await sessionReadFile(sessionId, src);
-  const { writeFile } = await import("@tauri-apps/plugin-fs");
-  await writeFile(dest, data);
+  const { readFile } = await import("@tauri-apps/plugin-fs");
+  await sessionWriteFile(remote.sessionId, remotePath, await readFile(localPath));
   return false;
+}
+
+/**
+ * Copy one session file to the local disk: a queued download on a
+ * queue-capable session, a byte round-trip otherwise. Resolves to whether the
+ * leg is tracked by the transfer queue.
+ */
+export async function downloadToLocal(
+  remote: PaneRemote,
+  remotePath: string,
+  localPath: string,
+  onRegistered?: (transferId: string) => void
+): Promise<boolean> {
+  const { sessionId, queueCapable } = remote;
+  if (queueCapable) {
+    await sessionDownload(sessionId, remotePath, localPath, (transferId) => {
+      seedTransferQueueRow({ transferId, sessionId, direction: "download", remotePath });
+      onRegistered?.(transferId);
+    });
+    return true;
+  }
+  const data = await sessionReadFile(sessionId, remotePath);
+  const { writeFile } = await import("@tauri-apps/plugin-fs");
+  await writeFile(localPath, data);
+  return false;
+}
+
+/**
+ * Describe a session as a transfer endpoint. A failed capability probe keeps
+ * the safe byte-based fallback.
+ */
+export async function probePaneRemote(sessionId: string): Promise<PaneRemote> {
+  const queueCapable = await sessionSupportsTransferQueue(sessionId).catch(() => false);
+  return { sessionId, queueCapable };
+}
+
+/** Copy one file; resolves to whether the leg is tracked by the transfer queue. */
+function copyFile(from: PaneSide, src: string, dest: string, remote: PaneRemote): Promise<boolean> {
+  return from === "local" ? uploadLocalFile(remote, src, dest) : downloadToLocal(remote, src, dest);
 }
 
 /**
@@ -96,8 +145,12 @@ async function ensureDir(to: PaneSide, dest: string, remote: PaneRemote): Promis
   }
 }
 
-/** Copy one entry (recursively for a folder); resolves to "any leg tracked". */
-async function copyEntry(
+/**
+ * Copy one entry into `destDir` of the other side (recursively for a folder),
+ * with no feedback of its own. Resolves to whether any leg is tracked by the
+ * transfer queue.
+ */
+export async function copyPaneEntry(
   from: PaneSide,
   entry: FileEntry,
   destDir: string,
@@ -113,7 +166,7 @@ async function copyEntry(
       : await sessionListFiles(remote.sessionId, entry.path);
   let tracked = false;
   for (const child of children) {
-    tracked = (await copyEntry(from, child, dest, remote)) || tracked;
+    tracked = (await copyPaneEntry(from, child, dest, remote)) || tracked;
   }
   return tracked;
 }
@@ -128,7 +181,7 @@ export async function copyBetweenPanes(request: PaneCopyRequest): Promise<boolea
   for (const entry of entries) {
     const ok = await runMaybeTrackedTransfer(
       "Copy",
-      () => copyEntry(from, entry, destDir, remote),
+      () => copyPaneEntry(from, entry, destDir, remote),
       { loading: `Copying ${entry.name}…`, success: `Copied ${entry.name}` }
     );
     if (!ok) return false;
