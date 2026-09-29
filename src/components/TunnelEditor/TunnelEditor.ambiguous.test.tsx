@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { seedLayoutState } from "@/test/layoutState";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
@@ -57,14 +58,15 @@ const BOUND_TO_AMBIGUOUS: TunnelConfig = {
 let container: HTMLDivElement;
 let root: Root;
 
-function render(meta: TunnelEditorMeta) {
-  act(() => {
+async function render(meta: TunnelEditorMeta) {
+  await act(async () => {
     root.render(
       <TooltipProvider>
         <TunnelEditor tabId={TAB_ID} meta={meta} isVisible={true} />
       </TooltipProvider>
     );
   });
+  await flushAsync();
 }
 
 async function flush() {
@@ -126,7 +128,7 @@ describe("TunnelEditor — SSH connections from external files (#3619)", () => {
 
   it("a new tunnel may be bound to an SSH connection from an external file", async () => {
     seedConnectionsRegion({ connections: [ssh("ext-ssh", "External SSH", "/shared.json")] });
-    render({ tunnelId: null, sshConnectionId: "ext-ssh" });
+    await render({ tunnelId: null, sshConnectionId: "ext-ssh" });
     setInput(
       container.querySelector<HTMLInputElement>('[data-testid="tunnel-editor-name"]')!,
       "External"
@@ -141,7 +143,7 @@ describe("TunnelEditor — SSH connections from external files (#3619)", () => {
     seedConnectionsRegion({
       connections: [ssh("db", "db"), ssh("db", "db", "/shared.json"), ssh("web", "web")],
     });
-    render({ tunnelId: null, sshConnectionId: "db" });
+    await render({ tunnelId: null, sshConnectionId: "db" });
     setInput(
       container.querySelector<HTMLInputElement>('[data-testid="tunnel-editor-name"]')!,
       "Fallback"
@@ -151,17 +153,17 @@ describe("TunnelEditor — SSH connections from external files (#3619)", () => {
     expect(savedConfig().sshConnectionId).toBe("web");
   });
 
-  it("flags an existing tunnel bound to an id held by several connection files", () => {
+  it("flags an existing tunnel bound to an id held by several connection files", async () => {
     seedConnectionsRegion({
       connections: [ssh("db", "db"), ssh("db", "db", "/shared.json"), ssh("web", "web")],
     });
-    render({ tunnelId: "tun-ambiguous" });
+    await render({ tunnelId: "tun-ambiguous" });
     expect(sshFieldError()).toContain("more than one connection file");
   });
 
-  it("does not flag a unique id", () => {
+  it("does not flag a unique id", async () => {
     seedConnectionsRegion({ connections: [ssh("db", "db"), ssh("web", "web", "/shared.json")] });
-    render({ tunnelId: "tun-ambiguous" });
+    await render({ tunnelId: "tun-ambiguous" });
     expect(sshFieldError()).toBeNull();
   });
 });

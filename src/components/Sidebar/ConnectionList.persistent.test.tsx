@@ -17,6 +17,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
+import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
@@ -78,7 +79,7 @@ const TELNET_CONN: SavedConnection = {
 let container: HTMLDivElement;
 let root: Root;
 
-function render(
+async function render(
   persistentSessions: Record<string, PersistentSessionEntry> = {},
   actionOverrides: Partial<{
     startPersistentSession: () => Promise<void>;
@@ -94,7 +95,7 @@ function render(
     ...actionOverrides,
   });
   seedConnectionsRegion({ connections: [SSH_CONN, TELNET_CONN] });
-  act(() => {
+  await act(async () => {
     root.render(
       React.createElement(TooltipProvider, {
         delayDuration: 0,
@@ -102,6 +103,7 @@ function render(
       })
     );
   });
+  await flushAsync();
 }
 
 function q(testid: string): HTMLElement | null {
@@ -126,8 +128,8 @@ afterEach(() => {
 setupConnectionsRegion();
 
 describe("ConnectionList — desktop-local persistent controls", () => {
-  it("shows NO persistence marker and NO state dot for a plain (desktop-local) connection", () => {
-    render({ "ssh-1": entry("running") });
+  it("shows NO persistence marker and NO state dot for a plain (desktop-local) connection", async () => {
+    await render({ "ssh-1": entry("running") });
     // #2099: a plain SSH connection is multi-instance and dies with the window,
     // so it carries no persistence surfacing whatsoever.
     expect(q("persistent-badge-ssh-1")).toBeNull(); // no ∞
@@ -144,9 +146,9 @@ describe("ConnectionList — desktop-local persistent controls", () => {
     expect(q("connection-connect-ssh-1")).toBeNull();
   });
 
-  it("shows Start when stopped and calls startPersistentSession", () => {
+  it("shows Start when stopped and calls startPersistentSession", async () => {
     const startPersistentSession = vi.fn(() => Promise.resolve());
-    render({}, { startPersistentSession });
+    await render({}, { startPersistentSession });
 
     expect(q("persistent-start-ssh-1")).not.toBeNull();
     expect(q("persistent-attach-ssh-1")).toBeNull();
@@ -158,10 +160,10 @@ describe("ConnectionList — desktop-local persistent controls", () => {
     expect(startPersistentSession).toHaveBeenCalledWith("ssh-1");
   });
 
-  it("shows Attach + Stop when running and calls the matching actions", () => {
+  it("shows Attach + Stop when running and calls the matching actions", async () => {
     const attachPersistentSession = vi.fn(() => Promise.resolve());
     const stopPersistentSession = vi.fn(() => Promise.resolve());
-    render({ "ssh-1": entry("running") }, { attachPersistentSession, stopPersistentSession });
+    await render({ "ssh-1": entry("running") }, { attachPersistentSession, stopPersistentSession });
 
     expect(q("persistent-start-ssh-1")).toBeNull();
     expect(q("persistent-attach-ssh-1")).not.toBeNull();
@@ -178,8 +180,8 @@ describe("ConnectionList — desktop-local persistent controls", () => {
     expect(stopPersistentSession).toHaveBeenCalledWith("ssh-1");
   });
 
-  it("hides inline lifecycle buttons while transitioning and still shows no marker", () => {
-    render({ "ssh-1": entry("starting") });
+  it("hides inline lifecycle buttons while transitioning and still shows no marker", async () => {
+    await render({ "ssh-1": entry("starting") });
     expect(q("persistent-start-ssh-1")).toBeNull();
     expect(q("persistent-attach-ssh-1")).toBeNull();
     expect(q("persistent-stop-ssh-1")).toBeNull();

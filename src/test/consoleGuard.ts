@@ -30,10 +30,12 @@ import { afterAll, afterEach } from "vitest";
 
 /**
  * Max bytes of console output one test file may emit across all its tests.
- * The noisiest file measured ~0.17 MB after the #3356 cleanup; the budget
- * leaves ~2x headroom for timing-dependent warnings on a loaded runner.
+ * After #3860 cleared the remaining act() warnings, the noisiest file
+ * (`FileBrowser.test.tsx`, react-virtual's flushSync warning, see #3897)
+ * measured ~47 KiB; the budget leaves ~2x headroom for timing jitter on a
+ * loaded runner. Lower it again as that file shrinks.
  */
-export const CONSOLE_BYTES_PER_FILE_BUDGET = 512 * 1024;
+export const CONSOLE_BYTES_PER_FILE_BUDGET = 96 * 1024;
 
 /**
  * Console messages that always fail the emitting test. Each one means the test

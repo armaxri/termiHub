@@ -72,7 +72,7 @@ describe("HttpMonitorPanel — run-location", () => {
     await flush();
 
     const urlInput = container.querySelector<HTMLInputElement>('[data-testid="http-monitor-url"]')!;
-    setInputValue(urlInput, "https://example.com/health");
+    act(() => setInputValue(urlInput, "https://example.com/health"));
     await flush();
 
     const start = container.querySelector<HTMLButtonElement>('[data-testid="http-monitor-start"]')!;

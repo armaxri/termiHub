@@ -12,6 +12,7 @@ import {
   flushSessionRegion,
   installSessionLifecycleHarness,
 } from "@/test/sessionLifecycleRegionTestHarness";
+import { flushAsync } from "@/test/flushAsync";
 
 // Render the *real* Tab so we exercise the actual state-dot markup, but stub out
 // the dnd-kit sortable wrapper and the terminal registry so the component mounts
@@ -66,7 +67,7 @@ function makeTerminalTab(id: string, isActive: boolean): TerminalTab {
 let container: HTMLDivElement;
 let root: Root;
 
-function render(tabs: TerminalTab[]) {
+async function render(tabs: TerminalTab[]) {
   act(() => {
     root.render(
       <TooltipProvider>
@@ -74,6 +75,7 @@ function render(tabs: TerminalTab[]) {
       </TooltipProvider>
     );
   });
+  await flushAsync();
 }
 
 /** Return the state-dot element for a given tab id, or null. */
@@ -101,8 +103,8 @@ afterEach(() => {
 });
 
 describe("TabBar — per-tab connection status dot", () => {
-  it("renders a 'connected' dot for a terminal tab with no lifecycle flags", () => {
-    render([makeTerminalTab("t1", true)]);
+  it("renders a 'connected' dot for a terminal tab with no lifecycle flags", async () => {
+    await render([makeTerminalTab("t1", true)]);
     const dot = dotFor("t1");
     expect(dot).not.toBeNull();
     expect(dot?.className).toContain("tab__state-dot--connected");
@@ -110,29 +112,29 @@ describe("TabBar — per-tab connection status dot", () => {
 
   it("renders a 'connecting' dot while the terminal is connecting", async () => {
     harness.transport.setSession("t1", connecting());
-    render([makeTerminalTab("t1", true)]);
+    await render([makeTerminalTab("t1", true)]);
     await flushSessionRegion();
     expect(dotFor("t1")?.className).toContain("tab__state-dot--connecting");
   });
 
-  it("renders a 'failed' dot when the terminal has a spawn error", () => {
-    render([makeTerminalTab("t1", true)]);
+  it("renders a 'failed' dot when the terminal has a spawn error", async () => {
+    await render([makeTerminalTab("t1", true)]);
     act(() => {
       useAppStore.setState({ terminalSpawnErrors: { t1: "boom" } });
     });
     expect(dotFor("t1")?.className).toContain("tab__state-dot--failed");
   });
 
-  it("exposes a non-colour accessible name for the connected state", () => {
-    render([makeTerminalTab("t1", true)]);
+  it("exposes a non-colour accessible name for the connected state", async () => {
+    await render([makeTerminalTab("t1", true)]);
     const dot = dotFor("t1");
     // role=img + aria-label surface the status to AT without hover/colour (A11Y-004).
     expect(dot?.getAttribute("role")).toBe("img");
     expect(dot?.getAttribute("aria-label")).toBe("Connected");
   });
 
-  it("exposes a non-colour accessible name for the failed state", () => {
-    render([makeTerminalTab("t1", true)]);
+  it("exposes a non-colour accessible name for the failed state", async () => {
+    await render([makeTerminalTab("t1", true)]);
     act(() => {
       useAppStore.setState({ terminalSpawnErrors: { t1: "boom" } });
     });
@@ -141,28 +143,28 @@ describe("TabBar — per-tab connection status dot", () => {
 
   it("exposes a non-colour accessible name for the connecting state", async () => {
     harness.transport.setSession("t1", connecting());
-    render([makeTerminalTab("t1", true)]);
+    await render([makeTerminalTab("t1", true)]);
     await flushSessionRegion();
     expect(dotFor("t1")?.getAttribute("aria-label")).toBe("Connecting");
   });
 
   it("exposes a non-colour accessible name for the disconnected state", async () => {
     harness.transport.setSession("t1", disconnected());
-    render([makeTerminalTab("t1", true)]);
+    await render([makeTerminalTab("t1", true)]);
     await flushSessionRegion();
     expect(dotFor("t1")?.getAttribute("aria-label")).toBe("Disconnected");
   });
 
   it("renders a 'disconnected' dot when the terminal session has exited", async () => {
     harness.transport.setSession("t1", disconnected());
-    render([makeTerminalTab("t1", true)]);
+    await render([makeTerminalTab("t1", true)]);
     await flushSessionRegion();
     expect(dotFor("t1")?.className).toContain("tab__state-dot--disconnected");
   });
 
   it("reflects state changes on a background (inactive) tab without focusing it", async () => {
     // t1 is active/focused, t2 is a background tab.
-    render([makeTerminalTab("t1", true), makeTerminalTab("t2", false)]);
+    await render([makeTerminalTab("t1", true), makeTerminalTab("t2", false)]);
     // Establish the region subscription before mutating it post-render.
     await flushSessionRegion();
 

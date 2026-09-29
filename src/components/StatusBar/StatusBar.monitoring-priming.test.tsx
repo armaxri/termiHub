@@ -28,6 +28,7 @@ import {
 import type { ConnectionTypeInfo } from "@/types/connection";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+import { flushAsync } from "@/test/flushAsync";
 
 vi.mock("@/components/CredentialStoreIndicator", () => ({ CredentialStoreIndicator: () => null }));
 vi.mock("./PortableBadge", () => ({ PortableBadge: () => null }));
@@ -136,20 +137,21 @@ describe("StatusBar — CPU first-sample priming (#1148, G10)", () => {
     teardownMonitors();
   });
 
-  function renderStatusBar() {
-    act(() =>
-      root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)))
-    );
+  async function renderStatusBar() {
+    await act(async () => {
+      root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)));
+    });
+    await flushAsync();
   }
 
-  it("shows a priming indicator (not '0%') for CPU on the first sample", () => {
+  it("shows a priming indicator (not '0%') for CPU on the first sample", async () => {
     setActiveMonitor({
       monitorSessionId: "sess-1",
       stats: makeStats({ cpuUsagePercent: 0 }),
       sampleCount: 1,
       status: "live",
     });
-    renderStatusBar();
+    await renderStatusBar();
 
     const cpu = container.querySelector('[data-testid="monitoring-cpu"]');
     expect(cpu).not.toBeNull();
@@ -160,14 +162,14 @@ describe("StatusBar — CPU first-sample priming (#1148, G10)", () => {
     expect(mem!.textContent).toContain("50%");
   });
 
-  it("shows the real CPU value from the second sample onward", () => {
+  it("shows the real CPU value from the second sample onward", async () => {
     setActiveMonitor({
       monitorSessionId: "sess-1",
       stats: makeStats({ cpuUsagePercent: 42 }),
       sampleCount: 2,
       status: "live",
     });
-    renderStatusBar();
+    await renderStatusBar();
 
     const cpu = container.querySelector('[data-testid="monitoring-cpu"]');
     expect(cpu).not.toBeNull();

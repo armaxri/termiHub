@@ -27,6 +27,7 @@ import {
 import type { ConnectionTypeInfo } from "@/types/connection";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+import { flushAsync } from "@/test/flushAsync";
 
 vi.mock("@/components/CredentialStoreIndicator", () => ({ CredentialStoreIndicator: () => null }));
 vi.mock("./PortableBadge", () => ({ PortableBadge: () => null }));
@@ -135,20 +136,21 @@ describe("StatusBar — monitoring Stale indicator (#1229, G1)", () => {
     teardownMonitors();
   });
 
-  function renderStatusBar() {
-    act(() =>
-      root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)))
-    );
+  async function renderStatusBar() {
+    await act(async () => {
+      root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)));
+    });
+    await flushAsync();
   }
 
-  it("shows a Stale badge and dims the stats when status is 'stale'", () => {
+  it("shows a Stale badge and dims the stats when status is 'stale'", async () => {
     setActiveMonitor({
       monitorSessionId: "sess-1",
       stats: makeStats(),
       sampleCount: 3,
       status: "stale",
     });
-    renderStatusBar();
+    await renderStatusBar();
 
     // The Stale badge is present.
     const badge = container.querySelector('[data-testid="monitoring-stale"]');
@@ -161,14 +163,14 @@ describe("StatusBar — monitoring Stale indicator (#1229, G1)", () => {
     expect(cpu!.className).toContain("monitoring-status__stat--stale");
   });
 
-  it("does not show the Stale badge when status is 'live'", () => {
+  it("does not show the Stale badge when status is 'live'", async () => {
     setActiveMonitor({
       monitorSessionId: "sess-1",
       stats: makeStats(),
       sampleCount: 3,
       status: "live",
     });
-    renderStatusBar();
+    await renderStatusBar();
 
     expect(container.querySelector('[data-testid="monitoring-stale"]')).toBeNull();
     const cpu = container.querySelector('[data-testid="monitoring-cpu"]');

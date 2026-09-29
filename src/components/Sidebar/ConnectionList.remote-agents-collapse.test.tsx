@@ -11,6 +11,7 @@ import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarn
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
+import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
@@ -74,8 +75,8 @@ const baseSettings = {
 let container: HTMLDivElement;
 let root: Root;
 
-function render() {
-  act(() => {
+async function render() {
+  await act(async () => {
     root.render(
       React.createElement(TooltipProvider, {
         delayDuration: 0,
@@ -83,6 +84,7 @@ function render() {
       })
     );
   });
+  await flushAsync();
 }
 
 function clickRemoteAgentsToggle() {
@@ -112,8 +114,8 @@ describe("ConnectionList – Remote Agents collapse (#1822)", () => {
     container.remove();
   });
 
-  it("expanded by default: children visible and toggle marked expanded", () => {
-    render();
+  it("expanded by default: children visible and toggle marked expanded", async () => {
+    await render();
 
     expect(container.querySelector('[data-testid="agent-node-agent-1"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="agent-filter-input"]')).toBeTruthy();
@@ -121,8 +123,8 @@ describe("ConnectionList – Remote Agents collapse (#1822)", () => {
     expect(toggle?.getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("collapsing hides the agent children and the agent filter", () => {
-    render();
+  it("collapsing hides the agent children and the agent filter", async () => {
+    await render();
     clickRemoteAgentsToggle();
 
     expect(container.querySelector('[data-testid="agent-node-agent-1"]')).toBeNull();
@@ -131,8 +133,8 @@ describe("ConnectionList – Remote Agents collapse (#1822)", () => {
     expect(toggle?.getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("collapsing removes the wrapper's flex-grow so it no longer squats on the column", () => {
-    render();
+  it("collapsing removes the wrapper's flex-grow so it no longer squats on the column", async () => {
+    await render();
 
     // While expanded the Remote Agents wrapper participates in the flex layout.
     const wrapper = container.querySelector<HTMLElement>(".connection-list__remote-agents");

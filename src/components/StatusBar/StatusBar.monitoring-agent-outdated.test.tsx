@@ -22,6 +22,7 @@ import {
   type FakeMonitorTransport,
 } from "@/test/systemMonitorHarness";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+import { flushAsync } from "@/test/flushAsync";
 
 vi.mock("@/components/CredentialStoreIndicator", () => ({ CredentialStoreIndicator: () => null }));
 vi.mock("./PortableBadge", () => ({ PortableBadge: () => null }));
@@ -106,21 +107,22 @@ describe("StatusBar — outdated agent (#3871)", () => {
     teardownMonitors();
   });
 
-  function renderStatusBar() {
-    act(() =>
-      root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)))
-    );
+  async function renderStatusBar() {
+    await act(async () => {
+      root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)));
+    });
+    await flushAsync();
   }
 
   const byTestId = (id: string) => container.querySelector(`[data-testid="${id}"]`);
 
-  it("says to update the agent instead of showing a monitor error", () => {
+  it("says to update the agent instead of showing a monitor error", async () => {
     setActiveMonitor({
       error:
         "Remote agent error: [thub-code:agent_outdated] the remote agent is too old to monitor this session; update the agent",
     });
     useAppStore.setState({ connectMonitoring: vi.fn(() => Promise.resolve()) });
-    renderStatusBar();
+    await renderStatusBar();
 
     const notice = byTestId("monitoring-agent-outdated");
     expect(notice).not.toBeNull();
@@ -130,10 +132,10 @@ describe("StatusBar — outdated agent (#3871)", () => {
     expect(byTestId("monitoring-retry-btn")).toBeNull();
   });
 
-  it("keeps the generic error and Retry for any other failure", () => {
+  it("keeps the generic error and Retry for any other failure", async () => {
     setActiveMonitor({ error: "Remote agent error: connection refused" });
     useAppStore.setState({ connectMonitoring: vi.fn(() => Promise.resolve()) });
-    renderStatusBar();
+    await renderStatusBar();
 
     expect(byTestId("monitoring-agent-outdated")).toBeNull();
     expect(byTestId("monitoring-error")).not.toBeNull();

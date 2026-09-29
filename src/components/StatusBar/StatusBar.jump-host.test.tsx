@@ -11,6 +11,7 @@ import { useAppStore } from "@/store/appStore";
 import { StatusBar } from "./StatusBar";
 import type { ConnectionConfig, TerminalTab } from "@/types/terminal";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
+import { flushAsync } from "@/test/flushAsync";
 
 // Stub the unrelated status-bar children so the test isolates the hop chain.
 vi.mock("@/components/CredentialStoreIndicator", () => ({ CredentialStoreIndicator: () => null }));
@@ -51,7 +52,7 @@ describe("StatusBar — jump-host hop chain", () => {
     container.remove();
   });
 
-  it("shows the hop chain for an active jump-host tab", () => {
+  it("shows the hop chain for an active jump-host tab", async () => {
     setActiveTab({
       type: "ssh",
       config: {
@@ -62,16 +63,18 @@ describe("StatusBar — jump-host hop chain", () => {
     });
 
     act(() => root.render(React.createElement(StatusBar)));
+    await flushAsync();
 
     const item = container.querySelector('[data-testid="status-bar-jump-host"]');
     expect(item).not.toBeNull();
     expect(item!.textContent).toContain("SSH: deploy@app-server via bastion");
   });
 
-  it("shows nothing for a direct SSH connection", () => {
+  it("shows nothing for a direct SSH connection", async () => {
     setActiveTab({ type: "ssh", config: { host: "app-server", username: "deploy" } });
 
     act(() => root.render(React.createElement(StatusBar)));
+    await flushAsync();
 
     expect(container.querySelector('[data-testid="status-bar-jump-host"]')).toBeNull();
   });

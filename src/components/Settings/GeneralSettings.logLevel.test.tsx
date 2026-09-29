@@ -108,7 +108,7 @@ describe("GeneralSettings — log file verbosity (OBS-009)", () => {
       current = typeof update === "function" ? update(current) : update;
     };
 
-    act(() => {
+    await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
           <GeneralSettings settings={BASE_SETTINGS} onChange={onChange} />

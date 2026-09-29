@@ -6,6 +6,7 @@ import { TabBar } from "./TabBar";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
 import { layoutState } from "@/test/layoutState";
+import { flushAsync } from "@/test/flushAsync";
 
 vi.mock("./TerminalRegistry", () => ({
   useTerminalRegistry: () => ({
@@ -72,10 +73,11 @@ function makeDirtyOtherTab(id = TAB_ID): TerminalTab {
 let container: HTMLDivElement;
 let root: Root;
 
-function render(tabs: TerminalTab[]) {
+async function render(tabs: TerminalTab[]) {
   act(() => {
     root.render(<TabBar panelId={PANEL_ID} tabs={tabs} />);
   });
+  await flushAsync();
 }
 
 function resetStore() {
@@ -102,12 +104,14 @@ afterEach(() => {
 });
 
 describe("TabBar — close file editor tab with unsaved changes", () => {
-  it("routes close through setPendingCloseRequest for a dirty editor tab (no window.confirm)", () => {
+  it("routes close through setPendingCloseRequest for a dirty editor tab (no window.confirm)", async () => {
     const confirmSpy = vi.spyOn(window, "confirm");
     const tabs = [makeEditorTab()];
-    render(tabs);
+    await render(tabs);
 
-    useAppStore.setState({ editorDirtyTabs: { [TAB_ID]: true } });
+    act(() => {
+      useAppStore.setState({ editorDirtyTabs: { [TAB_ID]: true } });
+    });
 
     const closeBtn = container.querySelector(
       `[data-testid="tab-close-${TAB_ID}"]`
@@ -124,11 +128,13 @@ describe("TabBar — close file editor tab with unsaved changes", () => {
     });
   });
 
-  it("does not close the tab immediately when the editor tab is dirty", () => {
+  it("does not close the tab immediately when the editor tab is dirty", async () => {
     const tabs = [makeEditorTab()];
-    render(tabs);
+    await render(tabs);
 
-    useAppStore.setState({ editorDirtyTabs: { [TAB_ID]: true } });
+    act(() => {
+      useAppStore.setState({ editorDirtyTabs: { [TAB_ID]: true } });
+    });
 
     // Record panels before close attempt
     const panelsBefore = layoutState().rootPanel;
@@ -145,13 +151,15 @@ describe("TabBar — close file editor tab with unsaved changes", () => {
     expect(layoutState().rootPanel).toEqual(panelsBefore);
   });
 
-  it("closes a clean editor tab directly without dialog", () => {
+  it("closes a clean editor tab directly without dialog", async () => {
     const confirmSpy = vi.spyOn(window, "confirm");
     const tabs = [makeEditorTab()];
-    render(tabs);
+    await render(tabs);
 
     // Tab is not dirty
-    useAppStore.setState({ editorDirtyTabs: { [TAB_ID]: false } });
+    act(() => {
+      useAppStore.setState({ editorDirtyTabs: { [TAB_ID]: false } });
+    });
 
     const closeBtn = container.querySelector(
       `[data-testid="tab-close-${TAB_ID}"]`
@@ -169,13 +177,15 @@ describe("TabBar — close file editor tab with unsaved changes", () => {
 describe("TabBar — unsaved-changes fallback dialog (shared Modal, no window.confirm)", () => {
   const DIALOG = '[data-testid="unsaved-editor-close-dialog"]';
 
-  it("shows the shared confirm dialog instead of a native window.confirm", () => {
+  it("shows the shared confirm dialog instead of a native window.confirm", async () => {
     const confirmSpy = vi.spyOn(window, "confirm");
     const closeTab = vi.fn();
     useAppStore.setState({ closeTab });
-    render([makeDirtyOtherTab()]);
+    await render([makeDirtyOtherTab()]);
 
-    useAppStore.setState({ editorDirtyTabs: { [TAB_ID]: true } });
+    act(() => {
+      useAppStore.setState({ editorDirtyTabs: { [TAB_ID]: true } });
+    });
 
     act(() => {
       (container.querySelector(`[data-testid="tab-close-${TAB_ID}"]`) as HTMLElement).click();
@@ -190,12 +200,14 @@ describe("TabBar — unsaved-changes fallback dialog (shared Modal, no window.co
     expect(closeTab).not.toHaveBeenCalled();
   });
 
-  it("confirming proceeds with the close", () => {
+  it("confirming proceeds with the close", async () => {
     const closeTab = vi.fn();
     useAppStore.setState({ closeTab });
-    render([makeDirtyOtherTab()]);
+    await render([makeDirtyOtherTab()]);
 
-    useAppStore.setState({ editorDirtyTabs: { [TAB_ID]: true } });
+    act(() => {
+      useAppStore.setState({ editorDirtyTabs: { [TAB_ID]: true } });
+    });
 
     act(() => {
       (container.querySelector(`[data-testid="tab-close-${TAB_ID}"]`) as HTMLElement).click();
@@ -209,12 +221,14 @@ describe("TabBar — unsaved-changes fallback dialog (shared Modal, no window.co
     expect(document.querySelector(DIALOG)).toBeNull();
   });
 
-  it("cancelling keeps the tab open and closes the dialog", () => {
+  it("cancelling keeps the tab open and closes the dialog", async () => {
     const closeTab = vi.fn();
     useAppStore.setState({ closeTab });
-    render([makeDirtyOtherTab()]);
+    await render([makeDirtyOtherTab()]);
 
-    useAppStore.setState({ editorDirtyTabs: { [TAB_ID]: true } });
+    act(() => {
+      useAppStore.setState({ editorDirtyTabs: { [TAB_ID]: true } });
+    });
 
     act(() => {
       (container.querySelector(`[data-testid="tab-close-${TAB_ID}"]`) as HTMLElement).click();

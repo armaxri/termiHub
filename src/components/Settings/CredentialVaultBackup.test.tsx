@@ -108,8 +108,8 @@ describe("CredentialVaultBackup", () => {
     container.remove();
   });
 
-  it("disables both actions when credential storage is off", () => {
-    render("none");
+  it("disables both actions when credential storage is off", async () => {
+    await renderLoaded("none");
     expect((query("credential-vault-export-btn") as HTMLButtonElement).disabled).toBe(true);
     expect((query("credential-vault-import-btn") as HTMLButtonElement).disabled).toBe(true);
     expect(query("credential-vault-unavailable")).not.toBeNull();

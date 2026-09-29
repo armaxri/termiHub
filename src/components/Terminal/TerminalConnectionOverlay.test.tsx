@@ -13,6 +13,7 @@ import {
   flushSessionRegion,
   installSessionLifecycleHarness,
 } from "@/test/sessionLifecycleRegionTestHarness";
+import { flushAsync } from "@/test/flushAsync";
 
 vi.mock("lucide-react", () => ({
   ServerCrash: () => null,
@@ -444,16 +445,17 @@ describe("TerminalConnectionOverlay — failed state", () => {
   });
 
   /** Render a failed tab with the given message, typed kind, and session type. */
-  function renderFailure(
+  async function renderFailure(
     message: string,
     kind: ConnectionErrorKind | undefined,
     sessionType: string
-  ): string {
-    useAppStore.setState({
-      terminalSpawnErrors: { [TAB_ID]: message },
-      terminalSpawnErrorKinds: kind ? { [TAB_ID]: kind } : {},
-    });
+  ): Promise<string> {
+    // Later calls re-render an already-mounted overlay, so the store update is in act.
     act(() => {
+      useAppStore.setState({
+        terminalSpawnErrors: { [TAB_ID]: message },
+        terminalSpawnErrorKinds: kind ? { [TAB_ID]: kind } : {},
+      });
       root.render(
         <TerminalConnectionOverlay
           tabId={TAB_ID}
@@ -464,52 +466,57 @@ describe("TerminalConnectionOverlay — failed state", () => {
         />
       );
     });
+    await flushAsync();
     return container.textContent ?? "";
   }
 
-  it("shows the SSH agent hint for the agent-auth kind", () => {
-    expect(renderFailure("Agent auth failed: x", "agent-auth", "ssh")).toContain(
+  it("shows the SSH agent hint for the agent-auth kind", async () => {
+    expect(await renderFailure("Agent auth failed: x", "agent-auth", "ssh")).toContain(
       "SSH Agent not running"
     );
   });
 
-  it("shows the timeout hint for the timeout kind", () => {
-    expect(renderFailure("connection timed out", "timeout", "ssh")).toContain("timed out");
+  it("shows the timeout hint for the timeout kind", async () => {
+    expect(await renderFailure("connection timed out", "timeout", "ssh")).toContain("timed out");
   });
 
   // Regression for #2088: an SSH connect timeout must give SSH-appropriate,
   // reachability-focused guidance — it must NOT tell the user to check "the
   // agent binary" (that hint belongs to agent connections, and a timeout means
   // the transport never connected in the first place).
-  it("gives an SSH-appropriate timeout hint, not the agent-binary one", () => {
-    const text = renderFailure("Connection timed out after 45s", "timeout", "ssh");
+  it("gives an SSH-appropriate timeout hint, not the agent-binary one", async () => {
+    const text = await renderFailure("Connection timed out after 45s", "timeout", "ssh");
     expect(text).not.toContain("agent binary");
     expect(text).toContain("SSH");
     expect(text).toContain("reachable");
   });
 
-  it("gives a telnet timeout hint free of any agent-binary mention", () => {
-    const text = renderFailure("TCP connect failed: connection timed out", "timeout", "telnet");
+  it("gives a telnet timeout hint free of any agent-binary mention", async () => {
+    const text = await renderFailure(
+      "TCP connect failed: connection timed out",
+      "timeout",
+      "telnet"
+    );
     expect(text).not.toContain("agent binary");
     expect(text).toContain("reachable");
   });
 
   // #2088: the SSH ssh-agent hint (remedy: start ssh-agent) is SSH-specific and
   // must not leak onto other backends even with the agent-auth kind.
-  it("does not show the SSH-agent hint on a non-SSH backend", () => {
-    expect(renderFailure("Agent auth failed", "agent-auth", "telnet")).not.toContain(
+  it("does not show the SSH-agent hint on a non-SSH backend", async () => {
+    expect(await renderFailure("Agent auth failed", "agent-auth", "telnet")).not.toContain(
       "SSH Agent not running"
     );
   });
 
-  it("shows serial not-found hint for serial sessionType", () => {
-    expect(renderFailure("Serial port '/dev/ttyUSB0' not found", "not-found", "serial")).toContain(
-      "Serial port not found"
-    );
+  it("shows serial not-found hint for serial sessionType", async () => {
+    expect(
+      await renderFailure("Serial port '/dev/ttyUSB0' not found", "not-found", "serial")
+    ).toContain("Serial port not found");
   });
 
-  it("shows the container hint for a docker not-found failure (#3784)", () => {
-    const text = renderFailure(
+  it("shows the container hint for a docker not-found failure (#3784)", async () => {
+    const text = await renderFailure(
       "Compose service 'shop/web' has no running container (1 stopped)",
       "not-found",
       "docker"
@@ -518,8 +525,8 @@ describe("TerminalConnectionOverlay — failed state", () => {
     expect(text).not.toContain("Serial port not found");
   });
 
-  it("shows serial permission hint for serial sessionType", () => {
-    const text = renderFailure("Permission denied on '/dev/ttyUSB0'", "permission", "serial");
+  it("shows serial permission hint for serial sessionType", async () => {
+    const text = await renderFailure("Permission denied on '/dev/ttyUSB0'", "permission", "serial");
     expect(text).toContain("Permission denied");
     expect(text).toContain("dialout");
   });
@@ -527,52 +534,56 @@ describe("TerminalConnectionOverlay — failed state", () => {
   // Regression for #1830: the fix command and its guidance appear exactly once,
   // in the hint panel. The backend message states only the fact (I18N-009), so
   // the raw error box is shown verbatim — no em-dash split.
-  it("does not duplicate the serial permission remediation command", () => {
+  it("does not duplicate the serial permission remediation command", async () => {
     const command = "sudo usermod -aG dialout $USER";
-    const text = renderFailure("Permission denied on 'COM7'", "permission", "serial");
+    const text = await renderFailure("Permission denied on 'COM7'", "permission", "serial");
     expect(text.split(command).length - 1).toBe(1);
     expect(text).toContain("Permission denied on 'COM7'");
     expect(text.split("dialout group").length - 1).toBe(1);
   });
 
-  it("shows serial busy hint for serial sessionType", () => {
+  it("shows serial busy hint for serial sessionType", async () => {
     expect(
-      renderFailure("Serial port '/dev/ttyUSB0' is already in use", "busy", "serial")
+      await renderFailure("Serial port '/dev/ttyUSB0' is already in use", "busy", "serial")
     ).toContain("already in use by another application");
   });
 
-  it("shows an auth hint for the auth kind on SSH", () => {
-    expect(renderFailure("Authentication failed", "auth", "ssh")).toContain(
+  it("shows an auth hint for the auth kind on SSH", async () => {
+    expect(await renderFailure("Authentication failed", "auth", "ssh")).toContain(
       "rejected the credentials"
     );
   });
 
-  it("does not show serial hint for non-serial sessionType", () => {
-    expect(renderFailure("No such file or directory", "not-found", "ssh")).not.toContain(
+  it("does not show serial hint for non-serial sessionType", async () => {
+    expect(await renderFailure("No such file or directory", "not-found", "ssh")).not.toContain(
       "Serial port not found"
     );
   });
 
   // I18N-009: hints are selected from the typed kind, never from the message.
   // A German (OS-localized) message still gets the right hint…
-  it("selects the hint from the kind for a non-English message", () => {
-    const busy = renderFailure(
+  it("selects the hint from the kind for a non-English message", async () => {
+    const busy = await renderFailure(
       "Der serielle Anschluss 'COM3' wird bereits verwendet",
       "busy",
       "serial"
     );
     expect(busy).toContain("The serial port is already in use by another application.");
-    const denied = renderFailure("Zugriff verweigert auf '/dev/ttyUSB0'", "permission", "serial");
+    const denied = await renderFailure(
+      "Zugriff verweigert auf '/dev/ttyUSB0'",
+      "permission",
+      "serial"
+    );
     expect(denied).toContain("dialout");
-    const timeout = renderFailure("Zeitüberschreitung der Verbindung", "timeout", "ssh");
+    const timeout = await renderFailure("Zeitüberschreitung der Verbindung", "timeout", "ssh");
     expect(timeout).toContain("before the SSH session was established");
   });
 
   // …and English text that used to trigger a hint by substring match shows
   // none without a typed kind. The message is also displayed whole: nothing is
   // split off at an em dash.
-  it("shows no hint for hint-like English text without a kind", () => {
-    const serial = renderFailure(
+  it("shows no hint for hint-like English text without a kind", async () => {
+    const serial = await renderFailure(
       "Permission denied on 'COM7' — something busy not found timed out",
       undefined,
       "serial"
@@ -581,7 +592,7 @@ describe("TerminalConnectionOverlay — failed state", () => {
     expect(serial).not.toContain("Serial port not found");
     expect(serial).not.toContain("already in use by another application");
     expect(serial).toContain("Permission denied on 'COM7' — something busy not found timed out");
-    const ssh = renderFailure("Agent auth failed: connection timed out", undefined, "ssh");
+    const ssh = await renderFailure("Agent auth failed: connection timed out", undefined, "ssh");
     expect(ssh).not.toContain("SSH Agent not running");
     expect(ssh).not.toContain("before the SSH session was established");
   });
@@ -589,7 +600,7 @@ describe("TerminalConnectionOverlay — failed state", () => {
   // #3751: an agent-hosted session's failure arrives as the agent's IPC
   // envelope. From a 0.18.0+ agent its `code` carries the typed kind, and the
   // tab's inner session type (read from the remote config) picks the family.
-  it("shows the matching hint for an agent-hosted session's typed failure", () => {
+  it("shows the matching hint for an agent-hosted session's typed failure", async () => {
     // SplitView passes the remote config's inner `sessionType` (`readSessionType`).
     const sessionType = "serial";
     const failure = (code: string) =>
@@ -600,27 +611,27 @@ describe("TerminalConnectionOverlay — failed state", () => {
       });
     const busy = failure("busy");
     expect(
-      renderFailure(busy.message, connectionErrorKindFromCode(busy.code), sessionType)
+      await renderFailure(busy.message, connectionErrorKindFromCode(busy.code), sessionType)
     ).toContain("already in use by another application");
     const missing = failure("not_found");
     expect(
-      renderFailure(missing.message, connectionErrorKindFromCode(missing.code), sessionType)
+      await renderFailure(missing.message, connectionErrorKindFromCode(missing.code), sessionType)
     ).toContain("Serial port not found");
     const timeout = failure("timeout");
     expect(
-      renderFailure(timeout.message, connectionErrorKindFromCode(timeout.code), "ssh")
+      await renderFailure(timeout.message, connectionErrorKindFromCode(timeout.code), "ssh")
     ).toContain("before the SSH session was established");
   });
 
   // An older agent sends no kind: the envelope code stays `remote_error` and
   // the overlay shows the message without a hint, exactly as before.
-  it("shows no hint for an agent-hosted failure from an older agent", () => {
+  it("shows no hint for an agent-hosted failure from an older agent", async () => {
     const old = parseBackendError({
       code: "remote_error",
       message: "Remote agent error: Daemon exited before its endpoint was ready",
       details: null,
     });
-    const text = renderFailure(old.message, connectionErrorKindFromCode(old.code), "serial");
+    const text = await renderFailure(old.message, connectionErrorKindFromCode(old.code), "serial");
     expect(text).toContain("Daemon exited before its endpoint was ready");
     expect(text).not.toContain("already in use by another application");
     expect(text).not.toContain("Serial port not found");
