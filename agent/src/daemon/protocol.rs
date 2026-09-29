@@ -56,6 +56,16 @@ pub const MSG_PROCESS_REQUEST: u8 = 0x07;
 /// a daemon that advertised [`CAP_MONITORING`] in [`MSG_CAPABILITIES`].
 pub const MSG_MONITORING_REQUEST: u8 = 0x08;
 
+/// Agent → Daemon: a file operation for this session's backend (#3242).
+/// Payload: JSON [`FileRequest`](super::files_rpc::FileRequest). Sent only to
+/// a daemon that advertised [`CAP_FILES`] in [`MSG_CAPABILITIES`].
+pub const MSG_FILE_REQUEST: u8 = 0x09;
+
+/// Agent → Daemon: one slice of a write's contents (#3242), following its
+/// [`MSG_FILE_REQUEST`]. Payload: the request id (u64 BE) then at most
+/// [`CHUNK_SIZE`](super::files_rpc::CHUNK_SIZE) bytes.
+pub const MSG_FILE_WRITE_DATA: u8 = 0x0A;
+
 /// [`MSG_ATTACH_INTENT`] payload: evict any writer currently attached — the
 /// historical accept behavior. Used by the spawn-path connect and explicit
 /// re-attach.
@@ -107,6 +117,14 @@ pub const MSG_CAPABILITIES: u8 = 0x88;
 /// [`MonitoringEvent`](super::monitoring_rpc::MonitoringEvent). Only the
 /// connection that subscribed receives the stream.
 pub const MSG_MONITORING_EVENT: u8 = 0x89;
+/// Daemon → Agent: the reply to a [`MSG_FILE_REQUEST`] (#3242). Payload: JSON
+/// [`FileResponse`](super::files_rpc::FileResponse), carrying the request's
+/// id. Only the connection that sent the request receives it.
+pub const MSG_FILE_RESPONSE: u8 = 0x8A;
+/// Daemon → Agent: one slice of a read's contents (#3242), sent before the
+/// read's [`MSG_FILE_RESPONSE`]. Payload: the request id (u64 BE) then at most
+/// [`CHUNK_SIZE`](super::files_rpc::CHUNK_SIZE) bytes.
+pub const MSG_FILE_READ_DATA: u8 = 0x8B;
 
 /// [`MSG_CAPABILITIES`] flag: the daemon serves [`MSG_PROCESS_REQUEST`] through
 /// its session backend's process manager.
@@ -115,6 +133,10 @@ pub const CAP_PROCESSES: u8 = 0x01;
 /// [`MSG_CAPABILITIES`] flag: the daemon serves [`MSG_MONITORING_REQUEST`]
 /// through its session backend's monitoring provider (#3871).
 pub const CAP_MONITORING: u8 = 0x02;
+
+/// [`MSG_CAPABILITIES`] flag: the daemon serves [`MSG_FILE_REQUEST`] through
+/// its session backend's file browser (#3242).
+pub const CAP_FILES: u8 = 0x04;
 
 /// Maximum allowed frame payload size (16 MiB).
 const MAX_PAYLOAD_SIZE: u32 = 16 * 1024 * 1024;

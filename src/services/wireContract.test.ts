@@ -214,6 +214,7 @@ describe("wire contract: agent connect / definitions", () => {
       "embeddedServerActivity",
       "maxSessions",
       "monitoringSupported",
+      "sessionFiles",
       "sessionMonitoring",
       "sessionProcesses",
       "toolStreaming",

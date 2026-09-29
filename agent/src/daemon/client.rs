@@ -16,6 +16,7 @@ use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
+use crate::daemon::files_rpc::{DaemonFileBrowser, FileChannel};
 use crate::daemon::monitoring_rpc::{DaemonMonitoringProvider, MonitoringChannel};
 use crate::daemon::process_rpc::{DaemonProcessManager, ProcessChannel};
 use crate::daemon::protocol::{self, *};
@@ -204,6 +205,8 @@ pub(crate) struct FeatureChannels {
     pub processes: Arc<ProcessChannel>,
     /// Session monitoring (#3871).
     pub monitoring: Arc<MonitoringChannel>,
+    /// Session file browsing (#3242).
+    pub files: Arc<FileChannel>,
 }
 
 impl FeatureChannels {
@@ -214,18 +217,22 @@ impl FeatureChannels {
         self.processes.fail_all();
         self.monitoring.set_supported(false);
         self.monitoring.fail_all();
+        self.files.set_supported(false);
+        self.files.fail_all();
     }
 
     /// Apply the daemon's [`MSG_CAPABILITIES`] flags.
     fn apply_capabilities(&self, flags: u8) {
         self.processes.set_supported(flags & CAP_PROCESSES != 0);
         self.monitoring.set_supported(flags & CAP_MONITORING != 0);
+        self.files.set_supported(flags & CAP_FILES != 0);
     }
 
     /// The connection ended: nothing sent over it will be answered.
     fn fail_all(&self) {
         self.processes.fail_all();
         self.monitoring.fail_all();
+        self.files.fail_all();
     }
 }
 
@@ -611,6 +618,21 @@ impl DaemonClient {
         Some(Arc::new(DaemonMonitoringProvider::new(
             self.writer.clone(),
             self.features.monitoring.clone(),
+        )))
+    }
+
+    /// The session backend's file browser, run inside the daemon (#3242) —
+    /// `None` when this worker does not currently hold the session (evicted,
+    /// or the daemon is gone) or when the daemon does not serve file requests
+    /// (its backend has no file browser, or it was started by an agent that
+    /// predates them).
+    pub fn file_browser(&self) -> Option<Arc<dyn termihub_core::files::FileBrowser + Send + Sync>> {
+        if self.is_evicted() || !self.is_alive() || !self.features.files.supported() {
+            return None;
+        }
+        Some(Arc::new(DaemonFileBrowser::new(
+            self.writer.clone(),
+            self.features.files.clone(),
         )))
     }
 
@@ -1101,6 +1123,16 @@ async fn read_frames(
                 MSG_MONITORING_EVENT => {
                     if let Some(features) = features {
                         features.monitoring.deliver(&frame.payload);
+                    }
+                }
+                MSG_FILE_READ_DATA => {
+                    if let Some(features) = features {
+                        features.files.deliver_chunk(&frame.payload);
+                    }
+                }
+                MSG_FILE_RESPONSE => {
+                    if let Some(features) = features {
+                        features.files.deliver(&frame.payload);
                     }
                 }
                 other => {

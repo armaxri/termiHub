@@ -43,6 +43,13 @@ sessionProcesses?: boolean,
  */
 sessionMonitoring?: boolean, 
 /**
+ * Whether the agent browses files inside agent-hosted SSH, Docker, FTP
+ * and WSL sessions through their own backends (protocol 0.22.0, #3242).
+ * `false` for older agents, whose such sessions' file browser says to
+ * update the agent.
+ */
+sessionFiles?: boolean, 
+/**
  * Agent binary version string, e.g. "1.4.2".
  */
 agentVersion?: string, };
