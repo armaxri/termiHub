@@ -50,7 +50,7 @@ fn process_requests(mock: &MockAgentRpcClient) -> Vec<(String, serde_json::Value
 async fn agent_hosted_sessions_route_list_and_kill_to_their_remote_session() {
     for session_type in ["ssh", "docker", "wsl"] {
         let mock = mock_agent(session_type, true);
-        let proxy = connected_proxy(&mock, session_type).await;
+        let mut proxy = connected_proxy(&mock, session_type).await;
         let manager = proxy
             .process_manager()
             .expect("an agent-hosted monitorable session has processes");
@@ -78,7 +78,7 @@ async fn agent_hosted_sessions_route_list_and_kill_to_their_remote_session() {
 #[tokio::test]
 async fn an_outdated_agent_reports_update_required_without_a_request() {
     let mock = mock_agent("ssh", false);
-    let proxy = connected_proxy(&mock, "ssh").await;
+    let mut proxy = connected_proxy(&mock, "ssh").await;
     let manager = proxy
         .process_manager()
         .expect("the capability stays visible so the panel can explain");
@@ -101,8 +101,10 @@ async fn an_outdated_agent_reports_update_required_without_a_request() {
 #[tokio::test]
 async fn a_local_session_on_an_older_agent_still_targets_the_agent_host() {
     let mock = mock_agent("local", false);
-    let proxy = connected_proxy(&mock, "local").await;
-    let manager = proxy.process_manager().expect("local sessions have processes");
+    let mut proxy = connected_proxy(&mock, "local").await;
+    let manager = proxy
+        .process_manager()
+        .expect("local sessions have processes");
 
     let _ = manager.list_processes().await;
     let sent = process_requests(&mock);

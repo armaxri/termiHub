@@ -33,6 +33,7 @@
       "embeddedServerActivity": false,
       "maxSessions": 16,
       "monitoringSupported": true,
+      "sessionProcesses": false,
       "toolStreaming": true
     },
     "protocolVersion": "0.9.0"
@@ -49,6 +50,7 @@
       "embeddedServerActivity": false,
       "maxSessions": 4,
       "monitoringSupported": false,
+      "sessionProcesses": false,
       "toolStreaming": false
     },
     "protocolVersion": "0.1.0"
