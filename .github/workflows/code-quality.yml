@@ -185,7 +185,7 @@ jobs:
       # feature-gated `tunnel`, `backends::docker`, `embedded_servers` and
       # `plugin` modules, whose DTOs are generated too.
       - name: Regenerate ts-rs TypeScript bindings (core crate)
-        run: cargo test -p termihub-core --lib --features ssh,docker,embedded-servers,plugin export_bindings
+        run: cargo test -p termihub-core --lib --features ssh,docker,embedded-servers,plugin,http-monitor export_bindings
       - name: Fail if generated TypeScript is stale
         run: git diff --exit-code -- src/types/generated
 

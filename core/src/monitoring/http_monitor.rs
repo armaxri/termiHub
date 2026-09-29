@@ -82,14 +82,22 @@ pub fn register_http_monitor(registry: &mut ServiceRegistry) {
 }
 
 /// Configuration for a single HTTP monitor.
+///
+/// This and [`HttpCheckResult`] / [`HttpMonitorState`] generate the frontend
+/// DTOs via ts-rs (audit DUP-030, #3802); see `crate::network::types` for the
+/// `Option` → `field?: T` convention used.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct HttpMonitorConfig {
     pub id: String,
     pub url: String,
+    #[cfg_attr(test, ts(type = "number"))]
     pub interval_ms: u64,
     pub method: String,
     pub expected_status: u16,
+    #[cfg_attr(test, ts(type = "number"))]
     pub timeout_ms: u64,
     /// Opt-in escape hatch for monitoring an internal host (SEC-008).
     ///
@@ -102,18 +110,25 @@ pub struct HttpMonitorConfig {
     /// (deny-internal) so the SSRF guard is safe by default; `#[serde(default)]`
     /// keeps configs stored before this field deserializing.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub allow_private_network: bool,
 }
 
 /// The result of a single HTTP check.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct HttpCheckResult {
     pub monitor_id: String,
+    #[cfg_attr(test, ts(optional))]
     pub status_code: Option<u16>,
+    #[cfg_attr(test, ts(optional, type = "number"))]
     pub latency_ms: Option<u64>,
     pub ok: bool,
+    #[cfg_attr(test, ts(optional))]
     pub error: Option<String>,
+    #[cfg_attr(test, ts(type = "number"))]
     pub timestamp_ms: u64,
 }
 
@@ -125,11 +140,14 @@ pub struct HttpCheckResult {
 ///
 /// (`running: false` implies `paused: false`.)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct HttpMonitorState {
     pub config: HttpMonitorConfig,
     pub running: bool,
     pub paused: bool,
+    #[cfg_attr(test, ts(optional))]
     pub last_result: Option<HttpCheckResult>,
 }
 

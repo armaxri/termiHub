@@ -13,6 +13,7 @@ import type { SerialPortScanPrefix } from "./generated/SerialPortScanPrefix";
 import type { CustomLanguageGrammar } from "./generated/CustomLanguageGrammar";
 import type { UpdateSettings } from "./generated/UpdateSettings";
 import type { AppSettings } from "./generated/AppSettings";
+import type { AgentCapabilities } from "./generated/AgentCapabilities";
 import type { SavedContainerRuntime, SpawnKind } from "./spawn";
 
 /**
@@ -151,26 +152,10 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   persistentScrollbackBufferSizeMb: 1,
 };
 
-/** Capabilities reported by a connected remote agent. */
-export interface AgentCapabilities {
-  connectionTypes: ConnectionTypeInfo[];
-  maxSessions: number;
-  availableShells?: string[];
-  availableSerialPorts?: string[];
-  dockerAvailable?: boolean;
-  availableDockerImages?: string[];
-  /** Whether `/proc`-based (or platform-equivalent) monitoring is available. */
-  monitoringSupported?: boolean;
-  /** Whether the agent streams network-tool runs live (`tool.start`, #3353). */
-  toolStreaming?: boolean;
-  /**
-   * Whether the agent serves an agent-hosted embedded server's access log and
-   * detailed stats (`embedded_server.activity`, #3453). Absent on older agents.
-   */
-  embeddedServerActivity?: boolean;
-  /** Agent binary version string, e.g. "1.4.2". */
-  agentVersion?: string;
-}
+// Capabilities reported by a connected remote agent — generated from the Rust
+// `AgentCapabilities` (`src-tauri/src/terminal/agent_manager/types.rs`) via
+// ts-rs (audit DUP-030, #3802).
+export type { AgentCapabilities };
 
 /** A remote agent definition stored in the sidebar as a folder-like entry. */
 export interface RemoteAgentDefinition {

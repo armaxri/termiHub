@@ -1,4 +1,10 @@
 //! Serializable result types for all network diagnostic tools.
+//!
+//! The frontend DTOs (`src/types/network.ts`) are generated from these via
+//! ts-rs (audit DUP-030, #3802). `u64` fields are mapped to `number`. `Option`
+//! fields serialize as `null` when unset but keep the frontend's historical
+//! `field?: T` typing via `ts(optional)`; tightening them to `T | null` is
+//! tracked separately so consumers can be updated first.
 
 use serde::{Deserialize, Serialize};
 
@@ -6,6 +12,8 @@ use serde::{Deserialize, Serialize};
 
 /// The reachability state of a scanned port.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub enum PortState {
     /// A connection was established; the port is open.
@@ -18,6 +26,8 @@ pub enum PortState {
 
 /// Result for a single port probe.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct PortScanResult {
     /// The target host this probe was made against. Carried in the result so
@@ -27,17 +37,21 @@ pub struct PortScanResult {
     pub port: u16,
     pub state: PortState,
     /// Round-trip latency in milliseconds for open ports.
+    #[cfg_attr(test, ts(optional, type = "number"))]
     pub latency_ms: Option<u64>,
 }
 
 /// Summary emitted when a port scan completes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct PortScanSummary {
     pub total: u32,
     pub open: u32,
     pub closed: u32,
     pub filtered: u32,
+    #[cfg_attr(test, ts(type = "number"))]
     pub elapsed_ms: u64,
 }
 
@@ -45,13 +59,17 @@ pub struct PortScanSummary {
 
 /// Result for a single ICMP/TCP ping echo.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct PingResult {
     /// Sequence number (starts at 1).
     pub seq: u32,
     /// Round-trip time in milliseconds. `None` when the packet timed out.
+    #[cfg_attr(test, ts(optional, type = "number"))]
     pub latency_ms: Option<u64>,
     /// IP time-to-live from the reply. `None` on timeout or TCP fallback.
+    #[cfg_attr(test, ts(optional))]
     pub ttl: Option<u8>,
     /// `true` when no reply was received within the timeout window.
     pub timed_out: bool,
@@ -61,6 +79,8 @@ pub struct PingResult {
 
 /// Aggregate statistics for a completed ping session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct PingStats {
     pub sent: u32,
@@ -79,18 +99,24 @@ pub struct PingStats {
 /// Only responding (up) hosts are streamed as results; non-responders are
 /// tallied into [`PingSweepSummary::down`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct PingSweepResult {
     /// The probed address (an IP string, or the original hostname token).
     pub host: String,
     /// Round-trip time in milliseconds for the reply.
+    #[cfg_attr(test, ts(optional, type = "number"))]
     pub latency_ms: Option<u64>,
     /// Best-effort reverse-DNS hostname for the address, if resolvable.
+    #[cfg_attr(test, ts(optional))]
     pub hostname: Option<String>,
 }
 
 /// Summary emitted when a ping sweep completes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct PingSweepSummary {
     /// Total number of hosts probed.
@@ -99,6 +125,7 @@ pub struct PingSweepSummary {
     pub up: u32,
     /// Hosts that did not respond within the timeout.
     pub down: u32,
+    #[cfg_attr(test, ts(type = "number"))]
     pub elapsed_ms: u64,
 }
 
@@ -106,6 +133,8 @@ pub struct PingSweepSummary {
 
 /// DNS record types supported by the lookup tool.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DnsRecordType {
     A,
@@ -162,6 +191,8 @@ impl std::str::FromStr for DnsRecordType {
 
 /// A single DNS resource record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct DnsRecord {
     pub record_type: DnsRecordType,
@@ -172,9 +203,12 @@ pub struct DnsRecord {
 
 /// Result of a DNS lookup including timing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct DnsResult {
     pub records: Vec<DnsRecord>,
+    #[cfg_attr(test, ts(type = "number"))]
     pub query_ms: u64,
 }
 
@@ -182,13 +216,17 @@ pub struct DnsResult {
 
 /// A single hop in a traceroute.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct TracerouteHop {
     /// TTL value at this hop (1-based).
     pub hop: u8,
     /// Reverse-DNS hostname of the router, if resolved.
+    #[cfg_attr(test, ts(optional))]
     pub host: Option<String>,
     /// IP address of the router. `None` when the hop did not respond (`* * *`).
+    #[cfg_attr(test, ts(optional))]
     pub ip: Option<String>,
     /// Three probe round-trip times in milliseconds.
     pub rtt_ms: [Option<f64>; 3],
@@ -198,6 +236,9 @@ pub struct TracerouteHop {
 
 /// IP protocol family.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "PortProtocol"))]
 #[serde(rename_all = "UPPERCASE")]
 pub enum Protocol {
     Tcp,
@@ -206,13 +247,17 @@ pub enum Protocol {
 
 /// A single listening port on the local machine.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct OpenPort {
     pub protocol: Protocol,
     pub local_addr: String,
     /// Owning process ID, if available.
+    #[cfg_attr(test, ts(optional))]
     pub pid: Option<u32>,
     /// Owning process name, if available.
+    #[cfg_attr(test, ts(optional))]
     pub process: Option<String>,
 }
 
@@ -220,6 +265,8 @@ pub struct OpenPort {
 
 /// A saved Wake-on-LAN device.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct WolDevice {
     pub id: String,
