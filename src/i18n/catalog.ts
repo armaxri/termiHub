@@ -47,6 +47,21 @@ const en = {
     "You may not have permission to access this port, or another application may be using it. Close any program using the port and try again.",
   "connection.hint.busy.serial": "The serial port is already in use by another application.",
 
+  // ── Credential re-entry on an auth failure (terminal overlays, #3089) ───
+  "credentialReentry.open": "Update Credentials",
+  "credentialReentry.target": "New credentials for {target}",
+  "credentialReentry.password.label": "Password",
+  "credentialReentry.passphrase.label": "Key passphrase",
+  "credentialReentry.passphrase.hint": "Leave empty if the key has no passphrase.",
+  "credentialReentry.keyPath.label": "Private key file",
+  "credentialReentry.keyPath.agentHint": "A path on the agent host.",
+  "credentialReentry.save.password": "Save password",
+  "credentialReentry.save.passphrase": "Save passphrase",
+  "credentialReentry.submit": "Reconnect",
+  "credentialReentry.cancel": "Cancel",
+  "credentialReentry.saveFailed":
+    "The credential could not be saved. It is used for this connection attempt only.",
+
   // ── Workflow triggers (WorkflowTriggersEditor, #3791) ───────────────────
   "workflow.trigger.connections.empty": "No saved connections.",
   "workflow.trigger.onDisconnect.label": "On disconnect",
