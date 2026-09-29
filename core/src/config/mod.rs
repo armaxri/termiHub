@@ -263,7 +263,11 @@ pub enum ContainerRuntime {
 /// execs an interactive shell into a container the user already started
 /// (identified by [`DockerConfig::existing_container`]) — the image is not pulled,
 /// no container is created, and the container is never stopped or removed on
-/// disconnect (PROD-016).
+/// disconnect (PROD-016). [`Compose`](ContainerMode::Compose) is like
+/// `Existing`, but names a Docker Compose service
+/// ([`DockerConfig::compose_service`]) that is resolved to that service's
+/// running container at connect time (#3784), so a recreate or scale change
+/// that renames the container does not break the saved connection.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ContainerMode {
@@ -272,6 +276,8 @@ pub enum ContainerMode {
     New,
     /// Exec into an existing, already-running container.
     Existing,
+    /// Exec into the running container of a Docker Compose service (#3784).
+    Compose,
 }
 
 /// Unified Docker container session configuration.
@@ -292,6 +298,13 @@ pub struct DockerConfig {
     /// Ignored in [`ContainerMode::New`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub existing_container: Option<String>,
+    /// Docker Compose service to exec into, as `project/service`, when
+    /// [`container_mode`](Self::container_mode) is [`ContainerMode::Compose`]
+    /// (#3784). Resolved at connect time to the service's running container
+    /// (the lowest `com.docker.compose.container-number` when it is scaled).
+    /// Ignored in the other modes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose_service: Option<String>,
     pub image: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shell: Option<String>,
@@ -317,6 +330,7 @@ impl Default for DockerConfig {
             runtime: ContainerRuntime::Auto,
             container_mode: ContainerMode::New,
             existing_container: None,
+            compose_service: None,
             image: String::new(),
             shell: None,
             cols: default_cols(),
@@ -836,6 +850,7 @@ impl DockerConfig {
     pub fn expand(mut self) -> Self {
         self.image = expand_config_value(&self.image);
         self.existing_container = self.existing_container.map(|s| expand_config_value(&s));
+        self.compose_service = self.compose_service.map(|s| expand_config_value(&s));
         self.shell = self.shell.map(|s| expand_config_value(&s));
         self.working_directory = self.working_directory.map(|s| expand_config_value(&s));
         for env in &mut self.env_vars {
@@ -1233,6 +1248,42 @@ mod tests {
     }
 
     #[test]
+    fn container_mode_compose_serializes_lowercase() {
+        assert_eq!(
+            serde_json::to_string(&ContainerMode::Compose).unwrap(),
+            "\"compose\""
+        );
+        let back: ContainerMode = serde_json::from_str("\"compose\"").unwrap();
+        assert_eq!(back, ContainerMode::Compose);
+    }
+
+    #[test]
+    fn docker_config_compose_service_roundtrip() {
+        let cfg = DockerConfig {
+            container_mode: ContainerMode::Compose,
+            compose_service: Some("shop/web".into()),
+            ..DockerConfig::default()
+        };
+        let json = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(json["containerMode"], "compose");
+        assert_eq!(json["composeService"], "shop/web");
+        let back: DockerConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(back.container_mode, ContainerMode::Compose);
+        assert_eq!(back.compose_service.as_deref(), Some("shop/web"));
+    }
+
+    #[test]
+    fn docker_config_without_compose_service_is_unchanged() {
+        // A config saved before #3784 has no `composeService`: it parses to
+        // `None`, and a config without it serializes without the key.
+        let cfg: DockerConfig =
+            serde_json::from_str(r#"{"image":"alpine","containerMode":"existing"}"#).unwrap();
+        assert!(cfg.compose_service.is_none());
+        let json = serde_json::to_value(&cfg).unwrap();
+        assert!(json.get("composeService").is_none());
+    }
+
+    #[test]
     fn container_runtime_default_is_auto() {
         let rt = ContainerRuntime::default();
         assert_eq!(rt, ContainerRuntime::Auto);
@@ -1458,6 +1509,7 @@ mod tests {
             runtime: ContainerRuntime::Podman,
             container_mode: ContainerMode::New,
             existing_container: None,
+            compose_service: None,
             image: "ubuntu:22.04".into(),
             shell: Some("/bin/bash".into()),
             cols: 80,
