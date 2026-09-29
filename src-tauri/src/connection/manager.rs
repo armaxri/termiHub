@@ -3286,3 +3286,7 @@ mod edit_move_tests;
 #[cfg(test)]
 #[path = "manager_jump_host_scope_tests.rs"]
 mod jump_host_scope_tests;
+
+#[cfg(test)]
+#[path = "manager_graphical_password_tests.rs"]
+mod graphical_password_tests;

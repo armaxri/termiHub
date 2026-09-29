@@ -193,4 +193,15 @@ mod tests {
         let h: Holder = serde_json::from_value(json!({ "config": {} })).unwrap();
         assert_eq!(h.extra, None);
     }
+
+    #[test]
+    fn deserialize_hooks_accept_the_legacy_save_to_store_key() {
+        let h: Holder = serde_json::from_value(json!({
+            "config": { "saveToStore": true },
+            "extra": { "saveToStore": true, "savePassword": false }
+        }))
+        .unwrap();
+        assert_eq!(h.config, json!({ "savePassword": true }));
+        assert_eq!(h.extra, Some(json!({ "savePassword": true })));
+    }
 }

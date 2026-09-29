@@ -129,6 +129,27 @@ fn saving_a_graphical_definition_sends_no_password_to_the_agent() {
 }
 
 #[test]
+fn saving_with_the_legacy_save_flag_sends_only_the_unified_flag() {
+    let store = RecordingStore::default();
+    let sent = RefCell::new(None);
+    let params = create_params(
+        "rdp",
+        json!({ "host": "h", "password": SECRET, "saveToStore": true }),
+    );
+
+    let saved = save_definition(&store, AGENT, params, |p| {
+        *sent.borrow_mut() = Some(p.config.clone());
+        Ok(echo_create(p))
+    })
+    .unwrap();
+
+    let wire = sent.into_inner().expect("the agent was called");
+    assert_eq!(wire, json!({ "host": "h", "savePassword": true }));
+    assert_eq!(saved.config["savePassword"], true);
+    assert_eq!(stored(&store, "def-1").as_deref(), Some(SECRET));
+}
+
+#[test]
 fn saving_without_the_save_option_keeps_the_secret_nowhere() {
     let store = RecordingStore::default();
     let params = create_params("rdp", json!({ "host": "h", "password": SECRET }));
@@ -274,16 +295,32 @@ fn a_legacy_definition_carrying_a_password_is_migrated_and_scrubbed() {
     assert!(updates[0].contains("def-legacy"));
     assert!(!updates[0].contains(SECRET));
     assert!(!updates[0].contains("\"password\""));
-    // The rewritten definition resolves from the store from now on.
-    assert!(updates[0].contains("\"saveToStore\":true"));
+    // The rewritten definition resolves from the store from now on, under the
+    // one save option every connection type uses (#3818).
+    assert!(updates[0].contains("\"savePassword\":true"));
+    assert!(!updates[0].contains("saveToStore"));
 
     let legacy = out.iter().find(|d| d.id == "def-legacy").unwrap();
     assert!(legacy.config.get("password").is_none());
-    assert_eq!(legacy.config["saveToStore"], true);
+    assert_eq!(legacy.config["savePassword"], true);
     // Non-graphical definitions keep their agent-side settings.
     let ssh = out.iter().find(|d| d.id == "def-ssh").unwrap();
     assert_eq!(ssh.config["password"], "agent-side");
     assert_eq!(out.len(), 3);
+}
+
+#[test]
+fn a_listed_legacy_save_flag_is_shown_as_the_unified_flag() {
+    // A definition saved with the old `saveToStore` option and no password
+    // needs no agent rewrite, but the editor must show it as "Save password".
+    let store = RecordingStore::default();
+    let defs = vec![info("def-old", "vnc", json!({ "host": "h", "saveToStore": true }))];
+
+    let out = migrate_definitions(&store, AGENT, defs, |_| {
+        panic!("a definition without a password is not rewritten")
+    });
+
+    assert_eq!(out[0].config, json!({ "host": "h", "savePassword": true }));
 }
 
 #[test]

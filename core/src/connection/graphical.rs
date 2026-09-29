@@ -1213,7 +1213,7 @@ mod tests {
             "port",
             "username",
             "password",
-            "saveToStore",
+            "savePassword",
             "scaleMode",
             "viewOnly",
             "clipboardSync",
@@ -1224,6 +1224,9 @@ mod tests {
                 "shared base must contain {expected}"
             );
         }
+        // One save option, the key every other type uses (#3818): the legacy
+        // `saveToStore` row was never read, so it must not come back.
+        assert!(!all_field_keys.contains(&"saveToStore"));
     }
 
     #[test]
