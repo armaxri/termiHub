@@ -38,7 +38,19 @@ vi.mock("@/services/api", () => ({
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
   vscodeOpenLocal: vi.fn(() => Promise.resolve()),
   sftpDownload: vi.fn(() => Promise.resolve()),
+  // Session → local paste (#3563) runs through the shared pane-transfer engine.
+  sessionSupportsTransferQueue: vi.fn(() => Promise.resolve(true)),
+  sessionDownload: vi.fn(() => Promise.resolve(1)),
+  sessionReadFile: vi.fn(() => Promise.resolve(new Uint8Array([7]))),
+  sessionListFiles: vi.fn(() => Promise.resolve([])),
+  sessionDeleteFile: vi.fn(() => Promise.resolve()),
+  sessionMkdir: vi.fn(() => Promise.resolve()),
+  sessionUpload: vi.fn(() => Promise.resolve(1)),
+  sessionWriteFile: vi.fn(() => Promise.resolve()),
 }));
+
+const fsMock = vi.hoisted(() => ({ readFile: vi.fn(), writeFile: vi.fn(() => Promise.resolve()) }));
+vi.mock("@tauri-apps/plugin-fs", () => fsMock);
 
 const toastMock = vi.hoisted(() => ({
   success: vi.fn(),
@@ -294,6 +306,11 @@ import {
   localDelete,
   localRename,
   localSetPermissions,
+  sessionDeleteFile,
+  sessionDownload,
+  sessionListFiles,
+  sessionReadFile,
+  sessionSupportsTransferQueue,
   vscodeOpenLocal,
 } from "@/services/api";
 
@@ -783,6 +800,133 @@ describe("useLocalFileSystem — action wiring", () => {
       });
       expect(toastMock.error).toHaveBeenCalledWith('Save "a.txt" failed: dialog unavailable');
       expect(vi.mocked(localCopyStart)).not.toHaveBeenCalled();
+    });
+  });
+  describe("session → local paste (#3563)", () => {
+    const remoteFile = (name: string, dir = "/srv"): FileEntry => ({
+      name,
+      path: `${dir}/${name}`,
+      isDirectory: false,
+      size: 1,
+      modified: "",
+      permissions: null,
+      writable: null,
+    });
+
+    function setRemoteClipboard(entries: FileEntry[], operation: "copy" | "cut" = "copy") {
+      act(() => {
+        useAppStore.getState().setFileClipboard({
+          entries,
+          operation,
+          sourceMode: "session",
+          sourcePath: "/srv",
+          terminalSessionId: "ssh-1",
+        });
+      });
+    }
+
+    it("downloads a remote file over the transfer queue and seeds its row", async () => {
+      vi.mocked(sessionDownload).mockImplementationOnce(async (_s, _r, _l, onRegistered) => {
+        onRegistered?.("xfer-d");
+        return 1;
+      });
+      const api = await mountHook("/home/user");
+      setRemoteClipboard([remoteFile("a.log")]);
+      await act(async () => {
+        await api.pasteEntry();
+      });
+      expect(vi.mocked(sessionSupportsTransferQueue)).toHaveBeenCalledWith("ssh-1");
+      expect(vi.mocked(sessionDownload)).toHaveBeenCalledWith(
+        "ssh-1",
+        "/srv/a.log",
+        "/home/user/a.log",
+        expect.any(Function)
+      );
+      expect(seedRowMock).toHaveBeenCalledWith({
+        transferId: "xfer-d",
+        sessionId: "ssh-1",
+        direction: "download",
+        remotePath: "/srv/a.log",
+      });
+      // The queued leg's event path owns the success toast; the pending one is dismissed.
+      expect(toastMock.loading).toHaveBeenCalledWith('Pasting "a.log"…');
+      expect(toastMock.dismiss).toHaveBeenCalledWith("toast-id");
+      expect(toastMock.error).not.toHaveBeenCalled();
+      // A copy keeps the clipboard.
+      expect(currentFileBrowsersView().clipboard?.entries[0].name).toBe("a.log");
+    });
+
+    it("falls back to a byte round-trip for a session without a transfer queue", async () => {
+      vi.mocked(sessionSupportsTransferQueue).mockResolvedValueOnce(false);
+      const api = await mountHook("/home/user");
+      setRemoteClipboard([remoteFile("b.txt")]);
+      await act(async () => {
+        await api.pasteEntry();
+      });
+      expect(vi.mocked(sessionDownload)).not.toHaveBeenCalled();
+      expect(vi.mocked(sessionReadFile)).toHaveBeenCalledWith("ssh-1", "/srv/b.txt");
+      expect(fsMock.writeFile).toHaveBeenCalledWith("/home/user/b.txt", new Uint8Array([7]));
+      expect(toastMock.success).toHaveBeenCalledWith('Pasted "b.txt"', { id: "toast-id" });
+    });
+
+    it("recreates a remote folder locally and copies its tree", async () => {
+      vi.mocked(sessionListFiles).mockResolvedValueOnce([remoteFile("x", "/srv/proj")]);
+      const api = await mountHook("/home/user");
+      setRemoteClipboard([{ ...remoteFile("proj"), isDirectory: true }]);
+      await act(async () => {
+        await api.pasteEntry();
+      });
+      expect(vi.mocked(localMkdir)).toHaveBeenCalledWith("/home/user/proj");
+      expect(vi.mocked(sessionListFiles)).toHaveBeenCalledWith("ssh-1", "/srv/proj");
+      expect(vi.mocked(sessionDownload).mock.calls.map((c) => c[2])).toEqual(["/home/user/proj/x"]);
+    });
+
+    it("a cut removes the remote source once copied and clears the clipboard", async () => {
+      const api = await mountHook("/home/user");
+      setRemoteClipboard([remoteFile("a.log"), remoteFile("b.log")], "cut");
+      await act(async () => {
+        await api.pasteEntry();
+      });
+      expect(vi.mocked(sessionDeleteFile).mock.calls).toEqual([
+        ["ssh-1", "/srv/a.log"],
+        ["ssh-1", "/srv/b.log"],
+      ]);
+      expect(currentFileBrowsersView().clipboard).toBeNull();
+    });
+
+    it("a failed download reports the error, keeps the source and the cut clipboard", async () => {
+      vi.mocked(sessionDownload).mockRejectedValueOnce(new Error("Permission denied"));
+      const api = await mountHook("/home/user");
+      setRemoteClipboard([remoteFile("a.log"), remoteFile("b.log")], "cut");
+      await act(async () => {
+        await expect(api.pasteEntry()).resolves.toBeUndefined();
+      });
+      expect(toastMock.error).toHaveBeenCalledWith("Paste 2 items failed: Permission denied", {
+        id: "toast-id",
+      });
+      expect(vi.mocked(sessionDownload)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(sessionDeleteFile)).not.toHaveBeenCalled();
+      expect(currentFileBrowsersView().clipboard?.entries).toHaveLength(2);
+    });
+
+    it("reports a remote clipboard whose session is gone instead of doing nothing", async () => {
+      const api = await mountHook("/home/user");
+      act(() => {
+        useAppStore.getState().setFileClipboard({
+          entries: [remoteFile("a.log")],
+          operation: "copy",
+          sourceMode: "session",
+          sourcePath: "/srv",
+          terminalSessionId: null,
+        });
+      });
+      await act(async () => {
+        await api.pasteEntry();
+      });
+      expect(toastMock.error).toHaveBeenCalledWith(
+        "Cannot paste: the remote session these items came from is no longer connected"
+      );
+      expect(vi.mocked(sessionDownload)).not.toHaveBeenCalled();
     });
   });
 });
