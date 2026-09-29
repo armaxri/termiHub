@@ -17,7 +17,6 @@ use std::collections::HashMap;
 use base64::Engine;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Runtime};
-use tokio::sync::mpsc::UnboundedSender;
 use tracing::{info, warn};
 
 use termihub_core::protocol::methods::{
@@ -27,7 +26,7 @@ use termihub_core::protocol::methods::{
 };
 
 use super::{
-    fold_evicted_hosted_sessions, hosted_sessions_for_agent, AgentIoCommand, MonitoringRoute,
+    fold_evicted_hosted_sessions, hosted_sessions_for_agent, AgentIoSender, MonitoringRoute,
     ToolRunMessage, ToolRunSender,
 };
 use crate::terminal::agent_forward::DesktopAgentForward;
@@ -193,7 +192,7 @@ pub(super) fn dispatch_agent_notification<R: Runtime>(
 /// the normal session/monitoring dispatch).
 pub(super) fn handle_agent_forward_notification(
     agent_forward: &DesktopAgentForward,
-    command_tx: &UnboundedSender<AgentIoCommand>,
+    command_tx: &AgentIoSender,
     method: &str,
     params: &Value,
     b64: &base64::engine::GeneralPurpose,
