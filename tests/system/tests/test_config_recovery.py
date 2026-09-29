@@ -89,7 +89,7 @@ class TestConfigRecovery(SidebarUi, ConnectionsUi, ConfigRecoveryUi, SystemTest)
                 doc = json.loads(self.read_config(CONNECTIONS))
             except (FileNotFoundError, json.JSONDecodeError):
                 return None
-            if doc.get("version") != "4" or not isinstance(doc.get("children"), list):
+            if doc.get("version") != "5" or not isinstance(doc.get("children"), list):
                 return None
             return next((c for c in doc["children"] if c.get("name") == name), None)
 

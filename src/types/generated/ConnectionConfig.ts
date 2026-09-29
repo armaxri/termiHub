@@ -6,5 +6,9 @@
  * Stores the connection type as a plain string and the settings as
  * unstructured JSON. The on-disk format is `{"type": "<id>", "config": {...}}`
  * which is backward-compatible with the previous tagged-enum format.
+ *
+ * Reading it accepts legacy settings keys and rewrites them to the unified
+ * ones, including type-scoped renames such as FTP's `timeoutSecs` →
+ * `connectTimeoutSecs` (#2901); only the unified keys are written.
  */
 export type ConnectionConfig = { type: string, config: Record<string, unknown>, };

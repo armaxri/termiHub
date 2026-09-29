@@ -284,18 +284,56 @@ impl crate::utils::migrate::VersionedStore for ConnectionStore {
     /// preserving the user's explicit value; a connection without either key now
     /// means "on". The bump makes it downgrade-safe: an older build refuses to
     /// overwrite a v4 file instead of silently dropping the renamed setting.
-    const CURRENT_VERSION: u32 = 4;
+    ///
+    /// v5 (PARITY-006, #2901) unifies the FTP connect timeout: FTP's legacy
+    /// `timeoutSecs` key becomes the shared `connectTimeoutSecs` key (the one
+    /// SSH/telnet use), preserving the user's value. The rename is scoped to
+    /// `ftp` connections — another type's own `timeoutSecs` is untouched. The
+    /// bump makes it downgrade-safe: a v4 build, whose FTP form is keyed by
+    /// `timeoutSecs`, refuses to overwrite a v5 file instead of re-saving the
+    /// FTP timeout under its default.
+    const CURRENT_VERSION: u32 = 5;
 
     fn migrate(
         mut value: serde_json::Value,
         from_version: u32,
     ) -> anyhow::Result<serde_json::Value> {
-        if from_version < 4 {
-            if let Some(children) = value.get_mut("children") {
+        if let Some(children) = value.get_mut("children") {
+            if from_version < 4 {
                 migrate_auto_reconnect_nodes(children);
+            }
+            if from_version < 5 {
+                migrate_type_scoped_settings_nodes(children);
             }
         }
         Ok(value)
+    }
+}
+
+/// v4 → v5 step: apply the type-scoped legacy-key renames (FTP's `timeoutSecs`
+/// → `connectTimeoutSecs`) to every saved connection's settings bag, recursing
+/// through folders.
+///
+/// Operates on raw JSON so it runs before the typed parse; a node without a
+/// string `config.type` is left untouched for the typed parse / recovery path to
+/// judge.
+fn migrate_type_scoped_settings_nodes(nodes: &mut serde_json::Value) {
+    let Some(nodes) = nodes.as_array_mut() else {
+        return;
+    };
+    for node in nodes {
+        if let Some(config) = node.get_mut("config") {
+            let type_id = config
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            if let (Some(type_id), Some(settings)) = (type_id, config.get_mut("config")) {
+                termihub_core::connection::normalize_connection_settings(&type_id, settings);
+            }
+        }
+        if let Some(children) = node.get_mut("children") {
+            migrate_type_scoped_settings_nodes(children);
+        }
     }
 }
 
@@ -623,8 +661,8 @@ mod tests {
     #[test]
     fn connection_store_default_is_current_version() {
         let store = ConnectionStore::default();
-        // v4: the reconnect setting is unified under `autoReconnect` (PARITY-008).
-        assert_eq!(store.version, "4");
+        // v5: the FTP connect timeout is unified under `connectTimeoutSecs` (#2901).
+        assert_eq!(store.version, "5");
         assert!(store.children.is_empty());
         assert!(store.agents.is_empty());
     }

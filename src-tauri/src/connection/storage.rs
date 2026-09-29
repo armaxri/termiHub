@@ -575,10 +575,10 @@ mod tests {
 
         storage.save_flat(&flat).unwrap();
 
-        // Verify on-disk format is the nested tree, at the current schema (v4)
+        // Verify on-disk format is the nested tree, at the current schema (v5)
         let raw = fs::read_to_string(&storage.file_path).unwrap();
         let on_disk: ConnectionStore = serde_json::from_str(&raw).unwrap();
-        assert_eq!(on_disk.version, "4");
+        assert_eq!(on_disk.version, "5");
         assert_eq!(on_disk.children.len(), 1); // One folder
         match &on_disk.children[0] {
             ConnectionTreeNode::Folder { name, children, .. } => {
@@ -815,7 +815,10 @@ mod tests {
         storage.save_flat(&loaded.data).unwrap();
         let raw = fs::read_to_string(&storage.file_path).unwrap();
         let on_disk: ConnectionStore = serde_json::from_str(&raw).unwrap();
-        assert_eq!(on_disk.version, "4");
+        assert_eq!(
+            on_disk.version,
+            ConnectionStore::CURRENT_VERSION.to_string()
+        );
         assert!(!raw.contains("resilientReconnect"));
     }
 
@@ -888,13 +891,25 @@ mod tests {
         let raw = fs::read_to_string(&storage.file_path).unwrap();
         let on_disk: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(on_disk["version"], serde_json::json!("5"));
-        let custom = &on_disk["children"][0]["config"]["config"];
+        let on_disk_settings = |name: &str| {
+            on_disk["children"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|n| n["name"] == name)
+                .unwrap()["config"]["config"]
+                .clone()
+        };
         assert_eq!(
-            custom,
-            &serde_json::json!({ "host": "a", "connectTimeoutSecs": 45 })
+            on_disk_settings("custom"),
+            serde_json::json!({ "host": "a", "connectTimeoutSecs": 45 })
         );
-        let plugin = &on_disk["children"][3]["config"]["config"];
-        assert_eq!(plugin, &serde_json::json!({ "timeoutSecs": 7 }));
+        assert_eq!(
+            on_disk_settings("plugin"),
+            serde_json::json!({ "timeoutSecs": 7 })
+        );
+        // Only the plugin's own key is left; no FTP connection keeps the legacy key.
+        assert_eq!(raw.matches("\"timeoutSecs\"").count(), 1, "{raw}");
     }
 
     /// The raw v4 → v5 step itself (before the typed parse) renames the FTP key.
