@@ -15,6 +15,9 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn, Instrument};
 
+use crate::daemon::monitoring_rpc::{
+    self, MonitorCommand, MonitoringEvent, MonitoringOp, MonitoringRequest,
+};
 use crate::daemon::process_rpc::{self, ProcessRequest, ProcessResponse};
 use crate::daemon::protocol::{self, *};
 use crate::daemon::transport::{self, BoxedReader, BoxedWriter, DaemonListener};
@@ -290,6 +293,8 @@ enum AgentCommand {
     QueryBuffer,
     /// Agent requested a process list / kill in this session's backend (#3210).
     Process(ProcessRequest),
+    /// Agent sent a monitoring request for this session's backend (#3871).
+    Monitoring(MonitoringRequest),
     /// Agent disconnected (EOF or error).
     ///
     /// Carries the connection generation that produced this disconnect so the
@@ -331,13 +336,21 @@ async fn daemon_loop(
     // connection generation that asked, and is dropped if that connection has
     // since been replaced (single-attach: only the requester hears it).
     let process_manager = connection.process_manager();
-    let capability_flags = if process_manager.is_some() {
-        CAP_PROCESSES
-    } else {
-        0
-    };
     let (process_tx, mut process_rx) = mpsc::channel::<(u64, ProcessResponse)>(16);
     let mut processes_in_flight: usize = 0;
+
+    // The session backend's monitoring provider (#3871), captured once like the
+    // process manager. One monitor worker serves its requests in order and
+    // streams its samples back, each tagged with the connection generation that
+    // subscribed; `monitor_owner` is that generation, and the stream is released
+    // as soon as it no longer holds the session (single-attach).
+    let (monitor_event_tx, mut monitor_event_rx) = mpsc::channel::<(u64, MonitoringEvent)>(32);
+    let monitor_cmd_tx = connection
+        .monitoring_handle()
+        .map(|provider| monitoring_rpc::spawn_monitor_worker(provider, monitor_event_tx.clone()));
+    let mut monitor_owner: Option<u64> = None;
+
+    let capability_flags = capability_flags(process_manager.is_some(), monitor_cmd_tx.is_some());
 
     // When the current unattached stretch began (`None` while a worker is
     // attached). Recomputed from `agent_writer` at the top of every iteration,
@@ -347,6 +360,11 @@ async fn daemon_loop(
 
     loop {
         detached_since = next_detached_since(agent_writer.is_some(), detached_since);
+        monitor_owner = release_monitor_if_unheld(
+            monitor_owner,
+            agent_writer.is_some().then_some(connection_gen),
+            monitor_cmd_tx.as_ref(),
+        );
         let detached_deadline = detached_timeout
             .zip(detached_since)
             .map(|(timeout, since)| since + timeout);
@@ -546,6 +564,32 @@ async fn daemon_loop(
                 }
             }
 
+            // A monitoring reply or streamed sample (#3871): only the connection
+            // that asked — and still holds the session — receives it.
+            Some((gen, event)) = monitor_event_rx.recv() => {
+                if gen != connection_gen {
+                    continue;
+                }
+                let Some(ref mut writer) = agent_writer else {
+                    continue;
+                };
+                let payload = match serde_json::to_vec(&event) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!("Failed to encode monitoring event: {e}");
+                        continue;
+                    }
+                };
+                if protocol::write_frame_async(writer, MSG_MONITORING_EVENT, &payload)
+                    .await
+                    .is_err()
+                {
+                    debug!("Agent connection lost on monitoring event");
+                    agent_writer = None;
+                    abort_reader(&mut reader_task);
+                }
+            }
+
             // Commands from the agent reader task
             cmd = agent_cmd_rx.recv() => {
                 match cmd {
@@ -612,6 +656,15 @@ async fn daemon_loop(
                             });
                         }
                     }
+                    Some(AgentCommand::Monitoring(request)) => {
+                        monitor_owner = route_monitoring_request(
+                            request,
+                            connection_gen,
+                            monitor_owner,
+                            monitor_cmd_tx.as_ref(),
+                            &monitor_event_tx,
+                        );
+                    }
                     Some(AgentCommand::Disconnected(gen)) => {
                         if gen == connection_gen {
                             info!("Agent disconnected");
@@ -629,6 +682,78 @@ async fn daemon_loop(
                     }
                 }
             }
+        }
+    }
+}
+
+/// The [`MSG_CAPABILITIES`] flags for a backend with / without a process
+/// manager (#3210) and a monitoring provider (#3871).
+fn capability_flags(processes: bool, monitoring: bool) -> u8 {
+    let mut flags = 0;
+    if processes {
+        flags |= CAP_PROCESSES;
+    }
+    if monitoring {
+        flags |= CAP_MONITORING;
+    }
+    flags
+}
+
+/// Stop the monitoring stream once its subscriber no longer holds the session
+/// (#3871): it detached or dropped (`attached_gen` is `None`), or another
+/// connection took the session over. Returns the new owner.
+fn release_monitor_if_unheld(
+    owner: Option<u64>,
+    attached_gen: Option<u64>,
+    commands: Option<&mpsc::Sender<MonitorCommand>>,
+) -> Option<u64> {
+    let owner = owner?;
+    if attached_gen == Some(owner) {
+        return Some(owner);
+    }
+    if let Some(commands) = commands {
+        if commands.try_send(MonitorCommand::Release).is_err() {
+            warn!("Monitor worker queue full; release deferred to its next request");
+        }
+    }
+    None
+}
+
+/// Hand a monitoring request to the monitor worker, or answer it at once when
+/// the backend has no provider or the queue is full (#3871). Returns the new
+/// stream owner: a subscribe makes the requesting connection the owner, an
+/// unsubscribe clears it.
+fn route_monitoring_request(
+    request: MonitoringRequest,
+    gen: u64,
+    owner: Option<u64>,
+    commands: Option<&mpsc::Sender<MonitorCommand>>,
+    events: &mpsc::Sender<(u64, MonitoringEvent)>,
+) -> Option<u64> {
+    let refuse = |id: u64, error: &str| {
+        let reply = MonitoringEvent::Reply {
+            id,
+            error: Some(error.to_string()),
+        };
+        if events.try_send((gen, reply)).is_err() {
+            debug!("Monitoring event queue full; refusal of request {id} dropped");
+        }
+    };
+    let Some(commands) = commands else {
+        refuse(request.id, "monitoring is not supported for this session");
+        return owner;
+    };
+    let id = request.id;
+    let next_owner = match request.op {
+        MonitoringOp::Subscribe => Some(gen),
+        MonitoringOp::Unsubscribe => None,
+        _ => owner,
+    };
+    match commands.try_send(MonitorCommand::Request { gen, request }) {
+        Ok(()) => next_owner,
+        Err(_) => {
+            refuse(id, "too many monitoring requests in flight");
+            owner
         }
     }
 }
@@ -684,6 +809,13 @@ async fn agent_reader_loop(mut reader: BoxedReader, tx: mpsc::Sender<AgentComman
                         Err(e) => {
                             // Without a parsable id there is nobody to answer.
                             debug!("Malformed process request from agent: {e}");
+                            continue;
+                        }
+                    },
+                    MSG_MONITORING_REQUEST => match serde_json::from_slice(&frame.payload) {
+                        Ok(request) => AgentCommand::Monitoring(request),
+                        Err(e) => {
+                            debug!("Malformed monitoring request from agent: {e}");
                             continue;
                         }
                     },

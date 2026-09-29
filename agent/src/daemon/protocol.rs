@@ -50,6 +50,12 @@ pub const MSG_ATTACH_INTENT: u8 = 0x06;
 /// [`MSG_CAPABILITIES`]; a pre-#3210 daemon would ignore it.
 pub const MSG_PROCESS_REQUEST: u8 = 0x07;
 
+/// Agent → Daemon: a monitoring subscribe / unsubscribe / interval / pause
+/// request for this session's backend (#3871). Payload: JSON
+/// [`MonitoringRequest`](super::monitoring_rpc::MonitoringRequest). Sent only to
+/// a daemon that advertised [`CAP_MONITORING`] in [`MSG_CAPABILITIES`].
+pub const MSG_MONITORING_REQUEST: u8 = 0x08;
+
 /// [`MSG_ATTACH_INTENT`] payload: evict any writer currently attached — the
 /// historical accept behavior. Used by the spawn-path connect and explicit
 /// re-attach.
@@ -95,10 +101,20 @@ pub const MSG_PROCESS_RESPONSE: u8 = 0x87;
 /// skips the unknown handshake frame; a pre-#3210 daemon never sends it, so a
 /// current worker reads "no optional features".
 pub const MSG_CAPABILITIES: u8 = 0x88;
+/// Daemon → Agent: a monitoring event (#3871) — the reply to a
+/// [`MSG_MONITORING_REQUEST`], or a stats sample / status transition streamed
+/// from the backend's monitoring provider. Payload: JSON
+/// [`MonitoringEvent`](super::monitoring_rpc::MonitoringEvent). Only the
+/// connection that subscribed receives the stream.
+pub const MSG_MONITORING_EVENT: u8 = 0x89;
 
 /// [`MSG_CAPABILITIES`] flag: the daemon serves [`MSG_PROCESS_REQUEST`] through
 /// its session backend's process manager.
 pub const CAP_PROCESSES: u8 = 0x01;
+
+/// [`MSG_CAPABILITIES`] flag: the daemon serves [`MSG_MONITORING_REQUEST`]
+/// through its session backend's monitoring provider (#3871).
+pub const CAP_MONITORING: u8 = 0x02;
 
 /// Maximum allowed frame payload size (16 MiB).
 const MAX_PAYLOAD_SIZE: u32 = 16 * 1024 * 1024;

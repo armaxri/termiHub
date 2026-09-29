@@ -74,7 +74,9 @@ use crate::update::{
     check_pin_matches_desktop, coordinate_update, CoordinationOutcome, ACK_TIMEOUT,
 };
 use termihub_core::files::{FileBrowser, LocalFileBrowser};
-use termihub_core::monitoring::{LocalProcessManager, ProcessError, ProcessManager};
+use termihub_core::monitoring::{
+    LocalProcessManager, MonitoringProvider, ProcessError, ProcessManager,
+};
 
 /// The agent's protocol version.
 ///
@@ -135,7 +137,12 @@ use termihub_core::monitoring::{LocalProcessManager, ProcessError, ProcessManage
 /// (#3210): `connection.processes.*` now serve agent-hosted SSH, Docker and WSL
 /// sessions. An older agent omits the flag and the desktop tells the user to
 /// update it; an older desktop ignores the flag.
-const AGENT_PROTOCOL_VERSION: &str = "0.20.0";
+/// Bumped to 0.21.0 for the additive `capabilities.sessionMonitoring` flag
+/// (#3871): `connection.monitoring.subscribe` now accepts an agent-hosted SSH,
+/// Docker or WSL session id and streams that session backend's own monitoring
+/// provider. An older agent omits the flag and the desktop tells the user to
+/// update it; an older desktop ignores the flag.
+const AGENT_PROTOCOL_VERSION: &str = "0.21.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -903,6 +910,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 keyboard_interactive_prompts: ki_prompts,
                 embedded_server_activity: true,
                 session_processes: true,
+                session_monitoring: true,
             },
         })
     })?;
@@ -1063,12 +1071,14 @@ fn register_connection_list_host_sessions(
 
 fn register_connection_close(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method(pm::CONNECTION_CLOSE, |params, ctx, _ext| async move {
-        let session_manager = get_session_manager(&ctx).await?;
+        let (session_manager, monitoring_manager) = get_monitoring_managers(&ctx).await?;
 
         let p: SessionCloseParams = params
             .parse()
             .map_err(|e| invalid_params("connection.close", e))?;
 
+        // A closed session's monitor stops with it (#3871).
+        monitoring_manager.unsubscribe(&p.session_id).await;
         if session_manager.close(&p.session_id).await {
             Ok::<_, ErrorObjectOwned>(json!({}))
         } else {
@@ -1127,11 +1137,14 @@ fn attach_error_code(msg: &str) -> i64 {
 
 fn register_connection_detach(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method(pm::CONNECTION_DETACH, |params, ctx, _ext| async move {
-        let session_manager = get_session_manager(&ctx).await?;
+        let (session_manager, monitoring_manager) = get_monitoring_managers(&ctx).await?;
 
         let p: SessionDetachParams = params
             .parse()
             .map_err(|e| invalid_params("connection.detach", e))?;
+
+        // A detached session is no longer this client's to monitor (#3871).
+        monitoring_manager.unsubscribe(&p.session_id).await;
 
         session_manager.detach(&p.session_id).await.map_err(|msg| {
             rpc_err_data(
@@ -1926,6 +1939,35 @@ async fn resolve_monitoring_host(
     host.to_string()
 }
 
+/// The monitoring provider of the session `host`, for
+/// `connection.monitoring.subscribe` (#3871).
+///
+/// `Ok(None)` when `host` is not a session of this client — it may still be a
+/// saved SSH connection. A session this client does not hold is refused with
+/// [`errors::SESSION_HELD_BY_OTHER`] and an exited one with
+/// [`errors::SESSION_NOT_RUNNING`], exactly like `connection.processes.*`, so a
+/// client never receives samples from a session that is not its own.
+async fn resolve_session_monitoring(
+    session_manager: &Arc<dyn SessionManagerApi>,
+    host: &str,
+) -> Result<Option<Arc<dyn MonitoringProvider + Send + Sync>>, ErrorObjectOwned> {
+    match session_manager.session_monitoring(host).await {
+        Ok(provider) => Ok(Some(provider)),
+        Err(SessionProcessError::Unknown) => Ok(None),
+        Err(SessionProcessError::Exited) => Err(rpc_err(
+            errors::SESSION_NOT_RUNNING,
+            format!("Session {host} is not running"),
+        )),
+        Err(SessionProcessError::HeldElsewhere) => Err(rpc_err(
+            errors::SESSION_HELD_BY_OTHER,
+            format!("Session {host} is not held by this client; attach it first"),
+        )),
+        Err(SessionProcessError::Unsupported(message)) => {
+            Err(rpc_err(errors::MONITORING_ERROR, message))
+        }
+    }
+}
+
 fn register_monitoring_subscribe(
     module: &mut RpcModule<Mutex<HandlerState>>,
 ) -> anyhow::Result<()> {
@@ -1939,6 +1981,23 @@ fn register_monitoring_subscribe(
                 .map_err(|e| invalid_params("monitoring.subscribe", e))?;
 
             let host = resolve_monitoring_host(&session_manager, &p.host).await;
+
+            // An agent-hosted session is monitored through its backend's own
+            // provider (#3871); any other host keeps the agent's collectors.
+            if host != "self" {
+                if let Some(provider) = resolve_session_monitoring(&session_manager, &host).await? {
+                    monitoring_manager
+                        .subscribe_provider(&host, provider, p.interval_ms)
+                        .await
+                        .map_err(|e| {
+                            rpc_err(
+                                errors::MONITORING_ERROR,
+                                format!("Failed to subscribe: {e}"),
+                            )
+                        })?;
+                    return Ok(json!({}));
+                }
+            }
 
             monitoring_manager
                 .subscribe(&host, p.interval_ms)

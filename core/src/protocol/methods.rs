@@ -292,6 +292,13 @@ pub struct Capabilities {
     /// (protocol 0.20.0, #3210). Absent (read as `false`) on older agents,
     /// which manage processes of local sessions only.
     pub session_processes: bool,
+    /// Whether [`CONNECTION_MONITORING_SUBSCRIBE`] accepts an agent-hosted SSH,
+    /// Docker or WSL **session id** as `host`, streaming that session's own
+    /// monitoring provider — its remote host, container (with the `docker
+    /// stats` fallback) or distribution (protocol 0.21.0, #3871). Absent (read
+    /// as `false`) on older agents, which monitor only `"self"` and saved SSH
+    /// connections.
+    pub session_monitoring: bool,
 }
 
 /// One prompt of a [`KbdInteractivePromptNotification`] round.
