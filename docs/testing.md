@@ -485,8 +485,9 @@ carve-out](#ssh-tunnel-startstop-on-macos-manual-carve-out-933) and ADR-5.
 ### Agent-crate Docker Rust tests — nightly `agent-docker-integration` job (TIN-008)
 
 Separate from the Python bridge lane above, the agent crate has **Rust**
-real-daemon Docker integration suites: `agent/tests/docker_integration.rs` (4
-tests), `agent/tests/docker_deferred_update_integration.rs` (1 test), and the
+real-daemon Docker integration suites: `agent/tests/docker_integration.rs` (6
+tests, including session monitoring of a distroless and a `/proc` container,
+#3871), `agent/tests/docker_deferred_update_integration.rs` (1 test), and the
 Docker case in `agent/tests/self_update_integration.rs`
 (`active_docker_session_is_never_interrupted`). Each carries a `#[ignore]`, so
 the per-PR `cargo test --workspace` gate ([`code-quality.yml`](../.github/workflows/code-quality.yml)
