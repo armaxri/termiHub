@@ -112,6 +112,8 @@ pub enum DropEdge {
 
 /// Direction of a directional-focus move.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum FocusDirection {
     Up,

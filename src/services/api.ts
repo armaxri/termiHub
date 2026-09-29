@@ -2818,6 +2818,9 @@ export async function restartAfterBackupRestore(): Promise<void> {
  * A credential kind the frontend can store/resolve/remove. Mirrors the backend
  * `CredentialType` string forms. `sudo_password` (#1327) backs the elevated
  * edit mode's opt-in persistence (#1329).
+ *
+ * Deliberately hand-written (#3088): these are the `Display` / `parse_credential_type`
+ * string forms the commands take as a plain `String`, not the enum's serde form.
  */
 export type CredentialType = "password" | "key_passphrase" | "sudo_password";
 

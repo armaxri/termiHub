@@ -461,6 +461,12 @@ export type SessionCloseConfirmRequest =
   | { kind: "tab"; tabId: string; panelId: string; label: string; reopen: ReopenTabPayload | null }
   | { kind: "panel"; panelId: string; liveCount: number; tabCount: number };
 
+/*
+ * The layout tree types below (`LeafPanel`, `SplitContainer`, `PanelNode`,
+ * `TabGroup`) are deliberately hand-written, not generated (#3088): the Rust
+ * twins in `core/src/layout/panel_tree.rs` model a minimal three-field `Tab`
+ * projection for the layout algebra, while these carry the full `TerminalTab`.
+ */
 export interface LeafPanel {
   type: "leaf";
   id: string;
