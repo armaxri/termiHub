@@ -360,15 +360,81 @@ mod tests {
         assert!(reg.status("inst-1").await.is_none());
     }
 
+    /// #3910: a desktop that restarts re-sends `service.start` for an instance
+    /// the (shared) registry still hosts. The same start again is idempotent: no
+    /// error, and the running instance is kept rather than torn down.
     #[tokio::test]
-    async fn duplicate_instance_id_is_rejected() {
+    async fn restarting_a_hosted_instance_with_the_same_config_is_idempotent() {
         let reg = registry();
         reg.start("inst-1", SERVICE_ID_HTTP, http_config(0))
             .await
             .expect("first start");
-        let err = reg.start("inst-1", SERVICE_ID_HTTP, http_config(0)).await;
-        assert!(matches!(err, Err(ServiceError::StartFailed(_))));
+        let bound = reg.local_addr("inst-1").await.expect("bound");
+
+        let again = reg
+            .start("inst-1", SERVICE_ID_HTTP, http_config(0))
+            .await
+            .expect("re-sending the same start must not error");
+        assert_eq!(again.status, ServiceStatus::Running);
+        assert_eq!(reg.active_count().await, 1);
+        assert_eq!(
+            reg.local_addr("inst-1").await,
+            Some(bound),
+            "the same instance keeps running, it is not replaced"
+        );
         reg.stop("inst-1").await;
+    }
+
+    /// #3910: a start for a hosted instance id with a changed config replaces
+    /// the instance (the desktop's config is authoritative), without an error.
+    #[tokio::test]
+    async fn restarting_a_hosted_instance_with_a_changed_config_replaces_it() {
+        let reg = registry();
+        reg.start("inst-1", SERVICE_ID_HTTP, http_config(0))
+            .await
+            .expect("first start");
+        let mut changed = http_config(0);
+        changed["readOnly"] = serde_json::json!(false);
+        let snap = reg
+            .start("inst-1", SERVICE_ID_HTTP, changed)
+            .await
+            .expect("a changed start replaces the instance");
+        assert_eq!(snap.status, ServiceStatus::Running);
+        assert_eq!(reg.active_count().await, 1);
+        reg.stop("inst-1").await;
+    }
+
+    /// #3910: with one registry shared by a listener's connections, "attached"
+    /// means at least one client. One client leaving must not idle a monitor
+    /// another client still watches.
+    #[tokio::test]
+    async fn attach_is_counted_so_one_client_leaving_does_not_idle_another() {
+        let reg = monitor_registry();
+        reg.attach_client().await;
+        reg.start("mon-1", "http_monitor", monitor_config())
+            .await
+            .expect("monitor hosts on the agent");
+        reg.attach_client().await;
+
+        reg.detach_client().await;
+        assert_eq!(
+            reg.is_observed("mon-1").await,
+            Some(true),
+            "a second client is still attached"
+        );
+
+        reg.detach_client().await;
+        assert_eq!(
+            reg.is_observed("mon-1").await,
+            Some(false),
+            "the last client left"
+        );
+
+        // More detaches than attaches never underflow the count.
+        reg.detach_client().await;
+        reg.attach_client().await;
+        assert_eq!(reg.is_observed("mon-1").await, Some(true));
+        reg.stop("mon-1").await;
     }
 
     #[tokio::test]

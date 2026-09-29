@@ -6708,4 +6708,7 @@ mod tests {
 
     /// `connection.files.*` for agent-hosted sessions (#3242).
     mod files_tests;
+
+    /// Hosted services shared across `--listen` connections (#3910).
+    mod service_registry_tests;
 }
