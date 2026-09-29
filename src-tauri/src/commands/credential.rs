@@ -6,6 +6,7 @@ use tracing::{debug, info, warn};
 
 use crate::connection::manager::ConnectionManager;
 use crate::connection::settings::{CredentialStorageMode, SettingsUnion};
+use crate::credential::manager::PendingStoreSwitch;
 use crate::credential::named::NamedCredentialRegistry;
 use crate::credential::types::{build_status_info, CredentialStoreStatusInfo};
 use crate::credential::{
@@ -63,8 +64,35 @@ pub struct SwitchResult {
     /// Number of credentials that failed to migrate. They remain in the
     /// previous store, which is left intact.
     pub failed_count: u32,
-    /// Warnings for credentials that failed to migrate.
+    /// Warnings for credentials that failed to migrate (or, for a switch to
+    /// `none`, that could not be removed).
     pub warnings: Vec<String>,
+    /// Switch to `none` only: number of credentials removed from the previous
+    /// store. `0` for every other target (#3323).
+    pub removed_count: u32,
+    /// Switch to `none` only: credentials (`connection_id:type`, never the
+    /// value) that could not be removed and still remain in the previous
+    /// store (#3323).
+    pub remaining: Vec<String>,
+    /// `true` when the switch failed completely and was rolled back: the
+    /// previous store is still active (and unlocked, if it was) and the new
+    /// mode was not persisted — nothing changed (#3323).
+    pub rolled_back: bool,
+}
+
+impl SwitchResult {
+    /// A no-op result (nothing to migrate, nothing changed on the side).
+    fn unchanged(warnings: Vec<String>) -> Self {
+        Self {
+            status: MigrationStatus::Success,
+            migrated_count: 0,
+            failed_count: 0,
+            warnings,
+            removed_count: 0,
+            remaining: Vec::new(),
+            rolled_back: false,
+        }
+    }
 }
 
 /// Per-credential migration tally produced by [`migrate_credentials`].
@@ -447,10 +475,12 @@ pub async fn change_master_password(
 
 /// Switch the credential storage backend.
 ///
-/// Optionally migrates existing credentials to the new store.
-/// When switching to master password mode, a `master_password` must be provided
-/// to set up the new encrypted store. The new mode is persisted to app settings
-/// so it survives app restarts.
+/// Migrates existing credentials to the new store — or, when switching to
+/// `none`, removes them from the previous store. When switching to master
+/// password mode, a `master_password` must be provided to set up the new
+/// encrypted store. The new mode is persisted to app settings so it survives
+/// app restarts. A total failure rolls the switch back (#3323); see
+/// [`perform_switch`].
 #[tauri::command]
 pub async fn switch_credential_store(
     new_mode: String,
@@ -470,12 +500,9 @@ pub async fn switch_credential_store(
     );
 
     if current_mode == target_mode {
-        return Ok(SwitchResult {
-            status: MigrationStatus::Success,
-            migrated_count: 0,
-            failed_count: 0,
-            warnings: vec!["Already using this storage mode".to_string()],
-        });
+        return Ok(SwitchResult::unchanged(vec![
+            "Already using this storage mode".to_string(),
+        ]));
     }
 
     // Collect credentials from the current store for migration. Aborts the
@@ -485,68 +512,218 @@ pub async fn switch_credential_store(
     let credentials_to_migrate =
         collect_credentials_for_migration(&manager, &current_mode, &named.secret_keys())?;
 
-    // Notify auto-lock timer when leaving master password mode
-    if current_mode == StorageMode::MasterPassword {
-        manager.notify_auto_lock_locked();
+    let result = perform_switch(
+        &manager,
+        target_mode.clone(),
+        master_password,
+        &credentials_to_migrate,
+        migrate_credentials,
+        |mode| {
+            // Persist the new mode to settings so it survives app restarts.
+            let mut settings = connection_manager.get_settings();
+            settings.credential_storage_mode = CredentialStorageMode::parse(mode.to_settings_str());
+            if let Err(e) = connection_manager.save_settings(settings) {
+                warn!(
+                    "Failed to persist credential storage mode to settings: {}",
+                    e
+                );
+            }
+        },
+    );
+
+    if matches!(
+        result,
+        Ok(SwitchResult {
+            rolled_back: false,
+            ..
+        })
+    ) {
+        sync_embedded_server_secrets(&app_handle);
+        sync_connection_credential_scopes(&app_handle);
+    }
+    emit_status_changed(&app_handle, &manager);
+    result
+}
+
+/// Remove the collected credentials from the previous store after a switch to
+/// `none`, so the secrets the user chose to discard do not linger on disk
+/// (#3323). Every failure is logged at WARN with the key only — never the
+/// value — and reported back as a remaining entry.
+fn clear_previous_store(
+    pending: &PendingStoreSwitch,
+    credentials: &[(CredentialKey, String)],
+) -> SwitchResult {
+    let mut removed_count = 0u32;
+    let mut remaining = Vec::new();
+    let mut warnings = Vec::new();
+
+    for (key, _) in credentials {
+        match pending.remove_from_previous(key) {
+            Ok(()) => removed_count += 1,
+            Err(e) => {
+                // SECRET HYGIENE: key (connection_id:type) and error only.
+                warn!(key = %key, error = %e, "failed to remove credential from previous store");
+                remaining.push(key.to_string());
+                warnings.push(format!("Failed to remove {}: {}", key, e));
+            }
+        }
     }
 
-    // Switch to the new backend
-    manager
-        .switch_store(target_mode.clone())
-        .map_err(|e| e.to_string())?;
+    info!(
+        removed_count,
+        source_count = credentials.len(),
+        remaining_count = remaining.len(),
+        "credential removal for switch to none complete"
+    );
 
-    // If switching to master password mode, set up the new store
-    if target_mode == StorageMode::MasterPassword {
-        let password = master_password
-            .ok_or("Master password is required when switching to master password mode")?;
+    SwitchResult {
+        status: MigrationStatus::from_counts(credentials.len(), removed_count),
+        migrated_count: 0,
+        failed_count: remaining.len() as u32,
+        warnings,
+        removed_count,
+        remaining,
+        rolled_back: false,
+    }
+}
 
+/// Core of [`switch_credential_store`], free of Tauri state so it can be
+/// tested directly. `current mode != target_mode` is assumed.
+///
+/// The switch is transactional (#3323):
+/// - The new backend is installed with [`CredentialManager::begin_switch`],
+///   which keeps the previous store alive — still unlocked — until the outcome
+///   is known.
+/// - Switching to `none` removes the credentials from the previous store
+///   (the confirm dialog promises they are deleted); any other target gets
+///   the credentials migrated into it via `migrate`.
+/// - A **total failure** (credentials to move, none written/removed) or a
+///   failure to set up the new master-password store **rolls back**: the
+///   previous store is reinstalled unlocked (no re-unlock prompt), a freshly
+///   created master-password file is deleted again, and `persist` is not
+///   called, so the new mode is not saved.
+/// - Otherwise (success or partial) the switch is committed — the previous
+///   master-password store is locked — and `persist` saves the new mode.
+fn perform_switch<M, P>(
+    manager: &CredentialManager,
+    target_mode: StorageMode,
+    master_password: Option<String>,
+    credentials: &[(CredentialKey, String)],
+    migrate: M,
+    persist: P,
+) -> Result<SwitchResult, String>
+where
+    M: FnOnce(&CredentialManager, &[(CredentialKey, String)]) -> MigrationOutcome,
+    P: FnOnce(&StorageMode),
+{
+    let password = if target_mode == StorageMode::MasterPassword {
+        Some(
+            master_password
+                .ok_or("Master password is required when switching to master password mode")?,
+        )
+    } else {
+        None
+    };
+
+    let pending = manager.begin_switch(target_mode.clone());
+    let leaving_master_password = pending.previous_mode() == StorageMode::MasterPassword;
+
+    // Set up (or unlock an existing) master-password target store.
+    let mut created_new_file = false;
+    if let Some(password) = password {
         let setup_result = manager
             .with_master_password_store(|store| {
                 if store.has_credentials_file() {
                     // File exists — unlock instead of setup
                     store.unlock(&password).map_err(|e| e.to_string())
                 } else {
+                    created_new_file = true;
                     store.setup(&password).map_err(|e| e.to_string())
                 }
             })
-            .ok_or_else(|| "Failed to access master password store after switch".to_string())?;
+            .ok_or_else(|| "Failed to access master password store after switch".to_string());
 
-        setup_result?;
-
-        // Notify auto-lock timer when entering master password mode
-        manager.notify_auto_lock_unlocked();
+        match setup_result {
+            Ok(Ok(())) => {
+                // Notify auto-lock timer when entering master password mode
+                manager.notify_auto_lock_unlocked();
+            }
+            Ok(Err(e)) | Err(e) => {
+                roll_back(manager, pending, &target_mode, created_new_file);
+                return Err(e);
+            }
+        }
     }
 
-    // Migrate credentials to the new store. Each failure is logged at WARN
-    // (key only, never the secret value) and an INFO summary is emitted
-    // unconditionally, so a partial or total migration failure leaves a durable
-    // trace instead of failing silently (OBS-007).
-    //
-    // The switch itself is NOT rolled back when migration fails: the new mode
-    // stays active and the source store is left intact, so the failed
-    // credentials can be recovered by switching back. `status` tells the
-    // frontend truthfully which of these cases occurred (#2839).
-    let outcome = migrate_credentials(&manager, &credentials_to_migrate);
+    // Move the credentials: migrate them into the new store, or — for `none`,
+    // whose NullStore would silently "accept" them — remove them from the
+    // previous store. Each failure is logged at WARN (key only, never the
+    // secret value) and an INFO summary is emitted unconditionally (OBS-007).
+    let result = if target_mode == StorageMode::None {
+        clear_previous_store(&pending, credentials)
+    } else {
+        let outcome = migrate(manager, credentials);
+        SwitchResult {
+            status: outcome.status,
+            migrated_count: outcome.migrated_count,
+            failed_count: outcome.failed_count,
+            warnings: outcome.warnings,
+            removed_count: 0,
+            remaining: Vec::new(),
+            rolled_back: false,
+        }
+    };
 
-    // Persist the new mode to settings so it survives app restarts.
-    let mut settings = connection_manager.get_settings();
-    settings.credential_storage_mode = CredentialStorageMode::parse(target_mode.to_settings_str());
-    if let Err(e) = connection_manager.save_settings(settings) {
+    if result.status == MigrationStatus::Failed {
         warn!(
-            "Failed to persist credential storage mode to settings: {}",
-            e
+            from = pending.previous_mode().to_settings_str(),
+            to = target_mode.to_settings_str(),
+            "credential store switch failed completely; rolling back to the previous store"
         );
+        roll_back(manager, pending, &target_mode, created_new_file);
+        return Ok(SwitchResult {
+            rolled_back: true,
+            ..result
+        });
     }
 
-    sync_embedded_server_secrets(&app_handle);
-    sync_connection_credential_scopes(&app_handle);
-    emit_status_changed(&app_handle, &manager);
-    Ok(SwitchResult {
-        status: outcome.status,
-        migrated_count: outcome.migrated_count,
-        failed_count: outcome.failed_count,
-        warnings: outcome.warnings,
-    })
+    manager.commit_switch(pending);
+    if leaving_master_password {
+        manager.notify_auto_lock_locked();
+    }
+    persist(&target_mode);
+    Ok(result)
+}
+
+/// Undo a switch started by [`perform_switch`]: delete a master-password file
+/// that this switch created (it holds nothing the user had before), then
+/// reinstall the previous store exactly as it was.
+fn roll_back(
+    manager: &CredentialManager,
+    pending: PendingStoreSwitch,
+    target_mode: &StorageMode,
+    created_new_file: bool,
+) {
+    if *target_mode == StorageMode::MasterPassword {
+        if created_new_file {
+            if let Some(Err(e)) = manager.with_master_password_store(|store| store.reset()) {
+                warn!(error = %e, "failed to delete the master-password file created by a rolled-back switch");
+            }
+        }
+        manager.notify_auto_lock_locked();
+    }
+    let previous_unlocked = pending.previous_is_unlocked();
+    let previous_mode = pending.previous_mode();
+    manager.rollback_switch(pending);
+    if previous_mode == StorageMode::MasterPassword {
+        if previous_unlocked {
+            manager.notify_auto_lock_unlocked();
+        } else {
+            // Not reachable today (a locked source aborts the switch before it
+            // starts); if it ever is, the UI's unlock flow handles the store.
+            warn!("previous master-password store is locked after rollback; unlock required");
+        }
+    }
 }
 
 /// Update the auto-lock timeout for the master password credential store.
@@ -1173,11 +1350,17 @@ mod tests {
             migrated_count: 1,
             failed_count: 1,
             warnings: vec!["Failed to migrate x".to_string()],
+            removed_count: 2,
+            remaining: vec!["conn:password".to_string()],
+            rolled_back: false,
         };
         let json = serde_json::to_value(&result).unwrap();
         assert_eq!(json["status"], "partial");
         assert_eq!(json["migratedCount"], 1);
         assert_eq!(json["failedCount"], 1);
+        assert_eq!(json["removedCount"], 2);
+        assert_eq!(json["remaining"][0], "conn:password");
+        assert_eq!(json["rolledBack"], false);
         assert_eq!(
             serde_json::to_value(MigrationStatus::Success).unwrap(),
             "success"
@@ -1186,5 +1369,261 @@ mod tests {
             serde_json::to_value(MigrationStatus::Failed).unwrap(),
             "failed"
         );
+    }
+
+    // --- #3323: transactional switch (rollback on total failure) and `none`. ---
+
+    /// An unlocked master-password manager holding `ids` as password entries.
+    fn master_password_source(dir: &std::path::Path, ids: &[&str]) -> CredentialManager {
+        let mgr = CredentialManager::new(StorageMode::MasterPassword, dir.to_path_buf());
+        mgr.with_master_password_store(|s| s.setup("source-pw"))
+            .unwrap()
+            .unwrap();
+        for (key, value) in ids.iter().map(|id| cred(id)) {
+            mgr.set(&key, &value).unwrap();
+        }
+        mgr
+    }
+
+    fn collect(mgr: &CredentialManager) -> Vec<(CredentialKey, String)> {
+        collect_credentials_for_migration(mgr, &mgr.get_mode(), &[]).unwrap()
+    }
+
+    /// A `migrate` stand-in whose writes fail for every key in `failing`.
+    fn failing_migration(
+        failing: &'static [&'static str],
+    ) -> impl FnOnce(&CredentialManager, &[(CredentialKey, String)]) -> MigrationOutcome {
+        move |mgr, creds| {
+            let mut migrated_count = 0u32;
+            let mut warnings = Vec::new();
+            for (key, value) in creds {
+                if failing.contains(&key.connection_id.as_str()) {
+                    warnings.push(format!("Failed to migrate {key}: denied"));
+                } else {
+                    mgr.set(key, value).unwrap();
+                    migrated_count += 1;
+                }
+            }
+            MigrationOutcome {
+                migrated_count,
+                failed_count: warnings.len() as u32,
+                status: MigrationStatus::from_counts(creds.len(), migrated_count),
+                warnings,
+            }
+        }
+    }
+
+    #[test]
+    fn total_failure_rolls_back_to_the_unlocked_previous_store() {
+        let _mock = crate::credential::os_keychain::test_support::install_mock();
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = master_password_source(dir.path(), &["a", "b"]);
+        let creds = collect(&mgr);
+        let mut persisted = None;
+
+        let result = perform_switch(
+            &mgr,
+            StorageMode::OsKeychain,
+            None,
+            &creds,
+            failing_migration(&["a", "b"]),
+            |mode| persisted = Some(mode.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(result.status, MigrationStatus::Failed);
+        assert!(result.rolled_back);
+        assert_eq!(result.failed_count, 2);
+        // Old mode active, settings unchanged, old store still unlocked + usable.
+        assert_eq!(mgr.get_mode(), StorageMode::MasterPassword);
+        assert!(
+            persisted.is_none(),
+            "a rolled-back mode must not be persisted"
+        );
+        assert_eq!(
+            mgr.status(),
+            crate::credential::CredentialStoreStatus::Unlocked
+        );
+        assert_eq!(
+            mgr.get(&cred("a").0).unwrap(),
+            Some(MIGRATION_TEST_SECRET.to_string())
+        );
+        let extra = CredentialKey::new("after-rollback", CredentialType::Password);
+        mgr.set(&extra, "still-writable").unwrap();
+    }
+
+    #[test]
+    fn partial_failure_switches_and_reports_truthfully() {
+        let _mock = crate::credential::os_keychain::test_support::install_mock();
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = master_password_source(dir.path(), &["p-ok", "p-bad"]);
+        let creds = collect(&mgr);
+        let mut persisted = None;
+
+        let result = perform_switch(
+            &mgr,
+            StorageMode::OsKeychain,
+            None,
+            &creds,
+            failing_migration(&["p-bad"]),
+            |mode| persisted = Some(mode.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(result.status, MigrationStatus::Partial);
+        assert!(!result.rolled_back);
+        assert_eq!(result.migrated_count, 1);
+        assert_eq!(result.failed_count, 1);
+        assert_eq!(result.removed_count, 0);
+        assert_eq!(mgr.get_mode(), StorageMode::OsKeychain);
+        assert_eq!(persisted, Some(StorageMode::OsKeychain));
+    }
+
+    #[test]
+    fn switching_to_none_removes_the_credentials_from_the_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = master_password_source(dir.path(), &["n1", "n2", "n3"]);
+        let creds = collect(&mgr);
+        let mut persisted = None;
+
+        let result = perform_switch(
+            &mgr,
+            StorageMode::None,
+            None,
+            &creds,
+            |_, _| panic!("switching to none must not 'migrate' into the NullStore"),
+            |mode| persisted = Some(mode.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(result.status, MigrationStatus::Success);
+        assert_eq!(result.removed_count, 3);
+        assert_eq!(result.migrated_count, 0);
+        assert!(result.remaining.is_empty());
+        assert_eq!(mgr.get_mode(), StorageMode::None);
+        assert_eq!(persisted, Some(StorageMode::None));
+
+        // The on-disk source store is empty: re-open and unlock it.
+        let reopened = MasterPasswordStore::new(dir.path().join("credentials.enc"));
+        reopened.unlock("source-pw").unwrap();
+        assert!(reopened.list_keys().unwrap().is_empty());
+        let raw = std::fs::read(dir.path().join("credentials.enc")).unwrap();
+        assert!(!String::from_utf8_lossy(&raw).contains(MIGRATION_TEST_SECRET));
+    }
+
+    #[test]
+    fn switching_to_none_reports_entries_that_could_not_be_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = master_password_source(dir.path(), &["r1"]);
+        let mut creds = collect(&mgr);
+        // r2 is not in the store, so removing it is a no-op success (no disk
+        // write); r1 must be written back to disk, which fails because the
+        // credentials file has been replaced by a directory.
+        creds.push(cred("r2"));
+        let blocked = dir.path().join("credentials.enc");
+        std::fs::remove_file(&blocked).unwrap();
+        std::fs::create_dir(&blocked).unwrap();
+
+        let result = perform_switch(
+            &mgr,
+            StorageMode::None,
+            None,
+            &creds,
+            |_, _| unreachable!(),
+            |_| {},
+        )
+        .unwrap();
+
+        assert_eq!(result.status, MigrationStatus::Partial);
+        assert_eq!(result.removed_count, 1);
+        assert_eq!(result.remaining, vec![cred("r1").0.to_string()]);
+        assert_eq!(result.failed_count, 1);
+        assert!(result.warnings[0].contains("Failed to remove"));
+        assert!(!result.warnings[0].contains(MIGRATION_TEST_SECRET));
+        assert_eq!(mgr.get_mode(), StorageMode::None);
+    }
+
+    #[test]
+    fn switching_to_none_rolls_back_when_nothing_could_be_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = master_password_source(dir.path(), &["x1"]);
+        let creds = collect(&mgr);
+        let blocked = dir.path().join("credentials.enc");
+        std::fs::remove_file(&blocked).unwrap();
+        std::fs::create_dir(&blocked).unwrap();
+        let mut persisted = false;
+
+        let result = perform_switch(
+            &mgr,
+            StorageMode::None,
+            None,
+            &creds,
+            |_, _| unreachable!(),
+            |_| persisted = true,
+        )
+        .unwrap();
+
+        assert_eq!(result.status, MigrationStatus::Failed);
+        assert!(result.rolled_back);
+        assert_eq!(result.remaining.len(), 1);
+        assert!(!persisted);
+        assert_eq!(mgr.get_mode(), StorageMode::MasterPassword);
+        assert_eq!(
+            mgr.status(),
+            crate::credential::CredentialStoreStatus::Unlocked
+        );
+        // The entry that could not be removed from disk is still readable.
+        assert_eq!(
+            mgr.get(&cred("x1").0).unwrap(),
+            Some(MIGRATION_TEST_SECRET.to_string())
+        );
+    }
+
+    #[test]
+    fn master_password_setup_failure_rolls_back() {
+        // Existing credentials.enc with a different password → unlock fails.
+        let file_dir = tempfile::tempdir().unwrap();
+        let existing = MasterPasswordStore::new(file_dir.path().join("credentials.enc"));
+        existing.setup("other-pw").unwrap();
+        drop(existing);
+        let mgr = CredentialManager::new(StorageMode::None, file_dir.path().to_path_buf());
+        let mut persisted = false;
+
+        let err = perform_switch(
+            &mgr,
+            StorageMode::MasterPassword,
+            Some("wrong-pw".to_string()),
+            &[],
+            |_, _| unreachable!(),
+            |_| persisted = true,
+        )
+        .unwrap_err();
+
+        assert!(!err.is_empty());
+        assert!(!persisted);
+        assert_eq!(mgr.get_mode(), StorageMode::None);
+        // The pre-existing file is never deleted by a rollback.
+        assert!(file_dir.path().join("credentials.enc").exists());
+    }
+
+    #[test]
+    fn rollback_deletes_a_master_password_file_it_created() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = CredentialManager::new(StorageMode::None, dir.path().to_path_buf());
+        let creds = vec![cred("m1")];
+
+        let result = perform_switch(
+            &mgr,
+            StorageMode::MasterPassword,
+            Some("new-pw-123".to_string()),
+            &creds,
+            failing_migration(&["m1"]),
+            |_| panic!("must not persist"),
+        )
+        .unwrap();
+
+        assert!(result.rolled_back);
+        assert_eq!(mgr.get_mode(), StorageMode::None);
+        assert!(!dir.path().join("credentials.enc").exists());
     }
 }

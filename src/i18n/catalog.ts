@@ -75,6 +75,22 @@ const en = {
   "workflow.trigger.pattern.error.invalidRegex": "This is not a valid regular expression.",
   "workflow.trigger.pattern.error.unsafeRegex":
     "Nested quantifiers such as (a+)+ and backreferences are not allowed, because they can make matching very slow.",
+
+  // ── Credential store switch result (SecuritySettings, #2839 / #3323) ────
+  "credentialSwitch.count.one": "{count} credential",
+  "credentialSwitch.count.other": "{count} credentials",
+  "credentialSwitch.migrated.success": "Switched to {target} — {credentials} migrated.",
+  "credentialSwitch.switched": "Switched to {target}.",
+  "credentialSwitch.migrated.partial":
+    "Switched to {target}. {migrated} of {total} credentials migrated; {failed} could not be moved and stayed in {previous}.",
+  "credentialSwitch.migrated.failed":
+    "Switch failed, nothing changed: none of your {credentials} could be moved to {target}. {previous} is still active.",
+  "credentialSwitch.removed.success": "Switched to {target} — {credentials} removed.",
+  "credentialSwitch.removed.partial":
+    "Switched to {target}. {removed} of {total} credentials removed; {failed} could not be removed from {previous}.",
+  "credentialSwitch.removed.failed":
+    "Switch failed, nothing changed: none of your {credentials} could be removed. {previous} is still active.",
+  "credentialSwitch.remaining.title": "Still stored in {previous}:",
 } as const;
 
 /** A stable id naming one catalog message. */
@@ -88,4 +104,18 @@ const CATALOGS: Record<Locale, Record<MessageId, string>> = { en };
 /** Resolve a message id to its text in `locale` (English by default). */
 export function t(id: MessageId, locale: Locale = "en"): string {
   return CATALOGS[locale][id];
+}
+
+/**
+ * Resolve a message id and substitute its `{name}` placeholders from `params`.
+ * Unknown placeholders are left as-is so a missing parameter is visible.
+ */
+export function tf(
+  id: MessageId,
+  params: Record<string, string | number>,
+  locale: Locale = "en"
+): string {
+  return t(id, locale).replace(/\{(\w+)\}/g, (match, name: string) =>
+    Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : match
+  );
 }
