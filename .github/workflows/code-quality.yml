@@ -189,6 +189,24 @@ jobs:
       - name: Fail if generated TypeScript is stale
         run: git diff --exit-code -- src/types/generated
 
+      # IPC wire-contract fixture staleness gate (audit MOCK-005, #3837). The
+      # golden JSON in src/test/fixtures/wire/ is what the Rust IPC DTOs really
+      # serialize; the frontend wire-contract suite feeds it to the api wrappers.
+      # Regenerate it, then fail if it changed (or a new fixture is untracked):
+      # a serde-only backend change must land with its refreshed fixture, which
+      # is what makes the frontend assertions see it.
+      - name: Fail if IPC wire-contract fixtures are stale
+        run: |
+          cargo test -p termihub --lib ipc_wire_fixtures
+          stale=$(git status --porcelain -- src/test/fixtures/wire)
+          if [ -n "$stale" ]; then
+            echo "::error::IPC wire fixtures are stale; run" \
+              "'cargo test -p termihub --lib ipc_wire_fixtures' and commit:"
+            echo "$stale"
+            git --no-pager diff -- src/test/fixtures/wire
+            exit 1
+          fi
+
       # Fail the PR when a crate declares a dependency it never uses (TOOL-008).
       # Unused deps grow build time and supply-chain surface. cargo-machete
       # statically scans each crate's sources for usage — no build required.

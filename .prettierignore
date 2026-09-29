@@ -23,3 +23,8 @@ src/types/generated/
 src-tauri/src/connection/testdata/
 src-tauri/src/workspace/testdata/
 src-tauri/src/files/testdata/
+
+# IPC wire-contract golden fixtures — written verbatim by serde_json's pretty
+# printer (`cargo test -p termihub --lib ipc_wire_fixtures`); the CI staleness
+# gate compares them byte-for-byte.
+src/test/fixtures/wire/

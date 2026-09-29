@@ -964,6 +964,26 @@ vi.mock("@tauri-apps/api/fs", () => ({
 }));
 ```
 
+#### IPC wire-contract fixtures (MOCK-005)
+
+A hand-typed `invoke` response only proves the frontend handles what the test
+author _thinks_ the backend sends. For the main IPC wrappers, use the golden
+JSON in `src/test/fixtures/wire/` instead. The `ipc_wire_fixtures` Rust test
+(`src-tauri/src/ipc_wire_fixtures.rs`) serializes the real DTOs into those
+files. `src/services/wireContract.test.ts` feeds them to the wrappers and pins
+the output: null vs absent keys, enum strings, numbers and flattened maps.
+
+After a serde change to one of those DTOs, regenerate the fixtures and commit
+them:
+
+```bash
+cargo test -p termihub --lib ipc_wire_fixtures
+```
+
+The `code-quality` CI job fails if the fixtures are stale. A regenerated
+fixture that changes the wire shape then fails the frontend suite until the
+frontend handles the new shape.
+
 ### 6. Component-test timeout (Windows CI flake, #1025)
 
 The global Vitest `testTimeout` is raised to **15000ms** in `vitest.config.ts`
