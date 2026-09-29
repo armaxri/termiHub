@@ -8,6 +8,10 @@
 #             contents. The test asserts it is left UNCHANGED on this path.
 FROM ubuntu:24.04
 
+# Harden apt against transient mirror failures in CI (#2768).
+RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \
+    > /etc/apt/apt.conf.d/80-ci-retries
+
 # Deliberately do NOT install `sudo`.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-server \
