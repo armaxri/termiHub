@@ -7,7 +7,7 @@
  * a hint when the agent is not connected.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { AgentCapabilities, AgentSettings } from "@/types/connection";
 import { Field, Input, NumberInput, Select, Toggle } from "@/components/ui";
 import { SettingsField } from "@/components/Settings/SettingsField";
@@ -29,6 +29,12 @@ interface AgentSettingsFormProps {
 }
 
 export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSettingsFormProps) {
+  // Control ids so each field's `<label htmlFor>` names and activates its control.
+  const fieldIdBase = useId();
+  const shellId = `${fieldIdBase}-shell`;
+  const startDirId = `${fieldIdBase}-start-dir`;
+  const scrollbackId = `${fieldIdBase}-scrollback`;
+  const logLevelId = `${fieldIdBase}-log-level`;
   const availableShells = capabilities?.availableShells ?? [];
   const isConnected = availableShells.length > 0;
 
@@ -97,6 +103,7 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
         <Field
           variant="settings"
           label="Default Shell"
+          htmlFor={shellId}
           hint="Shell used for new sessions. Leave empty to auto-detect."
           labelAccessory={
             !isConnected ? (
@@ -113,6 +120,7 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
             <Select
               value={settings.defaultShell ?? AUTO_DETECT_SHELL}
               onChange={(v) => update("defaultShell", v === AUTO_DETECT_SHELL ? null : v)}
+              id={shellId}
               options={[
                 { value: AUTO_DETECT_SHELL, label: "Auto-detect" },
                 ...availableShells.map((shell) => ({ value: shell, label: shell })),
@@ -120,6 +128,7 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
             />
           ) : (
             <Input
+              id={shellId}
               type="text"
               placeholder="Auto-detect"
               value={settings.defaultShell ?? ""}
@@ -130,9 +139,11 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
 
         <SettingsField
           label="Starting Directory"
+          htmlFor={startDirId}
           hint="Working directory for new sessions. Leave empty for the shell default."
         >
           <Input
+            id={startDirId}
             type="text"
             value={settings.startingDirectory}
             onChange={(e) => update("startingDirectory", e.target.value)}
@@ -146,9 +157,11 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
 
         <SettingsField
           label="Persistent Scrollback Buffer"
+          htmlFor={scrollbackId}
           hint="Size of the ring buffer kept on the agent for persistent sessions (1–64 MiB). Changes apply to newly started sessions."
         >
           <NumberInput
+            id={scrollbackId}
             min={1}
             max={64}
             step={1}
@@ -161,8 +174,13 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
       <div className="settings-panel__category">
         <h3 className="settings-panel__category-title">Diagnostics</h3>
 
-        <SettingsField label="Log Level" hint="Controls the verbosity of agent-side log output.">
+        <SettingsField
+          label="Log Level"
+          htmlFor={logLevelId}
+          hint="Controls the verbosity of agent-side log output."
+        >
           <Select
+            id={logLevelId}
             value={settings.logLevel}
             onChange={(v) => update("logLevel", v as AgentSettings["logLevel"])}
             options={LOG_LEVELS.map((level) => ({
