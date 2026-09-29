@@ -76,6 +76,14 @@ const en = {
   "workflow.trigger.pattern.error.unsafeRegex":
     "Nested quantifiers such as (a+)+ and backreferences are not allowed, because they can make matching very slow.",
 
+  // ── Tunnels whose SSH connection was deleted (#2850) ────────────────────
+  "tunnel.missingConnection.status": "SSH connection deleted",
+  "tunnel.missingConnection.detail": "SSH connection deleted — choose another",
+  "tunnel.missingConnection.choose": "Choose connection",
+  "tunnel.editor.missingConnection":
+    "The SSH connection this tunnel used was deleted. Choose another SSH connection.",
+  "tunnel.editor.chooseSshConnection": "Choose an SSH connection",
+
   // ── Credential store switch result (SecuritySettings, #2839 / #3323) ────
   "credentialSwitch.count.one": "{count} credential",
   "credentialSwitch.count.other": "{count} credentials",

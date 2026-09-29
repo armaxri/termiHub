@@ -33,6 +33,7 @@ import { TunnelChainPreviewDialog } from "./TunnelChainPreviewDialog";
 import { validateTunnelType, type TunnelFieldErrors } from "./tunnelValidation";
 import { newId } from "@/services/transport/ids";
 import { ambiguousConnectionIds } from "@/utils/jumpHost";
+import { t } from "@/i18n/catalog";
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import "./TunnelEditor.css";
 
@@ -157,6 +158,7 @@ const tunnelFormSchema = z
  */
 export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const tunnels = useAppStore((s) => s.tunnels);
+  const tunnelStates = useAppStore((s) => s.tunnelStates);
   const { connections } = useProjectedConnections();
   const { remoteAgents } = useProjectedAgents();
   const saveTunnel = useAppStore((s) => s.saveTunnel);
@@ -338,6 +340,12 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       : { value: c.id, label: c.name }
   );
   const sshConnectionAmbiguous = ambiguousIds.has(form.sshConnectionId);
+  // The backend reports this tunnel's SSH connection as deleted (#2850) and the
+  // draft still names no existing one: flag it so the user repoints the tunnel.
+  const sshConnectionMissing =
+    existingTunnel !== undefined &&
+    tunnelStates[existingTunnel.id]?.status === "missingConnection" &&
+    !sshConnections.some((c) => c.id === form.sshConnectionId);
 
   // Tunnel host (run-location) selector: This computer + every remote agent.
   const hostOptions = [
@@ -481,15 +489,21 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
               ? "A connection with this id exists in more than one connection file, so the " +
                 "tunnel cannot be hosted on it. Rename or move one of them, or pick another " +
                 "SSH connection."
-              : undefined
+              : sshConnectionMissing
+                ? t("tunnel.editor.missingConnection")
+                : undefined
           }
           data-testid="tunnel-editor-ssh-connection-field"
         >
           <Select
-            value={form.sshConnectionId || undefined}
+            value={sshConnectionMissing ? undefined : form.sshConnectionId || undefined}
             onChange={(v) => setValue("sshConnectionId", v)}
             options={sshOptions}
-            placeholder="No SSH connections available"
+            placeholder={
+              sshConnectionMissing && sshOptions.length > 0
+                ? t("tunnel.editor.chooseSshConnection")
+                : "No SSH connections available"
+            }
             aria-label="SSH Connection"
             data-testid="tunnel-editor-ssh-connection"
           />

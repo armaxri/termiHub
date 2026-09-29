@@ -158,9 +158,10 @@
   flex-shrink: 0;
 }
 
-/* Redundant-hop notice + inline degraded fix. */
+/* Redundant-hop notice + inline degraded fix + deleted SSH connection (#2850). */
 .tunnel-item__redundant,
-.tunnel-item__degraded-fix {
+.tunnel-item__degraded-fix,
+.tunnel-item__missing-connection {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
@@ -169,7 +170,8 @@
 }
 
 .tunnel-item__redundant-icon,
-.tunnel-item__degraded-icon {
+.tunnel-item__degraded-icon,
+.tunnel-item__missing-connection-icon {
   flex-shrink: 0;
 }
 
