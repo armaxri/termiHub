@@ -26,7 +26,8 @@ import {
   resolveCredential,
 } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
-import type { SavedConnection } from "@/types/connection";
+import { EMPTY_AGENTS_VIEW, setAgentsViewForTest } from "@/store/agentsBridge";
+import type { AgentCapabilities, RemoteAgentDefinition, SavedConnection } from "@/types/connection";
 import { connectSavedConnection } from "./connectSavedConnection";
 
 const mockedCreateTerminal = vi.mocked(createTerminal);
@@ -77,6 +78,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  setAgentsViewForTest(EMPTY_AGENTS_VIEW);
 });
 
 /** Nothing may have asked the user anything, and no tab may have opened. */
@@ -141,19 +143,6 @@ describe("connectSavedConnection — unattended refusals (#3527)", () => {
     expectNoPromptAndNoTab();
   });
 
-  it("refuses an agent-hosted connection", async () => {
-    const conn: SavedConnection = {
-      id: "conn-r",
-      name: "remote",
-      folderId: null,
-      config: { type: "remote-session", config: { agentId: "a1", sessionType: "ssh" } },
-    };
-    const result = await connectSavedConnection(conn, unattended);
-    expect(result.status).toBe("refused");
-    expect(mockedCreateTerminal).not.toHaveBeenCalled();
-    expectNoPromptAndNoTab();
-  });
-
   it("reports a connect that fails for another reason as failed, with the message", async () => {
     mockedCreateTerminal.mockRejectedValue(ipcError("unreachable", "No route to host"));
     const result = await connectSavedConnection(ssh("agent"), unattended);
@@ -203,5 +192,97 @@ describe("connectSavedConnection — unattended success (#3527)", () => {
     void connectSavedConnection(ssh("password"));
     await vi.waitFor(() => expect(useAppStore.getState().passwordPromptOpen).toBe(true));
     useAppStore.getState().dismissPasswordPrompt();
+  });
+});
+
+describe("connectSavedConnection — unattended agent-hosted targets (#3877)", () => {
+  /** An agent-hosted SSH target on agent `a1`, key auth on the agent host. */
+  const agentTarget: SavedConnection = {
+    id: "conn-r",
+    name: "remote",
+    folderId: null,
+    config: {
+      type: "remote-session",
+      config: {
+        agentId: "a1",
+        sessionType: "ssh",
+        host: "db-1.internal",
+        username: "ops",
+        authMethod: "key",
+        keyPath: "~/.ssh/id_ed25519",
+      },
+    },
+  };
+
+  /** Put agent `a1` into the agents view with the given state. */
+  function withAgent(
+    connectionState: RemoteAgentDefinition["connectionState"],
+    capabilities?: Partial<AgentCapabilities>
+  ): void {
+    const agent = {
+      id: "a1",
+      name: "pi",
+      connectionState,
+      capabilities: capabilities
+        ? ({ connectionTypes: [], maxSessions: 10, ...capabilities } as AgentCapabilities)
+        : undefined,
+    } as RemoteAgentDefinition;
+    setAgentsViewForTest({ ...EMPTY_AGENTS_VIEW, remoteAgents: [agent] });
+  }
+
+  it("connects an agent target on a new enough agent, with the never-prompt flag", async () => {
+    withAgent("connected", { unattendedConnect: true });
+    const result = await connectSavedConnection(agentTarget, unattended);
+
+    expect(result).toEqual({ status: "opened", tabId: "tab-new", sessionId: "session-1" });
+    expect(mockedCreateTerminal).toHaveBeenCalledOnce();
+    const [config, , , , flag] = mockedCreateTerminal.mock.calls[0];
+    expect(config.type).toBe("remote-session");
+    expect(flag).toBe(true);
+    // The key lives on the agent host: the agent decides whether it needs a
+    // passphrase (and refuses typed when it does), not a desktop-side probe.
+    expect(mockedIsSshKeyEncrypted).not.toHaveBeenCalled();
+    expect(useAppStore.getState().passwordPromptOpen).toBe(false);
+  });
+
+  it("skips an agent target on an agent too old for unattended connect", async () => {
+    withAgent("connected", { sessionFiles: true });
+    const result = await connectSavedConnection(agentTarget, unattended);
+    expect(result).toEqual({
+      status: "refused",
+      reason: "agent too old for unattended connect",
+    });
+    expect(mockedCreateTerminal).not.toHaveBeenCalled();
+    expectNoPromptAndNoTab();
+  });
+
+  it("skips an agent target whose agent is not connected", async () => {
+    withAgent("disconnected");
+    const result = await connectSavedConnection(agentTarget, unattended);
+    expect(result).toEqual({ status: "refused", reason: "agent not connected" });
+    expect(mockedCreateTerminal).not.toHaveBeenCalled();
+    expectNoPromptAndNoTab();
+  });
+
+  it("maps the backend's agent_outdated refusal to the same reason", async () => {
+    withAgent("connected", { unattendedConnect: true });
+    mockedCreateTerminal.mockRejectedValue(ipcError("agent_outdated"));
+    const result = await connectSavedConnection(agentTarget, unattended);
+    expect(result).toEqual({
+      status: "refused",
+      reason: "agent too old for unattended connect",
+    });
+    expectNoPromptAndNoTab();
+  });
+
+  it("refuses an agent-side prompt from its typed code", async () => {
+    withAgent("connected", { unattendedConnect: true });
+    mockedCreateTerminal.mockRejectedValue(ipcError("interaction_required"));
+    const result = await connectSavedConnection(agentTarget, unattended);
+    expect(result).toEqual({
+      status: "refused",
+      reason: "needs interactive input (e.g. a one-time code)",
+    });
+    expectNoPromptAndNoTab();
   });
 });
