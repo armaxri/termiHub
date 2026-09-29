@@ -163,7 +163,8 @@ fn agent_binary() -> &'static str {
 
 /// A running daemon process with its socket path.
 ///
-/// On drop, sends SIGKILL to the daemon and removes the socket file.
+/// On drop, stops the daemon (see [`common::daemon_reaper::reap_spawned_daemon`])
+/// and removes the socket file.
 struct DaemonHandle {
     child: Child,
     socket_path: PathBuf,
@@ -171,8 +172,8 @@ struct DaemonHandle {
 
 impl Drop for DaemonHandle {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        // Never SIGKILL a daemon that is already exiting (#3742).
+        common::daemon_reaper::reap_spawned_daemon(&mut self.child, &self.socket_path);
         let _ = std::fs::remove_file(&self.socket_path);
     }
 }

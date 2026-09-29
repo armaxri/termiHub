@@ -2070,6 +2070,7 @@ struct PersistentShellSetup {
     /// Captured daemon stderr, kept alive for startup-failure diagnostics.
     _daemon_stderr: NamedTempFile,
     _tmp: TempDir,
+    socket_path: PathBuf,
     pub session_id: String,
 }
 
@@ -2118,6 +2119,7 @@ impl PersistentShellSetup {
             daemon,
             _daemon_stderr: daemon_stderr,
             _tmp: tmp,
+            socket_path,
             session_id,
         }
     }
@@ -2133,9 +2135,9 @@ impl PersistentShellSetup {
 #[cfg(unix)]
 impl Drop for PersistentShellSetup {
     fn drop(&mut self) {
-        // Kill the daemon explicitly before fields drop (before _tmp is deleted).
-        self.daemon.kill().ok();
-        self.daemon.wait().ok();
+        // Stop the daemon explicitly before fields drop (before _tmp is deleted).
+        // Tests end with `connection.close`, so it may already be exiting (#3742).
+        common::daemon_reaper::reap_spawned_daemon(&mut self.daemon, &self.socket_path);
     }
 }
 
@@ -2215,8 +2217,8 @@ impl RecoverableDaemon {
 #[cfg(unix)]
 impl Drop for RecoverableDaemon {
     fn drop(&mut self) {
-        self.daemon.kill().ok();
-        self.daemon.wait().ok();
+        // Tests end with `connection.close`, so it may already be exiting (#3742).
+        common::daemon_reaper::reap_spawned_daemon(&mut self.daemon, &self.socket_path);
     }
 }
 
