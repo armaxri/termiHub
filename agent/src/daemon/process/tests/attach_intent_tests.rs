@@ -9,10 +9,10 @@
 
 use std::time::Duration;
 
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::Instant;
 
-use super::super::ATTACH_INTENT_TIMEOUT;
+use super::super::{ATTACH_INTENT_TIMEOUT, MAX_PENDING_INTENTS};
 use super::write_bound_tests::{spawn_daemon, Attach, Worker, PROMPT};
 use crate::daemon::protocol::{
     self, Frame, INTENT_RECOVERY, INTENT_TAKEOVER, MSG_DETACH, MSG_EVICTED, MSG_OUTPUT,
@@ -215,5 +215,51 @@ async fn a_pending_recovery_attaches_if_the_holder_left_meanwhile() {
         matches!(pending.handshake().await, Some(Attach::Ready(_))),
         "an orphaned session is recovered"
     );
+    daemon.task.abort();
+}
+
+/// A newcomer that hangs up before declaring its intent has nobody to hand the
+/// session to: the holder is not evicted for it.
+#[tokio::test(start_paused = true)]
+async fn a_newcomer_that_hangs_up_silently_does_not_evict_the_holder() {
+    let daemon = spawn_daemon();
+    let mut holder = attach_holder(&daemon).await;
+
+    let mut gone = Worker::connect_silent(&daemon);
+    settle().await;
+    gone.writer.shutdown().await.unwrap();
+    drop(gone);
+    settle().await;
+
+    tokio::time::sleep(ATTACH_INTENT_TIMEOUT * 2).await;
+    assert_holder_live(&daemon, &mut holder).await;
+    daemon.task.abort();
+}
+
+/// A flood of silent connects neither piles up without bound nor ends in an
+/// eviction: past the cap, a further connect is refused at once.
+#[tokio::test(start_paused = true)]
+async fn too_many_silent_newcomers_are_refused_not_evicting() {
+    let daemon = spawn_daemon();
+    let mut holder = attach_holder(&daemon).await;
+
+    let mut pending = Vec::new();
+    for _ in 0..MAX_PENDING_INTENTS {
+        pending.push(Worker::connect_silent(&daemon));
+    }
+    settle().await;
+
+    let start = Instant::now();
+    let mut extra = Worker::connect_silent(&daemon);
+    assert_eq!(extra.handshake().await, Some(Attach::Refused));
+    assert!(start.elapsed() < Duration::from_millis(100));
+    assert_holder_live(&daemon, &mut holder).await;
+
+    // The pending ones are still decided on their own intents.
+    for worker in &mut pending {
+        worker.send_intent(INTENT_RECOVERY).await;
+        assert_eq!(worker.handshake().await, Some(Attach::Refused));
+    }
+    assert_holder_live(&daemon, &mut holder).await;
     daemon.task.abort();
 }
