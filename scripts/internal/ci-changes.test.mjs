@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { classify, allAreas, testMatrix, formatOutputs } from "./ci-changes.mjs";
+import {
+  classify,
+  allAreas,
+  testMatrix,
+  formatOutputs,
+  findCommentOnlyRust,
+  isNarrowableRustSource,
+} from "./ci-changes.mjs";
 
 const on = (flags) => Object.keys(flags).filter((k) => flags[k]);
 
@@ -23,16 +30,20 @@ describe("classify", () => {
   });
 
   it("treats a Rust-only PR as rust (no frontend)", () => {
-    expect(on(classify(["src-tauri/src/lib.rs"]))).toEqual(["rust"]);
+    expect(on(classify(["src-tauri/src/lib.rs"]))).toEqual(["rust", "rustdoc"]);
   });
 
   it("flags agent for anything the agent binary builds from (#3615)", () => {
-    expect(on(classify(["agent/src/main.rs"]))).toEqual(["rust", "agent"]);
-    expect(on(classify(["core/src/lib.rs"]))).toEqual(["rust", "agent"]);
-    expect(on(classify(["agent/tests/local_agent_integration.rs"]))).toEqual(["rust", "agent"]);
-    expect(on(classify(["vendor/vnc-rs/src/lib.rs"]))).toEqual(["rust", "agent"]);
-    expect(on(classify(["plugin-api/src/lib.rs"]))).toEqual(["rust", "agent"]);
-    expect(on(classify(["rust-toolchain.toml"]))).toEqual(["rust", "agent"]);
+    expect(on(classify(["agent/src/main.rs"]))).toEqual(["rust", "agent", "rustdoc"]);
+    expect(on(classify(["core/src/lib.rs"]))).toEqual(["rust", "agent", "rustdoc"]);
+    expect(on(classify(["agent/tests/local_agent_integration.rs"]))).toEqual([
+      "rust",
+      "agent",
+      "rustdoc",
+    ]);
+    expect(on(classify(["vendor/vnc-rs/src/lib.rs"]))).toEqual(["rust", "agent", "rustdoc"]);
+    expect(on(classify(["plugin-api/src/lib.rs"]))).toEqual(["rust", "agent", "rustdoc"]);
+    expect(on(classify(["rust-toolchain.toml"]))).toEqual(["rust", "agent", "rustdoc"]);
     expect(classify(["Cargo.lock"])).toMatchObject({ rust: true, deps: true, agent: true });
   });
 
@@ -47,12 +58,13 @@ describe("classify", () => {
       "rust",
       "scripts",
       "agent",
+      "rustdoc",
     ]);
   });
 
   it("runs the frontend suite for Tauri config changes — the CSP guard is vitest (#3627)", () => {
     for (const conf of ["src-tauri/tauri.conf.json", "src-tauri/tauri.windows.conf.json"]) {
-      expect(on(classify([conf]))).toEqual(["rust", "frontend"]);
+      expect(on(classify([conf]))).toEqual(["rust", "frontend", "rustdoc"]);
     }
   });
 
@@ -112,6 +124,68 @@ describe("classify", () => {
 
   it("ignores blank lines and normalises backslashes", () => {
     expect(on(classify(["", "  ", "src\\main.tsx"]))).toEqual(["frontend"]);
+  });
+});
+
+describe("comment-only Rust changes (#3903)", () => {
+  const commentOnly = new Set(["core/src/backends/ssh/unattended.rs"]);
+
+  it("narrows a comment-only Rust PR to fmt + rustdoc", () => {
+    const flags = classify(["core/src/backends/ssh/unattended.rs"], { commentOnly });
+    expect(on(flags)).toEqual(["rustdoc"]);
+    expect(testMatrix(flags, true)).toEqual([]);
+  });
+
+  it("keeps the full Rust lane when any other Rust file has code changes", () => {
+    const flags = classify(["core/src/backends/ssh/unattended.rs", "agent/src/main.rs"], {
+      commentOnly,
+    });
+    expect(on(flags)).toEqual(["rust", "agent", "rustdoc"]);
+  });
+
+  it("combines with other areas as before", () => {
+    const flags = classify(["core/src/backends/ssh/unattended.rs", "docs/a.md"], { commentOnly });
+    expect(on(flags)).toEqual(["markdown", "rustdoc"]);
+  });
+
+  it("sets rustdoc for every Rust change, and all areas stay on for CI plumbing", () => {
+    expect(classify(["src-tauri/src/lib.rs"]).rustdoc).toBe(true);
+    expect(classify(["src/main.tsx"]).rustdoc).toBe(false);
+    expect(allAreas().rustdoc).toBe(true);
+  });
+
+  it("only narrows workspace .rs sources", () => {
+    expect(isNarrowableRustSource("core/src/lib.rs")).toBe(true);
+    expect(isNarrowableRustSource("rdp-sidecar/src/main.rs")).toBe(false);
+    expect(isNarrowableRustSource("Cargo.toml")).toBe(false);
+    expect(isNarrowableRustSource(".github/x.rs")).toBe(false);
+    // A comment-only claim for a non-narrowable path is ignored.
+    const flags = classify(["rdp-sidecar/src/main.rs"], {
+      commentOnly: new Set(["rdp-sidecar/src/main.rs"]),
+    });
+    expect(on(flags)).toEqual(["sidecar"]);
+  });
+
+  it("findCommentOnlyRust reads each file's diff and fails open on git errors", () => {
+    const sources = {
+      "B:core/src/a.rs": "/// old\nfn a() {}\n",
+      "H:core/src/a.rs": "/// new\nfn a() {}\n",
+      "B:core/src/b.rs": "fn b() { 1 }\n",
+      "H:core/src/b.rs": "fn b() { 2 }\n",
+    };
+    const git = (args) => {
+      if (args[0] === "diff") return "--- a\n+++ b\n@@ -1 +1 @@\n-x\n+y\n";
+      const source = sources[args[1]];
+      if (source === undefined) throw new Error("fatal: path does not exist");
+      return source;
+    };
+    const found = findCommentOnlyRust(
+      ["core/src/a.rs", "core/src/b.rs", "core/src/new.rs", "src/main.tsx"],
+      "B",
+      "H",
+      git
+    );
+    expect([...found]).toEqual(["core/src/a.rs"]);
   });
 });
 

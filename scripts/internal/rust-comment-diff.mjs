@@ -187,7 +187,7 @@ export function changedLineNumbers(diff) {
   for (const line of diff.split("\n")) {
     if (
       /^(new file|deleted file|rename from|rename to|similarity index|Binary files|old mode|new mode)/.test(
-        line,
+        line
       )
     ) {
       return null;
