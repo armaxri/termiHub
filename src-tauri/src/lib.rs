@@ -1173,3 +1173,6 @@ pub fn run() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod startup_storage_tests;
+
+#[cfg(test)]
+mod ipc_wire_fixtures;

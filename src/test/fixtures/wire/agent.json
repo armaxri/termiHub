@@ -1,0 +1,84 @@
+{
+  "connectAgent": {
+    "agentVersion": "1.4.2",
+    "capabilities": {
+      "agentVersion": "1.4.2",
+      "availableDockerImages": [
+        "alpine:3.20"
+      ],
+      "availableSerialPorts": [
+        "/dev/ttyUSB0"
+      ],
+      "availableShells": [
+        "/bin/bash",
+        "/bin/zsh"
+      ],
+      "connectionTypes": [
+        {
+          "capabilities": {
+            "fileBrowser": true,
+            "monitoring": true,
+            "persistent": true,
+            "resize": true
+          },
+          "displayName": "Local Shell",
+          "icon": "terminal",
+          "schema": {
+            "groups": []
+          },
+          "typeId": "local"
+        }
+      ],
+      "dockerAvailable": true,
+      "embeddedServerActivity": false,
+      "maxSessions": 16,
+      "monitoringSupported": true,
+      "toolStreaming": true
+    },
+    "protocolVersion": "0.9.0"
+  },
+  "connectAgentLegacy": {
+    "agentVersion": "0.3.0",
+    "capabilities": {
+      "agentVersion": "",
+      "availableDockerImages": [],
+      "availableSerialPorts": [],
+      "availableShells": [],
+      "connectionTypes": [],
+      "dockerAvailable": false,
+      "embeddedServerActivity": false,
+      "maxSessions": 4,
+      "monitoringSupported": false,
+      "toolStreaming": false
+    },
+    "protocolVersion": "0.1.0"
+  },
+  "listAgentDefinitions": [
+    {
+      "config": {
+        "baudRate": 115200,
+        "dataBits": 8,
+        "port": "/dev/ttyUSB0"
+      },
+      "folderId": "folder-lab",
+      "icon": "cpu",
+      "id": "def-1",
+      "name": "Serial console",
+      "persistent": true,
+      "sessionType": "serial",
+      "sourceFile": "/etc/termihub/shared.json",
+      "terminalOptions": {
+        "cursorBlink": false,
+        "fontSize": 12
+      }
+    },
+    {
+      "config": {},
+      "folderId": null,
+      "id": "def-2",
+      "name": "Shell",
+      "persistent": false,
+      "sessionType": "local"
+    }
+  ]
+}

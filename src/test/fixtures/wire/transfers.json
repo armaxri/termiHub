@@ -1,0 +1,31 @@
+{
+  "transferList": [
+    {
+      "attempt": 2,
+      "direction": "download",
+      "fileName": "disk.img",
+      "maxAttempts": 5,
+      "path": "/var/tmp/disk.img",
+      "sessionId": "sess-1",
+      "settled": false,
+      "speed": 12582912,
+      "state": "active",
+      "total": 6442450944,
+      "transferId": "tx-1",
+      "transferred": 4294967313
+    },
+    {
+      "attempt": 1,
+      "direction": "upload",
+      "fileName": "notes.txt",
+      "maxAttempts": 3,
+      "sessionId": "sess-1",
+      "settled": true,
+      "speed": 0,
+      "state": "cancelled",
+      "total": 0,
+      "transferId": "tx-2",
+      "transferred": 0
+    }
+  ]
+}

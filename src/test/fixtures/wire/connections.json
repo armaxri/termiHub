@@ -1,0 +1,89 @@
+{
+  "loadConnectionsAndFolders": {
+    "agents": [
+      {
+        "agentSettings": {
+          "enableDocker": true,
+          "enableFileBrowser": true,
+          "enableMonitoring": true,
+          "logLevel": "info",
+          "persistentScrollbackBufferSizeMb": 1,
+          "startingDirectory": "~",
+          "verboseTracing": false
+        },
+        "config": {
+          "allowSelfUpdate": false,
+          "authMethod": "password",
+          "host": "pi.local",
+          "port": 22,
+          "updateStrategy": "immediate",
+          "username": "pi"
+        },
+        "id": "agent-pi",
+        "name": "Pi"
+      }
+    ],
+    "connections": [
+      {
+        "config": {
+          "config": {
+            "authMethod": "key",
+            "autoReconnect": true,
+            "host": "build.example.com",
+            "keyPath": "~/.ssh/id_ed25519",
+            "port": 2222,
+            "username": "ci"
+          },
+          "type": "ssh"
+        },
+        "folderId": "Work",
+        "icon": "server",
+        "id": "Work/Build Box",
+        "name": "Build Box",
+        "sourceFile": "/home/me/shared/team.json",
+        "terminalOptions": {
+          "cursorStyle": "bar",
+          "fontFamily": "Hack",
+          "fontSize": 14,
+          "futureTerminalOption": {
+            "nested": [
+              1,
+              2
+            ]
+          },
+          "lineEnding": "crlf",
+          "lineHeight": 1.25
+        }
+      },
+      {
+        "config": {
+          "config": {},
+          "type": "local"
+        },
+        "folderId": null,
+        "id": "Scratch",
+        "name": "Scratch"
+      }
+    ],
+    "externalErrors": [
+      {
+        "error": "expected value at line 1 column 1",
+        "filePath": "/home/me/broken.json"
+      }
+    ],
+    "folders": [
+      {
+        "id": "Work",
+        "isExpanded": true,
+        "name": "Work",
+        "parentId": null
+      },
+      {
+        "id": "Work/Dev",
+        "isExpanded": false,
+        "name": "Dev",
+        "parentId": "Work"
+      }
+    ]
+  }
+}
