@@ -59,16 +59,16 @@ describe("PortableModeSettings", () => {
     container.remove();
   });
 
-  it("renders the settings section", () => {
-    act(() => {
+  it("renders the settings section", async () => {
+    await act(async () => {
       root.render(<PortableModeSettings />);
     });
     expect(container.querySelector('[data-testid="portable-mode-settings"]')).not.toBeNull();
   });
 
-  it("shows Inactive status in installed mode", () => {
+  it("shows Inactive status in installed mode", async () => {
     useAppStore.setState({ isPortableMode: false, portableDataDir: null });
-    act(() => {
+    await act(async () => {
       root.render(<PortableModeSettings />);
     });
     const status = container.querySelector('[data-testid="portable-mode-status"]');
@@ -76,9 +76,9 @@ describe("PortableModeSettings", () => {
     expect(status!.textContent).toContain("Inactive");
   });
 
-  it("shows Active status in portable mode", () => {
+  it("shows Active status in portable mode", async () => {
     useAppStore.setState({ isPortableMode: true, portableDataDir: "/tmp/portable/data" });
-    act(() => {
+    await act(async () => {
       root.render(<PortableModeSettings />);
     });
     const status = container.querySelector('[data-testid="portable-mode-status"]');
@@ -86,9 +86,9 @@ describe("PortableModeSettings", () => {
     expect(status!.textContent).toContain("Active");
   });
 
-  it("shows the data directory path in portable mode", () => {
+  it("shows the data directory path in portable mode", async () => {
     useAppStore.setState({ isPortableMode: true, portableDataDir: "/tmp/portable/data" });
-    act(() => {
+    await act(async () => {
       root.render(<PortableModeSettings />);
     });
     const dataDir = container.querySelector('[data-testid="portable-data-dir"]');
@@ -96,17 +96,17 @@ describe("PortableModeSettings", () => {
     expect(dataDir!.textContent).toBe("/tmp/portable/data");
   });
 
-  it("hides data directory path in installed mode", () => {
+  it("hides data directory path in installed mode", async () => {
     useAppStore.setState({ isPortableMode: false, portableDataDir: null });
-    act(() => {
+    await act(async () => {
       root.render(<PortableModeSettings />);
     });
     expect(container.querySelector('[data-testid="portable-data-dir"]')).toBeNull();
   });
 
-  it("shows info box about enabling portable mode in installed mode", () => {
+  it("shows info box about enabling portable mode in installed mode", async () => {
     useAppStore.setState({ isPortableMode: false });
-    act(() => {
+    await act(async () => {
       root.render(<PortableModeSettings />);
     });
     const text = container.textContent ?? "";
@@ -114,8 +114,8 @@ describe("PortableModeSettings", () => {
     expect(text).toContain("data/");
   });
 
-  it("shows export and import buttons", () => {
-    act(() => {
+  it("shows export and import buttons", async () => {
+    await act(async () => {
       root.render(<PortableModeSettings />);
     });
     expect(container.querySelector('[data-testid="export-config-btn"]')).not.toBeNull();
@@ -145,7 +145,7 @@ describe("PortableModeSettings", () => {
 
     useAppStore.setState({ isPortableMode: false, portableDataDir: null });
 
-    act(() => {
+    await act(async () => {
       root.render(<PortableModeSettings />);
     });
 
