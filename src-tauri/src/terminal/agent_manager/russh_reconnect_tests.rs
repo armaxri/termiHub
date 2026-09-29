@@ -234,6 +234,15 @@ fn is_session_leader(pid: u32) -> bool {
 /// processes never match the agent comm. Scoped strictly to our own sshd
 /// subtree and identity-matched, never a global name pattern (#2580).
 fn session_daemon_pids(root: u32, agent_comm: &str) -> Vec<u32> {
+    descendant_pids(root)
+        .into_iter()
+        .filter(|&pid| is_session_leader(pid) && comm_of(pid) == agent_comm)
+        .collect()
+}
+
+/// Every live descendant of `root` (not `root` itself), found by walking the
+/// process table by ppid. Empty when `ps` cannot be run.
+fn descendant_pids(root: u32) -> Vec<u32> {
     let out = match Command::new("ps")
         .args(["-ax", "-o", "pid=,ppid="])
         .output()
@@ -253,7 +262,7 @@ fn session_daemon_pids(root: u32, agent_comm: &str) -> Vec<u32> {
     let mut found = Vec::new();
     let mut stack = vec![root];
     while let Some(pid) = stack.pop() {
-        if pid != root && is_session_leader(pid) && comm_of(pid) == agent_comm {
+        if pid != root {
             found.push(pid);
         }
         if let Some(kids) = children.get(&pid) {
@@ -295,6 +304,119 @@ fn reap_session_daemons(pids: &[u32], agent_comm: &str) {
                 libc::kill(pid as libc::pid_t, libc::SIGKILL);
             }
         }
+    }
+}
+
+/// How long teardown lets an agent process that is already on its way out
+/// finish exiting before it falls back to SIGKILL (#3831). A clean exit takes
+/// milliseconds; the bound only matters when something is wrong.
+const AGENT_EXIT_GRACE: Duration = Duration::from_secs(10);
+
+/// Whether `pid` has exited but is not yet reaped. A zombie has finished its
+/// `atexit` work (including any coverage profile write), so it counts as gone.
+fn is_zombie(pid: u32) -> bool {
+    Command::new("ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .trim_start()
+                .starts_with('Z')
+        })
+        .unwrap_or(false)
+}
+
+/// The `termihub-agent --stdio` workers under our sshd `root`: agent-binary
+/// descendants that are NOT session leaders (the setsid'd session and registry
+/// daemons are), and have not yet exited.
+fn agent_worker_pids(root: u32, agent_comm: &str) -> Vec<u32> {
+    descendant_pids(root)
+        .into_iter()
+        .filter(|&pid| !is_session_leader(pid) && comm_of(pid) == agent_comm && !is_zombie(pid))
+        .collect()
+}
+
+/// Poll `pending` until it reports no processes or `grace` runs out. Returns
+/// whether everything exited in time.
+fn wait_until_gone(grace: Duration, mut pending: impl FnMut() -> Vec<u32>) -> bool {
+    let deadline = Instant::now() + grace;
+    loop {
+        if pending().is_empty() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Whether `pid` is still the running session daemon for `session_id` (its
+/// command line is `<agent> --daemon <session_id>`). A recycled PID or an exited
+/// daemon does not match.
+fn is_running_session_daemon(pid: u32, session_id: &str, agent_comm: &str) -> bool {
+    let args = Command::new("ps")
+        .args(["-o", "args=", "-p", &pid.to_string()])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    args.contains(&format!("--daemon {session_id}"))
+        && comm_of(pid) == agent_comm
+        && !is_zombie(pid)
+}
+
+/// After a test closed session `session_id` (`connection.close`), wait for its
+/// recorded session daemon to finish exiting on its own, so the exact-PID reap
+/// in `Drop` never SIGKILLs it mid-exit. Under `cargo llvm-cov` the daemon
+/// writes its `.profraw` in an `atexit` handler, and a SIGKILL during that
+/// write truncates it (#3742, #3831). Bounded by [`AGENT_EXIT_GRACE`].
+fn wait_for_closed_session_daemon(
+    sink: &std::sync::Mutex<Vec<u32>>,
+    session_id: &str,
+    agent_comm: &str,
+) -> bool {
+    let pids = sink.lock().map(|g| g.clone()).unwrap_or_default();
+    wait_until_gone(AGENT_EXIT_GRACE, || {
+        pids.iter()
+            .copied()
+            .filter(|&pid| is_running_session_daemon(pid, session_id, agent_comm))
+            .collect()
+    })
+}
+
+/// Env var the LLVM profiling runtime reads to decide where an instrumented
+/// process writes its `.profraw` coverage profile.
+const LLVM_PROFILE_FILE_ENV: &str = "LLVM_PROFILE_FILE";
+
+/// The `LLVM_PROFILE_FILE` the harness hands every agent sshd launches (#3831).
+///
+/// sshd starts a session with a scrubbed environment, in the user's home dir.
+/// Without this an instrumented agent — and every session/registry daemon it
+/// spawns, which inherit its environment — writes `default_*.profraw` into
+/// `$HOME`, and its coverage never reaches the `cargo llvm-cov` merge.
+///
+/// `test_value` is this test process's own setting (under `cargo llvm-cov`,
+/// a path in `target/llvm-cov-target/`). It is made absolute against `cwd`,
+/// because a relative path would resolve against the session's cwd: `$HOME`.
+/// Without one, the profile goes to `scratch` (the harness's temp dir), so an
+/// instrumented agent can never fall back to `$HOME` either way.
+fn agent_profile_file(test_value: Option<&std::ffi::OsStr>, cwd: &Path, scratch: &Path) -> PathBuf {
+    match test_value.filter(|v| !v.is_empty()) {
+        Some(value) => cwd.join(value),
+        None => scratch.join("agent-%p.profraw"),
+    }
+}
+
+/// One `NAME=value` token for an sshd_config `SetEnv` line. sshd splits the
+/// line shell-style, so a value holding whitespace, a quote or a backslash is
+/// double-quoted with those characters escaped.
+fn sshd_setenv_token(name: &str, value: &str) -> String {
+    let token = format!("{name}={value}");
+    if token.contains(|c: char| c.is_whitespace() || c == '"' || c == '\\') {
+        let escaped = token.replace('\\', "\\\\").replace('"', "\\\"");
+        format!("\"{escaped}\"")
+    } else {
+        token
     }
 }
 
@@ -440,6 +562,9 @@ struct LocalAgentSshd {
     /// Watchdog that kills the running sshd master if this test process dies
     /// before `stop()`/`Drop` can (#3649). Armed per `start()`.
     guard: Option<SshdParentGuard>,
+    /// Absolute `LLVM_PROFILE_FILE` forwarded to every agent this sshd
+    /// launches, so an instrumented agent never writes into `$HOME` (#3831).
+    profile_file: PathBuf,
 }
 
 impl LocalAgentSshd {
@@ -480,6 +605,14 @@ impl LocalAgentSshd {
         // `TERMIHUB_TEST_PARENT_PID` arms the agent's test-only parent-death
         // watchdog on this test process, so a killed test run takes the agent
         // and its daemons down with it instead of leaking them (#3641).
+        // `LLVM_PROFILE_FILE` sends an instrumented agent's coverage profile
+        // (and its daemons') to the llvm-cov target instead of `$HOME` (#3831).
+        let cwd = std::env::current_dir()?;
+        let profile_file = agent_profile_file(
+            std::env::var_os(LLVM_PROFILE_FILE_ENV).as_deref(),
+            &cwd,
+            &dir,
+        );
         let config_body = [
             format!("Port {}", 0), // placeholder, rewritten per start
             "ListenAddress 127.0.0.1".to_string(),
@@ -494,10 +627,11 @@ impl LocalAgentSshd {
                 "SetEnv TERMIHUB_REGISTRY_ENDPOINT={} XDG_CONFIG_HOME={} \
                  TERMIHUB_REGISTRY_IDLE_TIMEOUT_SECS=15 \
                  TERMIHUB_DAEMON_DETACHED_TIMEOUT_SECS=120 \
-                 TERMIHUB_TEST_PARENT_PID={}",
+                 TERMIHUB_TEST_PARENT_PID={} {}",
                 registry_endpoint.display(),
                 xdg.display(),
-                std::process::id()
+                std::process::id(),
+                sshd_setenv_token(LLVM_PROFILE_FILE_ENV, &profile_file.to_string_lossy()),
             ),
             String::new(),
         ]
@@ -525,6 +659,7 @@ impl LocalAgentSshd {
             agent_comm,
             daemon_pids: Arc::new(std::sync::Mutex::new(Vec::new())),
             guard: None,
+            profile_file,
         })
     }
 
@@ -574,6 +709,30 @@ impl LocalAgentSshd {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
+    }
+
+    /// Teardown after the test dropped its transport: let the `--stdio` agent
+    /// worker(s) finish exiting before `stop()`'s subtree SIGKILL (#3831).
+    ///
+    /// A dropped transport makes the agent hit EOF and exit on its own, and
+    /// under `cargo llvm-cov` it writes its `.profraw` in an `atexit` handler.
+    /// A SIGKILL that lands during that write truncates the profile, and
+    /// `llvm-profdata merge` then rejects the whole run (the #3742 failure).
+    /// Bounded by [`AGENT_EXIT_GRACE`]; a worker still running after that is
+    /// killed as before. Use plain `stop()` for a mid-test transport drop.
+    fn stop_after_disconnect(&mut self) {
+        if let Some(root) = self.master_pid() {
+            let comm = self.agent_comm.clone();
+            wait_until_gone(AGENT_EXIT_GRACE, || agent_worker_pids(root, &comm));
+        }
+        self.stop();
+    }
+
+    /// After the test closed session `session_id`, wait for its recorded
+    /// session daemon to exit on its own before `Drop` reaps the recorded PIDs
+    /// (see [`wait_for_closed_session_daemon`]).
+    fn wait_for_closed_daemon(&self, session_id: &str) {
+        wait_for_closed_session_daemon(&self.daemon_pids, session_id, &self.agent_comm);
     }
 
     /// Sever the transport the way the fixed `drop` harness does: kill only the
@@ -651,7 +810,8 @@ impl LocalAgentSshd {
 
 impl Drop for LocalAgentSshd {
     fn drop(&mut self) {
-        self.stop();
+        // The test may have just disconnected its agent (#3831).
+        self.stop_after_disconnect();
         // Reap any setsid'd session daemon a continuity sever spared — by the
         // exact PID captured while it was a live descendant, never a name
         // pattern (which could hit a parallel checkout's daemon) (#2580).
@@ -936,7 +1096,7 @@ async fn reconnect_agent_reestablishes_russh_transport_and_drives_fresh_create()
     // before the temp dir is removed.
     drop(channel2);
     drop(session2);
-    sshd.stop();
+    sshd.stop_after_disconnect();
 }
 
 /// Read `connection.output` notifications off the channel, tracking the highest
@@ -1210,9 +1370,10 @@ async fn reconnect_reattaches_same_daemon_session_and_process_keeps_running() {
         serde_json::json!({ "session_id": sid }),
     )
     .await;
+    sshd.wait_for_closed_daemon(&sid);
     drop(channel2);
     drop(session2);
-    sshd.stop();
+    sshd.stop_after_disconnect();
 }
 
 /// #2573: the SAME continuity invariant as above, but the transport is severed
@@ -1406,9 +1567,10 @@ async fn in_process_sever_reattaches_same_daemon_session_and_process_keeps_runni
         serde_json::json!({ "session_id": sid }),
     )
     .await;
+    sshd.wait_for_closed_daemon(&sid);
     drop(channel2);
     drop(session2);
-    sshd.stop();
+    sshd.stop_after_disconnect();
 }
 
 /// #2573: a PERMANENT transport loss (endpoint gone) after an in-process sever
@@ -1848,6 +2010,7 @@ async fn manager_test_sever_drives_reconnect_and_region_folds_headlessly() {
             .is_some();
 
             let _ = manager.close_session(&agent_id, &cont_sid);
+            wait_for_closed_session_daemon(&daemon_sink, &cont_sid, &agent_comm);
 
             SeverObservations {
                 sever_accepted,
@@ -2314,4 +2477,98 @@ async fn resilient_agent_tab_retains_config_and_redrive_reestablishes_after_reap
     sshd.record_session_daemons();
     let _ = manager.disconnect_agent(&agent_id);
     drop(app);
+}
+
+/// #3831: the profile path handed to sshd-launched agents is always absolute,
+/// so an instrumented agent never resolves it against the session cwd (`$HOME`).
+#[test]
+fn agent_profile_file_is_always_absolute() {
+    let cwd = Path::new("/work/checkout/src-tauri");
+    let scratch = Path::new("/tmp/termihub-russh-reconnect-1-0");
+
+    // cargo llvm-cov's own absolute value is forwarded unchanged.
+    let absolute =
+        std::ffi::OsStr::new("/work/checkout/target/llvm-cov-target/termihub-%p.profraw");
+    assert_eq!(
+        agent_profile_file(Some(absolute), cwd, scratch),
+        PathBuf::from("/work/checkout/target/llvm-cov-target/termihub-%p.profraw")
+    );
+
+    // A relative value is anchored at the test process's cwd, not the session's.
+    let relative = std::ffi::OsStr::new("cov/default_%p.profraw");
+    assert_eq!(
+        agent_profile_file(Some(relative), cwd, scratch),
+        cwd.join("cov/default_%p.profraw")
+    );
+
+    // Unset or empty: the harness's temp dir, never the default `$HOME` fallback.
+    for unset in [None, Some(std::ffi::OsStr::new(""))] {
+        let path = agent_profile_file(unset, cwd, scratch);
+        assert!(path.is_absolute(), "{path:?}");
+        assert!(path.starts_with(scratch), "{path:?}");
+    }
+}
+
+/// #3831: `SetEnv` tokens survive sshd's shell-style split.
+#[test]
+fn sshd_setenv_token_quotes_only_when_sshd_would_split() {
+    assert_eq!(
+        sshd_setenv_token("LLVM_PROFILE_FILE", "/a/b-%p.profraw"),
+        "LLVM_PROFILE_FILE=/a/b-%p.profraw"
+    );
+    assert_eq!(
+        sshd_setenv_token("LLVM_PROFILE_FILE", "/my dir/x\"y\\z"),
+        "\"LLVM_PROFILE_FILE=/my dir/x\\\"y\\\\z\""
+    );
+}
+
+/// #3831 guard: a session started through the harness's sshd actually carries
+/// the absolute `LLVM_PROFILE_FILE` — `%p` pattern intact — so no instrumented
+/// agent it launches writes `default_*.profraw` into `$HOME`. Uses the system
+/// `ssh` client to print the session environment; skips without sshd/ssh.
+#[test]
+fn sshd_session_env_carries_the_absolute_profile_path() {
+    let Some(sshd) = find_sshd() else {
+        eprintln!("SKIP: no sshd binary found");
+        return;
+    };
+    let mut harness =
+        LocalAgentSshd::new(sshd, PathBuf::from("/usr/bin/true")).expect("stand up sshd");
+    harness.start();
+    let output = match Command::new("ssh")
+        .args(["-F", "/dev/null", "-o", "BatchMode=yes"])
+        .args([
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+        ])
+        .args([
+            "-o",
+            "LogLevel=ERROR",
+            "-p",
+            &harness.port.to_string(),
+            "-i",
+        ])
+        .arg(&harness.client_key)
+        .arg(format!("{}@127.0.0.1", harness.username))
+        .arg(format!("printenv {LLVM_PROFILE_FILE_ENV}"))
+        .stdin(Stdio::null())
+        .output()
+    {
+        Ok(output) => output,
+        Err(e) => {
+            eprintln!("SKIP: no ssh client ({e})");
+            return;
+        }
+    };
+    assert!(
+        output.status.success(),
+        "ssh printenv failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let forwarded = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    // Exact match: sshd must not expand or strip `%p`-style patterns (#3831).
+    assert_eq!(Path::new(&forwarded), harness.profile_file.as_path());
+    assert!(Path::new(&forwarded).is_absolute(), "{forwarded}");
 }
