@@ -15,12 +15,13 @@ vi.mock("@/themes", () => ({
 }));
 
 // The expected-vs-real disconnect classification is unit-tested in
-// expectedApplyDisconnect.test.ts (it reads the agents region's connectionState
-// over a timed window). Here we mock it to a synchronous boolean so the component
-// tests assert the *wiring*: a true verdict → instructional success; a false
-// verdict → the real failure is surfaced (rethrown), never swallowed.
+// expectedApplyDisconnect.test.ts (structured error code first, then the agents
+// region's connectionState over a timed window). Here it is mocked to a boolean
+// so most component tests assert the *wiring*: a true verdict → instructional
+// success; a false verdict → the real failure is surfaced (rethrown), never
+// swallowed. The #2840 cases below opt back into the real classifier.
 vi.mock("./expectedApplyDisconnect", () => ({
-  awaitExpectedApplyDisconnect: vi.fn(),
+  isExpectedApplyDisconnect: vi.fn(),
 }));
 
 vi.mock("@/services/api", async (importOriginal) => {
@@ -87,7 +88,7 @@ describe("AgentUpdateBanner", () => {
     });
     mockedApi.requestAgentDeferredUpdate.mockResolvedValue({ applied: true, activeSessions: 0 });
     // Default: no transport drop observed (real-failure verdict) unless a test opts in.
-    mockedDisconnect.awaitExpectedApplyDisconnect.mockResolvedValue(false);
+    mockedDisconnect.isExpectedApplyDisconnect.mockResolvedValue(false);
   });
 
   afterEach(() => {
@@ -142,13 +143,14 @@ describe("AgentUpdateBanner", () => {
     // classifier confirms the agent's connection dropped → expected success. The
     // rejection message is deliberately non-English to prove the decision does not
     // depend on message text (I18N-008).
-    mockedApi.requestAgentDeferredUpdate.mockRejectedValue(new Error("Verbindung getrennt"));
-    mockedDisconnect.awaitExpectedApplyDisconnect.mockResolvedValue(true);
+    const dropped = new Error("Verbindung getrennt");
+    mockedApi.requestAgentDeferredUpdate.mockRejectedValue(dropped);
+    mockedDisconnect.isExpectedApplyDisconnect.mockResolvedValue(true);
     await render();
     await act(async () => {
       byTestId(applyId)?.click();
     });
-    expect(mockedDisconnect.awaitExpectedApplyDisconnect).toHaveBeenCalledWith(AGENT_ID);
+    expect(mockedDisconnect.isExpectedApplyDisconnect).toHaveBeenCalledWith(AGENT_ID, dropped);
     expect(toastMocks.info).toHaveBeenCalledTimes(1);
     expect(useAppStore.getState().agentUpdatesDismissed[AGENT_ID]).toBe(true);
   });
@@ -158,18 +160,67 @@ describe("AgentUpdateBanner", () => {
     // old substring classifier would have misreported this as success. The connection
     // did not drop (verdict false), so it must be surfaced as a real failure: no
     // instructional toast, the staged update is not dismissed, the banner stays.
-    mockedApi.requestAgentDeferredUpdate.mockRejectedValue(
-      new Error("update failed: connection to release server closed")
-    );
-    mockedDisconnect.awaitExpectedApplyDisconnect.mockResolvedValue(false);
+    const failure = new Error("update failed: connection to release server closed");
+    mockedApi.requestAgentDeferredUpdate.mockRejectedValue(failure);
+    mockedDisconnect.isExpectedApplyDisconnect.mockResolvedValue(false);
     await render();
     await act(async () => {
       byTestId(applyId)?.click();
     });
-    expect(mockedDisconnect.awaitExpectedApplyDisconnect).toHaveBeenCalledWith(AGENT_ID);
+    expect(mockedDisconnect.isExpectedApplyDisconnect).toHaveBeenCalledWith(AGENT_ID, failure);
     expect(toastMocks.info).not.toHaveBeenCalled();
     expect(useAppStore.getState().agentUpdatesDismissed[AGENT_ID]).not.toBe(true);
     expect(byTestId(bannerId)).not.toBeNull();
+  });
+
+  describe("structured apply-error envelope (#2840, real classifier)", () => {
+    beforeEach(async () => {
+      const actual = await vi.importActual<typeof import("./expectedApplyDisconnect")>(
+        "./expectedApplyDisconnect"
+      );
+      // Real classifier, with a short fallback window so the test stays fast.
+      mockedDisconnect.isExpectedApplyDisconnect.mockImplementation((id, err) =>
+        actual.isExpectedApplyDisconnect(id, err, 20)
+      );
+      // The agent's connection stays up throughout: only the structured code can
+      // make the apply failure count as the expected swap disconnect.
+      seedAgentsRegion({
+        remoteAgents: [
+          { id: AGENT_ID, name: AGENT_NAME, connectionState: "connected", config: {} },
+        ] as unknown as RemoteAgentDefinition[],
+      });
+    });
+
+    it("treats a structured transport-close as the expected swap disconnect", async () => {
+      mockedApi.requestAgentDeferredUpdate.mockRejectedValue({
+        code: "agent_transport_closed",
+        message: "Remote agent error: Verbindung getrennt",
+        details: null,
+      });
+      await render();
+      await act(async () => {
+        byTestId(applyId)?.click();
+      });
+      expect(toastMocks.info).toHaveBeenCalledTimes(1);
+      expect(useAppStore.getState().agentUpdatesDismissed[AGENT_ID]).toBe(true);
+    });
+
+    it("surfaces a structured agent-reported application error as a real failure", async () => {
+      mockedApi.requestAgentDeferredUpdate.mockRejectedValue({
+        code: "remote_error",
+        message: "Remote agent error: update refused, connection closed by policy",
+        details: null,
+      });
+      await render();
+      await act(async () => {
+        byTestId(applyId)?.click();
+        // Let the (shortened) connection-state fallback window elapse.
+        await new Promise((r) => setTimeout(r, 60));
+      });
+      expect(toastMocks.info).not.toHaveBeenCalled();
+      expect(useAppStore.getState().agentUpdatesDismissed[AGENT_ID]).not.toBe(true);
+      expect(byTestId(bannerId)).not.toBeNull();
+    });
   });
 
   it("hides the banner on Dismiss without calling the update API", async () => {

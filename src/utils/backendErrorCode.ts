@@ -37,6 +37,14 @@ export const AUTH_FAILED_CODE: IpcErrorCode = "auth_failed";
  */
 export const SECOND_FACTOR_FAILED_CODE: IpcErrorCode = "second_factor_failed";
 
+/**
+ * Stable code emitted when an agent request failed because the agent's
+ * **transport closed** under it (link drop / EOF) before any reply — as opposed
+ * to an error the agent itself reported (`remote_error`). Mirrors the Rust
+ * `TerminalError::AgentTransportClosed` (#2840).
+ */
+export const AGENT_TRANSPORT_CLOSED_CODE: IpcErrorCode = "agent_transport_closed";
+
 /** User-facing text for a rejected one-time code (#3376). */
 export const SECOND_FACTOR_FAILED_MESSAGE = "Verification code rejected — try again.";
 
@@ -111,6 +119,14 @@ export function isAuthFailure(error: unknown): boolean {
  */
 export function isSecondFactorFailure(error: unknown): boolean {
   return parseBackendError(error).code === SECOND_FACTOR_FAILED_CODE;
+}
+
+/**
+ * True when an agent request failed because the agent transport closed before
+ * a reply arrived (#2840), per the typed backend code — never the message text.
+ */
+export function isAgentTransportClosed(error: unknown): boolean {
+  return parseBackendError(error).code === AGENT_TRANSPORT_CLOSED_CODE;
 }
 
 /**

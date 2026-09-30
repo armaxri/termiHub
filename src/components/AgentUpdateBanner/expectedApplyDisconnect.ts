@@ -1,4 +1,5 @@
 import { currentAgentsView, onAgentsView } from "@/store/agentsBridge";
+import { isAgentTransportClosed } from "@/utils/backendErrorCode";
 
 /**
  * How long, after an immediate agent-update apply request fails, we wait for the
@@ -60,6 +61,37 @@ export function awaitExpectedApplyDisconnect(
     });
     const timer = setTimeout(() => finish(false), windowMs);
   });
+}
+
+/**
+ * Classify an error thrown by an immediate agent-update apply request as the
+ * *expected* binary-swap disconnect (`true`) or a genuine failure (`false`).
+ *
+ * Primary discriminator (#2840): the structured error envelope's `code`. When
+ * the backend reports `agent_transport_closed` — the request failed because the
+ * agent transport closed under it, not because the agent answered with an error
+ * — that is the swap's re-exec tearing the link down, so it resolves `true` at
+ * once. The message text is never consulted.
+ *
+ * Fallback: any other error (an agent-reported application error, a timeout,
+ * or a legacy/uncoded error) is confirmed against the agent's authoritative
+ * connection state via {@link awaitExpectedApplyDisconnect} — so it only counts
+ * as expected if the transport demonstrably drops within the window, and a real
+ * failure on a connection that stays up is surfaced.
+ *
+ * @param agentId Id of the agent whose apply request failed.
+ * @param error The value the apply request rejected with.
+ * @param windowMs Override the fallback wait window (tests).
+ */
+export function isExpectedApplyDisconnect(
+  agentId: string,
+  error: unknown,
+  windowMs: number = APPLY_DISCONNECT_WINDOW_MS
+): Promise<boolean> {
+  if (isAgentTransportClosed(error)) {
+    return Promise.resolve(true);
+  }
+  return awaitExpectedApplyDisconnect(agentId, windowMs);
 }
 
 /**
