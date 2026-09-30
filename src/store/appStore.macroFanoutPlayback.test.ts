@@ -201,6 +201,47 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
     expect(useAppStore.getState().macroPlayback).toBeNull();
   });
 
+  it("informs instead of playing an empty macro on several targets (#2979)", async () => {
+    seedFleet();
+    useAppStore.setState({ macros: [macro("m0", [])] });
+
+    const status = await useAppStore.getState().playMacro("m0", { targetTabIds: ["a", "b"] });
+
+    expect(status).toBeNull();
+    expect(injected).toEqual([]);
+    expect(toast.info).toHaveBeenCalledWith('Macro "Macro m0" has no steps to play');
+  });
+
+  it("a newer fan-out supersedes an in-flight one without losing its own state (#2979)", async () => {
+    vi.useFakeTimers();
+    seedFleet();
+    const slow = (id: string) =>
+      macro(id, [
+        { data: `${id}-1`, delayMs: 0 },
+        { data: `${id}-2`, delayMs: 1000 },
+      ]);
+    useAppStore.setState({ macros: [slow("m1"), slow("m2")] });
+
+    const first = useAppStore
+      .getState()
+      .playMacro("m1", { timingMode: "real-time", targetTabIds: ["a", "b"] });
+    await vi.advanceTimersByTimeAsync(0);
+    const second = useAppStore
+      .getState()
+      .playMacro("m2", { timingMode: "real-time", targetTabIds: ["a", "b"] });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The superseded run settles as cancelled and must not clear the new run's
+    // playback indicator.
+    await expect(first).resolves.toBe("cancelled");
+    expect(useAppStore.getState().macroPlayback?.macroId).toBe("m2");
+    expect(injected.map(([, data]) => data)).not.toContain("m1-2");
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(second).resolves.toBe("completed");
+    expect(useAppStore.getState().macroPlayback).toBeNull();
+  });
+
   it("exposes every receiving terminal in the playback state while running", async () => {
     vi.useFakeTimers();
     seedFleet();
