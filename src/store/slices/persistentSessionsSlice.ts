@@ -149,10 +149,15 @@ export const createPersistentSessionsSlice: StateCreator<
     try {
       await apiStartPersistentSession(connectionId, conn.config.type, conn.config.config);
     } catch (err) {
+      // The entry may have been dropped (a `stopped` event) while the start was
+      // in flight; rebuild a complete entry so readers never see a partial one.
       set((state) => ({
         persistentSessions: {
           ...state.persistentSessions,
           [connectionId]: {
+            connectionId,
+            sessionId: null,
+            attachedTabIds: [],
             ...state.persistentSessions[connectionId],
             state: "error",
             errorMessage: errorMessage(err),
@@ -276,10 +281,15 @@ export const createPersistentSessionsSlice: StateCreator<
       });
       return sessionId;
     } catch (err) {
+      // The entry may have been dropped (a `stopped` event) while the start was
+      // in flight; rebuild a complete entry so readers never see a partial one.
       set((state) => ({
         persistentSessions: {
           ...state.persistentSessions,
           [connectionId]: {
+            connectionId,
+            sessionId: null,
+            attachedTabIds: [],
             ...state.persistentSessions[connectionId],
             state: "error",
             errorMessage: errorMessage(err),
