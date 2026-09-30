@@ -42,6 +42,33 @@ pub const CONNECTIONS_REGION: &str = "connections";
 /// Publish the `connections` region from the store, fanning a diff out to every
 /// subscriber and returning the advanced region (empty when the view did not
 /// change).
+///
+/// # Deliberately whole-snapshot, not incremental (PERF-006, #2888)
+///
+/// Unlike `transfers`, `session-lifecycle`, `system-monitors` and `agents`, this
+/// region stays on the whole-snapshot-then-diff path, by decision:
+///
+/// - **There is no change set to reduce to.** The region's only writer is
+///   [`fold_connections_from_manager`] (#2831 / #3960): the persist command's
+///   `commit` choke point refolds the manager's **whole** unified view from disk
+///   under the commit lock and [`ConnectionsStore::replace`]s the store with it.
+///   The fold never learns *which* rows a save changed (the manager may re-id,
+///   dedupe siblings, re-home children), so finding the change means comparing
+///   every row — exactly the whole-region diff this path already computes.
+/// - **Ordered arrays.** `folders` and `connections` are position-ordered
+///   arrays, and `json_patch` diffs arrays index by index, so an insert / remove
+///   / move shifts every later index; no per-row reduction is byte-identical.
+///   The keyed `savedAs` echo map (#3961) is bounded ([`SAVED_AS_CAPACITY`])
+///   and tiny.
+/// - **The diff is not the cost.** Each fold already re-reads and parses the
+///   connection files from disk (`load_unified_view`), which dominates the
+///   in-memory serialize + diff. And the fold runs once per user-driven persist,
+///   not on a per-entry stream, so there is no O(N²) burst to bound.
+///
+/// Incrementalizing would add dirty-tracking risk to the authoritative
+/// substrate for no measurable win.
+///
+/// [`SAVED_AS_CAPACITY`]: crate::connections_projection::store::SAVED_AS_CAPACITY
 pub fn publish_connections(projector: &Projector, store: &ConnectionsStore) -> Vec<ProducedRegion> {
     match projector.publish_with(CONNECTIONS_REGION, || store.snapshot()) {
         Some(version) => vec![ProducedRegion {

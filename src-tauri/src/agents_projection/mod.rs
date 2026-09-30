@@ -19,6 +19,7 @@
 //! contract an intent's result is never returned inline — it always arrives as a
 //! projection diff on the `agents` region.
 
+mod delta;
 pub mod projection;
 pub mod store;
 
