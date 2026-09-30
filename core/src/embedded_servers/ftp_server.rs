@@ -1025,6 +1025,121 @@ mod tests {
         }
     }
 
+    /// Read one (possibly multi-line) FTP reply from the control channel.
+    fn read_reply(reader: &mut impl std::io::BufRead) -> String {
+        let mut first = String::new();
+        reader.read_line(&mut first).expect("reply line");
+        if first.as_bytes().get(3) == Some(&b'-') {
+            let end = format!("{} ", &first[..3]);
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("reply continuation");
+                if line.starts_with(&end) || line.is_empty() {
+                    break;
+                }
+            }
+        }
+        first
+    }
+
+    /// End to end through libunftp 0.23 over a real socket: credential login,
+    /// a passive-mode download from the configured root, and the access log
+    /// attributing the transfer to the user and client address that the
+    /// per-connection user-detail provider attached (#3975).
+    #[test]
+    fn credential_login_passive_retr_is_served_and_attributed() {
+        use crate::embedded_servers::service::BindSignal;
+        use std::io::{BufReader, Read, Write};
+        use std::time::{Duration, Instant};
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("hello.txt"), b"hello over ftp").expect("seed file");
+        let mut config = ftp_test_config(dir.path());
+        config.ftp_auth = Some(FtpAuth::Credentials {
+            username: "alice".to_string(),
+            password: "secret".to_string(),
+        });
+        let stats = AtomicServerStats::new();
+        let shutdown = ShutdownSignal::new();
+        let (ready, ready_rx) = BindSignal::for_test();
+        let (server_stats, server_shutdown) = (Arc::clone(&stats), shutdown.clone());
+        let handle = std::thread::spawn(move || {
+            start_ftp_server(&config, server_shutdown, server_stats, ready)
+        });
+        let addr = ready_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("bind confirmation")
+            .expect("bind ok")
+            .expect("bound address");
+
+        let control = std::net::TcpStream::connect(addr).expect("connect");
+        control
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .expect("read timeout");
+        let mut writer = control.try_clone().expect("clone control");
+        let mut reader = BufReader::new(control);
+        let mut cmd = |line: &str, reader: &mut BufReader<std::net::TcpStream>| {
+            writer
+                .write_all(format!("{line}\r\n").as_bytes())
+                .expect("send command");
+            read_reply(reader)
+        };
+
+        assert!(read_reply(&mut reader).starts_with("220"));
+        assert!(cmd("USER alice", &mut reader).starts_with("331"));
+        assert!(cmd("PASS wrong", &mut reader).starts_with("530"));
+        assert!(cmd("USER alice", &mut reader).starts_with("331"));
+        assert!(cmd("PASS secret", &mut reader).starts_with("230"));
+        assert!(cmd("TYPE I", &mut reader).starts_with("200"));
+
+        let pasv = cmd("PASV", &mut reader);
+        assert!(pasv.starts_with("227"), "{pasv}");
+        let nums: Vec<u16> = pasv[pasv.find('(').expect("(") + 1..pasv.find(')').expect(")")]
+            .split(',')
+            .map(|n| n.trim().parse().expect("pasv number"))
+            .collect();
+        let data_port = nums[4] * 256 + nums[5];
+        assert!(
+            PASSIVE_PORTS.contains(&data_port),
+            "passive port {data_port}"
+        );
+
+        let mut data = std::net::TcpStream::connect((addr.ip(), data_port)).expect("data conn");
+        let retr = cmd("RETR hello.txt", &mut reader);
+        assert!(retr.starts_with("150") || retr.starts_with("125"), "{retr}");
+        let mut body = Vec::new();
+        data.read_to_end(&mut body).expect("download");
+        assert_eq!(body, b"hello over ftp");
+        assert!(read_reply(&mut reader).starts_with("226"));
+        let _ = cmd("QUIT", &mut reader);
+
+        // The RETR entry is written when the download reader is dropped.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let log = loop {
+            let log = entries(&stats.activity);
+            if log.iter().any(|e| e.method == "RETR") || Instant::now() > deadline {
+                break log;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        let client = Some(addr.ip().to_string());
+        let logins: Vec<_> = log.iter().filter(|e| e.method == "LOGIN").collect();
+        assert_eq!(logins.len(), 2, "{log:?}");
+        assert!(logins
+            .iter()
+            .all(|e| e.user.as_deref() == Some("alice") && e.client == client));
+        let retr = log
+            .iter()
+            .find(|e| e.method == "RETR")
+            .expect("RETR logged");
+        assert_eq!(retr.user.as_deref(), Some("alice"));
+        assert_eq!(retr.client, client);
+        assert_eq!(retr.status, "ok");
+
+        shutdown.trigger();
+        handle.join().expect("no panic").expect("clean exit");
+    }
+
     // ── Access log (PROD-034) ────────────────────────────────────────────────
 
     fn ftp_user(name: &str) -> FtpUser {
