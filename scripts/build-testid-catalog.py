@@ -59,19 +59,48 @@ CATALOG_PATH = REPO_ROOT / "tests" / "system" / "testid-catalog.md"
 _SKIP_SUFFIXES = (".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx", ".d.ts")
 _SKIP_DIR_PARTS = {"__tests__", "test", "__mocks__", "testbridge"}
 
-_INTERP = re.compile(r"\$\{[^}]*\}")  # a ${...} interpolation
 _COLLAPSE = re.compile(r"\*+")  # runs of glob stars
 _EQ = re.compile(r"\s*=\s*")  # the `=` between attribute name and value
 _IDENT = re.compile(r"[A-Za-z0-9_$]")  # a JS identifier character
 
-# The literal ``data-testid`` DOM attribute plus the shared sidebar shell's
-# test-id props. ``SidebarListItem``/``SidebarStatusDot`` consumers pass their
-# row/name/badge/status ids through these props instead of a raw
-# ``data-testid``, so scanning the attribute alone drops them from the catalog
-# even though they render at runtime (#1431). Values are read the same way as a
-# ``data-testid`` (quoted literal or ``{...}`` expression), so forwarded ids are
-# classified and attributed to the consumer file just like direct attributes.
-_TESTID_ATTRS = ("data-testid", "testId", "nameTestId", "badgeTestId")
+# The coarse "this text may carry a test id" gate. Every sink form below —
+# ``data-testid``, any ``*TestId`` name, ``*TestIdPrefix``, and
+# ``setAttribute("data-testid", …)`` — contains this pattern, and
+# ``scan_testids`` skips text without it, so a new sink that does not contain it
+# would be dropped from the catalog (and fail the harness tests). The autoformat
+# hook (``scripts/internal/regen-testid-catalog.mjs``) uses this exact pattern
+# to decide when to regenerate; a unit test pins the two together (#1526).
+_TRIGGER = re.compile(r"[Tt]est[Ii]d")
+
+# A test-id *sink*: the literal ``data-testid`` DOM attribute, or any prop /
+# variable / object key whose name ends in ``TestId`` (``testId``, ``nameTestId``,
+# ``toggleTestId``, ``footerTestId``, ``modalTestId`` …). The shared sidebar shell
+# was the first to forward ids through such props (#1431); many more components
+# followed, so every ``*TestId`` name is recognised generically (#3044). The
+# lookbehind (which also rejects ``-``) stops ``testId`` matching the tail of
+# ``nameTestId`` and ``testid`` matching the tail of ``data-testid``; a sink name
+# must not continue into another identifier, so ``rowTestIdPrefix`` (handled by
+# ``_PREFIX_SINK``) and ``getByTestId(`` never match. An optional closing quote
+# admits the object-property form ``{ "data-testid": "…" }``.
+_SINK = re.compile(
+    r"""(?<![A-Za-z0-9_$-])(?:data-testid|[A-Za-z0-9_$]*[Tt]est[Ii]d)"""
+    r"""(?![A-Za-z0-9_$-])["']?"""
+)
+# ``*TestIdPrefix`` props supply the static stem of per-row ids the component
+# renders as ``${prefix}-${index}`` (``rowTestIdPrefix="dns-result"`` → rows
+# ``dns-result-0``…). The rendered template collapses to the useless ``*-*``
+# glob, so the concrete family is recovered from the caller's literal stem.
+_PREFIX_SINK = re.compile(
+    r"""(?<![A-Za-z0-9_$-])[A-Za-z0-9_$]*[Tt]est[Ii]d[Pp]refix(?![A-Za-z0-9_$])"""
+)
+# Imperative ``el.setAttribute("data-testid", …)`` (e.g. the terminal renderer).
+_SETATTR = re.compile(r"""setAttribute\(\s*(["'])data-testid\1\s*,\s*""")
+_COLON = re.compile(r"\s*:\s*")  # the `:` between an object key and its value
+_TEMPLATE = re.compile(r"`([^`]*)`")  # a template literal inside an expression
+# A testid mined from inside a larger expression must look like one (lowercase
+# kebab, ``*`` glob segments allowed) so e.g. an embedded label template is not
+# cataloged as an id.
+_TESTID_SHAPE = re.compile(r"^[a-z0-9*]+(?:-[a-z0-9*]+)+$")
 
 
 # ---------------------------------------------------------------------------
@@ -134,59 +163,141 @@ def _read_braced(text: str, start: int) -> "tuple[str, int]":
     return text[start + 1 :], i
 
 
-def _scan_attr(text: str, name: str) -> "list[tuple[str, str]]":
-    """Return ``(origin, value)`` for every ``name=`` occurrence in ``text``.
+def _read_value(text: str, p: int, braces: bool) -> "tuple[tuple[str, str] | None, int]":
+    """Read a testid value starting at ``text[p]``.
 
-    ``origin`` is ``"quoted"`` (value is the literal attribute string content) or
-    ``"expr"`` (value is the inner JSX ``{...}`` expression). A non-identifier
-    character must precede ``name`` so a prop like ``testId`` is not matched
-    inside ``nameTestId`` / ``badgeTestId``.
+    Returns ``((origin, value), end)`` or ``(None, p)`` when no value starts
+    there. ``origin`` is ``"quoted"`` (the literal string content) or ``"expr"``
+    (a template literal, or — when ``braces`` — the inner of a JSX ``{...}``).
+    Bare identifiers are not read: in object-key / call-argument position their
+    extent is ambiguous, and in JSX position they are always braced anyway.
+    """
+    if p >= len(text):
+        return None, p
+    ch = text[p]
+    if ch in "\"'":
+        val, end = _read_quoted(text, p)
+        return ("quoted", val), end
+    if ch == "`":
+        end = _template_end(text, p)
+        return ("expr", text[p:end]), end
+    if braces and ch == "{":
+        inner, end = _read_braced(text, p)
+        return ("expr", inner.strip()), end
+    return None, p
+
+
+def _template_end(text: str, start: int) -> int:
+    """Index just past the template literal opening at ``text[start]`` (a backtick).
+
+    ``${...}`` interpolations are skipped as balanced braces, so a template nested
+    inside one (``a${c ? "" : `-${i}`}``) does not end the outer literal early.
+    """
+    i = start + 1
+    while i < len(text):
+        ch = text[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "`":
+            return i + 1
+        if ch == "$" and text[i + 1 : i + 2] == "{":
+            _, i = _read_braced(text, i + 1)
+            continue
+        i += 1
+    return i
+
+
+def _object_key_position(text: str, start: int) -> bool:
+    """Whether ``text[start]`` begins an object key (after ``{``/``,`` or at BOF).
+
+    Guards the ``key: value`` form against ternaries (``c ? fooTestId : "x"``)
+    and type annotations, which also put a ``:`` after a ``*TestId`` name.
+    """
+    i = start - 1
+    while i >= 0 and text[i].isspace():
+        i -= 1
+    if i >= 0 and text[i] in "\"'":  # quoted key: step over the opening quote
+        i -= 1
+        while i >= 0 and text[i].isspace():
+            i -= 1
+    return i < 0 or text[i] in "{,"
+
+
+def _embedded_templates(expr: str) -> "list[tuple[str, str]]":
+    """Templates with interpolation embedded in a larger testid expression.
+
+    ``data-testid={x ?? `${base}-dont-ask-again`}`` is indirect as a whole, but
+    its fallback template still names a rendered id family. Only testid-shaped
+    templates are kept.
     """
     out: "list[tuple[str, str]]" = []
-    i = 0
-    while True:
-        j = text.find(name, i)
-        if j < 0:
-            break
-        k = j + len(name)
-        # Require a word boundary before the name (e.g. whitespace or `{`), so
-        # `testId` does not match the tail of `nameTestId`/`badgeTestId`.
-        if j > 0 and _IDENT.match(text[j - 1]):
-            i = k
-            continue
-        m = _EQ.match(text, k)
-        if not m:
-            i = k
-            continue
-        p = m.end()
-        if p >= len(text):
-            break
-        ch = text[p]
-        if ch in "\"'":
-            val, end = _read_quoted(text, p)
-            out.append(("quoted", val))
-            i = end
-        elif ch == "{":
-            inner, end = _read_braced(text, p)
-            out.append(("expr", inner.strip()))
-            i = end
-        else:
-            i = p
+    token = expr.strip()
+    if token[:1] in ("`", "\"", "'"):
+        return out  # the whole expression is one string; classified directly
+    for tmpl in _TEMPLATE.findall(token):
+        if "${" in tmpl and _TESTID_SHAPE.match(to_pattern(tmpl)):
+            out.append(("expr", "`" + tmpl + "`"))
     return out
 
 
 def scan_testids(text: str) -> "list[tuple[str, str]]":
-    """Return ``(origin, value)`` for every test-id attribute/prop in ``text``.
+    """Return ``(origin, value)`` for every test-id sink in ``text``.
 
-    Scans the literal ``data-testid`` DOM attribute plus the shared sidebar
-    shell's forwarding props (``testId`` / ``nameTestId`` / ``badgeTestId``);
-    see ``_TESTID_ATTRS``. Keeping the origin lets classification tell a literal
-    string from a bare expression — the quotes are gone by then.
+    Recognised forms (#899, #1431, #3044):
+
+    * ``data-testid=`` / ``<anything>TestId=`` JSX attributes and assignments,
+      with a quoted, template, or ``{...}`` value;
+    * object properties ``{ "data-testid": … }`` / ``{ fooTestId: … }`` with a
+      quoted or template value;
+    * ``setAttribute("data-testid", …)`` with a quoted or template value;
+    * ``*TestIdPrefix`` props — origin ``"prefix"``, value the literal stem;
+    * templates embedded in a sink's ``{...}`` expression (e.g. a ``??``
+      fallback), in addition to the whole expression itself.
+
+    Keeping the origin lets classification tell a literal string from a bare
+    expression — the quotes are gone by then.
     """
     out: "list[tuple[str, str]]" = []
-    for name in _TESTID_ATTRS:
-        out.extend(_scan_attr(text, name))
+    if not _TRIGGER.search(text):
+        return out
+    for m in _SINK.finditer(text):
+        eq = _EQ.match(text, m.end())
+        if eq and text[eq.end() : eq.end() + 1] != "=":  # not `==` / `===`
+            found, _ = _read_value(text, eq.end(), braces=True)
+            if found:
+                out.append(found)
+                if found[0] == "expr" and not found[1].startswith("`"):
+                    out.extend(_embedded_templates(found[1]))
+            continue
+        colon = _COLON.match(text, m.end())
+        if colon and _object_key_position(text, m.start()):
+            found, _ = _read_value(text, colon.end(), braces=False)
+            if found:
+                out.append(found)
+    for m in _SETATTR.finditer(text):
+        found, _ = _read_value(text, m.end(), braces=False)
+        if found:
+            out.append(found)
+    for m in _PREFIX_SINK.finditer(text):
+        sep = _EQ.match(text, m.end()) or _COLON.match(text, m.end())
+        if not sep:
+            continue
+        p = sep.end()
+        if text[p : p + 1] == "{":
+            p = _skip_ws(text, p + 1)
+        found, _ = _read_value(text, p, braces=False)
+        if found and found[0] == "quoted":
+            out.append(("prefix", found[1]))
+        elif found and "${" not in found[1]:
+            out.append(("prefix", found[1].strip("`")))
     return out
+
+
+def _skip_ws(text: str, i: int) -> int:
+    while i < len(text) and text[i].isspace():
+        i += 1
+    return i
 
 
 # ---------------------------------------------------------------------------
@@ -195,8 +306,21 @@ def scan_testids(text: str) -> "list[tuple[str, str]]":
 
 
 def to_pattern(template: str) -> str:
-    """Render a template string into a ``*``-glob pattern (``file-row-*``)."""
-    return _COLLAPSE.sub("*", _INTERP.sub("*", template))
+    """Render a template string into a ``*``-glob pattern (``file-row-*``).
+
+    Each ``${...}`` becomes ``*``; interpolations are matched as balanced braces
+    so one containing a nested template (``${i ? `-${i}` : ""}``) collapses whole.
+    """
+    out = []
+    i = 0
+    while i < len(template):
+        if template.startswith("${", i):
+            _, i = _read_braced(template, i + 1)
+            out.append("*")
+            continue
+        out.append(template[i])
+        i += 1
+    return _COLLAPSE.sub("*", "".join(out))
 
 
 def _classify_string(value: str) -> "tuple[str, str, str]":
@@ -217,6 +341,14 @@ def classify_testid(origin: str, value: str) -> "tuple[str, str, str]":
     catalog entry (exact id, ``*`` pattern, or call-site expression).
     """
     token = value.strip()
+
+    if origin == "prefix":
+        # A ``*TestIdPrefix`` stem: the component renders ``${stem}-<suffix>``
+        # ids (row indexes, or fixed suffixes like ``-download``).
+        stem = token.rstrip("-")
+        if not stem:
+            return "indirect", token, token
+        return "dynamic", stem + "-*", stem + "-${…}"
 
     if origin == "quoted":
         return _classify_string(token)
@@ -262,6 +394,13 @@ def collect(src_dir: Path = SRC_DIR) -> "dict[str, dict]":
             entry["files"].add(rel)
             entry["raw"].add(template)
     return buckets
+
+
+def _code(text: str) -> str:
+    """A markdown code span; a double-backtick span when ``text`` has a backtick."""
+    if "`" in text:
+        return f"`` {text} ``"
+    return f"`{text}`"
 
 
 def _files(entry: dict) -> str:
@@ -317,7 +456,7 @@ def render(buckets: "dict[str, dict]") -> str:
     )
     for key in sorted(dynamic):
         example = sorted(dynamic[key]["raw"])[0]
-        lines.append(f"| `{key}` | `{example}` | {_files(dynamic[key])} |")
+        lines.append(f"| {_code(key)} | {_code(example)} | {_files(dynamic[key])} |")
 
     lines += _section(
         "Indirect test IDs",
@@ -328,7 +467,7 @@ def render(buckets: "dict[str, dict]") -> str:
         ["expression", "source"],
     )
     for key in sorted(indirect):
-        lines.append(f"| `{{{key}}}` | {_files(indirect[key])} |")
+        lines.append(f"| {_code('{' + key + '}')} | {_files(indirect[key])} |")
 
     lines.append("")
     return "\n".join(lines)

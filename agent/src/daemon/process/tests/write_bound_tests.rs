@@ -30,7 +30,7 @@ const RING: usize = 64 * 1024;
 /// Output chunk the fake PTY produces.
 const CHUNK: usize = 4 * 1024;
 /// How long a responsive daemon may take to answer anything, in virtual time.
-const PROMPT: Duration = Duration::from_secs(5);
+pub(super) const PROMPT: Duration = Duration::from_secs(5);
 
 /// Connections handed to the loop instead of a real endpoint listener.
 struct TestAcceptor(mpsc::UnboundedReceiver<(BoxedReader, BoxedWriter)>);
@@ -50,13 +50,13 @@ impl WorkerAcceptor for TestAcceptor {
 }
 
 /// A running daemon loop: its connection inlet, its fake PTY output, its task.
-struct Daemon {
-    conns: mpsc::UnboundedSender<(BoxedReader, BoxedWriter)>,
-    output: mpsc::Sender<Vec<u8>>,
-    task: JoinHandle<()>,
+pub(super) struct Daemon {
+    pub(super) conns: mpsc::UnboundedSender<(BoxedReader, BoxedWriter)>,
+    pub(super) output: mpsc::Sender<Vec<u8>>,
+    pub(super) task: JoinHandle<()>,
 }
 
-fn spawn_daemon() -> Daemon {
+pub(super) fn spawn_daemon() -> Daemon {
     let (conns, conn_rx) = mpsc::unbounded_channel();
     let (output, output_rx) = mpsc::channel::<Vec<u8>>(16);
     let task = tokio::spawn(async move {
@@ -79,14 +79,14 @@ fn spawn_daemon() -> Daemon {
 }
 
 /// The worker end of one connection.
-struct Worker {
-    reader: ReadHalf<DuplexStream>,
-    writer: WriteHalf<DuplexStream>,
+pub(super) struct Worker {
+    pub(super) reader: ReadHalf<DuplexStream>,
+    pub(super) writer: WriteHalf<DuplexStream>,
 }
 
 /// How the daemon answered a connect.
 #[derive(Debug, PartialEq)]
-enum Attach {
+pub(super) enum Attach {
     /// Handshake done; carries the buffer replay (empty when there was none).
     Ready(Vec<u8>),
     /// Refused because a live worker holds the session (AGT-015).
@@ -95,23 +95,35 @@ enum Attach {
 
 impl Worker {
     /// Connect, declaring `intent` like a real worker does.
-    async fn connect(daemon: &Daemon, intent: u8) -> Self {
+    pub(super) async fn connect(daemon: &Daemon, intent: u8) -> Self {
+        let mut worker = Self::connect_silent(daemon);
+        worker.send_intent(intent).await;
+        worker
+    }
+
+    /// Connect without declaring an intent yet: a worker that is slow to write
+    /// its preamble, or a pre-AGT-015 worker that never sends one (#3928).
+    pub(super) fn connect_silent(daemon: &Daemon) -> Self {
         let (client, server) = tokio::io::duplex(PIPE);
         let (server_r, server_w) = tokio::io::split(server);
         daemon
             .conns
             .send((Box::new(server_r), Box::new(server_w)))
             .expect("daemon accepting");
-        let (reader, mut writer) = tokio::io::split(client);
-        protocol::write_frame_async(&mut writer, MSG_ATTACH_INTENT, &[intent])
+        let (reader, writer) = tokio::io::split(client);
+        Self { reader, writer }
+    }
+
+    /// Declare the attach intent, as a worker's first frame.
+    pub(super) async fn send_intent(&mut self, intent: u8) {
+        protocol::write_frame_async(&mut self.writer, MSG_ATTACH_INTENT, &[intent])
             .await
             .unwrap();
-        Self { reader, writer }
     }
 
     /// Read the daemon's answer to the connect, or `None` if it gave none
     /// within [`PROMPT`] (an unresponsive loop).
-    async fn handshake(&mut self) -> Option<Attach> {
+    pub(super) async fn handshake(&mut self) -> Option<Attach> {
         let run = async {
             let mut replay = Vec::new();
             loop {

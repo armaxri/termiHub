@@ -798,6 +798,13 @@ receives a daemon `MSG_EVICTED` frame, stops writing to the session (input/resiz
 "Session was taken over by another desktop") and sends the desktop a
 [`connection.evicted`](#connectionevicted) notification. The session stays alive and listed.
 
+The daemon reads a newcomer's intent without pausing the session (#3928): while it waits, the
+holder keeps receiving output and other connects are answered. A worker writes its intent right
+after connecting, but one that is descheduled first still has 5 s to declare it, so a slow
+recovery connect is refused rather than misread as a takeover. Only a worker that sends no
+intent at all within that bound — one from before AGT-015 — is treated as a takeover, and a
+newcomer that hangs up before declaring its intent never evicts the holder.
+
 `takeover: true` is the desktop's explicit **Reclaim**: it takes control back even when this worker
 does not currently hold the session (for example, its start-up recovery found the session owned by
 another live worker), adopting it from the shared per-user `state.json` and evicting whichever
@@ -1556,6 +1563,23 @@ List all saved connections and folders.
 | `folders[].name`             | `string`       | Display name                                  |
 | `folders[].parent_id`        | `string?`      | Parent folder ID, or `null` for root          |
 | `folders[].is_expanded`      | `boolean`      | Whether expanded in UI                        |
+
+> **Persistence and downgrade safety (#3920):** the agent saves these definitions
+> in its `connections.json` with a schema `version` (`"1"`; a file without one is
+> read as v1). If that file was written by a **newer** agent, this agent leaves it
+> untouched: `connections.list` returns no saved connections, and every mutating
+> `connections.*` method (`create`, `update`, `delete`, `folders.create`,
+> `folders.update`, `folders.delete`) fails with `-32603` and a message saying the
+> file was written by a newer agent. The error's `data` is
+> `{"reason": "definitions_store_newer_version", "store", "found", "supported"}`.
+> Update the agent to edit the definitions again.
+>
+> A **corrupt** `connections.json` is never silently wiped (#3931). The agent first
+> copies it byte-for-byte to `connections.json.corrupt-<UTC timestamp>` next to it
+> and logs the path, then loads every connection and folder that still parses on
+> its own. It overwrites the file only after that copy is on disk. Fields the
+> agent does not know, at the top level or on an entry, are kept in the file
+> across saves; they are never sent on the wire.
 
 ---
 

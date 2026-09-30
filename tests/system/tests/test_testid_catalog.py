@@ -143,6 +143,113 @@ def test_collect_attributes_forwarded_prop_to_consumer_file(tmp_path, monkeypatc
         assert rel in literal[tid]["files"]
 
 
+# ── widened sink forms (#3044) ───────────────────────────────────────────────
+
+
+def test_scan_set_attribute_imperative():
+    found = mod.scan_testids(
+        'el.setAttribute("data-testid", `terminal-renderer-${tabId}`);\n'
+        "sink.setAttribute('data-testid', 'csp-sink');\n"
+    )
+    assert ("expr", "`terminal-renderer-${tabId}`") in found
+    assert ("quoted", "csp-sink") in found
+    assert mod.classify_testid(*found[0])[:2] == ("dynamic", "terminal-renderer-*")
+
+
+def test_scan_object_property_forms():
+    snippet = """
+      const opts = [
+        { value: "tcp", "data-testid": `server-dialog-proto-${type}` },
+        { label: "None", testId: "storage-mode-none" },
+      ];
+    """
+    found = mod.scan_testids(snippet)
+    assert ("expr", "`server-dialog-proto-${type}`") in found
+    assert ("quoted", "storage-mode-none") in found
+
+
+def test_object_property_ignores_ternary_and_type_annotation():
+    # `c ? fooTestId : "x"` and `testId: string` are not object-key testids.
+    found = mod.scan_testids(
+        'const id = c ? fooTestId : "not-an-id";\n'
+        "interface P { testId: string; toggleTestId?: string }\n"
+    )
+    assert found == []
+
+
+def test_scan_any_testid_named_prop():
+    snippet = """
+      <Group
+        toggleTestId="connection-list-group-toggle"
+        headerTestId={`sidebar-group-header-${kind}`}
+        modalTestId="ssh-hostkey-prompt"
+      />
+    """
+    found = mod.scan_testids(snippet)
+    assert ("quoted", "connection-list-group-toggle") in found
+    assert ("expr", "`sidebar-group-header-${kind}`") in found
+    assert ("quoted", "ssh-hostkey-prompt") in found
+
+
+def test_sink_boundaries_no_false_matches():
+    # `data-testid` must not also register as a bare `testid` sink; comparisons,
+    # `getByTestId(` calls and `*TestIdPrefix` names are not plain sinks.
+    found = mod.scan_testids(
+        '<X data-testid="one" />\n'
+        'if (testId === "nope") {}\n'
+        'screen.getByTestId("nope");\n'
+    )
+    assert found == [("quoted", "one")]
+
+
+def test_scan_testid_prefix_row_family():
+    found = mod.scan_testids('<DiagnosticResultsTable rowTestIdPrefix="dns-result" />')
+    assert found == [("prefix", "dns-result")]
+    assert mod.classify_testid("prefix", "dns-result")[:2] == ("dynamic", "dns-result-*")
+
+
+def test_scan_template_embedded_in_expression():
+    snippet = (
+        "<input data-testid={dontAskAgain[\"data-testid\"] ?? "
+        "`${testIdBase}-dont-ask-again`} />"
+    )
+    found = mod.scan_testids(snippet)
+    # The whole expression stays indirect; the fallback template is mined too.
+    kinds = [mod.classify_testid(o, v)[:2] for o, v in found]
+    assert kinds[0][0] == "indirect"
+    assert ("dynamic", "*-dont-ask-again") in kinds
+
+
+def test_nested_template_interpolation_collapses_whole():
+    value = '`fp${i === 0 ? "" : `-${i}`}-copy`'
+    found = mod.scan_testids(f"{{ testId: {value} }}")
+    assert found == [("expr", value)]
+    assert mod.classify_testid(*found[0])[1] == "fp*-copy"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '<div data-testid="foo-bar" />',
+        '<X toggleTestId="foo-toggle" />',
+        '<X rowTestIdPrefix="dns-result" />',
+        'const c = { "data-testid": "foo-bar" };',
+        'const c = { modalTestId: "foo-modal" };',
+        'el.setAttribute("data-testid", "terminal-root");',
+    ],
+)
+def test_every_sink_form_contains_the_trigger(text: str):
+    # The autoformat hook regenerates the catalog only for files matching
+    # _TRIGGER (regen-testid-catalog.mjs pins its copy to it, #1526). Every form
+    # the scanner catalogs must therefore contain it.
+    assert mod.scan_testids(text), text
+    assert mod._TRIGGER.search(text), text
+
+
+def test_scan_skips_text_without_the_trigger():
+    assert mod.scan_testids('<div className="foo-bar" id="x" />') == []
+
+
 # ── generate-and-verify against the live source tree (#1528) ─────────────────
 
 
@@ -177,5 +284,19 @@ def test_catalog_contains_forwarded_sidebar_prop_ids(generated_catalog: str):
         "`tunnel-name-*`",
         "`tunnel-status-*`",
         "`tunnel-type-*`",
+    ):
+        assert pattern in generated_catalog, f"{pattern} missing from catalog"
+
+
+def test_catalog_contains_widened_form_ids(generated_catalog: str):
+    # setAttribute, object-property, generic *TestId prop and embedded-template
+    # forms all render real, harness-referenced ids (#3044).
+    for pattern in (
+        "`terminal-renderer-*`",
+        "`server-dialog-proto-*`",
+        "`storage-mode-none`",
+        "`*-dont-ask-again`",
+        "`dns-result-*`",
+        "`connection-list-group-toggle`",
     ):
         assert pattern in generated_catalog, f"{pattern} missing from catalog"
