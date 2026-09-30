@@ -281,6 +281,7 @@ fn server_side_fold_reflects_folder_and_connection_lifecycle() {
         json!({
             "folders": serde_json::to_value(&flat.folders).unwrap(),
             "connections": serde_json::to_value(&flat.connections).unwrap(),
+            "savedAs": {},
         }),
         "store mirrors the manager authority"
     );

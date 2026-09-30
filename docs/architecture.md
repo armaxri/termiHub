@@ -2731,7 +2731,10 @@ per-region **versioned diff channels** with multi-subscriber fan-out:
   partially-applied write still leaves the region equal to disk. For instant feedback the connections
   bridge layers a client-local overlay (`persistWithOverlay`) whose lifecycle follows the persist
   result: once it settles, `ProjectionClient.catchUp()` brings the cache up to the backend's version
-  and the overlay is dropped. No compensating write is ever needed.
+  and the overlay is dropped. No compensating write is ever needed. An add previews its row under a
+  client-generated id that `save_connection` replaces with the folder + name id; the command echoes
+  the pair in the region's `savedAs` map (`optimistic id → persisted id`) in the same fold as the
+  saved row, so the overlay yields to that row whichever of the diff and the reply lands first (#3961).
 
 Each domain was migrated behind flags via a **per-domain strangler-fig sequence**, landing beside the
 ~206 existing typed commands and ~36 events rather than replacing them wholesale:

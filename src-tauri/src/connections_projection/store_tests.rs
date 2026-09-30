@@ -11,7 +11,7 @@ use serde_json::json;
 use crate::connection::config::{ConnectionFolder, SavedConnection};
 use crate::terminal::backend::ConnectionConfig;
 
-use super::ConnectionsStore;
+use super::{ConnectionsStore, SAVED_AS_CAPACITY};
 
 /// A deterministic saved connection, optionally inside a folder.
 fn connection(id: &str, name: &str, folder_id: Option<&str>) -> SavedConnection {
@@ -46,7 +46,7 @@ fn a_fresh_store_snapshots_empty() {
     let store = ConnectionsStore::new();
     assert_eq!(
         store.snapshot(),
-        json!({ "folders": [], "connections": [] })
+        json!({ "folders": [], "connections": [], "savedAs": {} })
     );
 }
 
@@ -88,7 +88,7 @@ fn replace_with_empty_arrays_clears_the_tree() {
     assert_eq!(store.connection_count(), 0);
     assert_eq!(
         store.snapshot(),
-        json!({ "folders": [], "connections": [] })
+        json!({ "folders": [], "connections": [], "savedAs": {} })
     );
 }
 
@@ -107,4 +107,57 @@ fn snapshot_serialises_the_full_view_model() {
     assert_eq!(snap["connections"][0]["id"], json!("Work/A"));
     assert_eq!(snap["connections"][0]["folderId"], json!("Work"));
     assert_eq!(snap["connections"][0]["config"]["type"], json!("ssh"));
+}
+
+// ── The `savedAs` echo (#3961) ─────────────────────────────────────────────
+
+#[test]
+fn a_save_under_a_new_id_is_echoed_in_saved_as() {
+    let store = ConnectionsStore::new();
+    store.record_saved_as("conn-01J", "Work/A");
+
+    assert_eq!(store.snapshot()["savedAs"], json!({ "conn-01J": "Work/A" }));
+}
+
+#[test]
+fn a_save_that_keeps_its_id_is_not_echoed() {
+    let store = ConnectionsStore::new();
+    store.record_saved_as("Work/A", "Work/A");
+
+    assert_eq!(store.snapshot()["savedAs"], json!({}));
+}
+
+#[test]
+fn saved_as_survives_a_replace() {
+    let store = ConnectionsStore::new();
+    store.record_saved_as("conn-01J", "A");
+    store.replace(Vec::new(), vec![connection("A", "A", None)]);
+
+    assert_eq!(store.snapshot()["savedAs"], json!({ "conn-01J": "A" }));
+}
+
+#[test]
+fn saved_as_keeps_the_latest_mapping_for_an_id() {
+    let store = ConnectionsStore::new();
+    store.record_saved_as("conn-01J", "A");
+    store.record_saved_as("conn-01J", "A (1)");
+
+    assert_eq!(store.snapshot()["savedAs"], json!({ "conn-01J": "A (1)" }));
+}
+
+#[test]
+fn saved_as_is_bounded_dropping_the_oldest() {
+    let store = ConnectionsStore::new();
+    for i in 0..=SAVED_AS_CAPACITY {
+        store.record_saved_as(&format!("conn-{i}"), &format!("C{i}"));
+    }
+
+    let saved_as = store.snapshot()["savedAs"].clone();
+    let saved_as = saved_as.as_object().unwrap();
+    assert_eq!(saved_as.len(), SAVED_AS_CAPACITY);
+    assert!(!saved_as.contains_key("conn-0"), "the oldest is dropped");
+    assert_eq!(
+        saved_as[&format!("conn-{SAVED_AS_CAPACITY}")],
+        json!(format!("C{SAVED_AS_CAPACITY}"))
+    );
 }

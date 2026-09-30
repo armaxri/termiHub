@@ -72,6 +72,7 @@ import { useAppStore } from "./appStore";
 import {
   currentConnectionsView,
   ensureConnectionsSubscribed,
+  onConnectionsView,
   setConnectionTransportForTest,
   stopConnectionsSubscription,
 } from "./connectionsBridge";
@@ -320,6 +321,78 @@ describe("partial failures and batches (#2831)", () => {
     useAppStore.getState().deleteConnection("a");
     await settle();
     expect(ids()).toEqual(["b", "c", "d"]);
+    expectRegionEqualsDisk();
+  });
+});
+
+describe("an optimistic add never shows two rows when the saved id differs (#3961)", () => {
+  /**
+   * The adds whose preview lives under a client-generated id the persist
+   * command replaces with the name-derived one, and the name of the row each
+   * adds.
+   */
+  const ADDS: Array<{ name: string; run: () => unknown; rowName: string }> = [
+    {
+      name: "addConnection",
+      run: () => useAppStore.getState().addConnection({ ...conn("conn-1"), name: "Fresh" }),
+      rowName: "Fresh",
+    },
+    {
+      name: "bulkAddConnections",
+      run: () =>
+        useAppStore.getState().bulkAddConnections([
+          { ...conn("conn-1"), name: "Fresh" },
+          { ...conn("conn-2"), name: "Other" },
+        ]),
+      rowName: "Fresh",
+    },
+    {
+      name: "duplicateConnection",
+      run: () => useAppStore.getState().duplicateConnection("b"),
+      rowName: "Copy of Conn b",
+    },
+  ];
+
+  const ORDERS = [
+    { order: "the region diff before the command reply", diffFirst: true },
+    { order: "the command reply before the region diff", diffFirst: false },
+  ];
+
+  const CASES = ORDERS.flatMap((o) => ADDS.map((a) => ({ ...o, ...a })));
+
+  it.each(CASES)("$name, with $order", async ({ diffFirst, run, rowName }) => {
+    double.recomputeIdsOnSave((c) => `saved/${c.name}`);
+    if (diffFirst) double.deliverDiffBeforeReply();
+    const rowsNamed = (view: { connections: SavedConnection[] }) =>
+      view.connections.filter((c) => c.name === rowName).length;
+    const seen: number[] = [];
+    const unsubscribe = onConnectionsView((view) => seen.push(rowsNamed(view)));
+
+    run();
+    // The preview shows at once…
+    expect(rowsNamed(currentConnectionsView())).toBe(1);
+
+    await settle();
+    unsubscribe();
+
+    // …and no view any reader was ever handed carried the row twice.
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((n) => n === 1)).toBe(true);
+    expect(byId(`saved/${rowName}`)).toBeDefined();
+    expectRegionEqualsDisk();
+  });
+
+  it("a failed add with the diff first still drops the preview (region == disk)", async () => {
+    double.recomputeIdsOnSave((c) => `saved/${c.name}`);
+    double.deliverDiffBeforeReply();
+    double.failNext("persistConnection", new Error("disk read-only"));
+
+    useAppStore.getState().addConnection({ ...conn("conn-1"), name: "Fresh" });
+    expect(ids()).toContain("conn-1");
+
+    await settle();
+
+    expect(ids()).not.toContain("conn-1");
     expectRegionEqualsDisk();
   });
 });

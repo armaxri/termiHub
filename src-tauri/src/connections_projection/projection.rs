@@ -114,6 +114,20 @@ pub fn fold_connections_from_manager<R: tauri::Runtime>(app_handle: &AppHandle<R
     crate::tunnel::connection_refs::reconcile_tunnels_with_connections(app_handle, live);
 }
 
+/// Record in the managed [`ConnectionsStore`] that a connection sent as
+/// `arrived_as` was saved as `persisted` (#3961), so the next fold publishes
+/// the pair in the region's `savedAs` map alongside the saved row. A no-op when
+/// the store is not managed.
+pub fn record_saved_as<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    arrived_as: &str,
+    persisted: &str,
+) {
+    if let Some(store) = app_handle.try_state::<Arc<ConnectionsStore>>() {
+        store.record_saved_as(arrived_as, persisted);
+    }
+}
+
 #[cfg(test)]
 #[path = "projection_tests.rs"]
 mod tests;
