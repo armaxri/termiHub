@@ -123,6 +123,8 @@ import {
   listWorkflows as apiListWorkflows,
   deleteWorkflow as apiDeleteWorkflow,
   recordWorkflowRun as apiRecordWorkflowRun,
+  listWorkflowRuns as apiListWorkflowRuns,
+  clearWorkflowRunHistory as apiClearWorkflowRunHistory,
 } from "@/services/workflowApi";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { currentSettingsView } from "./settingsBridge";
@@ -1468,6 +1470,81 @@ describe("appStore — workflow run slice (#1852)", () => {
       const run = vi.mocked(apiRecordWorkflowRun).mock.calls[0][0];
       expect(run.status).toBe("completed");
       expect(run.continuedFailures).toBeUndefined();
+    });
+  });
+
+  describe("parameter prompt, target guards and history replies (#2979)", () => {
+    const withParam = (): Workflow => ({
+      ...workflow("wp", [cmd("deploy ${env}")]),
+      parameters: [{ name: "env", type: "string", required: true }],
+    });
+
+    it("prompts for parameters and runs with the collected values", async () => {
+      seedConnectedTerminal();
+      useAppStore.setState({ workflows: [withParam()] });
+
+      const run = useAppStore.getState().runWorkflow("wp");
+      await vi.waitFor(() => expect(useAppStore.getState().workflowParamPrompt).not.toBeNull());
+      expect(useAppStore.getState().workflowParamPrompt).toMatchObject({
+        workflowName: "Workflow wp",
+        parameters: [{ name: "env" }],
+      });
+      useAppStore.getState().resolveWorkflowParamPrompt({ env: "prod" });
+      await run;
+
+      expect(useAppStore.getState().workflowParamPrompt).toBeNull();
+      expect(injected).toEqual(["deploy prod\n"]);
+    });
+
+    it("cancelling the parameter prompt aborts the run before anything is sent", async () => {
+      seedConnectedTerminal();
+      useAppStore.setState({ workflows: [withParam()] });
+
+      const run = useAppStore.getState().runWorkflow("wp");
+      await vi.waitFor(() => expect(useAppStore.getState().workflowParamPrompt).not.toBeNull());
+      useAppStore.getState().resolveWorkflowParamPrompt(null);
+      // A second resolve (double click) is a no-op once the prompt has closed.
+      useAppStore.getState().resolveWorkflowParamPrompt({ env: "late" });
+      await run;
+
+      expect(injected).toEqual([]);
+      expect(toast.info).toHaveBeenCalledWith('Workflow "Workflow wp" cancelled');
+      expect(apiRecordWorkflowRun).not.toHaveBeenCalled();
+    });
+
+    it("refuses an empty multi-target selection", async () => {
+      seedConnectedTerminal();
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("ls")])] });
+
+      await useAppStore.getState().runWorkflow("w1", { targetTabIds: [] });
+
+      expect(injected).toEqual([]);
+      expect(toast.error).toHaveBeenCalledWith("No terminals selected to run the workflow against");
+    });
+
+    it("names the single selected terminal when it is not connected", async () => {
+      seedConnectedTerminal("tab-active", null);
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("ls")])] });
+
+      await useAppStore.getState().runWorkflow("w1", { targetTabIds: ["tab-active"] });
+
+      expect(toast.error).toHaveBeenCalledWith("The target terminal is not connected");
+    });
+
+    it("cancelWorkflowRun(runId) is a no-op for a run that is not in flight", () => {
+      expect(() => useAppStore.getState().cancelWorkflowRun("no-such-run")).not.toThrow();
+    });
+
+    it("stores an empty history when the backend replies with a non-array", async () => {
+      useAppStore.setState({ workflowRuns: [{ id: "stale" }] as never });
+      vi.mocked(apiListWorkflowRuns).mockResolvedValueOnce(null as never);
+      await useAppStore.getState().loadWorkflowRuns();
+      expect(useAppStore.getState().workflowRuns).toEqual([]);
+
+      useAppStore.setState({ workflowRuns: [{ id: "stale" }] as never });
+      vi.mocked(apiClearWorkflowRunHistory).mockResolvedValueOnce(undefined as never);
+      await useAppStore.getState().clearWorkflowRunHistory();
+      expect(useAppStore.getState().workflowRuns).toEqual([]);
     });
   });
 });
