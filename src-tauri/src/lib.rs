@@ -558,6 +558,7 @@ pub fn run() -> anyhow::Result<()> {
                 connection_registry,
                 &x_server_manager,
                 &x_server_consent_registry,
+                &mut recovery_warnings,
             );
 
             // ORDER: the tunnel manager is managed before the projection Pass B

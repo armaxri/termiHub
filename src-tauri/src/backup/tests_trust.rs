@@ -338,3 +338,51 @@ fn trust_store_section_is_exported_at_schema_version_1_verbatim() {
     assert_eq!(opened.sections[0].schema_version, 1);
     assert_eq!(opened.sections[0].data, doc);
 }
+
+/// #2745: the trust stores' format version lives in a `<file>.version`
+/// sidecar. A restore must never overwrite a trust store a newer termiHub wrote
+/// (the store itself refuses to write it; the restore must too).
+#[test]
+fn restore_refuses_to_overwrite_a_newer_format_trust_store() {
+    let (_src, json) = source_with_ssh(json!({"a:22": ["SHA256:A"]}));
+    let dst = tempfile::tempdir().unwrap();
+    let newer = r#"{"written":"by a newer termiHub"}"#;
+    std::fs::write(dst.path().join(SSH_FILE), newer).unwrap();
+    std::fs::write(dst.path().join(format!("{SSH_FILE}.version")), "2").unwrap();
+
+    assert_eq!(
+        preview_of(&json, dst.path(), "sshKnownHosts").status,
+        SectionStatus::Newer
+    );
+    assert!(matches!(
+        restore_one(
+            &json,
+            dst.path(),
+            "sshKnownHosts",
+            RestoreMode::Replace,
+            ConflictStrategy::Skip
+        ),
+        Err(VaultError::UnsupportedVersion { .. })
+    ));
+    assert_eq!(
+        std::fs::read_to_string(dst.path().join(SSH_FILE)).unwrap(),
+        newer
+    );
+}
+
+/// #2745: a trust store in a newer on-disk format is exported under that
+/// format version, so an older build refuses the section instead of reading
+/// it as its own format.
+#[test]
+fn a_newer_format_trust_store_is_exported_at_its_own_version() {
+    let src = tempfile::tempdir().unwrap();
+    write_doc(src.path(), SSH_FILE, &json!({"a:22": ["SHA256:A"]}));
+    std::fs::write(src.path().join(format!("{SSH_FILE}.version")), "3\n").unwrap();
+    let json = backup_of(src.path(), &["sshKnownHosts"], true).unwrap();
+    let opened = restore::open(&json, Some(PASSPHRASE)).unwrap();
+    assert_eq!(opened.sections[0].schema_version, 3);
+
+    // An unreadable version marker cannot be backed up under a guessed version.
+    std::fs::write(src.path().join(format!("{SSH_FILE}.version")), "v-next").unwrap();
+    assert!(backup_of(src.path(), &["sshKnownHosts"], true).is_err());
+}

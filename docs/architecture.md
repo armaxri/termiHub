@@ -1901,12 +1901,18 @@ dropping them (the preview says so) when credential storage is off.
   hand-edited file cannot inject a key). A **merge** is a union by host, but a host already trusted
   here always keeps exactly its current keys — whatever conflict strategy is picked — and the
   preview lists those hosts; only **replace** adopts the backup's keys.
-- **Trust-store versioning** — the files keep their flat, unversioned on-disk format: adding a
-  `version` key inside that object would make every older termiHub read the file as corrupt and
-  start with an empty store (the downgrade loss the migration layer exists to prevent). The format
-  is versioned where it leaves the machine: the backup section records schema version 1
-  (`TRUST_STORE_SCHEMA_VERSION`), and a section with a newer version is refused. The on-disk
-  migration story itself is still open in [#2745](https://github.com/armaxri/termiHub/issues/2745).
+- **Trust-store versioning** — the files keep their flat on-disk format: adding a `version` key
+  inside that object would make every older termiHub read the file as corrupt and start with an
+  empty store (the downgrade loss the migration layer exists to prevent). The on-disk format version
+  lives in a **sidecar** instead, `<file>.version` (#2745,
+  `src-tauri/src/session/trust_store_file.rs`); no sidecar means v1. On load, a newer or unreadable
+  version is never interpreted (its entries are not trusted) and the file is never written — the
+  guard re-reads the sidecar on every write. A corrupt file is copied to a non-clobbering backup
+  (`<file>.bak`, `<file>.bak.1`, …) before anything may overwrite it, then salvaged per host and per
+  fingerprint; if the backup fails, writes are refused. Each case becomes a startup recovery
+  warning. The backup section records the on-disk format version (`TRUST_STORE_SCHEMA_VERSION` is
+  the current one); a section with a newer version is refused, and a restore never overwrites a
+  store whose sidecar records a newer format.
 - **Plugins** (`backup/plugins/`) — one section with every installed plugin's files
   (base64), its `plugin-state.json` record (including the signer record, as-is), its settings and
   the pinned publisher keys (each must still hash to its `keyId`). Encrypted-only as well. Each

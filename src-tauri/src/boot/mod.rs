@@ -420,6 +420,7 @@ pub(crate) fn init_session_managers(
     >,
     x_server_manager: &std::sync::Arc<crate::terminal::xserver::XServerManager>,
     x_server_consent_registry: &std::sync::Arc<crate::terminal::xserver::ConnectConsentRegistry>,
+    recovery_warnings: &mut Vec<crate::connection::recovery::RecoveryWarning>,
 ) {
     let agent_manager: Arc<dyn AgentRpcClient> =
         Arc::new(AgentConnectionManager::new(app.handle().clone()));
@@ -448,6 +449,9 @@ pub(crate) fn init_session_managers(
             }
         },
     );
+    // A newer-format, unreadable or corrupt trust store is reported at startup
+    // rather than only logged (#2745).
+    recovery_warnings.extend(rdp_trust_store.take_load_warnings());
     let graphical_manager = crate::session::graphical_manager::GraphicalSessionManager::new(
         std::sync::Arc::new(build_desktop_registry()),
         rdp_trust_store,
@@ -468,6 +472,7 @@ pub(crate) fn init_session_managers(
             }
         },
     );
+    recovery_warnings.extend(ssh_trust_store.take_load_warnings());
     let ssh_host_key_verifier = std::sync::Arc::new(
         crate::session::ssh_host_key_verifier::SshHostKeyVerifier::new(
             ssh_trust_store,

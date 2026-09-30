@@ -18,3 +18,6 @@ pub mod session_log;
 pub mod ssh_host_key_verifier;
 pub mod ssh_keyboard_interactive;
 pub mod ssh_trust_store;
+pub mod trust_store_file;
+#[cfg(test)]
+mod trust_store_versioning_tests;

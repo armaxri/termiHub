@@ -31,6 +31,7 @@ use crate::network::monitor_history::HttpMonitorHistoryStore;
 use crate::network::tool_history::NetworkToolHistoryStore;
 use crate::network::wol_storage::WolDevicesFile;
 use crate::schedules::config::ScheduleStore;
+use crate::session::trust_store_file;
 use crate::tunnel::config::TunnelStore;
 use crate::utils::migrate::{load_versioned, read_version, LoadOutcome, VersionedStore};
 use crate::workflows::config::WorkflowStore;
@@ -775,6 +776,21 @@ pub enum CurrentDoc {
 /// Read and normalize a section's current store file from `config_dir`.
 pub fn read_current(spec: &SectionSpec, config_dir: &Path) -> CurrentDoc {
     let path = config_dir.join(spec.file_name);
+    // A trust store's format version lives in a sidecar, not the document
+    // (#2745): a newer one must never be read as this build's format or
+    // restored over.
+    if spec.shape == Shape::TrustMap {
+        match trust_store_file::on_disk_format_version(&path) {
+            Ok(found) if found > spec.current_version => {
+                return CurrentDoc::Newer {
+                    found,
+                    supported: spec.current_version,
+                }
+            }
+            Ok(_) => {}
+            Err(detail) => return CurrentDoc::Unreadable(detail),
+        }
+    }
     let raw = match std::fs::read_to_string(&path) {
         Ok(raw) => raw,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return CurrentDoc::Missing,

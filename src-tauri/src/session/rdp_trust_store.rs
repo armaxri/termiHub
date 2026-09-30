@@ -23,6 +23,10 @@
 //! than replaces. A presented fingerprint that matches *any* stored entry for
 //! the host is trusted; one that matches none while the host has entries is the
 //! changed / MITM case.
+//!
+//! The format version is kept in a `<file>.version` sidecar, and loading is
+//! version-gated with backup + per-entry salvage of a corrupt file (#2745) —
+//! see [`trust_store_file`](super::trust_store_file).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -30,7 +34,8 @@ use std::sync::Mutex;
 
 use tracing::warn;
 
-use crate::utils::fs::write_atomic;
+use super::trust_store_file::{self, PersistError};
+use crate::connection::recovery::RecoveryWarning;
 
 /// The trust-store file name inside the config directory.
 const FILE_NAME: &str = "rdp_known_hosts.json";
@@ -56,19 +61,29 @@ pub struct RdpTrustStore {
     path: Option<PathBuf>,
     /// host → accepted fingerprints.
     entries: Mutex<BTreeMap<String, Vec<String>>>,
+    /// `Some(reason)` when the file on disk must never be written by this
+    /// build (newer/unknown format, or corrupt and not backed up) — #2745.
+    write_refused: Mutex<Option<String>>,
+    /// Problems found when the file was loaded, drained once at startup.
+    load_warnings: Mutex<Vec<RecoveryWarning>>,
 }
 
 impl RdpTrustStore {
     /// Open (or start) a trust store backed by `FILE_NAME` inside `config_dir`.
     ///
-    /// A missing or unreadable file starts empty rather than failing — an absent
-    /// trust store simply means "nothing remembered yet".
+    /// Never fails. A missing file starts empty ("nothing remembered yet"). The
+    /// load is version-gated and recovers corruption per entry (#2745, see
+    /// [`trust_store_file`]): a newer-format file is left intact and never
+    /// written, a corrupt one is backed up and salvaged. Problems are available
+    /// from [`Self::take_load_warnings`].
     pub fn open(config_dir: PathBuf) -> Self {
         let path = config_dir.join(FILE_NAME);
-        let entries = load(&path);
+        let loaded = trust_store_file::load(&path, FILE_NAME);
         Self {
             path: Some(path),
-            entries: Mutex::new(entries),
+            entries: Mutex::new(loaded.entries),
+            write_refused: Mutex::new(loaded.write_refused),
+            load_warnings: Mutex::new(loaded.warnings),
         }
     }
 
@@ -78,6 +93,8 @@ impl RdpTrustStore {
         Self {
             path: None,
             entries: Mutex::new(BTreeMap::new()),
+            write_refused: Mutex::new(None),
+            load_warnings: Mutex::new(Vec::new()),
         }
     }
 
@@ -156,37 +173,42 @@ impl RdpTrustStore {
         removed
     }
 
-    /// Write the current entries to disk (no-op for an in-memory store).
+    /// Drain the problems found when the store was loaded (newer format,
+    /// corruption, salvage), for the startup recovery notice.
+    pub fn take_load_warnings(&self) -> Vec<RecoveryWarning> {
+        std::mem::take(&mut *self.load_warnings.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// Whether this store refuses to write its file (it is in a newer or
+    /// unknown format, or corrupt and could not be backed up). Decisions still
+    /// hold in memory for the session.
+    #[cfg(test)]
+    pub fn is_write_refused(&self) -> bool {
+        self.write_refused
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+    }
+
+    /// Write the current entries to disk (no-op for an in-memory store, or when
+    /// the file must not be overwritten — see [`trust_store_file::persist`]).
     fn persist(&self) {
         let Some(path) = &self.path else { return };
-        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
-        let write = || -> std::io::Result<()> {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            let json = serde_json::to_string_pretty(&*entries)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-            // Atomic temp-file + rename: an interrupted write can never truncate
-            // the existing store and drop remembered certificate fingerprints
-            // (same data-loss class as PER-002/PER-003).
-            write_atomic(path, &json).map_err(std::io::Error::other)
-        };
-        if let Err(e) = write() {
-            warn!(path = %path.display(), error = %e, "failed to persist RDP trust store");
+        let mut refused = self.write_refused.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(reason) = refused.as_ref() {
+            warn!(path = %path.display(), "not persisting RDP trust store: {reason}");
+            return;
         }
-    }
-}
-
-/// Load the entries from `path`, returning an empty map on any error.
-fn load(path: &PathBuf) -> BTreeMap<String, Vec<String>> {
-    let Ok(bytes) = std::fs::read(path) else {
-        return BTreeMap::new();
-    };
-    match serde_json::from_slice(&bytes) {
-        Ok(map) => map,
-        Err(e) => {
-            warn!(path = %path.display(), error = %e, "RDP trust store is corrupt; starting empty");
-            BTreeMap::new()
+        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        match trust_store_file::persist(path, &entries, FILE_NAME) {
+            Ok(()) => {}
+            Err(PersistError::Refused(reason)) => {
+                warn!(path = %path.display(), "not persisting RDP trust store: {reason}");
+                *refused = Some(reason);
+            }
+            Err(PersistError::Io(e)) => {
+                warn!(path = %path.display(), error = %e, "failed to persist RDP trust store");
+            }
         }
     }
 }
@@ -246,7 +268,7 @@ mod tests {
         assert_eq!(reopened.lookup("host:3389", FP_B), TrustLookup::Changed);
     }
 
-    /// The atomic write must leave only the store file behind — no leftover
+    /// The atomic write must leave only the store files behind — no leftover
     /// temporary write artifacts in the config directory.
     #[test]
     fn persist_leaves_no_stray_files() {
@@ -256,15 +278,17 @@ mod tests {
         store.remember("host:3389", FP_A);
         store.remember("host:3389", FP_B);
 
-        let names: Vec<String> = std::fs::read_dir(&dir)
+        let mut names: Vec<String> = std::fs::read_dir(&dir)
             .unwrap()
             .filter_map(|e| e.ok())
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
+        names.sort();
+        // The store file plus its format-version sidecar (#2745), nothing else.
         assert_eq!(
             names,
-            vec![FILE_NAME.to_string()],
-            "atomic persist must leave only the store file, got {names:?}"
+            vec![FILE_NAME.to_string(), format!("{FILE_NAME}.version")],
+            "atomic persist must leave only the store file and its sidecar, got {names:?}"
         );
     }
 
