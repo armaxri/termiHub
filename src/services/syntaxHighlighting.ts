@@ -23,10 +23,10 @@ import type { HighlightRule, HighlightStyle } from "../types/syntaxHighlighting"
 import { frontendLog } from "../utils/frontendLog";
 
 /** Lines longer than this (whole logical line) are skipped to avoid ReDoS/backtracking cost. */
-export const MAX_LINE_LENGTH = 10_000;
+const MAX_LINE_LENGTH = 10_000;
 
 /** Default number of logical lines scanned per frame before deferring the rest. */
-export const DEFAULT_LINE_BUDGET = 200;
+const DEFAULT_LINE_BUDGET = 200;
 
 /** onWriteParsed events within the trailing second above this count enter the throttled state. */
 const THROTTLE_WRITES_PER_SEC = 50;
@@ -196,7 +196,7 @@ interface Candidate extends RuleMatch {
 }
 
 /** Default per-logical-line wall-clock budget (ms) for the guarded scan. */
-export const DEFAULT_LINE_SCAN_BUDGET_MS = 50;
+const DEFAULT_LINE_SCAN_BUDGET_MS = 50;
 
 /** How often (in matches) the guarded scan re-checks the wall-clock deadline. */
 const DEADLINE_CHECK_INTERVAL = 256;
@@ -793,6 +793,3 @@ function now(): number {
     ? performance.now()
     : Date.now();
 }
-
-/** Re-exported for callers that want the raw style shape. */
-export type { HighlightStyle };

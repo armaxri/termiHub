@@ -452,7 +452,7 @@ const SHIFT_KEY_TO_BASE: Record<string, string> = {
  * `Ctrl/Cmd+<letter/digit>` shortcuts fire on the same physical key on a
  * non-US/non-Latin layout, where the produced `event.key` differs (I18N-011).
  */
-export function comboKeyToCode(key: string): string | null {
+function comboKeyToCode(key: string): string | null {
   if (key.length !== 1) return null;
   if (key >= "a" && key <= "z") return `Key${key.toUpperCase()}`;
   if (key >= "A" && key <= "Z") return `Key${key}`;
