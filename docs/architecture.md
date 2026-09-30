@@ -1910,8 +1910,9 @@ dropping them (the preview says so) when credential storage is off.
   guard re-reads the sidecar on every write. A corrupt file is copied to a non-clobbering backup
   (`<file>.bak`, `<file>.bak.1`, …) before anything may overwrite it, then salvaged per host and per
   fingerprint; if the backup fails, writes are refused. Each case becomes a startup recovery
-  warning. The backup section records the same version (`TRUST_STORE_SCHEMA_VERSION`), and a
-  section with a newer version is refused.
+  warning. The backup section records the on-disk format version (`TRUST_STORE_SCHEMA_VERSION` is
+  the current one); a section with a newer version is refused, and a restore never overwrites a
+  store whose sidecar records a newer format.
 - **Plugins** (`backup/plugins/`) — one section with every installed plugin's files
   (base64), its `plugin-state.json` record (including the signer record, as-is), its settings and
   the pinned publisher keys (each must still hash to its `keyId`). Encrypted-only as well. Each
