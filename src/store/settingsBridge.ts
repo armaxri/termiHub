@@ -285,8 +285,8 @@ export function seedSettingsRegion(settings: AppSettings): Promise<void> {
  */
 export type SettingsIntentKind = "settings.replace" | "settings.patch" | "settings.reset";
 
-/** Dispatch a `settings.*` intent, resolving with the ack (parity tests). */
-export function dispatchSettingsIntent(
+/** Dispatch a `settings.*` intent, resolving with the ack. */
+function dispatchSettingsIntent(
   kind: SettingsIntentKind,
   payload: Record<string, unknown>
 ): Promise<IntentAck> {

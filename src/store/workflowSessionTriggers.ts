@@ -133,7 +133,7 @@ function guarded(what: string, hook: () => void): void {
  * workflows once for this end, in the connection's context (no live session),
  * and forgets the session's output-match state.
  */
-export function notifyWorkflowSessionEnded(
+function notifyWorkflowSessionEnded(
   store: WorkflowTriggerStore,
   tabId: string,
   cause: SessionEndCause

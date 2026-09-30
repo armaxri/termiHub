@@ -51,7 +51,6 @@ import {
   type Transport,
 } from "@/services/transport";
 import type {
-  DropEdge,
   LeafPanel,
   PanelNode,
   SplitContainer,
@@ -157,7 +156,7 @@ export function buildLayoutSnapshot(
 }
 
 /** Project a rich {@link GroupSnapshot} to its minimal wire form (for seeding). */
-export function toMinimalGroup(group: GroupSnapshot): MinimalGroup {
+function toMinimalGroup(group: GroupSnapshot): MinimalGroup {
   const minimal: MinimalGroup = {
     id: group.id,
     name: group.name,
@@ -169,7 +168,7 @@ export function toMinimalGroup(group: GroupSnapshot): MinimalGroup {
 }
 
 /** The active group of a projected view (falls back to the first group). */
-export function activeGroupOf(view: LayoutView): MinimalGroup | undefined {
+function activeGroupOf(view: LayoutView): MinimalGroup | undefined {
   return view.groups.find((g) => g.id === view.activeGroupId) ?? view.groups[0];
 }
 
@@ -543,17 +542,8 @@ export function mirrorLayoutMove(preSnapshot: LayoutSnapshot, postSnapshot: Layo
   reseedLayoutRegion(postSnapshot);
 }
 
-/** Map a {@link DropEdge} to a `layout.moveTab` payload for a split-with-tab drop. */
-export function moveTabPayload(
-  tabId: string,
-  targetPanelId: string,
-  edge: DropEdge
-): Record<string, unknown> {
-  return { tabId, targetPanelId, edge };
-}
-
 /** Log a layout-region write failure so the resilience recovery is visible in the LogViewer. */
-export function logBridgeFallback(kind: string, err: unknown): void {
+function logBridgeFallback(kind: string, err: unknown): void {
   const message = errorMessage(err);
   frontendLog("layout_bridge", `${kind} region write failed: ${message}`);
 }
@@ -924,7 +914,7 @@ export function reseedLayoutRegion(snapshot: LayoutSnapshot, onReject?: () => vo
 
 /** Structural equality over two rich {@link LayoutSnapshot}s — used to de-dupe
  * reseeds (a settled layout is not reseeded on every render). */
-export function layoutSnapshotsEqual(a: LayoutSnapshot, b: LayoutSnapshot): boolean {
+function layoutSnapshotsEqual(a: LayoutSnapshot, b: LayoutSnapshot): boolean {
   if ((a.activeGroupId ?? null) !== (b.activeGroupId ?? null)) return false;
   if (a.groups.length !== b.groups.length) return false;
   return a.groups.every((g, i) => {
@@ -940,7 +930,7 @@ export function layoutSnapshotsEqual(a: LayoutSnapshot, b: LayoutSnapshot): bool
 }
 
 /** Log a compose failure (a transient region↔content desync) so recovery is visible. */
-export function logRenderFallback(err: unknown): void {
+function logRenderFallback(err: unknown): void {
   const message = errorMessage(err);
   frontendLog("layout_bridge", `compose skipped, kept last-good tree: ${message}`);
 }
