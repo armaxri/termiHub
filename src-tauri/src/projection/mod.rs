@@ -20,12 +20,14 @@
 //! a separate, untouched channel.
 
 mod delta_check;
+mod delta_splice;
 mod frame;
 mod helpers;
 mod identity;
 mod region;
 
 pub(crate) use delta_check::{perf006_divergence, report_perf006_divergence};
+pub(crate) use delta_splice::{pick_keys, splice_subtrees, subtree_map};
 pub use frame::{
     DiffFrame, DiffKind, DiffOp, Intent, IntentAck, IntentErrorInfo, IntentStatus, ProducedRegion,
     ProjectionFrame, SnapshotFrame, SnapshotKind,
