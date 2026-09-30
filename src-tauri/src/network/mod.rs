@@ -35,6 +35,7 @@ use crate::agent_service::{
     AgentHosted, AgentInstances, AgentStatusPollDelegate, AgentStatusPoller,
 };
 use crate::app_tasks::AppTasks;
+use crate::connection::recovery::RecoveryWarning;
 use http_monitor::{HttpCheckResult, HttpMonitorConfig, HttpMonitorService, HttpMonitorState};
 use termihub_core::network::WolDevice;
 use termihub_core::protocol::methods::{
@@ -260,8 +261,11 @@ impl NetworkManager {
     }
 
     /// Initialise the manager with the app config directory and app handle.
-    /// Loads persisted WoL devices from disk.
-    pub fn init(&mut self, config_dir: PathBuf, app_handle: AppHandle) {
+    /// Loads persisted WoL devices and HTTP monitor configs from disk, returning
+    /// any recovery warnings (a newer-version file left untouched, a corrupt
+    /// file backed up and salvaged) for the startup notice (#3946).
+    pub fn init(&mut self, config_dir: PathBuf, app_handle: AppHandle) -> Vec<RecoveryWarning> {
+        let mut warnings = Vec::new();
         self.config_dir = config_dir.clone();
         // Before any monitor is loaded, so every poll loop is app-owned.
         if let Some(tasks) = app_handle.try_state::<AppTasks>() {
@@ -270,10 +274,11 @@ impl NetworkManager {
         if let Ok(mut handle) = self.app_handle.lock() {
             *handle = Some(app_handle);
         }
-        match wol_storage::load_wol_devices(&config_dir) {
-            Ok(devices) => {
+        match wol_storage::load_wol_devices_with_recovery(&config_dir) {
+            Ok(result) => {
+                warnings.extend(result.warnings);
                 if let Ok(mut guard) = self.wol_devices.lock() {
-                    *guard = devices;
+                    *guard = result.data;
                 }
             }
             Err(e) => {
@@ -287,9 +292,20 @@ impl NetworkManager {
         // until the user starts/resumes it. This removes the steady-state
         // CPU/network cost of every saved monitor firing requests from launch,
         // forever, whether or not the monitors view is ever opened.
-        for config in self.load_persisted_monitor_configs() {
+        let configs = match http_monitor_storage::load_http_monitors_with_recovery(&config_dir) {
+            Ok(result) => {
+                warnings.extend(result.warnings);
+                result.data
+            }
+            Err(e) => {
+                error!("Failed to load persisted HTTP monitors: {e}");
+                Vec::new()
+            }
+        };
+        for config in configs {
             self.load_http_monitor_stopped(config);
         }
+        warnings
     }
 
     // ── Task lifecycle ──────────────────────────────────────────────────────

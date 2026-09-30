@@ -1217,8 +1217,14 @@ fn every_section_version_is_its_stores_current_version() {
             "namedCredentials",
             <crate::credential::named::NamedCredentialStore as VersionedStore>::CURRENT_VERSION,
         ),
-        ("wolDevices", WolDevicesFile::CURRENT_VERSION),
-        ("httpMonitors", HttpMonitorsFile::CURRENT_VERSION),
+        (
+            "wolDevices",
+            <WolDevicesFile as VersionedStore>::CURRENT_VERSION,
+        ),
+        (
+            "httpMonitors",
+            <HttpMonitorsFile as VersionedStore>::CURRENT_VERSION,
+        ),
         (
             "networkToolHistory",
             <NetworkToolHistoryStore as VersionedStore>::CURRENT_VERSION,

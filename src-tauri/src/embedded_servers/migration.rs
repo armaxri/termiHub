@@ -88,6 +88,7 @@ mod tests {
         let path = dir.path().join(FILE);
         let legacy = EmbeddedServerStore {
             version: EmbeddedServerStore::LEGACY_PLAINTEXT_VERSION.to_string(),
+            extra: Default::default(),
             servers: vec![ftp("srv-1", "hunter2"), http("srv-2", "s3cret")],
         };
         fs::write(&path, serde_json::to_string_pretty(&legacy).unwrap()).unwrap();
