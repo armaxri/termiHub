@@ -2302,7 +2302,9 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
   local (#3912), or a byte-based backend) is still copied file by file from
   the frontend (`src/hooks/sessionFolderPaste.ts`), so it records a
   **folder-paste manifest** in `transfers.json` (`folderPastes`) before its
-  first file and removes it once the whole folder landed (#3630). A paste into
+  first file and removes it once the whole folder landed (#3630). The session
+  file browser's folder **Download** and dropped-folder **Upload** are recorded
+  the same way, as a session → local and a local → session copy (#3983). A paste into
   the local disk records its destination with no session, and its Retry only
   needs the source's reconnected session. A manifest left at the next
   launch — a quit, crash or failure part-way — is shown as a notice whose
