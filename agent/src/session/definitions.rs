@@ -207,21 +207,44 @@ pub trait ConnectionStoreApi: Send + Sync + 'static {
     async fn load_external_files(&self, _paths: &[String]) {}
 }
 
-/// Current schema version of the agent's `connections.json`.
+/// Diagnostic name of the agent's definitions store.
+const DEFINITIONS_STORE_NAME: &str = "connections.json";
+
+/// Current schema version of the agent's `connections.json` (#3920).
+///
+/// A file with no `version` is the baseline, v1 — every file written before the
+/// store was versioned. A file with a **newer** version is refused: it is never
+/// reset, migrated or overwritten (see [`crate::store_version`]). When the
+/// persisted shape changes — a settings-key rename, say — bump this and add the
+/// numbered step to [`migrate_definitions`], so an older agent can no longer
+/// overwrite a file that uses the new shape.
 pub const DEFINITIONS_STORE_VERSION: u32 = 1;
 
-/// Migrate a parsed store from `from_version` to [`DEFINITIONS_STORE_VERSION`].
+/// Migrate a parsed store from `from_version` up to [`DEFINITIONS_STORE_VERSION`],
+/// one numbered step at a time.
+///
+/// v1 is the first versioned schema, so there is no step yet: every earlier
+/// file is already v1-shaped. The settings-key renames made before versioning
+/// (`resilientReconnect` → `autoReconnect`, FTP `timeoutSecs` →
+/// `connectTimeoutSecs`, #2901) stay in `Connection`'s rename-on-read, because
+/// they also apply to external files and RPC requests. Add the next rename as
+/// `if version < 2 { …; version = 2; }` and bump the constant.
 fn migrate_definitions(
     value: serde_json::Value,
     from_version: u32,
 ) -> Result<serde_json::Value, String> {
-    let _ = from_version;
+    let version = from_version;
+    debug_assert!(version <= DEFINITIONS_STORE_VERSION);
     Ok(value)
 }
 
 /// Persistent storage format for connections.json.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StorageFormat {
+    /// Schema version, written as a string like the desktop stores. Only ever
+    /// written: loading reads it from the raw JSON before the typed parse.
+    #[serde(default, skip_deserializing)]
+    version: String,
     #[serde(default)]
     connections: Vec<Connection>,
     #[serde(default)]
@@ -246,6 +269,9 @@ pub struct ConnectionStore {
     /// Connections and folders under a single lock (see [`Definitions`]).
     definitions: Mutex<Definitions>,
     file_path: PathBuf,
+    /// Set when the store file was written by a newer agent (#3920). The file
+    /// is then left intact and every mutation is refused with this error.
+    newer_on_disk: Option<NewerVersionError>,
     /// Read-only connections loaded from external files, tagged with their source path.
     external_snapshots: Mutex<Vec<ConnectionSnapshot>>,
 }
@@ -254,10 +280,22 @@ impl ConnectionStore {
     /// Create a new store, loading existing data from disk.
     /// Migrates from legacy `sessions.json` if `connections.json` doesn't exist.
     pub fn new(file_path: PathBuf) -> Self {
-        let definitions = Self::load_from_disk(&file_path);
+        let (definitions, newer_on_disk) = match Self::load_from_disk(&file_path) {
+            Ok(definitions) => (definitions, None),
+            Err(newer) => {
+                error!(
+                    "{} (at {}); the file is left untouched and the saved connections \
+                     are read-only until the agent is updated",
+                    newer,
+                    file_path.display()
+                );
+                (Definitions::default(), Some(newer))
+            }
+        };
         Self {
             definitions: Mutex::new(definitions),
             file_path,
+            newer_on_disk,
             external_snapshots: Mutex::new(Vec::new()),
         }
     }
@@ -268,6 +306,7 @@ impl ConnectionStore {
         Self {
             definitions: Mutex::new(Definitions::default()),
             file_path,
+            newer_on_disk: None,
             external_snapshots: Mutex::new(Vec::new()),
         }
     }
@@ -468,6 +507,12 @@ impl ConnectionStore {
     /// that still points at a Unix path such as `/bin/sh` (#3727).
     pub async fn ensure_default_shell(&self) {
         let mut defs = self.definitions.lock().await;
+        if let Err(newer) = self.ensure_writable() {
+            // The store looks empty only because a newer agent's file was not
+            // loaded; creating a default here would overwrite it (#3920).
+            warn!("Skipping default shell setup: {newer}");
+            return;
+        }
         if !defs.connections.is_empty() {
             if cfg!(windows) && repair_unix_default_shell(&mut defs, &detect_default_shell()) {
                 self.save_to_disk(&defs);
@@ -500,10 +545,13 @@ impl ConnectionStore {
     }
 
     /// Load from disk, with migration from legacy `sessions.json`.
-    fn load_from_disk(path: &PathBuf) -> Definitions {
+    ///
+    /// Errors — without touching the file — when it was written by a newer
+    /// agent (#3920).
+    fn load_from_disk(path: &PathBuf) -> Result<Definitions, NewerVersionError> {
         // Try loading the new format first
         if let Ok(contents) = std::fs::read_to_string(path) {
-            match serde_json::from_str::<StorageFormat>(&contents) {
+            match Self::parse_storage(&contents)? {
                 Ok(storage) => {
                     debug!(
                         "Loaded {} connections and {} folders from {}",
@@ -521,14 +569,14 @@ impl ConnectionStore {
                         .into_iter()
                         .map(|f| (f.id.clone(), f))
                         .collect();
-                    return Definitions {
+                    return Ok(Definitions {
                         connections,
                         folders,
-                    };
+                    });
                 }
                 Err(e) => {
                     warn!("Failed to parse connections from {}: {}", path.display(), e);
-                    return Definitions::default();
+                    return Ok(Definitions::default());
                 }
             }
         }
@@ -560,26 +608,63 @@ impl ConnectionStore {
                             (d.id, conn)
                         })
                         .collect();
-                    return Definitions {
+                    return Ok(Definitions {
                         connections,
                         folders: HashMap::new(),
-                    };
+                    });
                 }
             }
         }
 
         debug!("No connections file at {}", path.display());
-        Definitions::default()
+        Ok(Definitions::default())
     }
 
-    /// Refuse a mutation when the store file was written by a newer agent.
+    /// Parse the raw store: gate on its schema version, migrate an older file
+    /// forward, then deserialize.
+    ///
+    /// The outer error is a newer-version refusal; the inner one a genuinely
+    /// unreadable file.
+    fn parse_storage(raw: &str) -> Result<Result<StorageFormat, String>, NewerVersionError> {
+        let value: serde_json::Value = match serde_json::from_str(raw) {
+            Ok(value) => value,
+            Err(e) => return Ok(Err(e.to_string())),
+        };
+        let version = store_version::check_version(
+            &value,
+            DEFINITIONS_STORE_NAME,
+            DEFINITIONS_STORE_VERSION,
+        )?;
+        let value = if version < DEFINITIONS_STORE_VERSION {
+            match migrate_definitions(value, version) {
+                Ok(value) => value,
+                Err(e) => return Ok(Err(format!("migration from v{version} failed: {e}"))),
+            }
+        } else {
+            value
+        };
+        Ok(serde_json::from_value(value).map_err(|e| e.to_string()))
+    }
+
+    /// Refuse a mutation when the store file was written by a newer agent —
+    /// at load, or since (the file is re-read, so a newer agent writing it
+    /// while this one runs is caught too). Called under the definitions lock
+    /// **before** memory is touched, so a refused mutation changes nothing.
     fn ensure_writable(&self) -> Result<(), NewerVersionError> {
-        Ok(())
+        if let Some(newer) = &self.newer_on_disk {
+            return Err(newer.clone());
+        }
+        store_version::guard_not_newer(
+            &self.file_path,
+            DEFINITIONS_STORE_NAME,
+            DEFINITIONS_STORE_VERSION,
+        )
     }
 
     /// The refusal recorded when the store file was written by a newer agent.
+    #[cfg(test)]
     pub fn newer_on_disk(&self) -> Option<&NewerVersionError> {
-        None
+        self.newer_on_disk.as_ref()
     }
 
     /// Derive the legacy sessions.json path from the connections.json path.
@@ -590,7 +675,13 @@ impl ConnectionStore {
     }
 
     fn save_to_disk(&self, defs: &Definitions) {
+        // Last line of defence: never overwrite a newer agent's file (#3920).
+        if let Err(newer) = self.ensure_writable() {
+            error!("Not saving connections: {newer}");
+            return;
+        }
         let storage = StorageFormat {
+            version: DEFINITIONS_STORE_VERSION.to_string(),
             connections: defs.connections.values().cloned().collect(),
             folders: defs.folders.values().cloned().collect(),
         };
