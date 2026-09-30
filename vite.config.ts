@@ -14,15 +14,38 @@ const host = process.env.TAURI_DEV_HOST;
 // See docs/testing.md → "Parallel test isolation".
 const devPort = resolveDevPort();
 
+// Large, rarely-changing startup vendors split out of the entry chunk (#2883),
+// so an app-code change does not invalidate their cached bytes and the webview
+// can fetch them in parallel. Every group here is statically imported by the
+// entry, so Vite emits `<link rel="modulepreload">` for each chunk: no waterfall,
+// same startup bytes. Only add packages that are eager; a lazy-only package put
+// in an eager group would be pulled into startup.
+const VENDOR_CHUNKS: ReadonlyArray<readonly [string, RegExp]> = [
+  ["vendor-react", /\/node_modules\/(react|react-dom|scheduler)\//],
+  // `@xterm/addon-image` is excluded: it is lazily imported (inlineImages.ts)
+  // and must stay in its own on-demand chunk.
+  ["vendor-xterm", /\/node_modules\/@xterm\/(?!addon-image\/)/],
+  ["vendor-icons", /\/node_modules\/(lucide-react|@lucide\/lab)\//],
+  ["vendor-dnd", /\/node_modules\/@dnd-kit\//],
+  [
+    "vendor-radix",
+    /\/node_modules\/(@radix-ui|@floating-ui|react-remove-scroll|react-remove-scroll-bar|react-style-singleton|use-callback-ref|use-sidecar|aria-hidden)\//,
+  ],
+];
+
+function vendorChunk(id: string): string | undefined {
+  for (const [name, pattern] of VENDOR_CHUNKS) {
+    if (pattern.test(id)) return name;
+  }
+  return undefined;
+}
+
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
   // Istanbul instrumentation for the system-test harness's coverage (#3657):
   // an empty list unless TERMIHUB_FRONTEND_COVERAGE=1, so dev and release builds
   // are unchanged. It must precede react() so it sees the TypeScript source.
-  plugins: [
-    ...(await coveragePlugins(fileURLToPath(new URL(".", import.meta.url)))),
-    react(),
-  ],
+  plugins: [...(await coveragePlugins(fileURLToPath(new URL(".", import.meta.url)))), react()],
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
@@ -35,6 +58,11 @@ export default defineConfig(async () => ({
     // Monaco's 544-byte editor-worker stub was inlined this way). Other small
     // assets keep Vite's default 4 KiB inlining.
     assetsInlineLimit: (filePath: string) => (/\.[cm]?[jt]sx?$/.test(filePath) ? false : undefined),
+    rollupOptions: {
+      output: {
+        manualChunks: vendorChunk,
+      },
+    },
   },
 
   // Exclude Rust build artifacts from dependency scanning
