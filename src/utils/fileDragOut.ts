@@ -29,7 +29,7 @@ export const STAGED_DRAG_OUT_TTL_MS = 10 * 60 * 1000;
  * the byte cap keeps a drag-out from silently filling the disk — anything
  * bigger belongs in Download.
  */
-export const DRAG_OUT_LIMITS = {
+const DRAG_OUT_LIMITS = {
   maxEntries: 10_000,
   maxDepth: 32,
   maxBytes: 4 * 1024 * 1024 * 1024,

@@ -15,7 +15,6 @@ export type { ScheduleTargets } from "./generated/ScheduleTargets";
 export type { MissedRunPolicy } from "./generated/MissedRunPolicy";
 export type { ScheduleRunOutcome } from "./generated/ScheduleRunOutcome";
 export type { ScheduleRunResult } from "./generated/ScheduleRunResult";
-export type { Schedule } from "./generated/Schedule";
 export type { ScheduleView } from "./generated/ScheduleView";
 export type { SchedulerState } from "./generated/SchedulerState";
 export type { ScheduleInput } from "./generated/ScheduleInput";

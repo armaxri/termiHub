@@ -24,7 +24,7 @@ export function defaultDiagnosticsFileName(now: Date = new Date()): string {
 }
 
 /** The remote reports that are still included (not excluded by the user). */
-export function selectedAgentReports(
+function selectedAgentReports(
   agents: AgentCrashReports[] | null,
   excluded: ReadonlySet<string>
 ): AgentCrashReportRef[] {

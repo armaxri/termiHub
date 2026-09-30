@@ -30,7 +30,7 @@ export const RATE_TAU_MS = 3000;
 export const MIN_RATE_SAMPLE_MS = 200;
 
 /** Rates below this (bytes/sec) are reported as idle (`0`) to avoid a long tail. */
-export const IDLE_RATE_FLOOR = 1;
+const IDLE_RATE_FLOOR = 1;
 
 /** Estimator state carried between samples. */
 export interface RateEstimate {

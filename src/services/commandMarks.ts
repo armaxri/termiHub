@@ -149,10 +149,10 @@ export type CommandMarkTerminal = Pick<
 >;
 
 /** CSS class names used for decorations (styled in Terminal.css). */
-export const COMMAND_MARK_CLASS = "terminal-command-mark";
-export const COMMAND_MARK_SUCCESS_CLASS = "terminal-command-mark--success";
-export const COMMAND_MARK_FAILURE_CLASS = "terminal-command-mark--failure";
-export const PROMPT_FLASH_CLASS = "terminal-prompt-flash";
+const COMMAND_MARK_CLASS = "terminal-command-mark";
+const COMMAND_MARK_SUCCESS_CLASS = "terminal-command-mark--success";
+const COMMAND_MARK_FAILURE_CLASS = "terminal-command-mark--failure";
+const PROMPT_FLASH_CLASS = "terminal-prompt-flash";
 
 /** How long the jump-to-prompt highlight stays visible. */
 export const PROMPT_FLASH_MS = 800;

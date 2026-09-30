@@ -152,10 +152,10 @@ interface StepDetailEditorProps {
  * The full detail editor for a single step: its per-kind fields followed by the
  * shared "on failure" policy controls (PROD-045). `fieldId` scopes every input's
  * id/testid so a nested step (inside a `conditional`'s then/else list or a
- * loop body) never collides with its parent's ids. Exported so the conditional
- * and loop editors can render their sub-steps recursively.
+ * loop body) never collides with its parent's ids. The conditional and loop
+ * editors render their sub-steps recursively through it.
  */
-export function StepDetailEditor(props: StepDetailEditorProps) {
+function StepDetailEditor(props: StepDetailEditorProps) {
   return (
     <>
       <StepKindFields {...props} />

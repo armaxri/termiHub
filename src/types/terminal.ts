@@ -290,29 +290,11 @@ export type { TerminalOptions } from "./generated/TerminalOptions";
 // via ts-rs — do not hand-edit the shape here (audit DUP-030).
 export type { ExternalAgentFile } from "./generated/ExternalAgentFile";
 
-// How a shared remote agent binary is updated when a newer desktop deploys.
-// `"immediate"` (hard shutdown + redeploy) and `"coordinated"` (SI-5, notify
-// connected hosts) are honored today; `"deferred"` (SI-6) is not implemented, so
-// its control is hidden from the connection editor (WA-FE-002); the variant is
-// retained so existing configs that already persisted it still load. See #1354.
-// Generated from the Rust `UpdateStrategy` via ts-rs (audit DUP-030).
-export type { UpdateStrategy } from "./generated/UpdateStrategy";
-
 // SSH transport configuration for a remote agent (no session details).
 // Generated from the Rust `RemoteAgentConfig` (src-tauri/src/terminal/backend.rs)
 // via ts-rs (audit DUP-030). `allowSelfUpdate` (SI-8, hidden per WA-FE-002) and
 // `deferred`/`updateStrategy` are retained for forward-compat + tolerant loading.
 export type { RemoteAgentConfig } from "./generated/RemoteAgentConfig";
-
-// Key-value pair for Docker environment variables.
-// Generated from the Rust `EnvVar` (core/src/config/mod.rs) via ts-rs
-// (audit DUP-030 / MOCK-005).
-export type { EnvVar } from "./generated/EnvVar";
-
-// Host-to-container volume mount.
-// Generated from the Rust `VolumeMount` (core/src/config/mod.rs) via ts-rs
-// (audit DUP-030 / MOCK-005).
-export type { VolumeMount } from "./generated/VolumeMount";
 
 // Generic connection configuration for saved connections. The `type` field
 // identifies the connection type (e.g. "ssh", "local"), and `config` holds
@@ -342,42 +324,6 @@ export type { BroadcastScope };
 // Generated from the Rust `BroadcastGroup` (`src-tauri/src/connection/settings.rs`)
 // via ts-rs (#3802).
 export type { BroadcastGroup };
-
-/**
- * Broadcast-input state (#1955). When {@link BroadcastState.broadcastActive} is
- * set, typed input in the source terminal is mirrored to every connected target
- * session. The source tab is itself included in `broadcastTargetTabIds`, so the
- * fan-out loop treats it as just another target.
- */
-export interface BroadcastState {
-  /** Whether broadcast mode is currently active. */
-  broadcastActive: boolean;
-  /** The tab ID of the terminal where the user types (source of input). */
-  broadcastSourceTabId: string | null;
-  /** The scope used for the current broadcast session. */
-  broadcastScope: BroadcastScope;
-  /** Set of tab IDs that are broadcast targets (includes the source). */
-  broadcastTargetTabIds: Set<string>;
-  /** Last used scope, retained for the keyboard-shortcut toggle (#1958). */
-  lastBroadcastScope: BroadcastScope;
-}
-
-/**
- * Broadcast-input actions (#1955). Mutate {@link BroadcastState}; the input
- * fan-out itself lives at the `xterm.onData` seam in `Terminal.tsx`.
- */
-export interface BroadcastActions {
-  /** Enter broadcast mode with the given scope, source tab, and target tabs. */
-  startBroadcast: (scope: BroadcastScope, sourceTabId: string, targetTabIds: string[]) => void;
-  /** Leave broadcast mode and clear the source/target selection. */
-  stopBroadcast: () => void;
-  /** Add a tab to the broadcast target set (no-op when inactive). */
-  addBroadcastTarget: (tabId: string) => void;
-  /** Remove a tab from the broadcast target set. */
-  removeBroadcastTarget: (tabId: string) => void;
-  /** Whether the given tab is currently a broadcast target. */
-  isBroadcastTarget: (tabId: string) => boolean;
-}
 
 export interface TerminalTab {
   id: string;

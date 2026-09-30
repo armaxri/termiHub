@@ -22,14 +22,14 @@ import { THEME_FILE_SCHEMA } from "./themeIO";
 import { BASE_THEME_ORDER } from "./customThemes";
 
 /** Prefix used in `AppSettings.theme` (and as the theme id) for a plugin theme. */
-export const PLUGIN_THEME_PREFIX = "plugin:";
+const PLUGIN_THEME_PREFIX = "plugin:";
 
 /**
  * Display names of the built-in themes. A plugin theme whose name collides with
  * one of these is prefixed on registration — core themes always win the name
  * (concept "Edge Cases").
  */
-export const CORE_THEME_NAMES: ReadonlySet<string> = new Set(BASE_THEME_ORDER.map((t) => t.name));
+const CORE_THEME_NAMES: ReadonlySet<string> = new Set(BASE_THEME_ORDER.map((t) => t.name));
 
 /**
  * Build the namespaced id for a plugin theme: `plugin:<pluginId>:<themeId>`.

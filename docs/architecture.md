@@ -2719,8 +2719,8 @@ per-region **versioned diff channels** with multi-subscriber fan-out:
 - Regions are either **shared** (`"<domain>"`, e.g. `session-lifecycle`, `tunnels`, `connections`) or
   **client-scoped** (`"<domain>@<clientId>"`, e.g. `layout@client-7`); the `@client` suffix is the
   only structural difference. Infrastructure domains are shared so two windows see the same state.
-- The frontend caches `{ version, view }` per region (`src/store/projectionCache.ts`), driven by a
-  `ProjectionClient` (`src/services/transport/ProjectionClient.ts`) that applies ordered diffs, detects
+- The frontend caches `{ version, view }` per region in that domain's bridge (`src/store/*Bridge.ts`),
+  driven by a `ProjectionClient` (`src/services/transport/ProjectionClient.ts`) that applies ordered diffs, detects
   gaps (`baseVersion !== version`) and re-baselines via `resync`. An **optimistic overlay** (#2533)
   lets a dispatching client apply its own intent to its local view synchronously; the fold is
   version-gated and dropped once the authoritative diff for that version arrives, so there is no

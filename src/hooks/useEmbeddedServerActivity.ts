@@ -7,7 +7,7 @@ import type { AccessLogEntry, DetailedServerStats, ServerActivity } from "@/type
 import { errorMessage } from "@/utils/errorMessage";
 
 /** How often the access log is polled while the server is running. */
-export const ACTIVITY_POLL_INTERVAL_MS = 1500;
+const ACTIVITY_POLL_INTERVAL_MS = 1500;
 
 /** Client-side view of a server's access log, accumulated across polls. */
 export interface ActivityView {

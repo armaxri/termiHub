@@ -160,16 +160,6 @@ export type { RemoteDesktopStateEvent as RemoteDesktopStatePayload } from "./gen
  */
 export type { RemoteDesktopCertPromptEvent as RemoteDesktopCertPromptPayload } from "./generated/RemoteDesktopCertPromptEvent";
 
-/** Whether a state means the session is painting (or about to). */
-export function isLiveState(state: GraphicalSessionState): boolean {
-  return state === "active" || state === "resizing";
-}
-
-/** Whether a state is terminal (no further transitions). */
-export function isTerminalState(state: GraphicalSessionState): boolean {
-  return state === "closed" || state === "serverClosed" || state === "connectFailed";
-}
-
 /** Human-readable label for a scale mode (for the toolbar menu). */
 export const SCALE_MODE_LABELS: Record<ScaleMode, string> = {
   fit: "Fit to Tab",

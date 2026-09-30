@@ -136,7 +136,7 @@ function transport(): Transport {
  * de-duplicated across concurrent callers; a transport/subscribe failure is logged
  * and rethrown so the caller can log a bridge fallback.
  */
-export function ensureRestoreSubscribed(): Promise<ProjectionClient> {
+function ensureRestoreSubscribed(): Promise<ProjectionClient> {
   if (regionClient) return Promise.resolve(regionClient);
   if (!startPromise) {
     const client = new ProjectionClient(transport(), region);
@@ -222,8 +222,8 @@ export function __emitRestoreCohortViewForTest(view: RestoreCohortView, version:
 
 // ── Mutation: begin/settle intent dispatch (also seeds the render region) ──────
 
-/** Dispatch a `restore.*` intent, resolving with the ack (parity tests). */
-export function dispatchRestoreIntent(
+/** Dispatch a `restore.*` intent, resolving with the ack. */
+function dispatchRestoreIntent(
   kind: "restore.beginCohort" | "restore.settleTab",
   payload: Record<string, unknown>
 ): Promise<IntentAck> {
@@ -288,7 +288,7 @@ export function mirrorRestoreSettle(payload: {
 }
 
 /** Log a bridge failure so a dropped restore summary is visible in the LogViewer. */
-export function logRestoreBridgeFallback(kind: string, err: unknown): void {
+function logRestoreBridgeFallback(kind: string, err: unknown): void {
   const message = errorMessage(err);
   frontendLog("restore_cohort_bridge", `${kind} restore intent failed: ${message}`);
 }

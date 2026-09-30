@@ -1,6 +1,6 @@
 import React from "react";
 import { StatusDot } from "../ui/StatusDot";
-import type { StatusDotProps, StatusTone } from "../ui/StatusDot";
+import type { StatusTone } from "../ui/StatusDot";
 import "./SidebarListItem.css";
 
 /**
@@ -10,8 +10,6 @@ import "./SidebarListItem.css";
  * working.
  */
 export type SidebarStatusTone = StatusTone;
-/** @deprecated Alias of {@link StatusDotProps}. See {@link SidebarStatusTone}. */
-export type SidebarStatusDotProps = StatusDotProps;
 /** @deprecated Alias of {@link StatusDot}. See {@link SidebarStatusTone}. */
 export const SidebarStatusDot = StatusDot;
 

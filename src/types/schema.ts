@@ -11,8 +11,5 @@ export type { SettingsSchema } from "./generated/SettingsSchema";
 export type { SettingsGroup } from "./generated/SettingsGroup";
 export type { SettingsField } from "./generated/SettingsField";
 export type { Condition } from "./generated/Condition";
-export type { FilePathKind } from "./generated/FilePathKind";
-export type { SelectOption } from "./generated/SelectOption";
 export type { FieldType } from "./generated/FieldType";
-export type { NoticeSeverity } from "./generated/NoticeSeverity";
 export type { Capabilities } from "./generated/Capabilities";

@@ -12,4 +12,3 @@
  */
 export type { SshKeyboardInteractivePromptEvent as SshKeyboardInteractivePromptPayload } from "./generated/SshKeyboardInteractivePromptEvent";
 export type { SshKeyboardInteractivePromptClosedEvent as SshKeyboardInteractivePromptClosedPayload } from "./generated/SshKeyboardInteractivePromptClosedEvent";
-export type { SshKeyboardInteractivePromptItem } from "./generated/SshKeyboardInteractivePromptItem";

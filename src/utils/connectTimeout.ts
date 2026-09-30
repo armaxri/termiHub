@@ -32,7 +32,7 @@ export function connectTimeoutMs(kind: ConnectTimeoutKind): number {
 }
 
 /** Whole-second duration used in the user-facing message for a given kind. */
-export function connectTimeoutSeconds(kind: ConnectTimeoutKind): number {
+function connectTimeoutSeconds(kind: ConnectTimeoutKind): number {
   return Math.round(connectTimeoutMs(kind) / 1000);
 }
 

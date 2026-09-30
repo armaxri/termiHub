@@ -19,7 +19,7 @@ export function baseName(path: string): string {
 }
 
 /** Extract a human-readable message from an unknown transfer error. */
-export function transferErrorMessage(error: unknown): string {
+function transferErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
   return String(error);

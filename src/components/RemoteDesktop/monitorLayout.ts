@@ -17,7 +17,7 @@ import type { MonitorRect } from "@/types/remoteDesktop";
 export type MonitorMode = "single" | "all" | "custom";
 
 /** Most monitors a layout may carry (mirrors Rust `MAX_MONITORS`). */
-export const MAX_MONITORS = 16;
+const MAX_MONITORS = 16;
 
 /** Default count for the custom mode (mirrors Rust `DEFAULT_CUSTOM_MONITOR_COUNT`). */
 const DEFAULT_CUSTOM_COUNT = 2;

@@ -50,7 +50,7 @@ let sessionReconnectObserverWired = false;
  * Wired eagerly at store init (not lazily), so a drop folded into the region by
  * the backend is redriven even when no overlay/hook has subscribed yet.
  */
-export function wireSessionReconnectObserver(): void {
+function wireSessionReconnectObserver(): void {
   if (!sessionReconnectObserverWired) {
     sessionReconnectObserverWired = true;
     onSessionView((next, prev) => {
@@ -77,10 +77,9 @@ export function wireSessionReconnectObserver(): void {
  * Keep `activeWorkspaceName` in step with the backend's active workspace (#3517):
  * the `active-workspace-changed` broadcast (from any window) clears it when the
  * active workspace is deleted, follows a rename, and sets it when a workspace is
- * re-activated from the last session. Exported for tests, which may reset the
- * active-workspace listeners.
+ * re-activated from the last session.
  */
-export function syncActiveWorkspaceName(): () => void {
+function syncActiveWorkspaceName(): () => void {
   return subscribeActiveWorkspace(() => {
     const name = getActiveWorkspace()?.name ?? null;
     if (useAppStore.getState().activeWorkspaceName !== name) {

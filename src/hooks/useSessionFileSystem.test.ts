@@ -28,6 +28,19 @@ vi.mock("@/services/api", () => ({
   sftpListDir: vi.fn(),
   localListDir: vi.fn(() => Promise.resolve([])),
   localMkdir: vi.fn(() => Promise.resolve()),
+  // Default: a dropped path is a plain file. The folder-drop suite (#3966)
+  // overrides this for a folder.
+  localStat: vi.fn((path: string) =>
+    Promise.resolve({
+      name: path.split("/").pop() ?? path,
+      path,
+      isDirectory: false,
+      size: 1,
+      modified: "",
+      permissions: null,
+      writable: null,
+    })
+  ),
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
   sessionListFiles: vi.fn(() => Promise.resolve([])),
   sessionReadFile: vi.fn(() => Promise.resolve(new Uint8Array())),
@@ -1908,5 +1921,181 @@ describe("useSessionFileSystem — folder in a Download selection (#3944)", () =
     expect(vi.mocked(sessionDownload)).not.toHaveBeenCalled();
     expect(vi.mocked(sessionListFiles)).not.toHaveBeenCalled();
     expect(vi.mocked(toast.loading)).not.toHaveBeenCalled();
+  });
+});
+
+describe("useSessionFileSystem — dropping a local folder (#3966)", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+  const refreshSession = vi.fn(() => Promise.resolve());
+  const folder: FileEntry = {
+    name: "photos",
+    path: "/local/photos",
+    isDirectory: true,
+    size: 0,
+    modified: "",
+    permissions: null,
+    writable: null,
+  };
+  const child: FileEntry = {
+    name: "a.jpg",
+    path: "/local/photos/a.jpg",
+    isDirectory: false,
+    size: 3,
+    modified: "",
+    permissions: null,
+    writable: null,
+  };
+
+  beforeEach(async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+    const { localStat, localListDir } = await import("@/services/api");
+    vi.mocked(localStat).mockImplementation(async (path) =>
+      path === folder.path ? folder : { ...child, path, name: path.split("/").pop() ?? path }
+    );
+    vi.mocked(localListDir).mockImplementation(async (path) =>
+      path === folder.path ? [child] : []
+    );
+    vi.mocked(toast.loading).mockReturnValue("toast-1");
+    vi.mocked(sessionHasExecCapability).mockRejectedValue(new Error("not sftp-backed"));
+    vi.mocked(sessionSupportsRemoteCopy).mockResolvedValue(false);
+    vi.mocked(sessionUpload).mockImplementation(async (_s, _l, _r, onRegistered) => {
+      onRegistered?.("t-up");
+      return 3;
+    });
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  type SessionFs = ReturnType<typeof useSessionFileSystem>;
+
+  async function mountHook(queueCapable: boolean): Promise<SessionFs> {
+    vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(queueCapable);
+    useAppStore.setState({ sessionFileBrowserId: "sess-7", refreshSession });
+    seedFileBrowsers({
+      session: { path: "/remote/dir", entries: [], loading: false, error: null },
+    });
+    let api: SessionFs | undefined;
+    function Harness() {
+      api = useSessionFileSystem();
+      return null;
+    }
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    return api!;
+  }
+
+  it("queue-capable: uploads the folder tree into the current folder with seeded rows", async () => {
+    const api = await mountHook(true);
+    await act(async () => {
+      await api.uploadFileFromPath("/local/photos");
+    });
+
+    // Never a single-file upload of the folder path itself.
+    expect(vi.mocked(sessionUpload)).not.toHaveBeenCalledWith(
+      "sess-7",
+      "/local/photos",
+      expect.anything(),
+      expect.anything()
+    );
+    expect(vi.mocked(sessionMkdir)).toHaveBeenCalledWith("sess-7", "/remote/dir/photos");
+    expect(vi.mocked(sessionUpload)).toHaveBeenCalledWith(
+      "sess-7",
+      "/local/photos/a.jpg",
+      "/remote/dir/photos/a.jpg",
+      expect.any(Function)
+    );
+    expect(vi.mocked(dispatchTransferIntentBestEffort)).toHaveBeenCalledWith("transfer.seed", {
+      seed: {
+        id: "t-up",
+        sessionId: "sess-7",
+        direction: "upload",
+        name: "a.jpg",
+        path: "/remote/dir/photos/a.jpg",
+      },
+    });
+    expect(vi.mocked(toast.loading)).toHaveBeenCalledWith("Uploading photos…");
+    // The queued legs' event path owns the success toast.
+    expect(vi.mocked(toast.dismiss)).toHaveBeenCalledWith("toast-1");
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
+    expect(refreshSession).toHaveBeenCalled();
+  });
+
+  it("byte-based: writes every file of the folder remotely with its own success toast", async () => {
+    const api = await mountHook(false);
+    await act(async () => {
+      await api.uploadFileFromPath("/local/photos");
+    });
+    expect(vi.mocked(sessionWriteFile)).not.toHaveBeenCalledWith(
+      "sess-7",
+      "/remote/dir/photos",
+      expect.anything()
+    );
+    expect(vi.mocked(sessionMkdir)).toHaveBeenCalledWith("sess-7", "/remote/dir/photos");
+    expect(vi.mocked(sessionWriteFile)).toHaveBeenCalledWith(
+      "sess-7",
+      "/remote/dir/photos/a.jpg",
+      expect.any(Uint8Array)
+    );
+    expect(vi.mocked(sessionUpload)).not.toHaveBeenCalled();
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Uploaded photos", { id: "toast-1" });
+    expect(refreshSession).toHaveBeenCalled();
+  });
+
+  it("a failure inside the folder names the folder in the error toast", async () => {
+    const { localListDir } = await import("@/services/api");
+    vi.mocked(localListDir).mockRejectedValueOnce(new Error("permission denied"));
+    const api = await mountHook(false);
+    await act(async () => {
+      await api.uploadFileFromPath("/local/photos");
+    });
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+      'Upload "photos" failed: permission denied',
+      { id: "toast-1" }
+    );
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionWriteFile)).not.toHaveBeenCalled();
+  });
+
+  it("a dropped file still takes the single-file upload", async () => {
+    const api = await mountHook(true);
+    await act(async () => {
+      await api.uploadFileFromPath("/local/data.csv");
+    });
+    expect(vi.mocked(sessionUpload)).toHaveBeenCalledWith(
+      "sess-7",
+      "/local/data.csv",
+      "/remote/dir/data.csv",
+      expect.any(Function)
+    );
+    expect(vi.mocked(sessionMkdir)).not.toHaveBeenCalled();
+  });
+
+  it("a failed stat falls back to the single-file upload (the backend guard refuses a folder)", async () => {
+    const { localStat } = await import("@/services/api");
+    vi.mocked(localStat).mockRejectedValueOnce(new Error("stat failed"));
+    const api = await mountHook(true);
+    await act(async () => {
+      await api.uploadFileFromPath("/local/data.csv");
+    });
+    expect(vi.mocked(sessionUpload)).toHaveBeenCalledWith(
+      "sess-7",
+      "/local/data.csv",
+      "/remote/dir/data.csv",
+      expect.any(Function)
+    );
   });
 });

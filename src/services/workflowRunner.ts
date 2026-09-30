@@ -52,6 +52,9 @@ export const MAX_CONDITIONAL_DEPTH = 10;
  * this deep fails its run rather than recursing further, bounding an authoring
  * loop (a loop that nests itself) so it can never blow the stack. Shares the
  * same value as the conditional bound — both cap the depth of nested step lists.
+ *
+ * @alias Deliberately a separate name for the same value (knip duplicate-export
+ * check): the two bounds may diverge later.
  */
 export const MAX_LOOP_DEPTH = MAX_CONDITIONAL_DEPTH;
 
@@ -71,7 +74,7 @@ export const MAX_LOOP_ITERATIONS = 1000;
  * dynamic operand a structured while-loop needs, since a run's declared
  * parameters are otherwise fixed for the whole run.
  */
-export const LOOP_ITERATION_PARAM = "iteration";
+const LOOP_ITERATION_PARAM = "iteration";
 
 /**
  * Maximum number of retries a single step's {@link WorkflowStepRetry} policy may
@@ -118,7 +121,7 @@ export const WAIT_FOR_OUTPUT_DEFAULT_TIMEOUT_MS = 30_000;
 
 /** Hard cap (ms) a `wait-for-output` timeout is clamped to, so the step can
  * never wait longer than this even if a larger value is authored. */
-export const WAIT_FOR_OUTPUT_MAX_TIMEOUT_MS = 600_000;
+const WAIT_FOR_OUTPUT_MAX_TIMEOUT_MS = 600_000;
 
 /** A resolved `wait-for-output` matcher: the pattern plus whether it is a regex. */
 export interface WaitForOutputMatcher {

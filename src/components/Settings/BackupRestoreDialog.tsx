@@ -29,7 +29,7 @@ interface BackupRestoreDialogProps {
 }
 
 /** Whether a previewed section can be restored at all. */
-export function isRestorable(section: BackupSectionPreview): boolean {
+function isRestorable(section: BackupSectionPreview): boolean {
   return section.status === "ok" || section.status === "migrated";
 }
 

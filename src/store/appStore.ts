@@ -57,16 +57,13 @@ import {
   LayoutPersistenceSlice,
 } from "./slices/layoutPersistenceSlice";
 
-export type { MacroPlaybackState, PlayMacroOptions } from "./slices/macrosSlice";
+export type { MacroPlaybackState } from "./slices/macrosSlice";
 export type {
   WorkflowRunState,
   WorkflowRunOutputLine,
   WorkflowRunOutputStatus,
   WorkflowRunOutputState,
-  RunWorkflowOptions,
   LocalProcessAuthDecision,
-  LocalProcessPromptState,
-  WorkflowParamPromptState,
 } from "./slices/workflowsSlice";
 import { createWorkspacesSlice, WorkspacesSlice } from "./slices/workspacesSlice";
 
@@ -80,60 +77,24 @@ import { installStoreSubscriptions } from "./storeSubscriptions";
 // the slices import them without pulling in this root store; they are
 // re-exported here so every existing `@/store/appStore` import keeps working.
 export {
-  omitKey,
-  collectWindowTabs,
   collectLiveTabs,
-  createTab,
   extractTabContent,
-  setTabContentEntry,
   tabContentFromGroups,
-  patchTabContentEntry,
-  type LayoutAwareState,
-  type LayoutReducerResult,
   getComposedLayout,
-  withComposedLayout,
-  currentLayoutSnapshot,
-  revertCoupledField,
-  nonLayoutPartial,
-  postLayoutSnapshot,
-  removeTabFromLeaf,
-  setSplitSizesInTree,
-  generateGroupId,
   getActiveTab,
 } from "./layoutHelpers";
 export {
-  resolveEditorSessionKey,
   deriveEditorHostLabel,
   resolveBroadcastTargetTabIds,
   filterConnectedTerminalTabIds,
   monitorKeyForTab,
 } from "./tabQueries";
 export {
-  currentWindowLabel,
-  captureAllWindows,
-  restoreWindowedLayout,
-  bestEffortOwnership,
-  buildTransferAwareHandoff,
-  removeTransferSessionsFromWindow,
-  windowOwnsTransferSession,
-  pruneForeignTransfers,
-} from "./windowHelpers";
-export {
-  LAST_SESSION_SAVE_DEBOUNCE_MS,
-  beginRestoreGuard,
-  probeRestorePromptReachability,
-  teardownAllSessions,
-  collectRestoreCohort,
-} from "./restoreHelpers";
-export {
   ABORTED_CONNECT_MESSAGE,
-  isResilientReconnectTab,
   isResilientReconnectTabId,
   isBackendDrivenAgentReconnectTabId,
   onReconnectCommandForTabId,
-  runOnReconnectCommand,
 } from "./reconnectHelpers";
-export { wireSessionReconnectObserver, syncActiveWorkspaceName } from "./storeSubscriptions";
 
 export type SidebarView =
   | "connections"

@@ -46,7 +46,7 @@ import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
 import type { FileEntry } from "@/types/connection";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
-import { startQueuedUpload, uploadLocalFile } from "@/services/paneTransfer";
+import { uploadLocalFile } from "@/services/paneTransfer";
 import { seedTransferQueueRow } from "./transferFeedback";
 
 /**
@@ -62,26 +62,11 @@ function linkToFolderPaste(pasteId: string | undefined, transferId: string): voi
 }
 
 /**
- * Upload a local file over a session's transfer queue, seeding its queue row.
- * `pasteId` links the transfer to the recorded folder paste it belongs to.
- */
-export function startSessionUpload(
-  sessionId: string,
-  localPath: string,
-  remotePath: string,
-  pasteId?: string
-): Promise<number> {
-  return startQueuedUpload(sessionId, localPath, remotePath, (transferId) =>
-    linkToFolderPaste(pasteId, transferId)
-  );
-}
-
-/**
  * Stream a file between two sessions (SFTP or Docker at either end) as ONE
  * tracked transfer, seeding a single queue row keyed on the destination
  * (PROD-0013, #3586).
  */
-export function startSessionRemoteCopy(
+function startSessionRemoteCopy(
   srcSession: string,
   srcPath: string,
   dstSession: string,
@@ -186,7 +171,7 @@ export async function pasteFileLeg(
  * Whether a folder paste completes in ONE backend operation (a same-session
  * rename, or a same-session server-side copy on SFTP) rather than file by file.
  */
-export function isSingleOperationFolderPaste(t: PasteTransport): boolean {
+function isSingleOperationFolderPaste(t: PasteTransport): boolean {
   if (t.continueExisting || t.sourceMode !== "session") return false;
   const sameSession = (t.srcSession ?? t.destSession) === t.destSession;
   return sameSession && (t.operation === "cut" || t.destSftp);
@@ -259,7 +244,7 @@ export async function pasteFolderTree(
 }
 
 /** Describe a session endpoint from the tab that owns it (for the manifest). */
-export function sessionEndpoint(sessionId: string, path: string): FolderPasteEndpoint {
+function sessionEndpoint(sessionId: string, path: string): FolderPasteEndpoint {
   const tab = getAllTabsAcrossGroupTrees().find((t) => t.sessionId === sessionId);
   return {
     sessionId,

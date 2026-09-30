@@ -7,9 +7,6 @@ export type { CredentialStoreStatusInfo };
 /** Credential storage backend mode. */
 export type CredentialStorageMode = CredentialStoreStatusInfo["mode"];
 
-/** Runtime status of the credential store. */
-export type CredentialStoreStatus = CredentialStoreStatusInfo["status"];
-
 /**
  * Structured outcome of the credential migration performed by a store switch,
  * computed by the backend from real per-credential results (#2839):
@@ -48,7 +45,6 @@ export type { VaultImportResult } from "./generated/VaultImportResult";
 
 // OS user verification + biometric unlock DTOs (#3433, PROD-064), generated
 // from `credential::os_auth` / `credential::biometric_unlock` via ts-rs.
-export type { OsAuthCapability } from "./generated/OsAuthCapability";
 export type { OsAuthInfo } from "./generated/OsAuthInfo";
 export type { BiometricUnlockError } from "./generated/BiometricUnlockError";
 export type { BiometricUnlockStatus } from "./generated/BiometricUnlockStatus";

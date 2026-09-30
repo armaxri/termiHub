@@ -36,7 +36,7 @@ interface NetworkToolHistoryState {
 }
 
 /** Whether recording is enabled (defaults to on when the setting is unset). */
-export function isNetworkToolHistoryEnabled(): boolean {
+function isNetworkToolHistoryEnabled(): boolean {
   return currentSettingsView().networkToolHistoryEnabled !== false;
 }
 
