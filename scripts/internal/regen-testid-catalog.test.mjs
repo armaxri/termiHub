@@ -6,7 +6,7 @@ import {
   shouldRegenerate,
   resolvePython,
   PYTHON_CANDIDATES,
-  TESTID_ATTRS,
+  TESTID_TRIGGER,
 } from "./regen-testid-catalog.mjs";
 
 const WITH_ID = 'return <div data-testid="foo" />;';
@@ -43,39 +43,42 @@ describe("shouldRegenerate", () => {
     expect(shouldRegenerate("src/components/Foo/FooItem.tsx", FORWARDED_ONLY)).toBe(true);
   });
 
-  it("triggers for each forwarding prop on its own", () => {
-    for (const attr of TESTID_ATTRS) {
-      expect(shouldRegenerate("src/components/Foo.tsx", `<X ${attr}="foo" />`)).toBe(true);
+  it("triggers for every sink form the generator scans (#3044)", () => {
+    const forms = [
+      '<X testId="foo" />',
+      "<X toggleTestId={`row-${i}`} />",
+      '<X footerTestId="foo-footer" />',
+      '<X rowTestIdPrefix="dns-result" />',
+      'const cfg = { "data-testid": "foo-bar" };',
+      'const cfg = { modalTestId: "foo-modal" };',
+      'el.setAttribute("data-testid", "terminal-root");',
+      "const myTestId = `foo-${id}`;",
+    ];
+    for (const form of forms) {
+      expect(shouldRegenerate("src/components/Foo.tsx", form), form).toBe(true);
     }
-  });
-
-  it("does not trigger on a testid-like identifier that is not one of the props", () => {
-    // `myTestId` / `testIdPrefix` merely embed a prop name; matching them would
-    // regenerate the catalog on edits that cannot change it.
-    expect(shouldRegenerate("src/components/Foo.tsx", "const myTestId = 1;")).toBe(false);
-    expect(shouldRegenerate("src/components/Foo.tsx", "const testIdPrefix = 'x';")).toBe(false);
   });
 });
 
-describe("TESTID_ATTRS", () => {
-  it("matches the Python generator's _TESTID_ATTRS exactly", () => {
+describe("TESTID_TRIGGER", () => {
+  it("is the Python generator's _TRIGGER pattern exactly", () => {
     // The hook only decides *when* to run the Python generator — the catalog has
-    // a single source of truth in build-testid-catalog.py. But this trigger list
-    // duplicates the generator's attribute knowledge, and a prop added there
-    // (as #1431's forwarded props were) would silently stop refreshing the
-    // catalog after edits that only touch that prop. Pin the two together so the
-    // gate cannot drift from the generator again (#1526).
+    // a single source of truth in build-testid-catalog.py. This trigger mirrors
+    // the generator's own gate (scan_testids skips text that does not match it),
+    // so pinning the two keeps the hook from missing any sink the generator
+    // catalogs. A hand-kept attribute list drifted twice (#1431, #3044); #1526.
     const script = readFileSync(
       resolve(dirname(fileURLToPath(import.meta.url)), "..", "build-testid-catalog.py"),
       "utf8"
     );
-    const match = script.match(/^_TESTID_ATTRS\s*=\s*\(([^)]*)\)/m);
-    expect(match, "could not find _TESTID_ATTRS in build-testid-catalog.py").not.toBeNull();
-    const pythonAttrs = [...match[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-    expect(pythonAttrs.length).toBeGreaterThan(0);
-    expect([...TESTID_ATTRS].sort()).toEqual(pythonAttrs.sort());
+    const match = script.match(/^_TRIGGER\s*=\s*re\.compile\(\s*r"([^"]+)"\s*\)/m);
+    expect(match, "could not find _TRIGGER in build-testid-catalog.py").not.toBeNull();
+    expect(TESTID_TRIGGER.source).toBe(match[1]);
+    expect(TESTID_TRIGGER.flags).toBe("");
   });
+});
 
+describe("shouldRegenerate path filtering", () => {
   it("does not trigger for files outside src/", () => {
     expect(shouldRegenerate("scripts/internal/foo.ts", WITH_ID)).toBe(false);
     expect(shouldRegenerate("tests/system/thing.tsx", WITH_ID)).toBe(false);

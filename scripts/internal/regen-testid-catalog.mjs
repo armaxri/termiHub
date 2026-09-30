@@ -14,10 +14,12 @@
 // a missed refresh no longer reddens CI — it just leaves a stale reference for
 // whoever reads the catalog next.
 //
-// What this file *does* duplicate is the generator's notion of which files and
-// attributes carry a testid (SKIP_* and TESTID_ATTRS below). That copy can
-// drift from the scanner — it did when #1431 added the forwarding props — so
-// TESTID_ATTRS is pinned to the Python `_TESTID_ATTRS` by a unit test.
+// What this file *does* duplicate is the generator's notion of which files may
+// carry a testid (SKIP_* and TESTID_TRIGGER below). The attribute list drifted
+// twice — when #1431 added the forwarding props and when #3044 generalised the
+// scanner to every `*TestId` sink — so the trigger is now the generator's own
+// coarse `_TRIGGER` pattern, which every sink form contains and which the
+// scanner itself gates on. A unit test pins TESTID_TRIGGER to it (#1526).
 //
 // The logic lives here (rather than inline in bash) so the two fragile parts —
 // the trigger predicate and locating a usable Python interpreter across
@@ -37,51 +39,25 @@ const SKIP_SUFFIXES = [".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx", ".d.ts"
 const SKIP_DIR_PARTS = new Set(["__tests__", "test", "__mocks__", "testbridge"]);
 
 /**
- * Attributes/props whose presence means the file may contribute a testid.
+ * Pattern whose presence means the file may contribute a testid.
  *
- * Mirrors `_TESTID_ATTRS` in `scripts/build-testid-catalog.py`: the literal DOM
- * attribute plus the shared sidebar shell's forwarding props, which consumers
- * use instead of a raw `data-testid` (#1431). Gating on `data-testid` alone
- * skipped those consumers entirely. A unit test pins this list to the Python
- * one so the two cannot drift apart again (#1526).
+ * Mirrors `_TRIGGER` in `scripts/build-testid-catalog.py`. Every sink form the
+ * generator scans contains it: the `data-testid` attribute (also as an object
+ * key or via `setAttribute("data-testid", …)`), any `*TestId` prop/variable/key
+ * (#1431, #3044), and `*TestIdPrefix` row-family stems. The generator skips any
+ * text that does not match it, so a sink it catalogs can never be missed here.
+ * A unit test pins this pattern to the Python one so the two cannot drift (#1526).
  */
-export const TESTID_ATTRS = ["data-testid", "testId", "nameTestId", "badgeTestId"];
-
-/** A JS identifier character — used for the word boundary before an attribute name. */
-const IDENT = /[A-Za-z0-9_$]/;
+export const TESTID_TRIGGER = /[Tt]est[Ii]d/;
 
 /**
- * Whether `contents` mentions any test-id attribute/prop from {@link TESTID_ATTRS}
- * as a standalone name.
- *
- * The name must be delimited by non-identifier characters on both sides. This
- * mirrors the Python scanner's boundary rules: it requires a non-identifier
- * char before the name (so `testId` does not match inside `nameTestId`) and an
- * `=` after it (so it does not match inside `testIdPrefix`). Checking for any
- * non-identifier char rather than `=` specifically keeps the gate deliberately
- * loose — `testId ={x}` and `testId\n  ={x}` still trigger — while still
- * rejecting the identifier-substring false positives.
+ * Whether `contents` may carry a test id, per {@link TESTID_TRIGGER}.
  *
  * @param {string} contents - The file's text contents.
  * @returns {boolean}
  */
 export function containsTestId(contents) {
-  return TESTID_ATTRS.some((attr) => {
-    let from = 0;
-    for (;;) {
-      const at = contents.indexOf(attr, from);
-      if (at < 0) {
-        return false;
-      }
-      const after = at + attr.length;
-      const boundedBefore = at === 0 || !IDENT.test(contents[at - 1]);
-      const boundedAfter = after >= contents.length || !IDENT.test(contents[after]);
-      if (boundedBefore && boundedAfter) {
-        return true;
-      }
-      from = after;
-    }
-  });
+  return TESTID_TRIGGER.test(contents);
 }
 
 /** Interpreter candidates tried in order; the first that probes as real Python 3 wins. */
@@ -101,10 +77,10 @@ export const PYTHON_CANDIDATES = [
  * catalog regeneration.
  *
  * True only for an app-source `.ts`/`.tsx` file under `src/` that is not a
- * test/spec/decl/mock and mentions one of {@link TESTID_ATTRS}.
+ * test/spec/decl/mock and matches {@link TESTID_TRIGGER}.
  *
- * Deliberately coarser than the Python scanner: it checks for the attribute
- * name alone, not a full `name=<value>` match. A false positive costs one
+ * Deliberately coarser than the Python scanner: it checks for the trigger
+ * pattern alone, not a full sink `name=<value>` match. A false positive costs one
  * redundant (idempotent) generator run; a false negative leaves a stale
  * catalog, so the gate errs toward regenerating.
  *

@@ -1438,6 +1438,7 @@ fn register_connections_create(module: &mut RpcModule<Mutex<HandlerState>>) -> a
             folder_id: p.folder_id,
             terminal_options: p.terminal_options,
             icon: p.icon,
+            extra: serde_json::Map::new(),
         };
 
         let snapshot = connection_store
@@ -1542,6 +1543,7 @@ fn register_connections_folders_create(
                 name: p.name,
                 parent_id: p.parent_id,
                 is_expanded: false,
+                extra: serde_json::Map::new(),
             };
 
             let snapshot = connection_store

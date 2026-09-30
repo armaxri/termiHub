@@ -45,7 +45,26 @@ fn main() {
     println!("cargo:rustc-env=TERMIHUB_BUILD_BRANCH={branch}");
     println!("cargo:rerun-if-env-changed=TERMIHUB_BUILD_BRANCH");
 
-    tauri_build::build()
+    // Generate the Tauri context here rather than with the
+    // `tauri::generate_context!()` proc macro (#3916). The codegen writes
+    // content-hashed files (icons, Info.plist, the embedded frontend) into
+    // OUT_DIR. From inside the macro those writes happen while rustc compiles
+    // termihub_lib, so they postdate the compile's dep-info stamp and the next
+    // cargo invocation saw the crate as stale and rebuilt it once more. Here they
+    // are written before rustc starts. `lib.rs` includes the result through
+    // `tauri::tauri_build_context!()`.
+    //
+    // Same inputs as the macro: `tauri.conf.json` (plus the platform config
+    // and any `TAURI_CONFIG` merge), `dev` from the `tauri` crate's
+    // `custom-protocol` feature (`DEP_TAURI_DEV`, the same switch the macro's
+    // `cfg!(not(feature = "custom-protocol"))` follows), and the same
+    // `tauri-codegen` function, with compression on (see Cargo.toml).
+    let attributes = tauri_build::Attributes::new().codegen(tauri_build::CodegenContext::new());
+    if let Err(error) = tauri_build::try_build(attributes) {
+        // Mirror `tauri_build::build()`: print the error and fail the build.
+        println!("{error:#}");
+        std::process::exit(1);
+    }
 }
 
 /// The git files whose change means `GIT_HASH` may have changed: `HEAD`, plus
