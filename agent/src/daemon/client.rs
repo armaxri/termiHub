@@ -865,11 +865,7 @@ async fn connect_and_start_reader(
     } else {
         INTENT_TAKEOVER
     };
-    protocol::write_frame_async(&mut writer, MSG_ATTACH_INTENT, &[intent]).await?;
-    // #3140: tell the daemon this worker answers heartbeat probes, so it may
-    // reap us if we wedge. A pre-#3140 daemon ignores the unknown frame (its
-    // attach-intent read has already consumed the frame before it).
-    protocol::write_frame_async(&mut writer, MSG_AGENT_CAPABILITIES, &[CAP_HEARTBEAT]).await?;
+    send_attach_preamble(&mut reader, &mut writer, intent).await?;
     // The daemon's optional-feature flags; stays 0 for a pre-#3210 daemon.
     let mut daemon_flags = 0u8;
 
@@ -982,6 +978,71 @@ async fn connect_and_start_reader(
     });
 
     Ok((ReaderTask { handle, stop }, alive))
+}
+
+/// Longest [`send_attach_preamble`] looks for the daemon's answer after its
+/// preamble write failed. A daemon that refused and hung up left its answer
+/// buffered, so it reads at once; this only bounds a peer that is still open.
+const ANSWER_AFTER_FAILED_PREAMBLE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Send the attach preamble — the attach intent (AGT-015) followed by our
+/// capabilities (#3140) — as **one** write.
+///
+/// A daemon that refuses a recovery connect answers as soon as it has read the
+/// intent, then waits only a bounded while (`REFUSAL_LINGER` in
+/// [`crate::daemon::process`], #3890) for us to hang up. Written as separate frames, a worker stalled
+/// between them under load could send its capabilities after the daemon had
+/// already closed, and fail with a broken pipe instead of seeing the refusal
+/// (#3917). One write leaves nothing to send after the daemon has read the
+/// intent.
+///
+/// Should the write still fail — the daemon hung up before we wrote anything —
+/// whatever the daemon sent before hanging up is the answer: a refusal it
+/// already wrote surfaces as [`OwnedByLivePeer`], anything else as the write
+/// error.
+async fn send_attach_preamble(
+    reader: &mut BoxedReader,
+    writer: &mut BoxedWriter,
+    intent: u8,
+) -> Result<(), anyhow::Error> {
+    use tokio::io::AsyncWriteExt;
+
+    // A pre-AGT-015 daemon ignores the intent frame; a pre-#3140 daemon ignores
+    // the capabilities frame (its attach-intent read consumed the one before).
+    let mut preamble = protocol::encode_frame(MSG_ATTACH_INTENT, &[intent]);
+    preamble.extend(protocol::encode_frame(
+        MSG_AGENT_CAPABILITIES,
+        &[CAP_HEARTBEAT],
+    ));
+    let written = async {
+        writer.write_all(&preamble).await?;
+        writer.flush().await
+    }
+    .await;
+    match written {
+        Ok(()) => Ok(()),
+        Err(e) if daemon_refused_before_hangup(reader).await => {
+            debug!("Preamble write failed ({e}) after the daemon refused the connect");
+            Err(OwnedByLivePeer.into())
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Whether the daemon wrote an AGT-015 refusal before the connection failed,
+/// read from what is still buffered on `reader` (#3917).
+async fn daemon_refused_before_hangup(reader: &mut BoxedReader) -> bool {
+    let scan = async {
+        while let Ok(Some(frame)) = protocol::read_frame_async(reader).await {
+            if frame.msg_type == MSG_ERROR && frame.payload == ERR_OWNED_BY_LIVE_PEER {
+                return true;
+            }
+        }
+        false
+    };
+    tokio::time::timeout(ANSWER_AFTER_FAILED_PREAMBLE_TIMEOUT, scan)
+        .await
+        .unwrap_or(false)
 }
 
 /// Background task that reads frames from the daemon and sends notifications.
@@ -2032,5 +2093,105 @@ mod tests {
             wire(&rx.try_recv().unwrap()),
             legacy_wire(CONNECTION_EXIT, legacy)
         );
+    }
+
+    /// Records every `poll_write` buffer so a test can see how many writes a
+    /// sequence of frames took.
+    #[derive(Default)]
+    struct RecordingWriter {
+        writes: Arc<std::sync::Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl tokio::io::AsyncWrite for RecordingWriter {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buf: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            self.writes.lock().unwrap().push(buf.to_vec());
+            std::task::Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(
+            self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(
+            self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    /// #3917: the attach intent and the capabilities frame go out in ONE write,
+    /// so the daemon can never read the intent, refuse and hang up while the
+    /// capabilities frame is still unsent.
+    #[tokio::test]
+    async fn attach_preamble_is_a_single_write() {
+        let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut writer: BoxedWriter = Box::new(RecordingWriter {
+            writes: writes.clone(),
+        });
+        let (_peer, client) = tokio::io::duplex(64);
+        let mut reader: BoxedReader = Box::new(client);
+
+        send_attach_preamble(&mut reader, &mut writer, INTENT_RECOVERY)
+            .await
+            .expect("preamble sent");
+
+        let mut expected = protocol::encode_frame(MSG_ATTACH_INTENT, &[INTENT_RECOVERY]);
+        expected.extend(protocol::encode_frame(
+            MSG_AGENT_CAPABILITIES,
+            &[CAP_HEARTBEAT],
+        ));
+        assert_eq!(*writes.lock().unwrap(), vec![expected]);
+    }
+
+    /// #3917: a daemon that already wrote its AGT-015 refusal and then hung up
+    /// (its bounded linger elapsed under load) makes our preamble write fail
+    /// with a broken pipe. The refusal it sent is still readable and is the
+    /// answer: report it as `OwnedByLivePeer`, not as an I/O error.
+    #[tokio::test]
+    async fn refusal_before_hangup_is_owned_by_live_peer_despite_broken_pipe() {
+        let (client, mut daemon) = tokio::io::duplex(64 * 1024);
+        protocol::write_frame_async(&mut daemon, MSG_ERROR, ERR_OWNED_BY_LIVE_PEER)
+            .await
+            .unwrap();
+        drop(daemon);
+        let (client_reader, client_writer) = tokio::io::split(client);
+        let mut reader: BoxedReader = Box::new(client_reader);
+        let mut writer: BoxedWriter = Box::new(client_writer);
+
+        let err = send_attach_preamble(&mut reader, &mut writer, INTENT_RECOVERY)
+            .await
+            .expect_err("the daemon refused");
+        assert!(
+            err.downcast_ref::<OwnedByLivePeer>().is_some(),
+            "expected OwnedByLivePeer, got: {err:#}"
+        );
+    }
+
+    /// A daemon that hung up without answering still fails the connect with
+    /// the write error (e.g. it died): only an actual refusal is a refusal.
+    #[tokio::test]
+    async fn hangup_without_refusal_keeps_the_write_error() {
+        let (client, daemon) = tokio::io::duplex(64 * 1024);
+        drop(daemon);
+        let (client_reader, client_writer) = tokio::io::split(client);
+        let mut reader: BoxedReader = Box::new(client_reader);
+        let mut writer: BoxedWriter = Box::new(client_writer);
+
+        let err = send_attach_preamble(&mut reader, &mut writer, INTENT_RECOVERY)
+            .await
+            .expect_err("the daemon is gone");
+        assert!(err.downcast_ref::<OwnedByLivePeer>().is_none());
+        let io = err
+            .downcast_ref::<std::io::Error>()
+            .expect("the original write error");
+        assert_eq!(io.kind(), std::io::ErrorKind::BrokenPipe);
     }
 }

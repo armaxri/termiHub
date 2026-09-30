@@ -18,46 +18,15 @@
 
 use std::io::Read;
 use std::net::TcpListener;
-use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
+
+mod plugin_fixture;
+use plugin_fixture::{fixture_library, Variant};
 
 use termihub_core::connection::{ConnectionType, SettingsSchema};
 use termihub_core::plugin::{
     load_backend_library, ConnectionPolicy, LoadedLibrary, PermissionSet, PluginPermission,
 };
-
-/// Path to the fixture plugin's `Cargo.toml` (the shared echo `cdylib`).
-fn fixture_manifest() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join("test-plugin")
-        .join("Cargo.toml")
-}
-
-/// The platform-specific file name cargo produces for the fixture `cdylib`.
-fn artifact_name() -> String {
-    format!(
-        "{}termihub_test_plugin{}",
-        std::env::consts::DLL_PREFIX,
-        std::env::consts::DLL_SUFFIX
-    )
-}
-
-/// Build the fixture into `target_dir`, returning the freshly-built library path.
-fn build_fixture(target_dir: &Path) -> PathBuf {
-    let status = Command::new(env!("CARGO"))
-        .arg("build")
-        .arg("--manifest-path")
-        .arg(fixture_manifest())
-        .arg("--target-dir")
-        .arg(target_dir)
-        .status()
-        .expect("failed to spawn cargo to build the fixture plugin");
-    assert!(status.success(), "building the fixture plugin failed");
-    target_dir.join("debug").join(artifact_name())
-}
 
 /// Create a plugin session scoped to `permissions`, drive it with `settings`, and
 /// return its first emitted output line (the probe result).
@@ -101,7 +70,7 @@ async fn probe_outcome_with_policy(
 #[tokio::test]
 async fn network_capability_is_enforced_through_the_bridge() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let lib = load_backend_library(&build_fixture(&tmp.path().join("target")), None)
+    let lib = load_backend_library(&fixture_library(Variant::Default, tmp.path()), None)
         .expect("fixture should load");
 
     // A real listener so the *granted* probe can genuinely connect.
@@ -149,7 +118,7 @@ async fn connection_limit_is_enforced_through_the_bridge() {
     // mediated connections at 2 can open only 2 of 3 attempted at once; the third
     // is refused by the host (#2028).
     let tmp = tempfile::TempDir::new().unwrap();
-    let lib = load_backend_library(&build_fixture(&tmp.path().join("target")), None)
+    let lib = load_backend_library(&fixture_library(Variant::Default, tmp.path()), None)
         .expect("fixture should load");
 
     // Accept (and hold) every connection the host actually opens, so the ceiling —
@@ -200,7 +169,7 @@ async fn connection_limit_is_enforced_through_the_bridge() {
 #[tokio::test]
 async fn filesystem_capability_is_enforced_through_the_bridge() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let lib = load_backend_library(&build_fixture(&tmp.path().join("target")), None)
+    let lib = load_backend_library(&fixture_library(Variant::Default, tmp.path()), None)
         .expect("fixture should load");
 
     // A scoped root with an in-scope file, and a sibling secret outside it.
@@ -249,7 +218,7 @@ async fn filesystem_capability_is_enforced_through_the_bridge() {
 #[tokio::test]
 async fn filesystem_write_is_enforced_through_the_bridge() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let lib = load_backend_library(&build_fixture(&tmp.path().join("target")), None)
+    let lib = load_backend_library(&fixture_library(Variant::Default, tmp.path()), None)
         .expect("fixture should load");
 
     let root = tmp.path().join("scoped");
@@ -326,7 +295,7 @@ async fn filesystem_write_is_enforced_through_the_bridge() {
 #[tokio::test]
 async fn filesystem_stat_and_list_are_enforced_through_the_bridge() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let lib = load_backend_library(&build_fixture(&tmp.path().join("target")), None)
+    let lib = load_backend_library(&fixture_library(Variant::Default, tmp.path()), None)
         .expect("fixture should load");
 
     let root = tmp.path().join("scoped");
