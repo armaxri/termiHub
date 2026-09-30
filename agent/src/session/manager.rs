@@ -41,6 +41,7 @@ use crate::daemon::client::{
     OwnedByLivePeer, ProbeOutcome, EVICTED_REASON_HELD_BY_PEER,
 };
 use crate::daemon::transport::{endpoint_alive, remove_session_files, session_endpoint};
+use crate::session::orphan_sweep::{self, OrphanSweepConfig, OrphanSweepReport};
 use crate::state::persistence::{AgentState, PendingUpdate, PersistedSession};
 use crate::update::{
     cleanup_stale_update_backup, confine_to_staging, prune_applied_pending_update,
@@ -50,6 +51,26 @@ use crate::update::{
 
 /// Maximum number of concurrent sessions the agent supports.
 pub const MAX_SESSIONS: u32 = 20;
+
+/// Whether an orphan-sweep candidate's daemon is provably dead (#2807).
+///
+/// No daemon socket means nothing can be listening. Otherwise the daemon is
+/// probed with **recovery intent** only ([`DaemonClient::probe_holder`]): a
+/// held daemon refuses it (`HeldByPeer`) rather than evicting its holder, a
+/// free one is left running unattached, and only a failed connect counts as
+/// dead.
+async fn orphan_is_dead(candidate: &orphan_sweep::OrphanCandidate) -> bool {
+    let Some(socket) = &candidate.socket else {
+        return true;
+    };
+    match DaemonClient::probe_holder(&candidate.id, &socket.to_string_lossy()).await {
+        Ok(_) => false,
+        Err(e) => {
+            debug!("Orphan session {} is not answering: {e}", candidate.id);
+            true
+        }
+    }
+}
 
 // ── SessionManagerApi trait ────────────────────────────────────────
 
@@ -783,6 +804,11 @@ pub struct SessionManager {
     /// attached desktop (#3375). The process-wide hub in production; a private
     /// one in unit tests.
     ki_hub: Arc<KiPromptHub>,
+    /// Where the one-time orphan-file sweep looks (#2807). The per-user socket
+    /// dir in production; `None` (sweep disabled) for test-built managers, so a
+    /// test never scans the shared dir or probes a sibling test's socket unless
+    /// it injects a private dir via [`SessionManager::with_orphan_sweep`].
+    orphan_sweep: Option<OrphanSweepConfig>,
     /// Weak self-reference, set once the manager is wrapped in its owning `Arc`
     /// via [`SessionManager::into_arc`].
     ///
@@ -806,6 +832,14 @@ impl SessionManager {
             Arc::new(SystemUpdateApplier),
         )
         .with_ki_prompt_hub(KiPromptHub::global())
+        .with_orphan_sweep(orphan_sweep::default_config())
+    }
+
+    /// Scope the one-time orphan-file sweep (#2807) to `config`, or disable it
+    /// with `None`. See [`sweep_orphan_session_files`](Self::sweep_orphan_session_files).
+    pub fn with_orphan_sweep(mut self, config: Option<OrphanSweepConfig>) -> Self {
+        self.orphan_sweep = config;
+        self
     }
 
     /// Route daemon sessions' SSH keyboard-interactive prompts through `hub`
@@ -900,6 +934,7 @@ impl SessionManager {
             persistent_buffer_size: Arc::new(AtomicUsize::new(DEFAULT_PERSISTENT_BUFFER_SIZE)),
             agent_forward,
             ki_hub: KiPromptHub::new(),
+            orphan_sweep: None,
             self_ref: OnceLock::new(),
         }
     }
@@ -1969,6 +2004,81 @@ impl SessionManager {
         }
 
         unattached
+    }
+
+    /// One-time sweep of **pre-existing** orphan session files (#2807, AGT-019
+    /// follow-up).
+    ///
+    /// [`recover_sessions`](Self::recover_sessions) reclaims a dead session's
+    /// files when it drops the session's `state.json` entry, but files whose
+    /// entry was lost too (AGT-017) have nothing for recovery to iterate. This
+    /// scans the sweep dir for `session-<id>` files whose id is in neither the
+    /// shared `state.json` (read fresh), this worker's held or recovered
+    /// sessions, nor an in-flight create, and whose files are all older than the
+    /// configured minimum age, then classifies each one — **never disturbing a
+    /// live session**:
+    ///
+    /// - no daemon socket → nothing can be listening: dead, files removed;
+    /// - a recovery-intent probe ([`DaemonClient::probe_holder`]) that answers
+    ///   (free, or `HeldByPeer` — the daemon refuses a recovery newcomer while a
+    ///   worker holds it, so the holder is never evicted) → live, kept;
+    /// - a probe that fails to connect → dead, files removed.
+    ///
+    /// Never a bare connect. A no-op when no sweep dir is configured (every
+    /// test-built manager, and windows). Probing a dead socket takes up to the
+    /// short recovery connect timeout, so startup runs this in the background
+    /// rather than ahead of the desktop's `initialize` handshake.
+    pub async fn sweep_orphan_session_files(&self) -> OrphanSweepReport {
+        let mut report = OrphanSweepReport::default();
+        let Some(OrphanSweepConfig { dir, min_age }) = self.orphan_sweep.clone() else {
+            return report;
+        };
+
+        let exclude = self.orphan_sweep_exclusions().await;
+        let candidates = {
+            match tokio::task::spawn_blocking(move || {
+                orphan_sweep::scan(&dir, &exclude, min_age, std::time::SystemTime::now())
+            })
+            .await
+            {
+                Ok(candidates) => candidates,
+                Err(_) => return report,
+            }
+        };
+
+        for candidate in candidates {
+            // A create that reserved this id after the scan began owns it.
+            if self.pending_creates.lock().await.contains(&candidate.id) {
+                continue;
+            }
+            if orphan_is_dead(&candidate).await {
+                orphan_sweep::remove(&candidate);
+                info!(
+                    "Reclaimed orphan files of dead session {} (#2807)",
+                    candidate.id
+                );
+                report.removed.push(candidate.id);
+            } else {
+                info!(
+                    "Orphan session {} has a live daemon; keeping its files (#2807)",
+                    candidate.id
+                );
+                report.kept_live.push(candidate.id);
+            }
+        }
+        report
+    }
+
+    /// Ids the orphan sweep (#2807) must never touch: every session in the
+    /// shared `state.json` (read fresh — recovery owns those), plus this worker's
+    /// held and recovered-unattached sessions.
+    async fn orphan_sweep_exclusions(&self) -> HashSet<String> {
+        let mut exclude: HashSet<String> =
+            self.fresh_persisted_sessions().await.into_keys().collect();
+        exclude.extend(self.state.lock().await.sessions.keys().cloned());
+        exclude.extend(self.sessions.lock().await.keys().cloned());
+        exclude.extend(self.unattached.lock().await.iter().cloned());
+        exclude
     }
 
     /// Return the number of sessions with status `Running`.
@@ -5097,4 +5207,8 @@ mod tests {
 
     /// Resolving a held session's file browser (#3242).
     mod files_tests;
+
+    /// One-time sweep of pre-existing orphan session files (#2807).
+    #[cfg(unix)]
+    mod orphan_sweep_tests;
 }
