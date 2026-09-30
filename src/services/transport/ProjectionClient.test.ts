@@ -186,6 +186,91 @@ describe("ProjectionClient", () => {
   });
 });
 
+// ── Catch-up barrier (#2831) ───────────────────────────────────────────────────
+
+describe("ProjectionClient · catch-up barrier (#2831)", () => {
+  let transport: FakeTransport;
+  let client: ProjectionClient;
+  let states: ProjectionCacheState[];
+
+  beforeEach(async () => {
+    transport = new FakeTransport(tunnelsView());
+    client = new ProjectionClient(transport, "tunnels");
+    states = [];
+    client.onChange((s) => states.push(clone(s)));
+    await client.start();
+  });
+
+  it("adopts the backend's current view when its diff has not arrived yet", async () => {
+    // The backend published v1 but the frame is still in flight (not delivered).
+    transport.dropNext = 1;
+    const next = clone(tunnelsView());
+    next.tunnels[0].status = "stopped";
+    transport.publish(next);
+    expect(client.state.version).toBe(0);
+
+    await client.catchUp();
+
+    expect(transport.resyncHaves).toEqual([0]);
+    expect(client.state.version).toBe(1);
+    expect(client.state.view).toEqual(next);
+  });
+
+  it("is a cheap no-op round-trip when the cache is already current", async () => {
+    await client.catchUp();
+    expect(transport.resyncHaves).toEqual([0]);
+    expect(client.state.version).toBe(0);
+    expect(states).toHaveLength(1); // nothing re-emitted
+  });
+
+  it("ignores a late diff the adopted snapshot already covers, without a resync", async () => {
+    transport.dropNext = 1;
+    const next = clone(tunnelsView());
+    next.tunnels[0].status = "stopped";
+    transport.publish(next);
+    await client.catchUp();
+    const emitted = states.length;
+
+    // The in-flight v0→v1 frame now arrives after the v1 snapshot was adopted.
+    transport.emit({
+      region: "tunnels",
+      kind: "diff",
+      baseVersion: 0,
+      version: 1,
+      ops: [{ op: "replace", path: "/tunnels/0/status", value: "stopped" }],
+    });
+    await Promise.resolve();
+
+    expect(transport.resyncHaves).toEqual([0]); // only the catch-up itself
+    expect(client.state.version).toBe(1);
+    expect(client.state.view).toEqual(next);
+    expect(states).toHaveLength(emitted);
+  });
+
+  it("still catches up while a gap resync is already in flight", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const original = transport.resync.bind(transport);
+    let calls = 0;
+    transport.resync = async (region, have) => {
+      calls += 1;
+      if (calls === 1) await gate; // the gap resync hangs
+      return original(region, have);
+    };
+    // Force a gap resync that hangs.
+    transport.emit({ region: "tunnels", kind: "diff", baseVersion: 5, version: 6, ops: [] });
+    transport.dropNext = 1;
+    const next = clone(tunnelsView());
+    next.tunnels[1].status = "connected";
+    transport.publish(next);
+
+    await client.catchUp();
+
+    expect(client.state.view).toEqual(next);
+    release();
+  });
+});
+
 // ── Subscribe-race frame buffering (CONC-012) ──────────────────────────────────
 
 /**
