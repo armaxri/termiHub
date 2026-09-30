@@ -40,6 +40,11 @@
 //! only for SSH with a prompt-capable desktop. The worker turns a reported kind
 //! into a [`ClassifiedConnectFailure`], which `connection.create` relays to the
 //! desktop in its error `data`.
+//!
+//! A failure with no typed reason is reported too, carrying only its message
+//! (#3436), so the desktop sees why the connect failed — e.g. an OTP-insisting
+//! server with no prompt available for an older desktop — rather than just
+//! that the daemon exited.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -176,9 +181,10 @@ impl KiFailureKind {
     }
 }
 
-/// The daemon's failure report: a prompt outcome, or a classified connect
-/// failure with its human message (#3751). Every member is optional so either
-/// shape parses.
+/// The daemon's failure report: a prompt outcome, a classified connect failure
+/// with its human message (#3751), or — for a failure with no typed reason —
+/// just the human message (#3436). Every member is optional so any shape
+/// parses.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelayFailure {
     /// A keyboard-interactive outcome (#3375).
@@ -193,33 +199,40 @@ pub struct RelayFailure {
 }
 
 impl RelayFailure {
-    /// The report for `error`, or `None` when the error carries no typed
-    /// reason the desktop needs (it then sees today's generic failure).
-    pub fn from_session_error(error: &SessionError) -> Option<Self> {
+    /// The report for `error`. An untyped failure still carries its message,
+    /// so the desktop learns why the connect failed (e.g. a server that
+    /// insists on a one-time code no prompt can collect) instead of only that
+    /// the daemon exited — the same text an in-process connect reports.
+    pub fn from_session_error(error: &SessionError) -> Self {
         if let Some(kind) = KiFailureKind::from_session_error(error) {
-            return Some(Self {
+            return Self {
                 kind: Some(kind),
                 ..Self::default()
-            });
+            };
         }
-        let connect_failure = relayed_connect_failure_kind(error)?;
-        Some(Self {
+        Self {
             kind: None,
-            connect_failure: Some(connect_failure),
+            connect_failure: relayed_connect_failure_kind(error),
             message: Some(error.to_string()),
-        })
+        }
     }
 
-    /// The typed create error this report stands for, if any.
+    /// The create error this report stands for, if any: typed for a prompt
+    /// outcome or a classified failure, else an untyped error with the
+    /// daemon's message.
     pub fn into_error(self) -> Option<anyhow::Error> {
         if let Some(kind) = self.kind {
             return Some(anyhow::Error::new(KiConnectFailure(kind)));
         }
-        let kind = self.connect_failure?;
-        Some(anyhow::Error::new(ClassifiedConnectFailure {
-            kind,
-            message: self.message.unwrap_or_else(|| kind.code().to_string()),
-        }))
+        match (self.connect_failure, self.message) {
+            (Some(kind), message) => Some(anyhow::Error::new(ClassifiedConnectFailure {
+                kind,
+                message: message.unwrap_or_else(|| kind.code().to_string()),
+            })),
+            // Worded like the in-process connect path's untyped failure.
+            (None, Some(message)) => Some(anyhow::anyhow!("Connection failed: {message}")),
+            (None, None) => None,
+        }
     }
 }
 
@@ -508,14 +521,12 @@ pub fn connect_report_endpoint_from_env(ki_prompt_endpoint: Option<&str>) -> Opt
         .or_else(|| ki_prompt_endpoint.map(str::to_string))
 }
 
-/// Best-effort: tell the worker why the connect failed, when the reason is one
-/// the desktop must see typed — a prompt outcome (#3375) or a classified
-/// connect failure (#3751). Waits (bounded) for the worker's ack so the report
-/// lands before the daemon exits.
+/// Best-effort: tell the worker why the connect failed — typed for a prompt
+/// outcome (#3375) or a classified connect failure (#3751), else just the
+/// message (#3436). Waits (bounded) for the worker's ack so the report lands
+/// before the daemon exits.
 pub async fn report_connect_failure(endpoint: &str, error: &SessionError) {
-    let Some(failure) = RelayFailure::from_session_error(error) else {
-        return;
-    };
+    let failure = RelayFailure::from_session_error(error);
     let report = async {
         let (mut reader, mut writer) = connect_to_worker(endpoint).await?;
         let payload = serde_json::to_vec(&failure).map_err(std::io::Error::other)?;

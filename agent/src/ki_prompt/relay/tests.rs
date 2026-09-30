@@ -197,22 +197,43 @@ fn classified_failures() -> Vec<SessionError> {
 #[test]
 fn daemon_classifies_each_connect_failure_kind() {
     for error in classified_failures() {
-        let report = RelayFailure::from_session_error(&error).expect("typed report");
+        let report = RelayFailure::from_session_error(&error);
         assert_eq!(report.kind, None);
         assert_eq!(report.connect_failure, error.connect_failure_kind());
         assert_eq!(report.message.as_deref(), Some(error.to_string().as_str()));
     }
-    // Prompt outcomes keep their own member; untyped failures send nothing.
+    // Prompt outcomes keep their own member; untyped failures send only
+    // their message (#3436).
     assert_eq!(
         RelayFailure::from_session_error(&SessionError::AuthCancelled),
-        Some(RelayFailure {
+        RelayFailure {
             kind: Some(KiFailureKind::AuthCancelled),
             ..RelayFailure::default()
-        })
+        }
     );
     assert_eq!(
         RelayFailure::from_session_error(&SessionError::SpawnFailed("x".into())),
-        None
+        RelayFailure {
+            message: Some("Spawn failed: x".into()),
+            ..RelayFailure::default()
+        }
+    );
+}
+
+/// An untyped failure reaches the worker as an untyped error that keeps the
+/// daemon's message, worded like the in-process connect path (#3436).
+#[tokio::test]
+async fn untyped_failures_reach_the_worker_with_their_message() {
+    let (_hub, _rx, relay) = relay().await;
+    let error = SessionError::SpawnFailed("no prompt is available here".into());
+    report_connect_failure(relay.endpoint(), &error).await;
+    assert_eq!(relay.failure(), None, "not a prompt outcome");
+    let err = relay.failure_error().expect("failure recorded");
+    assert!(err.downcast_ref::<ClassifiedConnectFailure>().is_none());
+    assert!(err.downcast_ref::<KiConnectFailure>().is_none());
+    assert_eq!(
+        err.to_string(),
+        "Connection failed: Spawn failed: no prompt is available here"
     );
 }
 
@@ -273,7 +294,7 @@ fn daemon_relays_a_rejected_credential_as_auth_failed() {
         relayed_connect_failure_kind(&SessionError::AuthFailed),
         Some(K::AuthFailed)
     );
-    let report = RelayFailure::from_session_error(&SessionError::AuthFailed).expect("typed");
+    let report = RelayFailure::from_session_error(&SessionError::AuthFailed);
     assert_eq!(report.kind, None);
     assert_eq!(report.connect_failure, Some(K::AuthFailed));
     assert_eq!(report.message.as_deref(), Some("Authentication failed"));

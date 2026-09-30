@@ -3714,7 +3714,10 @@ sequenceDiagram
   endpoint (`session-<id>-ki.sock` / `\\.\pipe\termihub-ki-prompt-<id>`),
   exports it to the daemon, and forwards each round to the desktop. The daemon
   reports a cancel or rejected second factor back over it, so
-  `connection.create` fails with the typed `-32024` / `-32025`.
+  `connection.create` fails with the typed `-32024` / `-32025`. Any other
+  connect failure is reported with its message (#3436), so an older desktop's
+  create fails with the "no prompt is available here" error rather than a bare
+  "daemon exited" one.
 - **Errors.** Cancel → `-32024` (the desktop closes quietly, like a cancelled
   direct prompt); a wrong one-time code after an accepted password → `-32025`
   (the saved password is kept, #3376); a plain credential rejection stays the
