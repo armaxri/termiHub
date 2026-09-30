@@ -45,7 +45,7 @@ export function keychainExportReason(info: OsAuthInfo | null): string | null {
 }
 
 /** The note telling the user an OS-keychain export asks the OS to verify them. */
-export function keychainExportNote(info: OsAuthInfo): string {
+function keychainExportNote(info: OsAuthInfo): string {
   return `For your protection, termiHub asks you to confirm with ${info.exportReauth.methodLabel} each time you export.`;
 }
 

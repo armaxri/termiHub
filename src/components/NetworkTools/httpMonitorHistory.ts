@@ -28,7 +28,7 @@ export function mergeChecks(
 }
 
 /** A monitor's checks as a table (one row per check, ISO timestamps). */
-export function httpMonitorChecksTable(checks: HttpCheckResult[]): ResultTable {
+function httpMonitorChecksTable(checks: HttpCheckResult[]): ResultTable {
   return {
     columns: ["timestamp", "status_code", "latency_ms", "ok", "error"],
     rows: checks.map((c) => [
