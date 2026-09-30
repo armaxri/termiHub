@@ -416,10 +416,13 @@ impl ConnectionType for PluginConnectionType {
         // permissions and connection policy, so any network/filesystem access it
         // performs through the bridge is enforced by the host at runtime — including
         // the per-session connection ceiling and connect timeout (concept §13,
-        // #2018, #2028).
+        // #2018, #2028). Every status the bridge returns is downgraded for the ABI
+        // the plugin was built against, so an older-minor plugin is never handed a
+        // status variant it cannot decode (#3373).
         let bridge = super::capabilities::build_host_bridge_with_policy(
             self.permissions.clone(),
             self.connection_policy,
+            self.library.info().abi_version,
         );
 
         // ABI 1.1 host context (PLG-014) — built only for a plugin that reads it.
