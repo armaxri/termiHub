@@ -389,3 +389,40 @@ tests:
       - "The canvas takes keyboard input normally again after one click"
     verification: manual
     tags: [os-native, focus]
+
+  # --- Folded in from the per-feature walkthroughs in docs/testing.md (#3695) ---
+
+  - id: MT-NIN-30
+    release_gate: true
+    manual_reason: "native WebView2/RDP paste event"
+    name: "Windows right-click pastes once"
+    pr: 2595
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Copy echo-once-2595 to the clipboard."
+      - "In a terminal, right-click once with no selection."
+      - "Try Ctrl+V and the context-menu Paste. Optionally repeat over RDP."
+    expected:
+      - "Each paste inserts the text exactly once."
+      - "Right-click with a selection copies instead of pasting."
+    verification: manual
+    tags: [os-native]
+
+  - id: MT-NIN-31
+    release_gate: true
+    manual_reason: "OS keyboard modifier state cannot be toggled by the harness"
+    name: "Real Caps Lock key toggles the password warning"
+    pr: 1360
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Turn Caps Lock on and type in the connect-time password prompt."
+      - "Press Caps Lock again while the field is focused."
+    expected:
+      - "An amber 'Caps Lock is on' warning appears under the field."
+      - "The warning disappears when Caps Lock turns off."
+    verification: manual
+    tags: [os-native]

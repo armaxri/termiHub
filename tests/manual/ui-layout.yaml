@@ -35,3 +35,116 @@ tests:
       - "Left border blends naturally against the sidebar edge"
     verification: manual
     tags: [visual]
+
+  # --- Folded in from the per-feature walkthroughs in docs/testing.md (#3695) ---
+
+  - id: MT-UI-40
+    release_gate: true
+    manual_reason: "colour/contrast look and first-paint flash are visual judgements"
+    name: "Light/dark look sweep: palette, toasts, badges, banners, Transfer Queue"
+    pr: "UI-001"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Launch with the Dark theme and watch the first paint"
+      - "Show a success toast (save a connection); hover and Tab to its close X"
+      - "Connect a remote agent (version badge), open a root-owned remote file (Read-only banner)"
+      - "Start a large SFTP download so the Transfer Queue shows active/paused/done/failed rows"
+      - "Switch Settings > Appearance between Light and Dark and re-check each surface"
+    expected:
+      - "No white or grey flash on first paint; Dark is deep blue-charcoal with bright-blue accents"
+      - "Toast close X sits top-right with visible hover and focus ring"
+      - "Agent version chip/badge, Read-only badge + banner and queue state colours are legible"
+      - "Every surface stays legible and on-theme in both Light and Dark"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-41
+    release_gate: true
+    manual_reason: "native scrollbar paint (esp. Windows WebView2) is a visual judgement"
+    name: "Scrollbar thumb visible at rest in every theme"
+    pr: 3144
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open the sidebar with many entries, Settings, and a terminal with scrollback"
+      - "Hover directly over a scrollbar thumb, then move away"
+      - "Repeat in Dark, Light and Solarized"
+    expected:
+      - "Thumb is visible without hovering"
+      - "Thumb brightens on hover and returns after"
+      - "Thumb reads well on every theme; no layout shift"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-42
+    release_gate: true
+    manual_reason: "WKWebView GPU repaint"
+    name: "Zoomed terminal repaints without scrolling"
+    pr: 1823
+    platforms: [macos]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a local terminal and run seq 1 200."
+      - "Zoom the tab (Cmd+Shift+Enter), then un-zoom. Repeat a few times."
+      - "Drag a split-view splitter."
+    expected:
+      - "Content shows at once at the new size, with no scroll needed."
+      - "The split terminal still reflows and repaints."
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-43
+    release_gate: true
+    manual_reason: "visual paint of gutter decorations"
+    name: "OSC 133 gutter bars and jump highlight look right"
+    pr: 3415
+    platforms: [macos]
+    prerequisites:
+      - app: true
+    instructions:
+      - "In a local zsh tab run true, then false."
+      - "Run seq 1 200 and press Cmd+Up."
+    expected:
+      - "A green bar sits by true and a red bar by false, with no overlap."
+      - "The seq prompt row is briefly highlighted."
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-44
+    release_gate: true
+    manual_reason: "canvas-rendered pixels"
+    name: "Inline SIXEL/iTerm2 images draw correctly"
+    pr: 3442
+    platforms: [macos]
+    prerequisites:
+      - app: true
+    instructions:
+      - "In a local shell run img2sixel on a PNG, then imgcat on a PNG."
+      - "Scroll the image out of view and back."
+      - "Repeat with the DOM renderer."
+    expected:
+      - "Both pictures draw inline, followed by the prompt."
+      - "The image scrolls with the text on WebGL and DOM renderers."
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-45
+    release_gate: true
+    manual_reason: "WKWebView mis-paint on first layout"
+    name: "Sidebar paints fully on cold launch"
+    pr: 1828
+    platforms: [macos]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Enable experimental features and save one remote agent."
+      - "Quit and cold-launch the app a few times, once with a narrow window."
+    expected:
+      - "Headers, filter box and all rows are laid out correctly on first paint."
+      - "No resize is needed to fix the layout."
+    verification: manual
+    tags: [visual]
