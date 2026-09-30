@@ -34,6 +34,12 @@ pub(crate) mod wsl_init_script;
 #[cfg(any(all(feature = "wsl", windows), test))]
 pub(crate) mod wsl_exec;
 
+// Answers ConPTY's opening cursor-position query (portable-pty 0.9 sets
+// PSUEDOCONSOLE_INHERIT_CURSOR; #3974). Wired into the Windows PTY readers;
+// compiled on every platform under `test` so the logic is exercised everywhere.
+#[cfg(any(all(windows, any(feature = "local-shell", feature = "wsl")), test))]
+pub(crate) mod conpty_cursor;
+
 #[cfg(feature = "ftp")]
 pub mod ftp;
 

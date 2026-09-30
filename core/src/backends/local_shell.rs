@@ -139,6 +139,20 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
             .try_clone_reader()
             .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
 
+        // Windows: portable-pty 0.9 creates the ConPTY with
+        // PSUEDOCONSOLE_INHERIT_CURSOR, so conhost withholds all output until
+        // its opening cursor-position query is answered. Answer it at the
+        // reader seam, sharing the writer for the reply (#3974).
+        #[cfg(windows)]
+        let (writer, reader) = {
+            use super::conpty_cursor::{CursorQueryAnswerer, SharedPtyWriter, SharedWriter};
+            let shared: SharedPtyWriter = Arc::new(Mutex::new(writer));
+            (
+                SharedWriter(shared.clone()),
+                CursorQueryAnswerer::new(reader, shared),
+            )
+        };
+
         // Master is stored behind an `Option` so `close_pty` can drop it,
         // releasing the pseudoterminal (a best-effort attempt to unblock the
         // reader; on Windows ConPTY this is not guaranteed — see note #4).

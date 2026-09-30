@@ -1126,10 +1126,20 @@ impl ConnectionType for Wsl {
         // Spawn reader thread: bridges sync PTY reads to async tokio channel.
         // Also tees a copy of each chunk to the setup task until the setup task
         // drops its receiver (signalled by blocking_send returning Err).
-        let mut reader = pty_pair
+        let reader = pty_pair
             .master
             .try_clone_reader()
             .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
+
+        // Wrap the writer in an Arc so ConnectedState, the setup task and the
+        // ConPTY cursor-query answerer can share it.
+        let writer_arc: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(writer));
+        let setup_writer = writer_arc.clone();
+
+        // portable-pty 0.9 creates the ConPTY with PSUEDOCONSOLE_INHERIT_CURSOR,
+        // so conhost withholds all output until its opening cursor-position
+        // query is answered. Answer it at the reader seam (#3974).
+        let mut reader = super::conpty_cursor::CursorQueryAnswerer::new(reader, writer_arc.clone());
 
         // Setup tap: the setup task subscribes here to watch for the shell-ready
         // OSC 7 signal and the stty echo-off sentinel without stealing bytes from
@@ -1184,11 +1194,6 @@ impl ConnectionType for Wsl {
             }
             alive_clone.store(false, Ordering::SeqCst);
         });
-
-        // Wrap the writer in an Arc so both ConnectedState and the setup task
-        // can share it.
-        let writer_arc: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(writer));
-        let setup_writer = writer_arc.clone();
 
         self.state = Some(ConnectedState {
             master: Arc::new(Mutex::new(pty_pair.master)),
