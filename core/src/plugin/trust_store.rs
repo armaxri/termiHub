@@ -93,6 +93,18 @@ struct TrustStoreDoc {
 /// ceremony (the private half must never be committed) and signing the bundled
 /// example plugins. Tracked as a follow-up; until then, trust is established
 /// entirely through TOFU pinning, which is fully functional.
+///
+/// # Current posture: TOFU, no immutable anchor (#2796)
+///
+/// The plugin host re-checks at **load** that a signed plugin's key is in this
+/// store and that its backend still matches the digest recorded at install.
+/// With this list empty, every trusted key is a user pin in `trust-store.json`,
+/// an app-data file. That stops a swapped-and-re-signed library whose signer is
+/// not pinned, and it stops a key revoked since install. It does **not** stop an
+/// attacker who can write the app-data directory itself: they could also pin
+/// their own key and rewrite `plugin-state.json`. Only a compiled-in key here
+/// gives a root that a local filesystem attacker cannot forge. That key needs
+/// the maintainer's public key.
 const BUNDLED_PUBLISHERS: &[BundledKey] = &[];
 
 /// A compile-time bundled key entry (kept minimal so the seed list is a plain

@@ -56,11 +56,15 @@ use crate::connection::{plugin_type_id, ConnectionFactory, ConnectionTypeRegistr
 use super::capabilities::ConnectionPolicy;
 use super::connection::{PluginConnectionType, SessionHostContext};
 use super::host_context::{prepare_plugin_data_dir, PluginDataDirError};
+use super::library_pin::PinnedLibrary;
 use super::log_rate_limit::PluginLogLimiter;
 use super::manager::InstalledPlugin;
 use super::manifest::TerminalBackendExtension;
 use super::native_trust::NativeTrustStore;
+use super::plugin_state::{self, PluginStateRecord};
 use super::security::{PermissionError, PermissionSet, RecoveryAction, RestartTracker};
+use super::signer_change::PackageSigner;
+use super::trust_store::TrustStore;
 
 /// Everything that can go wrong while loading a plugin's backend library.
 #[derive(Debug, thiserror::Error)]
@@ -109,6 +113,41 @@ pub enum HostError {
         expected: String,
         /// The digest actually computed from the on-disk file.
         actual: String,
+    },
+
+    /// The backend library changed while it was being loaded: after the load,
+    /// the pinned handle no longer hashes to the verified digest, or (on
+    /// path-loading platforms) the path no longer names the hashed file. The
+    /// library is unloaded and refused (#2796).
+    #[error("backend library `{path}` changed while it was being loaded: {detail}")]
+    LibraryChangedDuringLoad {
+        /// The library path.
+        path: PathBuf,
+        /// What changed.
+        detail: String,
+    },
+
+    /// The plugin's co-located signature is valid, but its signing key is not
+    /// trusted **at load** — it was revoked since install, or it is not the key
+    /// the plugin was installed with (a re-signed tree) (#2796). Refused.
+    #[error("native plugin `{id}` is signed by a publisher key that is not trusted: {key_id}")]
+    SigningKeyNotTrusted {
+        /// The plugin id.
+        id: String,
+        /// The signing key's `sha256:` fingerprint.
+        key_id: String,
+    },
+
+    /// The extracted plugin no longer matches what the manager verified and
+    /// recorded in `plugin-state.json` at install (a different signer, or a
+    /// backend library whose digest differs from the install-verified one)
+    /// (#2796). Reinstall the plugin to load it.
+    #[error("native plugin `{id}` does not match its install record: {detail}")]
+    InstallRecordMismatch {
+        /// The plugin id.
+        id: String,
+        /// What differs.
+        detail: String,
     },
 
     /// The extracted plugin carries a `signature.json`, but re-verifying it over
@@ -589,19 +628,18 @@ pub fn select_backend_library(
 /// On any failure the (partially) opened library is dropped, so a rejected
 /// plugin leaves nothing loaded.
 ///
-/// # Verify-then-load TOCTOU (CORE-034)
+/// # Verify-then-load TOCTOU (CORE-034, #2796)
 ///
-/// When `expected_digest` is `Some`, the file at `library_path` is re-hashed and
-/// compared against that signed digest **immediately before** `Library::new`,
-/// refusing with [`HostError::LibraryDigestMismatch`] if the bytes on disk are
-/// not the ones that were verified. This narrows the window in which a file
-/// swapped in after the install-time verification could be loaded.
-///
-/// It does **not** fully close it: `libloading` re-opens the library **by path**,
-/// so a swap racing the sub-instruction gap between this hash and the `dlopen` is
-/// an irreducible residual (portably loading from an already-verified file handle
-/// or from memory is not available). `expected_digest = None` (an unsigned,
-/// accepted-risk plugin) performs no binding, exactly as before.
+/// When `expected_digest` is `Some`, the file at `library_path` is opened once,
+/// hashed through that handle and compared against the digest, refusing with
+/// [`HostError::LibraryDigestMismatch`] if the bytes are not the ones that were
+/// verified. The handle is held across the load and re-checked afterwards
+/// ([`HostError::LibraryChangedDuringLoad`]); on Linux the load goes through
+/// `/proc/self/fd/<n>` (the hashed inode), on Windows the handle denies
+/// write/delete sharing, and on macOS the path's inode identity is re-checked
+/// before and after the load. The per-OS residual is documented in
+/// `library_pin`. `expected_digest = None` (a legacy unsigned plugin) performs
+/// no binding, exactly as before.
 pub fn load_backend_library(
     library_path: &Path,
     expected_digest: Option<&str>,
@@ -720,29 +758,28 @@ fn load_backend_library_impl(
         accept_unverified_toolchain,
     } = *options;
     // Re-check the exact bytes about to be loaded against the digest they were
-    // signature-verified with, as late as possible before the open. This is the
-    // verify-then-load TOCTOU guard (CORE-034); the residual check→open race is
-    // documented above.
-    if let Some(expected) = expected_digest {
-        // Fail closed: if the file about to be loaded cannot even be read to hash
-        // it, the integrity check cannot be honored, so refuse rather than load.
-        let actual = super::signature::sha256_file(library_path)
-            .unwrap_or_else(|source| format!("<unreadable: {source}>"));
-        if actual != expected {
-            return Err(HostError::LibraryDigestMismatch {
-                path: library_path.to_owned(),
-                expected: expected.to_owned(),
-                actual,
-            });
-        }
-    }
+    // verified with, through a handle held open across the load (CORE-034,
+    // #2796). The per-OS residual of the check→open race is documented in
+    // `library_pin`. Fails closed: an unreadable file is refused, not loaded.
+    let pinned = expected_digest
+        .map(|expected| PinnedLibrary::open_verified(library_path, expected))
+        .transpose()?;
+    let open_path = match &pinned {
+        Some(pin) => pin.load_path()?,
+        None => library_path.to_owned(),
+    };
 
     // SAFETY: opening an arbitrary library runs its initializers; this is the
     // irreducible unsafety of a plugin host. Failures are returned, not panicked.
-    let library = unsafe { Library::new(library_path) }.map_err(|source| HostError::Open {
+    let library = unsafe { Library::new(&open_path) }.map_err(|source| HostError::Open {
         path: library_path.to_owned(),
         source,
     })?;
+    if let Some(pin) = pinned {
+        // On failure `library` is dropped here (unloaded) before anything in it
+        // is called.
+        pin.confirm_after_load()?;
+    }
 
     // --- 1. ABI version gate, before anything else is called. ---
     let found = {
@@ -832,25 +869,31 @@ fn load_backend_library_impl(
     }))
 }
 
-/// Determine the signed digest the backend library must match at load time, by
-/// re-verifying the *extracted* plugin against its co-located `signature.json`
-/// (CORE-034).
+/// The co-located signature's verdict on a backend library: who signed the
+/// extracted tree and the digest it signed for the library.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SignedBackend {
+    /// The signing key's `sha256:` fingerprint.
+    key_id: String,
+    /// The signed `sha256:` digest of the backend library.
+    digest: String,
+}
+
+/// Re-verify the *extracted* plugin against its co-located `signature.json`
+/// (CORE-034) and return who signed it and the signed digest of the library.
 ///
-/// Returns `Ok(None)` when the plugin is unsigned (no `signature.json`), so there
-/// is nothing to bind — the load proceeds unbound, exactly as before. For a
-/// signed plugin it recomputes the digest of every extracted file, re-runs the
-/// full Ed25519 verification over that map (so a tampered file, an altered digest
-/// map, or a broken signature is caught), and returns the signed digest of the
-/// library about to be loaded.
+/// Returns `Ok(None)` when the plugin is unsigned (no `signature.json`). For a
+/// signed plugin it recomputes the digest of every extracted file and re-runs
+/// the full Ed25519 verification over that map, so a tampered file, an altered
+/// digest map, or a broken signature is caught.
 ///
-/// This is a best-effort integrity re-check, not a complete TOCTOU close: it
-/// proves the extracted tree is internally consistent with a valid signature over
-/// these exact bytes, but does **not** re-check the signing key against the trust
-/// store, so an attacker who can rewrite the plugin directory *and* re-sign with a
-/// key the store would accept is not stopped here (the install-time trust gate is
-/// the anchor for that). Tracked for a fuller fix (persisting the install-verified
-/// digest / an immutable trust anchor / loading from verified bytes).
-fn signed_backend_digest(plugin_dir: &Path, lib_path: &Path) -> Result<Option<String>, HostError> {
+/// On its own this only proves the tree is internally consistent with *some*
+/// valid signature — a re-signed tree passes. [`resolve_load_binding`] is what
+/// anchors it: to the trust store and to the install record (#2796).
+fn signed_backend_digest(
+    plugin_dir: &Path,
+    lib_path: &Path,
+) -> Result<Option<SignedBackend>, HostError> {
     let sig_path = plugin_dir.join(super::signature::SIGNATURE_FILE_NAME);
     let raw = match std::fs::read(&sig_path) {
         Ok(bytes) => bytes,
@@ -869,11 +912,92 @@ fn signed_backend_digest(plugin_dir: &Path, lib_path: &Path) -> Result<Option<St
         .strip_prefix(plugin_dir)
         .map_err(|e| HostError::SignatureReverifyFailed(e.to_string()))?;
     let key = rel_to_slash(rel);
-    sig.files.get(&key).cloned().map(Some).ok_or_else(|| {
+    let digest = sig.files.get(&key).cloned().ok_or_else(|| {
         HostError::SignatureReverifyFailed(format!(
             "backend library `{key}` is not covered by the signature"
         ))
-    })
+    })?;
+    Ok(Some(SignedBackend {
+        key_id: sig.key_id,
+        digest,
+    }))
+}
+
+/// Decide the digest a backend library must match at load, anchoring the
+/// co-located signature to the trust store and to the install record (#2796).
+///
+/// * **Trust anchor.** A signed plugin's key must be trusted *now*
+///   (`is_trusted`). The one exception is an "install once" plugin — installed
+///   signed by a key the user chose not to pin, recorded as
+///   `signer_trusted: false` — which loads only while it is still signed by that
+///   same recorded key. A key revoked since install, a re-sign by any other
+///   untrusted key, or a legacy record that cannot say how the key was trusted
+///   is refused with [`HostError::SigningKeyNotTrusted`].
+/// * **Signer binding.** When the install recorded a signer, the tree must still
+///   carry exactly that signer (no stripped, added or changed signature).
+/// * **Digest binding.** When the install recorded a verified backend, the
+///   selected library must be that same file and the signature (if any) must
+///   sign the recorded digest; the recorded digest is what the loader then
+///   re-checks. Without a record (pre-#2796 installs) the signed digest is used.
+///
+/// The trust store and `plugin-state.json` live beside, not inside, the plugin
+/// directory. They are written only by the manager, but they are ordinary
+/// app-data files: with no bundled first-party key yet, the anchor is
+/// trust-on-first-use, not immutable (see `trust_store::BUNDLED_PUBLISHERS`).
+fn resolve_load_binding(
+    id: &str,
+    lib_rel: &str,
+    signed: Option<&SignedBackend>,
+    record: Option<&PluginStateRecord>,
+    is_trusted: impl Fn(&str) -> bool,
+) -> Result<Option<String>, HostError> {
+    let verified = record.and_then(|r| r.verified_backend.as_ref());
+    let recorded_signer = record.and_then(|r| r.signer.as_ref());
+    let mismatch = |detail: String| HostError::InstallRecordMismatch {
+        id: id.to_owned(),
+        detail,
+    };
+
+    if let Some(signed) = signed {
+        let install_once_same_key = verified.is_some_and(|v| !v.signer_trusted)
+            && recorded_signer.and_then(PackageSigner::key_id) == Some(signed.key_id.as_str());
+        if !is_trusted(&signed.key_id) && !install_once_same_key {
+            return Err(HostError::SigningKeyNotTrusted {
+                id: id.to_owned(),
+                key_id: signed.key_id.clone(),
+            });
+        }
+    }
+
+    if let Some(recorded) = recorded_signer {
+        let current = signed.map(|s| s.key_id.as_str());
+        if recorded.key_id() != current {
+            return Err(mismatch(format!(
+                "installed signer {}, now {}",
+                recorded.key_id().unwrap_or("unsigned"),
+                current.unwrap_or("unsigned")
+            )));
+        }
+    }
+
+    let Some(verified) = verified else {
+        return Ok(signed.map(|s| s.digest.clone()));
+    };
+    if verified.library != lib_rel {
+        return Err(mismatch(format!(
+            "installed backend `{}`, now `{lib_rel}`",
+            verified.library
+        )));
+    }
+    if let Some(signed) = signed {
+        if signed.digest != verified.sha256 {
+            return Err(mismatch(format!(
+                "backend `{lib_rel}` was installed as {}, now signed as {}",
+                verified.sha256, signed.digest
+            )));
+        }
+    }
+    Ok(Some(verified.sha256.clone()))
 }
 
 /// Recursively digest every file under `plugin_dir` except the signature entry,
@@ -914,7 +1038,7 @@ fn digest_extracted_dir(plugin_dir: &Path) -> Result<BTreeMap<String, String>, H
 
 /// Join a relative path's normal components with `/`, matching the archive-entry
 /// key form used by the signature's `files` map (which always uses `/`).
-fn rel_to_slash(rel: &Path) -> String {
+pub(super) fn rel_to_slash(rel: &Path) -> String {
     rel.components()
         .filter_map(|c| match c {
             Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
@@ -1153,11 +1277,13 @@ impl PluginHost {
         // exact-match check for a plugin that does report its toolchain.
         let accept_unverified_toolchain = trust.accepts_unverified_toolchain(&id, &library_sha256);
 
-        // Bind the exact library bytes about to be loaded to the signed digest
-        // (CORE-034): re-verify the extracted plugin against its co-located
-        // signature and re-check the library file immediately before `dlopen`. An
-        // unsigned plugin yields `None` — nothing to bind — as before.
-        let expected_digest = signed_backend_digest(&plugin_dir, &lib_path)?;
+        // Bind the exact library bytes about to be loaded (CORE-034, #2796):
+        // re-verify the extracted plugin against its co-located signature, anchor
+        // that signature to the trust store and the install record persisted in
+        // `plugin-state.json`, and re-check the library through a pinned handle
+        // across the `dlopen`. A legacy unsigned plugin with no install record
+        // yields `None` — nothing to bind — as before.
+        let expected_digest = self.load_binding(&id, &plugin_dir, &lib_path)?;
         let library = load_backend_library_with(
             &lib_path,
             &BackendLoadOptions {
@@ -1253,6 +1379,34 @@ impl PluginHost {
         // recovery counter so a future, unrelated failure gets a full budget.
         self.clear_recovery(&plugin.manifest.id);
         Ok(())
+    }
+
+    /// The digest `id`'s backend library at `lib_path` must match at load; see
+    /// [`resolve_load_binding`]. Fails closed on an unreadable install record.
+    fn load_binding(
+        &self,
+        id: &str,
+        plugin_dir: &Path,
+        lib_path: &Path,
+    ) -> Result<Option<String>, HostError> {
+        let signed = signed_backend_digest(plugin_dir, lib_path)?;
+        let record = plugin_state::read_record(&self.root, id).map_err(|e| {
+            HostError::InstallRecordMismatch {
+                id: id.to_owned(),
+                detail: e.to_string(),
+            }
+        })?;
+        let lib_rel = lib_path
+            .strip_prefix(plugin_dir)
+            .map(rel_to_slash)
+            .map_err(|e| HostError::SignatureReverifyFailed(e.to_string()))?;
+        // An unreadable trust store degrades to bundled-only: it can only make a
+        // key read *untrusted*, never trusted.
+        let trust =
+            TrustStore::load(&self.root).unwrap_or_else(|_| TrustStore::bundled_only(&self.root));
+        resolve_load_binding(id, &lib_rel, signed.as_ref(), record.as_ref(), |key_id| {
+            trust.is_trusted(key_id)
+        })
     }
 
     /// Unload a plugin: unregister its connection type and drop the host's
@@ -2096,8 +2250,12 @@ mod tests {
         .unwrap();
 
         // The signed digest of the library is returned.
-        let digest = signed_backend_digest(plugin_dir, &lib).unwrap().unwrap();
-        assert_eq!(digest, sha256_digest(lib_bytes));
+        let signed = signed_backend_digest(plugin_dir, &lib).unwrap().unwrap();
+        assert_eq!(signed.digest, sha256_digest(lib_bytes));
+        assert_eq!(
+            signed.key_id,
+            super::super::signature::key_id_from_public_key(key.verifying_key().as_bytes())
+        );
 
         // Tamper with an extracted file: re-verification now fails.
         std::fs::write(&lib, b"tampered").unwrap();
@@ -2105,6 +2263,201 @@ mod tests {
             signed_backend_digest(plugin_dir, &lib),
             Err(HostError::SignatureReverifyFailed(_))
         ));
+    }
+
+    // --- Load binding: trust anchor + install record (#2796) ---
+
+    mod load_binding {
+        use super::super::super::plugin_state::{PluginStateRecord, VerifiedBackend};
+        use super::super::super::signer_change::PackageSigner;
+        use super::super::{resolve_load_binding, HostError, SignedBackend};
+
+        const LIB: &str = "backend/libp.so";
+
+        fn signed(key: &str, digest: &str) -> SignedBackend {
+            SignedBackend {
+                key_id: key.into(),
+                digest: digest.into(),
+            }
+        }
+
+        fn record(signer: Option<&str>, digest: &str, signer_trusted: bool) -> PluginStateRecord {
+            PluginStateRecord {
+                enabled: true,
+                signer: Some(PackageSigner::from_key_id(signer)),
+                verified_backend: Some(VerifiedBackend {
+                    library: LIB.into(),
+                    sha256: digest.into(),
+                    signer_trusted,
+                }),
+                ..PluginStateRecord::default()
+            }
+        }
+
+        fn trusts(keys: &'static [&'static str]) -> impl Fn(&str) -> bool {
+            move |k| keys.contains(&k)
+        }
+
+        #[test]
+        fn trusted_signer_matching_the_record_binds_the_recorded_digest() {
+            let got = resolve_load_binding(
+                "p",
+                LIB,
+                Some(&signed("A", "d1")),
+                Some(&record(Some("A"), "d1", true)),
+                trusts(&["A"]),
+            )
+            .unwrap();
+            assert_eq!(got.as_deref(), Some("d1"));
+        }
+
+        #[test]
+        fn resigned_by_an_untrusted_key_is_refused() {
+            let err = resolve_load_binding(
+                "p",
+                LIB,
+                Some(&signed("EVIL", "d2")),
+                Some(&record(Some("A"), "d1", true)),
+                trusts(&["A"]),
+            )
+            .unwrap_err();
+            assert!(
+                matches!(&err, HostError::SigningKeyNotTrusted { key_id, .. } if key_id == "EVIL"),
+                "{err:?}"
+            );
+        }
+
+        #[test]
+        fn a_key_revoked_since_install_is_refused() {
+            let err = resolve_load_binding(
+                "p",
+                LIB,
+                Some(&signed("A", "d1")),
+                Some(&record(Some("A"), "d1", true)),
+                trusts(&[]),
+            )
+            .unwrap_err();
+            assert!(
+                matches!(err, HostError::SigningKeyNotTrusted { .. }),
+                "{err:?}"
+            );
+        }
+
+        #[test]
+        fn resigned_by_the_trusted_key_over_other_bytes_is_refused() {
+            let err = resolve_load_binding(
+                "p",
+                LIB,
+                Some(&signed("A", "d2")),
+                Some(&record(Some("A"), "d1", true)),
+                trusts(&["A"]),
+            )
+            .unwrap_err();
+            assert!(
+                matches!(err, HostError::InstallRecordMismatch { .. }),
+                "{err:?}"
+            );
+        }
+
+        #[test]
+        fn install_once_loads_only_with_its_recorded_key() {
+            let rec = record(Some("B"), "d1", false);
+            let ok =
+                resolve_load_binding("p", LIB, Some(&signed("B", "d1")), Some(&rec), trusts(&[]));
+            assert_eq!(ok.unwrap().as_deref(), Some("d1"));
+
+            let err =
+                resolve_load_binding("p", LIB, Some(&signed("C", "d1")), Some(&rec), trusts(&[]))
+                    .unwrap_err();
+            assert!(
+                matches!(err, HostError::SigningKeyNotTrusted { .. }),
+                "{err:?}"
+            );
+        }
+
+        #[test]
+        fn an_untrusted_signer_without_an_install_record_is_refused() {
+            let err = resolve_load_binding("p", LIB, Some(&signed("B", "d1")), None, trusts(&[]))
+                .unwrap_err();
+            assert!(
+                matches!(err, HostError::SigningKeyNotTrusted { .. }),
+                "{err:?}"
+            );
+        }
+
+        #[test]
+        fn a_trusted_signer_without_an_install_record_binds_the_signed_digest() {
+            let got =
+                resolve_load_binding("p", LIB, Some(&signed("A", "d1")), None, trusts(&["A"]))
+                    .unwrap();
+            assert_eq!(got.as_deref(), Some("d1"));
+        }
+
+        #[test]
+        fn a_stripped_or_added_signature_is_refused() {
+            let err = resolve_load_binding(
+                "p",
+                LIB,
+                None,
+                Some(&record(Some("A"), "d1", true)),
+                trusts(&["A"]),
+            )
+            .unwrap_err();
+            assert!(
+                matches!(err, HostError::InstallRecordMismatch { .. }),
+                "{err:?}"
+            );
+
+            let err = resolve_load_binding(
+                "p",
+                LIB,
+                Some(&signed("A", "d1")),
+                Some(&record(None, "d1", false)),
+                trusts(&["A"]),
+            )
+            .unwrap_err();
+            assert!(
+                matches!(err, HostError::InstallRecordMismatch { .. }),
+                "{err:?}"
+            );
+        }
+
+        #[test]
+        fn an_unsigned_plugin_binds_its_recorded_digest() {
+            let got = resolve_load_binding(
+                "p",
+                LIB,
+                None,
+                Some(&record(None, "d1", false)),
+                trusts(&[]),
+            )
+            .unwrap();
+            assert_eq!(got.as_deref(), Some("d1"));
+        }
+
+        #[test]
+        fn a_legacy_unsigned_plugin_without_a_record_stays_unbound() {
+            assert_eq!(
+                resolve_load_binding("p", LIB, None, None, trusts(&[])).unwrap(),
+                None
+            );
+        }
+
+        #[test]
+        fn a_different_selected_library_is_refused() {
+            let err = resolve_load_binding(
+                "p",
+                "backend/other.so",
+                None,
+                Some(&record(None, "d1", false)),
+                trusts(&[]),
+            )
+            .unwrap_err();
+            assert!(
+                matches!(err, HostError::InstallRecordMismatch { .. }),
+                "{err:?}"
+            );
+        }
     }
 
     #[test]
