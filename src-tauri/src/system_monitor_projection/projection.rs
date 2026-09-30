@@ -57,15 +57,16 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
 use termihub_core::monitoring::{MonitorStatus, MonitorStatusReason, SystemStats};
 
 use crate::commands::projection::ProjectionState;
 use crate::projection::{
-    apply_ops, compute_ops, optional_str, perf006_divergence, report_perf006_divergence,
-    required_bool, required_str, DiffOp, HandlerRegistry, Intent, ProducedRegion, Projector,
+    apply_ops, compute_ops, optional_str, perf006_divergence, pick_keys, report_perf006_divergence,
+    required_bool, required_str, splice_subtrees, subtree_map, DiffOp, HandlerRegistry, Intent,
+    ProducedRegion, Projector,
 };
 use crate::system_monitor_projection::store::{
     HistoryDelta, MonitorEntry, MonitorHistorySample, RegionDelta, SystemMonitorStore,
@@ -393,8 +394,8 @@ fn apply_history_delta(view: &mut Value, delta: &[(String, HistoryDelta)]) -> Ve
 /// touched keys, wrapped in the `{ monitors, statsCache }` envelope.
 fn reduced_from_view(view: &Value, delta: &RegionDelta) -> Value {
     json!({
-        "monitors": pick_keys(view.get("monitors"), delta.monitors.iter().map(|(k, _)| k)),
-        "statsCache": pick_keys(view.get("statsCache"), delta.stats_cache.iter().map(|(k, _)| k)),
+        "monitors": pick_keys(view.get("monitors"), &delta.monitors),
+        "statsCache": pick_keys(view.get("statsCache"), &delta.stats_cache),
     })
 }
 
@@ -405,48 +406,6 @@ fn reduced_from_delta(delta: &RegionDelta) -> Value {
         "monitors": subtree_map(&delta.monitors),
         "statsCache": subtree_map(&delta.stats_cache),
     })
-}
-
-/// Collect the named keys that are present in `src` into a fresh object.
-fn pick_keys<'a>(src: Option<&Value>, keys: impl Iterator<Item = &'a String>) -> Value {
-    let mut out = Map::new();
-    if let Some(obj) = src.and_then(Value::as_object) {
-        for key in keys {
-            if let Some(value) = obj.get(key) {
-                out.insert(key.clone(), value.clone());
-            }
-        }
-    }
-    Value::Object(out)
-}
-
-/// Collect the present (`Some`) entries of a drained subtree into a fresh object.
-fn subtree_map(entries: &[(String, Option<Value>)]) -> Value {
-    let mut out = Map::new();
-    for (key, value) in entries {
-        if let Some(value) = value {
-            out.insert(key.clone(), value.clone());
-        }
-    }
-    Value::Object(out)
-}
-
-/// Splice the drained subtrees into `view[field]` in place: `Some` upserts the
-/// entry, `None` removes it. A no-op if the field is somehow not an object.
-fn splice_subtrees(view: &mut Value, field: &str, entries: &[(String, Option<Value>)]) {
-    let Some(obj) = view.get_mut(field).and_then(Value::as_object_mut) else {
-        return;
-    };
-    for (key, value) in entries {
-        match value {
-            Some(value) => {
-                obj.insert(key.clone(), value.clone());
-            }
-            None => {
-                obj.remove(key);
-            }
-        }
-    }
 }
 
 /// Fold a monitoring transition into the managed [`SystemMonitorStore`]

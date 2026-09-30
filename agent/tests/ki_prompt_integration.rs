@@ -67,6 +67,38 @@ const OTP_PROMPT: &str = "Verification code: ";
 /// a loaded runner; a passing run returns as soon as the message arrives.
 const STEP_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// How often [`wait_until`] re-checks its condition.
+const POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+/// Poll `observe` until it returns `want` or [`STEP_TIMEOUT`] passes; panics
+/// with the last value seen and `context` on timeout.
+///
+/// For server-side counters the client gets no acknowledgement for: the
+/// value lands on the server's own runtime at some point after the client's
+/// message was sent, so reading it once right after is a race (#3999). A
+/// passing run returns on the first check that matches.
+fn wait_until<T: PartialEq + std::fmt::Debug>(
+    what: &str,
+    want: T,
+    mut observe: impl FnMut() -> T,
+    context: impl Fn() -> String,
+) {
+    let deadline = Instant::now() + STEP_TIMEOUT;
+    loop {
+        let seen = observe();
+        if seen == want {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "{what}: expected {want:?}, still {seen:?} after {STEP_TIMEOUT:?}; {}",
+                context()
+            );
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
 fn agent_binary() -> &'static str {
     env!("CARGO_BIN_EXE_termihub-agent")
 }
@@ -116,6 +148,10 @@ impl Fixture {
         self.server.observed.lock().unwrap().authenticated
     }
 
+    /// Shell requests the server has processed. The SSH backend sends the
+    /// shell request without asking for a reply (`want_reply = false`), so
+    /// nothing the client sees orders it before this read — wait for it with
+    /// [`wait_until`], never assert it directly.
     fn shells(&self) -> usize {
         self.server.observed.lock().unwrap().shells
     }
@@ -363,7 +399,14 @@ fn answered_otp_prompt_connects_the_session() {
 
     let attach = agent.rpc(pm::CONNECTION_ATTACH, json!({"session_id": session_id}));
     assert!(attach["result"].is_object(), "attach failed: {attach}");
-    assert_eq!(fixture.shells(), 1);
+    // The shell request carries no reply, so attach can return before the
+    // server has handled it (#3999): wait for the count, bounded.
+    wait_until(
+        "shell requests the server processed",
+        1,
+        || fixture.shells(),
+        || format!("agent stderr:\n{}", agent.stderr_log()),
+    );
 
     // Round-trip data through the daemon's SSH channel: the server's shell
     // echoes what it receives.

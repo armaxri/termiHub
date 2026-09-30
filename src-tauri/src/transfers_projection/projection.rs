@@ -49,13 +49,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
 use crate::commands::projection::ProjectionState;
 use crate::projection::{
-    compute_ops, perf006_divergence, report_perf006_divergence, required_bool, required_str,
-    DiffOp, HandlerRegistry, Intent, ProducedRegion, Projector,
+    compute_ops, perf006_divergence, pick_keys, report_perf006_divergence, required_bool,
+    required_str, splice_subtrees, subtree_map, DiffOp, HandlerRegistry, Intent, ProducedRegion,
+    Projector,
 };
 use crate::transfers_projection::store::{
     RegionDelta, TransferEntry, TransferProgress, TransferSeed, TransferSnapshot, TransferStore,
@@ -209,51 +210,6 @@ fn apply_transfer_delta(
     }
 
     (ops, None)
-}
-
-/// Collect the touched keys that are present in `src` into a fresh object — the
-/// reduced *old* subtree.
-fn pick_keys(src: Option<&Value>, entries: &[(String, Option<Value>)]) -> Value {
-    let mut out = Map::new();
-    if let Some(obj) = src.and_then(Value::as_object) {
-        for (key, _) in entries {
-            if let Some(value) = obj.get(key) {
-                out.insert(key.clone(), value.clone());
-            }
-        }
-    }
-    Value::Object(out)
-}
-
-/// Collect the present (`Some`) entries of a drained subtree into a fresh object —
-/// the reduced *new* subtree. A `None` value is an absent (removed) entry and is
-/// simply omitted, so the diff emits a `remove`.
-fn subtree_map(entries: &[(String, Option<Value>)]) -> Value {
-    let mut out = Map::new();
-    for (key, value) in entries {
-        if let Some(value) = value {
-            out.insert(key.clone(), value.clone());
-        }
-    }
-    Value::Object(out)
-}
-
-/// Splice the drained subtrees into `view[field]` in place: `Some` upserts the
-/// entry, `None` removes it. A no-op if the field is somehow not an object.
-fn splice_subtrees(view: &mut Value, field: &str, entries: &[(String, Option<Value>)]) {
-    let Some(obj) = view.get_mut(field).and_then(Value::as_object_mut) else {
-        return;
-    };
-    for (key, value) in entries {
-        match value {
-            Some(value) => {
-                obj.insert(key.clone(), value.clone());
-            }
-            None => {
-                obj.remove(key);
-            }
-        }
-    }
 }
 
 /// Fold a backend-produced `transfer-progress` event into the managed

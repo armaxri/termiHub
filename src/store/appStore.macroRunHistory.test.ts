@@ -50,7 +50,11 @@ vi.mock("@/services/macroApi", () => ({
 import { useAppStore } from "./appStore";
 import { seedLayoutState } from "@/test/layoutState";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
-import { recordMacroRun as apiRecordMacroRun } from "@/services/macroApi";
+import {
+  recordMacroRun as apiRecordMacroRun,
+  listMacroRuns as apiListMacroRuns,
+  clearMacroRunHistory as apiClearMacroRunHistory,
+} from "@/services/macroApi";
 import { installSessionLifecycleHarness } from "@/test/sessionLifecycleRegionTestHarness";
 
 const SECRET = "hunter2-secret-input";
@@ -196,6 +200,31 @@ describe("appStore — macro run history (#3543)", () => {
     const status = await useAppStore.getState().playMacro("m1", { timingMode: "instant" });
 
     expect(status).toBe("completed");
+  });
+
+  it("labels an untitled target 'Terminal' (#2979)", async () => {
+    const untitled = { ...term("a", "sess-a"), title: "" };
+    seedLayoutState({
+      rootPanel: { type: "leaf", id: "leaf-1", tabs: [untitled], activeTabId: "a" },
+      activePanelId: "leaf-1",
+    });
+    useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
+
+    await useAppStore.getState().playMacro("m1", { timingMode: "instant" });
+
+    expect((await lastRecorded()).targetLabels).toEqual(["Terminal"]);
+  });
+
+  it("stores an empty history when the backend replies with a non-array (#2979)", async () => {
+    useAppStore.setState({ macroRuns: [{ id: "stale" }] as never });
+    vi.mocked(apiListMacroRuns).mockResolvedValueOnce(null as never);
+    await useAppStore.getState().loadMacroRuns();
+    expect(useAppStore.getState().macroRuns).toEqual([]);
+
+    useAppStore.setState({ macroRuns: [{ id: "stale" }] as never });
+    vi.mocked(apiClearMacroRunHistory).mockResolvedValueOnce(undefined as never);
+    await useAppStore.getState().clearMacroRunHistory();
+    expect(useAppStore.getState().macroRuns).toEqual([]);
   });
 
   it("loads and clears the history", async () => {
