@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
+
+use crate::store_version::{self, NewerVersionError};
 
 /// A saved connection configuration that survives agent restarts.
 ///
@@ -155,7 +157,11 @@ pub trait ConnectionStoreApi: Send + Sync + 'static {
     async fn get(&self, id: &str) -> Option<ConnectionSnapshot>;
 
     /// Create a new connection and return its snapshot.
-    async fn create(&self, conn: Connection) -> ConnectionSnapshot;
+    ///
+    /// Every mutating method fails with [`NewerVersionError`] — without
+    /// touching memory or disk — when the store file on disk was written by a
+    /// newer agent (#3920).
+    async fn create(&self, conn: Connection) -> Result<ConnectionSnapshot, NewerVersionError>;
 
     /// Update an existing connection's fields. Returns `None` if not found.
     #[allow(clippy::too_many_arguments)]
@@ -169,16 +175,16 @@ pub trait ConnectionStoreApi: Send + Sync + 'static {
         folder_id: Option<Option<String>>,
         terminal_options: Option<Option<serde_json::Value>>,
         icon: Option<Option<String>>,
-    ) -> Option<ConnectionSnapshot>;
+    ) -> Result<Option<ConnectionSnapshot>, NewerVersionError>;
 
     /// List all connections and folders.
     async fn list(&self) -> (Vec<ConnectionSnapshot>, Vec<FolderSnapshot>);
 
     /// Delete a connection by ID. Returns `true` if found and removed.
-    async fn delete(&self, id: &str) -> bool;
+    async fn delete(&self, id: &str) -> Result<bool, NewerVersionError>;
 
     /// Create a new folder and return its snapshot.
-    async fn create_folder(&self, folder: Folder) -> FolderSnapshot;
+    async fn create_folder(&self, folder: Folder) -> Result<FolderSnapshot, NewerVersionError>;
 
     /// Update an existing folder's fields. Returns `None` if not found.
     async fn update_folder(
@@ -187,10 +193,10 @@ pub trait ConnectionStoreApi: Send + Sync + 'static {
         name: Option<String>,
         parent_id: Option<Option<String>>,
         is_expanded: Option<bool>,
-    ) -> Option<FolderSnapshot>;
+    ) -> Result<Option<FolderSnapshot>, NewerVersionError>;
 
     /// Delete a folder by ID. Returns `true` if found and removed.
-    async fn delete_folder(&self, id: &str) -> bool;
+    async fn delete_folder(&self, id: &str) -> Result<bool, NewerVersionError>;
 
     /// Load connections from external files on the remote host.
     ///
@@ -201,9 +207,44 @@ pub trait ConnectionStoreApi: Send + Sync + 'static {
     async fn load_external_files(&self, _paths: &[String]) {}
 }
 
+/// Diagnostic name of the agent's definitions store.
+const DEFINITIONS_STORE_NAME: &str = "connections.json";
+
+/// Current schema version of the agent's `connections.json` (#3920).
+///
+/// A file with no `version` is the baseline, v1 — every file written before the
+/// store was versioned. A file with a **newer** version is refused: it is never
+/// reset, migrated or overwritten (see [`crate::store_version`]). When the
+/// persisted shape changes — a settings-key rename, say — bump this and add the
+/// numbered step to [`migrate_definitions`], so an older agent can no longer
+/// overwrite a file that uses the new shape.
+pub const DEFINITIONS_STORE_VERSION: u32 = 1;
+
+/// Migrate a parsed store from `from_version` up to [`DEFINITIONS_STORE_VERSION`],
+/// one numbered step at a time.
+///
+/// v1 is the first versioned schema, so there is no step yet: every earlier
+/// file is already v1-shaped. The settings-key renames made before versioning
+/// (`resilientReconnect` → `autoReconnect`, FTP `timeoutSecs` →
+/// `connectTimeoutSecs`, #2901) stay in `Connection`'s rename-on-read, because
+/// they also apply to external files and RPC requests. Add the next rename as
+/// `if version < 2 { …; version = 2; }` and bump the constant.
+fn migrate_definitions(
+    value: serde_json::Value,
+    from_version: u32,
+) -> Result<serde_json::Value, String> {
+    let version = from_version;
+    debug_assert!(version <= DEFINITIONS_STORE_VERSION);
+    Ok(value)
+}
+
 /// Persistent storage format for connections.json.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StorageFormat {
+    /// Schema version, written as a string like the desktop stores. Only ever
+    /// written: loading reads it from the raw JSON before the typed parse.
+    #[serde(default, skip_deserializing)]
+    version: String,
     #[serde(default)]
     connections: Vec<Connection>,
     #[serde(default)]
@@ -228,6 +269,9 @@ pub struct ConnectionStore {
     /// Connections and folders under a single lock (see [`Definitions`]).
     definitions: Mutex<Definitions>,
     file_path: PathBuf,
+    /// Set when the store file was written by a newer agent (#3920). The file
+    /// is then left intact and every mutation is refused with this error.
+    newer_on_disk: Option<NewerVersionError>,
     /// Read-only connections loaded from external files, tagged with their source path.
     external_snapshots: Mutex<Vec<ConnectionSnapshot>>,
 }
@@ -236,10 +280,22 @@ impl ConnectionStore {
     /// Create a new store, loading existing data from disk.
     /// Migrates from legacy `sessions.json` if `connections.json` doesn't exist.
     pub fn new(file_path: PathBuf) -> Self {
-        let definitions = Self::load_from_disk(&file_path);
+        let (definitions, newer_on_disk) = match Self::load_from_disk(&file_path) {
+            Ok(definitions) => (definitions, None),
+            Err(newer) => {
+                error!(
+                    "{} (at {}); the file is left untouched and the saved connections \
+                     are read-only until the agent is updated",
+                    newer,
+                    file_path.display()
+                );
+                (Definitions::default(), Some(newer))
+            }
+        };
         Self {
             definitions: Mutex::new(definitions),
             file_path,
+            newer_on_disk,
             external_snapshots: Mutex::new(Vec::new()),
         }
     }
@@ -250,6 +306,7 @@ impl ConnectionStore {
         Self {
             definitions: Mutex::new(Definitions::default()),
             file_path,
+            newer_on_disk: None,
             external_snapshots: Mutex::new(Vec::new()),
         }
     }
@@ -261,13 +318,17 @@ impl ConnectionStore {
     }
 
     /// Create a new connection. Returns the snapshot.
-    pub async fn create(&self, mut conn: Connection) -> ConnectionSnapshot {
+    pub async fn create(
+        &self,
+        mut conn: Connection,
+    ) -> Result<ConnectionSnapshot, NewerVersionError> {
         conn.normalize_settings();
         let snapshot = conn.snapshot();
         let mut defs = self.definitions.lock().await;
+        self.ensure_writable()?;
         defs.connections.insert(conn.id.clone(), conn);
         self.save_to_disk(&defs);
-        snapshot
+        Ok(snapshot)
     }
 
     /// Update an existing connection's fields. Returns `None` if not found.
@@ -282,9 +343,12 @@ impl ConnectionStore {
         folder_id: Option<Option<String>>,
         terminal_options: Option<Option<serde_json::Value>>,
         icon: Option<Option<String>>,
-    ) -> Option<ConnectionSnapshot> {
+    ) -> Result<Option<ConnectionSnapshot>, NewerVersionError> {
         let mut defs = self.definitions.lock().await;
-        let conn = defs.connections.get_mut(id)?;
+        self.ensure_writable()?;
+        let Some(conn) = defs.connections.get_mut(id) else {
+            return Ok(None);
+        };
 
         if let Some(name) = name {
             conn.name = name;
@@ -311,7 +375,7 @@ impl ConnectionStore {
 
         let snapshot = conn.snapshot();
         self.save_to_disk(&defs);
-        Some(snapshot)
+        Ok(Some(snapshot))
     }
 
     /// List all connections and folders, including read-only external file connections.
@@ -363,22 +427,24 @@ impl ConnectionStore {
     }
 
     /// Delete a connection by ID. Returns `true` if found and deleted.
-    pub async fn delete(&self, id: &str) -> bool {
+    pub async fn delete(&self, id: &str) -> Result<bool, NewerVersionError> {
         let mut defs = self.definitions.lock().await;
+        self.ensure_writable()?;
         let removed = defs.connections.remove(id).is_some();
         if removed {
             self.save_to_disk(&defs);
         }
-        removed
+        Ok(removed)
     }
 
     /// Create a new folder. Returns the snapshot.
-    pub async fn create_folder(&self, folder: Folder) -> FolderSnapshot {
+    pub async fn create_folder(&self, folder: Folder) -> Result<FolderSnapshot, NewerVersionError> {
         let snapshot = folder.snapshot();
         let mut defs = self.definitions.lock().await;
+        self.ensure_writable()?;
         defs.folders.insert(folder.id.clone(), folder);
         self.save_to_disk(&defs);
-        snapshot
+        Ok(snapshot)
     }
 
     /// Update an existing folder's fields. Returns `None` if not found.
@@ -388,9 +454,12 @@ impl ConnectionStore {
         name: Option<String>,
         parent_id: Option<Option<String>>,
         is_expanded: Option<bool>,
-    ) -> Option<FolderSnapshot> {
+    ) -> Result<Option<FolderSnapshot>, NewerVersionError> {
         let mut defs = self.definitions.lock().await;
-        let folder = defs.folders.get_mut(id)?;
+        self.ensure_writable()?;
+        let Some(folder) = defs.folders.get_mut(id) else {
+            return Ok(None);
+        };
 
         if let Some(name) = name {
             folder.name = name;
@@ -404,13 +473,14 @@ impl ConnectionStore {
 
         let snapshot = folder.snapshot();
         self.save_to_disk(&defs);
-        Some(snapshot)
+        Ok(Some(snapshot))
     }
 
     /// Delete a folder by ID. Moves children (connections and subfolders) to root.
     /// Returns `true` if found and deleted.
-    pub async fn delete_folder(&self, id: &str) -> bool {
+    pub async fn delete_folder(&self, id: &str) -> Result<bool, NewerVersionError> {
         let mut defs = self.definitions.lock().await;
+        self.ensure_writable()?;
         let removed = defs.folders.remove(id).is_some();
         if removed {
             // Move connections in this folder to root
@@ -427,7 +497,7 @@ impl ConnectionStore {
             }
             self.save_to_disk(&defs);
         }
-        removed
+        Ok(removed)
     }
 
     /// Ensure a "Default Shell" connection exists if the store is empty.
@@ -437,6 +507,12 @@ impl ConnectionStore {
     /// that still points at a Unix path such as `/bin/sh` (#3727).
     pub async fn ensure_default_shell(&self) {
         let mut defs = self.definitions.lock().await;
+        if let Err(newer) = self.ensure_writable() {
+            // The store looks empty only because a newer agent's file was not
+            // loaded; creating a default here would overwrite it (#3920).
+            warn!("Skipping default shell setup: {newer}");
+            return;
+        }
         if !defs.connections.is_empty() {
             if cfg!(windows) && repair_unix_default_shell(&mut defs, &detect_default_shell()) {
                 self.save_to_disk(&defs);
@@ -469,10 +545,13 @@ impl ConnectionStore {
     }
 
     /// Load from disk, with migration from legacy `sessions.json`.
-    fn load_from_disk(path: &PathBuf) -> Definitions {
+    ///
+    /// Errors — without touching the file — when it was written by a newer
+    /// agent (#3920).
+    fn load_from_disk(path: &PathBuf) -> Result<Definitions, NewerVersionError> {
         // Try loading the new format first
         if let Ok(contents) = std::fs::read_to_string(path) {
-            match serde_json::from_str::<StorageFormat>(&contents) {
+            match Self::parse_storage(&contents)? {
                 Ok(storage) => {
                     debug!(
                         "Loaded {} connections and {} folders from {}",
@@ -490,14 +569,14 @@ impl ConnectionStore {
                         .into_iter()
                         .map(|f| (f.id.clone(), f))
                         .collect();
-                    return Definitions {
+                    return Ok(Definitions {
                         connections,
                         folders,
-                    };
+                    });
                 }
                 Err(e) => {
                     warn!("Failed to parse connections from {}: {}", path.display(), e);
-                    return Definitions::default();
+                    return Ok(Definitions::default());
                 }
             }
         }
@@ -529,16 +608,63 @@ impl ConnectionStore {
                             (d.id, conn)
                         })
                         .collect();
-                    return Definitions {
+                    return Ok(Definitions {
                         connections,
                         folders: HashMap::new(),
-                    };
+                    });
                 }
             }
         }
 
         debug!("No connections file at {}", path.display());
-        Definitions::default()
+        Ok(Definitions::default())
+    }
+
+    /// Parse the raw store: gate on its schema version, migrate an older file
+    /// forward, then deserialize.
+    ///
+    /// The outer error is a newer-version refusal; the inner one a genuinely
+    /// unreadable file.
+    fn parse_storage(raw: &str) -> Result<Result<StorageFormat, String>, NewerVersionError> {
+        let value: serde_json::Value = match serde_json::from_str(raw) {
+            Ok(value) => value,
+            Err(e) => return Ok(Err(e.to_string())),
+        };
+        let version = store_version::check_version(
+            &value,
+            DEFINITIONS_STORE_NAME,
+            DEFINITIONS_STORE_VERSION,
+        )?;
+        let value = if version < DEFINITIONS_STORE_VERSION {
+            match migrate_definitions(value, version) {
+                Ok(value) => value,
+                Err(e) => return Ok(Err(format!("migration from v{version} failed: {e}"))),
+            }
+        } else {
+            value
+        };
+        Ok(serde_json::from_value(value).map_err(|e| e.to_string()))
+    }
+
+    /// Refuse a mutation when the store file was written by a newer agent —
+    /// at load, or since (the file is re-read, so a newer agent writing it
+    /// while this one runs is caught too). Called under the definitions lock
+    /// **before** memory is touched, so a refused mutation changes nothing.
+    fn ensure_writable(&self) -> Result<(), NewerVersionError> {
+        if let Some(newer) = &self.newer_on_disk {
+            return Err(newer.clone());
+        }
+        store_version::guard_not_newer(
+            &self.file_path,
+            DEFINITIONS_STORE_NAME,
+            DEFINITIONS_STORE_VERSION,
+        )
+    }
+
+    /// The refusal recorded when the store file was written by a newer agent.
+    #[cfg(test)]
+    pub fn newer_on_disk(&self) -> Option<&NewerVersionError> {
+        self.newer_on_disk.as_ref()
     }
 
     /// Derive the legacy sessions.json path from the connections.json path.
@@ -549,7 +675,13 @@ impl ConnectionStore {
     }
 
     fn save_to_disk(&self, defs: &Definitions) {
+        // Last line of defence: never overwrite a newer agent's file (#3920).
+        if let Err(newer) = self.ensure_writable() {
+            error!("Not saving connections: {newer}");
+            return;
+        }
         let storage = StorageFormat {
+            version: DEFINITIONS_STORE_VERSION.to_string(),
             connections: defs.connections.values().cloned().collect(),
             folders: defs.folders.values().cloned().collect(),
         };
@@ -590,7 +722,7 @@ impl ConnectionStoreApi for ConnectionStore {
         ConnectionStore::get(self, id).await
     }
 
-    async fn create(&self, conn: Connection) -> ConnectionSnapshot {
+    async fn create(&self, conn: Connection) -> Result<ConnectionSnapshot, NewerVersionError> {
         ConnectionStore::create(self, conn).await
     }
 
@@ -605,7 +737,7 @@ impl ConnectionStoreApi for ConnectionStore {
         folder_id: Option<Option<String>>,
         terminal_options: Option<Option<serde_json::Value>>,
         icon: Option<Option<String>>,
-    ) -> Option<ConnectionSnapshot> {
+    ) -> Result<Option<ConnectionSnapshot>, NewerVersionError> {
         ConnectionStore::update(
             self,
             id,
@@ -624,11 +756,11 @@ impl ConnectionStoreApi for ConnectionStore {
         ConnectionStore::list(self).await
     }
 
-    async fn delete(&self, id: &str) -> bool {
+    async fn delete(&self, id: &str) -> Result<bool, NewerVersionError> {
         ConnectionStore::delete(self, id).await
     }
 
-    async fn create_folder(&self, folder: Folder) -> FolderSnapshot {
+    async fn create_folder(&self, folder: Folder) -> Result<FolderSnapshot, NewerVersionError> {
         ConnectionStore::create_folder(self, folder).await
     }
 
@@ -638,11 +770,11 @@ impl ConnectionStoreApi for ConnectionStore {
         name: Option<String>,
         parent_id: Option<Option<String>>,
         is_expanded: Option<bool>,
-    ) -> Option<FolderSnapshot> {
+    ) -> Result<Option<FolderSnapshot>, NewerVersionError> {
         ConnectionStore::update_folder(self, id, name, parent_id, is_expanded).await
     }
 
-    async fn delete_folder(&self, id: &str) -> bool {
+    async fn delete_folder(&self, id: &str) -> Result<bool, NewerVersionError> {
         ConnectionStore::delete_folder(self, id).await
     }
 
@@ -847,6 +979,7 @@ mod tests {
                 None,
             )
             .await
+            .unwrap()
             .unwrap();
         let raw = fs::read_to_string(&path).unwrap();
         assert!(
@@ -905,6 +1038,7 @@ mod tests {
                 None,
             )
             .await
+            .unwrap()
             .unwrap();
         let raw: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&path).unwrap()).expect("valid json on disk");
@@ -936,7 +1070,8 @@ mod tests {
                 terminal_options: None,
                 icon: None,
             })
-            .await;
+            .await
+            .unwrap();
         assert_eq!(
             created.config,
             json!({ "host": "h", "connectTimeoutSecs": 45 })
@@ -954,6 +1089,7 @@ mod tests {
                 None,
             )
             .await
+            .unwrap()
             .unwrap();
         assert_eq!(
             updated.config,
@@ -999,7 +1135,10 @@ mod tests {
         let path = tmp.path().join("connections.json");
         let store = ConnectionStore::new_temp(path);
 
-        store.create(make_connection("conn-1", "Shell", true)).await;
+        store
+            .create(make_connection("conn-1", "Shell", true))
+            .await
+            .unwrap();
 
         let snap = store.get("conn-1").await;
         assert!(snap.is_some());
@@ -1018,7 +1157,7 @@ mod tests {
         let store = ConnectionStore::new_temp(path);
 
         let conn = make_connection("conn-1", "Build Shell", true);
-        let snapshot = store.create(conn).await;
+        let snapshot = store.create(conn).await.unwrap();
         assert_eq!(snapshot.id, "conn-1");
         assert_eq!(snapshot.name, "Build Shell");
         assert!(snapshot.persistent);
@@ -1035,7 +1174,10 @@ mod tests {
         let path = tmp.path().join("connections.json");
         let store = ConnectionStore::new_temp(path);
 
-        store.create(make_connection("conn-1", "Old", false)).await;
+        store
+            .create(make_connection("conn-1", "Old", false))
+            .await
+            .unwrap();
 
         let updated = store
             .update(
@@ -1048,7 +1190,8 @@ mod tests {
                 None,
                 None,
             )
-            .await;
+            .await
+            .unwrap();
         assert!(updated.is_some());
         let snap = updated.unwrap();
         assert_eq!(snap.name, "New");
@@ -1072,7 +1215,8 @@ mod tests {
                 None,
                 None,
             )
-            .await;
+            .await
+            .unwrap();
         assert!(result.is_none());
     }
 
@@ -1084,10 +1228,12 @@ mod tests {
 
         store
             .create(make_connection("conn-1", "Shell", false))
-            .await;
+            .await
+            .unwrap();
         store
             .create_folder(make_folder("folder-1", "My Folder", None))
-            .await;
+            .await
+            .unwrap();
 
         // Move to folder
         let snap = store
@@ -1102,6 +1248,7 @@ mod tests {
                 None,
             )
             .await
+            .unwrap()
             .unwrap();
         assert_eq!(snap.folder_id, Some("folder-1".to_string()));
 
@@ -1109,6 +1256,7 @@ mod tests {
         let snap = store
             .update("conn-1", None, None, None, None, Some(None), None, None)
             .await
+            .unwrap()
             .unwrap();
         assert_eq!(snap.folder_id, None);
     }
@@ -1121,8 +1269,9 @@ mod tests {
 
         store
             .create(make_connection("conn-1", "Shell", false))
-            .await;
-        assert!(store.delete("conn-1").await);
+            .await
+            .unwrap();
+        assert!(store.delete("conn-1").await.unwrap());
 
         let (conns, _) = store.list().await;
         assert!(conns.is_empty());
@@ -1134,7 +1283,7 @@ mod tests {
         let path = tmp.path().join("connections.json");
         let store = ConnectionStore::new_temp(path);
 
-        assert!(!store.delete("nonexistent").await);
+        assert!(!store.delete("nonexistent").await.unwrap());
     }
 
     // ── Folder CRUD ─────────────────────────────────────────────────
@@ -1146,7 +1295,7 @@ mod tests {
         let store = ConnectionStore::new_temp(path);
 
         let folder = make_folder("folder-1", "Project A", None);
-        let snapshot = store.create_folder(folder).await;
+        let snapshot = store.create_folder(folder).await.unwrap();
         assert_eq!(snapshot.id, "folder-1");
         assert_eq!(snapshot.name, "Project A");
         assert_eq!(snapshot.parent_id, None);
@@ -1164,11 +1313,13 @@ mod tests {
 
         store
             .create_folder(make_folder("folder-1", "Old Name", None))
-            .await;
+            .await
+            .unwrap();
 
         let updated = store
             .update_folder("folder-1", Some("New Name".to_string()), None, Some(true))
-            .await;
+            .await
+            .unwrap();
         assert!(updated.is_some());
         let snap = updated.unwrap();
         assert_eq!(snap.name, "New Name");
@@ -1183,7 +1334,8 @@ mod tests {
 
         let result = store
             .update_folder("nonexistent", Some("Name".to_string()), None, None)
-            .await;
+            .await
+            .unwrap();
         assert!(result.is_none());
     }
 
@@ -1196,17 +1348,19 @@ mod tests {
         // Create parent folder, subfolder, and connection in parent
         store
             .create_folder(make_folder("folder-1", "Parent", None))
-            .await;
+            .await
+            .unwrap();
         store
             .create_folder(make_folder("folder-2", "Child", Some("folder-1")))
-            .await;
+            .await
+            .unwrap();
 
         let mut conn = make_connection("conn-1", "Shell", false);
         conn.folder_id = Some("folder-1".to_string());
-        store.create(conn).await;
+        store.create(conn).await.unwrap();
 
         // Delete parent folder
-        assert!(store.delete_folder("folder-1").await);
+        assert!(store.delete_folder("folder-1").await.unwrap());
 
         let (conns, folders) = store.list().await;
 
@@ -1225,7 +1379,7 @@ mod tests {
         let path = tmp.path().join("connections.json");
         let store = ConnectionStore::new_temp(path);
 
-        assert!(!store.delete_folder("nonexistent").await);
+        assert!(!store.delete_folder("nonexistent").await.unwrap());
     }
 
     // ── Persistence ─────────────────────────────────────────────────
@@ -1239,13 +1393,16 @@ mod tests {
             let store = ConnectionStore::new_temp(path.clone());
             store
                 .create(make_connection("conn-1", "Shell 1", true))
-                .await;
+                .await
+                .unwrap();
             store
                 .create(make_connection("conn-2", "Shell 2", false))
-                .await;
+                .await
+                .unwrap();
             store
                 .create_folder(make_folder("folder-1", "Folder", None))
-                .await;
+                .await
+                .unwrap();
         }
 
         let store2 = ConnectionStore::new(path);
@@ -1348,7 +1505,8 @@ mod tests {
 
         store
             .create(make_connection("conn-1", "Existing", false))
-            .await;
+            .await
+            .unwrap();
         store.ensure_default_shell().await;
 
         let (conns, _) = store.list().await;
@@ -1455,7 +1613,8 @@ mod tests {
         let store = ConnectionStore::new_temp(path);
         store
             .create(default_shell_conn("conn-1", "local", "/bin/sh"))
-            .await;
+            .await
+            .unwrap();
 
         store.ensure_default_shell().await;
 
@@ -1473,7 +1632,8 @@ mod tests {
         let store = ConnectionStore::new_temp(path);
         store
             .create(default_shell_conn("conn-1", "local", "/bin/sh"))
-            .await;
+            .await
+            .unwrap();
 
         store.ensure_default_shell().await;
 
@@ -1605,7 +1765,8 @@ mod tests {
         let store = ConnectionStore::new_temp(primary_path);
         store
             .create(make_connection("primary-1", "Primary Shell", false))
-            .await;
+            .await
+            .unwrap();
 
         // Before loading, only primary connection is listed
         let (conns, _) = store.list().await;
@@ -1724,7 +1885,8 @@ mod tests {
                 handles.push(tokio::spawn(async move {
                     store_a
                         .create(make_connection(&format!("conn-{i}"), "Shell", false))
-                        .await;
+                        .await
+                        .unwrap();
                 }));
 
                 // Group B: create_folder (locked folders, then connections).
@@ -1732,14 +1894,15 @@ mod tests {
                 handles.push(tokio::spawn(async move {
                     store_b
                         .create_folder(make_folder(&format!("folder-{i}"), "Folder", None))
-                        .await;
+                        .await
+                        .unwrap();
                 }));
 
                 // Group B: delete_folder (also folders→connections, and mutates
                 // both maps) contending against the group-A creates.
                 let store_c = Arc::clone(&store);
                 handles.push(tokio::spawn(async move {
-                    store_c.delete_folder(&format!("folder-{i}")).await;
+                    store_c.delete_folder(&format!("folder-{i}")).await.unwrap();
                 }));
 
                 // Group A: list (locks connections then folders) — read side.
@@ -1772,9 +1935,201 @@ mod tests {
         let store = ConnectionStore::new_temp(path);
         store
             .create(make_connection("conn-1", "Shell", false))
-            .await;
+            .await
+            .unwrap();
 
         let (conns, _) = store.list().await;
         assert_eq!(conns[0].source_file, None);
+    }
+
+    // ── Schema version + downgrade safety (#3920) ───────────────────
+
+    /// A `connections.json` written by a newer agent: a future schema version,
+    /// a connection, a folder, and a key this agent does not know.
+    fn newer_version_file() -> String {
+        serde_json::to_string_pretty(&json!({
+            "version": "99",
+            "connections": [{
+                "id": "conn-future",
+                "name": "Future",
+                "session_type": "ftp",
+                "config": {"host": "h", "futureKey": 42},
+                "persistent": false
+            }],
+            "folders": [{"id": "folder-future", "name": "F", "parent_id": null}],
+            "futureTopLevel": {"keep": true}
+        }))
+        .unwrap()
+    }
+
+    /// Load of a newer file never touches it — not on load, not when the
+    /// default shell would be auto-created on an "empty" store.
+    #[tokio::test]
+    async fn newer_version_file_is_left_intact_on_load() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let original = newer_version_file();
+        fs::write(&path, &original).unwrap();
+
+        let store = ConnectionStore::new(path.clone());
+        store.ensure_default_shell().await;
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        let refusal = store.newer_on_disk().expect("newer file must be flagged");
+        assert_eq!(refusal.found, 99);
+        assert_eq!(refusal.supported, DEFINITIONS_STORE_VERSION);
+    }
+
+    /// Every mutation over a newer file is refused with a clear error and
+    /// leaves both the file and the in-memory store untouched.
+    #[tokio::test]
+    async fn newer_version_file_refuses_every_mutation() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let original = newer_version_file();
+        fs::write(&path, &original).unwrap();
+        let store = ConnectionStore::new(path.clone());
+
+        let err = store
+            .create(make_connection("conn-1", "Shell", false))
+            .await
+            .unwrap_err();
+        assert_eq!(err.found, 99);
+        assert!(err.to_string().contains("newer version"), "{err}");
+
+        assert!(store
+            .update(
+                "conn-future",
+                Some("x".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None
+            )
+            .await
+            .is_err());
+        assert!(store.delete("conn-future").await.is_err());
+        assert!(store
+            .create_folder(make_folder("folder-1", "F", None))
+            .await
+            .is_err());
+        assert!(store
+            .update_folder("folder-future", Some("x".into()), None, None)
+            .await
+            .is_err());
+        assert!(store.delete_folder("folder-future").await.is_err());
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        assert!(store.get("conn-1").await.is_none());
+    }
+
+    /// A newer agent writing the file *after* this store loaded is still
+    /// protected: the save re-reads the file's version before overwriting.
+    #[tokio::test]
+    async fn save_refuses_to_overwrite_a_file_that_became_newer() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let store = ConnectionStore::new(path.clone());
+        store
+            .create(make_connection("conn-1", "Shell", false))
+            .await
+            .unwrap();
+
+        let newer = newer_version_file();
+        fs::write(&path, &newer).unwrap();
+
+        assert!(store
+            .create(make_connection("conn-2", "Shell 2", false))
+            .await
+            .is_err());
+        assert!(store.delete("conn-1").await.is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), newer);
+        assert!(
+            store.get("conn-2").await.is_none(),
+            "memory must not diverge"
+        );
+        assert!(
+            store.get("conn-1").await.is_some(),
+            "memory must not diverge"
+        );
+    }
+
+    /// A legacy, unversioned file loads as the baseline version, and the next
+    /// save stamps the current version.
+    #[tokio::test]
+    async fn unversioned_file_loads_as_baseline_and_save_writes_version() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        fs::write(
+            &path,
+            serde_json::to_string(&json!({
+                "connections": [{
+                    "id": "conn-old",
+                    "name": "Old",
+                    "session_type": "shell",
+                    "config": {"shell": "/bin/sh"},
+                    "persistent": false
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let store = ConnectionStore::new(path.clone());
+        assert!(store.newer_on_disk().is_none());
+        assert!(store.get("conn-old").await.is_some());
+
+        store
+            .create(make_connection("conn-new", "New", false))
+            .await
+            .unwrap();
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            on_disk["version"],
+            json!(DEFINITIONS_STORE_VERSION.to_string())
+        );
+        assert_eq!(on_disk["connections"].as_array().unwrap().len(), 2);
+    }
+
+    /// A current-version file (version as string or number) round-trips.
+    #[tokio::test]
+    async fn current_version_file_loads_as_string_or_number() {
+        for version in [
+            json!(DEFINITIONS_STORE_VERSION.to_string()),
+            json!(DEFINITIONS_STORE_VERSION),
+        ] {
+            let tmp = TempDir::new().unwrap();
+            let path = tmp.path().join("connections.json");
+            fs::write(
+                &path,
+                serde_json::to_string(&json!({
+                    "version": version,
+                    "connections": [{
+                        "id": "conn-1",
+                        "name": "One",
+                        "session_type": "shell",
+                        "config": {},
+                        "persistent": false
+                    }]
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let store = ConnectionStore::new(path);
+            assert!(store.newer_on_disk().is_none());
+            assert!(store.get("conn-1").await.is_some(), "{version}");
+        }
+    }
+
+    /// An older-version file runs through the numbered migrate chain.
+    #[test]
+    fn migrate_from_older_version_reaches_current_shape() {
+        let value = json!({"version": "0", "connections": [], "folders": []});
+        let migrated = migrate_definitions(value.clone(), 0).unwrap();
+        let parsed: StorageFormat = serde_json::from_value(migrated).unwrap();
+        assert!(parsed.connections.is_empty());
     }
 }

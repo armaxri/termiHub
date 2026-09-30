@@ -69,6 +69,7 @@ use crate::session::manager::{
     DeferredUpdateError, DeferredUpdateOutcome, SessionCreateError, SessionManagerApi,
     SessionProcessError, MAX_SESSIONS,
 };
+use crate::store_version::NewerVersionError;
 use crate::tunnel::AgentTunnelRegistry;
 use crate::update::{
     check_pin_matches_desktop, coordinate_update, CoordinationOutcome, ACK_TIMEOUT,
@@ -531,6 +532,22 @@ fn rpc_err(code: i64, message: impl Into<String>) -> ErrorObjectOwned {
 
 fn rpc_err_data(code: i64, message: impl Into<String>, data: Value) -> ErrorObjectOwned {
     ErrorObjectOwned::owned(code as i32, message.into(), Some(data))
+}
+
+/// The error for a `connections.*` mutation refused because the agent's
+/// definitions store on disk was written by a newer agent (#3920). The file is
+/// left intact; the message says why and `data` carries the versions.
+fn definitions_store_newer_err(e: &NewerVersionError) -> ErrorObjectOwned {
+    rpc_err_data(
+        errors::INTERNAL_ERROR,
+        e.to_string(),
+        json!({
+            "reason": "definitions_store_newer_version",
+            "store": e.store,
+            "found": e.found,
+            "supported": e.supported,
+        }),
+    )
 }
 
 /// The `connection.create` error for a connect that failed for a typed reason
@@ -1423,7 +1440,10 @@ fn register_connections_create(module: &mut RpcModule<Mutex<HandlerState>>) -> a
             icon: p.icon,
         };
 
-        let snapshot = connection_store.create(conn).await;
+        let snapshot = connection_store
+            .create(conn)
+            .await
+            .map_err(|e| definitions_store_newer_err(&e))?;
         to_result_value(&snapshot)
     })?;
     Ok(())
@@ -1467,6 +1487,7 @@ fn register_connections_update(module: &mut RpcModule<Mutex<HandlerState>>) -> a
                 icon,
             )
             .await
+            .map_err(|e| definitions_store_newer_err(&e))?
         {
             Some(snapshot) => to_result_value(&snapshot),
             None => Err(rpc_err_data(
@@ -1487,7 +1508,11 @@ fn register_connections_delete(module: &mut RpcModule<Mutex<HandlerState>>) -> a
             .parse()
             .map_err(|e| invalid_params("connections.delete", e))?;
 
-        if connection_store.delete(&p.id).await {
+        if connection_store
+            .delete(&p.id)
+            .await
+            .map_err(|e| definitions_store_newer_err(&e))?
+        {
             Ok::<_, ErrorObjectOwned>(json!({}))
         } else {
             Err(rpc_err_data(
@@ -1519,7 +1544,10 @@ fn register_connections_folders_create(
                 is_expanded: false,
             };
 
-            let snapshot = connection_store.create_folder(folder).await;
+            let snapshot = connection_store
+                .create_folder(folder)
+                .await
+                .map_err(|e| definitions_store_newer_err(&e))?;
             to_result_value(&snapshot)
         },
     )?;
@@ -1549,6 +1577,7 @@ fn register_connections_folders_update(
             match connection_store
                 .update_folder(&p.id, p.name, parent_id, p.is_expanded)
                 .await
+                .map_err(|e| definitions_store_newer_err(&e))?
             {
                 Some(snapshot) => to_result_value(&snapshot),
                 None => Err(rpc_err_data(
@@ -1574,7 +1603,11 @@ fn register_connections_folders_delete(
                 .parse()
                 .map_err(|e| invalid_params("connections.folders.delete", e))?;
 
-            if connection_store.delete_folder(&p.id).await {
+            if connection_store
+                .delete_folder(&p.id)
+                .await
+                .map_err(|e| definitions_store_newer_err(&e))?
+            {
                 Ok::<_, ErrorObjectOwned>(json!({}))
             } else {
                 Err(rpc_err_data(
@@ -6145,7 +6178,7 @@ mod tests {
                 .cloned()
         }
 
-        async fn create(&self, conn: Connection) -> ConnectionSnapshot {
+        async fn create(&self, conn: Connection) -> Result<ConnectionSnapshot, NewerVersionError> {
             let snap = ConnectionSnapshot {
                 id: conn.id.clone(),
                 name: conn.name,
@@ -6158,7 +6191,7 @@ mod tests {
                 source_file: None,
             };
             self.connections.lock().await.push(snap.clone());
-            snap
+            Ok(snap)
         }
 
         async fn update(
@@ -6171,13 +6204,15 @@ mod tests {
             _folder_id: Option<Option<String>>,
             _terminal_options: Option<Option<serde_json::Value>>,
             _icon: Option<Option<String>>,
-        ) -> Option<ConnectionSnapshot> {
+        ) -> Result<Option<ConnectionSnapshot>, NewerVersionError> {
             let mut conns = self.connections.lock().await;
-            let conn = conns.iter_mut().find(|c| c.id == id)?;
+            let Some(conn) = conns.iter_mut().find(|c| c.id == id) else {
+                return Ok(None);
+            };
             if let Some(n) = name {
                 conn.name = n;
             }
-            Some(conn.clone())
+            Ok(Some(conn.clone()))
         }
 
         async fn list(&self) -> (Vec<ConnectionSnapshot>, Vec<FolderSnapshot>) {
@@ -6187,14 +6222,14 @@ mod tests {
             )
         }
 
-        async fn delete(&self, id: &str) -> bool {
+        async fn delete(&self, id: &str) -> Result<bool, NewerVersionError> {
             let mut conns = self.connections.lock().await;
             let before = conns.len();
             conns.retain(|c| c.id != id);
-            conns.len() < before
+            Ok(conns.len() < before)
         }
 
-        async fn create_folder(&self, folder: Folder) -> FolderSnapshot {
+        async fn create_folder(&self, folder: Folder) -> Result<FolderSnapshot, NewerVersionError> {
             let snap = FolderSnapshot {
                 id: folder.id,
                 name: folder.name,
@@ -6202,7 +6237,7 @@ mod tests {
                 is_expanded: folder.is_expanded,
             };
             self.folders.lock().await.push(snap.clone());
-            snap
+            Ok(snap)
         }
 
         async fn update_folder(
@@ -6211,20 +6246,22 @@ mod tests {
             name: Option<String>,
             _parent_id: Option<Option<String>>,
             _is_expanded: Option<bool>,
-        ) -> Option<FolderSnapshot> {
+        ) -> Result<Option<FolderSnapshot>, NewerVersionError> {
             let mut folders = self.folders.lock().await;
-            let folder = folders.iter_mut().find(|f| f.id == id)?;
+            let Some(folder) = folders.iter_mut().find(|f| f.id == id) else {
+                return Ok(None);
+            };
             if let Some(n) = name {
                 folder.name = n;
             }
-            Some(folder.clone())
+            Ok(Some(folder.clone()))
         }
 
-        async fn delete_folder(&self, id: &str) -> bool {
+        async fn delete_folder(&self, id: &str) -> Result<bool, NewerVersionError> {
             let mut folders = self.folders.lock().await;
             let before = folders.len();
             folders.retain(|f| f.id != id);
-            folders.len() < before
+            Ok(folders.len() < before)
         }
 
         async fn load_external_files(&self, _paths: &[String]) {}
@@ -6745,4 +6782,7 @@ mod tests {
 
     /// Hosted services shared across `--listen` connections (#3910).
     mod service_registry_tests;
+
+    /// `connections.*` mutations over a newer definitions store (#3920).
+    mod definitions_store_tests;
 }

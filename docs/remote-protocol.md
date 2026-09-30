@@ -1557,6 +1557,16 @@ List all saved connections and folders.
 | `folders[].parent_id`        | `string?`      | Parent folder ID, or `null` for root          |
 | `folders[].is_expanded`      | `boolean`      | Whether expanded in UI                        |
 
+> **Persistence and downgrade safety (#3920):** the agent saves these definitions
+> in its `connections.json` with a schema `version` (`"1"`; a file without one is
+> read as v1). If that file was written by a **newer** agent, this agent leaves it
+> untouched: `connections.list` returns no saved connections, and every mutating
+> `connections.*` method (`create`, `update`, `delete`, `folders.create`,
+> `folders.update`, `folders.delete`) fails with `-32603` and a message saying the
+> file was written by a newer agent. The error's `data` is
+> `{"reason": "definitions_store_newer_version", "store", "found", "supported"}`.
+> Update the agent to edit the definitions again.
+
 ---
 
 ### `connections.create`
