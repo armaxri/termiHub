@@ -313,13 +313,14 @@ jobs:
         #
         # Runs even when the core suite failed, so one red suite never hides
         # the other. Plain `cargo test` (not instrumented): integration coverage
-        # is measured for termihub-core only. `--test-threads=1` because every
-        # test shares the one sftp-stress container.
+        # is measured for termihub-core only. `--no-fail-fast` so both binaries
+        # report; `--test-threads=1` because every test shares the one
+        # sftp-stress container.
         if: ${{ !cancelled() }}
         env:
           TERMIHUB_REQUIRE_DOCKER: "1"
         run: >-
-          cargo test -p termihub
+          cargo test -p termihub --no-fail-fast
           --test sftp_transfer --test sftp_transfer_resume
           -- --test-threads=1
 
