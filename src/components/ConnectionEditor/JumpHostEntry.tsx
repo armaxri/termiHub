@@ -3,7 +3,7 @@ import type { SettingsField } from "@/types/schema";
 import type { SavedConnectionOption } from "@/utils/jumpHost";
 import { isFieldVisible } from "@/utils/schemaDefaults";
 import { DynamicField } from "@/components/DynamicForm/DynamicField";
-import { Select, SelectItem } from "@/components/ui";
+import { Field, Select, SelectItem } from "@/components/ui";
 
 interface JumpHostEntryProps {
   /** The hop being edited. */
@@ -127,8 +127,7 @@ export function JumpHostEntry({
 
   return (
     <>
-      <div className="settings-form__field">
-        <span className="settings-form__label">Source</span>
+      <Field variant="settings" label="Source">
         <div className="jump-host__source-toggle" role="radiogroup" aria-label="Jump host source">
           <button
             type="button"
@@ -153,11 +152,20 @@ export function JumpHostEntry({
             Inline configuration
           </button>
         </div>
-      </div>
+      </Field>
 
       {mode === "saved" ? (
-        <div className="settings-form__field">
-          <span className="settings-form__label">Connection</span>
+        <Field
+          variant="settings"
+          label="Connection"
+          error={
+            refAmbiguous
+              ? "A connection with this id exists in more than one connection file, so it cannot " +
+                "be used as a jump host. Rename or move one of them, or configure the hop inline."
+              : undefined
+          }
+          errorTestId={tid("ambiguous")}
+        >
           <Select
             value={hop.connectionId ?? ""}
             onChange={(v) => onChange({ connectionId: v })}
@@ -173,17 +181,7 @@ export function JumpHostEntry({
               </SelectItem>
             ))}
           </Select>
-          {refAmbiguous && (
-            <p
-              className="settings-form__hint settings-form__hint--error"
-              role="alert"
-              data-testid={tid("ambiguous")}
-            >
-              A connection with this id exists in more than one connection file, so it cannot be
-              used as a jump host. Rename or move one of them, or configure the hop inline.
-            </p>
-          )}
-        </div>
+        </Field>
       ) : (
         inlineFields
           .filter((field) => isFieldVisible(field, hop as unknown as Record<string, unknown>))

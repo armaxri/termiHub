@@ -1241,3 +1241,21 @@
     transition: none;
   }
 }
+
+/* Row holding a field label next to an interactive accessory (e.g. a "?" help
+   button); the accessory sits beside the label, never inside it. */
+.ui-field__label-row {
+  display: flex;
+  align-items: center;
+}
+
+/* Decorative required-field marker appended to a field label. */
+.ui-field__required {
+  color: var(--color-error);
+}
+
+/* Single-row layout: control first, label text beside it. */
+.ui-field--checkbox {
+  flex-direction: row;
+  align-items: center;
+}

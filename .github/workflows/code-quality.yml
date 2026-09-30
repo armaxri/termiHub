@@ -48,6 +48,7 @@ jobs:
       agent: ${{ steps.detect.outputs.agent }}
       workflows: ${{ steps.detect.outputs.workflows }}
       rustdoc: ${{ steps.detect.outputs.rustdoc }}
+      tests: ${{ steps.detect.outputs.tests }}
       test_matrix: ${{ steps.detect.outputs.test_matrix }}
 
     steps:
@@ -874,7 +875,11 @@ jobs:
     name: Run Tests
     runs-on: ${{ matrix.os }}
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.test_matrix != '[]' }}
+    # [skip-tests] on the PR head commit (#3915) empties test_matrix and sets
+    # tests=false; either skips this job.
+    if: >-
+      ${{ !cancelled() && needs.changes.outputs.tests != 'false' &&
+      needs.changes.outputs.test_matrix != '[]' }}
     strategy:
       # Don't cancel sibling legs when one platform fails: a single real
       # failure (e.g. Windows) otherwise cancels the others, and downstream
@@ -1023,7 +1028,10 @@ jobs:
     name: Agent Live Tests (Windows, serial)
     runs-on: windows-latest
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.agent != 'false' }}
+    # Also skipped when the PR head commit carries [skip-tests] (#3915).
+    if: >-
+      ${{ !cancelled() && needs.changes.outputs.tests != 'false' &&
+      needs.changes.outputs.agent != 'false' }}
     # The 10 tests take ~20s serially; a cold build is the long pole. The
     # script's own deadline (CI_SERIAL_TIMEOUT_SECS) kills a wedged run first
     # and names the stuck test; this ceiling is only the backstop.
@@ -1075,7 +1083,10 @@ jobs:
     name: System-Test Harness (machinery)
     runs-on: ubuntu-latest
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.harness != 'false' }}
+    # Also skipped when the PR head commit carries [skip-tests] (#3915).
+    if: >-
+      ${{ !cancelled() && needs.changes.outputs.tests != 'false' &&
+      needs.changes.outputs.harness != 'false' }}
 
     steps:
       - name: Checkout code

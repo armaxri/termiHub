@@ -54,6 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       agent: ${{ steps.detect.outputs.agent }}
+      tests: ${{ steps.detect.outputs.tests }}
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -69,8 +70,11 @@ jobs:
     name: Build (${{ matrix.target }})
     runs-on: ubuntu-latest
     needs: changes
-    # Skipped on a PR whose agent/core changes are comment-only (#3903).
-    if: ${{ !cancelled() && needs.changes.outputs.agent != 'false' }}
+    # Skipped on a PR whose agent/core changes are comment-only (#3903), or
+    # whose head commit carries [skip-tests] (#3915).
+    if: >-
+      ${{ !cancelled() && needs.changes.outputs.tests != 'false' &&
+      needs.changes.outputs.agent != 'false' }}
 
     strategy:
       fail-fast: false
