@@ -9,8 +9,8 @@
 //! [`serve_tcp`] runs the same server on a loopback TCP port instead, for tests
 //! whose SSH client lives in **another process** — the agent's session daemon
 //! in the relayed-OTP end-to-end suite (#3436). Once authenticated, a session
-//! channel gets a PTY and a shell that prints [`SHELL_BANNER`], so a real SSH
-//! backend can finish its connect against it.
+//! channel gets a PTY and a shell that prints [`SHELL_BANNER`] and then echoes
+//! its input, so a real SSH backend can finish its connect and round-trip data.
 //!
 //! Compiled for this crate's tests and, behind the `ssh-test-support` feature,
 //! for other crates' tests. Never part of a shipping build.
