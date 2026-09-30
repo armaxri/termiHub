@@ -488,3 +488,29 @@ fn an_encrypted_import_with_the_wrong_password_imports_nothing() {
     assert!(main_ids(&dst).is_empty());
     assert!(dst_store.snapshot().is_empty());
 }
+
+/// Importing a connection whose id already exists skips it — and must not
+/// overwrite that existing connection's own saved password either.
+#[test]
+fn an_encrypted_import_does_not_clobber_a_skipped_connections_password() {
+    let src_dir = tempfile::tempdir().unwrap();
+    let (src, _r) = manager(src_dir.path(), Arc::new(RecordingStore::default()));
+    src.save_connection(with_password(ssh("a", "a", None), "FROM-EXPORT"))
+        .unwrap();
+    src.save_connection(with_password(ssh("b", "b", None), "B"))
+        .unwrap();
+    let json = src.export_encrypted_json(Some("export-pw"), None).unwrap();
+
+    let dst_dir = tempfile::tempdir().unwrap();
+    let dst_store = Arc::new(RecordingStore::default());
+    let (dst, _r) = manager(dst_dir.path(), dst_store.clone());
+    dst.save_connection(with_password(ssh("a", "a", None), "LOCAL"))
+        .unwrap();
+
+    let result = dst.import_encrypted_json(&json, Some("export-pw")).unwrap();
+
+    assert_eq!(main_ids(&dst), vec!["a", "b"]);
+    assert_eq!(dst_store.value("a", PW).as_deref(), Some("LOCAL"));
+    assert_eq!(dst_store.value("b", PW).as_deref(), Some("B"));
+    assert_eq!(result.credentials_imported, 1);
+}
