@@ -8,56 +8,107 @@
 //!
 //! Mirrors the Wake-on-LAN persistence in [`super::wol_storage`].
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 use super::http_monitor::HttpMonitorConfig;
+use crate::connection::recovery::RecoveryResult;
 use crate::utils::fs::write_atomic;
+use crate::utils::migrate::{
+    guard_not_newer, load_store_with_recovery, read_unknown_fields, salvage_list_store, Salvage,
+    VersionedStore,
+};
 
 const HTTP_MONITORS_FILE: &str = "http-monitors.json";
 
 /// On-disk shape of `http-monitors.json` (also read by the unified backup, PROD-068).
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize)]
 pub(crate) struct HttpMonitorsFile {
+    /// Schema version. Files written before versioning have none and are read
+    /// as v1.
+    #[serde(default = "current_version")]
+    pub(crate) version: String,
     pub(crate) monitors: Vec<HttpMonitorConfig>,
+    /// Unknown top-level fields, carried through a save verbatim (PER-010).
+    #[serde(flatten, default)]
+    pub(crate) extra: Map<String, Value>,
 }
 
-impl HttpMonitorsFile {
-    /// The file's schema version. It carries no `version` field yet, so it is
-    /// schema v1; the unified backup (PROD-068) takes the version from here.
-    /// Add a `version` field and bump this together if the shape ever changes.
-    pub(crate) const CURRENT_VERSION: u32 = 1;
+fn current_version() -> String {
+    <HttpMonitorsFile as VersionedStore>::CURRENT_VERSION.to_string()
+}
+
+impl Default for HttpMonitorsFile {
+    fn default() -> Self {
+        Self {
+            version: current_version(),
+            monitors: Vec::new(),
+            extra: Map::new(),
+        }
+    }
+}
+
+impl VersionedStore for HttpMonitorsFile {
+    const STORE_NAME: &'static str = HTTP_MONITORS_FILE;
+    /// Bump together with a `migrate` step if the shape ever changes; the
+    /// unified backup (PROD-068) takes the version from here.
+    const CURRENT_VERSION: u32 = 1;
+
+    fn salvage(raw: &str, file_name: &str) -> Salvage<Self> {
+        salvage_list_store::<Self, HttpMonitorConfig>(raw, file_name, "monitors")
+    }
 }
 
 /// Resolve the path to the HTTP monitors file.
-fn monitors_path(config_dir: &std::path::Path) -> PathBuf {
+fn monitors_path(config_dir: &Path) -> PathBuf {
     config_dir.join(HTTP_MONITORS_FILE)
 }
 
-/// Load saved HTTP monitor configs from disk. Returns an empty list if the file
-/// doesn't exist yet.
-pub fn load_http_monitors(config_dir: &std::path::Path) -> Result<Vec<HttpMonitorConfig>> {
-    let path = monitors_path(config_dir);
-    if !path.exists() {
-        return Ok(Vec::new());
+/// Load saved HTTP monitor configs with recovery: a missing file is an empty
+/// list, a newer file is left untouched (empty list + warning), and a corrupt
+/// file is backed up and salvaged per monitor (or reset when even that fails).
+pub fn load_http_monitors_with_recovery(
+    config_dir: &Path,
+) -> Result<RecoveryResult<Vec<HttpMonitorConfig>>> {
+    let result = load_store_with_recovery::<HttpMonitorsFile>(
+        &monitors_path(config_dir),
+        HTTP_MONITORS_FILE,
+    )?;
+    Ok(RecoveryResult {
+        data: result.data.monitors,
+        warnings: result.warnings,
+    })
+}
+
+/// Load saved HTTP monitor configs, logging (not returning) any recovery
+/// warnings.
+pub fn load_http_monitors(config_dir: &Path) -> Result<Vec<HttpMonitorConfig>> {
+    let result = load_http_monitors_with_recovery(config_dir)?;
+    for w in &result.warnings {
+        tracing::warn!("{}: {}", w.file_name, w.message);
     }
-    let content =
-        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let file: HttpMonitorsFile =
-        serde_json::from_str(&content).with_context(|| format!("parsing {}", path.display()))?;
-    Ok(file.monitors)
+    Ok(result.data)
 }
 
 /// Persist the current HTTP monitor config list to disk.
-pub fn save_http_monitors(
-    config_dir: &std::path::Path,
-    monitors: &[HttpMonitorConfig],
-) -> Result<()> {
+///
+/// Refuses to overwrite a file written by a newer schema (the version is
+/// re-read from disk here, so this holds across restarts), stamps the current
+/// version, and carries the file's unknown top-level fields forward.
+pub fn save_http_monitors(config_dir: &Path, monitors: &[HttpMonitorConfig]) -> Result<()> {
     let path = monitors_path(config_dir);
+    guard_not_newer(
+        &path,
+        HttpMonitorsFile::STORE_NAME,
+        <HttpMonitorsFile as VersionedStore>::CURRENT_VERSION,
+    )?;
     let file = HttpMonitorsFile {
+        version: current_version(),
         monitors: monitors.to_vec(),
+        extra: read_unknown_fields(&path, &["version", "monitors"]),
     };
     let content = serde_json::to_string_pretty(&file).context("serialising HTTP monitors")?;
     write_atomic(&path, &content).with_context(|| format!("writing {}", path.display()))?;
@@ -180,5 +231,119 @@ mod tests {
         let loaded = load_http_monitors(dir.path()).unwrap();
         assert_eq!(loaded.len(), 2);
         assert_eq!(loaded[0].url, "https://new.example.com");
+    }
+
+    // ── Schema versioning + downgrade safety (#3946, part of #2744) ────────
+
+    fn config_json(url: &str) -> serde_json::Value {
+        serde_json::to_value(make_config(url)).unwrap()
+    }
+
+    /// A file written by a newer schema must never be overwritten by this build.
+    #[test]
+    fn save_refuses_to_overwrite_newer_file() {
+        let dir = TempDir::new().unwrap();
+        let path = monitors_path(dir.path());
+        let newer = serde_json::json!({
+            "version": "99",
+            "monitors": [config_json("https://future.example.com")],
+            "fromTheFuture": true,
+        })
+        .to_string();
+        std::fs::write(&path, &newer).unwrap();
+
+        let result = save_http_monitors(dir.path(), &[make_config("https://mine.example.com")]);
+        assert!(result.is_err(), "saving over a newer file must be refused");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
+    }
+
+    /// A newer file is not interpreted by this build, and loading it leaves it
+    /// untouched (no backup, no rewrite).
+    #[test]
+    fn load_leaves_newer_file_intact() {
+        let dir = TempDir::new().unwrap();
+        let path = monitors_path(dir.path());
+        let newer = r#"{"version": "99", "monitors": "a new shape"}"#;
+        std::fs::write(&path, newer).unwrap();
+
+        let result = load_http_monitors_with_recovery(dir.path()).unwrap();
+        assert!(result.data.is_empty());
+        assert_eq!(result.warnings.len(), 1);
+        assert!(result.warnings[0].message.contains("newer version"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
+        assert!(!path.with_extension("json.bak").exists());
+    }
+
+    /// One corrupt monitor must not cost the user every other saved monitor.
+    #[test]
+    fn corrupt_entry_is_dropped_and_rest_survive() {
+        let dir = TempDir::new().unwrap();
+        let path = monitors_path(dir.path());
+        let raw = serde_json::json!({
+            "monitors": [config_json("https://good.example.com"), {"id": "broken"}],
+        })
+        .to_string();
+        std::fs::write(&path, &raw).unwrap();
+
+        let loaded = load_http_monitors(dir.path()).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].url, "https://good.example.com");
+        let backup = path.with_extension("json.bak");
+        assert_eq!(std::fs::read_to_string(backup).unwrap(), raw);
+    }
+
+    /// An unparseable file is backed up before it is reset.
+    #[test]
+    fn unparseable_file_is_backed_up_and_reset() {
+        let dir = TempDir::new().unwrap();
+        let path = monitors_path(dir.path());
+        std::fs::write(&path, "not json {").unwrap();
+
+        let result = load_http_monitors_with_recovery(dir.path()).unwrap();
+        assert!(result.data.is_empty());
+        assert_eq!(result.warnings.len(), 1);
+        let backup = path.with_extension("json.bak");
+        assert_eq!(std::fs::read_to_string(backup).unwrap(), "not json {");
+    }
+
+    /// A save stamps the schema version and keeps top-level fields this build
+    /// does not know (written by a newer same-schema build).
+    #[test]
+    fn save_stamps_version_and_preserves_unknown_fields() {
+        let dir = TempDir::new().unwrap();
+        let path = monitors_path(dir.path());
+        let raw = serde_json::json!({
+            "monitors": [config_json("https://a.example.com")],
+            "futureSetting": {"nested": [1, 2]},
+        })
+        .to_string();
+        std::fs::write(&path, raw).unwrap();
+
+        let monitors = load_http_monitors(dir.path()).unwrap();
+        save_http_monitors(dir.path(), &monitors).unwrap();
+
+        let saved: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved["version"], "1");
+        assert_eq!(
+            saved["futureSetting"],
+            serde_json::json!({"nested": [1, 2]})
+        );
+        assert_eq!(saved["monitors"].as_array().unwrap().len(), 1);
+    }
+
+    /// A pre-versioning (legacy) file has no `version` and loads as v1.
+    #[test]
+    fn legacy_unversioned_file_loads_as_v1() {
+        let dir = TempDir::new().unwrap();
+        let path = monitors_path(dir.path());
+        let raw = serde_json::json!({
+            "monitors": [config_json("https://a.example.com"), config_json("https://b.example.com")],
+        });
+        std::fs::write(&path, raw.to_string()).unwrap();
+
+        let result = load_http_monitors_with_recovery(dir.path()).unwrap();
+        assert!(result.warnings.is_empty());
+        assert_eq!(result.data.len(), 2);
     }
 }

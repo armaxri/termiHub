@@ -243,13 +243,7 @@ macro_rules! plain_store {
     };
 }
 
-plain_store!(
-    MacroStore,
-    TunnelStore,
-    EmbeddedServerStore,
-    WolDevicesFile,
-    HttpMonitorsFile,
-);
+plain_store!(MacroStore, TunnelStore, EmbeddedServerStore,);
 
 /// Normalize a store that has no migration layer: refuse a `version` newer
 /// than the store's `CURRENT_VERSION`, otherwise validate through the typed
@@ -480,11 +474,11 @@ pub static SECTIONS: &[SectionSpec] = &[
         label: "Wake-on-LAN devices",
         description: "Saved Wake-on-LAN devices.",
         file_name: "wol-devices.json",
-        current_version: WolDevicesFile::CURRENT_VERSION,
+        current_version: <WolDevicesFile as VersionedStore>::CURRENT_VERSION,
         shape: Shape::List { field: "devices" },
         contains_secrets: false,
         integrity_sensitive: false,
-        normalize: normalize_plain::<WolDevicesFile>,
+        normalize: normalize_versioned::<WolDevicesFile>,
         legacy_secrets: None,
         default_doc: || to_doc(&WolDevicesFile::default()),
     },
@@ -493,11 +487,11 @@ pub static SECTIONS: &[SectionSpec] = &[
         label: "HTTP monitors",
         description: "HTTP monitor definitions.",
         file_name: "http-monitors.json",
-        current_version: HttpMonitorsFile::CURRENT_VERSION,
+        current_version: <HttpMonitorsFile as VersionedStore>::CURRENT_VERSION,
         shape: Shape::List { field: "monitors" },
         contains_secrets: false,
         integrity_sensitive: false,
-        normalize: normalize_plain::<HttpMonitorsFile>,
+        normalize: normalize_versioned::<HttpMonitorsFile>,
         legacy_secrets: None,
         default_doc: || to_doc(&HttpMonitorsFile::default()),
     },

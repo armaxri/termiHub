@@ -547,7 +547,7 @@ pub fn run() -> anyhow::Result<()> {
             // Capture path for the connections file watcher before config_dir is moved.
             let connections_file = config_dir.join("connections.json");
 
-            boot::init_network(app, config_dir.clone());
+            boot::init_network(app, config_dir.clone(), &mut recovery_warnings);
 
             // ORDER: the credential manager is built before the ConnectionManager,
             // which consumes it; config_dir is moved in here (its last use).

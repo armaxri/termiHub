@@ -272,7 +272,11 @@ pub(crate) fn init_plugin_host(
     connection_registry
 }
 
-pub(crate) fn init_network(app: &tauri::App, config_dir: std::path::PathBuf) {
+pub(crate) fn init_network(
+    app: &tauri::App,
+    config_dir: std::path::PathBuf,
+    recovery_warnings: &mut Vec<crate::connection::recovery::RecoveryWarning>,
+) {
     // Construct the network manager fully-initialised, then hand it to
     // Tauri as shared managed state. Building it here (rather than in the
     // builder chain, then mutating it through a `*const → *mut` cast on the
@@ -280,7 +284,7 @@ pub(crate) fn init_network(app: &tauri::App, config_dir: std::path::PathBuf) {
     // TAURI-001 / ARCH-011: `init` takes `&mut self` on this still-owned
     // value, before any shared reference to it can exist.
     let mut network_manager = NetworkManager::new();
-    network_manager.init(config_dir.clone(), app.handle().clone());
+    recovery_warnings.extend(network_manager.init(config_dir.clone(), app.handle().clone()));
     // Managed behind an `Arc` so background tasks (port scan, ping,
     // traceroute) can hold an owned, lifetime-checked handle to the
     // manager instead of laundering a `State` reference through a
