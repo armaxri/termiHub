@@ -42,9 +42,12 @@ const SCAN_LIMIT: usize = 256;
 pub(crate) type SharedPtyWriter = Arc<Mutex<Box<dyn Write + Send>>>;
 
 /// [`Write`] adapter over a [`SharedPtyWriter`], so the shared writer can be
-/// handed out wherever a plain `Box<dyn Write + Send>` is expected.
+/// handed out wherever a plain `Box<dyn Write + Send>` is expected. Only the
+/// local-shell spawner needs it (WSL keeps the shared writer as-is).
+#[cfg(any(test, all(windows, feature = "local-shell")))]
 pub(crate) struct SharedWriter(pub(crate) SharedPtyWriter);
 
+#[cfg(any(test, all(windows, feature = "local-shell")))]
 impl Write for SharedWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.0
