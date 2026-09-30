@@ -2,9 +2,9 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.23.0
+**Version**: 0.24.0
 **Status**: Draft
-**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089, #3210, #3871, #3242
+**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089, #3210, #3871, #3242, #3051
 
 ---
 
@@ -314,9 +314,10 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 > major mismatch (`agent/src/handler/dispatch.rs`). The **desktop** does not participate in this
 > negotiation the way the matrix implies:
 >
-> - It sends a **fixed, hardcoded** `protocolVersion` in `initialize` (currently `"0.3.0"`, which
->   lags the real protocol) rather than its actual supported version, so it always advertises
->   major `0` and can never itself trigger the `-32002` reject path.
+> - It sends a **fixed, hardcoded** `protocolVersion` in `initialize` (currently `"0.24.0"`, the
+>   first version with the camelCase `initialize` result — it is not bumped for additive
+>   features) rather than its actual supported version, so it always advertises major `0` and can
+>   never itself trigger the `-32002` reject path.
 > - It **does not validate** the version the agent returns — it stores that value for display only
 >   and proceeds regardless.
 >
@@ -333,6 +334,9 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                          |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.24.0          | 0.24.0        | Yes                                                                                                                                  |
+| 0.24.0          | 0.9.0–0.23.0  | Yes (the older agent answers `initialize` in snake_case, which the desktop still reads)                                              |
+| 0.23.0          | 0.24.0        | Yes (the agent answers a pre-0.24.0 `protocolVersion` in the legacy snake_case)                                                      |
 | 0.23.0          | 0.23.0        | Yes                                                                                                                                  |
 | 0.23.0          | 0.9.0–0.22.0  | Yes (no `unattendedConnect` — a scheduled run skips an agent-hosted target: "agent too old for unattended connect")                  |
 | 0.22.0          | 0.23.0        | Yes (`unattendedConnect` ignored; `unattended` never sent)                                                                           |
@@ -400,6 +404,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                 |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                  |
 
+**0.24.0 (minor, `initialize` result casing)** — the [`initialize`](#initialize) result envelope is now **camelCase**, matching its params and the nested `capabilities` (#3051): `protocolVersion`, `agentVersion`, `clientId` and `updateAuthTokenPath` replace `protocol_version`, `agent_version`, `client_id` and `update_auth_token_path`. Negotiation is by **the requested version**, in both directions: the agent answers a client whose `protocolVersion` is `0.24.0` or later in camelCase and an older client in the legacy snake_case keys, so a pre-0.24.0 desktop keeps reading its agent's version and update token path. The desktop now requests `0.24.0` (instead of `0.3.0`) and reads **both** casings, so a pre-0.24.0 agent's snake_case result still yields its real version — the outdated-agent and update paths work instead of a parse failure. Nothing else changes: the rest of the protocol keeps its casing.
+
 **0.23.0 (additive, minor)** — [`connection.create`](#connectioncreate) accepts the optional `unattended: true` member (#3877), and the `initialize` result gains `capabilities.unattendedConnect: true` to say so. An unattended create is a connect with nobody at the keyboard — a desktop's scheduled run connecting a saved target — and **never prompts the desktop**: the agent runs the connect (in its own process, or in the session daemon of a persistent session) inside core's never-prompt scope and relays no keyboard-interactive round. Wherever the attended connect would ask, it fails fast with `-32003` and a typed `error.data.connect_failure`: `host_key_untrusted` for a host key that is not already trusted (unknown or changed), `interaction_required` for a keyboard-interactive / one-time-code round the saved password cannot answer, a password auth with no password, or an encrypted key with no passphrase; a rejected credential stays `auth_failed`. Negotiation is by **capability**: the desktop sends the member only to an agent that advertises the flag — an older agent would ignore it and connect attended, so the desktop skips such a target with "agent too old for unattended connect". The member is omitted when `false`, so an attended create keeps its wire shape; a pre-0.23.0 desktop never sends it.
 
 **0.22.0 (additive, minor)** — the [`connection.files.*`](#connectionfileslist) methods now accept an **agent-hosted SSH, Docker, FTP or WSL session id** as `connection_id` (#3242), and the `initialize` result gains `capabilities.sessionFiles: true` to say so. For such a session the agent browses **inside that session's own context** — the remote SSH host (SFTP), the container, the FTP server, or the WSL distribution — through the session backend's own file browser, which for a persistent session runs in the session daemon (see [Session-Daemon Transport](#session-daemon-transport-named-pipe-vs-unix-socket)); it never falls back to the agent host. The session must be running and **held by the requesting client**, exactly as for `connection.processes.*`: otherwise the call fails with `-32023` (held elsewhere) or `-32006` (not running) — this now also applies to a local session's id. Negotiation is by **capability**: a pre-0.22.0 agent omits the flag and answers `-32013` for such sessions, so the desktop does not call it and the file browser says the agent must be updated. A session started by an older agent's session daemon keeps answering `-32013` until it is reopened. A pre-0.22.0 desktop ignores the flag.
@@ -457,7 +463,7 @@ Handshake that establishes the protocol version and exchanges capabilities.
   "jsonrpc": "2.0",
   "method": "initialize",
   "params": {
-    "protocolVersion": "0.2.0",
+    "protocolVersion": "0.24.0",
     "client": "termihub-desktop",
     "clientVersion": "0.1.0",
     "clientCapabilities": { "keyboardInteractivePrompts": true }
@@ -472,9 +478,9 @@ Handshake that establishes the protocol version and exchanges capabilities.
 {
   "jsonrpc": "2.0",
   "result": {
-    "protocol_version": "0.3.0",
-    "agent_version": "0.1.0",
-    "client_id": "b3f1c2d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "protocolVersion": "0.24.0",
+    "agentVersion": "0.1.0",
+    "clientId": "b3f1c2d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
     "capabilities": {
       "connectionTypes": [
         {
@@ -512,10 +518,10 @@ On a successful `initialize`, the agent records the client (`client`, `client_ve
 
 | Result Field                              | Type                   | Description                                                                                                                                                                              |
 | ----------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `protocol_version`                        | `string`               | Negotiated protocol version                                                                                                                                                              |
-| `agent_version`                           | `string`               | Agent binary version                                                                                                                                                                     |
-| `client_id`                               | `string`               | Agent-assigned id for this client (0.3.0+)                                                                                                                                               |
-| `update_auth_token_path`                  | `string`               | Owner-only file (on the agent host) holding this instance's update auth token — see [Update authorization](#update-authorization-and-downgrade-policy) (0.13.0+; absent on older agents) |
+| `protocolVersion`                         | `string`               | Negotiated protocol version                                                                                                                                                              |
+| `agentVersion`                            | `string`               | Agent binary version                                                                                                                                                                     |
+| `clientId`                                | `string`               | Agent-assigned id for this client (0.3.0+)                                                                                                                                               |
+| `updateAuthTokenPath`                     | `string`               | Owner-only file (on the agent host) holding this instance's update auth token — see [Update authorization](#update-authorization-and-downgrade-policy) (0.13.0+; absent on older agents) |
 | `capabilities.connectionTypes`            | `ConnectionTypeInfo[]` | Available connection types with schemas/caps                                                                                                                                             |
 | `capabilities.maxSessions`                | `integer`              | Maximum concurrent sessions                                                                                                                                                              |
 | `capabilities.availableShells`            | `string[]`             | Available shell paths                                                                                                                                                                    |
@@ -530,12 +536,13 @@ On a successful `initialize`, the agent records the client (`client`, `client_ve
 | `capabilities.sessionFiles`               | `boolean`              | [`connection.files.*`](#connectionfileslist) accept an agent-hosted SSH, Docker, FTP or WSL session id and browse inside that session (0.22.0+; absent = `false`)                        |
 | `capabilities.unattendedConnect`          | `boolean`              | [`connection.create`](#connectioncreate) honors `unattended: true` — it never prompts and refuses with a typed `connect_failure` instead (0.23.0+; absent = `false`)                     |
 
-> **Field-casing note.** The `initialize` **params** are serialized in `camelCase`
-> (`protocolVersion`, `clientVersion`), matching the agent's `InitializeParams` — a field sent in
-> `snake_case` is silently ignored. The **result's top-level** fields, however, are `snake_case`
-> (`protocol_version`, `agent_version`, `client_id`), while the nested `capabilities` object is
-> `camelCase` (`connectionTypes`, `maxSessions`, …). This params-vs-result inconsistency is a known
-> wart; unifying it is a wire-breaking change deferred to a coordinated protocol-version bump.
+> **Field-casing note.** The `initialize` params and result are both `camelCase` (#3051) — the
+> params (`protocolVersion`, `clientVersion`; a field sent in `snake_case` is silently ignored),
+> the result envelope (`protocolVersion`, `agentVersion`, `clientId`, `updateAuthTokenPath`) and
+> the nested `capabilities` (`connectionTypes`, `maxSessions`, …). **Before 0.24.0** the result
+> envelope was `snake_case` (`protocol_version`, `agent_version`, `client_id`,
+> `update_auth_token_path`). For compatibility the agent still answers a client that requests a
+> version below `0.24.0` in that legacy shape, and the desktop accepts both shapes from an agent.
 
 **Errors:**
 
@@ -1376,7 +1383,7 @@ Coordination is best-effort and never blocks the update. If the host-wide regist
   "params": {
     "binaryPath": "/opt/updates/termihub-agent",
     "version": "0.4.0",
-    "authToken": "<contents of update_auth_token_path>"
+    "authToken": "<contents of updateAuthTokenPath>"
   },
   "id": 12
 }
@@ -1462,7 +1469,7 @@ as the [`--listen` handshake](#--listen-tcp-transport-per-instance-token-handsha
 - `--stdio` (one agent process per desktop) writes a fresh per-process token to
   `<config>/instance-auth/<pid>.token` (directory `0700`, file `0600`) and removes it on exit.
 
-The agent advertises the file's **path** — never the token — as `update_auth_token_path` in
+The agent advertises the file's **path** — never the token — as `updateAuthTokenPath` in
 the `initialize` result. The desktop reads the file out of band over its own SSH session
 (SFTP) immediately before it sends an update request. A caller that can reach the RPC surface
 but cannot read the agent owner's files cannot update the agent. A missing or wrong token, or
@@ -1506,7 +1513,7 @@ Applying swaps the on-disk agent binary with the staged one and re-execs it (Uni
   "params": {
     "binaryPath": "/opt/updates/termihub-agent",
     "version": "0.3.0",
-    "authToken": "<contents of update_auth_token_path>"
+    "authToken": "<contents of updateAuthTokenPath>"
   },
   "id": 11
 }
@@ -3545,10 +3552,10 @@ For serial sessions:
 
 ```text
 Desktop → Agent:
-{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"0.2.0","client":"termihub-desktop","clientVersion":"0.1.0"},"id":1}
+{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"0.24.0","client":"termihub-desktop","clientVersion":"0.1.0"},"id":1}
 
 Agent → Desktop:
-{"jsonrpc":"2.0","result":{"protocol_version":"0.2.0","agent_version":"0.1.0","capabilities":{"connectionTypes":["local","ssh","serial","docker","telnet","wsl"],"maxSessions":20}},"id":1}
+{"jsonrpc":"2.0","result":{"protocolVersion":"0.24.0","agentVersion":"0.1.0","capabilities":{"connectionTypes":["local","ssh","serial","docker","telnet","wsl"],"maxSessions":20}},"id":1}
 
 Desktop → Agent:
 {"jsonrpc":"2.0","method":"connection.create","params":{"type":"local","config":{"shell":"/bin/bash","cols":80,"rows":24,"env":{"TERM":"xterm-256color"}},"title":"Build session"},"id":2}
@@ -3579,10 +3586,10 @@ Agent → Desktop (notification — command output):
 
 ```text
 Desktop → Agent (new SSH channel):
-{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"0.2.0","client":"termihub-desktop","clientVersion":"0.1.0"},"id":1}
+{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"0.24.0","client":"termihub-desktop","clientVersion":"0.1.0"},"id":1}
 
 Agent → Desktop:
-{"jsonrpc":"2.0","result":{"protocol_version":"0.2.0","agent_version":"0.1.0","capabilities":{"connectionTypes":["local","ssh","serial","docker","telnet","wsl"],"maxSessions":20}},"id":1}
+{"jsonrpc":"2.0","result":{"protocolVersion":"0.24.0","agentVersion":"0.1.0","capabilities":{"connectionTypes":["local","ssh","serial","docker","telnet","wsl"],"maxSessions":20}},"id":1}
 
 Desktop → Agent:
 {"jsonrpc":"2.0","method":"connection.list","params":{},"id":2}

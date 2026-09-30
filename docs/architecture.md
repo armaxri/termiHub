@@ -756,7 +756,7 @@ sequenceDiagram
     Desktop->>SSH: Start termihub-agent --stdio
 
     Desktop->>Agent: initialize {version, capabilities}
-    Agent-->>Desktop: {agent_version, session_types, shells}
+    Agent-->>Desktop: {agentVersion, session_types, shells}
 
     Desktop->>Agent: session.create {type: shell, config}
     Agent->>SD: Spawn daemon process (termihub-agent --daemon)

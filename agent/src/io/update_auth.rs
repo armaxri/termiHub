@@ -18,8 +18,9 @@
 //!   `<config>/instance-auth/<pid>.token` (`0700` directory, `0600` file).
 //!
 //! Either way the agent advertises the file's **path** (never the token) in the
-//! `initialize` result as `update_auth_token_path`. The desktop reads the token
-//! out of band over its SSH session and sends it back as `authToken`. The token
+//! `initialize` result as `updateAuthTokenPath` (`update_auth_token_path` for
+//! a pre-0.24.0 client). The desktop reads the token out of band over its SSH
+//! session and sends it back as `authToken`. The token
 //! therefore proves the caller can read the agent owner's files — a peer that
 //! can merely reach the RPC surface cannot update the agent.
 //!
