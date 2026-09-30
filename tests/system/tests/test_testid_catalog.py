@@ -227,6 +227,29 @@ def test_nested_template_interpolation_collapses_whole():
     assert mod.classify_testid(*found[0])[1] == "fp*-copy"
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        '<div data-testid="foo-bar" />',
+        '<X toggleTestId="foo-toggle" />',
+        '<X rowTestIdPrefix="dns-result" />',
+        'const c = { "data-testid": "foo-bar" };',
+        'const c = { modalTestId: "foo-modal" };',
+        'el.setAttribute("data-testid", "terminal-root");',
+    ],
+)
+def test_every_sink_form_contains_the_trigger(text: str):
+    # The autoformat hook regenerates the catalog only for files matching
+    # _TRIGGER (regen-testid-catalog.mjs pins its copy to it, #1526). Every form
+    # the scanner catalogs must therefore contain it.
+    assert mod.scan_testids(text), text
+    assert mod._TRIGGER.search(text), text
+
+
+def test_scan_skips_text_without_the_trigger():
+    assert mod.scan_testids('<div className="foo-bar" id="x" />') == []
+
+
 # ── generate-and-verify against the live source tree (#1528) ─────────────────
 
 
