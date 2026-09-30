@@ -77,10 +77,22 @@ class NetworkToolsUi(HarnessMixin):
         self.driver.type("dns-hostname", hostname)
         self.driver.click("dns-run")
 
-    def start_http_monitor(self, url: str) -> None:
-        """Open the HTTP Monitor panel, target ``url``, and start monitoring."""
+    def start_http_monitor(self, url: str, *, allow_private_network: bool = False) -> None:
+        """Open the HTTP Monitor panel, target ``url``, and start monitoring.
+
+        ``allow_private_network`` ticks the panel's "Private network" opt-in: the
+        SSRF guard (SEC-008) refuses loopback/private targets without it, so a
+        suite monitoring its local fixture server must pass ``True`` (#4017).
+        """
         self.open_http_monitor()
         self.driver.type("http-monitor-url", url)
+        if allow_private_network:
+            self.driver.click("http-monitor-allow-private")
+            self.wait(
+                lambda: self.driver.get_attribute("http-monitor-allow-private", "aria-checked")
+                == "true",
+                what="the private-network opt-in to be checked",
+            )
         self.driver.click("http-monitor-start")
 
     def stop_http_monitor(self) -> None:

@@ -147,7 +147,7 @@ class TestNetworkToolsLive(NetworkToolsUi, SidebarUi, SettingsUi, TabsUi, System
 
     # ── MT-NET-17: HTTP Monitor — periodic check + response-time chart ──────────
     def test_http_monitor_check_and_chart(self, http_target: int):
-        self.start_http_monitor(f"http://127.0.0.1:{http_target}")
+        self.start_http_monitor(f"http://127.0.0.1:{http_target}", allow_private_network=True)
 
         # The immediate first check completes and records a 200 in the history
         # table. Since #1002 the panel attaches its listener before issuing the
@@ -164,7 +164,7 @@ class TestNetworkToolsLive(NetworkToolsUi, SidebarUi, SettingsUi, TabsUi, System
 
     # ── MT-NET-18: HTTP Monitor — running monitor shows in the sidebar ──────────
     def test_http_monitor_shows_in_sidebar(self, http_target: int):
-        self.start_http_monitor(f"http://127.0.0.1:{http_target}")
+        self.start_http_monitor(f"http://127.0.0.1:{http_target}", allow_private_network=True)
         self.wait(
             lambda: self.driver.exists("http-monitor-entry-0"),
             what="the first HTTP monitor check",
