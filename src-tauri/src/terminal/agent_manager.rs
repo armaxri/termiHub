@@ -92,6 +92,7 @@ use notifications::{
 ///
 /// Carved verbatim into sibling modules; the manager below spawns
 /// [`agent_io_task`] and emits through [`emit_agent_state`].
+mod agent_stderr;
 mod io_lanes;
 mod io_task;
 mod reconnect;
@@ -2967,12 +2968,14 @@ async fn read_handshake_line(
                 buf.push_str(&String::from_utf8_lossy(data));
             }
             Some(ChannelMsg::ExtendedData { ref data, ext: 1 }) => {
-                // stderr — log but don't fail
-                warn!(
-                    "Agent {}: stderr during handshake: {}",
-                    agent_id,
-                    String::from_utf8_lossy(data)
-                );
+                // stderr — re-emit the agent's framed log records at their real
+                // level (#2854); never fails the handshake. Decoded per chunk:
+                // the agent writes each record in one write, so a record is
+                // not split across chunks in practice, and a split one still
+                // degrades to plain `WARN` passthrough rather than being lost.
+                let mut stderr = agent_stderr::AgentStderr::new(agent_id);
+                stderr.push(data);
+                stderr.flush();
             }
             Some(ChannelMsg::Eof) | None => {
                 info!("Agent {}: channel EOF/closed during handshake", agent_id);

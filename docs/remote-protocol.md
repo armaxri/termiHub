@@ -112,7 +112,9 @@ This topology and the tracking model are identical across the **3-platform agent
 1. The desktop opens an SSH connection to the remote host using the configured credentials (reusing the existing `ssh2` crate infrastructure)
 2. The desktop opens an exec channel running the agent binary: `termihub-agent --stdio`
 3. The agent reads JSON-RPC messages from **stdin** and writes responses/notifications to **stdout**
-4. The agent writes diagnostic logs to **stderr** (not part of the protocol)
+4. The agent writes diagnostic logs to **stderr**, never stdout. In `--stdio` mode these are framed
+   log records the desktop re-emits (see [Stderr Log Side-Band](#stderr-log-side-band)); they are
+   not part of the JSON-RPC protocol
 
 ### Framing
 
@@ -130,6 +132,49 @@ Messages are **newline-delimited JSON** (NDJSON). Each message is a single line 
 - Messages MUST be valid UTF-8
 - Binary data (terminal output) MUST be base64-encoded
 - The maximum message size is 1 MiB (1,048,576 bytes)
+
+### Stderr Log Side-Band
+
+In `--stdio` mode the agent writes each of its `tracing` log records to **stderr** as one framed
+line (#2854, OBS-004). The desktop reads the channel's stderr, parses the framed lines and re-emits
+each record into its own log pipeline (LogViewer and `termihub.log`) at the record's real level.
+The JSON-RPC channel on stdout is never used for logs.
+
+```text
+@termihub-log/1 {"ts":"2026-09-30T10:00:00.123456Z","level":"INFO","target":"termihub_agent::handler::dispatch","msg":"agent session created","cid":"3f9c…","fields":{"session_id":"a1b2…","type_id":"ssh"}}\n
+```
+
+A framed line is the prefix `@termihub-log/`, the framing version (`1`), one space, and one JSON
+object. The wire type is `termihub_core::protocol::log_frame::LogFrame`.
+
+| Member   | Type                     | Description                                                                                                                     |
+| -------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `ts`     | `string`                 | RFC 3339 UTC time the agent recorded the event                                                                                  |
+| `level`  | `string`                 | `ERROR`, `WARN`, `INFO`, `DEBUG` or `TRACE`                                                                                     |
+| `target` | `string`                 | The event's `tracing` target on the agent                                                                                       |
+| `msg`    | `string`                 | The formatted message. JSON escapes newlines, so a record never spans lines                                                     |
+| `cid`    | `string?`                | The desktop correlation id (the `connection.create` `correlation_id`) of the enclosing `agent_session` span, if any             |
+| `fields` | `object<string,string>?` | The event's fields merged over its enclosing spans' fields. Fields with a secret name (`password`, `token`, …) are `[REDACTED]` |
+
+**Rules:**
+
+- A stderr line without the prefix is **unframed**: a panic message, a C library print, or any
+  other raw output. The desktop logs it at `WARN` as `agent process stderr: <line>`, as it did
+  before the framing existed.
+- A framed line with an unknown version or a malformed body is treated as unframed, so it is
+  logged, never dropped. Unknown JSON members are ignored.
+- The desktop re-emits records under the `tracing` target `termihub_agent::remote` with the fields
+  `agent_id`, `agent_target`, `agent_ts`, `correlation_id` and `agent_fields`. The LogViewer shows
+  `agent_target` as the entry's target. Every string is control-character-escaped and
+  length-capped, and secret-named fields are redacted again, so a record cannot forge a desktop
+  log line.
+- The framed sink honors `RUST_LOG` (default `info`) with `russh=warn` prepended, the same clamp as
+  the agent's durable log file, because the desktop writes the records to a durable log.
+- The `--listen`, `--daemon` and `--registry-daemon` roles keep plain, human-readable stderr.
+
+The framing is not negotiated: desktop and agent ship version-matched. An older desktop logs a
+newer agent's framed lines as unframed `WARN` text; a newer desktop logs an older agent's plain
+lines the same way.
 
 ### Connection Lifecycle
 

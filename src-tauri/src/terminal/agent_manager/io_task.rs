@@ -28,6 +28,7 @@ use termihub_core::protocol::methods::{
     AgentForwardCloseParams, AgentForwardDataParams, SessionInputParams, SessionResizeParams,
 };
 
+use super::agent_stderr::AgentStderr;
 use super::io_lanes::{AgentIoSender, CloseBudgetOnDrop, IoBudget, IoLanes, Next};
 use super::{
     dispatch_agent_notification, emit_agent_state, emit_agent_state_with_error, evicted_remote_ids,
@@ -183,6 +184,9 @@ pub(super) async fn agent_io_task<R: Runtime>(
     // re-launched agent is a new instance with a new token file.
     let mut update_auth_token_path = update_auth_token_path;
     let mut line_buf = String::new();
+    // The agent's stderr side-band: framed log records re-emitted at their
+    // real level/target, anything else passed through as `WARN` (#2854).
+    let mut agent_stderr = AgentStderr::new(agent_id.clone());
     let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
     let mut monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
     // Streaming tool runs (#3353): run id → where its notifications go.
@@ -474,8 +478,9 @@ pub(super) async fn agent_io_task<R: Runtime>(
                             }
                         }
                         Some(ChannelMsg::ExtendedData { ref data, ext: 1 }) => {
-                            // stderr from the remote agent process (SSH_EXTENDED_DATA_STDERR = 1)
-                            warn!(stderr = %String::from_utf8_lossy(data), "agent process stderr");
+                            // stderr from the remote agent process (SSH_EXTENDED_DATA_STDERR = 1):
+                            // framed log records re-emitted at their real level (#2854).
+                            agent_stderr.push(data);
                         }
                         Some(ChannelMsg::Eof) => {
                             // Remote side sent EOF — connection is gone
@@ -573,6 +578,8 @@ pub(super) async fn agent_io_task<R: Runtime>(
                 current_session = Some(new_session);
                 channel = new_channel;
                 line_buf.clear();
+                // A partial stderr line belongs to the dropped agent process.
+                agent_stderr.flush();
                 connection_error = None;
 
                 // Replay any notifications the agent emitted before answering
