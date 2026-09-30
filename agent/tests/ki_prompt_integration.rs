@@ -264,8 +264,7 @@ impl StdioAgent {
         }
         let resp = self.rpc("initialize", params);
         assert_eq!(
-            resp["result"]["capabilities"]["keyboardInteractivePrompts"],
-            true,
+            resp["result"]["capabilities"]["keyboardInteractivePrompts"], true,
             "initialize: {resp}"
         );
     }

@@ -15,6 +15,10 @@
 //! Compiled for this crate's tests and, behind the `ssh-test-support` feature,
 //! for other crates' tests. Never part of a shipping build.
 
+// Test-support code: a poisoned lock or an unencodable fixed key is a bug in
+// the test, and panicking is the right way to report it.
+#![allow(clippy::expect_used)]
+
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -262,9 +266,9 @@ pub fn serve(script: Script) -> (tokio::io::DuplexStream, Arc<Mutex<Observed>>) 
 
 /// The server's fixed host key (deterministic, so a test can trust it).
 fn host_key() -> russh::keys::PrivateKey {
-    russh::keys::PrivateKey::from(
-        russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&[7u8; 32]),
-    )
+    russh::keys::PrivateKey::from(russh::keys::ssh_key::private::Ed25519Keypair::from_seed(
+        &[7u8; 32],
+    ))
 }
 
 fn server_config() -> Arc<russh::server::Config> {
