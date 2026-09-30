@@ -38,6 +38,8 @@ pub const MSG_QUERY_BUFFER: u8 = 0x05;
 /// worker that is *recovering* declares [`INTENT_RECOVERY`] and the daemon
 /// refuses to evict a still-attached live writer; a deliberate re-attach or the
 /// fresh spawn declares [`INTENT_TAKEOVER`] and keeps the historical behavior.
+/// A worker that sends no intent while a writer is attached is refused, never
+/// taken for a takeover (#3932): only a declared takeover evicts.
 ///
 /// A pre-AGT-015 daemon does not read this frame before its handshake and its
 /// command loop ignores the unknown type, so a current worker connecting to an

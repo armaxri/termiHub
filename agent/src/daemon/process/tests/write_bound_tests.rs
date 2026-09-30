@@ -102,7 +102,7 @@ impl Worker {
     }
 
     /// Connect without declaring an intent yet: a worker that is slow to write
-    /// its preamble, or a pre-AGT-015 worker that never sends one (#3928).
+    /// its preamble (#3928), or one that never sends it and is refused (#3932).
     pub(super) fn connect_silent(daemon: &Daemon) -> Self {
         let (client, server) = tokio::io::duplex(PIPE);
         let (server_r, server_w) = tokio::io::split(server);

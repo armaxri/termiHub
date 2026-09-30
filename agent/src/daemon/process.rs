@@ -703,22 +703,33 @@ async fn daemon_loop(
         // startup must never evict a session another *live* worker is actively
         // attached to — otherwise opening a second desktop steals the first
         // desktop's live terminals. When a writer is attached, consult the
-        // newcomer's declared intent: a recovery connect is refused (its live
-        // owner keeps the session); a takeover connect evicts as before.
+        // newcomer's declared intent: only a declared takeover evicts; a
+        // recovery connect, or one that declared nothing within the bound
+        // (#3932), is refused and its live owner keeps the session.
         //
         // The intent was read off the loop (#3928), so decide against whether a
         // writer is attached *now*: the holder may have left meanwhile.
-        let decision = decide_attach(agent_writer.is_some(), intent.unwrap_or(INTENT_TAKEOVER));
+        let decision = decide_attach(agent_writer.is_some(), intent);
         match decision {
             AttachDecision::RefuseOwnedByLivePeer => {
                 // OBS-012: log the ownership decision so a
                 // "my session vanished" report is explicable —
                 // here the incumbent live writer keeps it.
-                info!(
-                    session_id,
-                    "Refusing recovery connect: a live writer is still \
-                     attached, leaving the session with its owner (AGT-015)"
-                );
+                if intent == Some(INTENT_RECOVERY) {
+                    info!(
+                        session_id,
+                        "Refusing recovery connect: a live writer is still \
+                         attached, leaving the session with its owner (AGT-015)"
+                    );
+                } else {
+                    info!(
+                        session_id,
+                        ?intent,
+                        "Refusing a connect that declared no takeover: a live \
+                         writer is still attached, leaving the session with its \
+                         owner (#3932)"
+                    );
+                }
                 // Off the loop, bounded (#3890): the refused
                 // peer may not be reading either.
                 tokio::spawn(refuse_connection(read_half, write_half));
@@ -1095,40 +1106,46 @@ async fn agent_reader_loop(mut reader: BoxedReader, tx: mpsc::Sender<AgentComman
 enum AttachDecision {
     /// No live writer was attached; the newcomer simply attaches.
     FreshAttach,
-    /// A live writer is attached and the newcomer is a recovery connect: refuse
-    /// it and leave the session with its current owner (AGT-015).
+    /// A live writer is attached and the newcomer did not declare a takeover (a
+    /// recovery connect, or no or an unknown intent): refuse it and leave the
+    /// session with its current owner (AGT-015, #3932).
     RefuseOwnedByLivePeer,
-    /// A live writer is attached and the newcomer is a takeover: evict the
-    /// incumbent and hand the session over (OBS-012 logs this).
+    /// A live writer is attached and the newcomer declared a takeover: evict
+    /// the incumbent and hand the session over (OBS-012 logs this).
     EvictAndTakeover,
 }
 
 /// Decide how to handle a new connection from `writer_attached` (is a live
-/// writer already attached) and its declared `intent`.
-fn decide_attach(writer_attached: bool, intent: u8) -> AttachDecision {
+/// writer already attached) and its declared `intent` (`None` when it declared
+/// none).
+///
+/// Only a declared [`INTENT_TAKEOVER`] may evict a live writer (#3932): a
+/// newcomer that never declared one is refused, whatever the reason it stayed
+/// silent, so no path lets a silent newcomer steal a live session.
+fn decide_attach(writer_attached: bool, intent: Option<u8>) -> AttachDecision {
     if !writer_attached {
         AttachDecision::FreshAttach
-    } else if intent == INTENT_RECOVERY {
-        AttachDecision::RefuseOwnedByLivePeer
-    } else {
-        // Takeover, or an absent/malformed intent which defaults to takeover,
-        // preserving the historical evict-on-accept behaviour.
+    } else if intent == Some(INTENT_TAKEOVER) {
         AttachDecision::EvictAndTakeover
+    } else {
+        AttachDecision::RefuseOwnedByLivePeer
     }
 }
 
 /// How long a newcomer that connects while a worker holds the session has to
-/// declare its [`MSG_ATTACH_INTENT`] before it is taken for a pre-AGT-015
-/// worker, which never sends one and so falls back to a takeover.
+/// declare its [`MSG_ATTACH_INTENT`]. One that declares nothing by then is
+/// refused, never taken for a takeover (#3932).
 ///
 /// A current worker writes its intent right after connecting, so this bound is
-/// only ever reached by a worker that is descheduled between the two — and a
-/// recovery worker misread that way would evict the live holder (#3928). The
-/// read runs off the daemon loop, so the bound costs nobody else anything and
-/// can be generous: it is 2.5× the historical inline 2 s that CI load was seen
-/// to exceed. It must stay well under the worker's own 15 s wait for
-/// `MSG_READY` (unchanged since before AGT-015), so a legacy takeover still
-/// completes.
+/// only ever reached by a worker that is descheduled between the two. The read
+/// runs off the daemon loop (#3928), so the bound costs nobody else anything
+/// and can be generous: it is 2.5× the historical inline 2 s that CI load was
+/// seen to exceed. It stays well under the worker's own 15 s wait for
+/// `MSG_READY`, so a silent worker hears its refusal before it gives up.
+///
+/// There is deliberately no fallback for a worker that never sends an intent:
+/// the desktop and agent ship version-matched and no released worker predates
+/// AGT-015, so a silent newcomer is only ever a current worker running late.
 const ATTACH_INTENT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How many newcomers may be owed their attach intent at once. Past this, a
@@ -1140,8 +1157,8 @@ const MAX_PENDING_INTENTS: usize = 8;
 struct Newcomer {
     read_half: BoxedReader,
     write_half: BoxedWriter,
-    /// Its declared attach intent; `None` when it was attached without one
-    /// because no writer held the session.
+    /// Its declared attach intent; `None` when it declared none — attached at
+    /// once because no writer held the session, or silent past the bound.
     intent: Option<u8>,
 }
 
@@ -1155,7 +1172,7 @@ async fn read_newcomer_intent(
     Some(Newcomer {
         read_half,
         write_half,
-        intent: Some(intent),
+        intent,
     })
 }
 
@@ -1163,17 +1180,17 @@ async fn read_newcomer_intent(
 /// a recovery connect (refuse if a live writer is attached) or a takeover.
 ///
 /// The current worker always sends this frame first, so the read normally
-/// returns at once. Defaults to [`INTENT_TAKEOVER`] — preserving the historical
-/// evict-on-accept behaviour — if the first frame is another one, or if none
-/// arrives within [`ATTACH_INTENT_TIMEOUT`] (a pre-AGT-015 worker never sends
-/// it). Returns `None` if the connection ends or fails first: there is nobody
-/// to hand the session to, so a vanished newcomer must never evict the holder.
-async fn read_attach_intent(reader: &mut BoxedReader) -> Option<u8> {
+/// returns at once with `Some(Some(intent))`. It yields `Some(None)` — no
+/// declared intent, which is refused while a writer is attached (#3932) — if
+/// the first frame is another one, the intent frame is empty, or nothing
+/// arrives within [`ATTACH_INTENT_TIMEOUT`]. Returns `None` if the connection
+/// ends or fails first: there is nobody to hand the session to.
+async fn read_attach_intent(reader: &mut BoxedReader) -> Option<Option<u8>> {
     match tokio::time::timeout(ATTACH_INTENT_TIMEOUT, protocol::read_frame_async(reader)).await {
         Ok(Ok(Some(frame))) if frame.msg_type == MSG_ATTACH_INTENT => {
-            Some(frame.payload.first().copied().unwrap_or(INTENT_TAKEOVER))
+            Some(frame.payload.first().copied())
         }
-        Ok(Ok(Some(_))) | Err(_) => Some(INTENT_TAKEOVER),
+        Ok(Ok(Some(_))) | Err(_) => Some(None),
         Ok(Ok(None)) | Ok(Err(_)) => None,
     }
 }
