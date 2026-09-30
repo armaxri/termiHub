@@ -96,22 +96,20 @@ def test_positive_exists_still_counts_when_id_also_negated_elsewhere(tmp_path):
 # ── source-side classification helpers ───────────────────────────────────────
 
 
-def test_prop_testid_matches_forwarding_props_and_object_keys():
-    # Custom ``*TestId`` props and object-property forms the catalog misses.
-    for text, expected in (
-        ('toggleTestId="connection-list-group-toggle"', "connection-list-group-toggle"),
-        ('testId: "storage-mode-none"', "storage-mode-none"),
-        ('"data-testid": `server-dialog-proto-${type}`', None),
+def test_source_side_covers_widened_forms_via_catalog_alone():
+    # The guard no longer runs its own supplementary scan (#3044): the catalog's
+    # scan must cover custom ``*TestId`` props, object-property keys,
+    # ``setAttribute``, ``*TestIdPrefix`` row families and embedded templates.
+    literals, globs, _ = mod.source_testids()
+    assert "connection-list-group-toggle" in literals
+    assert "storage-mode-none" in literals
+    for glob in (
+        "server-dialog-proto-*",
+        "terminal-renderer-*",
+        "dns-result-*",
+        "*-dont-ask-again",
     ):
-        matches = mod._PROP_TESTID.findall(text)
-        assert matches, text
-        if expected is not None:
-            kind, key, _ = mod._classify_value(mod._load_catalog_module(), matches[0])
-            assert (kind, key) == ("literal", expected)
-
-
-def test_prefix_prop_regex_captures_row_family():
-    assert mod._PREFIX_PROP.findall('rowTestIdPrefix="dns-result"') == ['"dns-result"']
+        assert glob in globs, glob
 
 
 def test_specific_glob_excludes_pure_wildcards():

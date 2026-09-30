@@ -114,124 +114,22 @@ def _load_catalog_module():
     return module
 
 
-# The catalog generator scans only the JSX ``data-testid=`` attribute plus three
-# fixed sidebar forwarding props (``testId`` / ``nameTestId`` / ``badgeTestId``).
-# The app forwards testids through many more differently-named ``*TestId`` props
-# (``toggleTestId``, ``footerTestId``, ``headerTestId``, ``modalTestId`` …), and
-# through object-property (``testId: "…"`` / ``"data-testid": "…"``) and imperative
-# (``setAttribute("data-testid", …)``) forms. Those ids ARE in the DOM and ARE
-# referenced by the harness, so the guard must see them or it false-flags drift.
-# Recognise them generically here without touching the catalog generator (a
-# follow-up tracks widening the catalog itself).
-_VALUE = r"""(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`[^`]*`)"""
-# A prop/object-key that is a testid sink: any identifier ending in ``TestId`` or
-# the literal ``data-testid`` (optionally quoted), then ``=`` / ``:`` and a
-# quoted-or-template value (optionally wrapped in a JSX ``{ … }``).
-_PROP_TESTID = re.compile(
-    r"""(?<![A-Za-z0-9_$])"""
-    r"""(?:[A-Za-z0-9_$]*[Tt]est[Ii]d|["']?data-testid["']?)"""
-    r"""\s*[=:]\s*\{?\s*(""" + _VALUE + r""")"""
-)
-_SETATTR_TESTID = re.compile(
-    r"""setAttribute\(\s*["']data-testid["']\s*,\s*(""" + _VALUE + r""")"""
-)
-# A ``*TestIdPrefix`` prop supplies the static stem of per-row ids the component
-# renders as ```${prefix}-${index}``` (e.g. ``rowTestIdPrefix="dns-result"`` →
-# rows ``dns-result-0``…). The rendered id itself collapses to the over-broad
-# ``*-*`` glob, so recover the concrete family from the caller's literal prefix.
-_PREFIX_PROP = re.compile(
-    r"""(?<![A-Za-z0-9_$])[A-Za-z0-9_$]*[Tt]est[Ii]d[Pp]refix"""
-    r"""\s*[=:]\s*\{?\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`[^`]*`)"""
-)
-# A ```...`` template literal (its inner text) — used to recover the static shape
-# of a testid built inside a larger expression, e.g. a ``foo ?? `${b}-suffix```
-# fallback the catalog classifies as fully "indirect".
-_TEMPLATE = re.compile(r"`([^`]*)`")
-# Names of JSX props / object keys that sink into a rendered testid, so an
-# expression value can be mined for embedded templates.
-_TESTID_SINK_NAME = re.compile(
-    r"""(?<![A-Za-z0-9_$])([A-Za-z0-9_$]*[Tt]est[Ii]d|data-testid)(?![A-Za-z0-9_$])"""
-)
-# A key/pattern is a plausible testid only if it is lowercase kebab (``*`` glob
-# segments allowed). Filters template noise like ``Refresh interval set to *``.
-_TESTID_KEY_SHAPE = re.compile(r"^[a-z0-9*]+(?:-[a-z0-9*]+)+$")
-
-
-def _classify_value(mod, raw: str):
-    """Classify a captured quoted/template value via the catalog module."""
-    if raw[:1] == "`":
-        return mod.classify_testid("expr", raw)
-    inner, _ = mod._read_quoted(raw, 0)
-    return mod.classify_testid("quoted", inner)
-
-
-def _add(result, literals: "set[str]", globs: "set[str]") -> None:
-    kind, key = result[0], result[1]
-    if kind == "literal" and _TESTID_KEY_SHAPE.match(key):
-        literals.add(key)
-    elif kind == "dynamic" and _TESTID_KEY_SHAPE.match(key):
-        globs.add(key)
-
-
-def _extra_source_scan(mod) -> "tuple[set[str], set[str]]":
-    """Scan src/** for testid forms the catalog generator does not recognise.
-
-    Returns ``(literals, dynamic_globs)`` classified with the catalog module's own
-    classifier so the two scans agree on literal-vs-glob shape. Covers:
-
-    * every ``*TestId`` prop / ``"data-testid":`` object key / ``setAttribute``
-      call with a quoted-or-template value (the catalog only scans four fixed
-      JSX attributes);
-    * ``*TestIdPrefix`` props → the ``prefix-*`` row family;
-    * templates embedded inside a testid-sink ``{...}`` expression (the
-      ``x ?? `${base}-suffix``` fallback the catalog records as indirect).
-    """
-    literals: "set[str]" = set()
-    globs: "set[str]" = set()
-    for path in mod.iter_source_files():
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
-            continue
-        # Direct quoted/template values on any testid sink + setAttribute.
-        for pattern in (_PROP_TESTID, _SETATTR_TESTID):
-            for raw in pattern.findall(text):
-                _add(_classify_value(mod, raw), literals, globs)
-        # `*TestIdPrefix="dns-result"` → dynamic row family `dns-result-*`.
-        for raw in _PREFIX_PROP.findall(text):
-            inner = raw[1:-1] if raw[:1] in "\"'`" else raw
-            stem = inner.rstrip("-")
-            if stem and _TESTID_KEY_SHAPE.match(stem):
-                globs.add(stem + "-*")
-        # Templates embedded in a testid-sink `{...}` expression.
-        for name_match in _TESTID_SINK_NAME.finditer(text):
-            eq = mod._EQ.match(text, name_match.end())
-            if not eq or eq.end() >= len(text) or text[eq.end()] != "{":
-                continue
-            inner, _ = mod._read_braced(text, eq.end())
-            for tmpl in _TEMPLATE.findall(inner):
-                if "${" not in tmpl:
-                    continue
-                _add(
-                    mod.classify_testid("expr", "`" + tmpl + "`"),
-                    literals,
-                    globs,
-                )
-    return literals, globs
-
-
 def source_testids() -> "tuple[set[str], list[str], list[str]]":
     """Return ``(literals, dynamic_globs, static_prefixes)`` scanned from src/**.
 
     ``literals`` are exact ids; ``dynamic_globs`` are ``*``-glob patterns
     (``file-row-*``); ``static_prefixes`` are the leading static segment of every
     literal and dynamic pattern (used to validate harness builder prefixes).
+
+    The catalog scan covers every testid form the app uses — JSX attributes, any
+    ``*TestId`` prop, object-property keys, ``setAttribute``, ``*TestIdPrefix``
+    families and templates embedded in a larger expression (#3044) — so the
+    guard needs no supplementary source scan of its own.
     """
     mod = _load_catalog_module()
     buckets = mod.collect()
-    extra_literals, extra_globs = _extra_source_scan(mod)
-    literals = set(buckets["literal"].keys()) | extra_literals
-    dynamic_globs = sorted(set(buckets["dynamic"].keys()) | extra_globs)
+    literals = set(buckets["literal"].keys())
+    dynamic_globs = sorted(buckets["dynamic"].keys())
     static_prefixes = set()
     for key in literals:
         static_prefixes.add(key)
