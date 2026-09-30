@@ -56,8 +56,8 @@ class FakeWorker {
     this.handler?.({ data: message } as MessageEvent<WorkerToHostMessage>);
   }
   /** Simulate an uncaught error in the worker. */
-  emitError(message = "boom") {
-    this.errorHandler?.({ message } as ErrorEvent);
+  emitError(message = "boom", filename = "") {
+    this.errorHandler?.({ message, filename } as ErrorEvent);
   }
   /** Simulate an undeserializable message from the worker. */
   emitMessageError() {
@@ -314,6 +314,217 @@ describe("worker error handling", () => {
     fake.emitError();
     expect(fake.terminated).toBe(false);
     expect(sandboxHasParsers()).toBe(true);
+  });
+});
+
+describe("crash-teardown recovery (#2857)", () => {
+  /** Every worker the factory has built, oldest first. */
+  let workers: FakeWorker[];
+  const latest = () => workers[workers.length - 1];
+  const url = (id: string) => `plugin://localhost/load/${id}/frontend/index.js`;
+  /** Crash the current worker enough times in a row to trip the teardown. */
+  const crashOut = (filename = "") => {
+    const w = latest();
+    for (let i = 0; i < 3; i++) w.emitError(`boom ${i}`, filename);
+  };
+  const logged = () => mockedFrontendLog.mock.calls.map((c) => String(c[1]));
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    workers = [];
+    __setSandboxWorkerFactory(() => {
+      const w = new FakeWorker();
+      workers.push(w);
+      return w as unknown as Worker;
+    });
+    loadPluginInSandbox("a", [url("a")]);
+    loadPluginInSandbox("b", [url("b")]);
+    latest().emit({ t: "parsersActive", active: true });
+    mockedFrontendLog.mockClear();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("rebuilds a fresh worker after a backoff and reloads every plugin", () => {
+    crashOut();
+    expect(workers).toHaveLength(1);
+    expect(workers[0].terminated).toBe(true);
+
+    vi.advanceTimersByTime(999);
+    expect(workers).toHaveLength(1); // still backing off
+    vi.advanceTimersByTime(1);
+    expect(workers).toHaveLength(2);
+    expect(latest().postsOfType("load")).toEqual([
+      { t: "load", pluginId: "a", entryUrls: [url("a")] },
+      { t: "load", pluginId: "b", entryUrls: [url("b")] },
+    ]);
+    expect(sandboxLoadedCount()).toBe(2);
+    expect(logged().some((m) => m.includes("Rebuilding"))).toBe(true);
+    // Parsers come back once the fresh worker reports them.
+    latest().emit({ t: "parsersActive", active: true });
+    expect(sandboxHasParsers()).toBe(true);
+  });
+
+  it("keeps the terminal on the synchronous fast path while the worker is rebuilt", () => {
+    crashOut();
+    expect(sandboxHasParsers()).toBe(false);
+    // Even a straggling enqueue passes through synchronously, byte-exact, without
+    // spawning a worker ahead of the backoff.
+    const original = enc("live");
+    let received: Uint8Array | null = null;
+    enqueueSandboxTransform("s1", original, (b) => (received = b));
+    expect(received).toBe(original);
+    expect(sandboxSessionPending("s1")).toBe(false);
+    expect(workers).toHaveLength(1);
+
+    // After the rebuild the fresh worker has no parsers until it says so.
+    vi.advanceTimersByTime(1000);
+    expect(workers).toHaveLength(2);
+    expect(sandboxHasParsers()).toBe(false);
+  });
+
+  it("backs off exponentially between successive rebuilds", () => {
+    crashOut();
+    vi.advanceTimersByTime(1000);
+    expect(workers).toHaveLength(2);
+    crashOut();
+    vi.advanceTimersByTime(1999);
+    expect(workers).toHaveLength(2);
+    vi.advanceTimersByTime(1);
+    expect(workers).toHaveLength(3);
+    crashOut();
+    vi.advanceTimersByTime(3999);
+    expect(workers).toHaveLength(3);
+    vi.advanceTimersByTime(1);
+    expect(workers).toHaveLength(4);
+  });
+
+  it("stops rebuilding after a bounded number of attempts (no crash loop)", () => {
+    for (let i = 0; i < 10; i++) {
+      crashOut();
+      vi.advanceTimersByTime(60_000);
+    }
+    // One original worker + three bounded rebuilds, then it stays degraded.
+    expect(workers).toHaveLength(4);
+    expect(workers.every((w) => w.terminated)).toBe(true);
+    expect(sandboxHasParsers()).toBe(false);
+    const giveUp = logged().find((m) => m.includes("giving up"));
+    expect(giveUp).toBeDefined();
+    // No attribution was possible, so every loaded plugin is named as a suspect.
+    expect(giveUp).toContain('"a"');
+    expect(giveUp).toContain('"b"');
+    // The terminal still flows untransformed.
+    const out: string[] = [];
+    enqueueSandboxTransform("s1", enc("still"), (b) => out.push(dec(b)));
+    expect(out).toEqual(["still"]);
+  });
+
+  it("disables only the plugin a crash is attributed to and reloads the rest", () => {
+    crashOut(url("b"));
+    expect(logged().some((m) => m.includes('"b"') && m.includes("disabled"))).toBe(true);
+    vi.advanceTimersByTime(1000);
+    expect(workers).toHaveLength(2);
+    expect(
+      latest()
+        .postsOfType("load")
+        .map((m) => m.pluginId)
+    ).toEqual(["a"]);
+    // The quarantined plugin stays tracked (so it can still be unloaded).
+    expect(sandboxLoadedCount()).toBe(2);
+  });
+
+  it("attributes a crash on the Windows plugin origin too", () => {
+    crashOut("http://plugin.localhost/load/b/frontend/index.js");
+    vi.advanceTimersByTime(1000);
+    expect(
+      latest()
+        .postsOfType("load")
+        .map((m) => m.pluginId)
+    ).toEqual(["a"]);
+  });
+
+  it("does not rebuild when every loaded plugin was quarantined", () => {
+    unloadPluginFromSandbox("a");
+    crashOut(url("b"));
+    vi.advanceTimersByTime(60_000);
+    expect(workers).toHaveLength(1);
+    expect(sandboxHasParsers()).toBe(false);
+  });
+
+  it("re-enables a quarantined plugin on an explicit unload + reload", () => {
+    crashOut(url("b"));
+    vi.advanceTimersByTime(1000);
+    unloadPluginFromSandbox("b");
+    expect(sandboxLoadedCount()).toBe(1);
+    loadPluginInSandbox("b", [url("b")]);
+    expect(
+      latest()
+        .postsOfType("load")
+        .map((m) => m.pluginId)
+    ).toEqual(["a", "b"]);
+  });
+
+  it("resets the rebuild budget once a rebuilt worker stays healthy", () => {
+    // Burn two rebuilds, then let the third worker run stably for a while.
+    crashOut();
+    vi.advanceTimersByTime(1000);
+    crashOut();
+    vi.advanceTimersByTime(2000);
+    expect(workers).toHaveLength(3);
+    vi.advanceTimersByTime(60_000); // stability window elapses
+    // A fresh crash starts again from the first (1s) backoff step.
+    crashOut();
+    vi.advanceTimersByTime(1000);
+    expect(workers).toHaveLength(4);
+  });
+
+  it("cancels a pending rebuild when the last plugin unloads", () => {
+    crashOut();
+    unloadPluginFromSandbox("a");
+    unloadPluginFromSandbox("b");
+    expect(sandboxLoadedCount()).toBe(0);
+    vi.advanceTimersByTime(60_000);
+    expect(workers).toHaveLength(1);
+  });
+
+  it("an explicit load during the backoff rebuilds immediately with every plugin", () => {
+    crashOut();
+    loadPluginInSandbox("c", [url("c")]);
+    expect(workers).toHaveLength(2);
+    expect(
+      latest()
+        .postsOfType("load")
+        .map((m) => m.pluginId)
+    ).toEqual(["a", "b", "c"]);
+    // The cancelled backoff timer must not build yet another worker.
+    vi.advanceTimersByTime(60_000);
+    expect(workers).toHaveLength(2);
+  });
+
+  it("after giving up, an explicit load retries and a stable worker refills the budget", () => {
+    for (let i = 0; i < 4; i++) {
+      crashOut();
+      vi.advanceTimersByTime(60_000);
+    }
+    expect(workers).toHaveLength(4); // gave up
+    loadPluginInSandbox("c", [url("c")]);
+    expect(workers).toHaveLength(5);
+    vi.advanceTimersByTime(60_000); // stays up → healed
+    crashOut();
+    vi.advanceTimersByTime(1000); // back to the first backoff step
+    expect(workers).toHaveLength(6);
+  });
+
+  it("clears the dead worker's widgets so the reload re-materialises them", () => {
+    latest().emit({
+      t: "widgetUpsert",
+      key: "b:w",
+      position: "left",
+      widgetId: "w",
+      node: { tag: "span", text: "x" },
+    });
+    expect(getStatusBarWidgets("left")).toHaveLength(1);
+    crashOut(url("b"));
+    expect(getStatusBarWidgets("left")).toHaveLength(0);
   });
 });
 
