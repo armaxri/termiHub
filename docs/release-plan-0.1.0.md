@@ -397,7 +397,7 @@ python scripts/test-manual.py --inventory
 
 | Category (`--category`)   | Display name          | Platforms      | Release-gating | Pending automation |  Total |
 | ------------------------- | --------------------- | -------------- | -------------: | -----------------: | -----: |
-| `connection-management`   | Connection Management | all            |              0 |                  4 |      4 |
+| `connection-management`   | Connection Management | all            |              0 |                  1 |      1 |
 | `credential-store`        | Credential Store      | all            |              3 |                  0 |      3 |
 | `local-shell`             | Local Shell           | macos, windows |              2 |                  0 |      2 |
 | `multi-window`            | Multi-Window          | macos          |              2 |                  0 |      2 |
@@ -408,7 +408,7 @@ python scripts/test-manual.py --inventory
 | `serial`                  | Serial                | all            |              1 |                  3 |      4 |
 | `ssh`                     | SSH                   | all            |              1 |                  1 |      2 |
 | `ui-layout`               | UI / Layout           | all            |              2 |                  0 |      2 |
-| **Total (11 categories)** |                       |                |         **32** |             **27** | **59** |
+| **Total (11 categories)** |                       |                |         **32** |             **24** | **56** |
 
 <!-- manual-inventory:end -->
 
