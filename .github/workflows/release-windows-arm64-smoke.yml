@@ -1,0 +1,199 @@
+name: Release Windows arm64 Smoke
+
+# Post-release execution smoke for the Windows arm64 agent binary (#3486), the
+# follow-up to the Windows x64 smoke (#3481, release-windows-smoke.yml).
+# release.yml cross-compiles termihub-agent-windows-arm64.exe for
+# aarch64-pc-windows-msvc on the x64 windows-latest runner (#3060), so no
+# release job ever runs it. After the "Release" workflow finishes publishing a
+# tag's artifacts, this downloads the just-published binary and, on the native
+# windows-11-arm hosted runner:
+#
+#   1. checks the binary against its published .sha256 sidecar (the file the
+#      desktop checks before installing the agent on a remote host),
+#   2. verifies its build-provenance attestation (the same check users run),
+#   3. asserts the runner is ARM64 and the binary's PE header is ARM64 (0xAA64),
+#      so an x64 binary cannot pass here under emulation,
+#   4. runs `termihub-agent --version` and asserts it prints the release version.
+#
+# Like the other post-release smokes this is a SEPARATE workflow triggered by the
+# completion of the "Release" run (not `release: published`), because release.yml
+# publishes the release BEFORE its build matrix uploads the assets.
+
+on:
+  # Fire after the Release workflow completes. workflow_run runs the copy of this
+  # file on the default branch, which is the correct behavior for release
+  # automation (releases are cut from the default branch's tags).
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  # Manual re-run against any already-published release, for verification without
+  # cutting a new release.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to smoke-test (e.g. v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  # `gh attestation verify` fetches the provenance bundles.
+  attestations: read
+
+jobs:
+  windows-arm64-agent-smoke:
+    name: Windows arm64 agent binary smoke
+    # Only run for a manual dispatch, or for a Release run that was triggered by a
+    # tag push AND succeeded — a failed/cancelled Release has no assets to test.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success')
+    runs-on: windows-11-arm
+    timeout-minutes: 15
+
+    env:
+      LOG_DIR: ${{ github.workspace }}\smoke-logs
+
+    steps:
+      - name: Resolve release tag
+        id: tag
+        shell: bash
+        env:
+          GH_EVENT: ${{ github.event_name }}
+          DISPATCH_TAG: ${{ github.event.inputs.tag }}
+          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "$GH_EVENT" = "workflow_dispatch" ]; then
+            TAG="${DISPATCH_TAG:-}"
+          else
+            # For a tag-triggered upstream run, head_branch is the tag name.
+            TAG="${RUN_TAG:-}"
+            case "$TAG" in
+              v*.*.*) ;;
+              *)
+                # Fallback: resolve the version tag pointing at the release commit.
+                echo "head_branch '$TAG' is not a version tag; resolving from head_sha"
+                TAG="$(gh api "repos/${GITHUB_REPOSITORY}/tags" --paginate \
+                        --jq "map(select(.commit.sha==\"${RUN_SHA:-}\")) | .[].name" \
+                        | grep -E '^v[0-9]' | head -n1 || true)"
+                ;;
+            esac
+          fi
+          case "$TAG" in
+            v*.*.*) ;;
+            *) echo "::error::could not resolve a version tag (got '$TAG')"; exit 1 ;;
+          esac
+          echo "Resolved release tag: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download arm64 agent binary
+        id: download
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # RUNNER_TEMP is a Windows path; use its POSIX form inside Git Bash.
+          dist="$(cygpath -u "$RUNNER_TEMP")/dist"
+          mkdir -p "$dist"
+          AGENT_NAME="termihub-agent-windows-arm64.exe"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$dist" \
+            --pattern "$AGENT_NAME" \
+            --pattern "${AGENT_NAME}.sha256"
+          ls -la "$dist"
+          for f in "$AGENT_NAME" "${AGENT_NAME}.sha256"; do
+            [ -f "$dist/$f" ] || { echo "::error::release asset $f not found for $TAG"; exit 1; }
+          done
+          # Windows-style path for the PowerShell steps below.
+          echo "agent=$(cygpath -w "$dist/$AGENT_NAME")" >> "$GITHUB_OUTPUT"
+
+      - name: Verify checksum and provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          AGENT: ${{ steps.download.outputs.agent }}
+        run: |
+          set -euo pipefail
+          AGENT_U="$(cygpath -u "$AGENT")"
+          # The .sha256 sidecar is what the desktop checks before installing the
+          # agent on a remote host. Git Bash provides sha256sum (#1350). A
+          # mismatch makes `sha256sum -c` exit non-zero, failing the job.
+          ( cd "$(dirname "$AGENT_U")" && sha256sum -c "$(basename "$AGENT_U").sha256" )
+          # Same attestation check as release.yml's verify-release job: signed by
+          # release.yml at exactly this tag.
+          gh attestation verify "$AGENT_U" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release.yml" \
+            --source-ref "refs/tags/${TAG}" >/dev/null
+          echo "attested: $(basename "$AGENT_U")"
+
+      - name: Assert native ARM64 runner and binary
+        shell: pwsh
+        env:
+          AGENT: ${{ steps.download.outputs.agent }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Windows on ARM runs x64 binaries under emulation, so a mislabeled x64
+          # asset would still pass --version. Check both sides natively.
+          $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+          Write-Output "runner OS architecture: $arch"
+          if ("$arch" -ne 'Arm64') {
+            Write-Output "::error::expected an Arm64 runner, got $arch"
+            exit 1
+          }
+          # PE header: e_lfanew at 0x3C points at "PE\0\0", followed by the
+          # IMAGE_FILE_HEADER Machine field (0xAA64 = IMAGE_FILE_MACHINE_ARM64).
+          $bytes = [System.IO.File]::ReadAllBytes($env:AGENT)
+          $peOffset = [System.BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [System.BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          Write-Output ("agent PE machine: 0x{0:X4}" -f $machine)
+          if ($machine -ne 0xAA64) {
+            Write-Output ("::error::agent binary is not ARM64 (PE machine 0x{0:X4})" -f $machine)
+            exit 1
+          }
+
+      - name: Run termihub-agent --version
+        shell: pwsh
+        env:
+          AGENT: ${{ steps.download.outputs.agent }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path $env:LOG_DIR | Out-Null
+          $text = (& $env:AGENT --version 2>&1 | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { Write-Output "::error::agent --version exited $LASTEXITCODE"; exit 1 }
+          Write-Output "agent --version printed: $text"
+          $text | Out-File -Encoding utf8 (Join-Path $env:LOG_DIR 'agent-version.log')
+          # A release build may append "(branch: …)"; the version prefix is the gate.
+          if (-not ($text -eq "termihub-agent $env:VERSION" -or $text.StartsWith("termihub-agent $env:VERSION "))) {
+            Write-Output "::error::unexpected agent --version output '$text'"
+            exit 1
+          }
+
+      - name: Summary
+        if: always()
+        shell: bash
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          {
+            echo "### Windows arm64 agent smoke (${TAG:-unresolved})"
+            echo ""
+            echo "- result: \`${JOB_STATUS}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload smoke logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-arm64-agent-smoke-logs
+          path: smoke-logs/
+          if-no-files-found: ignore
+          retention-days: 14

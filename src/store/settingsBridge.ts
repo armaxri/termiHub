@@ -303,9 +303,10 @@ export function dispatchSettingsIntent(
  * instantly. Best-effort: any dispatch failure is swallowed and logged (the paired
  * persist command still folds the reconciled truth into the region), and a
  * synchronous transport-construction failure (non-Tauri, no socket) is caught too,
- * so it never throws out of a command wrapper. The twin of the connections
- * bridge's {@link import("./connectionsBridge").mirrorConnectionIntent} and the
- * agents bridge's {@link import("./agentsBridge").mirrorAgentIntent}.
+ * so it never throws out of a command wrapper. The twin of the agents bridge's
+ * {@link import("./agentsBridge").mirrorAgentIntent}. (The connections bridge
+ * has no such intent: its persist command is the region's single writer and it
+ * shows transitions in a local overlay, {@link import("./connectionsBridge").persistWithOverlay}.)
  */
 export function mirrorSettingsIntent(
   kind: SettingsIntentKind,

@@ -355,14 +355,193 @@ fn load_folds_agents_then_connections() {
     assert_eq!(h.published(), vec![AGENTS_REGION, CONNECTIONS_REGION]);
 }
 
-/// A rejected mutation folds nothing, so no region republishes.
+// ── Single authoritative writer: region == disk on failure (#2831) ──────────
+
+/// The `connections` region exactly as the projector serves it to a client.
+fn region_view(h: &Harness) -> Value {
+    h.app
+        .state::<ProjectionState>()
+        .projector
+        .snapshot(CONNECTIONS_REGION)
+        .view
+}
+
+/// The unified connections tree exactly as it is on disk, in the region's shape
+/// (the order of both arrays included).
+fn disk_view(h: &Harness) -> Value {
+    let view = h.manager().load_unified_view().unwrap();
+    json!({
+        "folders": serde_json::to_value(&view.folders).unwrap(),
+        "connections": serde_json::to_value(&view.connections).unwrap(),
+    })
+}
+
+/// A harness whose `connections` region already equals disk, holding the
+/// seeded `Work/Host` plus two root connections `A` and `B`, in that order.
+fn settled_harness() -> Harness {
+    let h = harness();
+    h.manager().save_connection(connection("A", None)).unwrap();
+    h.manager().save_connection(connection("B", None)).unwrap();
+    load_connections_and_folders(h.handle(), h.manager()).unwrap();
+    assert_eq!(region_view(&h), disk_view(&h), "the region starts at disk");
+    h.sink.regions.lock().unwrap().clear();
+    h
+}
+
+fn region_version(h: &Harness) -> Option<u64> {
+    h.app
+        .state::<ProjectionState>()
+        .projector
+        .region_version(CONNECTIONS_REGION)
+}
+
+/// Done-when for #2831: a delete whose disk write fails leaves the region
+/// byte-identical to disk — order included — with no second (compensating)
+/// write: the region version does not move and no diff is published.
 #[test]
-fn failed_mutation_folds_nothing() {
+fn failed_delete_leaves_region_identical_to_disk_with_no_compensating_write() {
+    let h = settled_harness();
+    let before = region_view(&h);
+    let version = region_version(&h);
+    let a_id = connection_id_named(&h, "A");
+
+    // The delete targets an external file that does not exist, so the disk
+    // write fails and nothing on disk changes.
+    let missing = h.dir.path().join("missing.json");
+    let result = delete_connection(
+        a_id,
+        Some(missing.to_string_lossy().into_owned()),
+        h.handle(),
+        h.manager(),
+    );
+    assert!(result.is_err(), "the persist fails");
+
+    assert_eq!(
+        region_view(&h),
+        disk_view(&h),
+        "region == disk, order included"
+    );
+    assert_eq!(region_view(&h), before, "the region never moved");
+    assert_eq!(
+        region_version(&h),
+        version,
+        "no write at all hit the region"
+    );
+    assert!(h.published().is_empty(), "no compensating diff");
+}
+
+/// A mutation that fails *after* part of it reached disk republishes exactly
+/// what is on disk — here a reorder that was written before a later step of the
+/// same operation errored. Folding nothing on failure would leave the region
+/// in the old order while disk holds the new one.
+#[test]
+fn partially_applied_failed_mutation_republishes_exactly_disk() {
+    let h = settled_harness();
+    let a = connection_id_named(&h, "A");
+    let b = connection_id_named(&h, "B");
+    let host = connection_id(&h);
+
+    let result: Result<(), String> = commit(&h.handle(), &[Fold::Connections], || {
+        h.manager()
+            .reorder_connections(&[b.clone(), a.clone(), host.clone()])
+            .unwrap();
+        Err("a later step of the same mutation failed".to_string())
+    });
+    assert!(result.is_err());
+
+    assert_eq!(
+        region_view(&h),
+        disk_view(&h),
+        "region == disk, order included"
+    );
+    let order: Vec<String> = region_view(&h)["connections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["id"].as_str().unwrap().to_string())
+        .collect();
+    let pos = |id: &str| order.iter().position(|o| o == id).unwrap();
+    assert!(pos(&b) < pos(&a), "the reorder that reached disk shows");
+    assert_eq!(
+        h.published(),
+        vec![CONNECTIONS_REGION],
+        "one diff: the disk truth"
+    );
+}
+
+/// A failed mutation still re-folds its regions from disk, so a store that had
+/// drifted from disk (here: poisoned) is reconciled rather than left as is.
+#[test]
+fn failed_mutation_refolds_its_regions_from_disk() {
     let h = harness();
     h.poison();
     assert!(import_connections("not json".to_string(), h.handle(), h.manager()).is_err());
-    assert!(h.folded().is_empty(), "a failed op re-folds no region");
-    assert!(h.published().is_empty(), "a failed op publishes no diff");
+    assert_eq!(h.folded(), vec![Fold::Connections], "only its own region");
+    assert_eq!(region_view(&h), disk_view(&h), "region == disk");
+}
+
+/// Commits are serialised: a second command's write cannot start while the
+/// first command's write and fold are still running, so no fold can publish a
+/// view read before another command's write.
+#[test]
+fn commits_are_serialised_write_and_fold_together() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let h = Arc::new(bare_handle());
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let second_ran = Arc::new(AtomicBool::new(false));
+
+    let first = {
+        let handle = h.clone();
+        std::thread::spawn(move || {
+            let _: Result<(), ()> = commit(&handle, &[Fold::Connections], || {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                Ok(())
+            });
+        })
+    };
+    started_rx.recv().unwrap();
+
+    let second = {
+        let handle = h.clone();
+        let ran = second_ran.clone();
+        std::thread::spawn(move || {
+            let _: Result<(), ()> = commit(&handle, &[Fold::Connections], || {
+                ran.store(true, Ordering::SeqCst);
+                Ok(())
+            });
+        })
+    };
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(
+        !second_ran.load(Ordering::SeqCst),
+        "the second commit waits for the first"
+    );
+    release_tx.send(()).unwrap();
+    first.join().unwrap();
+    second.join().unwrap();
+    assert!(second_ran.load(Ordering::SeqCst), "then runs");
+}
+
+/// A bare app handle for the serialisation test (it folds nothing — no state
+/// is managed, so each fold is a best-effort no-op).
+fn bare_handle() -> AppHandle<MockRuntime> {
+    tauri::test::mock_app().handle().clone()
+}
+
+fn connection_id_named(h: &Harness, name: &str) -> String {
+    h.manager()
+        .load_unified_view()
+        .unwrap()
+        .connections
+        .into_iter()
+        .find(|c| c.name == name)
+        .expect("seeded connection")
+        .id
 }
 
 /// The body of each `#[tauri::command]` fn in `connection.rs`, by name.

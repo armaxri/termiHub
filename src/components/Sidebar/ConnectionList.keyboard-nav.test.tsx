@@ -25,6 +25,13 @@ vi.mock("@/services/api", () => ({
 
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
 
+// The folder toggle persists through `persistFolder`; a successful persist is
+// what lands the toggle in the region (#2831).
+vi.mock("@/services/storage", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/storage")>()),
+  persistFolder: vi.fn(() => Promise.resolve()),
+}));
+
 vi.mock("./AgentNode", () => ({
   AgentNode: ({
     agent,
@@ -166,6 +173,11 @@ describe("ConnectionList — keyboard navigation & ARIA", () => {
 
     act(() => folder.focus());
     keydown(folder, "ArrowRight");
+    // Let the toggle's persist settle (its optimistic overlay is dropped once the
+    // persisted fold lands, #2831) inside act, so no update escapes the test.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
 
     const folderAfter = container.querySelector(
       '[data-testid="folder-toggle-folder-1"]'

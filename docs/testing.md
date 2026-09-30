@@ -1613,9 +1613,10 @@ scripts\smoke-test.cmd src-tauri\target\release\termihub.exe
 
 ### Release Install Smokes (CI)
 
-Every published release is install- and launch-smoked on hosted runners by four
+Every published release is install- and launch-smoked on hosted runners by five
 workflows that fire after the Release workflow: Linux x64 and arm64 (which run this
-script or `--version`), plus macOS arm64 + Intel (DMG) and Windows x64 (MSI). The
+script or `--version`), macOS arm64 + Intel (DMG), Windows x64 (MSI), and the
+Windows arm64 agent binary (checksum, provenance, `--version`). The
 macOS and Windows smokes do not use this script — they launch the installed app and
 wait for its frontend's first IPC call to reach the backend in the durable app log,
 which works without WebDriver or System Events access. See

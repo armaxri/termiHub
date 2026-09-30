@@ -140,11 +140,13 @@ function makeAgent(overrides: Partial<RemoteAgentDefinition> = {}): RemoteAgentD
   };
 }
 
-/** Flush the fire-and-forget persist/remove promise chains. */
+/**
+ * Flush the fire-and-forget persist/remove promise chains — a macrotask, so the
+ * chain settles however many awaits it takes (the persist-confirmed overlay
+ * waits for a region catch-up before the caller's toast runs, #2831).
+ */
 async function flush() {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 const AGENT_ID = "agent-test-1";

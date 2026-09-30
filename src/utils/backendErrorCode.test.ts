@@ -4,6 +4,9 @@ import {
   parseBackendError,
   isAuthFailure,
   isSecondFactorFailure,
+  isAgentTransportClosed,
+  isAgentTimeout,
+  isAgentReportedError,
   backendErrorMessage,
 } from "./backendErrorCode";
 
@@ -102,6 +105,58 @@ describe("backendErrorCode", () => {
       expect(
         backendErrorMessage({ code: "spawn_failed", message: "Failed to spawn terminal: x" })
       ).toBe("Failed to spawn terminal: x");
+    });
+  });
+
+  describe("isAgentTransportClosed (#2840)", () => {
+    it("is true only for the structured agent_transport_closed code", () => {
+      expect(
+        isAgentTransportClosed({
+          code: "agent_transport_closed",
+          message: "Remote agent error: Agent connection lost",
+        })
+      ).toBe(true);
+      expect(
+        isAgentTransportClosed({
+          code: "remote_error",
+          message: "Remote agent error: Agent connection lost",
+        })
+      ).toBe(false);
+    });
+
+    it("never classifies by message text", () => {
+      expect(isAgentTransportClosed(new Error("Agent connection lost"))).toBe(false);
+      expect(isAgentTransportClosed("connection closed")).toBe(false);
+    });
+  });
+
+  describe("agent request failure kinds (#3959)", () => {
+    const closed = { code: "agent_transport_closed", message: "Remote agent error: lost" };
+    const timedOut = {
+      code: "agent_timeout",
+      message: "Remote agent error: Agent request timed out after 60s",
+    };
+    const reported = { code: "remote_error", message: "Remote agent error: update refused" };
+
+    it("tells a timeout, a transport close and an agent-reported error apart by code", () => {
+      expect(isAgentTimeout(timedOut)).toBe(true);
+      expect(isAgentTimeout(closed)).toBe(false);
+      expect(isAgentTimeout(reported)).toBe(false);
+
+      expect(isAgentReportedError(reported)).toBe(true);
+      expect(isAgentReportedError(timedOut)).toBe(false);
+      expect(isAgentReportedError(closed)).toBe(false);
+
+      expect(isAgentTransportClosed(timedOut)).toBe(false);
+    });
+
+    it("does not treat the SSH-operation timeout code as an agent timeout", () => {
+      expect(isAgentTimeout({ code: "timeout", message: "Timed out: exec" })).toBe(false);
+    });
+
+    it("never classifies by message text", () => {
+      expect(isAgentTimeout(new Error("Agent request timed out after 60s"))).toBe(false);
+      expect(isAgentReportedError("Remote agent error: update refused")).toBe(false);
     });
   });
 });

@@ -23,3 +23,8 @@
 )]
 
 pub mod protocol;
+
+// Structured agent-log framing over the `--stdio` stderr side-band (#2854,
+// OBS-004): the wire type + parser the desktop links against, and the encoder
+// layer the agent installs, kept together so they cannot drift.
+pub mod log_frame;

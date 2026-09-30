@@ -92,6 +92,7 @@ use notifications::{
 ///
 /// Carved verbatim into sibling modules; the manager below spawns
 /// [`agent_io_task`] and emits through [`emit_agent_state`].
+mod agent_stderr;
 mod io_lanes;
 mod io_task;
 mod reconnect;
@@ -130,7 +131,9 @@ use state_events::{emit_agent_state, emit_agent_state_with_error};
 /// with a JSON-RPC error) plus the human message. Carrying the code lets
 /// [`AgentConnectionManager::send_request`] map typed refusals to a typed
 /// [`TerminalError`] instead of parsing message text (#3404). Local failures
-/// (write error, connection lost) carry no code.
+/// (write error, connection lost) carry no code; the ones caused by the agent
+/// transport closing are flagged [`transport_closed`](Self::transport_closed)
+/// so they map to the typed [`TerminalError::AgentTransportClosed`] (#2840).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AgentRpcFailure {
     pub code: Option<i64>,
@@ -139,6 +142,10 @@ pub(crate) struct AgentRpcFailure {
     /// `data` of a failed `connection.create` — e.g. an agent-hosted serial
     /// port that is busy (#3751). `None` from an older agent or any other error.
     pub connect_failure: Option<termihub_core::errors::ConnectFailureKind>,
+    /// `true` when the request failed because the agent's transport closed
+    /// (link drop / EOF / write to a dead channel) before any reply — never an
+    /// agent-reported error (#2840). Set only via [`Self::transport_closed`].
+    pub transport_closed: bool,
 }
 
 impl From<String> for AgentRpcFailure {
@@ -147,11 +154,24 @@ impl From<String> for AgentRpcFailure {
             code: None,
             message,
             connect_failure: None,
+            transport_closed: false,
         }
     }
 }
 
 impl AgentRpcFailure {
+    /// A local failure caused by the agent transport closing before a reply
+    /// arrived (#2840): the in-flight request drain on link drop, or a write to
+    /// the already-dead channel.
+    pub(crate) fn transport_closed(message: impl Into<String>) -> Self {
+        Self {
+            code: None,
+            message: message.into(),
+            connect_failure: None,
+            transport_closed: true,
+        }
+    }
+
     /// Build the failure from an agent JSON-RPC error response, reading the
     /// optional connect-failure kind from its `data` (#3751). Tolerant: absent
     /// or unrecognised data leaves the failure unclassified.
@@ -165,6 +185,7 @@ impl AgentRpcFailure {
             message,
             connect_failure:
                 termihub_core::protocol::errors::SessionCreateErrorData::connect_failure_from(data),
+            transport_closed: false,
         }
     }
 
@@ -181,6 +202,9 @@ impl AgentRpcFailure {
     /// `PROCESS_NOT_SUPPORTED` shipped together with the process methods.
     pub(crate) fn into_terminal_error(self) -> TerminalError {
         use termihub_core::protocol::errors;
+        if self.transport_closed {
+            return TerminalError::agent_transport_closed(self.message);
+        }
         match self.code {
             Some(errors::SESSION_HELD_BY_OTHER) => TerminalError::SessionHeldByPeer(self.message),
             Some(errors::METHOD_NOT_FOUND | errors::PROCESS_NOT_SUPPORTED) => {
@@ -1679,24 +1703,25 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 params,
                 response_tx: resp_tx,
             })
-            .map_err(|_| TerminalError::RemoteError("Agent I/O task gone".to_string()))?;
+            .map_err(|_| TerminalError::agent_transport_closed("Agent I/O task gone"))?;
 
         // Drop the lock before waiting for response
         drop(agents);
 
-        // Bounded wait: a fired timeout returns a real timeout error and frees
-        // this thread; a dropped sender (io_task gone / pending drained on drop)
+        // Bounded wait: a fired timeout returns a typed agent-timeout error and
+        // frees this thread; a dropped sender (io_task gone / pending drained on drop)
         // surfaces as a connection-lost error rather than the old misleading
         // "timed out" string (CONC-003).
         match tokio::runtime::Handle::current()
             .block_on(async { tokio::time::timeout(timeout, resp_rx).await })
         {
-            Err(_elapsed) => Err(TerminalError::RemoteError(format!(
-                "Agent request timed out after {:?}",
-                timeout
-            ))),
-            Ok(Err(_recv)) => Err(TerminalError::RemoteError(
-                "Agent connection lost".to_string(),
+            // No reply within the deadline while the transport was up: typed as
+            // an agent timeout, not an agent-reported error (#3959).
+            Err(_elapsed) => Err(TerminalError::agent_timeout(timeout)),
+            // The reply sender was dropped with no answer: the I/O task (and the
+            // transport) went away under the request — typed, not text (#2840).
+            Ok(Err(_recv)) => Err(TerminalError::agent_transport_closed(
+                "Agent connection lost",
             )),
             Ok(Ok(inner)) => inner.map_err(AgentRpcFailure::into_terminal_error),
         }
@@ -1727,18 +1752,17 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 params,
                 response_tx: resp_tx,
             })
-            .map_err(|_| TerminalError::RemoteError("Agent I/O task gone".to_string()))?;
+            .map_err(|_| TerminalError::agent_transport_closed("Agent I/O task gone"))?;
         drop(agents);
 
         match tokio::runtime::Handle::current()
             .block_on(recv_excluding_prompts(resp_rx, timeout, &activity))
         {
-            Err(()) => Err(TerminalError::RemoteError(format!(
-                "Agent request timed out after {:?}",
-                timeout
-            ))),
-            Ok(Err(_recv)) => Err(TerminalError::RemoteError(
-                "Agent connection lost".to_string(),
+            Err(()) => Err(TerminalError::agent_timeout(timeout)),
+            // The reply sender was dropped with no answer: the I/O task (and the
+            // transport) went away under the request — typed, not text (#2840).
+            Ok(Err(_recv)) => Err(TerminalError::agent_transport_closed(
+                "Agent connection lost",
             )),
             Ok(Ok(inner)) => inner.map_err(AgentRpcFailure::into_terminal_error),
         }
@@ -2940,12 +2964,14 @@ async fn read_handshake_line(
                 buf.push_str(&String::from_utf8_lossy(data));
             }
             Some(ChannelMsg::ExtendedData { ref data, ext: 1 }) => {
-                // stderr — log but don't fail
-                warn!(
-                    "Agent {}: stderr during handshake: {}",
-                    agent_id,
-                    String::from_utf8_lossy(data)
-                );
+                // stderr — re-emit the agent's framed log records at their real
+                // level (#2854); never fails the handshake. Decoded per chunk:
+                // the agent writes each record in one write, so a record is
+                // not split across chunks in practice, and a split one still
+                // degrades to plain `WARN` passthrough rather than being lost.
+                let mut stderr = agent_stderr::AgentStderr::new(agent_id);
+                stderr.push(data);
+                stderr.flush();
             }
             Some(ChannelMsg::Eof) | None => {
                 info!("Agent {}: channel EOF/closed during handshake", agent_id);

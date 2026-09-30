@@ -157,6 +157,19 @@ pub enum IpcErrorCode {
     /// An unattended connect (#3527) was refused because the server asked for
     /// interactive input (a keyboard-interactive / one-time-code round).
     InteractionRequired,
+    /// An agent JSON-RPC request failed because the agent's **transport**
+    /// closed underneath it (link drop / EOF / the I/O task went away) before
+    /// any reply arrived — as opposed to the agent answering with an
+    /// application-level JSON-RPC error (`remote_error`, #2840). The agent
+    /// self-update "Apply Now" flow reads this as the expected binary-swap
+    /// disconnect instead of parsing the message text (I18N-008).
+    AgentTransportClosed,
+    /// An agent JSON-RPC request got **no reply** within its deadline while the
+    /// transport was still up (#3959) — the agent never answered. Distinct from
+    /// `remote_error` (the agent answered with an error) and from
+    /// `agent_transport_closed` (the link went away under the request), and
+    /// deliberately not the SSH-operation `timeout` category.
+    AgentTimeout,
     /// A single-file transfer was asked to copy a folder (#3944). Refused up
     /// front, so no empty or partial file is written at the destination.
     IsDirectory,
@@ -319,6 +332,25 @@ pub enum TerminalError {
     #[error("Timed out: {0}")]
     Timeout(String),
 
+    /// An agent JSON-RPC request failed because the agent's transport closed
+    /// (link drop / EOF / I/O task gone) before a reply arrived (#2840) — not an
+    /// error the agent itself reported. Classified at the source (the pending
+    /// request drain / dropped reply channel), never by message text. Renders
+    /// exactly like [`TerminalError::RemoteError`] so the human text is
+    /// unchanged; only the envelope `code` (`agent_transport_closed`) differs.
+    #[error("Remote agent error: {0}")]
+    AgentTransportClosed(String),
+
+    /// An agent JSON-RPC request timed out waiting for the agent's reply
+    /// (#3959) — the agent never answered, as opposed to answering with an
+    /// error. Classified at the source (the bounded wait in
+    /// `AgentConnectionManager`), never by message text. Renders exactly like
+    /// [`TerminalError::RemoteError`] so the human text is unchanged; only the
+    /// envelope `code` (`agent_timeout`) differs. Built via
+    /// [`TerminalError::agent_timeout`].
+    #[error("Remote agent error: {0}")]
+    AgentTimeout(String),
+
     /// A single-file transfer (`session_download` / `session_upload`) was
     /// given a folder as its source (#3944). It is refused before any
     /// transfer starts, so no empty or partial file lands at the destination;
@@ -344,7 +376,21 @@ impl TerminalError {
         ))
     }
 
-    /// Whether this error is a [`TerminalError::Timeout`].
+    /// An agent request failed because the agent transport closed before a
+    /// reply arrived (#2840). See [`TerminalError::AgentTransportClosed`].
+    pub fn agent_transport_closed(message: impl std::fmt::Display) -> Self {
+        TerminalError::AgentTransportClosed(message.to_string())
+    }
+
+    /// An agent request that got no reply within `limit` (#3959). See
+    /// [`TerminalError::AgentTimeout`].
+    pub fn agent_timeout(limit: std::time::Duration) -> Self {
+        TerminalError::AgentTimeout(format!("Agent request timed out after {limit:?}"))
+    }
+
+    /// Whether this error is a [`TerminalError::Timeout`] (an SSH-operation
+    /// deadline). An agent request timeout ([`TerminalError::AgentTimeout`]) is
+    /// deliberately not included.
     pub fn is_timeout(&self) -> bool {
         matches!(self, TerminalError::Timeout(_))
     }
@@ -398,6 +444,8 @@ impl TerminalError {
                 .and_then(C::from_slug)
                 .unwrap_or(C::RemoteError),
             TerminalError::AgentUnsupported(_) => C::RemoteError,
+            TerminalError::AgentTransportClosed(_) => C::AgentTransportClosed,
+            TerminalError::AgentTimeout(_) => C::AgentTimeout,
             TerminalError::Cancelled => C::Cancelled,
             TerminalError::SftpSessionNotFound(_) => C::SftpSessionNotFound,
             TerminalError::TunnelError(_) => C::TunnelError,
@@ -894,5 +942,67 @@ mod tests {
                 "the substring fallback text must be preserved, got {rendered:?}"
             );
         }
+    }
+
+    /// #2840: an agent-transport close carries its own stable envelope code,
+    /// distinct from an agent-reported (`remote_error`) failure, while the human
+    /// text renders exactly like a `RemoteError` (no marker, no rewording).
+    #[test]
+    fn agent_transport_closed_serializes_its_own_code_with_unchanged_text() {
+        let closed = TerminalError::agent_transport_closed("Agent connection lost");
+        assert_eq!(closed.code(), IpcErrorCode::AgentTransportClosed);
+        assert_eq!(
+            closed.to_string(),
+            "Remote agent error: Agent connection lost"
+        );
+        let value = serde_json::to_value(&closed).expect("serialize");
+        assert_eq!(value["code"], "agent_transport_closed");
+        assert_eq!(
+            value["message"],
+            "Remote agent error: Agent connection lost"
+        );
+        assert!(value["details"].is_null());
+
+        // The same text as an agent-reported failure keeps the generic code: the
+        // two are told apart by variant, never by message text.
+        let reported = TerminalError::RemoteError("Agent connection lost".to_string());
+        assert_eq!(
+            serde_json::to_value(&reported).expect("serialize")["code"],
+            "remote_error"
+        );
+    }
+
+    /// #3959: an agent request that timed out waiting for a reply carries its
+    /// own stable envelope code, distinct from both an agent-reported failure
+    /// (`remote_error`) and a transport close, while the human text keeps the
+    /// same `Remote agent error: …` rendering as before.
+    #[test]
+    fn agent_timeout_serializes_its_own_code_with_unchanged_text() {
+        let limit = std::time::Duration::from_secs(60);
+        let timed_out = TerminalError::agent_timeout(limit);
+        assert_eq!(timed_out.code(), IpcErrorCode::AgentTimeout);
+        assert_eq!(
+            timed_out.to_string(),
+            "Remote agent error: Agent request timed out after 60s"
+        );
+        let value = serde_json::to_value(&timed_out).expect("serialize");
+        assert_eq!(value["code"], "agent_timeout");
+        assert_eq!(
+            value["message"],
+            "Remote agent error: Agent request timed out after 60s"
+        );
+        assert!(value["details"].is_null());
+
+        // Not the SSH-operation `timeout` category: the retry helpers that gate
+        // on `is_timeout()` (agent deploy / remote exec) must not change.
+        assert!(!timed_out.is_timeout());
+        assert_ne!(timed_out.code(), IpcErrorCode::Timeout);
+
+        // The three agent-request failure kinds all carry distinct codes.
+        let reported = TerminalError::RemoteError("x".to_string()).code();
+        let closed = TerminalError::agent_transport_closed("x").code();
+        assert_ne!(timed_out.code(), reported);
+        assert_ne!(timed_out.code(), closed);
+        assert_ne!(reported, closed);
     }
 }

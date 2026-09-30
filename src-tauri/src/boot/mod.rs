@@ -654,20 +654,18 @@ fn register_all_projection_intents(app: &tauri::App) -> crate::projection::Handl
     // + `agent.*` intents modeling the agents slice (the
     // ordered agent list + per-agent sessions/definitions/folders).
     // ConnectionsStore (#2225, Phase 5): the shared
-    // `connections` region + `connection.*` intents, wrapping the
-    // existing saved-connection authority (`crate::connection`).
+    // `connections` region, wrapping the existing saved-connection
+    // authority (`crate::connection`).
     // Both are authoritative and drive the live UI (stateless-UI
-    // inversion complete, #2283): the sidebar renders from the regions
-    // and the actions route through the intents; the appStore agents
-    // and connections reducers were removed. The shared region is
-    // seeded below once the store is managed.
+    // inversion complete, #2283): the sidebar renders from the regions;
+    // the appStore agents and connections reducers were removed. The
+    // agents actions route through `agent.*` intents. The connections
+    // region has no intents: the persist commands' fold is its single
+    // writer (#2831). The shared region is seeded below once the store
+    // is managed.
     app.manage(Arc::new(agents_projection::AgentsStore::new()));
     agents_projection::projection::register_agent_intents(&mut registry, app.handle().clone());
     app.manage(Arc::new(connections_projection::ConnectionsStore::new()));
-    connections_projection::projection::register_connection_intents(
-        &mut registry,
-        app.handle().clone(),
-    );
     // SettingsStore (#2227, Phase 5): the shared `settings`
     // region + `settings.*` intents modeling the
     // `AppSettings` document (the persisted user-preferences slice),
