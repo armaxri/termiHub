@@ -70,6 +70,7 @@ describe("classify", () => {
   it("runs the Rust and agent test legs when the Rust test driver changes", () => {
     expect(on(classify(["scripts/internal/ci-rust-tests.sh"]))).toEqual([
       "rust",
+      "frontend",
       "scripts",
       "agent",
       "rustdoc",
@@ -99,12 +100,37 @@ describe("classify", () => {
   });
 
   it("routes scripts by kind", () => {
-    expect(on(classify(["scripts/dev.sh"]))).toEqual(["scripts"]);
-    expect(on(classify(["scripts/hooks/pre-push"]))).toEqual(["scripts"]);
+    expect(on(classify(["scripts/dev.sh"]))).toEqual(["frontend", "scripts"]);
+    expect(on(classify(["scripts/hooks/pre-push"]))).toEqual(["frontend", "scripts"]);
     expect(on(classify(["scripts/internal/parse-issue-refs.mjs"]))).toEqual(["frontend"]);
     expect(on(classify(["scripts/internal/ci-changes.mjs"]))).toEqual(["frontend"]);
-    expect(on(classify(["scripts/check-testid-drift.py"]))).toEqual(["harness"]);
+    expect(on(classify(["scripts/check-testid-drift.py"]))).toEqual(["frontend", "harness"]);
     expect(classify(["scripts/package-plugin.sh"])).toMatchObject({ rust: true, scripts: true });
+  });
+
+  // #3942: the scripts/internal vitest suite (run by the `frontend` area) reads
+  // files across scripts/**, e.g. regen-testid-catalog.test.mjs pins the hook's
+  // trigger list to scripts/build-testid-catalog.py. #3935 changed only that .py,
+  // skipped vitest, and turned develop red after merge.
+  it("runs the scripts/internal vitest suite for a PR touching only a pinned Python script", () => {
+    const flags = classify(["scripts/build-testid-catalog.py"]);
+    expect(flags).toMatchObject({ frontend: true, harness: true });
+    expect(testMatrix(flags, true)).toEqual(["ubuntu-latest"]);
+  });
+
+  it("runs the scripts/internal vitest suite for every file under scripts/", () => {
+    for (const path of [
+      "scripts/build-testid-catalog.py",
+      "scripts/coverage-baseline.json",
+      "scripts/release-marker-allowlist.json",
+      "scripts/README.md",
+      "scripts/package-plugin.sh",
+      "scripts/pnpm-audit-prod-gate.sh",
+      "scripts/internal/ci-rust-tests.sh",
+      "scripts/hooks/pre-push",
+    ]) {
+      expect(classify([path]).frontend, path).toBe(true);
+    }
   });
 
   it("adds scripts for any shell script, wherever it lives", () => {

@@ -19,7 +19,8 @@
  *
  * Areas:
  *   rust      workspace crates, manifests, toolchain/cargo config, ts-rs output
- *   frontend  React/TS app, vitest-covered scripts, JS toolchain config
+ *   frontend  React/TS app, JS toolchain config, and ALL of scripts/** (the
+ *             scripts/internal vitest suite reads files across it, #3942)
  *   sidecar   the workspace-excluded rdp-sidecar crate (own lockfile)
  *   scripts   shell/cmd scripts (ShellCheck, .sh<->.cmd parity, --help smoke)
  *   harness   the Python system-test harness (tests/system, its generators)
@@ -185,6 +186,8 @@ function locationAreas(path) {
 
   if (path.startsWith("scripts/")) {
     // Node helpers and their *.test.mjs are run by vitest (default include).
+    // Every other scripts/** file also gets `frontend` from the additive rule
+    // in classify() (#3942).
     if (/\.(mjs|cjs|js|ts)$/.test(path)) return ["frontend"];
     if (path.endsWith(".py")) return ["harness"];
     // Plugin packaging is exercised by Rust Code Quality.
@@ -237,6 +240,14 @@ export function classify(paths, { commentOnly = new Set() } = {}) {
 
     // Additive rules, independent of location.
     if (/\.(sh|cmd)$/.test(path)) flags.scripts = true;
+    // The scripts/internal vitest suite (run with the `frontend` area) reads
+    // files across scripts/**, not just its own modules: e.g.
+    // regen-testid-catalog.test.mjs pins the hook's trigger list to
+    // scripts/build-testid-catalog.py. Classifying that .py as harness-only let
+    // #3935 merge untested and turn develop red (#3942). The reads go through
+    // computed paths inside the checked modules, so a list derived from the
+    // tests would drift; the whole tree (incl. its .md) is the safe set.
+    if (path.startsWith("scripts/")) flags.frontend = true;
     if (DEP_FILES.has(basename(path)) && !path.startsWith("rdp-sidecar/")) flags.deps = true;
     if (
       startsWithAny(path, AGENT_ROOTS) ||
