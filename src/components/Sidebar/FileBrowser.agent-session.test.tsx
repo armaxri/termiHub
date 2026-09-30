@@ -22,7 +22,9 @@ import { DEFAULT_AGENT_SETTINGS, type FileEntry } from "@/types/connection";
 
 // The Download pickers (#3944): Save-as for a file, a folder picker for a folder.
 const saveMock = vi.fn((): Promise<string | null> => Promise.resolve("/local/app.log"));
-const openMock = vi.fn((): Promise<string | null> => Promise.resolve("/local/target"));
+const openMock = vi.fn(
+  (_options: unknown): Promise<string | null> => Promise.resolve("/local/target")
+);
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   save: () => saveMock(),
   open: (options: unknown) => openMock(options),
