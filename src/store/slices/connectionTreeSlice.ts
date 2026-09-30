@@ -289,11 +289,14 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
     addConnection: (connection) => {
       // Optimistic overlay, then persist. The persist command recomputes the
       // name-derived id and folds the authoritative view into the region (#2389),
-      // so the optimistic `conn-<ts>` row gives way to the persisted row when the
-      // overlay settles. A rejected persist just drops the overlay (#2831).
+      // echoing the optimistic `conn-<ulid>` id in the region's `savedAs` map, so
+      // the preview gives way to the persisted row the moment that fold lands —
+      // never shown next to it (#3961). A rejected persist drops the overlay (#2831).
       frontendLog("connection_sync", `addConnection: persisting ${connection.id}`);
-      persistWithOverlay(upsertConnection(connection), () =>
-        persistConnection(stripPassword(connection))
+      persistWithOverlay(
+        upsertConnection(connection),
+        () => persistConnection(stripPassword(connection)),
+        { previewId: connection.id }
       )
         .then(() => {
           toast.success(`Saved ${connection.name}`);
@@ -314,7 +317,9 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       // that reached disk (FES-005, #2831).
       Promise.all(
         newConnections.map((c) =>
-          persistWithOverlay(upsertConnection(c), () => persistConnection(stripPassword(c)))
+          persistWithOverlay(upsertConnection(c), () => persistConnection(stripPassword(c)), {
+            previewId: c.id,
+          })
         )
       )
         .then(() => {
@@ -440,8 +445,10 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       frontendLog("connection_sync", `duplicateConnection: persisting copy of ${connectionId}`);
       // A rejected persist drops the overlay, so a never-persisted duplicate
       // disappears (FES-005, #2831).
-      persistWithOverlay(upsertConnection(duplicate), () =>
-        persistConnection(stripPassword(duplicate))
+      persistWithOverlay(
+        upsertConnection(duplicate),
+        () => persistConnection(stripPassword(duplicate)),
+        { previewId: duplicate.id }
       ).catch((err) => {
         frontendLog("app_store", `Failed to persist duplicated connection: ${errorMessage(err)}`);
         toast.error(`Failed to duplicate ${original.name}: ${errorMessage(err)}`);

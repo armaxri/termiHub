@@ -17,6 +17,14 @@
  *   {@link resync} answers with the current snapshot, like `projection_resync`.
  * - **No `connection.*` intents exist.** {@link dispatched} records any intent
  *   so a test can assert the domain never dispatches one.
+ * - **A save may change the id, and the region says so (#3961).** With
+ *   {@link recomputeIdsOnSave}, `persistConnection` stores the connection under
+ *   a recomputed id (production derives it from folder + name) and, like the
+ *   Rust `ConnectionsStore`, publishes the `arrived-as → persisted` pair in the
+ *   region's `savedAs` map in the **same** fold. The reply carries the
+ *   persisted id, as `save_connection` does.
+ * - **Delivery order is selectable.** {@link deliverDiffBeforeReply} makes the
+ *   fold's frame land before the command's reply; by default the reply wins.
  *
  * Wire it by pointing the `@/services/storage` mocks at an instance's commands
  * and installing it with `setConnectionTransportForTest`.
@@ -67,6 +75,14 @@ export class ConnectionsBackendDouble implements Transport {
 
   private disk: ConnectionsView;
   private region: ConnectionsView;
+  /** The region's `savedAs` map as last published (#3961). */
+  private publishedSavedAs: Record<string, string> = {};
+  /** The region's `savedAs` map: optimistic id → persisted id (#3961). */
+  private savedAs: Record<string, string> = {};
+  /** Recomputes a saved connection's id (off by default: ids are kept). */
+  private persistedIdFor: ((connection: SavedConnection) => string) | null = null;
+  /** Deliver a fold's frame synchronously, before the command replies. */
+  private diffFirst = false;
   private version = 0;
   private handlers: FrameHandler[] = [];
   private failures = new Map<ConnectionsCommand, Failure[]>();
@@ -89,6 +105,24 @@ export class ConnectionsBackendDouble implements Transport {
     this.failures.set(command, queue);
   }
 
+  /**
+   * Make `persistConnection` store a connection under `persistedIdFor(c)`
+   * instead of its incoming id — the twin of the Rust path-based id
+   * recompute — and publish the rename in the region's `savedAs` map (#3961).
+   */
+  recomputeIdsOnSave(persistedIdFor: (connection: SavedConnection) => string): void {
+    this.persistedIdFor = persistedIdFor;
+  }
+
+  /**
+   * Deliver each fold's diff frame synchronously inside the command, so it
+   * lands **before** the command's reply (the default delivers it on a later
+   * macrotask, after the reply).
+   */
+  deliverDiffBeforeReply(): void {
+    this.diffFirst = true;
+  }
+
   /** What is on disk now. */
   diskView(): ConnectionsView {
     return structuredClone(this.disk);
@@ -106,12 +140,19 @@ export class ConnectionsBackendDouble implements Transport {
 
   // ── Persist commands ─────────────────────────────────────────────────────────
 
-  persistConnection = (connection: SavedConnection): Promise<void> =>
-    this.commit(
+  persistConnection = async (connection: SavedConnection): Promise<string> => {
+    const persistedId = this.persistedIdFor?.(connection) ?? connection.id;
+    const saved = { ...connection, id: persistedId };
+    await this.commit(
       "persistConnection",
-      (disk) => ({ folders: disk.folders, connections: upsert(disk.connections, connection) }),
-      connection.id
+      (disk) => ({ folders: disk.folders, connections: upsert(disk.connections, saved) }),
+      connection.id,
+      () => {
+        if (persistedId !== connection.id) this.savedAs[connection.id] = persistedId;
+      }
     );
+    return persistedId;
+  };
 
   removeConnection = (connectionId: string): Promise<void> =>
     this.commit(
@@ -184,7 +225,8 @@ export class ConnectionsBackendDouble implements Transport {
   private commit(
     command: ConnectionsCommand,
     op: (disk: ConnectionsView) => ConnectionsView,
-    id?: string
+    id?: string,
+    onSuccess?: () => void
   ): Promise<void> {
     this.calls.push(command);
     const failure = this.takeFailure(command, id);
@@ -194,6 +236,7 @@ export class ConnectionsBackendDouble implements Transport {
       return Promise.reject(failure.error);
     }
     this.disk = structuredClone(op(this.disk));
+    onSuccess?.();
     this.fold();
     return Promise.resolve();
   }
@@ -205,13 +248,18 @@ export class ConnectionsBackendDouble implements Transport {
     return index === -1 ? undefined : queue!.splice(index, 1)[0];
   }
 
-  /** Publish disk into the region; the diff frame lands on a later macrotask. */
+  /**
+   * Publish disk (plus the `savedAs` map) into the region; the diff frame lands
+   * on a later macrotask, or at once with {@link deliverDiffBeforeReply}.
+   */
   private fold(): void {
-    const ops = compare(this.region, this.disk) as DiffOp[];
+    const before = this.publishedView();
+    this.region = structuredClone(this.disk);
+    this.publishedSavedAs = { ...this.savedAs };
+    const ops = compare(before, this.publishedView()) as DiffOp[];
     if (ops.length === 0) return;
     const baseVersion = this.version;
     this.version += 1;
-    this.region = structuredClone(this.disk);
     const frame = {
       kind: "diff" as const,
       region: "connections",
@@ -219,9 +267,16 @@ export class ConnectionsBackendDouble implements Transport {
       version: this.version,
       ops,
     };
-    setTimeout(() => {
+    const deliver = () => {
       for (const handler of this.handlers) handler(frame);
-    }, 0);
+    };
+    if (this.diffFirst) deliver();
+    else setTimeout(deliver, 0);
+  }
+
+  /** The region view model as published: the tree plus the `savedAs` map. */
+  private publishedView(): ConnectionsView & { savedAs: Record<string, string> } {
+    return { ...this.regionView(), savedAs: { ...this.publishedSavedAs } };
   }
 
   // ── Transport ────────────────────────────────────────────────────────────────
@@ -250,7 +305,7 @@ export class ConnectionsBackendDouble implements Transport {
   }
 
   private snapshot(region: string): SnapshotFrame {
-    return { kind: "snapshot", region, version: this.version, view: this.regionView() };
+    return { kind: "snapshot", region, version: this.version, view: this.publishedView() };
   }
 }
 

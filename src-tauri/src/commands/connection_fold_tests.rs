@@ -357,8 +357,17 @@ fn load_folds_agents_then_connections() {
 
 // ── Single authoritative writer: region == disk on failure (#2831) ──────────
 
-/// The `connections` region exactly as the projector serves it to a client.
+/// The `connections` region's tree (`folders` + `connections`) exactly as the
+/// projector serves it to a client — without the `savedAs` echo (#3961), which
+/// is not part of the persisted tree.
 fn region_view(h: &Harness) -> Value {
+    let mut view = full_region_view(h);
+    view.as_object_mut().unwrap().remove("savedAs");
+    view
+}
+
+/// The whole `connections` region as the projector serves it to a client.
+fn full_region_view(h: &Harness) -> Value {
     h.app
         .state::<ProjectionState>()
         .projector
@@ -602,4 +611,37 @@ fn every_command_is_classified_and_folds_only_through_commit() {
             "{name} mutates the manager but does not go through `commit`"
         );
     }
+}
+
+// ── The saved id is echoed with the row it names (#3961) ───────────────────
+
+/// `save_connection` stores a new connection under the id it recomputes from
+/// folder + name, and publishes the `arrived-as → persisted` pair in the
+/// region's `savedAs` map in the **same** diff as the saved row. A client can
+/// then match its optimistic preview to the saved row whichever of that diff
+/// and the command's reply reaches it first.
+#[test]
+fn save_connection_echoes_the_optimistic_id_with_the_saved_row() {
+    let h = settled_harness();
+
+    let persisted = save_connection(connection("Fresh", None), h.handle(), h.manager())
+        .expect("the persist succeeds");
+    assert_ne!(persisted, "conn-Fresh", "the id is recomputed");
+
+    let view = full_region_view(&h);
+    assert_eq!(view["savedAs"]["conn-Fresh"], json!(persisted));
+    assert!(
+        view["connections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["id"] == json!(persisted)),
+        "the saved row is in the same region view"
+    );
+    assert_eq!(
+        h.published(),
+        vec![CONNECTIONS_REGION],
+        "one diff carries both the row and its echo"
+    );
+    assert_eq!(region_view(&h), disk_view(&h), "region == disk");
 }

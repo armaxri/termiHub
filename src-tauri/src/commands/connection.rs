@@ -175,10 +175,16 @@ pub fn save_connection<R: Runtime>(
     // The fold reflects the persisted tree — main store *and* the external-file
     // overlay (#2389/#2394) — so a save routed to an external file (`sourceFile`
     // set) updates the region via that overlay.
+    // The saved id is echoed in the region's `savedAs` map by the same fold that
+    // publishes the saved row, so the client can replace its optimistic preview
+    // whichever of the diff and this reply reaches it first (#3961).
+    let arrived_as = connection.id.clone();
     commit(&app, &[Fold::Connections], || {
-        manager
+        let persisted = manager
             .save_connection_routed(connection)
-            .map_err(config_error)
+            .map_err(config_error)?;
+        crate::connections_projection::projection::record_saved_as(&app, &arrived_as, &persisted);
+        Ok(persisted)
     })
 }
 

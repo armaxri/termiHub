@@ -43,6 +43,22 @@
  * post-persist version, then drops the overlay. On success the authoritative
  * view already carries the change; on failure it carries exactly what is on
  * disk — exact membership and order, no compensating write, no drift.
+ *
+ * # Previews that land under a different id (#3961)
+ *
+ * An add previews its row under a client-generated id (`conn-<ulid>`), but the
+ * persist command stores it under the id it recomputes from folder + name. The
+ * region diff carrying the saved row and the command's reply are independent
+ * messages, so the diff can land first — and even in the other order the
+ * catch-up adopts the saved row one step before the overlay drops. Without a
+ * match, the preview and the saved row would both show for that window.
+ *
+ * The client-generated id doubles as the match key: the backend echoes it in
+ * the region's `savedAs` map (`optimistic id → persisted id`), written in the
+ * **same** fold that publishes the saved row. An add overlay registered with
+ * its `previewId` stops applying the moment the authoritative view lists that
+ * id in `savedAs`, so the saved row replaces the preview in one emitted view,
+ * whichever message arrives first.
  */
 
 import { createTransport, ProjectionClient, type Transport } from "@/services/transport";
@@ -73,6 +89,8 @@ const EMPTY_VIEW: ConnectionsView = {
 interface ConnectionsRegionSnapshot {
   folders?: ConnectionFolder[];
   connections?: SavedConnection[];
+  /** Recent saves whose id changed: optimistic id → persisted id (#3961). */
+  savedAs?: Record<string, string>;
 }
 
 /** Translate the raw region snapshot into the `appStore`-named view. */
@@ -114,6 +132,8 @@ export type ConnectionsViewListener = (view: ConnectionsView) => void;
 const viewListeners = new Set<ConnectionsViewListener>();
 /** The authoritative view: what the backend region says (disk truth). */
 let baseView: ConnectionsView = EMPTY_VIEW;
+/** The authoritative region's `savedAs` map, committed with {@link baseView}. */
+let baseSavedAs: Readonly<Record<string, string>> = {};
 /** In-flight optimistic overlays, in mutation order (#2831). */
 let overlays: PendingOverlay[] = [];
 /** The effective view every reader sees: {@link baseView} with the pending
@@ -127,11 +147,33 @@ const versionGuard = makeVersionGuard();
 /** One in-flight optimistic overlay awaiting its persist result. */
 interface PendingOverlay {
   fold: ConnectionsFold;
+  /** The client-generated id an add previews its row under (#3961). */
+  previewId?: string;
+}
+
+/** Options for {@link persistWithOverlay}. */
+export interface PersistOverlayOptions {
+  /**
+   * For an add: the client-generated id the preview row uses. Once the
+   * authoritative region reports that id as saved (its `savedAs` map), the
+   * overlay stops applying, so the preview is replaced by the saved row rather
+   * than shown next to it (#3961).
+   */
+  previewId?: string;
+}
+
+/** Whether the authoritative region already carries this overlay's row. */
+function hasLanded(entry: PendingOverlay): boolean {
+  return (
+    entry.previewId !== undefined &&
+    Object.prototype.hasOwnProperty.call(baseSavedAs, entry.previewId)
+  );
 }
 
 /** Drop every overlay and the cached view (tests / re-init). */
 function resetViewState(): void {
   baseView = EMPTY_VIEW;
+  baseSavedAs = {};
   overlays = [];
   lastView = EMPTY_VIEW;
   versionGuard.reset();
@@ -139,7 +181,10 @@ function resetViewState(): void {
 
 /** Recompute the effective view from the base and the overlays, and notify. */
 function recomputeAndEmit(): void {
-  lastView = overlays.reduce<ConnectionsView>((view, o) => o.fold(view), baseView);
+  lastView = overlays.reduce<ConnectionsView>(
+    (view, o) => (hasLanded(o) ? view : o.fold(view)),
+    baseView
+  );
   for (const listener of viewListeners) {
     try {
       listener(lastView);
@@ -155,9 +200,14 @@ function recomputeAndEmit(): void {
  * applied). On today's substrate versions arrive monotonically so the guard never
  * drops a valid update — it only adds out-of-order protection.
  */
-function commitConnectionsView(view: ConnectionsView, version: number): void {
+function commitConnectionsView(
+  view: ConnectionsView,
+  version: number,
+  savedAs: Readonly<Record<string, string>> = baseSavedAs
+): void {
   if (!versionGuard.shouldApply(version)) return;
   baseView = view;
+  baseSavedAs = savedAs;
   recomputeAndEmit();
 }
 
@@ -181,7 +231,8 @@ export function ensureConnectionsSubscribed(): Promise<ProjectionClient> {
   if (!startPromise) {
     const client = new ProjectionClient(transport(), CONNECTIONS_REGION);
     client.onChange((state) => {
-      commitConnectionsView(toView((state.view ?? {}) as ConnectionsRegionSnapshot), state.version);
+      const raw = (state.view ?? {}) as ConnectionsRegionSnapshot;
+      commitConnectionsView(toView(raw), state.version, raw.savedAs ?? {});
     });
     startPromise = client
       .start()
@@ -272,12 +323,18 @@ export function setPersistedFoldSinkForTest(sink: ((fold: ConnectionsFold) => vo
  * `persist` is treated as a rejection. A failing catch-up is logged and the
  * overlay dropped anyway — an overlay is never stranded; the region stream
  * still converges.
+ *
+ * For an add, pass the preview row's client-generated id as
+ * `options.previewId`: the overlay then yields to the saved row as soon as the
+ * region reports it saved, whichever of the diff and the reply lands first
+ * (#3961).
  */
 export function persistWithOverlay<T>(
   fold: ConnectionsFold,
-  persist: () => Promise<T>
+  persist: () => Promise<T>,
+  options: PersistOverlayOptions = {}
 ): Promise<T> {
-  const entry: PendingOverlay = { fold };
+  const entry: PendingOverlay = { fold, previewId: options.previewId };
   overlays.push(entry);
   recomputeAndEmit();
 
