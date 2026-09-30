@@ -2,8 +2,10 @@
  * The one local ↔ session copy engine (PROD-007 #3558, unified in #3563):
  * copy files and folders between the local disk and one remote session. It
  * backs the dual-pane transfer view, the sidebar's local → session paste
- * (`sessionFolderPaste.pasteFileLeg`) and its session → local paste
- * (`useLocalFileSystem.pasteEntry`).
+ * (`sessionFolderPaste.pasteFileLeg`), its session → local paste
+ * (`useLocalFileSystem.pasteEntry`), the session browser's Upload / Download
+ * buttons and OS-drop upload (`useSessionFileSystem`) and the drag-out staging
+ * downloads (`useFileDragOut`, #3913).
  *
  * Each file leg goes through the existing transfer machinery:
  *
@@ -70,6 +72,23 @@ export function startQueuedUpload(
 }
 
 /**
+ * Start a queued download of a session file to the local disk, seeding its
+ * Transfer Queue row. `onRegistered` also sees the transfer id. Resolves with
+ * the bytes transferred once it completes.
+ */
+export function startQueuedDownload(
+  sessionId: string,
+  remotePath: string,
+  localPath: string,
+  onRegistered?: (transferId: string) => void
+): Promise<number> {
+  return sessionDownload(sessionId, remotePath, localPath, (transferId) => {
+    seedTransferQueueRow({ transferId, sessionId, direction: "download", remotePath });
+    onRegistered?.(transferId);
+  });
+}
+
+/**
  * Copy one local file to a session: a queued upload on a queue-capable
  * session, a byte round-trip otherwise. Resolves to whether the leg is tracked
  * by the transfer queue (whose event path then owns the success toast).
@@ -102,10 +121,7 @@ export async function downloadToLocal(
 ): Promise<boolean> {
   const { sessionId, queueCapable } = remote;
   if (queueCapable) {
-    await sessionDownload(sessionId, remotePath, localPath, (transferId) => {
-      seedTransferQueueRow({ transferId, sessionId, direction: "download", remotePath });
-      onRegistered?.(transferId);
-    });
+    await startQueuedDownload(sessionId, remotePath, localPath, onRegistered);
     return true;
   }
   const data = await sessionReadFile(sessionId, remotePath);

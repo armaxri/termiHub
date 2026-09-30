@@ -41,6 +41,7 @@ import {
   copyPaneEntry,
   downloadToLocal,
   probePaneRemote,
+  startQueuedDownload,
   uploadLocalFile,
 } from "./paneTransfer";
 
@@ -212,6 +213,24 @@ describe("shared per-leg helpers (#3563)", () => {
       direction: "download",
       remotePath: "/r/b",
     });
+  });
+
+  it("startQueuedDownload seeds a download row and hands the id to the caller", async () => {
+    const onRegistered = vi.fn();
+    await expect(startQueuedDownload("s1", "/r/x", "/stage/x", onRegistered)).resolves.toBe(1);
+    expect(api.sessionDownload).toHaveBeenCalledWith(
+      "s1",
+      "/r/x",
+      "/stage/x",
+      expect.any(Function)
+    );
+    expect(feedback.seedTransferQueueRow).toHaveBeenCalledWith({
+      transferId: "t-down",
+      sessionId: "s1",
+      direction: "download",
+      remotePath: "/r/x",
+    });
+    expect(onRegistered).toHaveBeenCalledWith("t-down");
   });
 
   it("copyPaneEntry copies one entry without its own toast", async () => {
