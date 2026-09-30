@@ -76,6 +76,14 @@ pub async fn run_tcp_listener(
     // Recover sessions from previous agent run
     session_manager.recover_sessions().await;
 
+    // Reclaim pre-existing orphan session files whose state entry was lost too
+    // (#2807). In the background: probing a dead socket takes up to the short
+    // recovery connect timeout, which must not delay the `initialize` handshake.
+    let sweep_manager = session_manager.clone();
+    tokio::spawn(async move {
+        sweep_manager.sweep_orphan_session_files().await;
+    });
+
     // Optional background GitHub self-update check (off unless opted in).
     crate::update::spawn_self_update_task(
         crate::update::UpdateConfig::from_env(

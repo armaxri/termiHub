@@ -346,4 +346,52 @@ mod tests {
         assert!(result.warnings.is_empty());
         assert_eq!(result.data.len(), 2);
     }
+
+    // ── Unknown per-entry fields (#3951, part of #2744) ────────────────────
+
+    fn saved_monitors(dir: &Path) -> Vec<serde_json::Value> {
+        let saved: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(monitors_path(dir)).unwrap()).unwrap();
+        saved["monitors"].as_array().unwrap().clone()
+    }
+
+    /// Fields a newer build wrote into a single monitor survive an older
+    /// build's load → save.
+    #[test]
+    fn unknown_monitor_fields_survive_load_save_round_trip() {
+        let dir = TempDir::new().unwrap();
+        let mut entry = config_json("https://a.example.com");
+        entry["futureField"] = serde_json::json!({"nested": [1, 2]});
+        let raw = serde_json::json!({
+            "version": "1",
+            "monitors": [entry, config_json("https://b.example.com")],
+        });
+        std::fs::write(monitors_path(dir.path()), raw.to_string()).unwrap();
+
+        let monitors = load_http_monitors(dir.path()).unwrap();
+        save_http_monitors(dir.path(), &monitors).unwrap();
+
+        let saved = saved_monitors(dir.path());
+        assert_eq!(saved.len(), 2);
+        assert_eq!(
+            saved[0]["futureField"],
+            serde_json::json!({"nested": [1, 2]})
+        );
+        assert!(saved[1].get("futureField").is_none());
+    }
+
+    /// Granular salvage keeps the surviving monitors' unknown fields.
+    #[test]
+    fn salvage_keeps_unknown_monitor_fields() {
+        let dir = TempDir::new().unwrap();
+        let mut entry = config_json("https://good.example.com");
+        entry["futureField"] = serde_json::json!(7);
+        let raw = serde_json::json!({"monitors": [entry, {"id": "broken"}]});
+        std::fs::write(monitors_path(dir.path()), raw.to_string()).unwrap();
+
+        let monitors = load_http_monitors(dir.path()).unwrap();
+        assert_eq!(monitors.len(), 1);
+        save_http_monitors(dir.path(), &monitors).unwrap();
+        assert_eq!(saved_monitors(dir.path())[0]["futureField"], 7);
+    }
 }

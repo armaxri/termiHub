@@ -26,6 +26,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use tauri::{AppHandle, Emitter};
 use termihub_core::service::drain_broadcast;
+use termihub_core::util::entry_extra::{upsert_keeping_extra, without_extra};
 
 use super::activity::ActivitySnapshot;
 use super::config::{
@@ -208,11 +209,7 @@ impl EmbeddedServerManager {
         self.sync_secrets();
         self.secrets.capture(&mut config)?;
         let mut store = self.lock_configs()?;
-        if let Some(existing) = store.servers.iter_mut().find(|s| s.id == config.id) {
-            *existing = config;
-        } else {
-            store.servers.push(config);
-        }
+        upsert_server(&mut store, config);
         self.persist(&store)
     }
 
@@ -741,7 +738,8 @@ pub(super) fn service_start_params(
     server_id: &str,
     config: &EmbeddedServerConfig,
 ) -> Result<serde_json::Value, TerminalError> {
-    let config_value = serde_json::to_value(config).map_err(|e| {
+    // The desktop file's unknown fields (#3951) are not the agent's business.
+    let config_value = serde_json::to_value(without_extra(config)).map_err(|e| {
         TerminalError::EmbeddedServerError(format!("Failed to serialize server config: {e}"))
     })?;
     serde_json::to_value(ServiceStartParams {
@@ -752,6 +750,14 @@ pub(super) fn service_start_params(
     .map_err(|e| {
         TerminalError::EmbeddedServerError(format!("Failed to build service.start params: {e}"))
     })
+}
+
+/// Replace the server with `config`'s id, or append `config` when there is none.
+///
+/// The entry keeps the unknown fields it had on disk and drops the IPC copy's
+/// (#3951). Pure so the save path is unit-testable.
+pub(super) fn upsert_server(store: &mut EmbeddedServerStore, config: EmbeddedServerConfig) {
+    upsert_keeping_extra(&mut store.servers, config);
 }
 
 /// Parse an agent `service.start` reply into the desktop [`ServerState`] (#2214).
@@ -965,6 +971,7 @@ mod tests {
             ftp_auth: None,
             http_auth: None,
             max_transfer_bytes: None,
+            extra: Default::default(),
         }
     }
 
@@ -1258,5 +1265,74 @@ mod tests {
             "srv-9"
         )
         .is_err());
+    }
+
+    // ── Unknown per-entry fields (#3951, part of #2744) ────────────────────
+
+    fn server_json(id: &str, name: &str) -> serde_json::Value {
+        json!({
+            "id": id,
+            "name": name,
+            "serverType": "http",
+            "rootDirectory": "/tmp",
+            "bindHost": "127.0.0.1",
+            "port": 8080,
+        })
+    }
+
+    /// A store loaded from a file whose server `a` carries an unknown field.
+    fn store_with_future_server() -> EmbeddedServerStore {
+        let mut entry = server_json("a", "Docs");
+        entry["futureField"] = json!({"nested": true});
+        serde_json::from_value(json!({"version": "2", "servers": [entry]})).unwrap()
+    }
+
+    fn servers_of(store: &EmbeddedServerStore) -> Vec<serde_json::Value> {
+        serde_json::to_value(store).unwrap()["servers"]
+            .as_array()
+            .unwrap()
+            .clone()
+    }
+
+    /// Editing a server replaces it with the editor's IPC copy, which never has
+    /// the unknown fields; the entry keeps the ones it had on disk.
+    #[test]
+    fn editing_a_server_keeps_its_unknown_fields() {
+        let mut store = store_with_future_server();
+        let edited: EmbeddedServerConfig =
+            serde_json::from_value(server_json("a", "Renamed")).unwrap();
+        upsert_server(&mut store, edited);
+
+        let servers = servers_of(&store);
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0]["name"], "Renamed");
+        assert_eq!(servers[0]["futureField"], json!({"nested": true}));
+    }
+
+    /// Unknown keys on the IPC copy are frontend state and are not kept, for
+    /// an edited server or a new one.
+    #[test]
+    fn ipc_only_server_keys_are_not_kept() {
+        let mut store = store_with_future_server();
+        let mut edited = server_json("a", "Renamed");
+        edited["frontendOnly"] = json!(1);
+        let mut added = server_json("b", "New");
+        added["frontendOnly"] = json!(1);
+        upsert_server(&mut store, serde_json::from_value(edited).unwrap());
+        upsert_server(&mut store, serde_json::from_value(added).unwrap());
+
+        let servers = servers_of(&store);
+        assert_eq!(servers.len(), 2);
+        assert!(servers.iter().all(|s| s.get("frontendOnly").is_none()));
+        assert_eq!(servers[0]["futureField"], json!({"nested": true}));
+    }
+
+    /// The desktop file's unknown fields are not sent to an agent host.
+    #[test]
+    fn service_start_params_do_not_carry_unknown_fields() {
+        let store = store_with_future_server();
+        let params = service_start_params("a", &store.servers[0]).expect("params build");
+        assert!(params["config"].get("futureField").is_none());
+        assert_eq!(params["config"]["name"], "Docs");
     }
 }
