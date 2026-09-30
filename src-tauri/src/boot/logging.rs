@@ -67,10 +67,12 @@ pub(crate) fn init_tracing() -> TracingInit {
     // standalone resolver detects portable mode itself. `TERMIHUB_FILE_LOG` still
     // wins at startup (handled inside `file_env_filter_with`); an absent or
     // unreadable settings file simply leaves the level at the INFO default.
+    // Read-only `peek` (#4017): recovering here would back up and reset a corrupt
+    // settings.json before boot's own load, swallowing the recovery warning.
     let persisted_file_log_level: Option<&str> = SettingsStorage::new_standalone()
         .ok()
-        .and_then(|s| s.load_with_recovery().ok())
-        .and_then(|r| r.data.file_log_level)
+        .and_then(|s| s.peek())
+        .and_then(|settings| settings.file_log_level)
         .map(|level| level.as_str());
 
     let (file_layer, file_reload_handle, file_log_status) =
