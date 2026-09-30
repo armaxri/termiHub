@@ -74,6 +74,10 @@
         {
           "summary": "Tight 24-bit TPIXELs serialised in the negotiated byte order with an opaque alpha lane for every filter (upstream: always little-endian, gradient alpha 0)",
           "refs": ["https://github.com/armaxri/termiHub/issues/3545"]
+        },
+        {
+          "summary": "VeNCrypt CA PEM bundles parsed with rustls-pki-types (CertificateDer::pem_slice_iter) instead of the unmaintained rustls-pemfile (RUSTSEC-2025-0134)",
+          "refs": ["https://github.com/armaxri/termiHub/issues/3975"]
         }
       ],
       "watch": {

@@ -40,6 +40,7 @@ use tokio_rustls::rustls::client::danger::{
     HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
 };
 use tokio_rustls::rustls::crypto::aws_lc_rs;
+use tokio_rustls::rustls::pki_types::pem::PemObject;
 use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use tokio_rustls::rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme};
 use tokio_rustls::TlsConnector;
@@ -316,8 +317,9 @@ fn build_client_config(verify: &TlsVerify) -> Result<ClientConfig, VncError> {
         }
         TlsVerify::CaPem(pem) => {
             let mut roots = RootCertStore::empty();
-            let mut reader = std::io::BufReader::new(pem.as_slice());
-            for cert in rustls_pemfile::certs(&mut reader) {
+            // PEM parsing via rustls-pki-types (the upstream-recommended
+            // successor to the unmaintained rustls-pemfile, RUSTSEC-2025-0134).
+            for cert in CertificateDer::pem_slice_iter(pem.as_slice()) {
                 let cert = cert.map_err(|e| VncError::Tls(format!("invalid CA PEM: {e}")))?;
                 roots
                     .add(cert)
@@ -467,6 +469,48 @@ mod tests {
     fn empty_ca_pem_is_rejected() {
         let err = build_client_config(&TlsVerify::CaPem(b"not a cert".to_vec()));
         assert!(err.is_err());
+    }
+
+    /// The CA of termiHub's VeNCrypt test server (tests/docker/vnc-vencrypt-server).
+    const FIXTURE_CA: &[u8] =
+        include_bytes!("../../../../tests/docker/vnc-vencrypt-server/certs/ca.crt");
+
+    fn tls_error(verify: &TlsVerify) -> String {
+        match build_client_config(verify) {
+            Err(VncError::Tls(msg)) => msg,
+            Err(other) => panic!("expected a TLS error, got {other:?}"),
+            Ok(_) => panic!("expected a TLS error, got a config"),
+        }
+    }
+
+    #[test]
+    fn ca_pem_with_a_certificate_builds() {
+        assert!(build_client_config(&TlsVerify::CaPem(FIXTURE_CA.to_vec())).is_ok());
+    }
+
+    #[test]
+    fn ca_pem_skips_non_certificate_sections() {
+        // #3975: the rustls-pki-types parser, like rustls-pemfile before it,
+        // takes only the CERTIFICATE blocks of a mixed bundle.
+        let mut pem = b"-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n".to_vec();
+        pem.extend_from_slice(FIXTURE_CA);
+        assert!(build_client_config(&TlsVerify::CaPem(pem)).is_ok());
+    }
+
+    #[test]
+    fn ca_pem_without_certificates_is_rejected() {
+        let pem = b"-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n".to_vec();
+        assert_eq!(
+            tls_error(&TlsVerify::CaPem(pem)),
+            "CA PEM contained no certificates"
+        );
+    }
+
+    #[test]
+    fn malformed_ca_pem_block_is_rejected() {
+        let pem = b"-----BEGIN CERTIFICATE-----\n!!not base64!!\n-----END CERTIFICATE-----\n";
+        let msg = tls_error(&TlsVerify::CaPem(pem.to_vec()));
+        assert!(msg.starts_with("invalid CA PEM:"), "{msg}");
     }
 
     #[test]
