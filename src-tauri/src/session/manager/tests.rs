@@ -3403,6 +3403,11 @@ impl AgentRpcClient for FailingAttachAgent {
 // (`session/file_ops.rs`). These lock in the manager's delegation and the
 // exact error messages it must preserve across the refactor.
 
+/// The one path [`MockFileBrowser::stat`] reports as a folder (#3944).
+const MOCK_FOLDER_PATH: &str = "/srv/data";
+/// The one path [`MockFileBrowser::stat`] fails to stat (#3944).
+const MOCK_MISSING_PATH: &str = "/srv/missing";
+
 /// A minimal in-memory [`FileBrowser`] that records the paths it was asked
 /// to list and echoes deterministic data back, so the manager's delegation
 /// can be asserted without a real file backend.
@@ -3448,10 +3453,14 @@ impl FileBrowser for MockFileBrowser {
         Ok(())
     }
     async fn stat(&self, path: &str) -> Result<FileEntry, termihub_core::errors::FileError> {
+        if path == MOCK_MISSING_PATH {
+            return Err(termihub_core::errors::FileError::NotFound(path.to_string()));
+        }
         Ok(FileEntry {
             name: path.to_string(),
             path: path.to_string(),
-            is_directory: false,
+            // A fixed folder path, so the transfer folder guard can be tested (#3944).
+            is_directory: path == MOCK_FOLDER_PATH,
             size: 0,
             modified: String::new(),
             permissions: None,
@@ -3570,6 +3579,71 @@ async fn file_ops_delegate_to_session_file_browser() {
     // read_file delegates and returns the browser's bytes (which echo the path).
     let data = manager.read_file("fs-1", "/etc/hosts").await.unwrap();
     assert_eq!(data, b"/etc/hosts");
+}
+
+/// A queued single-file transfer refuses a folder source with the typed
+/// `IsDirectory` error before anything is written (#3944): the remote path
+/// for a download (via the session's stat), the local path for an upload.
+/// A file, or a source that cannot be stat'ed, is let through unchanged.
+#[tokio::test]
+async fn transfer_source_guard_refuses_a_folder_in_either_direction() {
+    use crate::files::transfer::TransferDirection;
+    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    manager
+        .insert_test_session(
+            "fs-guard",
+            Box::new(FileConnection {
+                browser: MockFileBrowser {
+                    listed: Arc::new(std::sync::Mutex::new(Vec::new())),
+                },
+            }),
+        )
+        .await;
+    let local_dir = tempfile::tempdir().expect("tempdir");
+    let local_folder = local_dir.path().to_string_lossy().into_owned();
+    let local_file = local_dir.path().join("a.txt");
+    std::fs::write(&local_file, b"a").expect("write local file");
+    let local_file = local_file.to_string_lossy().into_owned();
+    let guard = |direction, remote: &'static str, local: String| {
+        let manager = &manager;
+        async move {
+            manager
+                .ensure_transfer_source_is_file("fs-guard", direction, remote, &local)
+                .await
+        }
+    };
+
+    // Download: a remote folder is refused and named; a file passes.
+    match guard(
+        TransferDirection::Download,
+        MOCK_FOLDER_PATH,
+        "/tmp/x".into(),
+    )
+    .await
+    {
+        Err(TerminalError::IsDirectory(path)) => assert_eq!(path, MOCK_FOLDER_PATH),
+        other => panic!("expected IsDirectory, got {other:?}"),
+    }
+    guard(TransferDirection::Download, "/srv/app.log", "/tmp/x".into())
+        .await
+        .expect("a remote file downloads");
+    // A failed stat leaves the transfer to report its own error.
+    guard(
+        TransferDirection::Download,
+        MOCK_MISSING_PATH,
+        "/tmp/x".into(),
+    )
+    .await
+    .expect("an unknown source is not refused here");
+
+    // Upload: a local folder is refused and named; a file passes.
+    match guard(TransferDirection::Upload, "/srv/up", local_folder.clone()).await {
+        Err(TerminalError::IsDirectory(path)) => assert_eq!(path, local_folder),
+        other => panic!("expected IsDirectory, got {other:?}"),
+    }
+    guard(TransferDirection::Upload, MOCK_FOLDER_PATH, local_file)
+        .await
+        .expect("a local file uploads");
 }
 
 /// A session whose connection exposes no file browser yields the exact

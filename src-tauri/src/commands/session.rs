@@ -1013,6 +1013,10 @@ async fn start_session_transfer(
     app_handle: tauri::AppHandle,
 ) -> Result<String, TerminalError> {
     let target = resolve_session_transfer_target(&manager, &session_id).await?;
+    // A folder is refused before anything is enqueued or written (#3944).
+    manager
+        .ensure_transfer_source_is_file(&session_id, direction, &remote_path, &local_path)
+        .await?;
 
     let transfer_id = uuid::Uuid::new_v4().to_string();
     let file_name = file_name_of(&remote_path);

@@ -157,6 +157,9 @@ pub enum IpcErrorCode {
     /// An unattended connect (#3527) was refused because the server asked for
     /// interactive input (a keyboard-interactive / one-time-code round).
     InteractionRequired,
+    /// A single-file transfer was asked to copy a folder (#3944). Refused up
+    /// front, so no empty or partial file is written at the destination.
+    IsDirectory,
 }
 
 impl IpcErrorCode {
@@ -315,6 +318,13 @@ pub enum TerminalError {
     /// and the limit.
     #[error("Timed out: {0}")]
     Timeout(String),
+
+    /// A single-file transfer (`session_download` / `session_upload`) was
+    /// given a folder as its source (#3944). It is refused before any
+    /// transfer starts, so no empty or partial file lands at the destination;
+    /// folders are copied file by file by the frontend's pane engine.
+    #[error("{0} is a folder, not a file")]
+    IsDirectory(String),
 }
 
 impl TerminalError {
@@ -402,6 +412,7 @@ impl TerminalError {
             TerminalError::Io(_) => C::Io,
             TerminalError::InvalidParams(_) => C::InvalidParams,
             TerminalError::Timeout(_) => C::Timeout,
+            TerminalError::IsDirectory(_) => C::IsDirectory,
         }
     }
 
@@ -589,6 +600,17 @@ mod tests {
             TerminalError::SpawnFailed("plain".into()).code(),
             IpcErrorCode::SpawnFailed
         );
+    }
+
+    /// A folder handed to a single-file transfer carries its own
+    /// `is_directory` code and names the folder (#3944).
+    #[test]
+    fn is_directory_has_its_own_code_and_names_the_folder() {
+        let err = TerminalError::IsDirectory("/srv/data".to_string());
+        assert_eq!(err.code(), IpcErrorCode::IsDirectory);
+        let json = serde_json::to_value(&err).expect("serialize");
+        assert_eq!(json["code"], "is_directory");
+        assert_eq!(json["message"], "/srv/data is a folder, not a file");
     }
 
     /// A dismissed keyboard-interactive prompt maps to `Cancelled` on both

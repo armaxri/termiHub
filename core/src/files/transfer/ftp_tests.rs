@@ -436,3 +436,46 @@ async fn upload_relaunch_restarts_from_zero_when_rest_is_unsupported() {
     assert_eq!(server.transfers(), vec![stor(0)]);
     assert_eq!(server.rest_commands(), 0);
 }
+
+// --- A folder path handed to a download (#3944) ---
+
+/// A download of a folder path fails: `RETR` on a directory is refused (a real
+/// server answers `550`, like the mock for a path that is not a file), so the
+/// transfer ends `Failed` after its retries and never lands any content. The
+/// executor has already created the local file by then, so an empty file can be
+/// left at the chosen path. That is why `session_download` refuses a folder up
+/// front and the frontend copies folders file by file (#3944).
+#[tokio::test]
+async fn download_of_a_folder_path_fails_and_lands_no_content() {
+    let server = MockFtpServer::start(MockFtpOptions::default()).await;
+    server.put("/pub/inner.bin", &content(64), MTIME);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let local = dir.path().join("pub");
+    let reg = TransferRegistry::new();
+    let handle = reg.enqueue(
+        "ftp-dir",
+        "ftp-session",
+        TransferDirection::Download,
+        "pub",
+        "/pub",
+        0,
+    );
+    let (sink, _events) = recording_sink();
+
+    run_ftp_transfer(
+        server.config(),
+        FtpDirection::Download,
+        "/pub".to_string(),
+        s(&local),
+        handle.clone(),
+        reg,
+        sink,
+        0,
+    )
+    .await;
+
+    assert_eq!(handle.state().tag(), TransferStateTag::Failed);
+    assert!(server.transfers().is_empty(), "no RETR ever streamed data");
+    let landed = std::fs::read(&local).unwrap_or_default();
+    assert!(landed.is_empty(), "a folder download must not land content");
+}
