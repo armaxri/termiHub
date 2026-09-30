@@ -665,21 +665,20 @@ impl ConnectionType for SidecarRdp {
         // skipped when the $TERMIHUB_RDP_HELPER override is set (dev/test) or no
         // digest was embedded (dev/branch builds); see [`integrity`].
         //
-        // This hash runs immediately before the spawn below, off the same
-        // absolute path, minimising the check→exec window. A narrow TOCTOU window
-        // remains — an attacker able to replace the on-disk file between this hash
-        // and the spawn could still swap it; closing it fully needs a single file
-        // handle hashed and exec'd via fexecve/`/proc/self/fd` (Unix), tracked as
-        // a follow-up. Replacing the file requires write access to a trusted
-        // install location, so this residual window is narrow.
+        // The digest is computed from a single retained file handle, and the
+        // spawn is built from that same handle (#2835): Linux execs
+        // `/proc/self/fd/<n>` (the hashed inode, no path re-lookup); Windows holds
+        // a write/delete-denying share mode across the spawn; macOS (no
+        // `fexecve`) checks the path still names the hashed inode before and after
+        // the spawn. The per-OS residual guarantee is documented in [`integrity`].
         let override_active = std::env::var_os(HELPER_PATH_ENV).is_some();
-        integrity::verify_helper_integrity(
+        let pinned = integrity::verify_helper_integrity(
             &helper,
             override_active,
             integrity::EXPECTED_HELPER_SHA256,
         )
         .map_err(SessionError::SpawnFailed)?;
-        let mut command = tokio::process::Command::new(&helper);
+        let mut command = pinned.command().map_err(SessionError::SpawnFailed)?;
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -695,6 +694,15 @@ impl ConnectionType for SidecarRdp {
                 helper.display()
             ))
         })?;
+        // Re-verify the pinned file before the child is sent anything — the
+        // connect payload below carries credentials. On a mismatch the child is
+        // killed (fail-closed) and never sees them.
+        if let Err(e) = pinned.confirm_after_spawn() {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            return Err(SessionError::SpawnFailed(e));
+        }
+        drop(pinned);
 
         let mut stdin = child
             .stdin
