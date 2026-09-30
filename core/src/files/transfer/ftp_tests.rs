@@ -462,20 +462,30 @@ async fn download_of_a_folder_path_fails_and_lands_no_content() {
     );
     let (sink, _events) = recording_sink();
 
-    run_ftp_transfer(
+    // A permanently failed transfer waits for a manual retry or cancel, so run
+    // it in the background and cancel it once it has failed.
+    let run = tokio::spawn(run_ftp_transfer(
         server.config(),
         FtpDirection::Download,
         "/pub".to_string(),
         s(&local),
         handle.clone(),
-        reg,
+        reg.clone(),
         sink,
         0,
-    )
-    .await;
+    ));
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        while handle.state().tag() != TransferStateTag::Failed {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the folder download fails");
 
-    assert_eq!(handle.state().tag(), TransferStateTag::Failed);
     assert!(server.transfers().is_empty(), "no RETR ever streamed data");
     let landed = std::fs::read(&local).unwrap_or_default();
     assert!(landed.is_empty(), "a folder download must not land content");
+
+    reg.cancel("ftp-dir");
+    run.await.expect("executor task");
 }
