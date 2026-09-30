@@ -221,7 +221,11 @@ Stale selectors are the most common authoring error.
 `tests/system/testid-catalog.md`, so an author can confirm an id (and its exact
 form) without spelunking components. Dynamic ids (`file-row-${name}`,
 `${testIdPrefix}-download`) are rendered as `*` glob patterns (`file-row-*`,
-`*-download`); prop-supplied ids are listed as **indirect**. The catalog is a
+`*-download`); prop-supplied ids are listed as **indirect**. Besides the JSX
+`data-testid=` attribute it scans every form the app renders ids through: any
+`*TestId` prop, object-property keys (`{ "data-testid": … }`, `{ testId: … }`),
+`setAttribute("data-testid", …)`, `*TestIdPrefix` row families, and templates
+inside a larger expression such as a `??` fallback (#3044). The catalog is a
 **local, git-ignored artifact** — not committed. A single global committed file
 went stale on every open branch the moment any testid changed on `develop`,
 breaking unrelated PRs' CI (#1528); CI now regenerates the catalog from source
