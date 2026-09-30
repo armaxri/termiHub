@@ -4510,7 +4510,7 @@ limits, symlinks, merge layout, group cancel, end-to-end temp tree) and
    neither comes back after another restart. Automated coverage:
    `src-tauri/src/files/transfer/relaunch.rs` (`cancelling_*` tests).
 
-### Transfer Queue: restart gaps (#3629, #3630, #3643)
+### Transfer Queue: restart gaps (#3629, #3630, #3643, #3912)
 
 Automated coverage: `src-tauri/src/files/transfer/persist*.rs`,
 `src-tauri/src/files/drag_out.rs`, `src/hooks/sessionFolderPaste.test.ts` and
@@ -4530,6 +4530,12 @@ Automated coverage: `src-tauri/src/files/transfer/persist*.rs`,
    The file that was copying at the quit never shows up as a paused Transfer
    Queue row of its own after the relaunch (#3643): the notice is the only
    trace of the paste, and after Retry the queue holds no stale row from it.
+3. **Interrupted remote → local folder paste (#3912):** in an SFTP session,
+   copy a folder holding several large files and paste it into a local
+   folder; quit while the second file is downloading. Relaunch → the same
+   notice appears, naming `Local` and the local folder. Retry before
+   reconnecting asks to connect to the SFTP connection first; after
+   reconnecting it downloads only the missing (or partly written) files.
 
 ### Transfer Queue panel: rows, controls, minimized state (#1337)
 

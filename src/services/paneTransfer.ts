@@ -139,9 +139,39 @@ export async function probePaneRemote(sessionId: string): Promise<PaneRemote> {
   return { sessionId, queueCapable };
 }
 
+/**
+ * Options of a copy between the panes.
+ */
+interface PaneCopyOptions {
+  /**
+   * Continue an interrupted folder paste (#3912): skip every file the
+   * destination already holds with the same size, so only the missing (or
+   * partly written) files are copied again.
+   */
+  continueExisting?: boolean;
+  /**
+   * Sees the id of every tracked file transfer, so a recorded folder paste can
+   * link it to its manifest (#3643).
+   */
+  onRegistered?: (transferId: string) => void;
+}
+
 /** Copy one file; resolves to whether the leg is tracked by the transfer queue. */
-function copyFile(from: PaneSide, src: string, dest: string, remote: PaneRemote): Promise<boolean> {
-  return from === "local" ? uploadLocalFile(remote, src, dest) : downloadToLocal(remote, src, dest);
+function copyFile(
+  from: PaneSide,
+  src: string,
+  dest: string,
+  remote: PaneRemote,
+  onRegistered?: (transferId: string) => void
+): Promise<boolean> {
+  return from === "local"
+    ? uploadLocalFile(remote, src, dest, onRegistered)
+    : downloadToLocal(remote, src, dest, onRegistered);
+}
+
+/** List `dir` on one side of the transfer. */
+function listSide(side: PaneSide, dir: string, remote: PaneRemote): Promise<FileEntry[]> {
+  return side === "remote" ? sessionListFiles(remote.sessionId, dir) : localListDir(dir);
 }
 
 /**
@@ -149,16 +179,67 @@ function copyFile(from: PaneSide, src: string, dest: string, remote: PaneRemote)
  * turns out to exist already (the copy then merges into it).
  */
 async function ensureDir(to: PaneSide, dest: string, remote: PaneRemote): Promise<void> {
-  const mkdir = () => (to === "remote" ? sessionMkdir(remote.sessionId, dest) : localMkdir(dest));
-  const exists = () =>
-    to === "remote" ? sessionListFiles(remote.sessionId, dest) : localListDir(dest);
   try {
-    await mkdir();
+    await (to === "remote" ? sessionMkdir(remote.sessionId, dest) : localMkdir(dest));
   } catch (err) {
-    await exists().catch(() => {
+    await listSide(to, dest, remote).catch(() => {
       throw err;
     });
   }
+}
+
+/**
+ * The destination folder's existing entries when continuing a paste, creating
+ * the folder when it is missing. A fresh copy always creates (or merges into)
+ * the folder and treats it as empty.
+ */
+async function prepareDestFolder(
+  to: PaneSide,
+  dest: string,
+  remote: PaneRemote,
+  continueExisting: boolean
+): Promise<FileEntry[]> {
+  if (continueExisting) {
+    try {
+      return await listSide(to, dest, remote);
+    } catch {
+      // Not there yet: create it below and treat it as empty.
+    }
+  }
+  await ensureDir(to, dest, remote);
+  return [];
+}
+
+/** Whether the destination already holds a complete copy of `child`. */
+function alreadyCopied(child: FileEntry, existing: FileEntry[]): boolean {
+  return existing.some((e) => e.name === child.name && !e.isDirectory && e.size === child.size);
+}
+
+/**
+ * Copy the folder `srcDir` to `destPath` on the other side, recursively and
+ * file by file. Resolves to whether any leg is tracked by the transfer queue.
+ */
+export async function copyPaneFolder(
+  from: PaneSide,
+  srcDir: string,
+  destPath: string,
+  remote: PaneRemote,
+  options: PaneCopyOptions = {}
+): Promise<boolean> {
+  const to: PaneSide = from === "local" ? "remote" : "local";
+  const existing = await prepareDestFolder(to, destPath, remote, !!options.continueExisting);
+  const children = await listSide(from, srcDir, remote);
+  let tracked = false;
+  for (const child of children) {
+    const childDest = joinDirPath(destPath, child.name);
+    if (child.isDirectory) {
+      tracked = (await copyPaneFolder(from, child.path, childDest, remote, options)) || tracked;
+    } else if (!(options.continueExisting && alreadyCopied(child, existing))) {
+      tracked =
+        (await copyFile(from, child.path, childDest, remote, options.onRegistered)) || tracked;
+    }
+  }
+  return tracked;
 }
 
 /**
@@ -170,21 +251,12 @@ export async function copyPaneEntry(
   from: PaneSide,
   entry: FileEntry,
   destDir: string,
-  remote: PaneRemote
+  remote: PaneRemote,
+  options: PaneCopyOptions = {}
 ): Promise<boolean> {
   const dest = joinDirPath(destDir, entry.name);
-  if (!entry.isDirectory) return copyFile(from, entry.path, dest, remote);
-
-  await ensureDir(from === "local" ? "remote" : "local", dest, remote);
-  const children =
-    from === "local"
-      ? await localListDir(entry.path)
-      : await sessionListFiles(remote.sessionId, entry.path);
-  let tracked = false;
-  for (const child of children) {
-    tracked = (await copyPaneEntry(from, child, dest, remote)) || tracked;
-  }
-  return tracked;
+  if (!entry.isDirectory) return copyFile(from, entry.path, dest, remote, options.onRegistered);
+  return copyPaneFolder(from, entry.path, dest, remote, options);
 }
 
 /**

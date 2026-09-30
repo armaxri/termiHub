@@ -71,6 +71,38 @@ describe("useInterruptedFolderPastes (#3630)", () => {
   });
 });
 
+describe("useInterruptedFolderPastes — remote → local pastes (#3912)", () => {
+  it("lists an interrupted remote → local folder paste after a reload", async () => {
+    const remoteToLocal: InterruptedFolderPaste = {
+      id: "p2",
+      operation: "copy",
+      source: { sessionId: "s", connectionId: "c", label: "web-1", path: "/srv/logs" },
+      destination: { sessionId: null, connectionId: null, label: "Local", path: "/home/u/logs" },
+      startedAtMs: 1,
+    };
+    vi.mocked(folderPasteTakeInterrupted).mockResolvedValue([remoteToLocal]);
+    const root = createRoot(document.createElement("div"));
+    function Harness() {
+      useInterruptedFolderPastes();
+      return null;
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const [title, opts] = vi.mocked(toast.error).mock.calls[0];
+    expect(title).toBe("Pasting “logs” did not finish");
+    expect(opts?.description).toContain("Local (/home/u/logs)");
+    lastRetryAction()();
+    expect(vi.mocked(retryInterruptedFolderPaste)).toHaveBeenCalledWith(remoteToLocal);
+    act(() => root.unmount());
+  });
+});
+
 describe("retryFromNotice", () => {
   it("reports success only once the retry completed", async () => {
     await retryFromNotice(paste);

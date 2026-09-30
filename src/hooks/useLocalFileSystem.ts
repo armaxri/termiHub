@@ -17,6 +17,7 @@ import {
   sessionDeleteFile,
 } from "@/services/api";
 import { copyPaneEntry, probePaneRemote } from "@/services/paneTransfer";
+import { pasteRemoteFolderToLocal } from "./sessionFolderPaste";
 import { FileEntry } from "@/types/connection";
 import {
   pickPathOrReport,
@@ -274,12 +275,24 @@ export function useLocalFileSystem() {
           for (const clipEntry of clipboard.entries) {
             const destPath = joinDirPath(destDir, clipEntry.name);
             if (remote) {
-              // Session → local: queued download or byte round-trip, folders
-              // recreated and copied file by file. A cut removes each remote
-              // source only once it has fully landed locally.
-              tracked = (await copyPaneEntry("remote", clipEntry, destDir, remote)) || tracked;
-              if (clipboard.operation === "cut") {
-                await sessionDeleteFile(remote.sessionId, clipEntry.path);
+              // Session → local: queued download or byte round-trip. A folder
+              // is recreated and copied file by file, recorded in the
+              // interrupted-paste manifest like a paste into a session (#3912).
+              // A cut removes each remote source only once it has fully landed
+              // locally.
+              if (clipEntry.isDirectory) {
+                tracked =
+                  (await pasteRemoteFolderToLocal(
+                    clipboard.operation,
+                    remote,
+                    clipEntry.path,
+                    destPath
+                  )) || tracked;
+              } else {
+                tracked = (await copyPaneEntry("remote", clipEntry, destDir, remote)) || tracked;
+                if (clipboard.operation === "cut") {
+                  await sessionDeleteFile(remote.sessionId, clipEntry.path);
+                }
               }
             } else if (clipboard.operation === "cut") {
               await localRename(clipEntry.path, destPath);
