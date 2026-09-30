@@ -210,7 +210,8 @@ describe("tabGroupsSlice — branch coverage (#2979)", () => {
       expect(getAllLeaves(source.rootPanel).map((l) => l.id)).toEqual([left.panelId]);
       expect(source.activePanelId).toBe(left.panelId);
       expect(allTabs().map((t) => t.id)).toEqual([right.tabId]);
-      expect(layoutState().tabGroups.at(-1)!.name).toBe("Group 2");
+      const groups = layoutState().tabGroups;
+      expect(groups[groups.length - 1].name).toBe("Group 2");
     });
 
     it("keeps the source group's active panel when moving from a non-active panel", () => {

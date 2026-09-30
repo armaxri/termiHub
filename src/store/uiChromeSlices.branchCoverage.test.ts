@@ -60,8 +60,8 @@ describe("uiChromeSlice (#2979)", () => {
   });
 
   it("switches views without collapsing", () => {
-    useAppStore.getState().setSidebarView("settings");
-    expect(useAppStore.getState().sidebarView).toBe("settings");
+    useAppStore.getState().setSidebarView("tunnels");
+    expect(useAppStore.getState().sidebarView).toBe("tunnels");
     expect(useAppStore.getState().sidebarCollapsed).toBe(false);
   });
 
@@ -125,12 +125,12 @@ describe("uiChromeSlice (#2979)", () => {
     });
 
     it("hides the active view and collapses the sidebar", async () => {
-      useAppStore.setState({ sidebarView: "settings", sidebarCollapsed: false });
+      useAppStore.setState({ sidebarView: "tunnels", sidebarCollapsed: false });
 
-      useAppStore.getState().toggleActivityBarView("settings");
+      useAppStore.getState().toggleActivityBarView("tunnels");
       await flushPersist();
 
-      expect(useAppStore.getState().layoutConfig.hiddenActivityBarViews).toEqual(["settings"]);
+      expect(useAppStore.getState().layoutConfig.hiddenActivityBarViews).toEqual(["tunnels"]);
       expect(useAppStore.getState().sidebarCollapsed).toBe(true);
       expect(m.saveSettings).toHaveBeenCalledTimes(1);
     });
@@ -138,9 +138,9 @@ describe("uiChromeSlice (#2979)", () => {
     it("hides an inactive view without collapsing, then un-hides it", async () => {
       m.saveSettings.mockRejectedValue(new Error("ro"));
 
-      useAppStore.getState().toggleActivityBarView("settings");
+      useAppStore.getState().toggleActivityBarView("tunnels");
       expect(useAppStore.getState().sidebarCollapsed).toBe(false);
-      useAppStore.getState().toggleActivityBarView("settings");
+      useAppStore.getState().toggleActivityBarView("tunnels");
       await flushPersist();
 
       expect(useAppStore.getState().layoutConfig.hiddenActivityBarViews).toEqual([]);

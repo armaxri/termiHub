@@ -6,7 +6,7 @@
  * `refreshConnectionTypes`.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { PersistentSessionStateChangedEvent } from "@/services/events";
+import type { PersistentSessionStateChange } from "@/services/events";
 
 const m = vi.hoisted(() => ({
   loadConnections: vi.fn(),
@@ -293,21 +293,19 @@ describe("startupSlice — branch coverage (#2979)", () => {
   });
 
   describe("persistent-session state fold", () => {
-    async function foldHandler(): Promise<(e: PersistentSessionStateChangedEvent) => void> {
+    async function foldHandler(): Promise<(e: PersistentSessionStateChange) => void> {
       await useAppStore.getState().loadFromBackend();
       return m.onPersistentSessionStateChanged.mock.calls[0][0];
     }
 
-    function event(
-      extra: Partial<PersistentSessionStateChangedEvent>
-    ): PersistentSessionStateChangedEvent {
+    function event(extra: Partial<PersistentSessionStateChange>): PersistentSessionStateChange {
       return {
         connectionId: "c1",
         sessionId: null,
         state: "running",
         attachedTabCount: 0,
         ...extra,
-      } as PersistentSessionStateChangedEvent;
+      } as PersistentSessionStateChange;
     }
 
     it("adds a new session entry with no attached tabs", async () => {
