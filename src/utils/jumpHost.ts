@@ -293,7 +293,7 @@ const INLINE_HOP_FIELD_KEYS = [
  * declared here as a schema field and rendered through the same schema-driven
  * `DynamicField` as every other hop field. Its `key` matches `JumpHostConfig`.
  */
-export const JUMP_HOST_CONNECT_TIMEOUT_FIELD: SettingsField = {
+const JUMP_HOST_CONNECT_TIMEOUT_FIELD: SettingsField = {
   key: "connectTimeoutSecs",
   label: "Connect Timeout (s)",
   fieldType: { type: "number", min: 1, max: 300 },

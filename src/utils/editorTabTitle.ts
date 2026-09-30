@@ -11,7 +11,7 @@ const SFTP_KEY_PREFIX = "sftp:";
 const SESSION_KEY_PREFIX = "session:";
 
 /** Separator between an editor tab's basename and its session qualifier. */
-export const EDITOR_TAB_QUALIFIER_SEPARATOR = " — ";
+const EDITOR_TAB_QUALIFIER_SEPARATOR = " — ";
 
 /**
  * Human-readable label identifying the remote session backing an editor tab,

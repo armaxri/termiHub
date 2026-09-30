@@ -11,6 +11,3 @@ export type { BackupRestoreResult } from "./generated/BackupRestoreResult";
 export type { BackupSectionInfo } from "./generated/BackupSectionInfo";
 export type { BackupSectionPreview } from "./generated/BackupSectionPreview";
 export type { RestoreMode } from "./generated/RestoreMode";
-export type { SectionRestoreChoice } from "./generated/SectionRestoreChoice";
-export type { SectionRestoreOutcome } from "./generated/SectionRestoreOutcome";
-export type { SectionStatus } from "./generated/SectionStatus";

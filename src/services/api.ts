@@ -50,7 +50,6 @@ import type {
 } from "@/types/diagnostics";
 import type { SpawnRequestPayload } from "@/services/events";
 import { base64ToBytes, bytesToBase64 } from "@/services/events";
-import type { AgentBinarySource } from "@/types/generated/AgentBinarySource";
 import type { AgentConnectResult } from "@/types/generated/AgentConnectResult";
 import type { AgentConnectionsData } from "@/types/generated/AgentConnectionsData";
 import type { AgentCoordinatedUpdateResult } from "@/types/generated/AgentCoordinatedUpdateResult";
@@ -84,12 +83,10 @@ import type { FolderPasteOperation } from "@/types/generated/FolderPasteOperatio
 import type { FolderUpdateParams } from "@/types/generated/FolderUpdateParams";
 import type { ImportError } from "@/types/generated/ImportError";
 import type { ImportPreview } from "@/types/generated/ImportPreview";
-import type { ImportResult } from "@/types/generated/ImportResult";
 import type { InterruptedFolderPaste } from "@/types/generated/InterruptedFolderPaste";
 import type { LocalCopyStarted } from "@/types/generated/LocalCopyStarted";
 import type { LocalSessionInfo } from "@/types/generated/LocalSessionInfo";
 import type { PersistentSessionSummary } from "@/types/generated/PersistentSessionSummary";
-import type { QueuedLocalCopy } from "@/types/generated/QueuedLocalCopy";
 import type { RdpTrustedHost } from "@/types/generated/RdpTrustedHost";
 import type { RemoteArchInfo } from "@/types/generated/RemoteArchInfo";
 import type { SavedRemoteAgent } from "@/types/generated/SavedRemoteAgent";
@@ -98,11 +95,9 @@ import type { ShellSpawn } from "@/types/generated/ShellSpawn";
 import type { SpawnOptions } from "@/types/generated/SpawnOptions";
 import type { SshKeyValidation } from "@/types/generated/SshKeyValidation";
 import type { SshTrustedHost } from "@/types/generated/SshTrustedHost";
-import type { TransferPhase } from "@/types/generated/TransferPhase";
 import type { TransferProgress } from "@/types/generated/TransferProgress";
 import type { TransferQueueState } from "@/types/generated/TransferQueueState";
 import type { TransferSnapshot } from "@/types/generated/TransferSnapshot";
-import type { UnlockCredentialStoreError } from "@/types/generated/UnlockCredentialStoreError";
 import type { ContainerRuntime, SpawnTarget } from "@/types/spawn";
 import type {
   TabHandoffRecord,
@@ -149,7 +144,6 @@ export type { ConnectionTypeInfo };
 
 // Command DTOs generated from their Rust source via ts-rs (#3088, audit DUP-030/AGT-028).
 export type {
-  AgentBinarySource,
   AgentConnectionsData,
   AgentCoordinatedUpdateResult,
   AgentDeferredUpdateResult,
@@ -177,7 +171,6 @@ export type {
   InterruptedFolderPaste,
   LocalSessionInfo,
   PersistentSessionSummary,
-  QueuedLocalCopy,
   RdpTrustedHost,
   RemoteArchInfo,
   SavedRemoteAgent,
@@ -186,7 +179,6 @@ export type {
   SpawnOptions,
   SshKeyValidation,
   SshTrustedHost,
-  UnlockCredentialStoreError,
 };
 
 // --- Terminal / session commands ---
@@ -259,7 +251,7 @@ export async function createConnection(
  * Pass a UNIQUE per-attempt `connectId` (e.g. `test:${crypto.randomUUID()}`) to
  * make a hung test abortable via {@link cancelConnecting} (#952).
  */
-export async function testConnection(
+async function testConnection(
   typeId: string,
   settings: Record<string, unknown>,
   agentId?: string,
@@ -1266,12 +1258,12 @@ export async function importConnections(json: string): Promise<number> {
   return await invoke<number>("import_connections", { json });
 }
 
-// `ImportPreview` (import-file summary), `ImportResult` (completed-import
-// counts) and `ConnectionImportResult` (those counts plus the shared named
-// credentials the import carried, #3564) are generated from their Rust source of
+// `ImportPreview` (import-file summary) and `ConnectionImportResult` (the
+// completed-import counts plus the shared named credentials the import
+// carried, #3564) are generated from their Rust source of
 // truth via ts-rs and re-exported here so existing consumers keep importing them
 // from `@/services/api` (DUP-030).
-export type { ImportPreview, ImportResult, ConnectionImportResult };
+export type { ImportPreview, ConnectionImportResult };
 
 /** Type guard: whether a caught rejection is a structured {@link ImportError}. */
 export function isImportError(err: unknown): err is ImportError {
@@ -1495,7 +1487,7 @@ export async function reloadExternalConnections(): Promise<SavedConnection[]> {
 // from the projection mirrors in `src-tauri/src/transfers_projection/store.rs`,
 // which deserialize exactly what core's `transfer-progress` / `transfer_list`
 // payloads emit. The #1336 rich `transfer-progress` fields stay optional.
-export type { TransferPhase, TransferQueueState, TransferProgress, TransferSnapshot };
+export type { TransferQueueState, TransferProgress, TransferSnapshot };
 
 /**
  * Rejection raised by {@link awaitTransfer} when a transfer settles via a
@@ -2341,13 +2333,6 @@ export async function getAgentCapabilities(agentId: string): Promise<AgentCapabi
 export async function listAgentSessions(agentId: string): Promise<AgentSessionInfo[]> {
   return await invoke<AgentSessionInfo[]>("list_agent_sessions", { agentId });
 }
-
-/**
- * Who controls a session running on an agent host (#3369): this desktop
- * (`"self"`), nobody — it runs unattached (`"none"`), or another desktop
- * (`"other"`; opening it is an explicit takeover).
- */
-export type AgentSessionHolder = AgentHostSessionInfo["holder"];
 
 /**
  * List every session running on an agent's host — including ones another

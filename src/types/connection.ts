@@ -255,10 +255,7 @@ export const LAYOUT_PRESETS: Record<string, LayoutConfig> = {
 // generated from `src-tauri/src/connection/shell_integration.rs` via ts-rs
 // (audit DUP-030, #3088).
 export type { ShellEntryVisibility } from "./generated/ShellEntryVisibility";
-export type { ShellIntegrationFallback } from "./generated/ShellIntegrationFallback";
-export type { ShowForTargets } from "./generated/ShowForTargets";
 export type { ShellEntry } from "./generated/ShellEntry";
-export type { LinuxFileManagerToggles } from "./generated/LinuxFileManagerToggles";
 export type { ShellIntegrationSettings } from "./generated/ShellIntegrationSettings";
 export type { DetectedFileManager } from "./generated/DetectedFileManager";
 export type { ShellIntegrationStatus } from "./generated/ShellIntegrationStatus";

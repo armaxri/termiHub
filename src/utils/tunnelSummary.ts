@@ -7,11 +7,7 @@ import type { TunnelConfig, TunnelState, TunnelStatus } from "@/types/tunnel";
 import { findCompanion } from "@/utils/tunnelChain";
 
 /** Tunnel statuses that count as "active" — deleting one tears down a live connection. */
-export const ACTIVE_TUNNEL_STATUSES: readonly TunnelStatus[] = [
-  "connecting",
-  "connected",
-  "reconnecting",
-];
+const ACTIVE_TUNNEL_STATUSES: readonly TunnelStatus[] = ["connecting", "connected", "reconnecting"];
 
 /** The port-mapping display string for a tunnel (e.g. `127.0.0.1:8080 → db:5432`). */
 export function tunnelPortMapping(tunnel: TunnelConfig): string {

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { sampleRate, type RateEstimate } from "@/utils/byteRate";
 
 /** How often the cumulative counter is sampled, in ms. */
-export const BYTE_RATE_SAMPLE_MS = 1000;
+const BYTE_RATE_SAMPLE_MS = 1000;
 
 /** Monotonic clock used for rate sampling (never jumps with wall-clock changes). */
 function monotonicNow(): number {

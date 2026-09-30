@@ -20,7 +20,7 @@ export const DEFAULT_STEP_RETRY: WorkflowStepRetry = { count: 3, delayMs: 1000, 
  * in `[0, MAX_RETRY_DELAY_MS]`) are enforced in `superRefine` so each violation
  * carries a user-facing message.
  */
-export const workflowStepPolicySchema = z
+const workflowStepPolicySchema = z
   .object({
     continueOnError: z.boolean().optional(),
     retry: z
@@ -80,7 +80,7 @@ export function stepPolicyErrors(step: WorkflowStep): StepPolicyErrors {
 }
 
 /** `true` when `step`'s own policy (not its nested steps) is valid. */
-export function stepPolicyValid(step: WorkflowStep): boolean {
+function stepPolicyValid(step: WorkflowStep): boolean {
   return Object.keys(stepPolicyErrors(step)).length === 0;
 }
 

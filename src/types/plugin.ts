@@ -27,6 +27,9 @@ export type JsonValue =
 /**
  * A JSON Schema object describing a plugin-provided backend's connection config.
  * Opaque to the host; the schema-driven config form consumes it in later work.
+ *
+ * @public Referenced by the ts-rs binding `generated/TerminalBackendExtension.ts`
+ * (via `import("../plugin")`), which knip does not analyse.
  */
 export type JsonSchema = { [key: string]: JsonValue };
 
@@ -49,34 +52,20 @@ export type { ThemeExtension } from "./generated/ThemeExtension";
 export type { WidgetPosition } from "./generated/WidgetPosition";
 export type { StatusBarWidgetExtension } from "./generated/StatusBarWidgetExtension";
 export type { PluginExtensions } from "./generated/PluginExtensions";
-export type { ConnectionPolicyManifest } from "./generated/ConnectionPolicyManifest";
 export type { PluginSettingType } from "./generated/PluginSettingType";
 export type { PluginSettingSchema } from "./generated/PluginSettingSchema";
 export type { PluginManifest } from "./generated/PluginManifest";
 export type { PluginState } from "./generated/PluginState";
 export type { InstalledPlugin } from "./generated/InstalledPlugin";
-export type { PluginVersionChangeKind } from "./generated/PluginVersionChangeKind";
-export type { PluginSignerChangeKind } from "./generated/PluginSignerChangeKind";
 export type { InstallPluginResult } from "./generated/InstallPluginResult";
 export type { PluginPackagePreview } from "./generated/PluginPackagePreview";
-export type { TrustSource } from "./generated/TrustSource";
 export type { TrustedPublisher } from "./generated/TrustedPublisher";
-export type { NativeAckInfo } from "./generated/NativeAckInfo";
 export type { NativePluginTrust } from "./generated/NativePluginTrust";
-export type { PluginUpdateStatus } from "./generated/PluginUpdateStatus";
 export type { PluginUpdateCheckOutcome } from "./generated/PluginUpdateCheckOutcome";
 export type { PluginUpdateCheckResult } from "./generated/PluginUpdateCheckResult";
-export type { PluginIndexToolchain } from "./generated/PluginIndexToolchain";
-export type { PluginIndexPackage } from "./generated/PluginIndexPackage";
-export type { PluginIndexEntry } from "./generated/PluginIndexEntry";
-export type { PluginToolchainStatus } from "./generated/PluginToolchainStatus";
-export type { PluginIndexInstallStatus } from "./generated/PluginIndexInstallStatus";
 export type { PluginIndexEntryView } from "./generated/PluginIndexEntryView";
 export type { PluginIndexResult } from "./generated/PluginIndexResult";
 export type { PluginSignerChange, PluginTrustInfo, PluginVersionChange };
-
-/** Trust level of a plugin package, as reported by {@link PluginTrustInfo}. */
-export type PluginTrustLevel = PluginTrustInfo["level"];
 
 /**
  * What an install is waiting on the user to confirm before it can proceed.

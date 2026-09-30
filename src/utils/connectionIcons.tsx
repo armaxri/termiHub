@@ -79,7 +79,7 @@ export function getDefaultIconInfo(config: ConnectionConfig): {
  * Names are PascalCase lucide-react names (e.g. "Terminal") or
  * "lab:camelCase" for @lucide/lab icons (e.g. "lab:penguin").
  */
-export function resolveIconByName(name: string): {
+function resolveIconByName(name: string): {
   component?: LucideIcon;
   iconNode?: IconNode;
 } | null {

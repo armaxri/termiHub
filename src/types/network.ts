@@ -22,17 +22,20 @@ export type { TracerouteHop } from "./generated/TracerouteHop";
 export type { PortProtocol } from "./generated/PortProtocol";
 export type { OpenPort } from "./generated/OpenPort";
 export type { WolDevice } from "./generated/WolDevice";
-export type { HttpMonitorConfig } from "./generated/HttpMonitorConfig";
 export type { HttpCheckResult } from "./generated/HttpCheckResult";
 export type { HttpMonitorState } from "./generated/HttpMonitorState";
 export type { NetworkHistoryTool } from "./generated/NetworkHistoryTool";
 export type { NetworkRunStatus } from "./generated/NetworkRunStatus";
-export type { NetworkRunResult } from "./generated/NetworkRunResult";
 export type { NetworkToolRun } from "./generated/NetworkToolRun";
 
 // ── Tool states (frontend-only) ───────────────────────────────────────────────
 
 export type DiagnosticStatus = "idle" | "running" | "completed" | "canceled" | "error";
 
-/** A plain CSV-cell value stored in a recorded result table. */
+/**
+ * A plain CSV-cell value stored in a recorded result table.
+ *
+ * @public Referenced by the ts-rs binding `generated/NetworkRunResult.ts`
+ * (via `import("../network")`), which knip does not analyse.
+ */
 export type NetworkRunCell = string | number | boolean | null;

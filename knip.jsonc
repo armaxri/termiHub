@@ -1,0 +1,33 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // src/main.tsx and src/test/setup.ts are picked up automatically by knip's
+  // vite/vitest plugins (index.html + vitest setupFiles), so only the entries
+  // those plugins cannot see are listed here.
+  "entry": [
+    "src/**/*.test.{ts,tsx}",
+    // Loaded dynamically in E2E/dev builds only (never statically imported).
+    "src/testbridge/**/*.{ts,tsx}",
+    // Shared test doubles/harnesses; consumed by the test files above.
+    "src/test/**/*.{ts,tsx}",
+  ],
+  "project": ["src/**/*.{ts,tsx}"],
+  // Generated from Rust by ts-rs; the full set is emitted whether or not the
+  // frontend uses every binding, so unused files/exports there are expected.
+  "ignore": ["src/types/generated/**"],
+  // A type/interface exported next to the function or component that uses it
+  // documents that symbol's signature (props, options, results) and lets a
+  // future caller name it. Un-exporting such types removes no code, so they
+  // are not reported. Values are still reported: an exported constant or
+  // function only used in its own file should lose its `export`.
+  "ignoreIssues": {
+    // The shared UI primitive kit (UI Modernization) exports each primitive's
+    // props/variant types from its barrel as part of the documented import
+    // surface, whether or not a call site names them yet.
+    "src/components/ui/index.ts": ["types"],
+    "src/components/ui/Toast/index.ts": ["types"],
+  },
+  "ignoreExportsUsedInFile": { "interface": true, "type": true },
+  "vite": {
+    "config": ["vite.config.ts", "vitest.config.ts"],
+  },
+}

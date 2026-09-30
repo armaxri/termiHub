@@ -47,7 +47,7 @@ export interface FinishedRun extends RunSnapshot {
 }
 
 /** The tool's current "Run on" selection (This computer when unset). */
-export function currentRunLocation(tool: NetworkHistoryTool): RunLocation {
+function currentRunLocation(tool: NetworkHistoryTool): RunLocation {
   return useRunLocationStore.getState().networkToolLocations[tool] ?? THIS_COMPUTER;
 }
 

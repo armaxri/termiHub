@@ -33,7 +33,7 @@ export function createEntry(): ShellEntry {
 }
 
 /** Generate a stable, collision-resistant id for a new entry. */
-export function generateEntryId(): string {
+function generateEntryId(): string {
   return newId("entry");
 }
 

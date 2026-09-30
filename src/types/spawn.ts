@@ -17,14 +17,6 @@ import type { SpawnTarget } from "./generated/SpawnTarget";
 export type ContainerRuntime = Exclude<CoreContainerRuntime, "auto">;
 
 /**
- * The container runtime *saved* on a shell-integration entry (#1561) — the
- * Rust `ContainerRuntime` (generated via ts-rs, #3088), where `"auto"` is the
- * default, meaning "no remembered preference, detect whichever runtime is
- * installed".
- */
-export type SavedContainerRuntime = CoreContainerRuntime;
-
-/**
  * The kind of session a spawn targets — the wire tokens of the Rust `SpawnKind`.
  * `"auto"` means "not explicitly stated": resolve by falling back to
  * presence-based inference.

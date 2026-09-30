@@ -55,7 +55,6 @@ import {
   newIntentId,
   ProjectionClient,
   type Intent,
-  type IntentAck,
   type OptimisticFold,
   type ProjectionCacheState,
   type Transport,
@@ -92,7 +91,7 @@ export interface FileBrowsersView {
 }
 
 /** The idle baseline a pane reports before its first listing (twin of `Pane::default`). */
-export const EMPTY_PANE_VIEW: FileBrowserPaneView = {
+const EMPTY_PANE_VIEW: FileBrowserPaneView = {
   path: "/",
   entries: [],
   loading: false,
@@ -321,14 +320,6 @@ export type FileBrowserIntentKind =
   | "fileBrowser.loadFailed"
   | "fileBrowser.clearError"
   | "fileBrowser.setClipboard";
-
-/** Dispatch a granular `fileBrowser.*` intent, resolving with the ack (parity tests). */
-export function dispatchFileBrowserIntent(
-  kind: FileBrowserIntentKind,
-  payload: Record<string, unknown>
-): Promise<IntentAck> {
-  return transport().dispatch({ intentId: newIntentId(), kind, payload, clientId });
-}
 
 /** Resolve the concrete pane an intent's payload targets (defaults to `local`). */
 function paneOf(pane: unknown): FileBrowserPane {

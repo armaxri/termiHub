@@ -59,7 +59,7 @@ export interface PaneCopyRequest {
  * row. `onRegistered` also sees the transfer id (a folder paste links it to its
  * manifest, #3643). Resolves with the bytes transferred once it completes.
  */
-export function startQueuedUpload(
+function startQueuedUpload(
   sessionId: string,
   localPath: string,
   remotePath: string,

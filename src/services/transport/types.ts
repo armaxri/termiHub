@@ -19,9 +19,6 @@
 
 export type { Intent } from "@/types/generated/Intent";
 export type { IntentAck } from "@/types/generated/IntentAck";
-export type { IntentError } from "@/types/generated/IntentError";
-export type { IntentStatus } from "@/types/generated/IntentStatus";
-export type { ProducedRegion } from "@/types/generated/ProducedRegion";
 export type { ProjectionFrame } from "@/types/generated/ProjectionFrame";
 export type { SnapshotFrame } from "@/types/generated/SnapshotFrame";
 export type { DiffFrame } from "@/types/generated/DiffFrame";

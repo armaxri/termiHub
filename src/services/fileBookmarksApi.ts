@@ -10,7 +10,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { FileBookmark, FileBookmarkScopeRekey } from "@/types/fileBookmark";
 
 /** Emitted by the backend after it moved bookmarks to another scope (#3569). */
-export const FILE_BOOKMARKS_REKEYED_EVENT = "file-bookmarks-rekeyed";
+const FILE_BOOKMARKS_REKEYED_EVENT = "file-bookmarks-rekeyed";
 
 /** Every bookmark in the order it was added — all scopes, or one `scope`. */
 export async function listFileBookmarks(scope?: string): Promise<FileBookmark[]> {
