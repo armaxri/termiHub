@@ -8,6 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::util::entry_extra::{EntryExtra, StoreEntry};
+
 // ── Port Scanner ─────────────────────────────────────────────────────────────
 
 /// The reachability state of a scanned port.
@@ -274,6 +276,21 @@ pub struct WolDevice {
     pub mac: String,
     pub broadcast: String,
     pub port: u16,
+    /// Unknown fields of this entry in `wol-devices.json`, kept verbatim so an
+    /// older build's save does not erase them (#3951). Not part of the
+    /// generated TS type; see [`crate::util::entry_extra`].
+    #[serde(flatten, default)]
+    #[cfg_attr(test, ts(skip))]
+    pub extra: EntryExtra,
+}
+
+impl StoreEntry for WolDevice {
+    fn entry_id(&self) -> &str {
+        &self.id
+    }
+    fn entry_extra_mut(&mut self) -> &mut EntryExtra {
+        &mut self.extra
+    }
 }
 
 #[cfg(test)]

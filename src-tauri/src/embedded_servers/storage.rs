@@ -249,6 +249,7 @@ mod tests {
                 password: "s3cret".to_string(),
             }),
             max_transfer_bytes: None,
+            extra: Default::default(),
         };
         let store = EmbeddedServerStore {
             version: "1".to_string(),
@@ -322,6 +323,7 @@ mod tests {
                 ftp_auth: None,
                 http_auth: None,
                 max_transfer_bytes: None,
+                extra: Default::default(),
             }],
         };
         storage.save(&store).unwrap();
@@ -395,6 +397,7 @@ mod tests {
                 ftp_auth: None,
                 http_auth: None,
                 max_transfer_bytes: None,
+                extra: Default::default(),
             }],
         };
         // Serialize the valid store, then append a corrupt (non-object) entry so
@@ -543,5 +546,77 @@ mod tests {
         let saved: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&storage.file_path).unwrap()).unwrap();
         assert_eq!(saved["futureSetting"], true);
+    }
+
+    // ── Unknown per-entry fields (#3951, part of #2744) ────────────────────
+
+    fn saved_servers(storage: &EmbeddedServerStorage) -> Vec<serde_json::Value> {
+        let saved: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&storage.file_path).unwrap()).unwrap();
+        saved["servers"].as_array().unwrap().clone()
+    }
+
+    /// Fields a newer build wrote into a single server entry survive an older
+    /// build's load → save.
+    #[test]
+    fn unknown_server_fields_survive_load_save_round_trip() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let mut entry = server_json("a");
+        entry["futureField"] = serde_json::json!({"nested": [1, 2]});
+        let raw = serde_json::json!({
+            "version": EmbeddedServerStore::CURRENT_VERSION.to_string(),
+            "servers": [entry, server_json("b")],
+        });
+        fs::write(&storage.file_path, raw.to_string()).unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap();
+        storage.save(&loaded.data).unwrap();
+
+        let servers = saved_servers(&storage);
+        assert_eq!(servers.len(), 2);
+        assert_eq!(
+            servers[0]["futureField"],
+            serde_json::json!({"nested": [1, 2]})
+        );
+        assert!(servers[1].get("futureField").is_none());
+    }
+
+    /// The verbatim save path (legacy passwords awaiting migration) keeps them
+    /// too.
+    #[test]
+    fn unknown_server_fields_survive_a_verbatim_save() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let mut entry = server_json("a");
+        entry["futureField"] = serde_json::json!("kept");
+        let raw = serde_json::json!({"servers": [entry]});
+        fs::write(&storage.file_path, raw.to_string()).unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap();
+        storage.save_verbatim(&loaded.data).unwrap();
+
+        assert_eq!(saved_servers(&storage)[0]["futureField"], "kept");
+    }
+
+    /// Granular salvage rewrites the file; the surviving entries keep their
+    /// unknown fields.
+    #[test]
+    fn salvage_keeps_unknown_server_fields() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let mut entry = server_json("a");
+        entry["futureField"] = serde_json::json!(7);
+        let raw = serde_json::json!({
+            "version": EmbeddedServerStore::CURRENT_VERSION.to_string(),
+            "servers": [entry, {"id": "broken"}],
+        });
+        fs::write(&storage.file_path, raw.to_string()).unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap();
+        assert_eq!(loaded.data.servers.len(), 1);
+        let servers = saved_servers(&storage);
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0]["futureField"], 7);
     }
 }

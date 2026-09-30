@@ -41,6 +41,7 @@ use crate::service::{
     EventChannel, Service, ServiceCapabilities, ServiceError, ServiceEvent, ServiceEventReceiver,
     ServiceRegistry, ServiceStatus,
 };
+use crate::util::entry_extra::{EntryExtra, StoreEntry};
 
 /// Machine-readable service id used in the [`ServiceRegistry`] and run-location
 /// routing.
@@ -112,6 +113,21 @@ pub struct HttpMonitorConfig {
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub allow_private_network: bool,
+    /// Unknown fields of this entry in `http-monitors.json`, kept verbatim so
+    /// an older build's save does not erase them (#3951). Not part of the
+    /// generated TS type; see [`crate::util::entry_extra`].
+    #[serde(flatten, default)]
+    #[cfg_attr(test, ts(skip))]
+    pub extra: EntryExtra,
+}
+
+impl StoreEntry for HttpMonitorConfig {
+    fn entry_id(&self) -> &str {
+        &self.id
+    }
+    fn entry_extra_mut(&mut self) -> &mut EntryExtra {
+        &mut self.extra
+    }
 }
 
 /// The result of a single HTTP check.
@@ -171,6 +187,7 @@ impl HttpMonitorConfig {
             expected_status,
             timeout_ms,
             allow_private_network: false,
+            extra: EntryExtra::new(),
         }
     }
 }

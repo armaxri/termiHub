@@ -561,6 +561,7 @@ pub(crate) mod tests {
             }),
             http_auth: None,
             max_transfer_bytes: None,
+            extra: Default::default(),
         }
     }
 
