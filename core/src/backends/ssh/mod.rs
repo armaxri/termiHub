@@ -13,8 +13,11 @@ pub mod handler;
 pub mod host_key;
 pub mod jump_host;
 pub mod keyboard_interactive;
-#[cfg(test)]
-mod ki_test_server;
+// In-process keyboard-interactive SSH server for tests (#3371). Exposed to
+// other crates' tests (the agent's OTP end-to-end suite, #3436) behind the
+// `ssh-test-support` feature, which only `[dev-dependencies]` enable.
+#[cfg(any(test, feature = "ssh-test-support"))]
+pub mod ki_test_server;
 mod legacy_pem;
 mod monitoring;
 mod process;

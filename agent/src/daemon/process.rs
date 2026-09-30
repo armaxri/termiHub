@@ -249,9 +249,9 @@ async fn run_daemon_session(config: DaemonConfig) -> anyhow::Result<()> {
     )
     .await
     {
-        // Tell the worker *why* when the desktop must see the reason typed (a
-        // cancelled prompt, a rejected one-time code, a classified connect
-        // failure such as a busy serial port); it cannot read our exit.
+        // Tell the worker *why* — typed for a cancelled prompt, a rejected
+        // one-time code or a classified connect failure such as a busy serial
+        // port, else just the message (#3436); it cannot read our exit.
         if let Some(endpoint) = report_endpoint.as_deref() {
             crate::ki_prompt::relay::report_connect_failure(endpoint, &e).await;
         }

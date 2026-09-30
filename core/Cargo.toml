@@ -296,6 +296,10 @@ agent-update-signing = [
 # for the agent's and desktop's own tests. Enabled only from `[dev-dependencies]`
 # — never in a shipping build.
 agent-update-signing-test-support = ["agent-update-signing"]
+# In-process keyboard-interactive SSH server (`backends::ssh::ki_test_server`)
+# for other crates' tests — the agent's relayed OTP end-to-end suite (#3436).
+# Enabled only from `[dev-dependencies]` — never in a shipping build.
+ssh-test-support = ["ssh"]
 # Embedded HTTP/FTP/TFTP file servers (#2192). Pulls the web-server stack
 # (`axum`/`tower-http` for HTTP, `libunftp`/`unftp-sbe-fs` for FTP) plus `chrono`
 # for status timestamps and `tracing` for lifecycle logs. Enabled by the desktop

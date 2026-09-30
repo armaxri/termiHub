@@ -121,7 +121,12 @@ windows-sys = { version = "0.59", features = [
 [dev-dependencies]
 serde_json = { workspace = true }
 # Deterministic test signing helpers for the self-update tests (#3330).
-termihub-core = { path = "../core", features = ["agent-update-signing-test-support"] }
+# The in-process keyboard-interactive SSH server for the relayed OTP end-to-end
+# suite (#3436, tests/ki_prompt_integration.rs).
+termihub-core = { path = "../core", features = [
+    "agent-update-signing-test-support",
+    "ssh-test-support",
+] }
 # `start_paused` for the coordinated-update ack/timeout tests (#1351): the 10 s
 # window is asserted on virtual time, so the tests are instant and immune to
 # host load rather than sleeping and hoping.
