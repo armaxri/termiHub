@@ -1934,7 +1934,7 @@ part of the release gate. Each was triaged with the #3681 rules and removed:
 
 - **Release gate.** The genuinely manual residue (OS-native windows and dialogs,
   real hardware or hosts, visual paint) became **40 new `release_gate: true`
-  YAML items**, so the corpus grew from 59 to 99 items (see the inventory above
+  YAML items** (the corpus grew by 40; see the inventory above
   and the [checklist](#release-gating-manual-checklist)). Two residues were
   already walked by guided tests in `test_external_app.py`; five colour/legibility
   checks were merged into MT-UI-40, and duplicate shell-integration steps into
