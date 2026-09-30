@@ -80,6 +80,9 @@ describe("connectionErrorKindFromCode", () => {
     expect(connectionErrorKindFromCode(undefined)).toBe("other");
     expect(connectionErrorKindFromCode("spawn_failed")).toBe("other");
     expect(connectionErrorKindFromCode("unreachable")).toBe("other");
+    // #3959: an agent that never answered is not a connect-transport timeout, so
+    // it must not show the "check the host is reachable" timeout hint.
+    expect(connectionErrorKindFromCode("agent_timeout")).toBe("other");
     expect(connectionErrorKindFromCode("made_up")).toBe("other");
   });
 
