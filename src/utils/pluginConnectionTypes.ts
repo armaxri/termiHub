@@ -23,7 +23,7 @@ import type { InstalledPlugin } from "@/types/plugin";
  */
 
 /** The prefix of every plugin-provided connection-type id (mirrors Rust `PLUGIN_TYPE_ID_PREFIX`). */
-export const PLUGIN_CONNECTION_TYPE_PREFIX = "plugin:";
+const PLUGIN_CONNECTION_TYPE_PREFIX = "plugin:";
 
 /**
  * The stable registry id of a plugin's terminal-backend connection type:

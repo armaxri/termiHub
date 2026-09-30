@@ -72,9 +72,9 @@ function onFocusOut(e: Event): void {
 
 /**
  * Install the window-level composition listeners (idempotent). Runs on module
- * load in a browser; exported so tests can re-install after a reset.
+ * load in a browser.
  */
-export function installImeCompositionTracker(): void {
+function installImeCompositionTracker(): void {
   if (installed || typeof window === "undefined") return;
   installed = true;
   // Capture phase on window runs before every other keydown listener,

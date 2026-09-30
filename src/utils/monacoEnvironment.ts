@@ -42,7 +42,7 @@ const WORKERS_BY_LABEL: Record<string, WorkerConstructor> = {
 };
 
 /** The bundled worker constructor Monaco should use for `label`. */
-export function monacoWorkerFor(label: string): WorkerConstructor {
+function monacoWorkerFor(label: string): WorkerConstructor {
   return WORKERS_BY_LABEL[label] ?? EditorWorker;
 }
 
@@ -59,7 +59,7 @@ export const monacoEnvironment = {
  * first editor is created (it is imported for its side effect by every module
  * that pulls in `monaco-editor`).
  */
-export function installMonacoEnvironment(): void {
+function installMonacoEnvironment(): void {
   (self as unknown as { MonacoEnvironment?: unknown }).MonacoEnvironment = monacoEnvironment;
 }
 

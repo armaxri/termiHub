@@ -12,13 +12,13 @@
  */
 
 /** The unified settings key for automatic reconnect. */
-export const AUTO_RECONNECT_KEY = "autoReconnect";
+const AUTO_RECONNECT_KEY = "autoReconnect";
 
 /** The legacy SSH-only key, still honoured on read. */
-export const LEGACY_RESILIENT_RECONNECT_KEY = "resilientReconnect";
+const LEGACY_RESILIENT_RECONNECT_KEY = "resilientReconnect";
 
 /** Auto-reconnect is on unless the user explicitly turned it off. */
-export const AUTO_RECONNECT_DEFAULT = true;
+const AUTO_RECONNECT_DEFAULT = true;
 
 /**
  * Whether auto-reconnect is enabled for a connection settings bag: the unified

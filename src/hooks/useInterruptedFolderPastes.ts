@@ -11,7 +11,7 @@ import {
 } from "./sessionFolderPaste";
 
 /** The notice text for an interrupted paste. */
-export function interruptedPasteMessage(paste: InterruptedFolderPaste): {
+function interruptedPasteMessage(paste: InterruptedFolderPaste): {
   title: string;
   description: string;
 } {
@@ -25,7 +25,7 @@ export function interruptedPasteMessage(paste: InterruptedFolderPaste): {
 }
 
 /** Show the persistent notice for one interrupted paste, with a Retry action. */
-export function showInterruptedPasteNotice(paste: InterruptedFolderPaste): void {
+function showInterruptedPasteNotice(paste: InterruptedFolderPaste): void {
   const { title, description } = interruptedPasteMessage(paste);
   toast.error(title, {
     id: `folder-paste-${paste.id}`,
