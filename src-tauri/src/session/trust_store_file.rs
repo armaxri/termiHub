@@ -102,6 +102,18 @@ fn read_sidecar(path: &Path) -> SidecarVersion {
     }
 }
 
+/// The on-disk format version of the trust store at `path`, per its sidecar:
+/// the recorded version (the baseline v1 when there is none), or the reason
+/// the marker could not be read. Used by the unified backup to stamp and gate
+/// the trust-store sections (#2745).
+pub fn on_disk_format_version(path: &Path) -> Result<u32, String> {
+    match read_sidecar(path) {
+        SidecarVersion::Absent => Ok(ASSUMED_VERSION),
+        SidecarVersion::Known(v) => Ok(v),
+        SidecarVersion::Unreadable(detail) => Err(detail),
+    }
+}
+
 /// Why this build must not interpret or overwrite the store file, if at all.
 fn write_blocker(path: &Path, file_name: &str) -> Option<String> {
     match read_sidecar(path) {

@@ -16,6 +16,7 @@ use super::{
 use crate::credential::crypto::encrypt_with_password;
 use crate::credential::vault::{self, VaultError, VaultExportFile};
 use crate::credential::CredentialManager;
+use crate::session::trust_store_file;
 use crate::utils::migrate::read_version;
 
 fn other(message: impl Into<String>) -> VaultError {
@@ -115,11 +116,17 @@ fn read_section(
     if spec.shape == Shape::Connections {
         sections::strip_connection_passwords(&mut data);
     }
-    // A trust store has no in-file version (its format is versioned by the
-    // section, see `TRUST_STORE_SCHEMA_VERSION`). Any other file with no
-    // version field predates versioning and is schema v1.
+    // A trust store has no in-file version: its format version lives in a
+    // sidecar (#2745), and a newer one is exported as such so an older build
+    // refuses the section. Any other file with no version field predates
+    // versioning and is schema v1.
     let schema_version = if spec.shape == Shape::TrustMap {
-        spec.current_version
+        trust_store_file::on_disk_format_version(&path).map_err(|e| {
+            other(format!(
+                "{} ({}) has an unreadable format version and cannot be backed up: {e}",
+                spec.label, spec.file_name
+            ))
+        })?
     } else {
         read_version(&data).unwrap_or(1)
     };
