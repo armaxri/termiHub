@@ -24,7 +24,7 @@ export type { TransferQueueState };
 export type { TransferDirection, TransferEntry, TransferSeed };
 
 /** The terminal states — a transfer in one of these will not move on its own. */
-export const TERMINAL_TRANSFER_STATES: readonly TransferQueueState[] = [
+const TERMINAL_TRANSFER_STATES: readonly TransferQueueState[] = [
   "completed",
   "failed",
   "cancelled",
@@ -42,7 +42,7 @@ export function isTerminalTransferState(state: TransferQueueState): boolean {
  * a light exponential moving average (UX-019) keeps the readout steady while
  * still tracking real changes. Lower = smoother/laggier.
  */
-export const ETA_SMOOTHING_ALPHA = 0.4;
+const ETA_SMOOTHING_ALPHA = 0.4;
 
 /** Inputs to {@link computeEtaSeconds}. */
 export interface EtaInput {
