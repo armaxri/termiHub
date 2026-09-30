@@ -801,9 +801,11 @@ receives a daemon `MSG_EVICTED` frame, stops writing to the session (input/resiz
 The daemon reads a newcomer's intent without pausing the session (#3928): while it waits, the
 holder keeps receiving output and other connects are answered. A worker writes its intent right
 after connecting, but one that is descheduled first still has 5 s to declare it, so a slow
-recovery connect is refused rather than misread as a takeover. Only a worker that sends no
-intent at all within that bound — one from before AGT-015 — is treated as a takeover, and a
-newcomer that hangs up before declaring its intent never evicts the holder.
+recovery connect is refused rather than misread as a takeover. Only a declared takeover ever
+evicts the holder (#3932): a newcomer that declares no intent within that bound is refused like
+a recovery connect, and one that hangs up before declaring its intent is dropped. There is no
+fallback for a worker that never sends an intent, because the desktop and agent ship
+version-matched. If nobody holds the session when the decision is taken, the newcomer attaches.
 
 `takeover: true` is the desktop's explicit **Reclaim**: it takes control back even when this worker
 does not currently hold the session (for example, its start-up recovery found the session owned by

@@ -128,23 +128,25 @@ async fn the_loop_keeps_serving_while_a_newcomer_is_pending() {
     daemon.task.abort();
 }
 
-/// A pre-AGT-015 worker never declares an intent: after the bound it still
-/// takes the session over, as before, and the holder is told it was evicted.
+/// A newcomer that never declares an intent is refused at the bound, never
+/// taken for a takeover (#3932): only a declared takeover may evict the holder.
+/// A current recovery worker descheduled past the bound must not steal the
+/// session, and no pre-AGT-015 worker exists to need the old fallback.
 #[tokio::test(start_paused = true)]
-async fn a_legacy_worker_that_sends_no_intent_takes_over_after_the_bound() {
+async fn a_worker_that_sends_no_intent_is_refused_at_the_bound() {
     let daemon = spawn_daemon();
     let mut holder = attach_holder(&daemon).await;
 
-    let mut legacy = Worker::connect_silent(&daemon);
+    let mut silent = Worker::connect_silent(&daemon);
     let start = Instant::now();
     settle().await;
     tokio::time::sleep(ATTACH_INTENT_TIMEOUT - Duration::from_millis(50)).await;
     assert_holder_live(&daemon, &mut holder).await;
 
-    let attached = legacy.handshake().await;
-    assert!(
-        matches!(attached, Some(Attach::Ready(_))),
-        "a legacy worker takes over: {attached:?}"
+    assert_eq!(
+        silent.handshake().await,
+        Some(Attach::Refused),
+        "a newcomer that never declared a takeover is refused"
     );
     let elapsed = start.elapsed();
     assert!(
@@ -156,15 +158,40 @@ async fn a_legacy_worker_that_sends_no_intent_takes_over_after_the_bound() {
         "promptly at the bound: {elapsed:?}"
     );
 
-    let evicted = next_frame(&mut holder, PROMPT)
+    assert!(
+        next_frame(&mut holder, Duration::ZERO).await.is_none(),
+        "the holder is never told it was evicted"
+    );
+    assert_holder_live(&daemon, &mut holder).await;
+    daemon.task.abort();
+}
+
+/// A silent newcomer whose holder left while it was pending has nobody to
+/// protect the session from: at the bound it simply attaches, as a newcomer to
+/// an unheld session always does.
+#[tokio::test(start_paused = true)]
+async fn a_silent_newcomer_attaches_if_the_holder_left_meanwhile() {
+    let daemon = spawn_daemon();
+    let mut holder = attach_holder(&daemon).await;
+
+    let mut silent = Worker::connect_silent(&daemon);
+    settle().await;
+    protocol::write_frame_async(&mut holder.writer, MSG_DETACH, &[])
         .await
-        .expect("the holder hears it was evicted");
-    assert_eq!(evicted.msg_type, MSG_EVICTED);
-    let mut rest = Vec::new();
-    tokio::time::timeout(PROMPT, holder.reader.read_to_end(&mut rest))
-        .await
-        .expect("the evicted holder's connection is closed")
         .unwrap();
+    let mut rest = Vec::new();
+    tokio::time::timeout(
+        Duration::from_millis(100),
+        holder.reader.read_to_end(&mut rest),
+    )
+    .await
+    .expect("the loop serves the detach at once while a newcomer is pending")
+    .unwrap();
+
+    assert!(
+        matches!(silent.handshake().await, Some(Attach::Ready(_))),
+        "an unheld session is attached without an intent"
+    );
     daemon.task.abort();
 }
 
