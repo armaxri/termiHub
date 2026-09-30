@@ -188,7 +188,7 @@ pub struct TransferSeed {
 /// `attempt`/`maxAttempts`) are preferred when present; otherwise the legacy
 /// #1245 fields (`phase`/`total`) drive the fold.
 #[derive(Deserialize, Clone, Debug)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(PartialEq, ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct TransferProgress {
@@ -227,6 +227,64 @@ pub struct TransferProgress {
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
     pub max_attempts: Option<u32>,
+}
+
+impl From<&crate::files::transfer::TransferProgress> for TransferProgress {
+    /// Direct conversion from the engine's wire event (PERF-007 follow-up, #2973).
+    ///
+    /// Reproduces **exactly** what `serde_json::from_value(serde_json::to_value(p))`
+    /// yields — the path the client `transfer.progress` route runs on the same
+    /// camelCase payload — without the JSON round-trip:
+    ///
+    /// - `path` is `skip_serializing_if = "String::is_empty"` on the wire, so an
+    ///   empty path is absent and deserializes to `None`; otherwise `Some`.
+    /// - `message` / `etaSecs` are `skip_serializing_if = "Option::is_none"`, so
+    ///   they pass through unchanged.
+    /// - `state` / `speed` / `totalBytes` / `attempt` / `maxAttempts` are always
+    ///   serialized by the engine, so they always arrive as `Some` (a `0` speed or
+    ///   attempt included — the fold, not the conversion, treats `0` specially).
+    /// - the lowercase enum tags map variant-for-variant.
+    ///
+    /// Locked by the table parity test in `progress_parity_tests.rs`, which keeps
+    /// the old round-trip as its oracle.
+    fn from(p: &crate::files::transfer::TransferProgress) -> Self {
+        use crate::files::transfer::state::TransferStateTag as Tag;
+        use crate::files::transfer::{
+            TransferDirection as WireDirection, TransferPhase as WirePhase,
+        };
+        Self {
+            transfer_id: p.transfer_id.clone(),
+            session_id: p.session_id.clone(),
+            direction: match p.direction {
+                WireDirection::Download => TransferDirection::Download,
+                WireDirection::Upload => TransferDirection::Upload,
+            },
+            file_name: p.file_name.clone(),
+            path: (!p.path.is_empty()).then(|| p.path.clone()),
+            transferred: p.transferred,
+            total: p.total,
+            phase: match p.phase {
+                WirePhase::Transferring => TransferPhase::Transferring,
+                WirePhase::Done => TransferPhase::Done,
+                WirePhase::Cancelled => TransferPhase::Cancelled,
+                WirePhase::Error => TransferPhase::Error,
+            },
+            message: p.message.clone(),
+            state: Some(match p.state {
+                Tag::Queued => TransferQueueState::Queued,
+                Tag::Active => TransferQueueState::Active,
+                Tag::Paused => TransferQueueState::Paused,
+                Tag::Completed => TransferQueueState::Completed,
+                Tag::Failed => TransferQueueState::Failed,
+                Tag::Cancelled => TransferQueueState::Cancelled,
+            }),
+            speed: Some(p.speed),
+            eta_secs: p.eta_secs,
+            total_bytes: Some(p.total_bytes),
+            attempt: Some(p.attempt),
+            max_attempts: Some(p.max_attempts),
+        }
+    }
 }
 
 /// A snapshot of one queued transfer from `transfer_list`, mirroring the frontend
@@ -747,3 +805,7 @@ fn drain_delta_of(inner: &mut Inner) -> RegionDelta {
 #[cfg(test)]
 #[path = "store_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "progress_parity_tests.rs"]
+mod progress_parity_tests;

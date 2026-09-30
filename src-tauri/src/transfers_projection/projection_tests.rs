@@ -445,6 +445,43 @@ fn progress_payload(id: &str, state: &str, transferred: u64) -> Value {
     })
 }
 
+/// The engine's wire event (`files::transfer::TransferProgress`) the production
+/// sink hands to `fold_transfer_progress` — the typed twin of
+/// [`progress_payload`] (#2973: the fold converts it directly, no JSON).
+fn wire_progress(
+    id: &str,
+    state: &str,
+    transferred: u64,
+) -> crate::files::transfer::TransferProgress {
+    use crate::files::transfer::state::TransferStateTag as Tag;
+    use crate::files::transfer::{TransferDirection, TransferPhase};
+    crate::files::transfer::TransferProgress {
+        transfer_id: id.to_string(),
+        session_id: "sess-1".to_string(),
+        direction: TransferDirection::Download,
+        file_name: "data.csv".to_string(),
+        path: "/remote/data.csv".to_string(),
+        transferred,
+        total: 1000,
+        phase: TransferPhase::Transferring,
+        message: None,
+        state: match state {
+            "queued" => Tag::Queued,
+            "active" => Tag::Active,
+            "paused" => Tag::Paused,
+            "completed" => Tag::Completed,
+            "failed" => Tag::Failed,
+            "cancelled" => Tag::Cancelled,
+            other => panic!("unknown state {other}"),
+        },
+        speed: 0,
+        total_bytes: 1000,
+        eta_secs: None,
+        attempt: 0,
+        max_attempts: 0,
+    }
+}
+
 // ── Server-authority fold (#2387, prerequisite for #2229) ─────────────────────
 //
 // These drive the *production* `fold_transfer_progress` end to end against a
@@ -480,7 +517,7 @@ fn server_side_progress_fold_updates_store_and_region_without_client_dispatch() 
 
     // The engine emits an `active` progress sample at the source — no
     // `transfer.progress` intent is dispatched.
-    fold_transfer_progress(app.handle(), &progress_payload("t1", "active", 400));
+    fold_transfer_progress(app.handle(), &wire_progress("t1", "active", 400));
 
     // The store is authoritative server-side.
     let entry = store.get("t1").expect("row created by the server fold");
@@ -516,8 +553,8 @@ fn server_side_terminal_fold_settles_the_row() {
         .subscribe(TRANSFERS_REGION, "sub", "C", sink.clone());
     app.manage(projection);
 
-    fold_transfer_progress(app.handle(), &progress_payload("t1", "active", 400));
-    fold_transfer_progress(app.handle(), &progress_payload("t1", "completed", 1000));
+    fold_transfer_progress(app.handle(), &wire_progress("t1", "active", 400));
+    fold_transfer_progress(app.handle(), &wire_progress("t1", "completed", 1000));
 
     let entry = store.get("t1").expect("row retained after completion");
     assert_eq!(entry.state, TransferQueueState::Completed);
@@ -559,7 +596,7 @@ fn server_side_progress_fold_matches_the_client_transfer_progress_route() {
 fn server_side_fold_is_a_noop_without_managed_state() {
     let app = tauri::test::mock_app();
     // Nothing managed — reaching the assert without panicking is the contract.
-    fold_transfer_progress(app.handle(), &progress_payload("t1", "active", 1));
+    fold_transfer_progress(app.handle(), &wire_progress("t1", "active", 1));
 }
 
 // ── Incremental publish equivalence (PERF-006, rollout of #2878) ──────────────

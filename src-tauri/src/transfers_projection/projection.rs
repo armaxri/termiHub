@@ -271,11 +271,12 @@ fn splice_subtrees(view: &mut Value, field: &str, entries: &[(String, Option<Val
 /// event stream reflects the full register → queue → progress → pause → resume →
 /// finish → cancel lifecycle into the store without any client round-trip.
 ///
-/// `progress` is the event serialized exactly as the frontend receives it
-/// (camelCase JSON); it is parsed into the store's [`TransferProgress`] via the
-/// identical `serde_json::from_value` path the client `transfer.progress` route
-/// runs, so the server fold reproduces the client route's store transition
-/// exactly (parity). It is **additive**: the Tauri `transfer-progress` emission
+/// `progress` is the engine's wire event; it is converted into the store's
+/// [`TransferProgress`] by the direct `From` conversion (#2973), which yields
+/// exactly what the client `transfer.progress` route's `serde_json::from_value`
+/// parses from the same camelCase payload — so the server fold reproduces the
+/// client route's store transition exactly (parity) without a JSON round-trip
+/// per progress sample. It is **additive**: the Tauri `transfer-progress` emission
 /// stays in place and the render-cut mirror (`transfer.replace`, a later #2229
 /// step) keeps the region a faithful copy of `appStore`, so this changes no
 /// user-facing behavior.
@@ -285,14 +286,14 @@ fn splice_subtrees(view: &mut Value, field: &str, entries: &[(String, Option<Val
 /// not parse, the fold is skipped rather than erroring. The store transition runs
 /// to completion synchronously before the publish, so the store lock is never
 /// held across an await.
-pub fn fold_transfer_progress<R: tauri::Runtime>(app_handle: &AppHandle<R>, progress: &Value) {
+pub fn fold_transfer_progress<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    progress: &crate::files::transfer::TransferProgress,
+) {
     let Some(store) = app_handle.try_state::<Arc<TransferStore>>() else {
         return;
     };
-    let Ok(parsed) = serde_json::from_value::<TransferProgress>(progress.clone()) else {
-        return;
-    };
-    store.progress(&parsed, now_ms());
+    store.progress(&TransferProgress::from(progress), now_ms());
     if let Some(projection) = app_handle.try_state::<ProjectionState>() {
         publish_transfers(&projection.projector, store.inner().as_ref());
     }

@@ -748,9 +748,7 @@ fn cancel_row(app_handle: &AppHandle, record: &PersistedTransfer) {
 
 /// Fold a synthetic progress event through the shared transfers store.
 fn fold_row(app_handle: &AppHandle, progress: &TransferProgress) {
-    if let Ok(value) = serde_json::to_value(progress) {
-        crate::transfers_projection::projection::fold_transfer_progress(app_handle, &value);
-    }
+    crate::transfers_projection::projection::fold_transfer_progress(app_handle, progress);
 }
 
 #[cfg(test)]
