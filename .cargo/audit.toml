@@ -16,18 +16,19 @@
 # These mirror the `[advisories] ignore` list in deny.toml so cargo-audit and
 # cargo-deny stay in agreement. Real vulnerabilities and yanked crates are NOT
 # listed here and still fail the gate. Revisit + remove per ID when upstream
-# ships a maintained/sound replacement — see #3054.
+# ships a maintained/sound replacement — see #3054. Last revisited 2026-09-30.
 # ---------------------------------------------------------------------------
 ignore = [
     "RUSTSEC-2023-0071",
     # -- unmaintained (no fix available; crate abandoned upstream) --
-    # proc-macro-error: unmaintained, via gtk3-macros / glib-macros.
+    # proc-macro-error: unmaintained, via glib-macros 0.18 (Tauri GTK3 stack); no fix.
     "RUSTSEC-2024-0370",
-    # rustls-pemfile: unmaintained (superseded upstream), transitive.
+    # rustls-pemfile: unmaintained, via libunftp 0.20 + vendored vnc-rs (clear via bumps).
     "RUSTSEC-2025-0134",
-    # serial: unmaintained, transitive serial-port stack.
+    # serial: unmaintained, via portable-pty 0.8 (0.9 moves to serial2).
     "RUSTSEC-2017-0008",
-    # unic-char-property: unmaintained, via the unic-* unicode stack.
+    # unic-* (next 5 IDs): unmaintained, via urlpattern 0.3 <- tauri-utils; no fix.
+    # unic-char-property.
     "RUSTSEC-2025-0081",
     # unic-char-range: unmaintained, via the unic-* unicode stack.
     "RUSTSEC-2025-0075",
@@ -38,12 +39,10 @@ ignore = [
     # unic-ucd-version: unmaintained, via the unic-* unicode stack.
     "RUSTSEC-2025-0098",
     # -- unsound (no vulnerability path in our usage; no upstream fix) --
-    # event-listener: unsound (!Send tags cross threads via StackSlot), transitive.
-    "RUSTSEC-2026-0221",
-    # git2: unsound (UB in Remote::list()), Tauri/git transitive.
+    # git2: unsound (UB in Remote::list()), build-dep of ssh2-config 0.7 (0.8 uses git2 0.21).
     "RUSTSEC-2026-0183",
-    # git2: unsound (UB via Signature from buffer-created BlameHunk), transitive.
+    # git2: unsound (UB via BlameHunk Signature), build-dep of ssh2-config 0.7; as above.
     "RUSTSEC-2026-0184",
-    # glib: unsound VariantStrIter iterator impls, Tauri/GTK3 binding transitive.
+    # glib: unsound VariantStrIter impls, glib 0.18 pinned by Tauri/wry GTK3; fix is 0.20+.
     "RUSTSEC-2024-0429",
 ]

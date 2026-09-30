@@ -1,0 +1,16 @@
+# Cargo audit configuration for the RDP sidecar (separate workspace/lockfile).
+# https://docs.rs/cargo-audit/latest/cargo_audit/
+#
+# Mirrors the accepted sign-offs in rdp-sidecar/deny.toml so a local
+# `cargo audit` agrees with the CI cargo-deny gate. Revisit per ID when
+# upstream resolves — see #3054. Last revisited 2026-09-30.
+
+[advisories]
+ignore = [
+    # rsa: Marvin timing sidechannel, pre-release 0.10.0-rc via IronRDP/sspi
+    # CredSSP; no private-key decryption path. Rationale in deny.toml.
+    "RUSTSEC-2023-0071",
+    # glib: unsound VariantStrIter impls, glib 0.18 pinned by gtk 0.18 via
+    # clipboard-files; unsoundness notice, fix is glib 0.20+.
+    "RUSTSEC-2024-0429",
+]

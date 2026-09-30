@@ -31,7 +31,10 @@ unmaintained = "none"
 
 # RUSTSEC advisories accepted as a conscious release sign-off. Each has a
 # documented rationale below; keep this list minimal and revisit at each
-# dependency bump.
+# dependency bump. Last revisited 2026-09-30 (#3054). The transitive `glib`
+# unsoundness notice (RUSTSEC-2024-0429) is not listed: cargo-deny's default
+# `unsound = "workspace"` never matches it, so an ignore would be stale. Its
+# sign-off lives in rdp-sidecar/.cargo/audit.toml for cargo-audit.
 ignore = [
     # RUSTSEC-2023-0071: Marvin timing sidechannel in `rsa` (transitive via
     # picky/sspi -> IronRDP's CredSSP auth). Accepted as a release sign-off, same
@@ -42,13 +45,6 @@ ignore = [
     # CredSSP client validates the server's public key and does not perform
     # attacker-observable private-key decryption through this crate.
     "RUSTSEC-2023-0071",
-    # RUSTSEC-2024-0429: unsoundness in `glib`'s `VariantStrIter` Iterator /
-    # DoubleEndedIterator impls. Non-actionable transitive advisory accepted as
-    # a release sign-off (#3054; findings SUP-003/004/006). `glib` is pinned by
-    # the Tauri/GTK3 clipboard-files -> gtk 0.18 binding stack; it is an
-    # unsoundness NOTICE, not an exploitable vulnerability in our usage, and no
-    # upstream fix exists on that line. Mirrors the workspace audit/deny ignores.
-    "RUSTSEC-2024-0429",
 ]
 
 [licenses]
