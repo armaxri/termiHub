@@ -8,7 +8,9 @@ Connections view afterward, so suites also mix in
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import json
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from .base import HarnessMixin
 
@@ -25,6 +27,10 @@ class SettingsUi(HarnessMixin):
 
     if TYPE_CHECKING:  # borrowed from SidebarUi, with which suites combine this
         def switch_to_connections_sidebar(self) -> None: ...
+
+        # supplied by SystemTest
+        @property
+        def config_dir(self) -> Path: ...
 
     def open_settings_tab(self) -> None:
         """Open the Settings editor tab from the activity-bar gear menu."""
@@ -65,3 +71,48 @@ class SettingsUi(HarnessMixin):
         nav = f"settings-nav-{category}"
         self.wait(lambda: self.driver.exists(nav), what=f"the {category} settings nav")
         self.driver.click(nav)
+
+    # ── persisted settings (settings.json) ─────────────────────────────────────
+    def persisted_settings(self) -> dict[str, Any]:
+        """The on-disk ``settings.json`` document (``{}`` if absent/unreadable)."""
+        path = self.config_dir / "settings.json"
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return loaded if isinstance(loaded, dict) else {}
+
+    def write_settings_file(self, **fields: Any) -> None:
+        """Merge ``fields`` into the on-disk ``settings.json``.
+
+        Run it while the app is down (a ``restart_app`` ``between`` hook): a
+        running app would overwrite the file on its next save. Read-modify-write,
+        so settings the app already persisted are kept.
+        """
+        data = self.persisted_settings()
+        data.setdefault("version", "1")
+        data.update(fields)
+        (self.config_dir / "settings.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    def select_setting(
+        self, category: str, test_id: str, value: str, *, key: str, expected: Any
+    ) -> None:
+        """Change a Settings select like a user does and wait until it is saved.
+
+        A ``settings.patch`` intent only edits the in-memory settings region; it
+        never reaches ``settings.json`` (#4017). The Settings editor's
+        ``updateSettings`` path persists, debounced ~300 ms, so this waits for
+        both the region and the file to hold ``expected`` for ``key`` (``None``
+        = the key is unset, e.g. a "platform default" choice).
+        """
+        self.open_settings_category(category)
+        self.wait(lambda: self.driver.exists(test_id), what=f"the {test_id} select")
+        self.driver.select(test_id, value)
+        self.wait(
+            lambda: self.projection_region_cache(SETTINGS_REGION).get(key) == expected,
+            what=f"{key}={expected!r} in the settings region",
+        )
+        self.wait(
+            lambda: self.persisted_settings().get(key) == expected,
+            what=f"{key}={expected!r} saved to settings.json",
+        )
