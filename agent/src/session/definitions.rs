@@ -41,6 +41,11 @@ pub struct Connection {
     /// Custom icon name (lucide-react PascalCase or "lab:camelCase").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// Fields this agent does not know (e.g. written by a newer agent at the
+    /// same schema version). Kept on disk verbatim across load and save, never
+    /// sent on the wire (#3931).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// On-disk shape of [`Connection`], read before the type-scoped legacy-key
@@ -63,6 +68,8 @@ struct RawConnection {
     terminal_options: Option<serde_json::Value>,
     #[serde(default)]
     icon: Option<String>,
+    #[serde(flatten)]
+    extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl From<RawConnection> for Connection {
@@ -76,6 +83,7 @@ impl From<RawConnection> for Connection {
             folder_id: raw.folder_id,
             terminal_options: raw.terminal_options,
             icon: raw.icon,
+            extra: raw.extra,
         };
         conn.normalize_settings();
         conn
@@ -131,6 +139,9 @@ pub struct Folder {
     /// Whether this folder is expanded in the UI.
     #[serde(default)]
     pub is_expanded: bool,
+    /// Unknown fields, preserved on disk across load and save (#3931).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Folder {
@@ -249,6 +260,57 @@ struct StorageFormat {
     connections: Vec<Connection>,
     #[serde(default)]
     folders: Vec<Folder>,
+    /// Unknown top-level keys, preserved across load and save (#3931). On load
+    /// this also catches `version`, which [`StorageFormat::into_definitions`]
+    /// strips so it is never written twice.
+    #[serde(flatten)]
+    extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Keys [`StorageFormat`] owns itself; never carried in its `extra` map.
+const STORAGE_KNOWN_KEYS: [&str; 3] = ["version", "connections", "folders"];
+
+impl StorageFormat {
+    fn into_definitions(self) -> Definitions {
+        let mut extra = self.extra;
+        for key in STORAGE_KNOWN_KEYS {
+            extra.remove(key);
+        }
+        Definitions {
+            connections: self
+                .connections
+                .into_iter()
+                .map(|c| (c.id.clone(), c))
+                .collect(),
+            folders: self
+                .folders
+                .into_iter()
+                .map(|f| (f.id.clone(), f))
+                .collect(),
+            extra,
+        }
+    }
+}
+
+/// A corrupt `connections.json` whose copy is not yet safely on disk (#3931).
+///
+/// While one is pending, nothing may overwrite the store file.
+#[derive(Debug)]
+enum PendingBackup {
+    /// The corrupt file's bytes, as read at load; backing up failed so far.
+    Bytes(Vec<u8>),
+    /// The file existed but could not be read at all; re-read before a save.
+    Unreadable,
+}
+
+/// Result of [`ConnectionStore::load_from_disk`].
+#[derive(Debug, Default)]
+struct Loaded {
+    definitions: Definitions,
+    /// The file was corrupt: `definitions` hold whatever could be salvaged.
+    recovered_from_corruption: bool,
+    /// Set when the corrupt file's copy could not be written yet.
+    pending_backup: Option<PendingBackup>,
 }
 
 /// In-memory definitions: connections and folders held together.
@@ -262,6 +324,8 @@ struct StorageFormat {
 struct Definitions {
     connections: HashMap<String, Connection>,
     folders: HashMap<String, Folder>,
+    /// Unknown top-level store keys, written back verbatim (#3931).
+    extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Manages connections and folders with disk persistence.
@@ -272,6 +336,9 @@ pub struct ConnectionStore {
     /// Set when the store file was written by a newer agent (#3920). The file
     /// is then left intact and every mutation is refused with this error.
     newer_on_disk: Option<NewerVersionError>,
+    /// A corrupt store file that has not been backed up yet (#3931). Every save
+    /// first retries the backup and is refused while it keeps failing.
+    pending_backup: std::sync::Mutex<Option<PendingBackup>>,
     /// Read-only connections loaded from external files, tagged with their source path.
     external_snapshots: Mutex<Vec<ConnectionSnapshot>>,
 }
@@ -280,8 +347,8 @@ impl ConnectionStore {
     /// Create a new store, loading existing data from disk.
     /// Migrates from legacy `sessions.json` if `connections.json` doesn't exist.
     pub fn new(file_path: PathBuf) -> Self {
-        let (definitions, newer_on_disk) = match Self::load_from_disk(&file_path) {
-            Ok(definitions) => (definitions, None),
+        let (loaded, newer_on_disk) = match Self::load_from_disk(&file_path) {
+            Ok(loaded) => (loaded, None),
             Err(newer) => {
                 error!(
                     "{} (at {}); the file is left untouched and the saved connections \
@@ -289,15 +356,26 @@ impl ConnectionStore {
                     newer,
                     file_path.display()
                 );
-                (Definitions::default(), Some(newer))
+                (Loaded::default(), Some(newer))
             }
         };
-        Self {
-            definitions: Mutex::new(definitions),
+        let persist_salvage = loaded.recovered_from_corruption && loaded.pending_backup.is_none();
+        let store = Self {
+            definitions: Mutex::new(loaded.definitions),
             file_path,
             newer_on_disk,
+            pending_backup: std::sync::Mutex::new(loaded.pending_backup),
             external_snapshots: Mutex::new(Vec::new()),
+        };
+        if persist_salvage {
+            // The corrupt original is safely backed up: persist the salvaged
+            // store so the file parses again and is not re-backed-up on every
+            // start. Nothing else holds the lock yet.
+            if let Ok(defs) = store.definitions.try_lock() {
+                store.save_to_disk(&defs);
+            }
         }
+        store
     }
 
     /// Create a store with a custom path (useful for testing).
@@ -307,6 +385,7 @@ impl ConnectionStore {
             definitions: Mutex::new(Definitions::default()),
             file_path,
             newer_on_disk: None,
+            pending_backup: std::sync::Mutex::new(None),
             external_snapshots: Mutex::new(Vec::new()),
         }
     }
@@ -530,6 +609,7 @@ impl ConnectionStore {
             folder_id: None,
             terminal_options: None,
             icon: None,
+            extra: serde_json::Map::new(),
         };
 
         info!("Creating default shell connection (shell: {})", shell);
@@ -547,37 +627,47 @@ impl ConnectionStore {
     /// Load from disk, with migration from legacy `sessions.json`.
     ///
     /// Errors — without touching the file — when it was written by a newer
-    /// agent (#3920).
-    fn load_from_disk(path: &PathBuf) -> Result<Definitions, NewerVersionError> {
-        // Try loading the new format first
-        if let Ok(contents) = std::fs::read_to_string(path) {
-            match Self::parse_storage(&contents)? {
-                Ok(storage) => {
-                    debug!(
-                        "Loaded {} connections and {} folders from {}",
-                        storage.connections.len(),
-                        storage.folders.len(),
-                        path.display()
-                    );
-                    let connections = storage
-                        .connections
-                        .into_iter()
-                        .map(|c| (c.id.clone(), c))
-                        .collect();
-                    let folders = storage
-                        .folders
-                        .into_iter()
-                        .map(|f| (f.id.clone(), f))
-                        .collect();
-                    return Ok(Definitions {
-                        connections,
-                        folders,
-                    });
+    /// agent (#3920). A corrupt file is backed up first, then every parseable
+    /// entry is salvaged (#3931); see [`Loaded`].
+    fn load_from_disk(path: &PathBuf) -> Result<Loaded, NewerVersionError> {
+        match std::fs::read(path) {
+            Ok(bytes) => {
+                let parsed = match std::str::from_utf8(&bytes) {
+                    Ok(raw) => Self::parse_storage(raw)?,
+                    Err(e) => Err(format!("not valid UTF-8: {e}")),
+                };
+                match parsed {
+                    Ok(storage) => {
+                        debug!(
+                            "Loaded {} connections and {} folders from {}",
+                            storage.connections.len(),
+                            storage.folders.len(),
+                            path.display()
+                        );
+                        return Ok(Loaded {
+                            definitions: storage.into_definitions(),
+                            ..Loaded::default()
+                        });
+                    }
+                    Err(e) => return Ok(Self::recover_corrupt(path, bytes, &e)),
                 }
-                Err(e) => {
-                    warn!("Failed to parse connections from {}: {}", path.display(), e);
-                    return Ok(Definitions::default());
-                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                // The file exists but cannot be read, so it cannot be backed up
+                // either: never overwrite it until it can be (#3931).
+                error!(
+                    "Cannot read connections from {}: {}; saved connections are not \
+                     loaded, and the file will not be overwritten until it can be \
+                     backed up",
+                    path.display(),
+                    e
+                );
+                return Ok(Loaded {
+                    recovered_from_corruption: true,
+                    pending_backup: Some(PendingBackup::Unreadable),
+                    ..Loaded::default()
+                });
             }
         }
 
@@ -603,21 +693,197 @@ impl ConnectionStore {
                                 folder_id: None,
                                 terminal_options: None,
                                 icon: None,
+                                extra: serde_json::Map::new(),
                             };
                             conn.normalize_settings();
                             (d.id, conn)
                         })
                         .collect();
-                    return Ok(Definitions {
-                        connections,
-                        folders: HashMap::new(),
+                    return Ok(Loaded {
+                        definitions: Definitions {
+                            connections,
+                            ..Definitions::default()
+                        },
+                        ..Loaded::default()
                     });
                 }
             }
         }
 
         debug!("No connections file at {}", path.display());
-        Ok(Definitions::default())
+        Ok(Loaded::default())
+    }
+
+    /// Handle a corrupt store file (#3931): back its exact bytes up, then
+    /// salvage every entry that still parses.
+    ///
+    /// If the backup cannot be written, the salvaged data is still loaded but
+    /// the backup stays pending and [`Self::save_to_disk`] refuses to overwrite
+    /// the file until it succeeds.
+    fn recover_corrupt(path: &Path, bytes: Vec<u8>, reason: &str) -> Loaded {
+        let salvaged = std::str::from_utf8(&bytes)
+            .ok()
+            .and_then(Self::salvage_storage);
+        let pending_backup = match store_version::backup_corrupt(path, &bytes) {
+            Ok(backup) => {
+                warn!(
+                    "{} is corrupt ({}); the original was backed up to {}",
+                    path.display(),
+                    reason,
+                    backup.display()
+                );
+                None
+            }
+            Err(e) => {
+                error!(
+                    "{} is corrupt ({}) and could not be backed up ({}); it will not \
+                     be overwritten until a backup succeeds",
+                    path.display(),
+                    reason,
+                    e
+                );
+                Some(PendingBackup::Bytes(bytes))
+            }
+        };
+        let definitions = match salvaged {
+            Some(defs) => {
+                warn!(
+                    "Salvaged {} connections and {} folders from corrupt {}",
+                    defs.connections.len(),
+                    defs.folders.len(),
+                    path.display()
+                );
+                defs
+            }
+            None => {
+                warn!(
+                    "Nothing could be salvaged from corrupt {}; starting empty",
+                    path.display()
+                );
+                Definitions::default()
+            }
+        };
+        Loaded {
+            definitions,
+            recovered_from_corruption: true,
+            pending_backup,
+        }
+    }
+
+    /// Per-entry salvage of a store that failed a whole-file parse, mirroring
+    /// the desktop's `salvage_list_store` (`src-tauri/src/utils/migrate.rs`):
+    /// keep every connection and folder that parses on its own, drop (and log)
+    /// the rest, and carry every other top-level key through.
+    ///
+    /// `None` when the file is not a JSON object at all. Only called once the
+    /// version gate has passed (a newer file never reaches here).
+    fn salvage_storage(raw: &str) -> Option<Definitions> {
+        let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+        let version = store_version::read_version(&value).unwrap_or(store_version::ASSUMED_VERSION);
+        let value = if version < DEFINITIONS_STORE_VERSION {
+            migrate_definitions(value, version).ok()?
+        } else {
+            value
+        };
+        let serde_json::Value::Object(mut top) = value else {
+            return None;
+        };
+        let connections =
+            Self::salvage_entries::<Connection>(top.remove("connections"), "connection");
+        let folders = Self::salvage_entries::<Folder>(top.remove("folders"), "folder");
+        Some(
+            StorageFormat {
+                version: String::new(),
+                connections,
+                folders,
+                extra: top,
+            }
+            .into_definitions(),
+        )
+    }
+
+    /// Parse each element of a store list individually, dropping (and
+    /// logging) the ones that do not parse.
+    fn salvage_entries<T: serde::de::DeserializeOwned>(
+        list: Option<serde_json::Value>,
+        kind: &str,
+    ) -> Vec<T> {
+        let entries = match list {
+            None | Some(serde_json::Value::Null) => return Vec::new(),
+            Some(serde_json::Value::Array(entries)) => entries,
+            Some(other) => {
+                warn!("Dropped corrupt {kind} list (not an array): {other}");
+                return Vec::new();
+            }
+        };
+        entries
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                let label = entry
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .or_else(|| entry.get("id").and_then(serde_json::Value::as_str))
+                    .unwrap_or("unknown")
+                    .to_string();
+                match serde_json::from_value::<T>(entry) {
+                    Ok(parsed) => Some(parsed),
+                    Err(e) => {
+                        warn!("Dropped corrupt {kind} at index {index} (\"{label}\"): {e}");
+                        None
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// Make sure a corrupt store file has a copy on disk before it may be
+    /// overwritten (#3931). Returns `false` — refusing the save — while the
+    /// backup keeps failing.
+    fn secure_pending_backup(&self) -> bool {
+        let mut pending = self
+            .pending_backup
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let bytes = match pending.as_ref() {
+            None => return true,
+            Some(PendingBackup::Bytes(bytes)) => bytes.clone(),
+            Some(PendingBackup::Unreadable) => match std::fs::read(&self.file_path) {
+                Ok(bytes) => bytes,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    *pending = None;
+                    return true;
+                }
+                Err(e) => {
+                    error!(
+                        "Not saving connections: {} is still unreadable ({}) and cannot \
+                         be backed up",
+                        self.file_path.display(),
+                        e
+                    );
+                    return false;
+                }
+            },
+        };
+        match store_version::backup_corrupt(&self.file_path, &bytes) {
+            Ok(backup) => {
+                warn!(
+                    "Backed up the previous {} to {} before overwriting it",
+                    self.file_path.display(),
+                    backup.display()
+                );
+                *pending = None;
+                true
+            }
+            Err(e) => {
+                error!(
+                    "Not saving connections: could not back up the corrupt {} ({})",
+                    self.file_path.display(),
+                    e
+                );
+                false
+            }
+        }
     }
 
     /// Parse the raw store: gate on its schema version, migrate an older file
@@ -680,10 +946,19 @@ impl ConnectionStore {
             error!("Not saving connections: {newer}");
             return;
         }
+        // Never overwrite a corrupt file without a copy on disk (#3931).
+        if !self.secure_pending_backup() {
+            return;
+        }
+        let mut extra = defs.extra.clone();
+        for key in STORAGE_KNOWN_KEYS {
+            extra.remove(key);
+        }
         let storage = StorageFormat {
             version: DEFINITIONS_STORE_VERSION.to_string(),
             connections: defs.connections.values().cloned().collect(),
             folders: defs.folders.values().cloned().collect(),
+            extra,
         };
         if let Some(parent) = self.file_path.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
@@ -929,6 +1204,7 @@ mod tests {
             folder_id: None,
             terminal_options: None,
             icon: None,
+            extra: Default::default(),
         }
     }
 
@@ -938,6 +1214,7 @@ mod tests {
             name: name.to_string(),
             parent_id: parent_id.map(|s| s.to_string()),
             is_expanded: false,
+            extra: Default::default(),
         }
     }
 
@@ -1069,6 +1346,7 @@ mod tests {
                 folder_id: None,
                 terminal_options: None,
                 icon: None,
+                extra: Default::default(),
             })
             .await
             .unwrap();
@@ -1571,6 +1849,45 @@ mod tests {
         assert_eq!(fs::read_to_string(&backups[0]).unwrap(), original);
     }
 
+    /// A store file that exists but cannot be read is never overwritten while
+    /// it stays unreadable; once readable it is backed up before the save.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unreadable_file_is_not_overwritten_until_backed_up() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let original = r#"{"connections":[{"id":"c","name":"Kept","session_type":"shell"}]}"#;
+        fs::write(&path, original).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read(&path).is_ok() {
+            // Running as root: permissions do not block reads, nothing to test.
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+            return;
+        }
+
+        let store = ConnectionStore::new(path.clone());
+        store.ensure_default_shell().await;
+        store
+            .create(make_connection("conn-new", "New", false))
+            .await
+            .unwrap();
+
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        assert!(corrupt_backups(&path).is_empty());
+
+        // Readable again: the next save backs the original up first.
+        store
+            .create(make_connection("conn-new-2", "New 2", false))
+            .await
+            .unwrap();
+        let backups = corrupt_backups(&path);
+        assert_eq!(backups.len(), 1);
+        assert_eq!(fs::read_to_string(&backups[0]).unwrap(), original);
+    }
+
     /// Unknown top-level and per-entry fields survive a load + save, and are
     /// not leaked onto the wire snapshot.
     #[tokio::test]
@@ -1774,6 +2091,7 @@ mod tests {
         Definitions {
             connections: conns.into_iter().map(|c| (c.id.clone(), c)).collect(),
             folders: HashMap::new(),
+            extra: Default::default(),
         }
     }
 
@@ -1872,6 +2190,7 @@ mod tests {
             folder_id: Some("folder-1".to_string()),
             terminal_options: None,
             icon: None,
+            extra: Default::default(),
         };
         let json = serde_json::to_string(&conn).unwrap();
         let parsed: Connection = serde_json::from_str(&json).unwrap();
@@ -1897,6 +2216,7 @@ mod tests {
             name: "Project".to_string(),
             parent_id: Some("folder-0".to_string()),
             is_expanded: true,
+            extra: Default::default(),
         };
         let json = serde_json::to_string(&folder).unwrap();
         let parsed: Folder = serde_json::from_str(&json).unwrap();
@@ -1933,6 +2253,7 @@ mod tests {
             folder_id: Some("folder-1".to_string()),
             terminal_options: None,
             icon: None,
+            extra: Default::default(),
         };
         assert_eq!(
             serde_json::to_string(&conn.snapshot()).unwrap(),
@@ -1947,6 +2268,7 @@ mod tests {
             name: "Production".to_string(),
             parent_id: Some("folder-root".to_string()),
             is_expanded: true,
+            extra: Default::default(),
         };
         assert_eq!(
             serde_json::to_string(&folder.snapshot()).unwrap(),
