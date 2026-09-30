@@ -50,6 +50,9 @@ export const AGENT_SCHEMA: SettingsSchema = {
               { value: "password", label: "Password" },
               { value: "key", label: "SSH Key" },
               { value: "agent", label: "SSH Agent" },
+              // OTP / 2FA / PAM challenges answered in the in-app prompt at
+              // connect time (#3377, same method as SSH connections #3371).
+              { value: "keyboard-interactive", label: "Keyboard-Interactive (OTP / 2FA)" },
             ],
           },
           required: true,

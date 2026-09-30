@@ -5,7 +5,7 @@ import type { UpdateStrategy } from "./UpdateStrategy";
 /**
  * SSH transport configuration for a remote agent (no session details).
  */
-export type RemoteAgentConfig = { host: string, port: number, username: string, authMethod: "password" | "key" | "agent", password?: string, keyPath?: string, savePassword?: boolean, 
+export type RemoteAgentConfig = { host: string, port: number, username: string, authMethod: "password" | "key" | "agent" | "keyboard-interactive", password?: string, keyPath?: string, savePassword?: boolean, 
 /**
  * Id of a shared named credential (#3557) that supplies this agent's
  * password / key passphrase instead of a per-agent secret. When set, the
