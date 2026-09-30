@@ -1472,3 +1472,285 @@ describe("useSessionFileSystem — recursive directory paste (PROD-004)", () => 
     );
   });
 });
+
+// #3913: the Upload / Download buttons and the OS-drop upload run through the
+// shared pane transfer engine. These pin the user-visible contract on both
+// transports — pending toast, terminal feedback, queue-row seed, cancel quiet
+// path and the listing refresh — so the routing change cannot drift it.
+describe("useSessionFileSystem — button + drop transfer contract (#3913)", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+  const refreshSession = vi.fn(() => Promise.resolve());
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+    vi.mocked(toast.loading).mockReturnValue("toast-1");
+    vi.mocked(sessionHasExecCapability).mockRejectedValue(new Error("not sftp-backed"));
+    vi.mocked(sessionSupportsRemoteCopy).mockResolvedValue(false);
+    // The engine hands the queue its transfer id through the start callback.
+    vi.mocked(sessionDownload).mockImplementation(async (_s, _r, _l, onRegistered) => {
+      onRegistered?.("t-down");
+      return 7;
+    });
+    vi.mocked(sessionUpload).mockImplementation(async (_s, _l, _r, onRegistered) => {
+      onRegistered?.("t-up");
+      return 7;
+    });
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  type SessionFs = ReturnType<typeof useSessionFileSystem>;
+
+  async function mountHook(queueCapable: boolean): Promise<SessionFs> {
+    vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(queueCapable);
+    useAppStore.setState({ sessionFileBrowserId: "sess-9", refreshSession });
+    seedFileBrowsers({
+      session: { path: "/remote/dir", entries: [], loading: false, error: null },
+    });
+    let api: SessionFs | undefined;
+    function Harness() {
+      api = useSessionFileSystem();
+      return null;
+    }
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    return api!;
+  }
+
+  async function pickForUpload(path: string | null) {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(open).mockResolvedValueOnce(path);
+  }
+
+  describe("queue-capable session", () => {
+    it("download: pending toast, seeded download row, no success toast of its own", async () => {
+      const api = await mountHook(true);
+      await act(async () => {
+        await api.downloadFile("/remote/dir/file.txt", "file.txt");
+      });
+      expect(vi.mocked(sessionDownload)).toHaveBeenCalledWith(
+        "sess-9",
+        "/remote/dir/file.txt",
+        "/local/save.txt",
+        expect.any(Function)
+      );
+      expect(vi.mocked(toast.loading)).toHaveBeenCalledWith("Downloading file.txt…");
+      expect(vi.mocked(dispatchTransferIntentBestEffort)).toHaveBeenCalledWith("transfer.seed", {
+        seed: {
+          id: "t-down",
+          sessionId: "sess-9",
+          direction: "download",
+          name: "file.txt",
+          path: "/remote/dir/file.txt",
+        },
+      });
+      expect(vi.mocked(toast.dismiss)).toHaveBeenCalledWith("toast-1");
+      expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+      expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
+    });
+
+    it("download: an early failure raises the error toast", async () => {
+      vi.mocked(sessionDownload).mockRejectedValueOnce(new Error("no such file"));
+      const api = await mountHook(true);
+      await act(async () => {
+        await api.downloadFile("/remote/dir/file.txt", "file.txt");
+      });
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith("Download failed: no such file", {
+        id: "toast-1",
+      });
+    });
+
+    it("download: a cancelled transfer stays quiet", async () => {
+      const { TransferTerminalError } = await import("@/services/api");
+      vi.mocked(sessionDownload).mockRejectedValueOnce(
+        new TransferTerminalError("cancelled", "cancelled")
+      );
+      const api = await mountHook(true);
+      await act(async () => {
+        await api.downloadFile("/remote/dir/file.txt", "file.txt");
+      });
+      expect(vi.mocked(toast.dismiss)).toHaveBeenCalledWith("toast-1");
+      expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
+      expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+    });
+
+    it("download: a cancelled Save-as dialog does nothing", async () => {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      vi.mocked(save).mockResolvedValueOnce(null);
+      const api = await mountHook(true);
+      await act(async () => {
+        await api.downloadFile("/remote/dir/file.txt", "file.txt");
+      });
+      expect(vi.mocked(sessionDownload)).not.toHaveBeenCalled();
+      expect(vi.mocked(toast.loading)).not.toHaveBeenCalled();
+    });
+
+    it("upload button: seeded upload row, pending toast, then refreshes the listing", async () => {
+      await pickForUpload("/local/data.csv");
+      const api = await mountHook(true);
+      await act(async () => {
+        await api.uploadFile();
+      });
+      expect(vi.mocked(sessionUpload)).toHaveBeenCalledWith(
+        "sess-9",
+        "/local/data.csv",
+        "/remote/dir/data.csv",
+        expect.any(Function)
+      );
+      expect(vi.mocked(toast.loading)).toHaveBeenCalledWith("Uploading data.csv…");
+      expect(vi.mocked(dispatchTransferIntentBestEffort)).toHaveBeenCalledWith("transfer.seed", {
+        seed: {
+          id: "t-up",
+          sessionId: "sess-9",
+          direction: "upload",
+          name: "data.csv",
+          path: "/remote/dir/data.csv",
+        },
+      });
+      expect(vi.mocked(toast.dismiss)).toHaveBeenCalledWith("toast-1");
+      expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+      expect(refreshSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("upload button: names a Windows-picked file by its basename", async () => {
+      await pickForUpload("C:\\Users\\me\\data.csv");
+      const api = await mountHook(true);
+      await act(async () => {
+        await api.uploadFile();
+      });
+      expect(vi.mocked(sessionUpload)).toHaveBeenCalledWith(
+        "sess-9",
+        "C:\\Users\\me\\data.csv",
+        "/remote/dir/data.csv",
+        expect.any(Function)
+      );
+      expect(vi.mocked(toast.loading)).toHaveBeenCalledWith("Uploading data.csv…");
+    });
+
+    it("upload button: a failure raises the error toast and does not refresh", async () => {
+      await pickForUpload("/local/data.csv");
+      vi.mocked(sessionUpload).mockRejectedValueOnce(new Error("disk full"));
+      const api = await mountHook(true);
+      await act(async () => {
+        await api.uploadFile();
+      });
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith("Upload failed: disk full", {
+        id: "toast-1",
+      });
+      expect(refreshSession).not.toHaveBeenCalled();
+    });
+
+    it("upload button: a cancelled picker does nothing", async () => {
+      await pickForUpload(null);
+      const api = await mountHook(true);
+      await act(async () => {
+        await api.uploadFile();
+      });
+      expect(vi.mocked(sessionUpload)).not.toHaveBeenCalled();
+      expect(vi.mocked(toast.loading)).not.toHaveBeenCalled();
+    });
+
+    it("OS drop: uploads into the current folder with a seeded row and refreshes", async () => {
+      const api = await mountHook(true);
+      await act(async () => {
+        await api.uploadFileFromPath("C:\\Users\\me\\report.pdf");
+      });
+      expect(vi.mocked(sessionUpload)).toHaveBeenCalledWith(
+        "sess-9",
+        "C:\\Users\\me\\report.pdf",
+        "/remote/dir/report.pdf",
+        expect.any(Function)
+      );
+      expect(vi.mocked(toast.loading)).toHaveBeenCalledWith("Uploading report.pdf…");
+      expect(refreshSession).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("byte-based session", () => {
+    it("download: writes the bytes locally with its own success toast", async () => {
+      const { writeFile } = await import("@tauri-apps/plugin-fs");
+      const api = await mountHook(false);
+      await act(async () => {
+        await api.downloadFile("/remote/dir/file.txt", "file.txt");
+      });
+      expect(vi.mocked(sessionReadFile)).toHaveBeenCalledWith("sess-9", "/remote/dir/file.txt");
+      expect(vi.mocked(writeFile)).toHaveBeenCalledWith("/local/save.txt", expect.any(Uint8Array));
+      expect(vi.mocked(toast.loading)).toHaveBeenCalledWith("Downloading file.txt…");
+      expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Downloaded file.txt", {
+        id: "toast-1",
+      });
+      expect(vi.mocked(dispatchTransferIntentBestEffort)).not.toHaveBeenCalled();
+    });
+
+    it("download: a failure names the file in the error toast", async () => {
+      vi.mocked(sessionReadFile).mockRejectedValueOnce(new Error("permission denied"));
+      const api = await mountHook(false);
+      await act(async () => {
+        await api.downloadFile("/remote/dir/file.txt", "file.txt");
+      });
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        'Download "file.txt" failed: permission denied',
+        { id: "toast-1" }
+      );
+    });
+
+    it("upload button: writes the bytes with its own success toast and refreshes", async () => {
+      await pickForUpload("/local/data.csv");
+      const api = await mountHook(false);
+      await act(async () => {
+        await api.uploadFile();
+      });
+      expect(vi.mocked(sessionWriteFile)).toHaveBeenCalledWith(
+        "sess-9",
+        "/remote/dir/data.csv",
+        expect.any(Uint8Array)
+      );
+      expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Uploaded data.csv", {
+        id: "toast-1",
+      });
+      expect(refreshSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("upload button: a failure names the file and does not refresh", async () => {
+      await pickForUpload("/local/data.csv");
+      vi.mocked(sessionWriteFile).mockRejectedValueOnce(new Error("read-only"));
+      const api = await mountHook(false);
+      await act(async () => {
+        await api.uploadFile();
+      });
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Upload "data.csv" failed: read-only', {
+        id: "toast-1",
+      });
+      expect(refreshSession).not.toHaveBeenCalled();
+    });
+
+    it("OS drop: writes the bytes into the current folder and refreshes", async () => {
+      const api = await mountHook(false);
+      await act(async () => {
+        await api.uploadFileFromPath("/local/data.csv");
+      });
+      expect(vi.mocked(sessionWriteFile)).toHaveBeenCalledWith(
+        "sess-9",
+        "/remote/dir/data.csv",
+        expect.any(Uint8Array)
+      );
+      expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Uploaded data.csv", {
+        id: "toast-1",
+      });
+      expect(refreshSession).toHaveBeenCalledTimes(1);
+    });
+  });
+});

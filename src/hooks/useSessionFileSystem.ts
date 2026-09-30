@@ -4,7 +4,6 @@ import { useAppStore } from "@/store/appStore";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
 import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
 import {
-  sessionReadFile,
   sessionWriteFile,
   sessionDeleteFile,
   sessionRenameFile,
@@ -12,7 +11,6 @@ import {
   sessionSetPermissions,
   sessionSetOwner,
   sessionCreateSymlink,
-  sessionDownload,
   sessionVscodeOpenRemote,
   sessionHasExecCapability,
   sessionSupportsTransferQueue,
@@ -20,10 +18,10 @@ import {
 import { FileEntry } from "@/types/connection";
 import { frontendLog } from "@/utils/frontendLog";
 import {
+  baseName,
   runBlockingTransfer,
   runMaybeTrackedTransfer,
   runTransfer,
-  seedTransferQueueRow,
   pickPathOrReport,
 } from "./transferFeedback";
 import { errorMessage } from "@/utils/errorMessage";
@@ -32,9 +30,38 @@ import {
   pasteFileLeg,
   pasteFolderRecorded,
   probeRemoteCopy,
-  startSessionUpload,
   type PasteTransport,
 } from "./sessionFolderPaste";
+import { downloadToLocal, uploadLocalFile } from "@/services/paneTransfer";
+
+/** Toast wording for one Upload / Download button leg. */
+const LEG_LABELS = {
+  Download: { pending: "Downloading", done: "Downloaded" },
+  Upload: { pending: "Uploading", done: "Uploaded" },
+} as const;
+
+/**
+ * Run one Upload / Download leg of the shared pane transfer engine (#3913)
+ * with the feedback its transport needs. A queued leg defers its success toast
+ * to the transfer-progress event path (`runTransfer`); a byte-based leg emits
+ * no event, so it owns its loading → success / error toast (UX-017, #2906).
+ * Resolves to whether the leg succeeded.
+ */
+function runButtonLeg(
+  queued: boolean,
+  verb: keyof typeof LEG_LABELS,
+  fileName: string,
+  leg: () => Promise<unknown>
+): Promise<boolean> {
+  const labels = LEG_LABELS[verb];
+  const loading = `${labels.pending} ${fileName}…`;
+  if (queued) return runTransfer(verb, leg, { loading });
+  return runBlockingTransfer(leg, {
+    loading,
+    success: `${labels.done} ${fileName}`,
+    errorLabel: `${verb} "${fileName}"`,
+  });
+}
 
 /**
  * Hook for session-based file system operations.
@@ -154,18 +181,6 @@ export function useSessionFileSystem() {
     };
   }, [sessionFileBrowserId]);
 
-  // Dedicated-channel transfer wrappers that seed a Transfer Queue row from the
-  // id the start command returns (#1632), mirroring the SFTP hook. Only used on
-  // the SFTP-backed path; the byte-based fallback has no transfer id to seed.
-  const startDownload = useCallback(
-    (sessionId: string, remotePath: string, localPath: string) =>
-      sessionDownload(sessionId, remotePath, localPath, (transferId) =>
-        seedTransferQueueRow({ transferId, sessionId, direction: "download", remotePath })
-      ),
-    []
-  );
-  const startUpload = startSessionUpload;
-
   const navigateTo = useCallback(
     (path: string) => {
       if (!sessionFileBrowserId) return;
@@ -185,6 +200,10 @@ export function useSessionFileSystem() {
 
   const dismissError = useCallback(() => clearFileBrowserError("session"), [clearFileBrowserError]);
 
+  // The Upload / Download buttons and the OS-drop upload copy through the
+  // shared pane transfer engine (#3913): a queued transfer with a seeded
+  // Transfer Queue row on a queue-capable session (SFTP / FTP / Docker —
+  // progress, pause, cancel, retry), a byte round-trip on an agent session.
   const downloadFile = useCallback(
     async (remotePath: string, fileName: string) => {
       if (!sessionFileBrowserId) return;
@@ -192,33 +211,26 @@ export function useSessionFileSystem() {
         save({ title: "Save file as...", defaultPath: fileName })
       );
       if (!localPath) return;
-      if (transferQueueCapable) {
-        // Queue-capable (SFTP/FTP/Docker): register a tracked transfer on the rich queue
-        // engine — progress/ETA/pause/resume/retry (#2421, PROD-010).
-        await runTransfer(
-          "Download",
-          () => startDownload(sessionFileBrowserId, remotePath, localPath),
-          { loading: `Downloading ${fileName}…` }
-        );
-        return;
-      }
-      // Byte-based fallback (remote-agent): blocking round-trip
-      // with no transfer-progress event, so surface its own feedback (UX-017)
-      // rather than resolving silently.
-      await runBlockingTransfer(
-        async () => {
-          const data = await sessionReadFile(sessionFileBrowserId, remotePath);
-          const { writeFile } = await import("@tauri-apps/plugin-fs");
-          await writeFile(localPath, data);
-        },
-        {
-          loading: `Downloading ${fileName}…`,
-          success: `Downloaded ${fileName}`,
-          errorLabel: `Download "${fileName}"`,
-        }
+      const remote = { sessionId: sessionFileBrowserId, queueCapable: transferQueueCapable };
+      await runButtonLeg(transferQueueCapable, "Download", fileName, () =>
+        downloadToLocal(remote, remotePath, localPath)
       );
     },
-    [sessionFileBrowserId, transferQueueCapable, startDownload]
+    [sessionFileBrowserId, transferQueueCapable]
+  );
+
+  const uploadFileFromPath = useCallback(
+    async (localPath: string) => {
+      if (!sessionFileBrowserId) return;
+      const fileName = baseName(localPath) || "upload";
+      const remotePath = joinDirPath(sessionCurrentPath, fileName);
+      const remote = { sessionId: sessionFileBrowserId, queueCapable: transferQueueCapable };
+      const ok = await runButtonLeg(transferQueueCapable, "Upload", fileName, () =>
+        uploadLocalFile(remote, localPath, remotePath)
+      );
+      if (ok) refreshSession();
+    },
+    [sessionFileBrowserId, sessionCurrentPath, refreshSession, transferQueueCapable]
   );
 
   const uploadFile = useCallback(async () => {
@@ -228,75 +240,8 @@ export function useSessionFileSystem() {
       return open({ title: "Select file to upload", multiple: false });
     });
     if (!localPath) return;
-    const fileName = localPath.split("/").pop() ?? localPath.split("\\").pop() ?? "upload";
-    const remotePath =
-      sessionCurrentPath === "/" ? `/${fileName}` : `${sessionCurrentPath}/${fileName}`;
-    if (transferQueueCapable) {
-      // Queue-capable (SFTP/FTP/Docker): register a tracked transfer on the rich queue
-      // engine — progress/ETA/pause/resume/retry (#2421, PROD-010).
-      const ok = await runTransfer(
-        "Upload",
-        () => startUpload(sessionFileBrowserId, localPath, remotePath),
-        { loading: `Uploading ${fileName}…` }
-      );
-      if (ok) refreshSession();
-      return;
-    }
-    // Byte-based fallback (remote-agent): blocking round-trip
-    // with no transfer-progress event, so surface its own feedback (#2906)
-    // rather than resolving silently.
-    const ok = await runBlockingTransfer(
-      async () => {
-        const { readFile } = await import("@tauri-apps/plugin-fs");
-        const data = await readFile(localPath);
-        await sessionWriteFile(sessionFileBrowserId, remotePath, data);
-      },
-      {
-        loading: `Uploading ${fileName}…`,
-        success: `Uploaded ${fileName}`,
-        errorLabel: `Upload "${fileName}"`,
-      }
-    );
-    if (ok) refreshSession();
-  }, [sessionFileBrowserId, sessionCurrentPath, refreshSession, transferQueueCapable, startUpload]);
-
-  const uploadFileFromPath = useCallback(
-    async (localPath: string) => {
-      if (!sessionFileBrowserId) return;
-      const parts = localPath.replace(/\\/g, "/").split("/");
-      const fileName = parts[parts.length - 1] || "upload";
-      const remotePath =
-        sessionCurrentPath === "/" ? `/${fileName}` : `${sessionCurrentPath}/${fileName}`;
-      if (transferQueueCapable) {
-        // Queue-capable (SFTP/FTP/Docker): register a tracked transfer on the rich queue
-        // engine — progress/ETA/pause/resume/retry (#2421, PROD-010).
-        const ok = await runTransfer(
-          "Upload",
-          () => startUpload(sessionFileBrowserId, localPath, remotePath),
-          { loading: `Uploading ${fileName}…` }
-        );
-        if (ok) refreshSession();
-        return;
-      }
-      // Byte-based fallback (remote-agent): blocking round-trip
-      // with no transfer-progress event, so surface its own feedback (#2906)
-      // rather than resolving silently.
-      const ok = await runBlockingTransfer(
-        async () => {
-          const { readFile } = await import("@tauri-apps/plugin-fs");
-          const data = await readFile(localPath);
-          await sessionWriteFile(sessionFileBrowserId, remotePath, data);
-        },
-        {
-          loading: `Uploading ${fileName}…`,
-          success: `Uploaded ${fileName}`,
-          errorLabel: `Upload "${fileName}"`,
-        }
-      );
-      if (ok) refreshSession();
-    },
-    [sessionFileBrowserId, sessionCurrentPath, refreshSession, transferQueueCapable, startUpload]
-  );
+    await uploadFileFromPath(localPath);
+  }, [sessionFileBrowserId, uploadFileFromPath]);
 
   const createDirectory = useCallback(
     async (name: string) => {

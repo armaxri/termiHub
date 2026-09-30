@@ -6,7 +6,6 @@ import {
   dragOutDiscardStaging,
   dragOutStageSession,
   dragOutStart,
-  sessionDownload,
   sessionListFiles,
 } from "@/services/api";
 import type { FileEntry } from "@/types/connection";
@@ -26,7 +25,7 @@ import {
 } from "@/utils/fileDragOut";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
-import { seedTransferQueueRow } from "./transferFeedback";
+import { startQueuedDownload } from "@/services/paneTransfer";
 
 /** Discard staged copies whose reuse window has lapsed (best-effort). */
 function discardExpiredStaging(): void {
@@ -95,10 +94,9 @@ async function stageRemote(sessionId: string, entries: FileEntry[]): Promise<str
     const tree = await buildStagingTree(entries, (path) => sessionListFiles(sessionId, path));
     const staging = await dragOutCreateStaging(tree.staging);
     dir = staging.dir;
+    // Each file is a queued leg of the shared pane transfer engine (#3913).
     await runBounded(tree.downloads, DRAG_OUT_DOWNLOAD_CONCURRENCY, ({ index, remotePath }) =>
-      sessionDownload(sessionId, remotePath, staging.paths[index], (transferId) =>
-        seedTransferQueueRow({ transferId, sessionId, direction: "download", remotePath })
-      )
+      startQueuedDownload(sessionId, remotePath, staging.paths[index])
     );
     const roots = tree.roots.map((i) => staging.paths[i]);
     rememberStaging(sessionId, entries, staging.dir, roots);
