@@ -116,4 +116,28 @@ describe("remoteAgentConfig conversions (#3162)", () => {
     };
     expect(toRemoteAgentConfig(remoteAgentConfigToRecord(config))).toEqual(config);
   });
+  // #3377: an agent host behind a 2FA bastion can pick keyboard-interactive.
+  it("keeps every supported auth method, including keyboard-interactive", () => {
+    for (const authMethod of ["password", "key", "agent", "keyboard-interactive"] as const) {
+      const config = toRemoteAgentConfig({ host: "h", port: 22, username: "u", authMethod });
+      expect(config.authMethod).toBe(authMethod);
+    }
+  });
+
+  it("round-trips a keyboard-interactive DTO without inventing a password", () => {
+    const config: RemoteAgentConfig = {
+      host: "bastion.example.com",
+      port: 22,
+      username: "ops",
+      authMethod: "keyboard-interactive",
+    };
+    const record = remoteAgentConfigToRecord(config);
+    expect(record).toEqual({
+      host: "bastion.example.com",
+      port: 22,
+      username: "ops",
+      authMethod: "keyboard-interactive",
+    });
+    expect(toRemoteAgentConfig(record)).toEqual(config);
+  });
 });

@@ -754,6 +754,37 @@ mod tests {
         assert_eq!(deserialized.agent_settings.log_level, "info");
     }
 
+    /// #3377: an agent host saved with keyboard-interactive auth persists the
+    /// method verbatim and hands it to the SSH connect, which then answers the
+    /// server's OTP / 2FA rounds through the in-app prompt.
+    #[test]
+    fn saved_remote_agent_keyboard_interactive_round_trips() {
+        use termihub_core::backends::ssh::keyboard_interactive::AUTH_METHOD_KEYBOARD_INTERACTIVE;
+
+        let json = r#"{
+            "id": "agent-ki",
+            "name": "Bastion",
+            "config": {
+                "host": "bastion.example.com",
+                "port": 22,
+                "username": "ops",
+                "authMethod": "keyboard-interactive"
+            }
+        }"#;
+        let agent: SavedRemoteAgent = serde_json::from_str(json).unwrap();
+        assert_eq!(agent.config.auth_method, AUTH_METHOD_KEYBOARD_INTERACTIVE);
+        assert!(agent.extra.is_empty());
+
+        let saved = serde_json::to_value(&agent).unwrap();
+        assert_eq!(saved["config"]["authMethod"], "keyboard-interactive");
+        assert!(saved["config"].get("password").is_none());
+
+        let reloaded: SavedRemoteAgent = serde_json::from_value(saved).unwrap();
+        let ssh = reloaded.config.to_ssh_config();
+        assert_eq!(ssh.auth_method, AUTH_METHOD_KEYBOARD_INTERACTIVE);
+        assert!(ssh.password.is_none());
+    }
+
     #[test]
     fn saved_remote_agent_backward_compat_missing_agent_settings() {
         // Existing JSON without agentSettings should deserialize with defaults
