@@ -14,6 +14,7 @@ import {
   sessionVscodeOpenRemote,
   sessionHasExecCapability,
   sessionSupportsTransferQueue,
+  localStat,
 } from "@/services/api";
 import { FileEntry } from "@/types/connection";
 import { frontendLog } from "@/utils/frontendLog";
@@ -258,15 +259,36 @@ export function useSessionFileSystem() {
     [sessionFileBrowserId, transferQueueCapable, downloadFolder]
   );
 
+  // A dropped local folder (#3966) is copied into the current folder by the
+  // same engine, one queued or byte leg per file, instead of a single-file
+  // `session_upload` of the folder path. If the local stat fails, the path
+  // takes the single-file upload, and the backend guard refuses a folder
+  // there with a clear error (#3944).
   const uploadFileFromPath = useCallback(
     async (localPath: string) => {
       if (!sessionFileBrowserId) return;
       const fileName = baseName(localPath) || "upload";
-      const remotePath = joinDirPath(sessionCurrentPath, fileName);
       const remote = { sessionId: sessionFileBrowserId, queueCapable: transferQueueCapable };
-      const ok = await runButtonLeg(transferQueueCapable, "Upload", fileName, () =>
-        uploadLocalFile(remote, localPath, remotePath)
-      );
+      let entry: FileEntry | null = null;
+      try {
+        entry = await localStat(localPath);
+      } catch {
+        // Unknown kind: take the single-file upload (see above).
+      }
+      let ok: boolean;
+      if (entry?.isDirectory) {
+        const folder: FileEntry = { ...entry, name: fileName, path: localPath };
+        ok = await runMaybeTrackedTransfer(
+          `Upload "${fileName}"`,
+          () => copyPaneEntry("local", folder, sessionCurrentPath, remote),
+          { loading: `Uploading ${fileName}…`, success: `Uploaded ${fileName}` }
+        );
+      } else {
+        const remotePath = joinDirPath(sessionCurrentPath, fileName);
+        ok = await runButtonLeg(transferQueueCapable, "Upload", fileName, () =>
+          uploadLocalFile(remote, localPath, remotePath)
+        );
+      }
       if (ok) refreshSession();
     },
     [sessionFileBrowserId, sessionCurrentPath, refreshSession, transferQueueCapable]
