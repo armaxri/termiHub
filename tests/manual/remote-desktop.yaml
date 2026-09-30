@@ -1,0 +1,177 @@
+category: remote-desktop
+display_name: "Remote Desktop"
+
+# Only the parts a fixture cannot reach stay here: a real Windows RDP host, real displays, audio, and OS clipboards / file managers.
+# Folded in from the per-feature walkthroughs in docs/testing.md (#3695).
+
+tests:
+  - id: MT-RD-01
+    release_gate: true
+    manual_reason: "real Windows RDP host (NLA/domain) has no fixture"
+    name: "RDP to a real Windows host (NLA + domain account)"
+    pr: 1747
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create an RDP connection to a Windows host with a domain account, Security Auto"
+      - "Connect, move the mouse and type"
+      - "Reconnect with a wrong password"
+    expected:
+      - "Desktop paints and input tracks"
+      - "Wrong password shows an authentication error"
+    verification: manual
+    tags: [hardware]
+
+  - id: MT-RD-02
+    release_gate: true
+    manual_reason: "needs real multiple displays and a Windows RDP host"
+    name: "RDP spans real local displays on a Windows host"
+    pr: 3696
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "With two local displays, set Monitors to All local displays; connect to a Windows host"
+      - "Cycle the viewport button and click on each monitor"
+      - "Unplug one display and refocus termiHub"
+      - "Set Custom count 3 and reconnect"
+    expected:
+      - "Windows Display settings lists monitors matching the local arrangement"
+      - "Clicks land on the right remote monitor"
+      - "Unplug re-lays to one monitor; custom count gives three"
+    verification: manual
+    tags: [hardware]
+
+  - id: MT-RD-03
+    release_gate: true
+    manual_reason: "real Windows RDP host Explorer has no fixture"
+    name: "Redirected drive appears in Windows Explorer"
+    pr: 1757
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Enable Redirect a Local Drive with a shared folder; connect to a Windows host"
+      - "Open File Explorer, browse the drive, create, edit and delete a file"
+    expected:
+      - "'<Drive Name> on termiHub' is listed under This PC"
+      - "Changes show up in the local folder; nothing above it is reachable"
+    verification: manual
+    tags: [hardware]
+
+  - id: MT-RD-04
+    release_gate: true
+    manual_reason: "audible playback needs a real audio device and ears"
+    name: "RDP remote audio plays on local speakers"
+    pr: 1764
+    platforms: [macos, windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Enable Redirect Audio Output; connect to a Windows host"
+      - "Play a sound in the remote session and change the remote volume"
+      - "Reconnect with the option off"
+    expected:
+      - "Audio is heard locally, roughly in sync; volume tracks"
+      - "With the option off, no audio plays"
+    verification: manual
+    tags: [hardware]
+
+  - id: MT-RD-05
+    release_gate: true
+    manual_reason: "real Windows host Explorer clipboard has no fixture"
+    name: "Clipboard files move both ways with a Windows host"
+    pr: 1765
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Enable Redirect a Local Drive and Receive Clipboard Files; put a file in the shared folder; connect to a Windows host"
+      - "Copy files in remote Explorer"
+      - "Paste into a remote folder"
+    expected:
+      - "Remote-copied files appear in the local shared folder"
+      - "The pre-placed local file pastes intact on the remote"
+    verification: manual
+    tags: [hardware]
+
+  - id: MT-RD-06
+    release_gate: true
+    manual_reason: "OS clipboard of another app + Windows/RealVNC host without fixture"
+    name: "Remote-desktop image clipboard with local image apps"
+    pr: 3469
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Connect to a Windows RDP host; copy a picture in remote Paint"
+      - "In the Clipboard panel click Copy image; paste into a local image app"
+      - "Copy a local screenshot, click Send local image, paste in remote Paint"
+      - "Repeat on a VNC server offering dib (e.g. RealVNC)"
+    expected:
+      - "Picture pastes into the local app"
+      - "Picture pastes into remote Paint"
+      - "VNC with dib shows the Image section and behaves the same"
+    verification: manual
+    tags: [os-native, hardware]
+
+  - id: MT-RD-07
+    release_gate: true
+    manual_reason: "NSPasteboard promise fulfilled by a Finder paste"
+    name: "Remote files paste into Finder via delayed render"
+    pr: 1804
+    platforms: [macos]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Enable shared folder + Receive Clipboard Files; connect to a Windows host"
+      - "Copy files in remote Explorer"
+      - "Clipboard panel: click Copy to clipboard"
+      - "Cmd+V into a Finder folder"
+    expected:
+      - "Files do not appear in the shared folder on copy"
+      - "Toast says N file(s) ready"
+      - "Files appear in Finder with intact contents"
+    verification: manual
+    tags: [os-native]
+
+  - id: MT-RD-08
+    release_gate: true
+    manual_reason: "WM_RENDERFORMAT served by a real Explorer paste"
+    name: "Remote files paste into Explorer via delayed render"
+    pr: 1814
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Enable shared folder + Receive Clipboard Files; connect to a Windows host"
+      - "Copy files in remote Explorer"
+      - "Clipboard panel: click Copy to clipboard"
+      - "Ctrl+V into a local Explorer folder"
+    expected:
+      - "Files do not appear in the shared folder on copy"
+      - "Toast says N file(s) ready"
+      - "Files appear in Explorer with intact contents"
+    verification: manual
+    tags: [os-native]
+
+  - id: MT-RD-09
+    release_gate: true
+    manual_reason: "real file manager paste on a live X11/Wayland desktop"
+    name: "Remote files paste into Linux file managers (X11 + Wayland)"
+    pr: 1815
+    platforms: [linux]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Enable shared folder + Receive Clipboard Files; connect to a Windows host"
+      - "Copy files incl. 'na\u00efve report.txt' in remote Explorer; click Copy to clipboard"
+      - "Ctrl+V into Nautilus on an X11 session"
+      - "Repeat on a pure Wayland session (GNOME or sway)"
+    expected:
+      - "Files do not appear in the shared folder on copy"
+      - "Files paste with intact contents and exact names on X11"
+      - "Files paste the same way on Wayland"
+    verification: manual
+    tags: [os-native]

@@ -397,18 +397,23 @@ python scripts/test-manual.py --inventory
 
 | Category (`--category`)   | Display name          | Platforms      | Release-gating | Pending automation |  Total |
 | ------------------------- | --------------------- | -------------- | -------------: | -----------------: | -----: |
-| `connection-management`   | Connection Management | all            |              0 |                  4 |      4 |
-| `credential-store`        | Credential Store      | all            |              3 |                  0 |      3 |
-| `local-shell`             | Local Shell           | macos, windows |              2 |                  0 |      2 |
+| `app`                     | App                   | all            |              4 |                  0 |      4 |
+| `connection-management`   | Connection Management | all            |              0 |                  1 |      1 |
+| `credential-store`        | Credential Store      | all            |              8 |                  0 |      8 |
+| `editor`                  | Editor                | all            |              1 |                  0 |      1 |
+| `file-browser`            | File Browser          | all            |              2 |                  0 |      2 |
+| `local-shell`             | Local Shell           | macos, windows |              4 |                  0 |      4 |
 | `multi-window`            | Multi-Window          | macos          |              2 |                  0 |      2 |
-| `native-input`            | Native Input          | all            |             19 |                  0 |     19 |
+| `native-input`            | Native Input          | all            |             21 |                  0 |     21 |
 | `network-tools`           | network-tools         | all            |              2 |                  2 |      4 |
 | `portable-mode`           | Portable Mode         | all            |              0 |                  2 |      2 |
 | `remote-agent`            | Remote Agent          | all            |              0 |                 15 |     15 |
+| `remote-desktop`          | Remote Desktop        | all            |              9 |                  0 |      9 |
 | `serial`                  | Serial                | windows        |              1 |                  0 |      1 |
-| `ssh`                     | SSH                   | all            |              1 |                  1 |      2 |
-| `ui-layout`               | UI / Layout           | all            |              2 |                  0 |      2 |
-| **Total (11 categories)** |                       |                |         **32** |             **24** | **56** |
+| `shell-integration`       | Shell Integration     | all            |              6 |                  0 |      6 |
+| `ssh`                     | SSH                   | all            |              4 |                  1 |      5 |
+| `ui-layout`               | UI / Layout           | all            |              8 |                  0 |      8 |
+| **Total (16 categories)** |                       |                |         **72** |             **21** | **93** |
 
 <!-- manual-inventory:end -->
 

@@ -161,8 +161,10 @@ tower-http = { version = "0.5", features = ["fs"], optional = true }
 # error plumbing (`Context`, `anyhow!`); gated behind `embedded-servers` so the
 # rest of core keeps its `thiserror`-only error surface.
 anyhow = { version = "1", optional = true }
-libunftp = { version = "0.20", optional = true }
-unftp-sbe-fs = { version = "0.2", optional = true }
+libunftp = { version = "0.23", optional = true }
+# The auth/storage traits `libunftp` builds on moved into `unftp-core` in 0.23.
+unftp-core = { version = "0.1", optional = true }
+unftp-sbe-fs = { version = "0.4", optional = true }
 chrono = { version = "0.4", features = ["serde"], optional = true }
 # Ed25519 plugin package signing / verification (#2036). Mature, misuse-resistant
 # Ed25519 implementation (library-first over hand-rolled curve code). The
@@ -308,6 +310,7 @@ embedded-servers = [
     "dep:axum",
     "dep:tower-http",
     "dep:libunftp",
+    "dep:unftp-core",
     "dep:unftp-sbe-fs",
     "dep:chrono",
     "dep:tracing",

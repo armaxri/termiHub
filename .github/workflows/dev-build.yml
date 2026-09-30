@@ -442,11 +442,13 @@ jobs:
       - name: Sign agent binaries
         env:
           AGENT_UPDATE_SIGNING_KEY: ${{ secrets.AGENT_UPDATE_SIGNING_KEY }}
+          AGENT_UPDATE_SIGNING_KEY_NEXT: ${{ secrets.AGENT_UPDATE_SIGNING_KEY_NEXT }}
         run: |
           set -euo pipefail
           HELPER="$GITHUB_WORKSPACE/scripts/internal/agent-update-signing.sh"
-          if [ -z "${AGENT_UPDATE_SIGNING_KEY}" ] || ! "$HELPER" check-key; then
-            echo "::warning title=Unsigned dev agents::Agent update signing is not configured (placeholder key or missing AGENT_UPDATE_SIGNING_KEY secret); dev agent binaries are published unsigned."
+          if ! "$HELPER" check-key || ! "$HELPER" select-key \
+            AGENT_UPDATE_SIGNING_KEY AGENT_UPDATE_SIGNING_KEY_NEXT; then
+            echo "::warning title=Unsigned dev agents::Agent update signing is not configured (placeholder key, or no AGENT_UPDATE_SIGNING_KEY / _NEXT secret matching the first trusted key); dev agent binaries are published unsigned."
             exit 0
           fi
           mapfile -t agents < <(find artifacts/ -maxdepth 1 -type f -name 'termihub-agent-*' \
@@ -457,8 +459,8 @@ jobs:
           fi
           umask 077
           key="$RUNNER_TEMP/agent-update-signing-key.pem"
-          printf '%s\n' "$AGENT_UPDATE_SIGNING_KEY" > "$key"
           trap 'shred -u "$key" 2>/dev/null || rm -f "$key"' EXIT
+          "$HELPER" select-key --out "$key" AGENT_UPDATE_SIGNING_KEY AGENT_UPDATE_SIGNING_KEY_NEXT
           "$HELPER" sign --key "$key" "${agents[@]}"
 
       # Guard against silently publishing an INCOMPLETE dev build (finding CI-021).

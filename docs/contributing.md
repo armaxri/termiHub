@@ -1567,7 +1567,8 @@ Windows fallback, and the coordinated push — only when that signature verifies
 ([#3330](https://github.com/armaxri/termiHub/issues/3330)). The public half is compiled into
 the agent and the desktop (via `termihub-core`) from
 [`agent/keys/update-signing.pub.pem`](../agent/keys/update-signing.pub.pem); the private
-half exists **only** as the `AGENT_UPDATE_SIGNING_KEY` GitHub Actions secret.
+half exists **only** as a GitHub Actions secret (`AGENT_UPDATE_SIGNING_KEY`, or
+`AGENT_UPDATE_SIGNING_KEY_NEXT` after a [rotation](#agent-update-signing-key)).
 
 ```mermaid
 flowchart LR
@@ -1618,16 +1619,73 @@ via `gh secret set AGENT_UPDATE_SIGNING_KEY` (stdin, never echoed, shredded loca
 self-tests the pair. Then commit the `.pub.pem` through a normal PR into `develop`. There is
 deliberately no backup of the private key.
 
-**Rotation:** agents only trust the keys compiled into them, so a planned rotation needs an
-overlap. The agent already trusts **every** `PUBLIC KEY` block in `update-signing.pub.pem`,
-so the principle is: (1) add the new public key next to the old one and keep signing with
-the old private key; (2) ship at least one release carrying both keys and let agents update
-to it; (3) switch the secret to the new private key and drop the old block. The setup script
-does not yet automate step (1)–(3) (it discards the private key it does not upload) — that
-tooling is tracked in [#3329](https://github.com/armaxri/termiHub/issues/3329). Until then, plan a rotation with the maintainer
-rather than re-running the script.
+**Rotation (planned, overlap — [#3329](https://github.com/armaxri/termiHub/issues/3329)):**
+agents only trust the keys compiled into them, but they trust **every** `PUBLIC KEY` block
+in `update-signing.pub.pem`. Release CI reads two secret slots, `AGENT_UPDATE_SIGNING_KEY`
+and `AGENT_UPDATE_SIGNING_KEY_NEXT`, and signs with whichever holds the private half of the
+**first** block (`agent-update-signing.sh select-key`, logged as `Selected signing key: …`).
+So a rotation is: append the new key, ship it, then drop the old block — the private key is
+never copied out of GitHub, and the release fails before building if neither slot matches.
 
-**Compromise:** replace the secret and the public key immediately (`--force`). Agents that
+```mermaid
+sequenceDiagram
+    participant M as Maintainer
+    participant R as Repo key file
+    participant S as Secret slots
+    participant CI as release.yml
+    M->>R: --rotate appends new key (old stays first)
+    M->>S: --rotate stages new private key in the free slot
+    CI->>CI: overlap release: signs with OLD key, ships both keys
+    M->>R: --switch-over drops the old block
+    CI->>CI: next release: signs with the staged key
+    M->>S: gh secret delete the retired slot
+```
+
+1. **Stage the next key** (generates it, appends its public block, stores the private key
+   in the free slot — `AGENT_UPDATE_SIGNING_KEY_NEXT` the first time):
+
+   ```bash
+   ./scripts/internal/setup-agent-signing-key.sh --rotate --dry-run   # trial on a temp copy
+   ./scripts/internal/setup-agent-signing-key.sh --rotate
+   git checkout -b build/agent-signing-key-rotation origin/develop
+   git add agent/keys/update-signing.pub.pem
+   git commit -m 'build(agent): add the next agent update signing public key'
+   ```
+
+   Open a PR into `develop`. CI keeps signing with the current key.
+
+2. **Ship the overlap:** release at least one version carrying both keys, and give deployed
+   agents time to update to it. An agent that never runs a two-key build refuses updates
+   signed by the new key after step 3 and has to be redeployed from a desktop (as in the
+   compromise case below).
+3. **Switch over** (drops the first, old block; touches no secret):
+
+   ```bash
+   ./scripts/internal/setup-agent-signing-key.sh --switch-over --dry-run   # trial
+   ./scripts/internal/setup-agent-signing-key.sh --switch-over
+   git checkout -b build/agent-signing-key-switch-over origin/develop
+   git add agent/keys/update-signing.pub.pem
+   git commit -m 'build(agent): switch agent update signing to the rotated key'
+   ```
+
+   From the first release built after this PR lands, CI signs with the staged slot.
+
+4. **Retire the old private key** once that release is published (the script prints the slot
+   name; the release log warns about a secret that matches no trusted key):
+
+   ```bash
+   gh secret delete AGENT_UPDATE_SIGNING_KEY --repo armaxri/termiHub   # the retired slot
+   ```
+
+   The next rotation then stages into the freed slot, so the two slots alternate.
+
+`--rotate` refuses while a rotation is already in progress (two keys in the file), and
+`--switch-over` refuses unless exactly two keys are present. The `Shell Script Quality` CI
+job runs the whole cycle in `--dry-run` with throwaway keys
+(`scripts/internal/check-script-headless.sh`).
+
+**Compromise:** replace the secret and the public key immediately (`--force`), then delete the
+other slot (`gh secret delete AGENT_UPDATE_SIGNING_KEY_NEXT`) if it holds a key. Agents that
 still embed only the leaked key can no longer be updated automatically — redeploy them from
 a desktop built with the new key (the immediate-deploy path installs over SSH and does not
 depend on the old agent's check; the desktop verifies against its own compiled-in key).

@@ -2,41 +2,10 @@ category: connection-management
 display_name: "Connection Management"
 
 tests:
-  - id: MT-CONN-24
-    automation_issue: 3689
-    name: "Drag external connections into local folders"
-    pr: 210
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Drag external connections into local folders in the sidebar"
-    expected:
-      - "Folder assignment persists correctly"
-    verification: manual
-
-  # --- Multi-select delete (bugfix/multi-connection-delete) ---
-
-  - id: MT-CONN-33
-    automation_issue: 3689
-    name: "Delete multiple selected connections"
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Create at least three connections in the sidebar"
-      - "Click the first connection to select it"
-      - "Ctrl+Click (or Cmd+Click on macOS) to add two more to the selection"
-      - "Right-click one of the selected connections and choose Delete"
-    expected:
-      - "All selected connections are removed from the sidebar immediately"
-      - "Unselected connections remain untouched"
-    verification: manual
-
   # --- Cross-instance connection sync (bugfix/multi-connection-delete) ---
 
   - id: MT-CONN-34
-    automation_issue: 3689
+    automation_issue: 4000
     name: "Connection changes sync across parallel instances"
     platforms: [all]
     prerequisites:
@@ -51,20 +20,4 @@ tests:
       - "The new connection appears in instance B's sidebar within ~1 second"
       - "The deleted connection disappears from instance B's sidebar within ~1 second"
       - "No manual window-focus switch is required to trigger the update"
-    verification: manual
-
-  # --- Drag connection out of folder (#394) ---
-
-  - id: MT-CONN-32
-    automation_issue: 3689
-    name: "Drag connection out of folder to root"
-    pr: 394
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Create a folder and drag a connection into it"
-      - "Expand the folder and drag the connection out to the empty root area below all folders"
-    expected:
-      - "Connection moves out of the folder back to the root level"
     verification: manual
