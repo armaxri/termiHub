@@ -369,4 +369,123 @@ mod tests {
         assert!(reloaded.warnings.is_empty());
         assert_eq!(reloaded.data.servers.len(), 1);
     }
+
+    // ── Schema versioning + downgrade safety (#3946, part of #2744) ────────
+
+    fn server_json(id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "name": id,
+            "serverType": "http",
+            "rootDirectory": "/tmp/docs",
+            "bindHost": "127.0.0.1",
+            "port": 8080,
+        })
+    }
+
+    /// A file written by a newer schema must never be overwritten — by either
+    /// save path — and loading it leaves it untouched.
+    #[test]
+    fn newer_file_is_left_intact_and_never_overwritten() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let newer = serde_json::json!({
+            "version": "99",
+            "servers": [server_json("future")],
+            "fromTheFuture": true,
+        })
+        .to_string();
+        fs::write(&storage.file_path, &newer).unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(loaded.data.servers.is_empty());
+        assert_eq!(loaded.warnings.len(), 1);
+        assert!(loaded.warnings[0].message.contains("newer version"));
+        assert!(!storage.file_path.with_extension("json.bak").exists());
+
+        assert!(storage.save(&loaded.data).is_err(), "save must refuse");
+        assert!(
+            storage.save_verbatim(&loaded.data).is_err(),
+            "save_verbatim must refuse"
+        );
+        assert_eq!(fs::read_to_string(&storage.file_path).unwrap(), newer);
+    }
+
+    /// A newer file whose shape this build cannot even parse is not treated as
+    /// corruption: no backup, no reset.
+    #[test]
+    fn newer_unparseable_shape_is_not_reset_as_corrupt() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let newer = r#"{"version": "99", "servers": {"a": "new shape"}}"#;
+        fs::write(&storage.file_path, newer).unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap();
+        assert_eq!(loaded.warnings.len(), 1);
+        assert!(loaded.warnings[0].message.contains("newer version"));
+        assert_eq!(fs::read_to_string(&storage.file_path).unwrap(), newer);
+        assert!(!storage.file_path.with_extension("json.bak").exists());
+    }
+
+    /// A pre-versioning file has no `version`; it is legacy v1 and must load
+    /// intact rather than being reset as corrupt.
+    #[test]
+    fn unversioned_file_loads_as_legacy_v1() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let raw = serde_json::json!({"servers": [server_json("a"), server_json("b")]});
+        fs::write(&storage.file_path, raw.to_string()).unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(loaded.data.servers.len(), 2);
+        assert_eq!(
+            loaded.data.version,
+            EmbeddedServerStore::LEGACY_PLAINTEXT_VERSION.to_string()
+        );
+        assert!(!storage.file_path.with_extension("json.bak").exists());
+    }
+
+    /// Top-level fields this build does not know survive a load/save round trip.
+    #[test]
+    fn unknown_top_level_fields_are_preserved() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let raw = serde_json::json!({
+            "version": EmbeddedServerStore::CURRENT_VERSION.to_string(),
+            "servers": [server_json("a")],
+            "futureSetting": {"nested": [1, 2]},
+        });
+        fs::write(&storage.file_path, raw.to_string()).unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap();
+        storage.save(&loaded.data).unwrap();
+
+        let saved: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&storage.file_path).unwrap()).unwrap();
+        assert_eq!(
+            saved["futureSetting"],
+            serde_json::json!({"nested": [1, 2]})
+        );
+        assert_eq!(saved["servers"].as_array().unwrap().len(), 1);
+    }
+
+    /// Salvage keeps the unknown top-level fields too, not just the good entries.
+    #[test]
+    fn salvage_preserves_unknown_top_level_fields() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let raw = serde_json::json!({
+            "version": EmbeddedServerStore::CURRENT_VERSION.to_string(),
+            "servers": [server_json("a"), {"id": "broken"}],
+            "futureSetting": true,
+        });
+        fs::write(&storage.file_path, raw.to_string()).unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap();
+        assert_eq!(loaded.data.servers.len(), 1);
+        let saved: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&storage.file_path).unwrap()).unwrap();
+        assert_eq!(saved["futureSetting"], true);
+    }
 }
