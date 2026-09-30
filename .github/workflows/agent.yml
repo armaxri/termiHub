@@ -196,10 +196,32 @@ jobs:
           CI_RUST_TESTS_SPLIT_SERIAL: '1'
         run: ./scripts/internal/ci-rust-tests.sh heavy -p termihub-agent -p termihub-core
 
-      - name: Build
+      # Build through the shipped Windows build script (MT-AGENT-15, #3685), so
+      # a regression in `build-agents.cmd --native` (native MSVC cargo build, the
+      # .sha256 sidecar, the summary) fails here instead of on a user's box.
+      # `--targets` pins the matrix target: the script's default also tries the
+      # best-effort ARM64 build, which is not this leg's job.
+      - name: Build (scripts\build-agents.cmd --native)
+        shell: pwsh
         env:
           TERMIHUB_BUILD_BRANCH: ${{ github.head_ref || github.ref_name }}
-        run: cargo build --release --target ${{ matrix.target }} -p termihub-agent
+          TARGET: ${{ matrix.target }}
+        run: |
+          & .\scripts\build-agents.cmd --native --targets $env:TARGET | Tee-Object -FilePath agent-build.log
+          $rc = $LASTEXITCODE
+          if ($rc -ne 0) { Write-Error "build-agents.cmd --native exited $rc"; exit 1 }
+          $exe = "target/$env:TARGET/release/termihub-agent.exe"
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+            Write-Error "expected agent binary not found: $exe"; exit 1
+          }
+          if (-not (Test-Path -LiteralPath "$exe.sha256" -PathType Leaf)) {
+            Write-Error "expected checksum sidecar not found: $exe.sha256"; exit 1
+          }
+          if (-not (Select-String -LiteralPath agent-build.log -SimpleMatch 'Built: 1 | Failed: 0' -Quiet)) {
+            Write-Error "build summary did not report 'Built: 1 | Failed: 0'"; exit 1
+          }
+          & $exe --version
+          if ($LASTEXITCODE -ne 0) { Write-Error "$exe --version exited $LASTEXITCODE"; exit 1 }
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

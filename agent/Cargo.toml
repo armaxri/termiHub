@@ -141,9 +141,13 @@ sha2 = "0.10"
 [target.'cfg(windows)'.dev-dependencies]
 # Kill-on-close Job Object the test harnesses put spawned agents into, so a
 # killed test run cannot leak them (#3641, agent/tests/common/parent_death.rs).
+# ToolHelp: the process-tree snapshot the Windows ConPTY shell-session tests use
+# to find (and orphan-check) the shell a session spawned (#3685).
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_JobObjects",
     "Win32_System_Threading",
 ] }
+
