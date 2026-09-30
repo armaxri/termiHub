@@ -524,7 +524,11 @@ rather than letting the suites self-skip to a false green — then runs
 The `core/tests` integration suites (SSH/telnet/monitoring/tunnel/SFTP/…) and
 the desktop `src-tauri/tests/sftp_transfer.rs` / `sftp_transfer_resume.rs` suites gate each test behind a
 runtime `require_docker!` / `require_sftp_stress!` guard rather than `#[ignore]`,
-so they compile and self-skip when the Docker fixtures are not up. Two
+so they compile and self-skip when the Docker fixtures are not up. The desktop
+crate's in-crate Docker tests — the elevated-save tests in
+`src-tauri/src/files/sftp.rs` and the agent-deploy test in
+`src-tauri/src/utils/remote_exec.rs` — use the same gate through
+`utils::docker_fixture_gate::fixture_ready` (#3978). Two
 properties keep a skip from hiding a broken lane:
 
 - **Skips are visible.** A skipped test prints a `SKIPPED: <fixture> not
@@ -554,8 +558,8 @@ fixtures up and runs these suites with `TERMIHUB_REQUIRE_DOCKER=1` (#2970), so a
 missing fixture reds the lane. It brings up every profile a gated test needs
 (default, `stress`, `fault`, `network`, `ftp`, `vnc`, `rdp`) and runs both
 `cargo test -p termihub-core --all-features` and the desktop
-`sftp_transfer` / `sftp_transfer_resume` suites (#3039), each with
-`--test-threads=1`. A new gated suite whose fixture sits in another profile must
+`sftp_transfer` / `sftp_transfer_resume` suites (#3039) and the in-crate
+`elevated_save` / `agent_deploy` tests (#3978), each with `--test-threads=1`. A new gated suite whose fixture sits in another profile must
 add that profile to the lane's bring-up in the same PR, or it will hard-fail
 there.
 

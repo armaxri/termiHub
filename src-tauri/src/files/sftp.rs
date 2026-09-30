@@ -47,10 +47,10 @@ mod tests {
     // end-to-end over a live SSH connection (temp SFTP upload → `sudo -S`
     // rewrite → typed classification → temp cleanup), covering the three
     // outcomes the #1328 unit tests can only stub: correct password, wrong
-    // password, and no-sudo. They self-skip when the container is not up,
-    // mirroring the "Agent Deploy SFTP" test in `utils::remote_exec` and the
-    // `require_docker!` convention in `core/tests/common`. Bring the fixtures
-    // up with:
+    // password, and no-sudo. They self-skip when the container is not up, but
+    // hard-fail under `TERMIHUB_REQUIRE_DOCKER=1` (`utils::docker_fixture_gate`,
+    // #3978) — the integration-fixtures lane sets it, so they cannot go green
+    // there by skipping. Bring the fixtures up with:
     //   docker compose -f tests/docker/docker-compose.yml up -d ssh-sudo ssh-nosudo
     //
     // Ports are read from `TERMIHUB_TEST_SSH_SUDO_PORT` (default 2212) and
@@ -65,6 +65,7 @@ mod tests {
     // before/after expectations). They are serialized in-source with
     // `#[serial(elevated_save)]` (#2238), which keeps them parallel-safe under
     // the default `cargo test` regardless of the outer `--test-threads` setting.
+    use crate::utils::docker_fixture_gate::fixture_ready;
     use crate::utils::remote_exec::run_remote_command;
     use crate::utils::ssh_auth::connect_and_authenticate;
     use serial_test::serial;
@@ -82,17 +83,6 @@ mod tests {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(default)
-    }
-
-    /// Returns `true` if a TCP connection to the SSH server succeeds quickly.
-    fn ssh_port_reachable(port: u16) -> bool {
-        use std::net::TcpStream;
-        use std::time::Duration;
-        format!("127.0.0.1:{port}")
-            .parse()
-            .ok()
-            .and_then(|addr| TcpStream::connect_timeout(&addr, Duration::from_secs(2)).ok())
-            .is_some()
     }
 
     /// Trust the loopback fixture host keys before connecting.
@@ -169,11 +159,7 @@ mod tests {
     #[serial(elevated_save)]
     async fn elevated_save_success_rewrites_root_file_over_real_ssh() {
         let port = env_port("TERMIHUB_TEST_SSH_SUDO_PORT", DEFAULT_SSH_SUDO_PORT);
-        if !ssh_port_reachable(port) {
-            eprintln!(
-                "SKIPPED: ssh-sudo container not reachable on port {port} \
-                 (start with: docker compose -f tests/docker/docker-compose.yml up -d ssh-sudo)"
-            );
+        if !fixture_ready("ssh-sudo", port) {
             return;
         }
 
@@ -231,11 +217,7 @@ mod tests {
     #[serial(elevated_save)]
     async fn elevated_save_wrong_password_leaves_file_untouched() {
         let port = env_port("TERMIHUB_TEST_SSH_SUDO_PORT", DEFAULT_SSH_SUDO_PORT);
-        if !ssh_port_reachable(port) {
-            eprintln!(
-                "SKIPPED: ssh-sudo container not reachable on port {port} \
-                 (start with: docker compose -f tests/docker/docker-compose.yml up -d ssh-sudo)"
-            );
+        if !fixture_ready("ssh-sudo", port) {
             return;
         }
 
@@ -285,11 +267,7 @@ mod tests {
     #[serial(elevated_save)]
     async fn elevated_save_without_sudo_returns_other() {
         let port = env_port("TERMIHUB_TEST_SSH_NOSUDO_PORT", DEFAULT_SSH_NOSUDO_PORT);
-        if !ssh_port_reachable(port) {
-            eprintln!(
-                "SKIPPED: ssh-nosudo container not reachable on port {port} \
-                 (start with: docker compose -f tests/docker/docker-compose.yml up -d ssh-nosudo)"
-            );
+        if !fixture_ready("ssh-nosudo", port) {
             return;
         }
 

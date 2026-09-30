@@ -6,6 +6,9 @@ pub mod config_paths;
 pub mod data_dir_lock;
 pub mod diagnostics_bundle;
 pub mod docker_detect;
+/// Skip-or-hard-fail gate for the in-crate Docker-backed tests (#3978).
+#[cfg(test)]
+pub(crate) mod docker_fixture_gate;
 pub mod download;
 pub mod errors;
 pub mod expand;
