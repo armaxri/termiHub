@@ -1676,11 +1676,11 @@ take either side and re-run the same command. CI (`--check`) fails if it is stal
 | `native-input`            | Native Input          | all            |             19 |                  0 |     19 |
 | `network-tools`           | network-tools         | all            |              2 |                  2 |      4 |
 | `portable-mode`           | Portable Mode         | all            |              0 |                  2 |      2 |
-| `remote-agent`            | Remote Agent          | all            |              0 |                 15 |     15 |
+| `remote-agent`            | Remote Agent          | all            |              0 |                 12 |     12 |
 | `serial`                  | Serial                | all            |              1 |                  3 |      4 |
 | `ssh`                     | SSH                   | all            |              1 |                  1 |      2 |
 | `ui-layout`               | UI / Layout           | all            |              2 |                  0 |      2 |
-| **Total (11 categories)** |                       |                |         **32** |             **27** | **59** |
+| **Total (11 categories)** |                       |                |         **32** |             **24** | **56** |
 
 <!-- manual-inventory:end -->
 
@@ -1768,17 +1768,17 @@ take either side and re-run the same command. CI (`--check`) fails if it is stal
 | MT-AGENT-12     | Agent update dialog does not hang when SSH is unresponsive                              | Automated (already)   | core/src/backends/ssh/auth.rs::connect_times_out_on_silent_server                                                                   |
 | MT-AGENT-13     | Double-clicking a stopped persistent agent shell turns the state dot green              | Tracked issue         | #3686                                                                                                                               |
 | MT-AGENT-14     | Reattaching via Active Sessions preserves scrollback buffer                             | Automated (already)   | agent local_agent_integration.rs buffer replay + Terminal.agent-reattach-scrollback.test.tsx                                        |
-| MT-AGENT-15     | Build the Windows agent binary natively (MSVC)                                          | Tracked issue         | #3685                                                                                                                               |
+| MT-AGENT-15     | Build the Windows agent binary natively (MSVC)                                          | Automated (#3685)     | `agent.yml` build-windows runs `build-agents.cmd --native`, asserts exe/sidecar/summary                                             |
 | MT-AGENT-16     | Reconnecting a destroyed persistent session restarts it (no endless loop)               | Automated (already)   | Terminal.reconnect-fresh.test.tsx + appStore.terminalReconnect.test.ts                                                              |
 | MT-AGENT-17     | Reconnecting after the agent connection is destroyed re-establishes the agent           | Tracked issue         | #3686                                                                                                                               |
 | MT-AGENT-18     | Deploy + install agent to a Windows host (cmd.exe default shell)                        | Tracked issue         | #3684                                                                                                                               |
 | MT-AGENT-19     | Deploy + install agent to a Windows host (PowerShell default shell)                     | Tracked issue         | #3684                                                                                                                               |
 | MT-AGENT-20     | Connect (--stdio) to a freshly installed Windows agent                                  | Tracked issue         | #3684                                                                                                                               |
 | MT-AGENT-21     | Windows agent binary ships with releases                                                | Automated (already)   | .github/workflows/release-windows-smoke.yml (downloads + verifies the Windows agent)                                                |
-| MT-AGENT-22     | PowerShell session through the Windows agent (ConPTY spawn / resize / teardown)         | Tracked issue         | #3685                                                                                                                               |
+| MT-AGENT-22     | PowerShell session through the Windows agent (ConPTY spawn / resize / teardown)         | Automated (#3685)     | agent `live_agent_tcp_windows_powershell_session_echo_resize_close_reaps_shell`                                                     |
 | MT-AGENT-23     | cmd.exe session through the Windows agent (ConPTY spawn / resize / teardown)            | Automated (already)   | core local_shell.rs::windows_cmd_spawn_echo_resize_teardown (Windows CI)                                                            |
 | MT-AGENT-24     | Persistent session on a Windows agent survives disconnect/reconnect (named-pipe daemon) | Tracked issue         | #3684                                                                                                                               |
-| MT-AGENT-25     | File browser through a Windows agent (local filesystem, forward-slash paths)            | Tracked issue         | #3685                                                                                                                               |
+| MT-AGENT-25     | File browser through a Windows agent (local filesystem, forward-slash paths)            | Automated (#3685)     | core `files/local.rs` tilde list/stat tests + read/write round-trip (Windows CI)                                                    |
 | MT-AGENT-26     | SSH / Docker jump session originating from a Windows agent                              | Tracked issue         | #3684                                                                                                                               |
 | MT-AGENT-27     | SSH jump-host backend from a Windows-hosted agent (default key / agent auth)            | Tracked issue         | #3684                                                                                                                               |
 | MT-AGENT-28     | Docker backend via named pipe from a Windows-hosted agent                               | Tracked issue         | #3684                                                                                                                               |
