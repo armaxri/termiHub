@@ -157,6 +157,13 @@ pub enum IpcErrorCode {
     /// An unattended connect (#3527) was refused because the server asked for
     /// interactive input (a keyboard-interactive / one-time-code round).
     InteractionRequired,
+    /// An agent JSON-RPC request failed because the agent's **transport**
+    /// closed underneath it (link drop / EOF / the I/O task went away) before
+    /// any reply arrived — as opposed to the agent answering with an
+    /// application-level JSON-RPC error (`remote_error`, #2840). The agent
+    /// self-update "Apply Now" flow reads this as the expected binary-swap
+    /// disconnect instead of parsing the message text (I18N-008).
+    AgentTransportClosed,
 }
 
 impl IpcErrorCode {
@@ -315,6 +322,15 @@ pub enum TerminalError {
     /// and the limit.
     #[error("Timed out: {0}")]
     Timeout(String),
+
+    /// An agent JSON-RPC request failed because the agent's transport closed
+    /// (link drop / EOF / I/O task gone) before a reply arrived (#2840) — not an
+    /// error the agent itself reported. Classified at the source (the pending
+    /// request drain / dropped reply channel), never by message text. Renders
+    /// exactly like [`TerminalError::RemoteError`] so the human text is
+    /// unchanged; only the envelope `code` (`agent_transport_closed`) differs.
+    #[error("Remote agent error: {0}")]
+    AgentTransportClosed(String),
 }
 
 impl TerminalError {
@@ -332,6 +348,12 @@ impl TerminalError {
             "{what} did not complete within {:.1}s — the SSH server stopped responding",
             limit.as_secs_f64()
         ))
+    }
+
+    /// An agent request failed because the agent transport closed before a
+    /// reply arrived (#2840). See [`TerminalError::AgentTransportClosed`].
+    pub fn agent_transport_closed(message: impl std::fmt::Display) -> Self {
+        TerminalError::AgentTransportClosed(message.to_string())
     }
 
     /// Whether this error is a [`TerminalError::Timeout`].
@@ -388,6 +410,7 @@ impl TerminalError {
                 .and_then(C::from_slug)
                 .unwrap_or(C::RemoteError),
             TerminalError::AgentUnsupported(_) => C::RemoteError,
+            TerminalError::AgentTransportClosed(_) => C::AgentTransportClosed,
             TerminalError::Cancelled => C::Cancelled,
             TerminalError::SftpSessionNotFound(_) => C::SftpSessionNotFound,
             TerminalError::TunnelError(_) => C::TunnelError,
@@ -872,5 +895,33 @@ mod tests {
                 "the substring fallback text must be preserved, got {rendered:?}"
             );
         }
+    }
+
+    /// #2840: an agent-transport close carries its own stable envelope code,
+    /// distinct from an agent-reported (`remote_error`) failure, while the human
+    /// text renders exactly like a `RemoteError` (no marker, no rewording).
+    #[test]
+    fn agent_transport_closed_serializes_its_own_code_with_unchanged_text() {
+        let closed = TerminalError::agent_transport_closed("Agent connection lost");
+        assert_eq!(closed.code(), IpcErrorCode::AgentTransportClosed);
+        assert_eq!(
+            closed.to_string(),
+            "Remote agent error: Agent connection lost"
+        );
+        let value = serde_json::to_value(&closed).expect("serialize");
+        assert_eq!(value["code"], "agent_transport_closed");
+        assert_eq!(
+            value["message"],
+            "Remote agent error: Agent connection lost"
+        );
+        assert!(value["details"].is_null());
+
+        // The same text as an agent-reported failure keeps the generic code: the
+        // two are told apart by variant, never by message text.
+        let reported = TerminalError::RemoteError("Agent connection lost".to_string());
+        assert_eq!(
+            serde_json::to_value(&reported).expect("serialize")["code"],
+            "remote_error"
+        );
     }
 }

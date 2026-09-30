@@ -74,6 +74,7 @@ fn parse_host_sessions_reply_maps_method_not_found_to_unsupported() {
         code: Some(errors::METHOD_NOT_FOUND),
         message: "Method not found".to_string(),
         connect_failure: None,
+        transport_closed: false,
     };
     let old = parse_host_sessions_reply(Err(old_agent.into_terminal_error()))
         .expect("an older agent is not an error");
@@ -85,6 +86,7 @@ fn parse_host_sessions_reply_maps_method_not_found_to_unsupported() {
         code: Some(-32601),
         message: "Methode nicht gefunden".to_string(),
         connect_failure: None,
+        transport_closed: false,
     };
     let parsed =
         parse_host_sessions_reply(Err(reworded.into_terminal_error())).expect("classified by code");
@@ -95,6 +97,7 @@ fn parse_host_sessions_reply_maps_method_not_found_to_unsupported() {
         code: Some(errors::INTERNAL_ERROR),
         message: "Method not found".to_string(),
         connect_failure: None,
+        transport_closed: false,
     };
     assert!(parse_host_sessions_reply(Err(same_text.into_terminal_error())).is_err());
 
@@ -120,6 +123,7 @@ fn agent_rpc_failure_maps_unsupported_codes_to_a_typed_error() {
             code: Some(code),
             message: "nope".to_string(),
             connect_failure: None,
+            transport_closed: false,
         }
         .into_terminal_error();
         assert!(
@@ -134,6 +138,7 @@ fn agent_rpc_failure_maps_unsupported_codes_to_a_typed_error() {
         code: Some(errors::FILE_BROWSING_NOT_SUPPORTED),
         message: "Method not found".to_string(),
         connect_failure: None,
+        transport_closed: false,
     };
     assert!(matches!(
         generic.into_terminal_error(),
@@ -150,6 +155,7 @@ fn agent_rpc_failure_maps_the_held_code_to_a_typed_error() {
         code: Some(termihub_core::protocol::errors::SESSION_HELD_BY_OTHER),
         message: "anything".to_string(),
         connect_failure: None,
+        transport_closed: false,
     };
     assert!(matches!(
         held.into_terminal_error(),
@@ -161,6 +167,7 @@ fn agent_rpc_failure_maps_the_held_code_to_a_typed_error() {
         code: Some(termihub_core::protocol::errors::SESSION_NOT_FOUND),
         message: "Session is held by another desktop".to_string(),
         connect_failure: None,
+        transport_closed: false,
     };
     assert!(matches!(
         not_found.into_terminal_error(),
@@ -1306,6 +1313,120 @@ async fn send_request_times_out_when_no_response_arrives() {
     drop(_command_rx);
 }
 
+/// #2840: drive one `send_request` against a fake I/O task that answers the
+/// request via `answer`, returning the typed error the caller sees.
+async fn send_request_error_with(
+    answer: impl FnOnce(oneshot::Sender<Result<Value, AgentRpcFailure>>) + Send + 'static,
+) -> TerminalError {
+    let app = tauri::test::mock_app();
+    let manager = Arc::new(AgentConnectionManager::new(app.handle().clone()));
+    let (command_tx, mut command_rx) = mpsc::unbounded_channel::<AgentIoCommand>();
+    manager.agents.lock().unwrap().insert(
+        "agent-1".to_string(),
+        make_agent_connection_with_tx(command_tx),
+    );
+    tokio::spawn(async move {
+        if let Some(AgentIoCommand::Request { response_tx, .. }) = command_rx.recv().await {
+            answer(response_tx);
+        }
+    });
+    let m = manager.clone();
+    tokio::task::spawn_blocking(move || {
+        m.send_request_with_timeout(
+            "agent-1",
+            termihub_core::protocol::methods::AGENT_REQUEST_DEFERRED_UPDATE,
+            serde_json::json!({}),
+            std::time::Duration::from_secs(5),
+        )
+    })
+    .await
+    .expect("spawn_blocking join")
+    .expect_err("the request must fail")
+}
+
+/// #2840: an in-flight request failed by the link-drop drain (the agent's
+/// binary swap tearing down the transport) surfaces the typed
+/// `agent_transport_closed` code, not a generic `remote_error`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn send_request_drained_by_a_transport_drop_is_typed_transport_closed() {
+    let err = send_request_error_with(|tx| {
+        let _ = tx.send(Err(AgentRpcFailure::transport_closed(
+            "Agent connection lost",
+        )));
+    })
+    .await;
+    assert!(
+        matches!(err, TerminalError::AgentTransportClosed(_)),
+        "{err:?}"
+    );
+    let envelope = serde_json::to_value(&err).unwrap();
+    assert_eq!(envelope["code"], "agent_transport_closed");
+    // The human text is unchanged by the retype.
+    assert_eq!(
+        envelope["message"],
+        "Remote agent error: Agent connection lost"
+    );
+}
+
+/// #2840: a reply channel dropped without an answer (the I/O task died with
+/// the transport) is the same typed transport close.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn send_request_whose_reply_channel_drops_is_typed_transport_closed() {
+    let err = send_request_error_with(drop).await;
+    assert_eq!(
+        err.code(),
+        crate::utils::errors::IpcErrorCode::AgentTransportClosed,
+        "{err:?}"
+    );
+}
+
+/// #2840: an application-level JSON-RPC error the agent itself reported (it
+/// refused the update) stays `remote_error` — even when its text talks about a
+/// closed connection. Classified by source, never by message text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn send_request_agent_reported_error_is_not_transport_closed() {
+    let err = send_request_error_with(|tx| {
+        let _ = tx.send(Err(AgentRpcFailure::from_error_response(
+            Some(termihub_core::protocol::errors::INTERNAL_ERROR),
+            "update refused: connection closed by policy".to_string(),
+            None,
+        )));
+    })
+    .await;
+    assert!(matches!(err, TerminalError::RemoteError(_)), "{err:?}");
+    assert_eq!(err.code(), crate::utils::errors::IpcErrorCode::RemoteError);
+}
+
+/// #2840: when the I/O task is already gone (its command receiver dropped),
+/// the request fails with the typed transport close too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn send_request_to_a_gone_io_task_is_typed_transport_closed() {
+    let app = tauri::test::mock_app();
+    let manager = Arc::new(AgentConnectionManager::new(app.handle().clone()));
+    let (command_tx, command_rx) = mpsc::unbounded_channel::<AgentIoCommand>();
+    drop(command_rx);
+    manager.agents.lock().unwrap().insert(
+        "agent-1".to_string(),
+        make_agent_connection_with_tx(command_tx),
+    );
+    let m = manager.clone();
+    let err = tokio::task::spawn_blocking(move || {
+        m.send_request(
+            "agent-1",
+            termihub_core::protocol::methods::AGENT_REQUEST_UPDATE,
+            serde_json::json!({}),
+        )
+    })
+    .await
+    .expect("spawn_blocking join")
+    .expect_err("a gone I/O task must fail the request");
+    assert_eq!(
+        err.code(),
+        crate::utils::errors::IpcErrorCode::AgentTransportClosed,
+        "{err:?}"
+    );
+}
+
 /// The RAII guard clears the registry entry when the connect finishes, so a
 /// later cancel targets only live connects (no stale token left behind).
 #[test]
@@ -1751,6 +1872,7 @@ fn relayed_prompt_outcomes_map_to_typed_errors() {
         code: Some(AUTH_CANCELLED),
         message: "Authentication was cancelled".into(),
         connect_failure: None,
+        transport_closed: false,
     };
     assert!(matches!(
         cancelled.into_terminal_error(),
@@ -1760,6 +1882,7 @@ fn relayed_prompt_outcomes_map_to_typed_errors() {
         code: Some(SECOND_FACTOR_FAILED),
         message: "rejected".into(),
         connect_failure: None,
+        transport_closed: false,
     };
     assert!(matches!(
         otp.into_terminal_error(),
@@ -1864,7 +1987,7 @@ fn old_agent_auth_rejection_without_data_stays_remote_error() {
     )
     .into_terminal_error();
     assert!(matches!(err, TerminalError::RemoteError(_)), "{err:?}");
-    assert_eq!(err.code(), IpcErrorCode::RemoteError);
+    assert_eq!(err.code(), crate::utils::errors::IpcErrorCode::RemoteError);
 }
 
 /// An older agent sends no `data` (and a newer one may send a kind this build
@@ -1885,7 +2008,7 @@ fn agent_connect_failure_without_a_known_kind_stays_remote_error() {
         )
         .into_terminal_error();
         assert!(matches!(err, TerminalError::RemoteError(_)));
-        assert_eq!(err.code(), IpcErrorCode::RemoteError);
+        assert_eq!(err.code(), crate::utils::errors::IpcErrorCode::RemoteError);
         let envelope = serde_json::to_value(&err).unwrap();
         assert_eq!(
             envelope["message"],
