@@ -817,8 +817,20 @@ fn initialize_params_report_real_client_version() {
         "clientVersion must track the desktop crate version, not a literal"
     );
     // The protocol/client identity fields stay as declared.
-    assert_eq!(params["protocolVersion"], "0.3.0");
+    assert_eq!(params["protocolVersion"], "0.24.0");
     assert_eq!(params["client"], "termihub-desktop");
+}
+
+/// #3051: the desktop requests a protocol version whose `initialize` result
+/// is camelCase, so a current agent answers in the new shape.
+#[test]
+fn initialize_params_request_the_camel_case_result() {
+    assert_eq!(DESKTOP_PROTOCOL_VERSION, "0.24.0");
+    assert!(
+        termihub_core::protocol::methods::initialize_result_is_camel_case(DESKTOP_PROTOCOL_VERSION)
+    );
+    let params = build_initialize_params(&AgentSettings::default(), &[]);
+    assert_eq!(params["protocolVersion"], DESKTOP_PROTOCOL_VERSION);
 }
 
 /// serialize_request produces valid newline-terminated JSON-RPC.
@@ -2207,7 +2219,8 @@ fn reconnect_retained_agent_reports_no_config_once_scrubbed() {
 /// verbatim so the DTO-built params can be proven wire-identical.
 fn legacy_initialize_params(settings: &AgentSettings, external_files: &[&str]) -> Value {
     json!({
-        "protocolVersion": "0.3.0",
+        // #3051: the only change since DUP-001, the requested version.
+        "protocolVersion": "0.24.0",
         "client": "termihub-desktop",
         "clientVersion": env!("CARGO_PKG_VERSION"),
         "agentSettings": settings,
@@ -2291,6 +2304,44 @@ fn initialize_result_parses_into_the_shared_dto() {
     );
     assert_eq!(r.capabilities.max_sessions, 20);
     assert!(r.capabilities.tool_streaming);
+}
+
+/// #3051: a 0.24.0+ agent answers with the camelCase envelope.
+#[test]
+fn initialize_result_parses_the_camel_case_shape() {
+    let r = parse_initialize_result(json!({
+        "protocolVersion": "0.24.0",
+        "agentVersion": "1.5.0",
+        "clientId": "client-8",
+        "updateAuthTokenPath": "/home/u/.config/termihub-agent/t",
+        "capabilities": { "connectionTypes": [], "maxSessions": 20 },
+    }))
+    .unwrap();
+    assert_eq!(r.protocol_version, "0.24.0");
+    assert_eq!(r.agent_version, "1.5.0");
+    assert_eq!(r.client_id, "client-8");
+    assert_eq!(
+        crate::terminal::agent_update_auth::token_path_from_initialize(&r).as_deref(),
+        Some("/home/u/.config/termihub-agent/t")
+    );
+}
+
+/// #3051: a pre-0.24.0 agent still answers in snake_case. The desktop must
+/// read its real version — not "unknown" — so the outdated-agent / update
+/// path can fire instead of a parse failure.
+#[test]
+fn initialize_result_from_a_pre_camel_case_agent_keeps_its_version() {
+    let r = parse_initialize_result(json!({
+        "protocol_version": "0.23.0",
+        "agent_version": "0.9.0",
+        "client_id": "client-9",
+        "capabilities": { "connectionTypes": [], "maxSessions": 5 },
+    }))
+    .unwrap();
+    assert_eq!(r.protocol_version, "0.23.0");
+    assert_eq!(r.agent_version, "0.9.0");
+    assert_eq!(r.client_id, "client-9");
+    assert!(!r.capabilities.unattended_connect);
 }
 
 #[test]

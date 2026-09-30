@@ -756,7 +756,7 @@ sequenceDiagram
     Desktop->>SSH: Start termihub-agent --stdio
 
     Desktop->>Agent: initialize {version, capabilities}
-    Agent-->>Desktop: {agent_version, session_types, shells}
+    Agent-->>Desktop: {agentVersion, session_types, shells}
 
     Desktop->>Agent: session.create {type: shell, config}
     Agent->>SD: Spawn daemon process (termihub-agent --daemon)
@@ -2133,6 +2133,43 @@ would act only under that window's label and could not assume another window's i
 remote-client transport ships, it must derive the principal from its authenticated session and add
 an authorization policy for shared regions — the substrate does not authenticate transports itself.
 
+### Incremental projection publish (PERF-006)
+
+The default publish re-serializes a whole region and diffs it against the last emitted view
+(`Projector::publish_with`) — O(region) per fold, so a per-entry stream over N entries is O(N²).
+Regions with a hot per-entry fold instead publish through `Projector::publish_delta`: the store
+tracks which entries each fold touched, the publish drains just those (inside the region lock,
+the pattern from #3788) and diffs a **reduced** view. This is correct only because the reduced diff is
+**byte-identical** to the whole-region diff: `json_patch` visits object keys in sorted order and each
+key's ops depend only on that key's own subtrees, so dropping untouched keys from both sides drops
+no ops and reorders none. Arrays are diffed index by index (an insert, remove or reorder shifts
+every later index), so an ordered array is never reduced.
+
+Every incremental region carries the same three-layer proof: a debug-build cross-check against the
+whole-region diff (a mismatch is logged, resynced to the whole diff, and panics under `cfg(test)`),
+equivalence tests over each fold shape, and the pre-existing projection tests.
+
+| Region              | Publish                     | Why                                                            |
+| ------------------- | --------------------------- | -------------------------------------------------------------- |
+| `system-monitors`   | incremental                 | keyed maps; the history ring is append-only (#3204)            |
+| `session-lifecycle` | incremental                 | one keyed map                                                  |
+| `transfers`         | incremental                 | one keyed map + a scalar                                       |
+| `agents`            | hybrid (#2888)              | keyed maps reduced per agent id; ordered `agents` list whole   |
+| `connections`       | whole-snapshot, by decision | single whole-view writer from disk; ordered arrays (see below) |
+
+- **`agents` (hybrid).** The view holds the ordered `agents` list plus the `sessions`,
+  `definitions` and `folders` maps. The three maps are keyed by agent id, so a definition, folder
+  or session fold re-serializes and diffs only that agent's entries. The ordered `agents` list is carried and diffed
+  whole whenever a fold touches it (add, remove, reorder, status, settings), exactly as before.
+  Cross-entry folds stay inside one agent id (`delete_folder` reparents that agent's definitions),
+  and whole-list folds (`reflect_saved_agents`, `replace`) mark every old and new key.
+- **`connections` (whole-snapshot).** The region's only writer refolds the manager's whole unified
+  view from disk after every persist (#2831, #3960) and replaces the store. That fold never learns
+  which rows changed, so finding the change means comparing every row — which is the whole-region
+  diff. Both collections are ordered arrays, the `savedAs` echo map (#3961) is small and bounded,
+  the disk re-read dominates the in-memory diff, and the fold runs once per user-driven persist
+  rather than on a per-entry stream. Incrementalizing it would add risk for no measurable win.
+
 ### Experimental Features
 
 termiHub provides an opt-in mechanism for features that are under active development and not yet ready for general availability.
@@ -2302,7 +2339,9 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
   local (#3912), or a byte-based backend) is still copied file by file from
   the frontend (`src/hooks/sessionFolderPaste.ts`), so it records a
   **folder-paste manifest** in `transfers.json` (`folderPastes`) before its
-  first file and removes it once the whole folder landed (#3630). A paste into
+  first file and removes it once the whole folder landed (#3630). The session
+  file browser's folder **Download** and dropped-folder **Upload** are recorded
+  the same way, as a session → local and a local → session copy (#3983). A paste into
   the local disk records its destination with no session, and its Retry only
   needs the source's reconnected session. A manifest left at the next
   launch — a quit, crash or failure part-way — is shown as a notice whose

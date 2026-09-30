@@ -30,10 +30,12 @@ import { joinDirPath, pasteVerbLabels, type PasteOptions } from "@/utils/fileDra
 import {
   pasteFileLeg,
   pasteFolderRecorded,
+  pasteRemoteFolderToLocal,
   probeRemoteCopy,
+  uploadLocalFolderToSession,
   type PasteTransport,
 } from "./sessionFolderPaste";
-import { copyPaneEntry, downloadToLocal, uploadLocalFile } from "@/services/paneTransfer";
+import { downloadToLocal, uploadLocalFile } from "@/services/paneTransfer";
 
 /** Toast wording for one Upload / Download button leg. */
 const LEG_LABELS = {
@@ -208,7 +210,8 @@ export function useSessionFileSystem() {
   //
   // A folder (only reachable from a multi-select Download) is never handed to a
   // single-file `session_download` (#3944): the user picks a target folder and
-  // the engine copies the tree into it, one queued or byte leg per file.
+  // the engine copies the tree into it, one queued or byte leg per file. Both
+  // folder directions are recorded in the interrupted-paste manifest (#3983).
   const downloadFolder = useCallback(
     async (sessionId: string, remotePath: string, folderName: string) => {
       const label = `Download "${folderName}"`;
@@ -222,18 +225,13 @@ export function useSessionFileSystem() {
       });
       if (!targetDir) return;
       const remote = { sessionId, queueCapable: transferQueueCapable };
-      const folder: FileEntry = {
-        name: folderName,
-        path: remotePath,
-        isDirectory: true,
-        size: 0,
-        modified: "",
-        permissions: null,
-        writable: null,
-      };
+      // Recorded in the interrupted-paste manifest like a session → local
+      // paste (#3983), so a download cut short by a quit is listed and
+      // resumable after a restart.
+      const destPath = joinDirPath(targetDir, folderName);
       await runMaybeTrackedTransfer(
         label,
-        () => copyPaneEntry("remote", folder, targetDir, remote),
+        () => pasteRemoteFolderToLocal("copy", remote, remotePath, destPath),
         { loading: `Downloading ${folderName}…`, success: `Downloaded ${folderName}` }
       );
     },
@@ -277,10 +275,13 @@ export function useSessionFileSystem() {
       }
       let ok: boolean;
       if (entry?.isDirectory) {
-        const folder: FileEntry = { ...entry, name: fileName, path: localPath };
+        // Recorded in the interrupted-paste manifest like a local → session
+        // paste (#3983), so an upload cut short by a quit is listed and
+        // resumable after a restart.
+        const destPath = joinDirPath(sessionCurrentPath, fileName);
         ok = await runMaybeTrackedTransfer(
           `Upload "${fileName}"`,
-          () => copyPaneEntry("local", folder, sessionCurrentPath, remote),
+          () => uploadLocalFolderToSession(remote, localPath, destPath),
           { loading: `Uploading ${fileName}…`, success: `Uploaded ${fileName}` }
         );
       } else {

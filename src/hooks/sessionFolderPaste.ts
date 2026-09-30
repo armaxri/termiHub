@@ -352,6 +352,28 @@ export async function pasteRemoteFolderToLocal(
 }
 
 /**
+ * Upload the local folder `srcDir` to the session folder `destPath` through
+ * the shared pane-transfer engine (an OS-dropped folder, #3966), recorded in
+ * the folder-paste manifest like a local → session paste (#3983). Each tracked
+ * upload is linked to it (#3643), and the manifest ends only once the whole
+ * folder landed. An interrupted upload continues through
+ * {@link retryInterruptedFolderPaste} like any local → session paste.
+ * Resolves to whether any leg is tracked by the transfer queue.
+ */
+export async function uploadLocalFolderToSession(
+  remote: PaneRemote,
+  srcDir: string,
+  destPath: string
+): Promise<boolean> {
+  const destination = sessionEndpoint(remote.sessionId, destPath);
+  return recordFolderPaste("copy", localEndpoint(srcDir), destination, (pasteId) =>
+    copyPaneFolder("local", srcDir, destPath, remote, {
+      onRegistered: (transferId) => linkToFolderPaste(pasteId, transferId),
+    })
+  );
+}
+
+/**
  * The live session an endpoint of an interrupted paste now runs on: the same
  * session when it is still open, otherwise the open tab of the same saved
  * connection (session ids do not survive a restart). `null` when neither is

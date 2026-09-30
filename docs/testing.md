@@ -524,7 +524,11 @@ rather than letting the suites self-skip to a false green — then runs
 The `core/tests` integration suites (SSH/telnet/monitoring/tunnel/SFTP/…) and
 the desktop `src-tauri/tests/sftp_transfer.rs` / `sftp_transfer_resume.rs` suites gate each test behind a
 runtime `require_docker!` / `require_sftp_stress!` guard rather than `#[ignore]`,
-so they compile and self-skip when the Docker fixtures are not up. Two
+so they compile and self-skip when the Docker fixtures are not up. The desktop
+crate's in-crate Docker tests — the elevated-save tests in
+`src-tauri/src/files/sftp.rs` and the agent-deploy test in
+`src-tauri/src/utils/remote_exec.rs` — use the same gate through
+`utils::docker_fixture_gate::fixture_ready` (#3978). Two
 properties keep a skip from hiding a broken lane:
 
 - **Skips are visible.** A skipped test prints a `SKIPPED: <fixture> not
@@ -554,8 +558,8 @@ fixtures up and runs these suites with `TERMIHUB_REQUIRE_DOCKER=1` (#2970), so a
 missing fixture reds the lane. It brings up every profile a gated test needs
 (default, `stress`, `fault`, `network`, `ftp`, `vnc`, `rdp`) and runs both
 `cargo test -p termihub-core --all-features` and the desktop
-`sftp_transfer` / `sftp_transfer_resume` suites (#3039), each with
-`--test-threads=1`. A new gated suite whose fixture sits in another profile must
+`sftp_transfer` / `sftp_transfer_resume` suites (#3039) and the in-crate
+`elevated_save` / `agent_deploy` tests (#3978), each with `--test-threads=1`. A new gated suite whose fixture sits in another profile must
 add that profile to the lane's bring-up in the same PR, or it will hard-fail
 there.
 
@@ -4513,7 +4517,7 @@ limits, symlinks, merge layout, group cancel, end-to-end temp tree) and
    neither comes back after another restart. Automated coverage:
    `src-tauri/src/files/transfer/relaunch.rs` (`cancelling_*` tests).
 
-### Transfer Queue: restart gaps (#3629, #3630, #3643, #3912)
+### Transfer Queue: restart gaps (#3629, #3630, #3643, #3912, #3983)
 
 Automated coverage: `src-tauri/src/files/transfer/persist*.rs`,
 `src-tauri/src/files/drag_out.rs`, `src/hooks/sessionFolderPaste.test.ts` and
@@ -4539,6 +4543,15 @@ Automated coverage: `src-tauri/src/files/transfer/persist*.rs`,
    notice appears, naming `Local` and the local folder. Retry before
    reconnecting asks to connect to the SFTP connection first; after
    reconnecting it downloads only the missing (or partly written) files.
+4. **Interrupted folder Download and dropped-folder Upload (#3983):** in an
+   SFTP session's file browser, select a folder holding several large files,
+   choose **Download** and pick a local target folder; quit while the second
+   file is downloading. Relaunch → the same notice appears, naming `Local` and
+   the target folder; after reconnecting, Retry downloads only the missing
+   (or partly written) files. Then drop a local folder holding several large
+   files from the OS onto the session file browser and quit while the second
+   file is uploading. Relaunch → the notice names the session folder; after
+   reconnecting, Retry uploads only the missing files.
 
 ### Transfer Queue panel: rows, controls, minimized state (#1337)
 

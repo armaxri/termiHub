@@ -851,7 +851,9 @@ mod tests {
     //
     // Lives in-crate (rather than `core/tests/`) because these helpers are in the
     // desktop crate's private `utils` module. Self-skips when the container is not
-    // up, mirroring the `require_docker!` convention in `core/tests/common`.
+    // up, but hard-fails under `TERMIHUB_REQUIRE_DOCKER=1` (`utils::docker_fixture_gate`,
+    // #3978) — the integration-fixtures lane sets it, so it cannot go green there
+    // by skipping.
     // Bring the container up with:
     //   docker compose -f tests/docker/docker-compose.yml up -d ssh-password
     //
@@ -922,25 +924,10 @@ mod tests {
         let _ = set_host_key_verifier(Arc::new(TrustLocalFixtures));
     }
 
-    /// Returns `true` if a TCP connection to the SSH server succeeds quickly.
-    fn ssh_port_reachable(port: u16) -> bool {
-        use std::net::TcpStream;
-        use std::time::Duration;
-        format!("127.0.0.1:{port}")
-            .parse()
-            .ok()
-            .and_then(|addr| TcpStream::connect_timeout(&addr, Duration::from_secs(2)).ok())
-            .is_some()
-    }
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn agent_deploy_sftp_upload_round_trips_over_real_ssh() {
         let port = ssh_password_port();
-        if !ssh_port_reachable(port) {
-            eprintln!(
-                "SKIPPED: ssh-password container not reachable on port {port} \
-                 (start with: docker compose -f tests/docker/docker-compose.yml up -d ssh-password)"
-            );
+        if !crate::utils::docker_fixture_gate::fixture_ready("ssh-password", port) {
             return;
         }
 

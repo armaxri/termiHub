@@ -2840,11 +2840,20 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
+/// Protocol version the desktop requests in `initialize`.
+///
+/// 0.24.0 is the first version whose `initialize` result envelope is camelCase
+/// (#3051); requesting it makes a current agent answer in that shape. The agent
+/// negotiates down to its own version, so an older agent (major `0`) still
+/// accepts it and answers in snake_case, which the shared DTO also reads.
+/// Before #3051 this was a fixed `"0.3.0"`.
+const DESKTOP_PROTOCOL_VERSION: &str = "0.24.0";
+
 /// Build the `initialize` JSON-RPC params including agent runtime settings and
 /// external files, as the shared [`InitializeParams`] DTO (DUP-001, #3226).
 fn build_initialize_params(settings: &AgentSettings, external_files: &[&str]) -> Value {
     let params = InitializeParams {
-        protocol_version: "0.3.0".to_string(),
+        protocol_version: DESKTOP_PROTOCOL_VERSION.to_string(),
         client: "termihub-desktop".to_string(),
         // AGT-014: report the desktop crate's real version rather than a stale
         // literal. The agent records this in its per-process client registry and
