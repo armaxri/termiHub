@@ -1708,17 +1708,16 @@ impl<R: Runtime> AgentConnectionManager<R> {
         // Drop the lock before waiting for response
         drop(agents);
 
-        // Bounded wait: a fired timeout returns a real timeout error and frees
-        // this thread; a dropped sender (io_task gone / pending drained on drop)
+        // Bounded wait: a fired timeout returns a typed agent-timeout error and
+        // frees this thread; a dropped sender (io_task gone / pending drained on drop)
         // surfaces as a connection-lost error rather than the old misleading
         // "timed out" string (CONC-003).
         match tokio::runtime::Handle::current()
             .block_on(async { tokio::time::timeout(timeout, resp_rx).await })
         {
-            Err(_elapsed) => Err(TerminalError::RemoteError(format!(
-                "Agent request timed out after {:?}",
-                timeout
-            ))),
+            // No reply within the deadline while the transport was up: typed as
+            // an agent timeout, not an agent-reported error (#3959).
+            Err(_elapsed) => Err(TerminalError::agent_timeout(timeout)),
             // The reply sender was dropped with no answer: the I/O task (and the
             // transport) went away under the request — typed, not text (#2840).
             Ok(Err(_recv)) => Err(TerminalError::agent_transport_closed(
@@ -1759,10 +1758,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
         match tokio::runtime::Handle::current()
             .block_on(recv_excluding_prompts(resp_rx, timeout, &activity))
         {
-            Err(()) => Err(TerminalError::RemoteError(format!(
-                "Agent request timed out after {:?}",
-                timeout
-            ))),
+            Err(()) => Err(TerminalError::agent_timeout(timeout)),
             // The reply sender was dropped with no answer: the I/O task (and the
             // transport) went away under the request — typed, not text (#2840).
             Ok(Err(_recv)) => Err(TerminalError::agent_transport_closed(

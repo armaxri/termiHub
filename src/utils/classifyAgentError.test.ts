@@ -187,6 +187,16 @@ describe("classifyAgentError", () => {
       expect(result.message).toBe("boom");
     });
 
+    it("surfaces an agent request timeout as its raw message, like remote_error (#3959)", () => {
+      const result = classifyAgentError({
+        code: "agent_timeout",
+        message: "Remote agent error: Agent request timed out after 60s",
+        details: null,
+      });
+      expect(result.category).toBe("unknown");
+      expect(result.message).toBe("Remote agent error: Agent request timed out after 60s");
+    });
+
     it("classifies an unknown code marker as unknown", () => {
       const result = classifyAgentError("[thub-code:some_future_code] Connection failed: refused");
       expect(result.category).toBe("unknown");

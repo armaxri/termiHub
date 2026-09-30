@@ -74,9 +74,10 @@ export function AgentUpdateBanner({ agentId, agentName }: AgentUpdateBannerProps
     } catch (err) {
       // An immediate apply re-execs the agent, tearing down its transport — so a
       // failure here is expected *only if it was that transport closing*. Decide
-      // from the structured error code (`agent_transport_closed`, #2840), falling
-      // back to the agent's authoritative connection state (a drop within a short
-      // window) for any other error — never by parsing the error message, which
+      // from the structured error code (`agent_transport_closed`, #2840; an
+      // agent-reported `remote_error` fails at once, #3959), falling back to the
+      // agent's authoritative connection state (a drop within a short window) for
+      // a timeout or uncoded error — never by parsing the error message, which
       // was locale-fragile and over-broad (I18N-008). If neither shows the
       // transport closed, this was a real update failure — surface it.
       if (await isExpectedApplyDisconnect(agentId, err)) {

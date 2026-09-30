@@ -1303,6 +1303,9 @@ async fn send_request_times_out_when_no_response_arrives() {
         err.to_string().to_lowercase().contains("timed out"),
         "expected a real timeout error, got: {err}"
     );
+    // #3959: typed at the source — a timeout, not an agent-reported error.
+    assert!(matches!(err, TerminalError::AgentTimeout(_)), "{err:?}");
+    assert_eq!(err.code(), crate::utils::errors::IpcErrorCode::AgentTimeout);
     assert!(
         elapsed < std::time::Duration::from_secs(2),
         "send_request must fail fast on timeout, took {elapsed:?}"
@@ -1311,6 +1314,41 @@ async fn send_request_times_out_when_no_response_arrives() {
     // Prove the receiver was still alive across the wait — i.e. we exercised
     // the timeout path, not the send-failure path.
     drop(_command_rx);
+}
+
+/// #3959: the prompt-excluding request wait (used by `connection.create`) types
+/// its elapsed deadline as an agent timeout too, not an agent-reported error.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn send_request_excluding_prompts_times_out_as_agent_timeout() {
+    let app = tauri::test::mock_app();
+    let manager = Arc::new(AgentConnectionManager::new(app.handle().clone()));
+    let (command_tx, command_rx) = mpsc::unbounded_channel::<AgentIoCommand>();
+    {
+        let mut agents = manager.agents.lock().unwrap();
+        agents.insert(
+            "agent-1".to_string(),
+            make_agent_connection_with_tx(command_tx),
+        );
+    }
+
+    let err = {
+        let m = manager.clone();
+        tokio::task::spawn_blocking(move || {
+            m.send_request_excluding_prompts(
+                "agent-1",
+                termihub_core::protocol::methods::CONNECTIONS_LIST,
+                serde_json::json!({}),
+                std::time::Duration::from_millis(200),
+            )
+        })
+        .await
+        .expect("spawn_blocking join")
+        .expect_err("a request with no response must time out")
+    };
+    assert!(matches!(err, TerminalError::AgentTimeout(_)), "{err:?}");
+    assert_eq!(err.code(), crate::utils::errors::IpcErrorCode::AgentTimeout);
+    // The receiver stayed alive across the wait: the timeout path, not a close.
+    drop(command_rx);
 }
 
 /// #2840: drive one `send_request` against a fake I/O task that answers the
