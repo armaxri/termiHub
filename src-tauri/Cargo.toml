@@ -139,7 +139,7 @@ which = "7"
 # ProxyJump chain into the jump-host editor (#1702). Library-first per the repo
 # rules — handles the tokenizer, `Include`, and `Match`/pattern semantics rather
 # than hand-rolling them.
-ssh2-config = "0.7"
+ssh2-config = "0.8"
 # Streaming XML reader/writer used to append/remove termiHub's Thunar custom
 # action inside a shared ~/.config/Thunar/uca.xml without disturbing foreign
 # actions (Linux file-manager registration, #1370).
