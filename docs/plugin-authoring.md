@@ -153,7 +153,9 @@ number:
   shown as _incompatible_ and auto-disabled) rather than as a malformed package.
 - For a plugin with a native `terminalBackend`, the loader additionally requires
   `apiVersion` to **equal** the ABI version the library itself exports. A package
-  whose manifest and library disagree is refused with an error naming both.
+  whose manifest and library disagree is refused with an error naming both —
+  and the packager already refuses to build it (see
+  [Packaging → The ABI check](#the-abi-check)).
 
 Theme / JS-only plugins have no library, so for them `apiVersion` is checked
 against the host with the same rule and nothing else.
@@ -323,10 +325,14 @@ sequenceDiagram
 ```
 
 [`echo-backend/src/lib.rs`](../examples/plugins/echo-backend/src/lib.rs) is a
-complete, tested implementation of all four symbols. `termihub_plugin_abi_version`
-returns `CURRENT_PLUGIN_ABI_VERSION.to_packed()` (the version packed into a `u32`
-as `major << 16 | minor`), and `PluginInfo::new` fills in the same value — plus,
-from ABI 1.1, the build toolchain (see [below](#the-toolchain-rule-abi-11)).
+complete, tested implementation of all four symbols. It exports
+`termihub_plugin_abi_version` with one line,
+`termihub_plugin_api::export_plugin_abi_version!();`, which returns
+`CURRENT_PLUGIN_ABI_VERSION.to_packed()` (the version packed into a `u32` as
+`major << 16 | minor`) **and** embeds a readable copy of it (the ABI marker) that
+the packager checks against your manifest. `PluginInfo::new` fills in the same
+value — plus, from ABI 1.1, the build toolchain (see
+[below](#the-toolchain-rule-abi-11)).
 
 ### What plugin backends can and cannot do in 0.1
 
@@ -551,10 +557,45 @@ flowchart LR
     C --> E[termihub-plugin-pack]
     D --> E
     E --> F[validate manifest]
-    F --> G[zip §1 layout]
+    F --> F2[check each backend library's<br/>ABI marker = apiVersion]
+    F2 --> G[zip §1 layout]
     G --> H[validate produced package]
     H --> I[(&lt;id&gt;-&lt;version&gt;.termihub-plugin)]
 ```
+
+### The ABI check
+
+Before writing anything, the packager checks every native library under
+`backend/` (flat or `backend/<triple>/`) against the manifest `apiVersion`. The
+library's ABI is authoritative, so a disagreement fails packaging with an error
+naming both versions:
+
+```text
+error: manifest `apiVersion` is "1.0" but `backend/libecho_backend.dylib` exports
+plugin ABI 1.1; set `apiVersion` to "1.1" (the library's ABI is authoritative)
+```
+
+The packager **reads** the version from the ABI marker that
+`export_plugin_abi_version!` embeds; it never loads the library. That keeps your
+plugin's code from running inside the packaging step, and it works for every
+target from any machine — a Windows `.dll` built with `--target` on Linux is
+checked the same way as the host's own library, and every slice of a macOS
+universal binary must agree.
+
+A library **without** the marker (one that hand-writes
+`termihub_plugin_abi_version`) cannot be checked. It is still packaged, with a
+warning:
+
+```text
+warning: cannot verify manifest `apiVersion` "1.1" against `backend/libmy_plugin.so`:
+the library embeds no ABI marker. …
+```
+
+Such a package is only refused later, when termiHub loads it. To get the check,
+use `export_plugin_abi_version!()` — or, if you must compute the version at run
+time, keep your function and add
+`termihub_plugin_api::embed_plugin_abi_marker!(<the same AbiVersion>);`. The
+marker is packaging metadata only: the host never reads or requires it.
 
 ### Multi-platform packages
 

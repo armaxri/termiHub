@@ -5,7 +5,9 @@ REM The manifest validation, zipping (concept §1 layout) and round-trip
 REM validation are done by the `termihub-plugin-pack` binary in termihub-core.
 REM This wrapper adds the backend-crate build: if the source has a Cargo.toml, it
 REM builds the cdylib in --release, stages the DLL into a temp backend\ directory
-REM next to the manifest, and packages that staged tree.
+REM next to the manifest, and packages that staged tree. The packer checks every
+REM staged library's embedded ABI marker against the manifest apiVersion (without
+REM loading it) and fails on a mismatch; an unmarked library only warns (#3372).
 REM
 REM Usage: scripts\package-plugin.cmd <plugin-source-dir> [--out <dir>] [--no-build]
 REM                                   [--target <triple>]... [--toolchain <ver>] [--sign <key>]

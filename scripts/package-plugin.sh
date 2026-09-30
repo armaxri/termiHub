@@ -7,6 +7,9 @@
 # NOT do: if the source is a Rust backend crate (`Cargo.toml` present), it builds
 # the `cdylib` in `--release`, stages the compiled library into a temporary
 # `backend/` directory alongside the manifest, and packages that staged tree.
+# The packer checks every staged library's embedded ABI marker against the
+# manifest `apiVersion` (without loading it) and fails on a mismatch; a library
+# without the marker is packaged with a warning (#3372).
 #
 # Usage: ./scripts/package-plugin.sh <plugin-source-dir> [--out <dir>] [--no-build]
 #                                    [--target <triple>]... [--toolchain <ver>] [--sign <key>]
@@ -68,7 +71,7 @@ while [ $# -gt 0 ]; do
         shift 2
         ;;
     --help | -h)
-        sed -n '2,30p' "$0"
+        sed -n '2,33p' "$0"
         exit 0
         ;;
     -*)
@@ -118,7 +121,7 @@ fi
 
 if [ -z "$SOURCE" ]; then
     echo "ERROR: no plugin source directory given" >&2
-    sed -n '11,28p' "$0" >&2
+    sed -n '14,31p' "$0" >&2
     exit 2
 fi
 if [ ! -f "$SOURCE/manifest.json" ]; then
