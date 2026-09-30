@@ -4,8 +4,9 @@
  * manifest that makes an interrupted folder paste visible after a restart
  * (#3630).
  *
- * A folder paste that crosses sessions (local → session, session → session, or
- * a byte-based backend) is copied one file at a time from the frontend. Only
+ * A folder paste that crosses sessions (local → session, session → session,
+ * session → local (#3912), or a byte-based backend) is copied one file at a
+ * time from the frontend. Only
  * the file in flight has a persisted transfer record, so after an app restart
  * the files that had not started yet would silently never be copied. To make
  * that visible, such a paste records a manifest before its first file and
@@ -46,7 +47,12 @@ import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
 import type { FileEntry } from "@/types/connection";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
-import { uploadLocalFile } from "@/services/paneTransfer";
+import {
+  copyPaneFolder,
+  probePaneRemote,
+  uploadLocalFile,
+  type PaneRemote,
+} from "@/services/paneTransfer";
 import { seedTransferQueueRow } from "./transferFeedback";
 
 /**
@@ -254,6 +260,11 @@ function sessionEndpoint(sessionId: string, path: string): FolderPasteEndpoint {
   };
 }
 
+/** The local disk as a manifest endpoint (no session). */
+function localEndpoint(path: string): FolderPasteEndpoint {
+  return { sessionId: null, connectionId: null, label: "Local", path };
+}
+
 /** The manifest endpoints of a paste of `srcDir` → `destPath`. */
 function manifestEndpoints(
   t: PasteTransport,
@@ -262,17 +273,44 @@ function manifestEndpoints(
 ): [FolderPasteEndpoint, FolderPasteEndpoint] {
   const source =
     t.sourceMode === "local"
-      ? { sessionId: null, connectionId: null, label: "Local", path: srcDir }
+      ? localEndpoint(srcDir)
       : sessionEndpoint(t.srcSession ?? t.destSession, srcDir);
   return [source, sessionEndpoint(t.destSession, destPath)];
 }
 
 /**
+ * Run a file-by-file folder paste recorded as a folder-paste manifest (#3630).
+ * The manifest is removed only once `paste` resolves, so a paste interrupted
+ * by a quit, crash or failure is reported after the next launch rather than
+ * silently left half-copied. Recording is best-effort: a persistence failure
+ * never blocks the paste (`paste` then gets no manifest id).
+ */
+async function recordFolderPaste<T>(
+  operation: FolderPasteOperation,
+  source: FolderPasteEndpoint,
+  destination: FolderPasteEndpoint,
+  paste: (pasteId: string | undefined) => Promise<T>
+): Promise<T> {
+  let pasteId: string | undefined;
+  try {
+    pasteId = await folderPasteBegin(operation, source, destination);
+  } catch (err) {
+    frontendLog("folder_paste", `Could not record folder paste: ${errorMessage(err)}`);
+  }
+  const result = await paste(pasteId);
+  if (pasteId) {
+    try {
+      await folderPasteEnd(pasteId);
+    } catch (err) {
+      frontendLog("folder_paste", `Could not clear folder paste: ${errorMessage(err)}`);
+    }
+  }
+  return result;
+}
+
+/**
  * {@link pasteFolderTree}, recorded as a folder-paste manifest while it runs
- * when it is copied file by file (#3630). The manifest is removed only once
- * the whole folder landed, so a paste interrupted by a quit, crash or failure
- * is reported after the next launch rather than silently left half-copied.
- * Recording is best-effort: a persistence failure never blocks the paste.
+ * when it is copied file by file (#3630), see {@link recordFolderPaste}.
  */
 export async function pasteFolderRecorded(
   t: PasteTransport,
@@ -281,21 +319,36 @@ export async function pasteFolderRecorded(
 ): Promise<boolean> {
   if (isSingleOperationFolderPaste(t)) return pasteFolderTree(t, srcDir, destPath);
   const [source, destination] = manifestEndpoints(t, srcDir, destPath);
-  let pasteId: string | null = null;
-  try {
-    pasteId = await folderPasteBegin(t.operation, source, destination);
-  } catch (err) {
-    frontendLog("folder_paste", `Could not record folder paste: ${errorMessage(err)}`);
-  }
-  const tracked = await pasteFolderTree(pasteId ? { ...t, pasteId } : t, srcDir, destPath);
-  if (pasteId) {
-    try {
-      await folderPasteEnd(pasteId);
-    } catch (err) {
-      frontendLog("folder_paste", `Could not clear folder paste: ${errorMessage(err)}`);
-    }
-  }
-  return tracked;
+  return recordFolderPaste(t.operation, source, destination, (pasteId) =>
+    pasteFolderTree(pasteId ? { ...t, pasteId } : t, srcDir, destPath)
+  );
+}
+
+/**
+ * Paste the session folder `srcDir` to the local folder `destPath` (#3912)
+ * through the shared pane-transfer engine, recorded in the same folder-paste
+ * manifest as a paste into a session: each tracked download is linked to it
+ * (#3643), and a move removes the remote source only once the whole folder
+ * landed. `continueExisting` continues an interrupted paste, skipping the
+ * files the local folder already holds with the same size. Resolves to
+ * whether any leg is tracked by the transfer queue.
+ */
+export async function pasteRemoteFolderToLocal(
+  operation: FolderPasteOperation,
+  remote: PaneRemote,
+  srcDir: string,
+  destPath: string,
+  continueExisting = false
+): Promise<boolean> {
+  const source = sessionEndpoint(remote.sessionId, srcDir);
+  return recordFolderPaste(operation, source, localEndpoint(destPath), async (pasteId) => {
+    const tracked = await copyPaneFolder("remote", srcDir, destPath, remote, {
+      continueExisting,
+      onRegistered: (transferId) => linkToFolderPaste(pasteId, transferId),
+    });
+    if (operation === "cut") await sessionDeleteFile(remote.sessionId, srcDir);
+    return tracked;
+  });
 }
 
 /**
@@ -349,13 +402,35 @@ export async function probeRemoteCopy(sessionId: string): Promise<boolean> {
 }
 
 /**
- * Continue an interrupted folder paste (#3630): resolve both endpoints to
+ * Continue an interrupted session → local folder paste (#3912) on the live
+ * session of its source. Rejects with {@link FolderPasteEndpointUnavailable}
+ * when the source is not connected.
+ */
+async function retryRemoteToLocalPaste(paste: InterruptedFolderPaste): Promise<boolean> {
+  const srcSession = resolveLiveSession(paste.source);
+  if (!srcSession) throw new FolderPasteEndpointUnavailable(paste.source);
+  const remote = await probePaneRemote(srcSession);
+  return pasteRemoteFolderToLocal(
+    paste.operation,
+    remote,
+    paste.source.path,
+    paste.destination.path,
+    true
+  );
+}
+
+/**
+ * Continue an interrupted folder paste (#3630). A paste into the local disk
+ * (#3912) continues on its source's live session; otherwise resolve both endpoints to
  * their live sessions and paste the folder again in continue mode, copying
  * only the files the destination does not yet hold completely. Recorded like
  * any folder paste, so a second interruption is reported again. Rejects with
  * {@link FolderPasteEndpointUnavailable} when an endpoint is not connected.
  */
 export async function retryInterruptedFolderPaste(paste: InterruptedFolderPaste): Promise<boolean> {
+  if (!paste.destination.sessionId && !paste.destination.connectionId) {
+    return retryRemoteToLocalPaste(paste);
+  }
   const destSession = resolveLiveSession(paste.destination);
   if (!destSession) throw new FolderPasteEndpointUnavailable(paste.destination);
   const local = !paste.source.sessionId;

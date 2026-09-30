@@ -5,9 +5,11 @@ vi.mock("@/services/api", () => ({
   folderPasteEnd: vi.fn(() => Promise.resolve()),
   folderPasteLinkTransfer: vi.fn(() => Promise.resolve()),
   localListDir: vi.fn(() => Promise.resolve([])),
+  localMkdir: vi.fn(() => Promise.resolve()),
   sessionCopy: vi.fn(() => Promise.resolve()),
   sessionCopyRemote: vi.fn(() => Promise.resolve(0)),
   sessionDeleteFile: vi.fn(() => Promise.resolve()),
+  sessionDownload: vi.fn(() => Promise.resolve(0)),
   sessionHasExecCapability: vi.fn(() => Promise.reject(new Error("not sftp-backed"))),
   sessionListFiles: vi.fn(() => Promise.resolve([])),
   sessionMkdir: vi.fn(() => Promise.resolve()),
@@ -32,7 +34,11 @@ import {
   folderPasteEnd,
   folderPasteLinkTransfer,
   localListDir,
+  localMkdir,
   sessionCopyRemote,
+  sessionDeleteFile,
+  sessionDownload,
+  sessionSupportsTransferQueue,
   sessionListFiles,
   sessionMkdir,
   sessionReadFile,
@@ -399,5 +405,86 @@ describe("retryInterruptedFolderPaste (#3630)", () => {
       ["paste-2", "t:/home/u/proj/todo.bin"],
     ]);
     expect(vi.mocked(folderPasteEnd)).toHaveBeenCalledWith("paste-2");
+  });
+});
+
+describe("retryInterruptedFolderPaste — remote → local (#3912)", () => {
+  const interrupted: InterruptedFolderPaste = {
+    id: "old",
+    operation: "copy",
+    source: { sessionId: "dead", connectionId: "conn-web", label: "web", path: "/srv/logs" },
+    destination: { sessionId: null, connectionId: null, label: "Local", path: "/home/u/logs" },
+    startedAtMs: 1,
+  };
+
+  beforeEach(() => {
+    vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(true);
+    vi.mocked(sessionListFiles).mockImplementation(async (_s, path) =>
+      path === "/srv/logs"
+        ? [entry("a.log", "/srv/logs/a.log", 5), entry("b.log", "/srv/logs/b.log", 5)]
+        : []
+    );
+    vi.mocked(localListDir).mockImplementation(async (path) =>
+      path === "/home/u/logs" ? [entry("a.log", "/home/u/logs/a.log", 5)] : []
+    );
+  });
+
+  it("refuses when the source connection is not open", async () => {
+    await expect(retryInterruptedFolderPaste(interrupted)).rejects.toThrow(
+      "Connect to web first, then retry."
+    );
+    expect(vi.mocked(folderPasteBegin)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionDownload)).not.toHaveBeenCalled();
+  });
+
+  it("downloads only the missing files over the reconnected session, recorded afresh", async () => {
+    vi.mocked(getAllTabsAcrossGroupTrees).mockReturnValue([tab("web-2", "conn-web")]);
+    vi.mocked(sessionDownload).mockImplementationOnce(async (_s, _r, _l, onRegistered) => {
+      onRegistered?.("xfer-b");
+      return 5;
+    });
+
+    await retryInterruptedFolderPaste(interrupted);
+
+    expect(vi.mocked(folderPasteBegin)).toHaveBeenCalledWith(
+      "copy",
+      expect.objectContaining({ sessionId: "web-2", connectionId: "conn-web", path: "/srv/logs" }),
+      expect.objectContaining({ sessionId: null, path: "/home/u/logs" })
+    );
+    expect(vi.mocked(sessionDownload)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(sessionDownload)).toHaveBeenCalledWith(
+      "web-2",
+      "/srv/logs/b.log",
+      "/home/u/logs/b.log",
+      expect.any(Function)
+    );
+    // The local folder is already there: it is merged into, not recreated.
+    expect(vi.mocked(localMkdir)).not.toHaveBeenCalled();
+    expect(vi.mocked(folderPasteLinkTransfer)).toHaveBeenCalledWith("paste-2", "xfer-b");
+    expect(vi.mocked(folderPasteEnd)).toHaveBeenCalledWith("paste-2");
+  });
+
+  it("creates the local folder when it is missing and copies everything", async () => {
+    vi.mocked(getAllTabsAcrossGroupTrees).mockReturnValue([tab("web-2", "conn-web")]);
+    vi.mocked(localListDir).mockRejectedValue(new Error("No such file or directory"));
+
+    await retryInterruptedFolderPaste(interrupted);
+
+    expect(vi.mocked(localMkdir)).toHaveBeenCalledWith("/home/u/logs");
+    expect(vi.mocked(sessionDownload).mock.calls.map((c) => c[1])).toEqual([
+      "/srv/logs/a.log",
+      "/srv/logs/b.log",
+    ]);
+  });
+
+  it("finishes a move by removing the remote source once the rest landed", async () => {
+    vi.mocked(getAllTabsAcrossGroupTrees).mockReturnValue([tab("web-2", "conn-web")]);
+
+    await retryInterruptedFolderPaste({ ...interrupted, operation: "cut" });
+
+    expect(vi.mocked(sessionDeleteFile)).toHaveBeenCalledWith("web-2", "/srv/logs");
+    const download = vi.mocked(sessionDownload).mock.invocationCallOrder[0];
+    const del = vi.mocked(sessionDeleteFile).mock.invocationCallOrder[0];
+    expect(download).toBeLessThan(del);
   });
 });

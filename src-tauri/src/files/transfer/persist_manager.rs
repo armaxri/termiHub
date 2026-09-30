@@ -1051,6 +1051,48 @@ mod tests {
         assert!(relaunched.snapshot().folder_pastes.is_empty());
     }
 
+    /// A remote → local folder paste (#3912) is recorded in the same manifest:
+    /// its source is the session it was copied from (with the saved connection
+    /// a Retry reconnects through) and its destination is the local disk (no
+    /// session). Left unfinished, it is listed as interrupted after a restart
+    /// exactly like a paste into a session, and its in-flight download is
+    /// reported through the paste instead of as its own paused row.
+    #[test]
+    fn interrupted_remote_to_local_folder_paste_is_listed_after_a_restart() {
+        let dir = TempDir::new().unwrap();
+        let paste = {
+            let m = TransferPersistenceManager::new_test(dir.path());
+            let source = FolderPasteEndpoint {
+                connection_id: Some("conn-web".to_string()),
+                label: Some("web".to_string()),
+                ..endpoint(Some("sess-web"), "/srv/logs")
+            };
+            let paste = m.begin_folder_paste(
+                FolderPasteOperation::Copy,
+                source,
+                endpoint(None, "/home/u/logs"),
+            );
+            register(&m, "download");
+            m.record_folder_paste("download", &paste);
+            m.flush();
+            paste
+        };
+
+        let relaunched = TransferPersistenceManager::new_test(dir.path());
+        let taken = relaunched.take_interrupted_folder_pastes();
+        assert_eq!(taken.len(), 1);
+        assert_eq!(taken[0].id, paste);
+        assert_eq!(taken[0].source.session_id.as_deref(), Some("sess-web"));
+        assert_eq!(taken[0].source.connection_id.as_deref(), Some("conn-web"));
+        assert_eq!(taken[0].destination.session_id, None);
+        assert_eq!(taken[0].destination.connection_id, None);
+        assert_eq!(taken[0].destination.path, "/home/u/logs");
+        assert!(
+            relaunched.snapshot().get("download").is_none(),
+            "the in-flight download is reported through the paste"
+        );
+    }
+
     /// The file a session folder paste had in flight at quit comes back only
     /// through the paste's notice, never as its own paused row (#3643).
     /// Unlinked records, and records of a paste that finished, rehydrate as
