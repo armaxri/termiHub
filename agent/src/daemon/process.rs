@@ -1428,8 +1428,8 @@ pub(crate) mod tests {
     // agent's environment (`SystemDaemonLauncher` never clears it), so when the
     // desktop→agent SSH leg itself forwards the agent, that host-local socket
     // transparently chains back to the operator's own agent — end to end,
-    // without a bespoke JSON-RPC relay. The chosen model is documented in
-    // `docs/testing.md` → "SSH agent forwarding through the remote agent".
+    // without a bespoke JSON-RPC relay. A live end-to-end test of this chain is
+    // tracked in #4005 (it replaced the manual walkthrough in `docs/testing.md`).
     //
     // These tests pin the agent-side seam: the `forwardAgent` flag survives the
     // settings handoff untouched and, fed to the core parser exactly as the
