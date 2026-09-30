@@ -156,6 +156,7 @@ pub async fn connect_for_recovery(endpoint: &str) -> io::Result<(BoxedReader, Bo
 pub use unix_impl::{
     agent_forward_endpoint, endpoint_alive, ensure_agent_forward_dir, ki_prompt_endpoint,
     open_daemon_log, open_registry_log, registry_endpoint, remove_session_files, session_endpoint,
+    socket_dir,
 };
 // allow(unused_imports): `agent_forward_endpoint` has only unix-side consumers
 // in some builds; kept to mirror the unix surface. There is no windows
@@ -268,7 +269,7 @@ mod unix_impl {
     /// The shared [`ListenerSecurity::CurrentUserOnly`](termihub_core::ipc::ListenerSecurity)
     /// bind additionally verifies this directory is owned by us with `0o700`
     /// perms before binding into it.
-    fn socket_dir() -> PathBuf {
+    pub fn socket_dir() -> PathBuf {
         // SAFETY: `getuid` has no preconditions and never fails; it returns the
         // real uid of the calling process.
         let uid = unsafe { libc::getuid() };
