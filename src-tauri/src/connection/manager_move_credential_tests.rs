@@ -31,6 +31,7 @@ fn take(recorded: &Recorded) -> Vec<ConnectionIdChange> {
 
 fn ssh(id: &str, name: &str, folder_id: Option<&str>) -> SavedConnection {
     SavedConnection {
+        extra: Default::default(),
         icon: None,
         id: id.to_string(),
         name: name.to_string(),
@@ -62,6 +63,7 @@ fn local(id: &str, name: &str, folder_id: Option<&str>) -> SavedConnection {
 
 fn folder(id: &str, name: &str, parent_id: Option<&str>) -> ConnectionFolder {
     ConnectionFolder {
+        extra: Default::default(),
         id: id.to_string(),
         name: name.to_string(),
         parent_id: parent_id.map(String::from),

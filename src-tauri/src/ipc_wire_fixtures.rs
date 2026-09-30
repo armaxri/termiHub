@@ -134,12 +134,14 @@ fn connections_fixture() -> Value {
         connections: vec![full, bare],
         folders: vec![
             ConnectionFolder {
+                extra: Default::default(),
                 id: "Work".into(),
                 name: "Work".into(),
                 parent_id: None,
                 is_expanded: true,
             },
             ConnectionFolder {
+                extra: Default::default(),
                 id: "Work/Dev".into(),
                 name: "Dev".into(),
                 parent_id: Some("Work".into()),

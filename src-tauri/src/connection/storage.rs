@@ -265,6 +265,23 @@ impl ConnectionStorage {
     }
 }
 
+/// The unknown fields of a raw folder entry (#3947): everything but the keys
+/// the typed [`ConnectionTreeNode::Folder`] owns, so a folder rebuilt by the
+/// granular recovery keeps them like a cleanly parsed one does.
+fn folder_extra(entry: &serde_json::Value) -> super::config::NodeExtra {
+    const OWNED: [&str; 4] = ["type", "name", "isExpanded", "children"];
+    entry
+        .as_object()
+        .map(|fields| {
+            fields
+                .iter()
+                .filter(|(key, _)| !OWNED.contains(&key.as_str()))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Recursively recover valid tree nodes from a JSON array,
 /// dropping corrupt entries and recording warnings.
 fn recover_nodes_recursive(
@@ -303,6 +320,7 @@ fn recover_nodes_recursive(
                     name: name.to_string(),
                     is_expanded,
                     children: child_nodes,
+                    extra: folder_extra(entry),
                 });
             }
             Some("connection") => {
@@ -422,6 +440,7 @@ mod tests {
         let store = ConnectionStore {
             version: "2".to_string(),
             children: vec![ConnectionTreeNode::Connection {
+                extra: Default::default(),
                 icon: None,
                 name: "Test".to_string(),
                 config: crate::terminal::backend::ConnectionConfig {
@@ -450,9 +469,11 @@ mod tests {
         let store = ConnectionStore {
             version: "2".to_string(),
             children: vec![ConnectionTreeNode::Folder {
+                extra: Default::default(),
                 name: "Work".to_string(),
                 is_expanded: true,
                 children: vec![ConnectionTreeNode::Connection {
+                    extra: Default::default(),
                     icon: None,
                     name: "SSH".to_string(),
                     config: crate::terminal::backend::ConnectionConfig {
@@ -553,6 +574,7 @@ mod tests {
 
         let flat = FlatConnectionStore {
             connections: vec![SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "Work/SSH".to_string(),
                 name: "SSH".to_string(),
@@ -565,6 +587,7 @@ mod tests {
                 source_file: None,
             }],
             folders: vec![ConnectionFolder {
+                extra: Default::default(),
                 id: "Work".to_string(),
                 name: "Work".to_string(),
                 parent_id: None,

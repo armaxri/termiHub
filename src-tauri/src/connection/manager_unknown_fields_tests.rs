@@ -135,7 +135,10 @@ fn an_agent_saved_over_ipc_does_not_persist_frontend_only_keys() {
     let on_disk = read_json(&path);
     let agents = on_disk["agents"].as_array().unwrap();
     assert_eq!(agents.len(), 2, "{on_disk}");
-    assert!(agents.iter().all(|a| a.get("connectionState").is_none()), "{on_disk}");
+    assert!(
+        agents.iter().all(|a| a.get("connectionState").is_none()),
+        "{on_disk}"
+    );
     assert_eq!(agents[0]["futureAgentField"], 7, "{on_disk}");
     assert!(agents[1].get("futureAgentField").is_none(), "{on_disk}");
 }
@@ -179,5 +182,8 @@ fn moving_a_connection_to_another_file_keeps_its_unknown_fields() {
 
     let on_disk = read_json(&file);
     let text = on_disk.to_string();
-    assert!(text.contains("\"futureConnectionField\":{\"pinned\":true}"), "{text}");
+    assert!(
+        text.contains("\"futureConnectionField\":{\"pinned\":true}"),
+        "{text}"
+    );
 }

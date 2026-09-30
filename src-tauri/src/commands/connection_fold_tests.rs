@@ -56,6 +56,7 @@ struct Harness {
 
 fn connection(name: &str, folder_id: Option<&str>) -> SavedConnection {
     SavedConnection {
+        extra: Default::default(),
         icon: None,
         id: format!("conn-{name}"),
         name: name.to_string(),
@@ -71,6 +72,7 @@ fn connection(name: &str, folder_id: Option<&str>) -> SavedConnection {
 
 fn folder(id: &str) -> ConnectionFolder {
     ConnectionFolder {
+        extra: Default::default(),
         id: id.to_string(),
         name: id.to_string(),
         parent_id: None,

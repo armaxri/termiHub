@@ -193,6 +193,16 @@ pub struct TerminalOptions {
 // On-disk types (v2 nested tree format)
 // ---------------------------------------------------------------------------
 
+/// Fields of a persisted node (folder, connection or agent) that this build
+/// does not know (#3947).
+///
+/// A newer desktop may add per-node fields without bumping the schema version
+/// (an additive change needs no migration), so an older desktop that loads and
+/// re-saves the file must carry them through instead of erasing them. The
+/// map is empty for every node this build wrote itself, so it adds nothing to
+/// the serialized output.
+pub type NodeExtra = serde_json::Map<String, serde_json::Value>;
+
 /// A node in the connection tree stored on disk.
 ///
 /// Folders contain children; connections are leaf nodes.
@@ -214,6 +224,9 @@ pub enum ConnectionTreeNode {
         is_expanded: bool,
         #[serde(default)]
         children: Vec<ConnectionTreeNode>,
+        /// Unknown per-node fields, kept verbatim (#3947).
+        #[serde(flatten)]
+        extra: NodeExtra,
     },
     /// A saved connection.
     #[serde(rename_all = "camelCase")]
@@ -229,6 +242,9 @@ pub enum ConnectionTreeNode {
         /// choice survives a save/load round-trip (#2316).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         icon: Option<String>,
+        /// Unknown per-node fields, kept verbatim (#3947).
+        #[serde(flatten)]
+        extra: NodeExtra,
     },
 }
 
@@ -244,6 +260,17 @@ pub struct SavedRemoteAgent {
     /// Runtime preferences sent to the agent on startup and on live updates.
     #[serde(default)]
     pub agent_settings: AgentSettings,
+    /// Unknown fields of this agent entry in `connections.json`, kept verbatim
+    /// so a same-version load → save does not erase them (#3947).
+    ///
+    /// This struct is both the on-disk entry and the IPC shape, so the map is
+    /// flattened on the wire too. Only the on-disk value is authoritative: the
+    /// manager replaces whatever an IPC save carries with the fields the entry
+    /// already had on disk, so keys the frontend adds are never persisted.
+    /// Skipped in the generated type, which keeps its exact typed shape.
+    #[serde(flatten)]
+    #[cfg_attr(test, ts(skip))]
+    pub extra: NodeExtra,
 }
 
 /// Top-level schema for the connections JSON file (v2 nested format).
@@ -449,6 +476,12 @@ pub struct SavedConnection {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     #[cfg_attr(test, ts(optional = nullable))]
     pub source_file: Option<String>,
+    /// Runtime-only: the on-disk node's unknown fields (#3947), carried from
+    /// load to save. Never on the IPC wire — the editor's copy arrives with an
+    /// empty map and the save paths keep the fields the node had on disk.
+    #[serde(skip)]
+    #[cfg_attr(test, ts(skip))]
+    pub extra: NodeExtra,
 }
 
 /// In-memory representation of a folder (with generated path-based ID).
@@ -464,6 +497,11 @@ pub struct ConnectionFolder {
     pub name: String,
     pub parent_id: Option<String>,
     pub is_expanded: bool,
+    /// Runtime-only: the on-disk node's unknown fields (#3947), carried from
+    /// load to save. Never on the IPC wire — see [`SavedConnection::extra`].
+    #[serde(skip)]
+    #[cfg_attr(test, ts(skip))]
+    pub extra: NodeExtra,
 }
 
 /// Flattened in-memory store used by the manager and IPC layer.
@@ -504,9 +542,11 @@ mod tests {
     #[test]
     fn connection_tree_node_folder_serde_round_trip() {
         let node = ConnectionTreeNode::Folder {
+            extra: Default::default(),
             name: "Work".to_string(),
             is_expanded: true,
             children: vec![ConnectionTreeNode::Connection {
+                extra: Default::default(),
                 icon: None,
                 name: "My SSH".to_string(),
                 config: make_ssh_config(),
@@ -520,7 +560,9 @@ mod tests {
                 name,
                 is_expanded,
                 children,
+                extra,
             } => {
+                assert!(extra.is_empty(), "{extra:?}");
                 assert_eq!(name, "Work");
                 assert!(is_expanded);
                 assert_eq!(children.len(), 1);
@@ -532,6 +574,7 @@ mod tests {
     #[test]
     fn connection_tree_node_connection_serde_round_trip() {
         let node = ConnectionTreeNode::Connection {
+            extra: Default::default(),
             icon: None,
             name: "Local Shell".to_string(),
             config: make_local_config(),
@@ -548,7 +591,9 @@ mod tests {
                 config,
                 terminal_options,
                 icon,
+                extra,
             } => {
+                assert!(extra.is_empty(), "{extra:?}");
                 assert_eq!(name, "Local Shell");
                 assert_eq!(config.type_id, "local");
                 assert!(terminal_options.is_some());
@@ -564,9 +609,11 @@ mod tests {
             version: "2".to_string(),
             children: vec![
                 ConnectionTreeNode::Folder {
+                    extra: Default::default(),
                     name: "Work".to_string(),
                     is_expanded: true,
                     children: vec![ConnectionTreeNode::Connection {
+                        extra: Default::default(),
                         icon: None,
                         name: "Prod SSH".to_string(),
                         config: make_ssh_config(),
@@ -574,6 +621,7 @@ mod tests {
                     }],
                 },
                 ConnectionTreeNode::Connection {
+                    extra: Default::default(),
                     icon: None,
                     name: "Local".to_string(),
                     config: make_local_config(),
@@ -678,6 +726,7 @@ mod tests {
     #[test]
     fn saved_remote_agent_serde_round_trip() {
         let agent = SavedRemoteAgent {
+            extra: Default::default(),
             id: "agent-1".to_string(),
             name: "Pi Agent".to_string(),
             config: RemoteAgentConfig {
@@ -743,6 +792,7 @@ mod tests {
     #[test]
     fn serde_produces_correct_json_shape() {
         let node = ConnectionTreeNode::Connection {
+            extra: Default::default(),
             icon: None,
             name: "Test".to_string(),
             config: make_local_config(),
@@ -808,6 +858,7 @@ mod tests {
     #[test]
     fn folder_json_shape_has_type_tag() {
         let node = ConnectionTreeNode::Folder {
+            extra: Default::default(),
             name: "Work".to_string(),
             is_expanded: false,
             children: vec![],
@@ -891,6 +942,7 @@ mod tests {
     fn saved_connection_without_icon_stays_clean() {
         // A connection with no icon must not emit a stray `icon` key.
         let conn = SavedConnection {
+            extra: Default::default(),
             id: "Local".to_string(),
             name: "Local".to_string(),
             config: make_local_config(),
@@ -911,6 +963,7 @@ mod tests {
         // The on-disk `ConnectionTreeNode::Connection` variant must carry `icon`
         // so it persists to disk, not just in memory (#2316).
         let node = ConnectionTreeNode::Connection {
+            extra: Default::default(),
             name: "My SSH".to_string(),
             config: make_ssh_config(),
             terminal_options: None,
@@ -926,5 +979,46 @@ mod tests {
             }
             _ => panic!("Expected Connection"),
         }
+    }
+
+    /// The connection and folder IPC shapes are unchanged by the on-disk
+    /// unknown-field carry (#3947): the map never crosses the wire.
+    #[test]
+    fn node_extra_never_crosses_the_ipc_wire() {
+        let mut extra = NodeExtra::new();
+        extra.insert("futureField".to_string(), serde_json::json!(1));
+        let conn = SavedConnection {
+            id: "c".to_string(),
+            name: "c".to_string(),
+            config: ConnectionConfig {
+                type_id: "local".to_string(),
+                settings: serde_json::json!({}),
+            },
+            folder_id: None,
+            terminal_options: None,
+            icon: None,
+            source_file: None,
+            extra: extra.clone(),
+        };
+        let folder = ConnectionFolder {
+            id: "f".to_string(),
+            name: "f".to_string(),
+            parent_id: None,
+            is_expanded: false,
+            extra,
+        };
+        assert_eq!(
+            serde_json::to_value(&conn).unwrap(),
+            serde_json::json!({
+                "id": "c",
+                "name": "c",
+                "config": { "type": "local", "config": {} },
+                "folderId": null
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&folder).unwrap(),
+            serde_json::json!({ "id": "f", "name": "f", "parentId": null, "isExpanded": false })
+        );
     }
 }

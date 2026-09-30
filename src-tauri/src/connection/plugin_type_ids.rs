@@ -222,6 +222,7 @@ mod tests {
 
     fn conn(name: &str, type_id: &str) -> SavedConnection {
         SavedConnection {
+            extra: Default::default(),
             id: name.to_string(),
             name: name.to_string(),
             config: ConnectionConfig {

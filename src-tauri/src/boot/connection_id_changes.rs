@@ -185,6 +185,7 @@ mod tests {
 
     fn conn(id: &str, name: &str, folder_id: Option<&str>) -> SavedConnection {
         SavedConnection {
+            extra: Default::default(),
             icon: None,
             id: id.to_string(),
             name: name.to_string(),
@@ -200,6 +201,7 @@ mod tests {
 
     fn folder(id: &str, name: &str) -> ConnectionFolder {
         ConnectionFolder {
+            extra: Default::default(),
             id: id.to_string(),
             name: name.to_string(),
             parent_id: None,

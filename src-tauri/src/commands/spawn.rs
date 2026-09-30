@@ -829,6 +829,7 @@ mod tests {
         settings: serde_json::Value,
     ) -> SavedConnection {
         SavedConnection {
+            extra: Default::default(),
             icon: None,
             id: id.to_string(),
             name: name.to_string(),

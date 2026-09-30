@@ -54,6 +54,7 @@ impl Machine {
     fn save_ssh(&self, name: &str, credential_ref: &str) {
         self.connections
             .save_connection(SavedConnection {
+                extra: Default::default(),
                 id: name.to_string(),
                 name: name.to_string(),
                 config: ConnectionConfig {
@@ -76,6 +77,7 @@ impl Machine {
     fn save_agent(&self, name: &str, credential_ref: &str) {
         self.connections
             .save_agent(SavedRemoteAgent {
+                extra: Default::default(),
                 id: name.to_string(),
                 name: name.to_string(),
                 config: RemoteAgentConfig {
@@ -203,6 +205,7 @@ fn round_trip_through_a_folder() {
     let cred = a.create("Bastion", "bastion-secret");
     a.connections
         .save_folder(crate::connection::config::ConnectionFolder {
+            extra: Default::default(),
             id: "Work".to_string(),
             name: "Work".to_string(),
             parent_id: None,
@@ -211,6 +214,7 @@ fn round_trip_through_a_folder() {
         .unwrap();
     a.connections
         .save_connection(SavedConnection {
+            extra: Default::default(),
             id: "Work/web".to_string(),
             name: "web".to_string(),
             config: ConnectionConfig {
