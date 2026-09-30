@@ -23,43 +23,40 @@
  * store's own connect / session / tab logic — sources the inventory from this
  * region, synchronously via {@link currentConnectionsView} or reactively via
  * {@link import("./useProjectedConnections").useProjectedConnections}. The
- * connection-tree lifecycle actions are thin backend-command wrappers: each
- * dispatches its granular `connection.*` intent ({@link mirrorConnectionIntent})
- * as the optimistic write, then calls the persist command whose server-side fold
- * (#2389 / #2394) reconciles the authoritative truth back into the region. There
- * is no local slice left to fall back to, so the mutation-cut flag is gone.
+ * connection-tree lifecycle actions are thin backend-command wrappers around
+ * {@link persistWithOverlay}.
+ *
+ * # Single authoritative writer (#2831)
+ *
+ * The persist command is the **only** writer of the `connections` region: it
+ * writes `connections.json` and, in the same backend step, folds the disk truth
+ * into the region (the `commit` choke point) — whether the write succeeded,
+ * failed cleanly, or failed half-way. No `connection.*` intent is dispatched, so
+ * there is never a second, uncoupled region write that a failed persist has to
+ * compensate for, and the region cannot sit ahead of (or behind) disk.
+ *
+ * Instant feedback comes from a **client-local optimistic overlay**
+ * ({@link persistWithOverlay}): a pure {@link ConnectionsFold} layered over the
+ * authoritative view while the persist is in flight. The overlay's lifecycle is
+ * driven by the persist result, not by an intent ack: once the persist settles
+ * (either way) the bridge waits for the region to catch up to the backend's
+ * post-persist version, then drops the overlay. On success the authoritative
+ * view already carries the change; on failure it carries exactly what is on
+ * disk — exact membership and order, no compensating write, no drift.
  */
 
-import {
-  createTransport,
-  newClientId,
-  newIntentId,
-  ProjectionClient,
-  type IntentAck,
-  type Transport,
-} from "@/services/transport";
+import { createTransport, ProjectionClient, type Transport } from "@/services/transport";
 import type { SavedConnection, ConnectionFolder } from "@/types/connection";
 import { frontendLog } from "@/utils/frontendLog";
 import { makeVersionGuard } from "./bridgeVersionGuard";
+import type { ConnectionsFold, ConnectionsView } from "./connectionsOverlay";
 import { errorMessage } from "@/utils/errorMessage";
+
+export type { ConnectionsFold, ConnectionsView } from "./connectionsOverlay";
 
 /** The projection region id for the connections-tree domain (twin of the Rust
  * `CONNECTIONS_REGION` const). Shared (Open Design Decision #4). */
 export const CONNECTIONS_REGION = "connections";
-
-/**
- * The projected connections view model, in `appStore` terms — a twin of the Rust
- * store snapshot with the frontend slice's field names: the flat folder tree plus
- * the flat saved-connection list, whose nesting is expressed by parent pointers
- * (`ConnectionFolder.parentId`, `SavedConnection.folderId`) and whose ordering is
- * array position. The projected records match the frontend {@link ConnectionFolder}
- * / {@link SavedConnection} shapes one-to-one, so the render cut is a pure parity
- * swap.
- */
-export interface ConnectionsView {
-  folders: ConnectionFolder[];
-  connections: SavedConnection[];
-}
 
 /** The empty view a fresh region reports (twin of the empty store snapshot). */
 const EMPTY_VIEW: ConnectionsView = {
@@ -92,11 +89,6 @@ let transportInstance: Transport | null = null;
 let regionClient: ProjectionClient | null = null;
 let startPromise: Promise<ProjectionClient> | null = null;
 
-// A stable per-session client identity for dispatched intents (fan-out / audit
-// only; the shared region's diff reaches every subscriber regardless of who
-// dispatched it).
-const clientId = newClientId();
-
 /** Inject a transport for tests; `null` restores the lazily-created real one and
  * drops any active subscription. */
 export function setConnectionTransportForTest(t: Transport | null): void {
@@ -104,8 +96,7 @@ export function setConnectionTransportForTest(t: Transport | null): void {
   regionClient = null;
   startPromise = null;
   transportInstance = t;
-  lastView = EMPTY_VIEW;
-  versionGuard.reset();
+  resetViewState();
 }
 
 function transport(): Transport {
@@ -121,21 +112,34 @@ function transport(): Transport {
 export type ConnectionsViewListener = (view: ConnectionsView) => void;
 
 const viewListeners = new Set<ConnectionsViewListener>();
+/** The authoritative view: what the backend region says (disk truth). */
+let baseView: ConnectionsView = EMPTY_VIEW;
+/** In-flight optimistic overlays, in mutation order (#2831). */
+let overlays: PendingOverlay[] = [];
+/** The effective view every reader sees: {@link baseView} with the pending
+ * {@link overlays} applied. Reference-identical to `baseView` with no overlay. */
 let lastView: ConnectionsView = EMPTY_VIEW;
-// The monotonic region-version guard for `lastView` (FES-006): a projected view
+// The monotonic region-version guard for `baseView` (FES-006): a projected view
 // strictly older than the last applied is a stale, out-of-order delivery and is
 // ignored, so it can never clobber a newer view.
 const versionGuard = makeVersionGuard();
 
-/**
- * Commit a projected view (at its region `version`) as the current view and notify
- * subscribers, unless it is stale (a version strictly older than the last applied).
- * On today's substrate versions arrive monotonically so the guard never drops a
- * valid update — it only adds out-of-order protection.
- */
-function commitConnectionsView(view: ConnectionsView, version: number): void {
-  if (!versionGuard.shouldApply(version)) return;
-  lastView = view;
+/** One in-flight optimistic overlay awaiting its persist result. */
+interface PendingOverlay {
+  fold: ConnectionsFold;
+}
+
+/** Drop every overlay and the cached view (tests / re-init). */
+function resetViewState(): void {
+  baseView = EMPTY_VIEW;
+  overlays = [];
+  lastView = EMPTY_VIEW;
+  versionGuard.reset();
+}
+
+/** Recompute the effective view from the base and the overlays, and notify. */
+function recomputeAndEmit(): void {
+  lastView = overlays.reduce<ConnectionsView>((view, o) => o.fold(view), baseView);
   for (const listener of viewListeners) {
     try {
       listener(lastView);
@@ -143,6 +147,18 @@ function commitConnectionsView(view: ConnectionsView, version: number): void {
       logConnectionBridgeFallback("reconcile", err);
     }
   }
+}
+
+/**
+ * Commit a projected view (at its region `version`) as the authoritative base and
+ * notify subscribers, unless it is stale (a version strictly older than the last
+ * applied). On today's substrate versions arrive monotonically so the guard never
+ * drops a valid update — it only adds out-of-order protection.
+ */
+function commitConnectionsView(view: ConnectionsView, version: number): void {
+  if (!versionGuard.shouldApply(version)) return;
+  baseView = view;
+  recomputeAndEmit();
 }
 
 /**
@@ -187,8 +203,7 @@ export function stopConnectionsSubscription(): void {
   regionClient?.stop();
   regionClient = null;
   startPromise = null;
-  lastView = EMPTY_VIEW;
-  versionGuard.reset();
+  resetViewState();
 }
 
 /** The last view fanned out (for a hook that subscribes after the first diff). */
@@ -212,116 +227,94 @@ export function __emitConnectionsViewForTest(view: ConnectionsView, version: num
  * authoritative region without a live backend. Not used in production.
  */
 export function setConnectionsViewForTest(view: ConnectionsView): void {
-  lastView = { folders: view.folders, connections: view.connections };
-  for (const listener of viewListeners) {
-    try {
-      listener(lastView);
-    } catch (err) {
-      logConnectionBridgeFallback("reconcile", err);
-    }
-  }
+  baseView = { folders: view.folders, connections: view.connections };
+  recomputeAndEmit();
 }
 
-// ── Mutation cut: granular connection.* intent dispatch ───────────────────────
+// ── Persist-confirmed optimistic overlay (#2831) ──────────────────────────────
 
 /**
- * The granular `connection.*` intent kinds the mutation cut dispatches (twins of
- * the Rust routes). Excludes the whole-slice `connection.replace` mirror; the
- * mutation reducers drive the region through these per-transition intents so the
- * store tracks each transition.
+ * Test seam standing in for the backend's persist fold: invoked with the overlay
+ * fold of every persist that **succeeded**, before the overlay is dropped, so a
+ * unit / component test with mocked persist commands (and so no real fold) can
+ * land the change in its seeded region the way production's fold would. `null`
+ * clears it. Never set in production code.
  */
-export type ConnectionIntentKind =
-  | "connection.add"
-  | "connection.update"
-  | "connection.remove"
-  | "connection.move"
-  | "connection.reorder"
-  | "connection.addFolder"
-  | "connection.removeFolder"
-  | "connection.toggleFolder";
+let persistedFoldSinkForTest: ((fold: ConnectionsFold) => void) | null = null;
 
-/** Dispatch a granular `connection.*` intent, resolving with the ack (parity tests). */
-export function dispatchConnectionIntent(
-  kind: ConnectionIntentKind,
-  payload: Record<string, unknown>
-): Promise<IntentAck> {
-  return transport().dispatch({ intentId: newIntentId(), kind, payload, clientId });
+/** Install (or clear, with `null`) the {@link persistedFoldSinkForTest} seam. */
+export function setPersistedFoldSinkForTest(sink: ((fold: ConnectionsFold) => void) | null): void {
+  persistedFoldSinkForTest = sink;
 }
 
 /**
- * Fire a granular `connection.*` intent against the authoritative region — the
- * connection-tree lifecycle actions' optimistic write. Since the reducer removal
- * (#2401) the `appStore` `connections` / `folders` slice is gone, so this is no
- * longer a "mirror" of a local mutation: it **is** the mutation's client-side
- * transition, applied to the shared `connections` region ahead of the persist
- * command's authoritative server-side fold (#2389 / #2394) so the UI updates
- * instantly. Best-effort: any dispatch failure is swallowed and logged (the
- * paired persist command still folds the reconciled truth into the region), and a
- * synchronous transport-construction failure (non-Tauri, no socket) is caught too,
- * so it never throws out of a reducer. The twin of the transfers bridge's
- * {@link import("./transfersBridge").dispatchTransferIntentBestEffort}.
- */
-export function mirrorConnectionIntent(
-  kind: ConnectionIntentKind,
-  payload: Record<string, unknown>
-): void {
-  try {
-    void dispatchConnectionIntent(kind, payload)
-      .then((ack) => {
-        if (ack.status === "rejected") {
-          logConnectionBridgeFallback(kind, new Error(ack.error?.message ?? "rejected"));
-        }
-      })
-      .catch((err) => logConnectionBridgeFallback(kind, err));
-  } catch (err) {
-    logConnectionBridgeFallback(kind, err);
-  }
-}
-
-/** A granular `connection.*` intent to dispatch: the forward transition, or the
- * compensating transition that reverts it (FES-005). */
-export interface ConnectionIntentSpec {
-  kind: ConnectionIntentKind;
-  payload: Record<string, unknown>;
-}
-
-/**
- * Run a connection mutation atomically against the authoritative region and disk
- * (FES-005): fire the granular optimistic `connection.*` intent (`forward`) so the
- * region reflects the transition immediately, then await the paired persist
- * command. If the persist **rejects**, fire the compensating `revert` intent so the
- * region is rolled back to match the on-disk truth.
+ * Run a connection-tree mutation through its persist command — the single
+ * authoritative writer of the `connections` region — with instant optimistic
+ * feedback (#2831).
  *
- * The two backend writes a connection mutation performs — the region intent (applied
- * to the in-memory `connections` region at once) and the persist command (which
- * writes `connections.json` and re-folds the disk truth into the region on success,
- * #2389 / #2394) — are otherwise uncoupled. A failed persist used to leave the region
- * ahead of disk: the deleted connection stayed gone in the UI but was still on disk,
- * so it "resurrected" on the next reseed (and the mirror image for a failed add —
- * the added entry vanished on reload). Reverting the region on rejection closes that
- * gap: the revert is the client-side twin of the inverse Rust store reducer,
- * dispatched through the same shared region so the UI reverts synchronously rather
- * than surfacing only a transient toast.
+ * `fold` is applied to the effective view **synchronously**, as a client-local
+ * overlay over the authoritative region; nothing is written to the backend
+ * region from here. The overlay's lifecycle is driven by the persist result:
  *
- * The returned promise mirrors `persist`: it resolves with the persist result, or —
- * after firing the revert — rejects with the persist error, so the caller keeps its
- * own success / error toast handling. Never dispatch a `revert` that is not a true
- * inverse of `forward`, or the region will diverge in the other direction.
+ * - **resolved** → the persist's server-side fold has published the change; the
+ *   bridge catches the region up to the backend's current version
+ *   ({@link ProjectionClient.catchUp}) and then drops the overlay, so the
+ *   authoritative view supersedes it with no gap in between.
+ * - **rejected** → the backend re-folded the disk truth (the failed write changed
+ *   nothing, or exactly what reached disk); the bridge catches up and drops the
+ *   overlay, so the view is byte-identical to disk — membership and order —
+ *   with no compensating write.
+ *
+ * The returned promise settles only after the overlay is dropped: it resolves
+ * with the persist result, or rejects with the persist error, so a caller that
+ * reads {@link currentConnectionsView} after awaiting it sees the authoritative
+ * outcome (e.g. a rename's recomputed id, #875). A synchronous throw from
+ * `persist` is treated as a rejection. A failing catch-up is logged and the
+ * overlay dropped anyway — an overlay is never stranded; the region stream
+ * still converges.
  */
-export function persistConnectionMutation<T>(
-  forward: ConnectionIntentSpec,
-  persist: () => Promise<T>,
-  revert: ConnectionIntentSpec
+export function persistWithOverlay<T>(
+  fold: ConnectionsFold,
+  persist: () => Promise<T>
 ): Promise<T> {
-  mirrorConnectionIntent(forward.kind, forward.payload);
-  return persist().catch((err: unknown) => {
-    mirrorConnectionIntent(revert.kind, revert.payload);
-    throw err;
-  });
+  const entry: PendingOverlay = { fold };
+  overlays.push(entry);
+  recomputeAndEmit();
+
+  let persisted: Promise<T>;
+  try {
+    persisted = persist();
+  } catch (err) {
+    persisted = Promise.reject(err);
+  }
+  return persisted.then(
+    async (value) => {
+      await settleOverlay(entry, true);
+      return value;
+    },
+    async (err: unknown) => {
+      await settleOverlay(entry, false);
+      throw err;
+    }
+  );
 }
 
-/** Log a bridge dispatch failure so it is visible in the LogViewer. */
+/** Catch the region up to the backend, then drop the overlay. */
+async function settleOverlay(entry: PendingOverlay, persisted: boolean): Promise<void> {
+  try {
+    await regionClient?.catchUp();
+  } catch (err) {
+    logConnectionBridgeFallback("catch-up", err);
+  }
+  if (persisted && persistedFoldSinkForTest) persistedFoldSinkForTest(entry.fold);
+  const index = overlays.indexOf(entry);
+  if (index === -1) return; // reset while in flight
+  overlays.splice(index, 1);
+  recomputeAndEmit();
+}
+
+/** Log a bridge failure so it is visible in the LogViewer. */
 export function logConnectionBridgeFallback(kind: string, err: unknown): void {
   const message = errorMessage(err);
-  frontendLog("connection_bridge", `${kind} connection intent failed: ${message}`);
+  frontendLog("connection_bridge", `${kind} failed: ${message}`);
 }

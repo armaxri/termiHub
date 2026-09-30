@@ -15,14 +15,18 @@
  *   client, so the sweep leaves tunnels alone and raises no toast of its own.
  *
  * These tests drive the real `appStore` delete actions against the same faithful
- * in-memory port of the Rust `ConnectionsStore` the FES-005 atomicity tests use,
- * then assert no dangling references remain — and, critically, that the
- * (irreversible) persistent-session teardown runs ONLY after the delete is
- * confirmed durable, so a rejected persist (region rolled back, FES-005) never
- * tears down a session for a connection that is coming back.
+ * connections backend double the FES-005 / #2831 atomicity tests use, then assert
+ * no dangling references remain — and, critically, that the (irreversible)
+ * persistent-session teardown runs ONLY after the delete is confirmed durable, so
+ * a rejected persist (the connection still on disk and shown again) never tears
+ * down a session for a connection that stays.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+import { ConnectionsBackendDouble } from "@/test/connectionsBackendDouble";
+
+const backend = vi.hoisted(() => ({ current: null as ConnectionsBackendDouble | null }));
 
 const { mockStopPersistentSession, toastMock } = vi.hoisted(() => ({
   mockStopPersistentSession: vi.fn().mockResolvedValue(undefined),
@@ -40,8 +44,8 @@ vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
     Promise.resolve({ connections: [], folders: [], agents: [], externalErrors: [] })
   ),
-  persistConnection: vi.fn(() => Promise.resolve()),
-  removeConnection: vi.fn(() => Promise.resolve()),
+  persistConnection: vi.fn((...a: [never]) => backend.current!.persistConnection(...a)),
+  removeConnection: vi.fn((id: string) => backend.current!.removeConnection(id)),
   persistFolder: vi.fn(() => Promise.resolve()),
   removeFolder: vi.fn(() => Promise.resolve()),
   persistAgent: vi.fn(() => Promise.resolve()),
@@ -89,18 +93,9 @@ import {
   setConnectionTransportForTest,
   stopConnectionsSubscription,
 } from "./connectionsBridge";
-import type { ConnectionFolder, SavedConnection, PersistentSessionEntry } from "@/types/connection";
+import type { SavedConnection, PersistentSessionEntry } from "@/types/connection";
 import type { TabContent } from "@/types/terminal";
 import type { TunnelConfig } from "@/types/tunnel";
-import type {
-  FrameHandler,
-  Intent,
-  IntentAck,
-  ProjectionFrame,
-  SnapshotFrame,
-  Subscription,
-  Transport,
-} from "@/services/transport";
 
 function makeConnection(id: string): SavedConnection {
   return {
@@ -137,68 +132,7 @@ function makeTunnel(id: string, sshConnectionId: string): TunnelConfig {
   };
 }
 
-interface RegionView {
-  folders: ConnectionFolder[];
-  connections: SavedConnection[];
-}
-
-/** Faithful in-memory port of the Rust `ConnectionsStore` (the FES-005 double). */
-class ConnectionsStoreTransport implements Transport {
-  private folders: ConnectionFolder[] = [];
-  private connections: SavedConnection[] = [];
-  private version = 0;
-  private handlers: FrameHandler[] = [];
-
-  async dispatch(intent: Intent): Promise<IntentAck> {
-    const p = intent.payload as Record<string, unknown>;
-    switch (intent.kind) {
-      case "connection.add":
-        this.connections.push(structuredClone(p.connection as SavedConnection));
-        break;
-      case "connection.remove":
-        this.connections = this.connections.filter((c) => c.id !== (p.connectionId as string));
-        break;
-      default:
-        break;
-    }
-    this.version += 1;
-    this.fan();
-    return {
-      intentId: intent.intentId,
-      status: "accepted",
-      produced: [{ region: "connections", version: this.version }],
-    };
-  }
-
-  private regionView(): RegionView {
-    return structuredClone({ folders: this.folders, connections: this.connections });
-  }
-
-  async subscribe(region: string, onFrame: FrameHandler): Promise<Subscription> {
-    this.handlers.push(onFrame);
-    return {
-      snapshot: this.snapshot(region),
-      unsubscribe: () => {
-        this.handlers = this.handlers.filter((h) => h !== onFrame);
-      },
-    };
-  }
-
-  async resync(): Promise<SnapshotFrame | null> {
-    return null;
-  }
-
-  private snapshot(region: string): SnapshotFrame {
-    return { kind: "snapshot", region, version: this.version, view: this.regionView() };
-  }
-
-  private fan(): void {
-    const frame: ProjectionFrame = this.snapshot("connections");
-    for (const h of this.handlers) h(frame);
-  }
-}
-
-let transport: ConnectionsStoreTransport;
+let transport: ConnectionsBackendDouble;
 
 function ids(): string[] {
   return currentConnectionsView().connections.map((c) => c.id);
@@ -226,7 +160,8 @@ function seedDependents(connectionId: string): void {
 beforeEach(async () => {
   useAppStore.setState(useAppStore.getInitialState());
   vi.clearAllMocks();
-  transport = new ConnectionsStoreTransport();
+  transport = new ConnectionsBackendDouble();
+  backend.current = transport;
   setConnectionTransportForTest(transport);
   await ensureConnectionsSubscribed();
 });
@@ -234,6 +169,7 @@ beforeEach(async () => {
 afterEach(() => {
   stopConnectionsSubscription();
   setConnectionTransportForTest(null);
+  backend.current = null;
 });
 
 describe("connection delete sweeps dependent state (FES-009)", () => {
@@ -270,8 +206,8 @@ describe("connection delete sweeps dependent state (FES-009)", () => {
     useAppStore.getState().addConnection(makeConnection("ssh-1"));
     seedDependents("ssh-1");
 
-    // The on-disk delete fails: the region rolls the removal back (the connection
-    // reappears), so the sweep must not have irreversibly torn down its session.
+    // The on-disk delete fails: the connection is still on disk and shown again,
+    // so the sweep must not have irreversibly torn down its session.
     vi.mocked(removeConnection).mockRejectedValueOnce(new Error("disk read-only"));
 
     useAppStore.getState().deleteConnection("ssh-1");
@@ -347,9 +283,7 @@ describe("connection delete sweeps dependent state (FES-009)", () => {
     });
 
     // Only "ssh-2" fails on disk; "ssh-1" deletes cleanly.
-    vi.mocked(removeConnection).mockImplementation((id: string) =>
-      id === "ssh-2" ? Promise.reject(new Error("locked")) : Promise.resolve()
-    );
+    transport.failNext("removeConnection", new Error("locked"), { id: "ssh-2" });
 
     useAppStore.getState().bulkDeleteConnections(["ssh-1", "ssh-2"]);
 

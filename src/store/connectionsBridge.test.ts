@@ -2,11 +2,11 @@
  * Connections bridge — the connections domain is region-authoritative (#2225, PR
  * B). These tests drive the bridge against the in-memory {@link FakeTransport}
  * store double and assert: it subscribes and fans the projected view out to
- * listeners, caches the latest view for synchronous reads, and dispatches the
- * granular `connection.*` intents (the tree lifecycle actions' optimistic write).
- * Best-effort dispatch never throws, even on a rejected ack.
+ * listeners, caches the latest view for synchronous reads, and layers the
+ * persist-confirmed optimistic overlay ({@link persistWithOverlay}, #2831) over
+ * the authoritative view without ever writing the region itself.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type {
   FrameHandler,
@@ -19,13 +19,14 @@ import type {
 } from "@/services/transport";
 import type { ConnectionFolder, SavedConnection } from "@/types/connection";
 
+import { orderConnections, removeConnection, upsertConnection } from "./connectionsOverlay";
 import {
   __emitConnectionsViewForTest,
   CONNECTIONS_REGION,
   currentConnectionsView,
   ensureConnectionsSubscribed,
-  mirrorConnectionIntent,
   onConnectionsView,
+  persistWithOverlay,
   setConnectionTransportForTest,
   stopConnectionsSubscription,
   type ConnectionsView,
@@ -80,8 +81,22 @@ class FakeTransport implements Transport {
     };
   }
 
-  async resync(): Promise<SnapshotFrame | null> {
-    return null;
+  /**
+   * Change the region as a persist's server-side fold would, but keep the diff
+   * frame "in flight" (not delivered) — the command resolved before its frame.
+   */
+  foldInFlight(view: ConnectionsView): void {
+    this.view = { folders: view.folders, connections: view.connections };
+    this.version += 1;
+  }
+
+  resyncs = 0;
+  failResync = false;
+
+  async resync(region: string, have?: number): Promise<SnapshotFrame | null> {
+    this.resyncs += 1;
+    if (this.failResync) throw new Error("transport down");
+    return have === this.version ? null : this.snapshot(region);
   }
 
   private snapshot(region: string): SnapshotFrame {
@@ -165,26 +180,119 @@ describe("version guard (FES-006)", () => {
   });
 });
 
-describe("mirrorConnectionIntent (optimistic dispatch)", () => {
-  it("dispatches the granular intent", async () => {
-    mirrorConnectionIntent("connection.add", { connection: connection("A/1", "A") });
-    await flush();
-    expect(transport.dispatched).toHaveLength(1);
-    expect(transport.dispatched[0]).toMatchObject({
-      kind: "connection.add",
-      payload: { connection: { id: "A/1" } },
-    });
+describe("persistWithOverlay — the persist is the single region writer (#2831)", () => {
+  const a = connection("A");
+  const b = connection("B");
+  const c = connection("C");
+
+  beforeEach(async () => {
+    transport.seed({ folders: [], connections: [a, b, c] });
+    await ensureConnectionsSubscribed();
   });
 
-  it("never throws even when the ack is rejected", async () => {
-    vi.spyOn(transport, "dispatch").mockResolvedValue({
-      intentId: "x",
-      status: "rejected",
-      error: { message: "boom" },
-    } as IntentAck);
-    expect(() =>
-      mirrorConnectionIntent("connection.toggleFolder", { folderId: "A" })
-    ).not.toThrow();
+  const ids = () => currentConnectionsView().connections.map((x) => x.id);
+
+  /** A persist whose settling the test controls. */
+  function deferred<T = void>() {
+    let resolve!: (v: T) => void;
+    let reject!: (e: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  it("shows the overlay synchronously and dispatches no region intent", () => {
+    const persist = deferred();
+    void persistWithOverlay(removeConnection("A"), () => persist.promise);
+    expect(ids()).toEqual(["B", "C"]);
+    expect(transport.dispatched).toEqual([]);
+    persist.resolve();
+  });
+
+  it("on success, settles onto the persisted region with no gap, even before its frame lands", async () => {
+    const persist = deferred();
+    const done = persistWithOverlay(
+      upsertConnection(connection("conn-tmp")),
+      () => persist.promise
+    );
+    expect(ids()).toEqual(["A", "B", "C", "conn-tmp"]);
+
+    // The command persisted under a recomputed id and folded it; its frame is
+    // still in flight when the command resolves.
+    transport.foldInFlight({ folders: [], connections: [a, b, c, connection("New")] });
+    persist.resolve();
+    await done;
+
+    expect(ids()).toEqual(["A", "B", "C", "New"]); // no optimistic row, no duplicate
+    expect(transport.dispatched).toEqual([]);
+  });
+
+  it("Done-when: a failed persist leaves the view byte-identical to disk, order included, with no compensating write", async () => {
+    const disk = structuredClone(currentConnectionsView());
+    const persist = deferred();
+    const done = persistWithOverlay(removeConnection("A"), () => persist.promise);
+    expect(ids()).toEqual(["B", "C"]);
+
+    persist.reject(new Error("disk read-only"));
+    await expect(done).rejects.toThrow("disk read-only");
+
+    // "A" is back exactly where disk has it (first), not appended.
+    expect(currentConnectionsView()).toEqual(disk);
+    expect(ids()).toEqual(["A", "B", "C"]);
+    expect(transport.dispatched).toEqual([]);
+  });
+
+  it("a failed persist that partly reached disk shows exactly what disk holds", async () => {
+    const persist = deferred();
+    const done = persistWithOverlay(orderConnections(["C", "B", "A"]), () => persist.promise);
+    expect(ids()).toEqual(["C", "B", "A"]);
+
+    // Half the reorder reached disk before a later step failed; the backend
+    // re-folded that disk truth.
+    transport.foldInFlight({ folders: [], connections: [b, a, c] });
+    persist.reject(new Error("later step failed"));
+    await expect(done).rejects.toThrow();
+
+    expect(ids()).toEqual(["B", "A", "C"]);
+  });
+
+  it("treats a synchronous throw from the persist as a rejection", async () => {
+    const done = persistWithOverlay(removeConnection("A"), () => {
+      throw new Error("no transport");
+    });
+    await expect(done).rejects.toThrow("no transport");
+    expect(ids()).toEqual(["A", "B", "C"]);
+  });
+
+  it("settles overlays independently", async () => {
+    const first = deferred();
+    const second = deferred();
+    const one = persistWithOverlay(removeConnection("A"), () => first.promise);
+    void persistWithOverlay(removeConnection("B"), () => second.promise);
+    expect(ids()).toEqual(["C"]);
+
+    first.reject(new Error("locked"));
+    await expect(one).rejects.toThrow();
+    expect(ids()).toEqual(["A", "C"]); // "B" still pending, still hidden
+    second.resolve();
+  });
+
+  it("never strands an overlay when the catch-up itself fails", async () => {
+    transport.failResync = true;
+    await expect(
+      persistWithOverlay(removeConnection("A"), () => Promise.reject(new Error("x")))
+    ).rejects.toThrow("x");
+    expect(ids()).toEqual(["A", "B", "C"]);
+  });
+
+  it("with no overlay the view is the authoritative region itself", async () => {
+    await persistWithOverlay(removeConnection("A"), async () => {
+      transport.seed({ folders: [], connections: [b, c] });
+    });
+    expect(ids()).toEqual(["B", "C"]);
     await flush();
+    expect(ids()).toEqual(["B", "C"]);
   });
 });

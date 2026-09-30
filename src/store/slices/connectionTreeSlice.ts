@@ -13,11 +13,17 @@ import {
   reloadExternalConnections as apiReloadExternalConnections,
 } from "@/services/storage";
 import { newId } from "@/services/transport/ids";
+import { currentConnectionsView, persistWithOverlay } from "@/store/connectionsBridge";
 import {
-  currentConnectionsView,
-  mirrorConnectionIntent,
-  persistConnectionMutation,
-} from "@/store/connectionsBridge";
+  moveConnection,
+  orderConnections,
+  removeConnection as removeConnectionFold,
+  removeFolder as removeFolderFold,
+  replaceConnection,
+  setFolderExpanded,
+  upsertConnection,
+  upsertFolder,
+} from "@/store/connectionsOverlay";
 import { SavedConnection, ConnectionFolder, ConnectionIdChange } from "@/types/connection";
 import { TabContent } from "@/types/terminal";
 import { frontendLog } from "@/utils/frontendLog";
@@ -38,13 +44,13 @@ import { errorMessage } from "@/utils/errorMessage";
  * lives only in the shared `connections` projection region, read via
  * `useProjectedConnections()` (components) or `currentConnectionsView()`
  * (store-side). `appStore` holds no connections/folders slice. The lifecycle
- * actions below are thin backend-command wrappers — each dispatches the
- * optimistic `connection.*` intent and calls the persist command; the command's
- * server-side fold (`fold_connections_from_manager`, #2389 / #2394) reconciles
- * the authoritative truth (persisted id, dedup rename, external overlay) back
- * into the region, so there is no frontend reload / id-reconcile pass. A rejected
- * persist reverts the region so a never-persisted / unsaved row does not linger
- * until reload (FES-005).
+ * actions below are thin backend-command wrappers around `persistWithOverlay`
+ * (#2831): the persist command is the single writer of the region — it writes
+ * disk and folds the disk truth (persisted id, dedup rename, external overlay)
+ * into the region in one backend step, success or failure — while a
+ * client-local optimistic overlay gives instant feedback until the persist
+ * settles. A rejected persist therefore leaves the region exactly equal to disk
+ * with no compensating write (FES-005).
  *
  * The referential-integrity sweep after a delete ({@link sweepDeletedConnectionRefs}
  * in the factory) reaches other domains — persistent sessions, open tabs, bookmarks —
@@ -141,12 +147,12 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
    * sweeps each frontend-owned dependent so a delete leaves no quiet
    * inconsistency behind.
    *
-   * **Ordering vs the FES-005 rollback.** The persistent-session teardown kills a
+   * **Ordering vs a failed persist.** The persistent-session teardown kills a
    * backend process and is not revertible, so the sweep must run only once the
    * delete is confirmed durable on disk — the callers invoke it from the persist
    * `.then()`, per id, as each id's own persist resolves. A persist that *rejects*
-   * (region rolled back, the connection re-added) therefore never races an
-   * irreversible teardown of a session for a connection that is coming back.
+   * (the overlay dropped, the connection still shown from disk) therefore never
+   * races an irreversible teardown of a session for a connection that stays.
    *
    * Per dependent:
    * - **persistentSessions** — tear the live session down via the normal
@@ -260,10 +266,11 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       const existing = currentConnectionsView().folders.find((f) => f.id === folderId);
       if (!existing) return;
       const toggled = { ...existing, isExpanded: !existing.isExpanded };
-      // Optimistic flip in the region, then persist (the persist command folds the
-      // authoritative view back, #2389).
-      mirrorConnectionIntent("connection.toggleFolder", { folderId });
-      persistFolder(toggled).catch((err) => {
+      // Set-shaped overlay (not a flip), so it stays correct while layered over a
+      // base that already carries the persisted value (#2831).
+      persistWithOverlay(setFolderExpanded(folderId, toggled.isExpanded), () =>
+        persistFolder(toggled)
+      ).catch((err) => {
         frontendLog("app_store", `Failed to persist folder toggle: ${errorMessage(err)}`);
         toast.error(`Failed to save folder state: ${errorMessage(err)}`);
       });
@@ -280,16 +287,13 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
     },
 
     addConnection: (connection) => {
-      // Optimistic add in the region, then persist. The persist command recomputes
-      // the name-derived id and folds the authoritative view back server-side
-      // (#2389), so the optimistic `conn-<ts>` row is reconciled to the persisted id
-      // without a frontend id-reconcile / reload pass. A rejected persist reverts the
-      // region so a never-persisted row does not linger until reload (FES-005).
+      // Optimistic overlay, then persist. The persist command recomputes the
+      // name-derived id and folds the authoritative view into the region (#2389),
+      // so the optimistic `conn-<ts>` row gives way to the persisted row when the
+      // overlay settles. A rejected persist just drops the overlay (#2831).
       frontendLog("connection_sync", `addConnection: persisting ${connection.id}`);
-      persistConnectionMutation(
-        { kind: "connection.add", payload: { connection } },
-        () => persistConnection(stripPassword(connection)),
-        { kind: "connection.remove", payload: { connectionId: connection.id } }
+      persistWithOverlay(upsertConnection(connection), () =>
+        persistConnection(stripPassword(connection))
       )
         .then(() => {
           toast.success(`Saved ${connection.name}`);
@@ -306,16 +310,11 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
         "connection_sync",
         `bulkAddConnections: persisting ${newConnections.length} connections`
       );
-      // Per-item atomicity (FES-005): each add reverts its own region entry if its
-      // persist rejects, so a partial import failure leaves only the successfully
-      // persisted rows in the region rather than every optimistic row.
+      // One overlay per item: a partial import failure leaves exactly the rows
+      // that reached disk (FES-005, #2831).
       Promise.all(
         newConnections.map((c) =>
-          persistConnectionMutation(
-            { kind: "connection.add", payload: { connection: c } },
-            () => persistConnection(stripPassword(c)),
-            { kind: "connection.remove", payload: { connectionId: c.id } }
-          )
+          persistWithOverlay(upsertConnection(c), () => persistConnection(stripPassword(c)))
         )
       )
         .then(() => {
@@ -330,20 +329,14 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
     },
 
     updateConnection: (connection) => {
-      // Optimistic edit in the region, then persist. A rename changes the
-      // name-derived persisted id; the persist command's server-side fold (#2389)
-      // reconciles it back into the region under the new id, so a connect fired
-      // after the save resolves reads the correct id (#875) without a frontend pass.
-      // On a rejected persist, revert the region to the prior value so an unsaved
-      // edit does not linger until reload (FES-005).
-      const prior = currentConnectionsView().connections.find((c) => c.id === connection.id);
+      // Optimistic overlay, then persist. A rename changes the name-derived
+      // persisted id; the persist command's fold (#2389) lands it in the region
+      // under the new id before the overlay settles, so a connect fired after the
+      // save resolves reads the correct id (#875). A rejected persist drops the
+      // overlay, leaving the on-disk value (FES-005, #2831).
       frontendLog("connection_sync", `updateConnection: persisting ${connection.id}`);
-      persistConnectionMutation(
-        { kind: "connection.update", payload: { connection } },
-        () => persistConnection(stripPassword(connection)),
-        prior
-          ? { kind: "connection.update", payload: { connection: prior } }
-          : { kind: "connection.remove", payload: { connectionId: connection.id } }
+      persistWithOverlay(replaceConnection(connection), () =>
+        persistConnection(stripPassword(connection))
       )
         .then(() => {
           toast.success(`Saved ${connection.name}`);
@@ -357,19 +350,11 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
     deleteConnection: (connectionId) => {
       const conn = currentConnectionsView().connections.find((c) => c.id === connectionId);
       frontendLog("connection_sync", `deleteConnection: removing ${connectionId} optimistically`);
-      // Revert (re-add the captured connection) if the on-disk delete rejects, so a
-      // still-on-disk connection does not resurrect on the next reseed (FES-005).
-      // Without a captured entry there is nothing to restore — fall back to the plain
-      // optimistic remove.
-      const forward = { kind: "connection.remove" as const, payload: { connectionId } };
-      const persist = () => removeConnection(connectionId, conn?.sourceFile);
-      const deletePromise = conn
-        ? persistConnectionMutation(forward, persist, {
-            kind: "connection.add",
-            payload: { connection: conn },
-          })
-        : (mirrorConnectionIntent(forward.kind, forward.payload), persist());
-      deletePromise
+      // A rejected on-disk delete drops the overlay: the connection is shown again
+      // exactly where disk has it (FES-005, #2831).
+      persistWithOverlay(removeConnectionFold(connectionId), () =>
+        removeConnection(connectionId, conn?.sourceFile)
+      )
         .then(() => {
           frontendLog("connection_sync", `deleteConnection: backend confirmed`);
           // Referential-integrity sweep (FES-009): only now that the delete is
@@ -391,18 +376,15 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
         "connection_sync",
         `bulkDeleteConnections: removing ${connectionIds.join(", ")} optimistically`
       );
-      // Per-item atomicity (FES-005): each delete re-adds its own captured entry if
-      // its persist rejects, so a partial failure resurrects only the rows still on
-      // disk rather than leaving every optimistic removal diverged until reload.
+      // One overlay per item: a partial failure shows exactly the rows still on
+      // disk (FES-005, #2831).
       Promise.all(
         toDelete.map((c) => {
-          const persistDone = persistConnectionMutation(
-            { kind: "connection.remove", payload: { connectionId: c.id } },
-            () => removeConnection(c.id, c.sourceFile),
-            { kind: "connection.add", payload: { connection: c } }
+          const persistDone = persistWithOverlay(removeConnectionFold(c.id), () =>
+            removeConnection(c.id, c.sourceFile)
           );
           // Sweep per id on its OWN durable success (FES-009): a sibling whose
-          // persist rejected is rolled back (FES-005) and must not be swept, so
+          // persist rejected is still on disk (FES-005) and must not be swept, so
           // this cannot gate on the whole batch resolving. Kept as a side-effect
           // branch (the unmodified promise is what the batch awaits) so the
           // batch's own rejection timing / error toast is unchanged.
@@ -429,22 +411,19 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
     },
 
     addFolder: (folder) => {
-      mirrorConnectionIntent("connection.addFolder", { folder });
       frontendLog("connection_sync", `addFolder: persisting ${folder.id}`);
-      persistFolder(folder).catch((err) => {
+      persistWithOverlay(upsertFolder(folder), () => persistFolder(folder)).catch((err) => {
         frontendLog("app_store", `Failed to persist new folder: ${errorMessage(err)}`);
         toast.error(`Failed to create folder ${folder.name}: ${errorMessage(err)}`);
       });
     },
 
     deleteFolder: (folderId) => {
-      // The `connection.removeFolder` intent re-homes the folder's child
-      // connections to root and reparents its child folders in the region
-      // (optimistic), and the `removeFolder` command folds the authoritative
-      // result back server-side (#2389) — so no frontend reparenting is needed.
-      mirrorConnectionIntent("connection.removeFolder", { folderId });
+      // The overlay re-homes the folder's children the way the backend does, and
+      // the `removeFolder` command folds the authoritative result (recomputed
+      // child ids included) into the region (#2389, #2831).
       frontendLog("connection_sync", `deleteFolder: removing ${folderId}`);
-      removeFolder(folderId).catch((err) => {
+      persistWithOverlay(removeFolderFold(folderId), () => removeFolder(folderId)).catch((err) => {
         frontendLog("app_store", `Failed to persist folder deletion: ${errorMessage(err)}`);
         toast.error(`Failed to delete folder: ${errorMessage(err)}`);
       });
@@ -459,12 +438,10 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
         name: `Copy of ${original.name}`,
       };
       frontendLog("connection_sync", `duplicateConnection: persisting copy of ${connectionId}`);
-      // Revert (remove the optimistic copy) if the persist rejects, so a
-      // never-persisted duplicate does not linger until reload (FES-005).
-      persistConnectionMutation(
-        { kind: "connection.add", payload: { connection: duplicate } },
-        () => persistConnection(stripPassword(duplicate)),
-        { kind: "connection.remove", payload: { connectionId: duplicate.id } }
+      // A rejected persist drops the overlay, so a never-persisted duplicate
+      // disappears (FES-005, #2831).
+      persistWithOverlay(upsertConnection(duplicate), () =>
+        persistConnection(stripPassword(duplicate))
       ).catch((err) => {
         frontendLog("app_store", `Failed to persist duplicated connection: ${errorMessage(err)}`);
         toast.error(`Failed to duplicate ${original.name}: ${errorMessage(err)}`);
@@ -478,10 +455,11 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       if (currentSource === targetSource) return;
       try {
         // The move command relocates the entry between config files and folds the
-        // refreshed unified view into the region server-side (#2394); mirror the
-        // update so the region reflects it immediately even before that diff lands.
-        const updated = await apiMoveConnectionToFile(connectionId, currentSource, targetSource);
-        mirrorConnectionIntent("connection.update", { connection: updated });
+        // refreshed unified view into the region (#2394); the overlay shows the
+        // new file at once, and the promise settles once the region caught up.
+        await persistWithOverlay(replaceConnection({ ...conn, sourceFile: targetSource }), () =>
+          apiMoveConnectionToFile(connectionId, currentSource, targetSource)
+        );
       } catch (err) {
         frontendLog("app_store", `Failed to move connection to file: ${errorMessage(err)}`);
         toast.error(`Failed to move ${conn.name}: ${errorMessage(err)}`);
@@ -489,22 +467,16 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
     },
 
     saveConnectionToFile: async (connection, currentSource) => {
-      const prior = currentConnectionsView().connections.find((c) => c.id === connection.id);
       frontendLog(
         "connection_sync",
         `saveConnectionToFile: persisting ${connection.id} from ${currentSource ?? "main"}`
       );
       try {
-        const saved = await persistConnectionMutation(
-          { kind: "connection.update", payload: { connection } },
-          () => apiSaveConnectionToFile(stripPassword(connection), currentSource),
-          prior
-            ? { kind: "connection.update", payload: { connection: prior } }
-            : { kind: "connection.remove", payload: { connectionId: connection.id } }
+        // The command folds the refreshed view into the region (#2394) before the
+        // overlay settles, so the region holds `saved` when this resolves.
+        const saved = await persistWithOverlay(replaceConnection(connection), () =>
+          apiSaveConnectionToFile(stripPassword(connection), currentSource)
         );
-        // The command folds the refreshed view into the region server-side
-        // (#2394); mirror the result so the region reflects it immediately.
-        mirrorConnectionIntent("connection.update", { connection: saved });
         toast.success(`Saved ${saved.name}`);
         return saved;
       } catch (err) {
@@ -517,15 +489,14 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
     moveConnectionToFolder: (connectionId, folderId) => {
       const existing = currentConnectionsView().connections.find((c) => c.id === connectionId);
       if (!existing) return;
-      // Optimistic move in the region for instant visual feedback.
-      mirrorConnectionIntent("connection.move", { connectionId, folderId });
-
-      // Persist to backend; the persist command folds any dedup rename (e.g. moving
-      // a connection into a folder with a same-named sibling) back into the region
-      // server-side (#2389).
+      // Optimistic overlay, then persist; the persist command folds any dedup
+      // rename (e.g. moving a connection into a folder with a same-named sibling)
+      // into the region (#2389, #2831).
       const moved = { ...existing, folderId };
       frontendLog("connection_sync", `moveConnectionToFolder: persisting ${connectionId}`);
-      persistConnection(stripPassword(moved)).catch((err) => {
+      persistWithOverlay(moveConnection(connectionId, folderId), () =>
+        persistConnection(stripPassword(moved))
+      ).catch((err) => {
         frontendLog("app_store", `Failed to persist connection move: ${errorMessage(err)}`);
         toast.error(`Failed to move ${moved.name}: ${errorMessage(err)}`);
       });
@@ -534,13 +505,7 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
     bulkMoveConnectionsToFolder: (connectionIds, folderId) => {
       const idSet = new Set(connectionIds);
 
-      // Optimistic move in the region for instant visual feedback.
-      for (const connectionId of connectionIds) {
-        mirrorConnectionIntent("connection.move", { connectionId, folderId });
-      }
-
-      // Persist all connections in parallel; each persist folds the authoritative
-      // view back into the region server-side (#2389).
+      // One overlay per item, each settled by its own persist (#2389, #2831).
       const moved = currentConnectionsView()
         .connections.filter((c) => idSet.has(c.id))
         .map((c) => ({ ...c, folderId }));
@@ -548,15 +513,21 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
         "connection_sync",
         `bulkMoveConnectionsToFolder: persisting ${moved.length} connections`
       );
-      Promise.all(moved.map((conn) => persistConnection(stripPassword(conn)))).catch((err) => {
+      Promise.all(
+        moved.map((conn) =>
+          persistWithOverlay(moveConnection(conn.id, folderId), () =>
+            persistConnection(stripPassword(conn))
+          )
+        )
+      ).catch((err) => {
         frontendLog("app_store", `Failed to persist bulk connection move: ${errorMessage(err)}`);
         toast.error(`Failed to move connections: ${errorMessage(err)}`);
       });
     },
 
     reorderConnections: (oldIndex, newIndex) => {
-      // Compute the new id order from the authoritative region view, optimistically
-      // reorder it in the region for instant feedback, then persist the new array
+      // Compute the new id order from the effective region view, show it at once
+      // through the overlay, then persist the new array
       // order to disk so an intra-folder reorder survives a reload (#2594). Twin of
       // `reorderRemoteAgents`.
       const conns = [...currentConnectionsView().connections];
@@ -572,8 +543,11 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       const [moved] = conns.splice(oldIndex, 1);
       conns.splice(newIndex, 0, moved);
       const connectionIds = conns.map((c) => c.id);
-      mirrorConnectionIntent("connection.reorder", { oldIndex, newIndex });
-      persistConnectionOrder(connectionIds).catch((err) => {
+      // Set-shaped (an explicit id order, not an index move), so it stays correct
+      // over a base that already carries the persisted order (#2831).
+      persistWithOverlay(orderConnections(connectionIds), () =>
+        persistConnectionOrder(connectionIds)
+      ).catch((err) => {
         frontendLog("app_store", `Failed to persist connection reorder: ${errorMessage(err)}`);
         toast.error(`Failed to save connection order: ${errorMessage(err)}`);
       });

@@ -25,9 +25,18 @@
 //! # Authoritative — drives the live UI
 //!
 //! The stateless-UI inversion is complete (#2283): this store is authoritative.
-//! The live UI subscribes to and renders the `connections` region, and frontend
-//! code dispatches `connection.*` intents; the former `appStore` connections
-//! reducers were removed.
+//! The live UI subscribes to and renders the `connections` region; the former
+//! `appStore` connections reducers were removed.
+//!
+//! # Single writer (#2831)
+//!
+//! The store has exactly one mutation, [`ConnectionsStore::replace`], driven by
+//! the persist command's fold from the [`ConnectionManager`] disk view. There
+//! are no per-transition `connection.*` intents: an optimistic transition lives
+//! only in the client's local overlay, so a failed persist can never leave the
+//! region ahead of disk.
+//!
+//! [`ConnectionManager`]: crate::connection::manager::ConnectionManager
 
 use std::sync::{Mutex, MutexGuard};
 
@@ -36,9 +45,8 @@ use serde_json::{json, Value};
 use crate::connection::config::{ConnectionFolder, SavedConnection};
 
 /// The private mutable core: the flat folder + connection arrays, mirroring the
-/// `appStore` connections slice one-to-one. One mutex guards it so intents never
-/// interleave — the substrate's single-writer contract also holds within the
-/// store.
+/// `appStore` connections slice one-to-one. One mutex guards it so a fold never
+/// interleaves with a snapshot.
 #[derive(Default)]
 struct Inner {
     folders: Vec<ConnectionFolder>,
@@ -74,103 +82,14 @@ impl ConnectionsStore {
         })
     }
 
-    // ── Connection transitions ─────────────────────────────────────────────
+    // ── The single write path (#2831) ───────────────────────────────────────
 
-    /// `connection.add` — append one saved connection (mirrors `addConnection`,
-    /// which pushes onto the array; ordering is array position).
-    pub fn add_connection(&self, connection: SavedConnection) {
-        self.lock().connections.push(connection);
-    }
-
-    /// `connection.update` — replace the connection whose id matches the incoming
-    /// one (mirrors `updateConnection`'s `map(c => c.id === id ? next : c)`). A
-    /// no-op when no entry carries that id.
-    pub fn update_connection(&self, connection: SavedConnection) {
-        let mut inner = self.lock();
-        if let Some(slot) = inner.connections.iter_mut().find(|c| c.id == connection.id) {
-            *slot = connection;
-        }
-    }
-
-    /// `connection.remove` — drop the connection with this id (mirrors
-    /// `deleteConnection`'s filter). Idempotent.
-    pub fn remove_connection(&self, connection_id: &str) {
-        self.lock().connections.retain(|c| c.id != connection_id);
-    }
-
-    /// `connection.move` — set one connection's `folderId` (mirrors
-    /// `moveConnectionToFolder`; `None` = move to root). A no-op for an unknown id.
-    pub fn move_connection(&self, connection_id: &str, folder_id: Option<String>) {
-        let mut inner = self.lock();
-        if let Some(connection) = inner.connections.iter_mut().find(|c| c.id == connection_id) {
-            connection.folder_id = folder_id;
-        }
-    }
-
-    /// `connection.reorder` — move the connection at `old_index` to `new_index`
-    /// (`reorderConnections`), matching the agents store's `reorder`. Ordering is
-    /// array position (the on-disk `children` order), so an intra-folder drag maps
-    /// to a pure array move of the two siblings within the flat list. Out-of-range
-    /// indices are a no-op.
-    pub fn reorder(&self, old_index: usize, new_index: usize) {
-        let mut inner = self.lock();
-        let len = inner.connections.len();
-        if old_index >= len || new_index >= len {
-            return;
-        }
-        let moved = inner.connections.remove(old_index);
-        inner.connections.insert(new_index, moved);
-    }
-
-    // ── Folder transitions ─────────────────────────────────────────────────
-
-    /// `connection.addFolder` — append one folder (mirrors `addFolder`).
-    pub fn add_folder(&self, folder: ConnectionFolder) {
-        self.lock().folders.push(folder);
-    }
-
-    /// `connection.removeFolder` — remove a folder and re-home its children, exactly
-    /// as `deleteFolder` does: child folders reparent to the removed folder's own
-    /// parent, and child connections move to root (`folderId = null`). Idempotent.
-    pub fn remove_folder(&self, folder_id: &str) {
-        let mut inner = self.lock();
-        let parent_id = inner
-            .folders
-            .iter()
-            .find(|f| f.id == folder_id)
-            .and_then(|f| f.parent_id.clone());
-        for connection in inner.connections.iter_mut() {
-            if connection.folder_id.as_deref() == Some(folder_id) {
-                connection.folder_id = None;
-            }
-        }
-        for folder in inner.folders.iter_mut() {
-            if folder.parent_id.as_deref() == Some(folder_id) {
-                folder.parent_id = parent_id.clone();
-            }
-        }
-        inner.folders.retain(|f| f.id != folder_id);
-    }
-
-    /// `connection.toggleFolder` — flip one folder's persisted `isExpanded`
-    /// (mirrors `toggleFolder`, which persists via `persistFolder`). A no-op for an
-    /// unknown id.
-    pub fn toggle_folder(&self, folder_id: &str) {
-        let mut inner = self.lock();
-        if let Some(folder) = inner.folders.iter_mut().find(|f| f.id == folder_id) {
-            folder.is_expanded = !folder.is_expanded;
-        }
-    }
-
-    // ── Whole-region mirror (render-cut seed) ───────────────────────────────
-
-    /// `connection.replace` — overwrite the whole connections slice (the two flat
-    /// folder + connection arrays) with a caller-supplied snapshot. Used by the
-    /// frontend to keep the shared `connections` region a faithful copy of the
-    /// connections slice — the analog of the agents bridge's `agent.replace` seed.
-    /// This store is authoritative (the former `appStore` reducers were removed,
-    /// #2283). Idempotent server-side: replacing with the same content yields no
-    /// diff.
+    /// Overwrite the whole connections slice (the two flat folder + connection
+    /// arrays) with the manager's persisted view. The **only** mutation this store
+    /// has: it is called by `fold_connections_from_manager` inside the `commit`
+    /// choke point, so the region is written by the persist command alone and
+    /// always equals disk (#2831). Idempotent: replacing with the same content
+    /// publishes no diff.
     pub fn replace(&self, folders: Vec<ConnectionFolder>, connections: Vec<SavedConnection>) {
         let mut inner = self.lock();
         inner.folders = folders;

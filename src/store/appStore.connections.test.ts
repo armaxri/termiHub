@@ -266,8 +266,8 @@ describe("appStore — connections, folders, and special tabs", () => {
 
       // The delete routes to the persist command with the entry's source file; the
       // authoritative reconcile is the command's server-side fold (#2389), so there
-      // is no frontend reload here — the optimistic `connection.remove` intent
-      // already dropped it from the region.
+      // is no frontend reload here — the persisted delete lands in the region
+      // through that fold.
       expect(vi.mocked(removeConnection)).toHaveBeenCalledWith("c-1", "extra.json");
       const final = currentConnectionsView().connections;
       expect(final).toHaveLength(1);
@@ -321,8 +321,8 @@ describe("appStore — connections, folders, and special tabs", () => {
       await Promise.resolve();
       await Promise.resolve();
 
-      // Each removal routes to the persist command (folded server-side, #2389); the
-      // optimistic `connection.remove` intents already dropped both from the region.
+      // Each removal routes to the persist command, whose fold (#2389, #2831) is
+      // what drops both from the region.
       expect(currentConnectionsView().connections.map((c) => c.id)).toEqual(["c-3"]);
     });
 

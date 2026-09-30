@@ -296,6 +296,10 @@ export class ProjectionClient {
   }
 
   private applyDiff(diff: DiffFrame): void {
+    // A diff the cache has already moved past — it was in flight when a newer
+    // snapshot was adopted (e.g. by {@link catchUp}) — carries nothing new.
+    // Dropping it is exact, and avoids a redundant resync round-trip (#2831).
+    if (diff.version <= this.version) return;
     // Gap: a frame was dropped, reordered, or the stream reconnected. Discard
     // and re-baseline rather than apply out of order.
     if (diff.baseVersion !== this.version) {
@@ -333,6 +337,31 @@ export class ProjectionClient {
       }
     } finally {
       this.resyncing = false;
+    }
+  }
+
+  /**
+   * Bring the cache up to (at least) the backend's current region version —
+   * a **barrier** for callers that just caused an authoritative change outside
+   * the intent channel (#2831).
+   *
+   * A Tauri command that writes the backend (e.g. a connection persist, whose
+   * fold publishes the region) resolves independently of the diff frame it
+   * produced: the frame may still be in flight when the command's promise
+   * settles. Awaiting `catchUp()` afterwards guarantees the cache reflects
+   * every change the backend had published by then — the frame already
+   * arrived (the backend answers `null`, one cheap round-trip) or the fresh
+   * snapshot is adopted now. Unlike {@link resync} it is never skipped while
+   * another resync is running, since the caller needs the guarantee, not just
+   * eventual convergence. Snapshot adoption never regresses the version, and
+   * the late frame is then dropped as already covered.
+   */
+  async catchUp(): Promise<void> {
+    if (this.closed) return;
+    const have = this.version >= 0 ? this.version : undefined;
+    const snapshot = await this.transport.resync(this.region, have);
+    if (snapshot && !this.closed) {
+      this.adoptSnapshot(snapshot);
     }
   }
 
