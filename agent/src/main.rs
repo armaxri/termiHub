@@ -159,8 +159,10 @@ async fn run() -> anyhow::Result<()> {
             Ok(())
         }
         "--stdio" => {
-            // Configure tracing to stderr so it doesn't interfere with the protocol on stdout
-            init_tracing();
+            // Tracing goes to stderr so it never interferes with the protocol on
+            // stdout — as framed records the desktop re-emits at their real
+            // level and target (#2854, OBS-004).
+            init_tracing(StderrLogFormat::Framed);
 
             let shutdown = setup_shutdown_signal();
             let allow_self_update = self_update_enabled(&args);
@@ -169,7 +171,7 @@ async fn run() -> anyhow::Result<()> {
             io::stdio::run_stdio_loop(shutdown, allow_self_update, update_strategy).await
         }
         "--listen" => {
-            init_tracing();
+            init_tracing(StderrLogFormat::Plain);
 
             // The listen address is optional; skip it (and any other flags) when
             // resolving the address so `--allow-self-update` is not mistaken for it.
@@ -188,7 +190,7 @@ async fn run() -> anyhow::Result<()> {
             io::tcp::run_tcp_listener(addr, shutdown, allow_self_update, update_strategy).await
         }
         "--daemon" => {
-            init_tracing();
+            init_tracing(StderrLogFormat::Plain);
 
             let session_id = args.get(2).unwrap_or_else(|| {
                 eprintln!("--daemon requires a session ID argument");
@@ -197,7 +199,7 @@ async fn run() -> anyhow::Result<()> {
             daemon::process::run_daemon(session_id).await
         }
         "--registry-daemon" => {
-            init_tracing();
+            init_tracing(StderrLogFormat::Plain);
 
             // Spawned by a worker that could not find a registry (see
             // `registry_daemon::client`), never by a user. Exits on its own once
@@ -217,22 +219,55 @@ async fn run() -> anyhow::Result<()> {
     }
 }
 
-/// Build the env-filter for the stderr sink.
+/// How the stderr sink renders records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StderrLogFormat {
+    /// Human-readable `fmt` lines — for the `--listen` / `--daemon` /
+    /// `--registry-daemon` roles, whose stderr nobody parses.
+    Plain,
+    /// One structured [`termihub_agent::log_frame`] record per line — for the
+    /// `--stdio` role, whose stderr the desktop captures and re-emits at each
+    /// record's real level and target (#2854, OBS-004).
+    Framed,
+}
+
+/// Floor applied to `russh` on the framed stderr sink, whatever `RUST_LOG`
+/// says. The desktop re-emits framed records into its durable `termihub.log`,
+/// so the same clamp the agent's own file sink applies ([`file_log`]) holds
+/// here: `russh`'s per-packet `DEBUG`/`TRACE` output never reaches a durable
+/// log unless a directive names `russh` explicitly.
+const RUSSH_CLAMP: &str = "russh=warn";
+
+/// The env-filter directive for the stderr sink, given `RUST_LOG`.
 ///
-/// Unchanged from the agent's original behavior: honors `RUST_LOG`, defaulting
-/// to `info`. Kept as the stderr layer so the `--stdio` capture path (the
-/// desktop reads the agent's stderr and re-logs it) keeps working exactly as
-/// before.
-fn stderr_env_filter() -> EnvFilter {
-    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
+/// `RUST_LOG` (default `info`) as before; the [`StderrLogFormat::Framed`] sink
+/// additionally gets [`RUSSH_CLAMP`] prepended.
+fn stderr_filter_directive(format: StderrLogFormat, rust_log: Option<&str>) -> String {
+    let base = rust_log
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .unwrap_or("info");
+    match format {
+        StderrLogFormat::Plain => base.to_string(),
+        StderrLogFormat::Framed => format!("{RUSSH_CLAMP},{base}"),
+    }
+}
+
+/// Build the env-filter for the stderr sink (see [`stderr_filter_directive`]).
+/// An unparsable `RUST_LOG` falls back to the default rather than failing.
+fn stderr_env_filter(format: StderrLogFormat) -> EnvFilter {
+    let rust_log = std::env::var(EnvFilter::DEFAULT_ENV).ok();
+    EnvFilter::try_new(stderr_filter_directive(format, rust_log.as_deref()))
+        .unwrap_or_else(|_| EnvFilter::new(stderr_filter_directive(format, None)))
 }
 
 /// Initialize the tracing subscriber.
 ///
 /// Installs two layers on one registry (audit OBS-003):
 ///
-/// - a **stderr** layer (`RUST_LOG`, default `info`) — unchanged, so the
-///   interactive `--stdio` role keeps its desktop-captured stderr logging;
+/// - a **stderr** layer (`RUST_LOG`, default `info`). For the interactive
+///   `--stdio` role it writes framed records ([`StderrLogFormat::Framed`]) the
+///   desktop parses; for every other role it writes plain `fmt` lines;
 /// - a **durable rotating file** layer ([`file_log`]) written for *every* role,
 ///   so the `--daemon` / `--listen` / `--registry-daemon` roles — whose stderr
 ///   goes to the remote host with no capture path — leave a retrievable,
@@ -241,15 +276,23 @@ fn stderr_env_filter() -> EnvFilter {
 /// Opening the log file is best-effort: if it cannot be opened (read-only home,
 /// no config dir), the agent logs a warning to stderr and runs with the stderr
 /// layer alone rather than failing to start.
-fn init_tracing() {
+fn init_tracing(format: StderrLogFormat) {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
     use tracing_subscriber::Layer;
 
-    let stderr_layer = tracing_subscriber::fmt::layer()
-        .with_writer(std::io::stderr)
-        .with_filter(stderr_env_filter());
-    let registry = tracing_subscriber::registry().with(stderr_layer);
+    let plain_layer = (format == StderrLogFormat::Plain).then(|| {
+        tracing_subscriber::fmt::layer()
+            .with_writer(std::io::stderr)
+            .with_filter(stderr_env_filter(format))
+    });
+    let framed_layer = (format == StderrLogFormat::Framed).then(|| {
+        termihub_agent::log_frame::FramedStderrLayer::new(std::io::stderr)
+            .with_filter(stderr_env_filter(format))
+    });
+    let registry = tracing_subscriber::registry()
+        .with(plain_layer)
+        .with(framed_layer);
 
     match file_log::RotatingLogFile::with_defaults() {
         Ok(file) => {
@@ -410,5 +453,78 @@ mod tests {
             ])),
             UpdateStrategy::Immediate
         );
+    }
+
+    #[test]
+    fn framed_stderr_filter_clamps_russh_and_plain_keeps_rust_log() {
+        assert_eq!(
+            stderr_filter_directive(StderrLogFormat::Framed, None),
+            "russh=warn,info"
+        );
+        assert_eq!(
+            stderr_filter_directive(StderrLogFormat::Framed, Some("debug")),
+            "russh=warn,debug"
+        );
+        // An explicit russh directive still wins (it comes later).
+        assert_eq!(
+            stderr_filter_directive(StderrLogFormat::Framed, Some("debug,russh=trace")),
+            "russh=warn,debug,russh=trace"
+        );
+        assert_eq!(
+            stderr_filter_directive(StderrLogFormat::Plain, None),
+            "info"
+        );
+        assert_eq!(
+            stderr_filter_directive(StderrLogFormat::Plain, Some("  ")),
+            "info"
+        );
+        assert_eq!(
+            stderr_filter_directive(StderrLogFormat::Plain, Some("debug")),
+            "debug"
+        );
+    }
+
+    #[test]
+    fn framed_stderr_filter_drops_russh_debug() {
+        use tracing::subscriber::NoSubscriber;
+        use tracing::Dispatch;
+        use tracing_subscriber::layer::SubscriberExt;
+        // Pin two no-op dispatchers so a parallel test cannot cache these
+        // callsites' interest as `never` for the scoped subscriber below.
+        static PINNED: std::sync::OnceLock<[Dispatch; 2]> = std::sync::OnceLock::new();
+        PINNED.get_or_init(|| {
+            [
+                Dispatch::new(NoSubscriber::default()),
+                Dispatch::new(NoSubscriber::default()),
+            ]
+        });
+        // A framed sink under RUST_LOG=debug still never passes russh DEBUG.
+        let filter = EnvFilter::new(stderr_filter_directive(
+            StderrLogFormat::Framed,
+            Some("debug"),
+        ));
+        let buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        #[derive(Clone)]
+        struct W(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for W {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let w = W(buf.clone());
+        let layer = termihub_agent::log_frame::FramedStderrLayer::new(move || w.clone());
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::Layer::with_filter(layer, filter));
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::debug!(target: "russh::cipher", "reading, seqn = 603");
+            tracing::debug!(target: "termihub_agent::io", "kept");
+        });
+        let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        assert!(!out.contains("seqn"), "{out}");
+        assert!(out.contains("kept"), "{out}");
     }
 }
