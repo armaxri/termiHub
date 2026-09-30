@@ -153,7 +153,11 @@ use termihub_core::monitoring::{
 /// (#3877): an unattended create never relays a prompt and refuses with a typed
 /// `connect_failure` kind instead. The desktop sends the member only to an agent
 /// that advertises the flag; an older desktop never sends it.
-const AGENT_PROTOCOL_VERSION: &str = "0.23.0";
+/// Bumped to 0.24.0 for the camelCase `initialize` result envelope (#3051):
+/// `protocolVersion`, `agentVersion`, `clientId`, `updateAuthTokenPath`. A client
+/// that negotiates an older version still gets the legacy snake_case keys, and
+/// the desktop reads both.
+const AGENT_PROTOCOL_VERSION: &str = "0.24.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -960,8 +964,10 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
         // handing the result back to the transport loop to serialise + flush.
         info!("initialize: responding to client (docker_available={docker_available})");
 
-        to_result_value(&InitializeResult {
-            protocol_version: negotiated_version,
+        // #3051: camelCase envelope for a 0.24.0+ client, the legacy snake_case
+        // keys for an older one (which reads only those).
+        let result = InitializeResult {
+            protocol_version: negotiated_version.clone(),
             agent_version: env!("CARGO_PKG_VERSION").to_string(),
             client_id,
             update_auth_token_path,
@@ -981,6 +987,12 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 session_files: true,
                 unattended_connect: true,
             },
+        };
+        result.to_wire_value(&negotiated_version).map_err(|e| {
+            rpc_err(
+                errors::INTERNAL_ERROR,
+                format!("Failed to serialize response: {e}"),
+            )
         })
     })?;
     Ok(())
@@ -3504,7 +3516,7 @@ mod tests {
         let handler = make_handler();
         let result = dispatch(&handler, "initialize", init_params(), 1).await;
 
-        assert_eq!(result["result"]["protocol_version"], AGENT_PROTOCOL_VERSION);
+        assert_eq!(result["result"]["protocolVersion"], AGENT_PROTOCOL_VERSION);
         assert_eq!(result["result"]["capabilities"]["maxSessions"], 20);
         let conn_types = result["result"]["capabilities"]["connectionTypes"]
             .as_array()
@@ -3608,7 +3620,7 @@ mod tests {
             1,
         )
         .await;
-        assert_eq!(result["result"]["protocol_version"], AGENT_PROTOCOL_VERSION);
+        assert_eq!(result["result"]["protocolVersion"], AGENT_PROTOCOL_VERSION);
     }
 
     #[tokio::test]
@@ -3625,7 +3637,7 @@ mod tests {
             1,
         )
         .await;
-        assert_eq!(result["result"]["protocol_version"], AGENT_PROTOCOL_VERSION);
+        assert_eq!(result["result"]["protocolVersion"], AGENT_PROTOCOL_VERSION);
     }
 
     // ── ConnectionRegistry integration ─────────────────────────────
@@ -3768,9 +3780,50 @@ mod tests {
     /// `sessionMonitoring` capability (#3871), 0.22.0 the `sessionFiles`
     /// capability (#3242), and 0.23.0 the unattended `connection.create` with
     /// its `unattendedConnect` capability (#3877).
+    ///
+    /// 0.24.0 made the `initialize` result envelope camelCase (#3051).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.23.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.24.0");
+    }
+
+    /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and
+    /// none of the legacy snake_case keys.
+    #[tokio::test]
+    async fn initialize_answers_a_current_client_in_camel_case() {
+        let handler = make_handler();
+        let result = dispatch(&handler, "initialize", init_params(), 1).await;
+        let r = &result["result"];
+        assert_eq!(r["protocolVersion"], AGENT_PROTOCOL_VERSION);
+        assert_eq!(r["agentVersion"], env!("CARGO_PKG_VERSION"));
+        assert!(r["clientId"].as_str().is_some_and(|id| !id.is_empty()));
+        for legacy in ["protocol_version", "agent_version", "client_id"] {
+            assert!(r.get(legacy).is_none(), "unexpected {legacy} in {r}");
+        }
+        assert!(r["capabilities"]["maxSessions"].is_number());
+    }
+
+    /// #3051: a desktop that negotiates a pre-0.24.0 version reads only the
+    /// snake_case envelope, so the agent keeps answering it in that shape.
+    #[tokio::test]
+    async fn initialize_answers_an_older_client_in_the_legacy_snake_case() {
+        let handler = make_handler();
+        let result = dispatch(
+            &handler,
+            "initialize",
+            json!({"protocolVersion": "0.23.0", "client": "test", "clientVersion": "0.1.0"}),
+            1,
+        )
+        .await;
+        let r = &result["result"];
+        assert_eq!(r["protocol_version"], "0.23.0");
+        assert_eq!(r["agent_version"], env!("CARGO_PKG_VERSION"));
+        assert!(r["client_id"].as_str().is_some_and(|id| !id.is_empty()));
+        for camel in ["protocolVersion", "agentVersion", "clientId"] {
+            assert!(r.get(camel).is_none(), "unexpected {camel} in {r}");
+        }
+        // The nested capabilities are camelCase in both shapes.
+        assert!(r["capabilities"]["maxSessions"].is_number());
     }
 
     // ── agent.forward.connect (desktop port forward, #3241) ────────
@@ -3919,7 +3972,7 @@ mod tests {
     async fn initialize_returns_client_id() {
         let handler = make_handler();
         let result = dispatch(&handler, "initialize", init_params(), 1).await;
-        let client_id = result["result"]["client_id"].as_str();
+        let client_id = result["result"]["clientId"].as_str();
         assert!(
             client_id.is_some_and(|id| !id.is_empty()),
             "initialize must return a non-empty client_id, got {result}"
@@ -3930,7 +3983,7 @@ mod tests {
     async fn list_connections_reports_initialized_client() {
         let handler = make_handler();
         let init = dispatch(&handler, "initialize", init_params(), 1).await;
-        let own_id = init["result"]["client_id"].as_str().unwrap().to_string();
+        let own_id = init["result"]["clientId"].as_str().unwrap().to_string();
 
         let result = dispatch(&handler, "agent.list_connections", json!({}), 2).await;
         let conns = result["result"]["connections"]
@@ -4310,7 +4363,7 @@ mod tests {
 
         // 1. Initialize
         let result = dispatch(&handler, "initialize", init_params(), 1).await;
-        assert_eq!(result["result"]["protocol_version"], AGENT_PROTOCOL_VERSION);
+        assert_eq!(result["result"]["protocolVersion"], AGENT_PROTOCOL_VERSION);
 
         // 2. Create a stub session
         let snapshot = mgr

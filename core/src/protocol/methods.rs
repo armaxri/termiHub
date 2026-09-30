@@ -399,21 +399,31 @@ pub struct KbdInteractiveClosedNotification {
 /// `connectionTypes` as pass-through JSON for the frontend. The envelope's
 /// field set is defined once, here.
 ///
+/// **Field casing (#3051).** The envelope is camelCase on the wire —
+/// `protocolVersion`, `agentVersion`, `clientId`, `updateAuthTokenPath` —
+/// matching [`InitializeParams`] and the nested [`Capabilities`]. Agents older
+/// than protocol [`INITIALIZE_CAMEL_CASE_SINCE`] sent these four keys in
+/// snake_case, so each also accepts its snake_case alias on read: a desktop
+/// can still read an older agent's version and offer the update. An agent
+/// answers a client that negotiated an older version in that legacy shape
+/// ([`InitializeResult::to_wire_value`]).
+///
 /// The `serde(default)`s only affect deserialization (the desktop) and keep
 /// its historical tolerance of older agents: a missing version reads as
-/// `"unknown"`, a missing `client_id` (pre-0.3.0) as empty.
+/// `"unknown"`, a missing `clientId` (pre-0.3.0) as empty.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct InitializeResult<C = Capabilities> {
-    #[serde(default = "unknown_version")]
+    #[serde(default = "unknown_version", alias = "protocol_version")]
     pub protocol_version: String,
-    #[serde(default = "unknown_version")]
+    #[serde(default = "unknown_version", alias = "agent_version")]
     pub agent_version: String,
     /// Agent-assigned id for this client connection.
     ///
     /// Lets the desktop recognise its own entry in an `agent.list_connections`
     /// snapshot so the connected-host update guard (#1349) can exclude itself.
     /// Added in protocol 0.3.0 (additive, backwards compatible).
-    #[serde(default)]
+    #[serde(default, alias = "client_id")]
     pub client_id: String,
     pub capabilities: C,
     /// Path (on the agent host) of this agent instance's owner-only (`0600`)
@@ -422,8 +432,67 @@ pub struct InitializeResult<C = Capabilities> {
     /// agent owner's files can obtain it — and sends it as `authToken` on the
     /// update RPCs. Absent from agents older than protocol 0.13.0, which do not
     /// require the token. Added in protocol 0.13.0.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        alias = "update_auth_token_path",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub update_auth_token_path: Option<String>,
+}
+
+/// First protocol version whose [`InitializeResult`] envelope is camelCase
+/// (#3051). Clients that negotiate an older version get the legacy
+/// snake_case envelope.
+pub const INITIALIZE_CAMEL_CASE_SINCE: &str = "0.24.0";
+
+/// The `initialize` envelope keys that changed casing in
+/// [`INITIALIZE_CAMEL_CASE_SINCE`], as `(camelCase, legacy snake_case)`.
+const INITIALIZE_LEGACY_KEYS: [(&str, &str); 4] = [
+    ("protocolVersion", "protocol_version"),
+    ("agentVersion", "agent_version"),
+    ("clientId", "client_id"),
+    ("updateAuthTokenPath", "update_auth_token_path"),
+];
+
+/// Parse a `MAJOR.MINOR.PATCH` protocol version into a comparable tuple.
+fn parse_protocol_version(version: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = version.trim().split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    parts.next().is_none().then_some((major, minor, patch))
+}
+
+/// Whether a client that negotiated `negotiated` reads the camelCase
+/// `initialize` envelope (#3051). An unparseable version reads as legacy.
+pub fn initialize_result_is_camel_case(negotiated: &str) -> bool {
+    match (
+        parse_protocol_version(negotiated),
+        parse_protocol_version(INITIALIZE_CAMEL_CASE_SINCE),
+    ) {
+        (Some(v), Some(since)) => v >= since,
+        _ => false,
+    }
+}
+
+impl<C: Serialize> InitializeResult<C> {
+    /// Serialize for a client that negotiated `negotiated` (#3051): the
+    /// camelCase envelope from [`INITIALIZE_CAMEL_CASE_SINCE`], the legacy
+    /// snake_case top-level keys before it. The nested capabilities are
+    /// camelCase in both shapes.
+    pub fn to_wire_value(&self, negotiated: &str) -> serde_json::Result<Value> {
+        let mut value = serde_json::to_value(self)?;
+        if !initialize_result_is_camel_case(negotiated) {
+            if let Value::Object(map) = &mut value {
+                for (camel, snake) in INITIALIZE_LEGACY_KEYS {
+                    if let Some(v) = map.remove(camel) {
+                        map.insert(snake.to_string(), v);
+                    }
+                }
+            }
+        }
+        Ok(value)
+    }
 }
 
 fn unknown_version() -> String {
@@ -2456,7 +2525,7 @@ mod tests {
             },
         };
         let v = serde_json::to_value(&result).unwrap();
-        assert_eq!(v["protocol_version"], "0.2.0");
+        assert_eq!(v["protocolVersion"], "0.2.0");
         assert_eq!(v["capabilities"]["maxSessions"], 20);
         assert_eq!(v["capabilities"]["connectionTypes"][0]["typeId"], "local");
         assert_eq!(v["capabilities"]["availableShells"][0], "/bin/bash");
@@ -2476,7 +2545,103 @@ mod tests {
             .unwrap()
             .is_empty());
         // AGT-003 (#3213): the token path is omitted when the agent has none.
+        assert!(v.get("updateAuthTokenPath").is_none());
+    }
+
+    fn sample_initialize_result() -> InitializeResult<Value> {
+        InitializeResult {
+            protocol_version: "0.24.0".to_string(),
+            agent_version: "1.4.2".to_string(),
+            client_id: "c-1".to_string(),
+            capabilities: json!({ "maxSessions": 4 }),
+            update_auth_token_path: Some("/t".to_string()),
+        }
+    }
+
+    #[test]
+    fn initialize_result_emits_camel_case_top_level_keys() {
+        // #3051: the envelope matches the camelCase params and capabilities.
+        let v = serde_json::to_value(sample_initialize_result()).unwrap();
+        assert_eq!(
+            v,
+            json!({
+                "protocolVersion": "0.24.0",
+                "agentVersion": "1.4.2",
+                "clientId": "c-1",
+                "capabilities": { "maxSessions": 4 },
+                "updateAuthTokenPath": "/t",
+            })
+        );
+    }
+
+    #[test]
+    fn initialize_result_round_trips_the_camel_case_shape() {
+        let original = sample_initialize_result();
+        let v = serde_json::to_value(&original).unwrap();
+        let back: InitializeResult<Value> = serde_json::from_value(v).unwrap();
+        assert_eq!(back, original);
+    }
+
+    #[test]
+    fn initialize_result_camel_case_starts_at_protocol_0_24_0() {
+        assert_eq!(INITIALIZE_CAMEL_CASE_SINCE, "0.24.0");
+        assert!(initialize_result_is_camel_case("0.24.0"));
+        assert!(initialize_result_is_camel_case("0.24.1"));
+        assert!(initialize_result_is_camel_case("0.25.0"));
+        assert!(initialize_result_is_camel_case("1.0.0"));
+        assert!(!initialize_result_is_camel_case("0.23.0"));
+        assert!(!initialize_result_is_camel_case("0.3.0"));
+        assert!(!initialize_result_is_camel_case("0.1.0"));
+        // Unparseable reads as legacy: the safe shape for an unknown client.
+        assert!(!initialize_result_is_camel_case("garbage"));
+        assert!(!initialize_result_is_camel_case(""));
+    }
+
+    #[test]
+    fn initialize_result_wire_value_is_camel_case_for_a_new_client() {
+        let v = sample_initialize_result().to_wire_value("0.24.0").unwrap();
+        assert_eq!(v, serde_json::to_value(sample_initialize_result()).unwrap());
+    }
+
+    #[test]
+    fn initialize_result_wire_value_is_snake_case_for_an_older_client() {
+        // A pre-0.24.0 desktop reads the snake_case envelope; answering it in
+        // camelCase would lose its version and token path (#3051).
+        let v = sample_initialize_result().to_wire_value("0.3.0").unwrap();
+        assert_eq!(
+            v,
+            json!({
+                "protocol_version": "0.24.0",
+                "agent_version": "1.4.2",
+                "client_id": "c-1",
+                "capabilities": { "maxSessions": 4 },
+                "update_auth_token_path": "/t",
+            })
+        );
+        // The nested capabilities keep their camelCase in both shapes.
+        let mut none = sample_initialize_result();
+        none.update_auth_token_path = None;
+        let v = none.to_wire_value("0.23.0").unwrap();
         assert!(v.get("update_auth_token_path").is_none());
+        assert!(v.get("updateAuthTokenPath").is_none());
+    }
+
+    #[test]
+    fn initialize_result_parses_an_older_agents_snake_case_shape() {
+        // #3051: a desktop must still read a pre-0.24.0 agent's result, so it
+        // can detect the version and offer the update instead of failing.
+        let wire = json!({
+            "protocol_version": "0.23.0",
+            "agent_version": "0.9.1",
+            "client_id": "c-9",
+            "capabilities": {},
+            "update_auth_token_path": "/old",
+        });
+        let r: InitializeResult<Value> = serde_json::from_value(wire).unwrap();
+        assert_eq!(r.protocol_version, "0.23.0");
+        assert_eq!(r.agent_version, "0.9.1");
+        assert_eq!(r.client_id, "c-9");
+        assert_eq!(r.update_auth_token_path.as_deref(), Some("/old"));
     }
 
     #[test]

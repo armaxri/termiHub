@@ -148,7 +148,7 @@ async fn initialize_advertises_the_token_path_only_when_configured() {
     let gated = make_mock_handler().with_update_auth(UpdateAuth::for_test(TOKEN));
     let result = dispatch(&gated, "initialize", init_params(), 1).await;
     assert_eq!(
-        result["result"]["update_auth_token_path"],
+        result["result"]["updateAuthTokenPath"],
         "/test/instance-auth/0.token"
     );
     assert!(
@@ -158,6 +158,7 @@ async fn initialize_advertises_the_token_path_only_when_configured() {
 
     let ungated = make_mock_handler();
     let result = dispatch(&ungated, "initialize", init_params(), 1).await;
+    assert!(result["result"].get("updateAuthTokenPath").is_none());
     assert!(result["result"].get("update_auth_token_path").is_none());
 }
 
