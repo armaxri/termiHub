@@ -10,6 +10,13 @@ rust-version.workspace = true
 # skips its missing per-crate license field (#2096).
 publish = false
 
+# `tauri-codegen` is a build-dependency declared only to switch on its
+# `compression` feature for the build-script context codegen (#3916); build.rs
+# reaches it through `tauri_build::CodegenContext`, never by name, so machete's
+# name-scan cannot see the use.
+[package.metadata.cargo-machete]
+ignored = ["tauri-codegen"]
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
@@ -66,7 +73,18 @@ name = "termihub_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+# `codegen`: build.rs generates the Tauri context (`tauri_build::CodegenContext`)
+# instead of the `tauri::generate_context!()` proc macro, so the content-hashed
+# asset files (icons, Info.plist, embedded frontend) land in OUT_DIR *before*
+# rustc compiles termihub_lib. Written from inside the macro they postdate the
+# compile and made the next cargo invocation rebuild termihub once more (#3916).
+tauri-build = { version = "2", features = ["codegen"] }
+# Pinned explicitly for its `compression` feature: the runtime `tauri/compression`
+# feature decompresses embedded assets with brotli, so the codegen that writes
+# them must compress. The macro path got it via `tauri/compression` ->
+# `tauri-macros/compression`; the build-script copy must not rely on host-dep
+# feature unification to get the same (#3916).
+tauri-codegen = { version = "2", default-features = false, features = ["compression"] }
 
 [dependencies]
 # default-features = false avoids `common-controls-v6` which embeds a Windows
