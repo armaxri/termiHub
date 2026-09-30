@@ -7,10 +7,10 @@ import { COLOR_TOKEN_KEYS } from "./colorTokens";
 import { newId } from "@/services/transport/ids";
 
 /** Prefix used in `AppSettings.theme` to reference a custom theme by id. */
-export const CUSTOM_THEME_PREFIX = "custom:";
+const CUSTOM_THEME_PREFIX = "custom:";
 
 /** Built-in themes usable as a base for custom themes, keyed by their id. */
-export const BASE_THEMES: Record<string, ThemeDefinition> = {
+const BASE_THEMES: Record<string, ThemeDefinition> = {
   dark: darkTheme,
   light: lightTheme,
   "solarized-dark": solarizedDarkTheme,
