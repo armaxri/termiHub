@@ -4517,7 +4517,7 @@ limits, symlinks, merge layout, group cancel, end-to-end temp tree) and
    neither comes back after another restart. Automated coverage:
    `src-tauri/src/files/transfer/relaunch.rs` (`cancelling_*` tests).
 
-### Transfer Queue: restart gaps (#3629, #3630, #3643, #3912)
+### Transfer Queue: restart gaps (#3629, #3630, #3643, #3912, #3983)
 
 Automated coverage: `src-tauri/src/files/transfer/persist*.rs`,
 `src-tauri/src/files/drag_out.rs`, `src/hooks/sessionFolderPaste.test.ts` and
@@ -4543,6 +4543,15 @@ Automated coverage: `src-tauri/src/files/transfer/persist*.rs`,
    notice appears, naming `Local` and the local folder. Retry before
    reconnecting asks to connect to the SFTP connection first; after
    reconnecting it downloads only the missing (or partly written) files.
+4. **Interrupted folder Download and dropped-folder Upload (#3983):** in an
+   SFTP session's file browser, select a folder holding several large files,
+   choose **Download** and pick a local target folder; quit while the second
+   file is downloading. Relaunch → the same notice appears, naming `Local` and
+   the target folder; after reconnecting, Retry downloads only the missing
+   (or partly written) files. Then drop a local folder holding several large
+   files from the OS onto the session file browser and quit while the second
+   file is uploading. Relaunch → the notice names the session folder; after
+   reconnecting, Retry uploads only the missing files.
 
 ### Transfer Queue panel: rows, controls, minimized state (#1337)
 

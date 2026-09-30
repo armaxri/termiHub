@@ -1922,6 +1922,53 @@ describe("useSessionFileSystem — folder in a Download selection (#3944)", () =
     expect(vi.mocked(sessionListFiles)).not.toHaveBeenCalled();
     expect(vi.mocked(toast.loading)).not.toHaveBeenCalled();
   });
+
+  it("records the folder download in the interrupted-paste manifest (#3983)", async () => {
+    const { localMkdir, folderPasteLinkTransfer } = await import("@/services/api");
+    await pickTargetFolder("/local/target");
+    const api = await mountHook(true);
+    await act(async () => {
+      await api.downloadFile("/remote/dir/sub", "sub", true);
+    });
+
+    // Recorded like a session → local paste (#3912): a local destination has
+    // no session and no connection, so an interrupted download is listed and
+    // retried after a restart.
+    expect(vi.mocked(folderPasteBegin)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(folderPasteBegin)).toHaveBeenCalledWith(
+      "copy",
+      expect.objectContaining({ sessionId: "sess-9", path: "/remote/dir/sub" }),
+      expect.objectContaining({ sessionId: null, connectionId: null, path: "/local/target/sub" })
+    );
+    // Each queued download is linked to the manifest (#3643).
+    expect(vi.mocked(folderPasteLinkTransfer)).toHaveBeenCalledWith("paste-1", "t-down");
+    // Begin before the first file, end only after the folder landed.
+    const begin = vi.mocked(folderPasteBegin).mock.invocationCallOrder[0];
+    const end = vi.mocked(folderPasteEnd).mock.invocationCallOrder[0];
+    expect(begin).toBeLessThan(vi.mocked(localMkdir).mock.invocationCallOrder[0]);
+    expect(vi.mocked(sessionDownload).mock.invocationCallOrder[0]).toBeLessThan(end);
+    expect(vi.mocked(folderPasteEnd)).toHaveBeenCalledWith("paste-1");
+  });
+
+  it("keeps the manifest of a folder download whose file fails (#3983)", async () => {
+    vi.mocked(sessionDownload).mockRejectedValueOnce(new Error("connection lost"));
+    await pickTargetFolder("/local/target");
+    const api = await mountHook(true);
+    await act(async () => {
+      await api.downloadFile("/remote/dir/sub", "sub", true);
+    });
+    expect(vi.mocked(folderPasteBegin)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(folderPasteEnd)).not.toHaveBeenCalled();
+  });
+
+  it("a cancelled folder picker records no manifest (#3983)", async () => {
+    await pickTargetFolder(null);
+    const api = await mountHook(true);
+    await act(async () => {
+      await api.downloadFile("/remote/dir/sub", "sub", true);
+    });
+    expect(vi.mocked(folderPasteBegin)).not.toHaveBeenCalled();
+  });
 });
 
 describe("useSessionFileSystem — dropping a local folder (#3966)", () => {
@@ -2082,6 +2129,49 @@ describe("useSessionFileSystem — dropping a local folder (#3966)", () => {
       expect.any(Function)
     );
     expect(vi.mocked(sessionMkdir)).not.toHaveBeenCalled();
+  });
+
+  it("records the dropped-folder upload in the interrupted-paste manifest (#3983)", async () => {
+    const { folderPasteLinkTransfer } = await import("@/services/api");
+    const api = await mountHook(true);
+    await act(async () => {
+      await api.uploadFileFromPath("/local/photos");
+    });
+
+    // Recorded like a local → session paste (#3630): an interrupted upload is
+    // listed and retried after a restart.
+    expect(vi.mocked(folderPasteBegin)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(folderPasteBegin)).toHaveBeenCalledWith(
+      "copy",
+      expect.objectContaining({ sessionId: null, connectionId: null, path: "/local/photos" }),
+      expect.objectContaining({ sessionId: "sess-7", path: "/remote/dir/photos" })
+    );
+    // Each queued upload is linked to the manifest (#3643).
+    expect(vi.mocked(folderPasteLinkTransfer)).toHaveBeenCalledWith("paste-1", "t-up");
+    // Begin before the first file, end only after the folder landed.
+    const begin = vi.mocked(folderPasteBegin).mock.invocationCallOrder[0];
+    const end = vi.mocked(folderPasteEnd).mock.invocationCallOrder[0];
+    expect(begin).toBeLessThan(vi.mocked(sessionMkdir).mock.invocationCallOrder[0]);
+    expect(vi.mocked(sessionUpload).mock.invocationCallOrder[0]).toBeLessThan(end);
+    expect(vi.mocked(folderPasteEnd)).toHaveBeenCalledWith("paste-1");
+  });
+
+  it("keeps the manifest of a dropped-folder upload whose file fails (#3983)", async () => {
+    vi.mocked(sessionUpload).mockRejectedValueOnce(new Error("connection lost"));
+    const api = await mountHook(true);
+    await act(async () => {
+      await api.uploadFileFromPath("/local/photos");
+    });
+    expect(vi.mocked(folderPasteBegin)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(folderPasteEnd)).not.toHaveBeenCalled();
+  });
+
+  it("a dropped file records no manifest (#3983)", async () => {
+    const api = await mountHook(true);
+    await act(async () => {
+      await api.uploadFileFromPath("/local/data.csv");
+    });
+    expect(vi.mocked(folderPasteBegin)).not.toHaveBeenCalled();
   });
 
   it("a failed stat falls back to the single-file upload (the backend guard refuses a folder)", async () => {
