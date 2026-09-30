@@ -17,6 +17,7 @@ fn manager(dir: &Path, store: Arc<RecordingStore>) -> ConnectionManager {
 
 fn graphical(type_id: &str, name: &str, settings: serde_json::Value) -> SavedConnection {
     SavedConnection {
+        extra: Default::default(),
         icon: None,
         id: format!("conn-{name}"),
         name: name.to_string(),

@@ -23,6 +23,7 @@ fn ssh(id: &str, name: &str, folder_id: Option<&str>, hops: &[&str]) -> SavedCon
         settings["proxyJump"] = json!(hops);
     }
     SavedConnection {
+        extra: Default::default(),
         icon: None,
         id: id.to_string(),
         name: name.to_string(),
@@ -38,6 +39,7 @@ fn ssh(id: &str, name: &str, folder_id: Option<&str>, hops: &[&str]) -> SavedCon
 
 fn folder(id: &str, name: &str) -> ConnectionFolder {
     ConnectionFolder {
+        extra: Default::default(),
         id: id.to_string(),
         name: name.to_string(),
         parent_id: None,

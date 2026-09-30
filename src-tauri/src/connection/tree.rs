@@ -42,6 +42,7 @@ pub fn flatten_tree(
                 name,
                 is_expanded,
                 children: child_nodes,
+                extra,
             } => {
                 let folder_id = compute_folder_id(parent_path, name);
                 folders.push(ConnectionFolder {
@@ -49,6 +50,7 @@ pub fn flatten_tree(
                     name: name.clone(),
                     parent_id: parent_folder_id.clone(),
                     is_expanded: *is_expanded,
+                    extra: extra.clone(),
                 });
                 let (child_conns, child_folders) = flatten_tree(child_nodes, Some(&folder_id));
                 connections.extend(child_conns);
@@ -59,6 +61,7 @@ pub fn flatten_tree(
                 config,
                 terminal_options,
                 icon,
+                extra,
             } => {
                 let conn_id = compute_connection_id(parent_path, name);
                 connections.push(SavedConnection {
@@ -69,6 +72,7 @@ pub fn flatten_tree(
                     terminal_options: terminal_options.clone(),
                     icon: icon.clone(),
                     source_file: None,
+                    extra: extra.clone(),
                 });
             }
         }
@@ -105,6 +109,7 @@ fn build_tree_for_parent(
                 name: folder.name.clone(),
                 is_expanded: folder.is_expanded,
                 children,
+                extra: folder.extra.clone(),
             });
         }
     }
@@ -118,6 +123,7 @@ fn build_tree_for_parent(
                 config: conn.config.clone(),
                 terminal_options: conn.terminal_options.clone(),
                 icon: conn.icon.clone(),
+                extra: conn.extra.clone(),
             });
         }
     }
@@ -330,12 +336,14 @@ mod tests {
     fn flatten_root_connections_only() {
         let tree = vec![
             ConnectionTreeNode::Connection {
+                extra: Default::default(),
                 icon: None,
                 name: "Local".to_string(),
                 config: make_local_config(),
                 terminal_options: None,
             },
             ConnectionTreeNode::Connection {
+                extra: Default::default(),
                 icon: None,
                 name: "SSH".to_string(),
                 config: make_ssh_config(),
@@ -356,16 +364,19 @@ mod tests {
     #[test]
     fn flatten_folder_with_connections() {
         let tree = vec![ConnectionTreeNode::Folder {
+            extra: Default::default(),
             name: "Work".to_string(),
             is_expanded: true,
             children: vec![
                 ConnectionTreeNode::Connection {
+                    extra: Default::default(),
                     icon: None,
                     name: "Prod".to_string(),
                     config: make_ssh_config(),
                     terminal_options: None,
                 },
                 ConnectionTreeNode::Connection {
+                    extra: Default::default(),
                     icon: None,
                     name: "Dev".to_string(),
                     config: make_ssh_config(),
@@ -390,12 +401,15 @@ mod tests {
     #[test]
     fn flatten_nested_folders() {
         let tree = vec![ConnectionTreeNode::Folder {
+            extra: Default::default(),
             name: "Root Folder".to_string(),
             is_expanded: true,
             children: vec![ConnectionTreeNode::Folder {
+                extra: Default::default(),
                 name: "Sub Folder".to_string(),
                 is_expanded: false,
                 children: vec![ConnectionTreeNode::Connection {
+                    extra: Default::default(),
                     icon: None,
                     name: "Deep SSH".to_string(),
                     config: make_ssh_config(),
@@ -422,6 +436,7 @@ mod tests {
     #[test]
     fn flatten_handles_slash_in_name() {
         let tree = vec![ConnectionTreeNode::Connection {
+            extra: Default::default(),
             icon: None,
             name: "A/B".to_string(),
             config: make_local_config(),
@@ -449,6 +464,7 @@ mod tests {
         // persistence path — flat store -> build_tree -> JSON (on disk) ->
         // parse -> flatten_tree -> flat store — with no data loss.
         let conns = vec![SavedConnection {
+            extra: Default::default(),
             id: "Work/My SSH".to_string(),
             name: "My SSH".to_string(),
             config: make_ssh_config(),
@@ -458,6 +474,7 @@ mod tests {
             source_file: None,
         }];
         let folders = vec![ConnectionFolder {
+            extra: Default::default(),
             id: "Work".to_string(),
             name: "Work".to_string(),
             parent_id: None,
@@ -488,6 +505,7 @@ mod tests {
     fn build_tree_root_connections() {
         let conns = vec![
             SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "Local".to_string(),
                 name: "Local".to_string(),
@@ -497,6 +515,7 @@ mod tests {
                 source_file: None,
             },
             SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "SSH".to_string(),
                 name: "SSH".to_string(),
@@ -520,6 +539,7 @@ mod tests {
     #[test]
     fn build_tree_with_folders() {
         let folders = vec![ConnectionFolder {
+            extra: Default::default(),
             id: "Work".to_string(),
             name: "Work".to_string(),
             parent_id: None,
@@ -527,6 +547,7 @@ mod tests {
         }];
         let conns = vec![
             SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "Work/Prod".to_string(),
                 name: "Prod".to_string(),
@@ -536,6 +557,7 @@ mod tests {
                 source_file: None,
             },
             SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "Root Conn".to_string(),
                 name: "Root Conn".to_string(),
@@ -572,13 +594,16 @@ mod tests {
     fn round_trip_flat_tree_flat() {
         let original_tree = vec![
             ConnectionTreeNode::Folder {
+                extra: Default::default(),
                 name: "Work".to_string(),
                 is_expanded: true,
                 children: vec![
                     ConnectionTreeNode::Folder {
+                        extra: Default::default(),
                         name: "Dev".to_string(),
                         is_expanded: false,
                         children: vec![ConnectionTreeNode::Connection {
+                            extra: Default::default(),
                             icon: None,
                             name: "Dev SSH".to_string(),
                             config: make_ssh_config(),
@@ -586,6 +611,7 @@ mod tests {
                         }],
                     },
                     ConnectionTreeNode::Connection {
+                        extra: Default::default(),
                         icon: None,
                         name: "Prod SSH".to_string(),
                         config: make_ssh_config(),
@@ -594,6 +620,7 @@ mod tests {
                 ],
             },
             ConnectionTreeNode::Connection {
+                extra: Default::default(),
                 icon: None,
                 name: "Local".to_string(),
                 config: make_local_config(),
@@ -635,6 +662,7 @@ mod tests {
     fn dedup_no_duplicates() {
         let mut conns = vec![
             SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "A".to_string(),
                 name: "A".to_string(),
@@ -644,6 +672,7 @@ mod tests {
                 source_file: None,
             },
             SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "B".to_string(),
                 name: "B".to_string(),
@@ -664,6 +693,7 @@ mod tests {
     fn dedup_same_name_connections_in_root() {
         let mut conns = vec![
             SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "SSH".to_string(),
                 name: "SSH".to_string(),
@@ -673,6 +703,7 @@ mod tests {
                 source_file: None,
             },
             SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "SSH".to_string(),
                 name: "SSH".to_string(),
@@ -693,6 +724,7 @@ mod tests {
     fn dedup_three_same_name() {
         let mut conns = vec![
             SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "X".to_string(),
                 name: "X".to_string(),
@@ -702,6 +734,7 @@ mod tests {
                 source_file: None,
             },
             SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "X".to_string(),
                 name: "X".to_string(),
@@ -711,6 +744,7 @@ mod tests {
                 source_file: None,
             },
             SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "X".to_string(),
                 name: "X".to_string(),
@@ -732,6 +766,7 @@ mod tests {
     fn dedup_skips_existing_suffix() {
         let mut conns = vec![
             SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "A".to_string(),
                 name: "A".to_string(),
@@ -741,6 +776,7 @@ mod tests {
                 source_file: None,
             },
             SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "A (1)".to_string(),
                 name: "A (1)".to_string(),
@@ -750,6 +786,7 @@ mod tests {
                 source_file: None,
             },
             SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "A".to_string(),
                 name: "A".to_string(),
@@ -772,12 +809,14 @@ mod tests {
     fn dedup_different_folders_no_conflict() {
         let mut folders = vec![
             ConnectionFolder {
+                extra: Default::default(),
                 id: "F1".to_string(),
                 name: "F1".to_string(),
                 parent_id: None,
                 is_expanded: true,
             },
             ConnectionFolder {
+                extra: Default::default(),
                 id: "F2".to_string(),
                 name: "F2".to_string(),
                 parent_id: None,
@@ -786,6 +825,7 @@ mod tests {
         ];
         let mut conns = vec![
             SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "F1/SSH".to_string(),
                 name: "SSH".to_string(),
@@ -795,6 +835,7 @@ mod tests {
                 source_file: None,
             },
             SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "F2/SSH".to_string(),
                 name: "SSH".to_string(),
@@ -814,12 +855,14 @@ mod tests {
     #[test]
     fn dedup_folder_and_connection_same_name() {
         let mut folders = vec![ConnectionFolder {
+            extra: Default::default(),
             id: "Work".to_string(),
             name: "Work".to_string(),
             parent_id: None,
             is_expanded: true,
         }];
         let mut conns = vec![SavedConnection {
+            extra: Default::default(),
             icon: None,
             id: "Work".to_string(),
             name: "Work".to_string(),
@@ -839,12 +882,14 @@ mod tests {
     fn dedup_duplicate_folder_names() {
         let mut folders = vec![
             ConnectionFolder {
+                extra: Default::default(),
                 id: "Work".to_string(),
                 name: "Work".to_string(),
                 parent_id: None,
                 is_expanded: true,
             },
             ConnectionFolder {
+                extra: Default::default(),
                 id: "Work2".to_string(),
                 name: "Work".to_string(),
                 parent_id: None,
@@ -870,6 +915,7 @@ mod tests {
         // ID has been recomputed to "TestDir/Zsh", colliding with the
         // existing connection's ID.
         let mut folders = vec![ConnectionFolder {
+            extra: Default::default(),
             id: "TestDir".to_string(),
             name: "TestDir".to_string(),
             parent_id: None,
@@ -878,6 +924,7 @@ mod tests {
         let mut conns = vec![
             // Existing connection in folder
             SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "TestDir/Zsh".to_string(),
                 name: "Zsh".to_string(),
@@ -888,6 +935,7 @@ mod tests {
             },
             // Moved connection: ID recomputed to match new folder
             SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "TestDir/Zsh".to_string(),
                 name: "Zsh".to_string(),
@@ -922,6 +970,7 @@ mod tests {
         let mut conns = vec![
             // Existing root connection
             SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "SSH".to_string(),
                 name: "SSH".to_string(),
@@ -932,6 +981,7 @@ mod tests {
             },
             // Connection reparented from deleted folder to root
             SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "SSH".to_string(),
                 name: "SSH".to_string(),
@@ -957,6 +1007,7 @@ mod tests {
         // After reparenting, both are at root → dedup should rename the second.
         let mut folders = vec![
             ConnectionFolder {
+                extra: Default::default(),
                 id: "Work".to_string(),
                 name: "Work".to_string(),
                 parent_id: None,
@@ -964,6 +1015,7 @@ mod tests {
             },
             // Subfolder reparented from deleted folder to root
             ConnectionFolder {
+                extra: Default::default(),
                 id: "Work".to_string(),
                 name: "Work".to_string(),
                 parent_id: None,
@@ -993,16 +1045,19 @@ mod tests {
     fn count_tree_items_mixed() {
         let tree = vec![
             ConnectionTreeNode::Folder {
+                extra: Default::default(),
                 name: "F".to_string(),
                 is_expanded: true,
                 children: vec![
                     ConnectionTreeNode::Connection {
+                        extra: Default::default(),
                         icon: None,
                         name: "C1".to_string(),
                         config: make_local_config(),
                         terminal_options: None,
                     },
                     ConnectionTreeNode::Connection {
+                        extra: Default::default(),
                         icon: None,
                         name: "C2".to_string(),
                         config: make_local_config(),
@@ -1011,6 +1066,7 @@ mod tests {
                 ],
             },
             ConnectionTreeNode::Connection {
+                extra: Default::default(),
                 icon: None,
                 name: "C3".to_string(),
                 config: make_local_config(),

@@ -25,6 +25,7 @@ fn ssh(id: &str, host: &str, hops: &[&str]) -> SavedConnection {
         settings["proxyJump"] = json!(hops);
     }
     SavedConnection {
+        extra: Default::default(),
         icon: None,
         id: id.to_string(),
         name: id.to_string(),

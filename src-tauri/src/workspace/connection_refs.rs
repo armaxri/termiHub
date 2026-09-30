@@ -102,6 +102,7 @@ mod tests {
 
     fn conn(id: &str, name: &str, source: Option<&str>) -> SavedConnection {
         SavedConnection {
+            extra: Default::default(),
             id: id.to_string(),
             name: name.to_string(),
             config: ConnectionConfig {

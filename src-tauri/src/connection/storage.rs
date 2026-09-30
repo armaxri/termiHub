@@ -265,6 +265,23 @@ impl ConnectionStorage {
     }
 }
 
+/// The unknown fields of a raw folder entry (#3947): everything but the keys
+/// the typed [`ConnectionTreeNode::Folder`] owns, so a folder rebuilt by the
+/// granular recovery keeps them like a cleanly parsed one does.
+fn folder_extra(entry: &serde_json::Value) -> super::config::NodeExtra {
+    const OWNED: [&str; 4] = ["type", "name", "isExpanded", "children"];
+    entry
+        .as_object()
+        .map(|fields| {
+            fields
+                .iter()
+                .filter(|(key, _)| !OWNED.contains(&key.as_str()))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Recursively recover valid tree nodes from a JSON array,
 /// dropping corrupt entries and recording warnings.
 fn recover_nodes_recursive(
@@ -303,6 +320,7 @@ fn recover_nodes_recursive(
                     name: name.to_string(),
                     is_expanded,
                     children: child_nodes,
+                    extra: folder_extra(entry),
                 });
             }
             Some("connection") => {
@@ -422,6 +440,7 @@ mod tests {
         let store = ConnectionStore {
             version: "2".to_string(),
             children: vec![ConnectionTreeNode::Connection {
+                extra: Default::default(),
                 icon: None,
                 name: "Test".to_string(),
                 config: crate::terminal::backend::ConnectionConfig {
@@ -450,9 +469,11 @@ mod tests {
         let store = ConnectionStore {
             version: "2".to_string(),
             children: vec![ConnectionTreeNode::Folder {
+                extra: Default::default(),
                 name: "Work".to_string(),
                 is_expanded: true,
                 children: vec![ConnectionTreeNode::Connection {
+                    extra: Default::default(),
                     icon: None,
                     name: "SSH".to_string(),
                     config: crate::terminal::backend::ConnectionConfig {
@@ -553,6 +574,7 @@ mod tests {
 
         let flat = FlatConnectionStore {
             connections: vec![SavedConnection {
+                extra: Default::default(),
                 icon: None,
                 id: "Work/SSH".to_string(),
                 name: "SSH".to_string(),
@@ -565,6 +587,7 @@ mod tests {
                 source_file: None,
             }],
             folders: vec![ConnectionFolder {
+                extra: Default::default(),
                 id: "Work".to_string(),
                 name: "Work".to_string(),
                 parent_id: None,
@@ -983,5 +1006,159 @@ mod tests {
             migrated["children"][0]["children"][0]["config"]["config"],
             serde_json::json!({ "autoReconnect": true })
         );
+    }
+
+    /// A v5 file whose folder, connection and agent nodes carry fields this
+    /// build does not know (written by a newer desktop at the same schema
+    /// version). Built as raw JSON so the fixture is independent of the typed
+    /// node structs.
+    fn file_with_unknown_node_fields(version: &str, ftp_timeout_key: &str) -> serde_json::Value {
+        serde_json::json!({
+            "version": version,
+            "children": [
+                {
+                    "type": "folder",
+                    "name": "Work",
+                    "isExpanded": true,
+                    "futureFolderField": { "color": "teal" },
+                    "children": [{
+                        "type": "connection",
+                        "name": "nested",
+                        "config": { "type": "ftp", "config": { ftp_timeout_key: 45 } },
+                        "futureConnectionField": [1, 2, 3]
+                    }]
+                },
+                {
+                    "type": "connection",
+                    "name": "root",
+                    "config": { "type": "local", "config": {} },
+                    "icon": "server",
+                    "futureConnectionField": "kept"
+                }
+            ],
+            "agents": [{
+                "id": "agent-1",
+                "name": "Agent",
+                "config": { "host": "h", "port": 22, "username": "u", "authMethod": "key" },
+                "futureAgentField": 7
+            }]
+        })
+    }
+
+    /// Asserts every unknown per-node field of [`file_with_unknown_node_fields`]
+    /// is still on disk.
+    fn assert_unknown_node_fields_on_disk(on_disk: &serde_json::Value) {
+        let children = on_disk["children"].as_array().unwrap();
+        let node = |name: &str| {
+            children
+                .iter()
+                .find(|n| n["name"] == name)
+                .unwrap_or_else(|| panic!("node {name} missing: {on_disk}"))
+                .clone()
+        };
+        let folder = node("Work");
+        assert_eq!(
+            folder["futureFolderField"],
+            serde_json::json!({ "color": "teal" }),
+            "{on_disk}"
+        );
+        assert_eq!(folder["type"], serde_json::json!("folder"));
+        assert_eq!(
+            folder["children"][0]["futureConnectionField"],
+            serde_json::json!([1, 2, 3]),
+            "{on_disk}"
+        );
+        let root = node("root");
+        assert_eq!(root["type"], serde_json::json!("connection"));
+        assert_eq!(root["futureConnectionField"], serde_json::json!("kept"));
+        assert_eq!(root["icon"], serde_json::json!("server"));
+        assert_eq!(
+            on_disk["agents"][0]["futureAgentField"],
+            serde_json::json!(7),
+            "{on_disk}"
+        );
+    }
+
+    /// Regression (#3947): a same-version load → save must not erase per-node
+    /// fields a newer desktop added to folders, connections or agents.
+    #[test]
+    fn unknown_node_fields_survive_load_save_round_trip() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let file = file_with_unknown_node_fields("5", "connectTimeoutSecs");
+        fs::write(&storage.file_path, file.to_string()).unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        storage.save_flat(&loaded.data).unwrap();
+
+        let raw = fs::read_to_string(&storage.file_path).unwrap();
+        let on_disk: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_unknown_node_fields_on_disk(&on_disk);
+        // The known fields are untouched, and no catch-all key leaks onto disk.
+        assert_eq!(
+            on_disk["children"][0]["children"][0]["config"]["config"],
+            serde_json::json!({ "connectTimeoutSecs": 45 })
+        );
+        assert!(!raw.contains("\"extra\""), "{raw}");
+    }
+
+    /// The v4 → v5 migration and the `ConnectionConfig` rename-on-read still
+    /// apply to a node that also carries unknown fields, and those fields
+    /// survive the migrating load → save.
+    #[test]
+    fn unknown_node_fields_survive_a_migrating_load() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let file = file_with_unknown_node_fields("4", "timeoutSecs");
+        fs::write(&storage.file_path, file.to_string()).unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let nested = loaded
+            .data
+            .connections
+            .iter()
+            .find(|c| c.name == "nested")
+            .unwrap();
+        assert_eq!(
+            nested.config.settings,
+            serde_json::json!({ "connectTimeoutSecs": 45 })
+        );
+        storage.save_flat(&loaded.data).unwrap();
+
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&storage.file_path).unwrap()).unwrap();
+        assert_eq!(on_disk["version"], serde_json::json!("5"));
+        assert_eq!(
+            on_disk["children"][0]["children"][0]["config"]["config"],
+            serde_json::json!({ "connectTimeoutSecs": 45 })
+        );
+        assert_unknown_node_fields_on_disk(&on_disk);
+    }
+
+    /// A node salvaged by the granular recovery path keeps its unknown fields
+    /// too: only the corrupt sibling is dropped.
+    #[test]
+    fn recovered_nodes_keep_unknown_fields() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let mut file = file_with_unknown_node_fields("5", "connectTimeoutSecs");
+        file["children"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({ "type": "connection", "name": "broken" }));
+        fs::write(&storage.file_path, file.to_string()).unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(!loaded.warnings.is_empty());
+
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&storage.file_path).unwrap()).unwrap();
+        assert_unknown_node_fields_on_disk(&on_disk);
+        storage.save_flat(&loaded.data).unwrap();
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&storage.file_path).unwrap()).unwrap();
+        assert_unknown_node_fields_on_disk(&on_disk);
     }
 }

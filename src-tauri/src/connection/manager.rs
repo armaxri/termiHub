@@ -492,12 +492,18 @@ impl ConnectionManager {
     }
 
     /// Save (add or update) a remote agent. Passwords are stripped before persisting.
+    ///
+    /// The agent's unknown on-disk fields are kept (#3947); whatever unknown
+    /// keys the IPC copy carries are dropped — they are frontend state, not
+    /// fields a newer build wrote.
     pub fn save_agent(&self, agent: SavedRemoteAgent) -> Result<()> {
-        let agent = prepare_agent_for_storage(agent, &*self.credential_store)?;
+        let mut agent = prepare_agent_for_storage(agent, &*self.credential_store)?;
+        agent.extra.clear();
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
 
         if let Some(existing) = store.agents.iter_mut().find(|a| a.id == agent.id) {
+            agent.extra = std::mem::take(&mut existing.extra);
             *existing = agent;
         } else {
             store.agents.push(agent);
@@ -694,8 +700,13 @@ impl ConnectionManager {
                 }
             });
 
-        // Apply the folder update
+        // Apply the folder update, keeping the folder's unknown on-disk fields
+        // (#3947) — the IPC copy never carries them.
         if let Some(existing) = store.folders.iter_mut().find(|f| f.id == folder.id) {
+            let mut folder = folder;
+            if folder.extra.is_empty() {
+                folder.extra = std::mem::take(&mut existing.extra);
+            }
             *existing = folder;
         } else {
             store.folders.push(folder);
@@ -1269,8 +1280,13 @@ impl ConnectionManager {
             saved.id = self.save_connection_routed(connection)?;
             return Ok(saved);
         }
-        // The connection must still exist where the editor loaded it from.
-        self.read_connection(&connection.id, current_source)?;
+        // The connection must still exist where the editor loaded it from; its
+        // unknown on-disk fields move with it (#3947).
+        let resident = self.read_connection(&connection.id, current_source)?;
+        let mut connection = connection;
+        if connection.extra.is_empty() {
+            connection.extra = resident.extra;
+        }
         let target_source = connection.source_file.clone();
         self.relocate(connection, current_source, target_source)
     }
@@ -1847,6 +1863,7 @@ mod tests {
             settings["savePassword"] = serde_json::Value::Bool(sp);
         }
         SavedConnection {
+            extra: Default::default(),
             icon: None,
             id: id.to_string(),
             name: "SSH".to_string(),
@@ -1902,6 +1919,7 @@ mod tests {
 
     fn make_serial_conn(id: &str) -> SavedConnection {
         SavedConnection {
+            extra: Default::default(),
             icon: None,
             id: id.to_string(),
             name: "Serial".to_string(),
@@ -1917,6 +1935,7 @@ mod tests {
 
     fn make_local_conn(id: &str) -> SavedConnection {
         SavedConnection {
+            extra: Default::default(),
             icon: None,
             id: id.to_string(),
             name: "Local".to_string(),
@@ -1937,6 +1956,7 @@ mod tests {
         save_password: Option<bool>,
     ) -> SavedRemoteAgent {
         SavedRemoteAgent {
+            extra: Default::default(),
             id: id.to_string(),
             name: "Agent".to_string(),
             config: RemoteAgentConfig {
@@ -2073,6 +2093,7 @@ mod tests {
         let path_str = file_path.to_str().unwrap();
 
         let folders = vec![ConnectionFolder {
+            extra: Default::default(),
             id: "My Folder".to_string(),
             name: "My Folder".to_string(),
             parent_id: None,
@@ -2219,6 +2240,7 @@ mod tests {
         conn.folder_id = Some("Unknown".to_string());
 
         let folders = vec![ConnectionFolder {
+            extra: Default::default(),
             id: "Unknown".to_string(),
             name: "Unknown".to_string(),
             parent_id: None,
@@ -2354,6 +2376,7 @@ mod tests {
 
         // Helper: make a connection with a distinct name (ID is computed from name)
         let make_conn = |name: &str| SavedConnection {
+            extra: Default::default(),
             icon: None,
             id: format!("conn-{}", name),
             name: name.to_string(),
@@ -2409,6 +2432,7 @@ mod tests {
         let cred_store = Arc::new(MockStore::new());
 
         let make_conn = |name: &str| SavedConnection {
+            extra: Default::default(),
             icon: None,
             id: name.to_string(),
             name: name.to_string(),
@@ -2459,6 +2483,7 @@ mod tests {
         let cred_store = Arc::new(MockStore::new());
 
         let make_conn = |name: &str| SavedConnection {
+            extra: Default::default(),
             icon: None,
             id: name.to_string(),
             name: name.to_string(),
@@ -2504,6 +2529,7 @@ mod tests {
         let cred_store = Arc::new(MockStore::new());
 
         let make_conn = |name: &str| SavedConnection {
+            extra: Default::default(),
             icon: None,
             id: name.to_string(),
             name: name.to_string(),
@@ -2519,6 +2545,7 @@ mod tests {
         let setup = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
         setup
             .save_folder(ConnectionFolder {
+                extra: Default::default(),
                 id: "Work".to_string(),
                 name: "Work".to_string(),
                 parent_id: None,
@@ -2559,6 +2586,7 @@ mod tests {
         let cred_store = Arc::new(MockStore::new());
 
         let make_conn = |name: &str| SavedConnection {
+            extra: Default::default(),
             icon: None,
             id: name.to_string(),
             name: name.to_string(),
@@ -2604,6 +2632,7 @@ mod tests {
         let cred_store = Arc::new(MockStore::new());
 
         let make_conn = |name: &str| SavedConnection {
+            extra: Default::default(),
             icon: None,
             id: name.to_string(),
             name: name.to_string(),
@@ -2663,6 +2692,7 @@ mod tests {
         let cred_store = Arc::new(MockStore::new());
 
         let make_conn = |name: &str| SavedConnection {
+            extra: Default::default(),
             icon: None,
             id: name.to_string(),
             name: name.to_string(),
@@ -2719,6 +2749,7 @@ mod tests {
         let cred_store = Arc::new(MockStore::new());
 
         let make_conn = |name: &str| SavedConnection {
+            extra: Default::default(),
             icon: None,
             id: name.to_string(),
             name: name.to_string(),
@@ -3025,6 +3056,7 @@ mod tests {
     /// A connection of `type_id` named `name` (id = name), optionally foldered.
     fn typed_conn(name: &str, type_id: &str, folder: Option<&str>) -> SavedConnection {
         SavedConnection {
+            extra: Default::default(),
             icon: None,
             id: match folder {
                 Some(f) => format!("{f}/{name}"),
@@ -3057,6 +3089,7 @@ mod tests {
         let ext = dir.path().join("team.json");
         let ext_str = ext.to_str().unwrap();
         let folders = vec![ConnectionFolder {
+            extra: Default::default(),
             id: "Ops".to_string(),
             name: "Ops".to_string(),
             parent_id: None,
@@ -3293,3 +3326,7 @@ mod jump_host_scope_tests;
 #[cfg(test)]
 #[path = "manager_graphical_password_tests.rs"]
 mod graphical_password_tests;
+
+#[cfg(test)]
+#[path = "manager_unknown_fields_tests.rs"]
+mod unknown_fields_tests;

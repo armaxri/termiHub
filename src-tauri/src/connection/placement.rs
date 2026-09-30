@@ -34,6 +34,16 @@ pub(crate) struct Placement {
     pub changes: Vec<ConnectionIdChange>,
 }
 
+/// An edit replacing `resident` keeps the unknown on-disk fields it had
+/// (#3947): the editor's copy crosses IPC, which never carries them, so it
+/// arrives with an empty map. A copy that does carry fields (read from a file)
+/// is taken as-is.
+fn keep_unknown_fields(incoming: &mut SavedConnection, resident: &mut SavedConnection) {
+    if incoming.extra.is_empty() {
+        incoming.extra = std::mem::take(&mut resident.extra);
+    }
+}
+
 /// Put `connection` into `connections`, keeping it writable.
 ///
 /// When its folder is not part of `folders`, the folder chain is copied from
@@ -56,6 +66,8 @@ pub(crate) fn place_connection(
     };
     let index = match existing {
         Some(idx) => {
+            let mut connection = connection;
+            keep_unknown_fields(&mut connection, &mut connections[idx]);
             connections[idx] = connection;
             idx
         }
@@ -138,6 +150,7 @@ mod tests {
 
     fn conn(id: &str, name: &str, folder_id: Option<&str>) -> SavedConnection {
         SavedConnection {
+            extra: Default::default(),
             id: id.to_string(),
             name: name.to_string(),
             config: ConnectionConfig {
@@ -153,6 +166,7 @@ mod tests {
 
     fn folder(id: &str, name: &str, parent_id: Option<&str>) -> ConnectionFolder {
         ConnectionFolder {
+            extra: Default::default(),
             id: id.to_string(),
             name: name.to_string(),
             parent_id: parent_id.map(String::from),

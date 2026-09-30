@@ -1527,6 +1527,7 @@ mod tests {
 
         fn ssh(name: &str, folder: Option<&str>) -> SavedConnection {
             SavedConnection {
+                extra: Default::default(),
                 id: match folder {
                     Some(f) => format!("{f}/{name}"),
                     None => name.to_string(),
@@ -1561,6 +1562,7 @@ mod tests {
             let folders = folder_ids
                 .into_iter()
                 .map(|id| ConnectionFolder {
+                    extra: Default::default(),
                     name: id.clone(),
                     id,
                     parent_id: None,

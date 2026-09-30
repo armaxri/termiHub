@@ -35,6 +35,7 @@ fn change(old: &str, new: &str) -> ConnectionIdChange {
 
 fn conn(id: &str, name: &str, folder_id: Option<&str>) -> SavedConnection {
     SavedConnection {
+        extra: Default::default(),
         icon: None,
         id: id.to_string(),
         name: name.to_string(),
@@ -50,6 +51,7 @@ fn conn(id: &str, name: &str, folder_id: Option<&str>) -> SavedConnection {
 
 fn folder(id: &str, name: &str, parent_id: Option<&str>) -> ConnectionFolder {
     ConnectionFolder {
+        extra: Default::default(),
         id: id.to_string(),
         name: name.to_string(),
         parent_id: parent_id.map(String::from),

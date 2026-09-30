@@ -21,6 +21,7 @@ fn manager(dir: &Path, store: &Arc<RecordingStore>) -> ConnectionManager {
 
 fn ssh(id: &str, name: &str) -> SavedConnection {
     SavedConnection {
+        extra: Default::default(),
         icon: None,
         id: id.to_string(),
         name: name.to_string(),

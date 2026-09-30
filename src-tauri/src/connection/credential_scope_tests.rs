@@ -11,6 +11,7 @@ const SCOPE: &str = "5d0c3a1e-0b8e-4c55-9d6f-2a8b7c1e4f00";
 
 fn conn(id: &str) -> SavedConnection {
     SavedConnection {
+        extra: Default::default(),
         icon: None,
         id: id.to_string(),
         name: id.to_string(),
