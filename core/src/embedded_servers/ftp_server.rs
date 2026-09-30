@@ -19,11 +19,14 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use libunftp::auth::{AuthenticationError, Authenticator, Credentials, UserDetail};
 use libunftp::notification::{DataEvent, DataListener, EventMeta, PresenceEvent, PresenceListener};
-use libunftp::storage::{ErrorKind as StorageErrorKind, Fileinfo, StorageBackend};
 use libunftp::ServerBuilder;
 use tokio::io::{AsyncRead, ReadBuf};
+use unftp_core::auth::{
+    AuthenticationError, Authenticator, Credentials, Principal, UserDetail, UserDetailError,
+    UserDetailProvider,
+};
+use unftp_core::storage::{ErrorKind as StorageErrorKind, Fileinfo, StorageBackend};
 use unftp_sbe_fs::Filesystem;
 
 use super::activity::{AccessRecord, ServerActivity, TransferGuard};
@@ -65,26 +68,36 @@ pub fn start_ftp_server(
 /// The concrete libunftp server type this module builds.
 type FtpServer = libunftp::Server<MaybeReadOnlyFilesystem, FtpUser>;
 
+/// Passive data-connection port range. libunftp 0.21 made the range inclusive;
+/// this is the same 49152–65534 span the former exclusive `49152..65535` gave.
+const PASSIVE_PORTS: std::ops::RangeInclusive<u16> = 49152..=65534;
+
 /// Build a libunftp server for `config`. `Server::service` consumes the server,
 /// so the accept loop builds one per control connection (cheap: every field is
-/// an `Arc` or small value).
+/// an `Arc` or small value). `client` is that connection's peer address, which
+/// the session user carries for the access log (PROD-034).
 fn build_server(
     config: &EmbeddedServerConfig,
     stats: &Arc<AtomicServerStats>,
+    client: IpAddr,
 ) -> Result<FtpServer> {
     let root: PathBuf = config.root_directory.clone().into();
     let read_only = config.read_only;
     let activity = Arc::clone(&stats.activity);
     let activity_for_factory = Arc::clone(&activity);
-    ServerBuilder::with_authenticator(
+    ServerBuilder::<MaybeReadOnlyFilesystem, FtpUser>::with_user_detail_provider(
         Box::new(move || MaybeReadOnlyFilesystem {
             inner: Filesystem::new(root.clone()),
             read_only,
             activity: Arc::clone(&activity_for_factory),
         }),
-        Arc::new(FtpAuthenticator::new(config.ftp_auth.clone(), activity)),
+        Arc::new(FtpUserProvider { client }),
     )
-    .passive_ports(49152..65535)
+    .authenticator(Arc::new(FtpAuthenticator::new(
+        config.ftp_auth.clone(),
+        activity,
+    )))
+    .passive_ports(PASSIVE_PORTS)
     .greeting("termiHub FTP Server ready.")
     .notify_data(StatsTracker {
         stats: Arc::clone(stats),
@@ -106,7 +119,7 @@ async fn run_ftp_server(
 
     // Validate the server configuration before binding, so a bad config fails
     // the start instead of every later connection.
-    if let Err(e) = build_server(config, &stats) {
+    if let Err(e) = build_server(config, &stats, IpAddr::from([0, 0, 0, 0])) {
         ready.fail(&e.to_string());
         return Err(e);
     }
@@ -155,7 +168,7 @@ fn serve_connection(
     stream: tokio::net::TcpStream,
     peer: std::net::SocketAddr,
 ) {
-    let server = match build_server(config, stats) {
+    let server = match build_server(config, stats, peer.ip()) {
         Ok(server) => server,
         Err(e) => {
             tracing::warn!(%peer, error = %e, "FTP server build failed; dropping connection");
@@ -188,19 +201,44 @@ impl Display for FtpUser {
 
 impl UserDetail for FtpUser {}
 
+/// Turns the authenticated [`Principal`] into the session [`FtpUser`]. One
+/// provider is built per control connection, so it knows that connection's
+/// client address (libunftp 0.22 split user-detail lookup out of
+/// [`Authenticator`], which now only returns the login name).
+#[derive(Debug)]
+struct FtpUserProvider {
+    client: IpAddr,
+}
+
+#[async_trait]
+impl UserDetailProvider for FtpUserProvider {
+    type User = FtpUser;
+
+    async fn provide_user_detail(&self, principal: &Principal) -> Result<FtpUser, UserDetailError> {
+        Ok(FtpUser {
+            username: principal.username.clone(),
+            client: self.client,
+        })
+    }
+}
+
 // ─── Storage backend: optional read-only wrapper + access log ─────────────────
 
 /// Wraps `Filesystem`, optionally rejects all write operations, and records
 /// every file operation in the access log.
+///
+/// `inner` holds the error when the root directory could not be opened (since
+/// unftp-sbe-fs 0.3 `Filesystem::new` is fallible instead of panicking); the
+/// session then fails `enter` and every storage call with that error.
 #[derive(Debug)]
 struct MaybeReadOnlyFilesystem {
-    inner: Filesystem,
+    inner: io::Result<Filesystem>,
     read_only: bool,
     activity: Arc<ServerActivity>,
 }
 
 /// Short status token for a storage result.
-fn storage_status(err: &libunftp::storage::Error) -> &'static str {
+fn storage_status(err: &unftp_core::storage::Error) -> &'static str {
     match err.kind() {
         StorageErrorKind::PermissionDenied => "denied",
         StorageErrorKind::PermanentFileNotAvailable
@@ -210,6 +248,16 @@ fn storage_status(err: &libunftp::storage::Error) -> &'static str {
 }
 
 impl MaybeReadOnlyFilesystem {
+    /// The opened root filesystem, or a local error if it could not be opened.
+    fn fs(&self) -> unftp_core::storage::Result<&Filesystem> {
+        self.inner.as_ref().map_err(|e| {
+            unftp_core::storage::Error::new(
+                StorageErrorKind::LocalError,
+                format!("FTP root directory unavailable: {e}"),
+            )
+        })
+    }
+
     /// Start an access-log record for `command` on `path` by `user`.
     fn record_for(
         user: &FtpUser,
@@ -231,7 +279,7 @@ impl MaybeReadOnlyFilesystem {
         command: &str,
         path: &Path,
         started: Instant,
-        result: &libunftp::storage::Result<T>,
+        result: &unftp_core::storage::Result<T>,
     ) {
         let record = match result {
             Ok(_) => Self::record_for(user, command, path, "ok", true),
@@ -247,7 +295,7 @@ impl MaybeReadOnlyFilesystem {
         user: &FtpUser,
         command: &str,
         path: &Path,
-    ) -> libunftp::storage::Result<()> {
+    ) -> unftp_core::storage::Result<()> {
         if self.read_only {
             self.activity.record(
                 Self::record_for(user, command, path, "denied", false)
@@ -264,25 +312,31 @@ impl StorageBackend<FtpUser> for MaybeReadOnlyFilesystem {
     type Metadata = unftp_sbe_fs::Meta;
 
     fn enter(&mut self, user_detail: &FtpUser) -> io::Result<()> {
-        StorageBackend::<FtpUser>::enter(&mut self.inner, user_detail)
+        match &mut self.inner {
+            Ok(fs) => StorageBackend::<FtpUser>::enter(fs, user_detail),
+            Err(e) => Err(io::Error::new(
+                e.kind(),
+                format!("FTP root directory unavailable: {e}"),
+            )),
+        }
     }
 
     async fn metadata<P: AsRef<Path> + Send + Debug>(
         &self,
         user: &FtpUser,
         path: P,
-    ) -> libunftp::storage::Result<Self::Metadata> {
-        self.inner.metadata(user, path).await
+    ) -> unftp_core::storage::Result<Self::Metadata> {
+        self.fs()?.metadata(user, path).await
     }
 
     async fn list<P: AsRef<Path> + Send + Debug>(
         &self,
         user: &FtpUser,
         path: P,
-    ) -> libunftp::storage::Result<Vec<Fileinfo<PathBuf, Self::Metadata>>> {
+    ) -> unftp_core::storage::Result<Vec<Fileinfo<PathBuf, Self::Metadata>>> {
         let started = Instant::now();
         let logged = path.as_ref().to_path_buf();
-        let result = self.inner.list(user, path).await;
+        let result = self.fs()?.list(user, path).await;
         self.log_result(user, "LIST", &logged, started, &result);
         result
     }
@@ -292,10 +346,10 @@ impl StorageBackend<FtpUser> for MaybeReadOnlyFilesystem {
         user: &FtpUser,
         path: P,
         start_pos: u64,
-    ) -> libunftp::storage::Result<Box<dyn tokio::io::AsyncRead + Send + Sync + Unpin>> {
+    ) -> unftp_core::storage::Result<Box<dyn tokio::io::AsyncRead + Send + Sync + Unpin>> {
         let started = Instant::now();
         let logged = path.as_ref().to_path_buf();
-        match self.inner.get(user, path, start_pos).await {
+        match self.fs()?.get(user, path, start_pos).await {
             Ok(reader) => {
                 // The RETR entry is written when the download reader finishes
                 // (or is dropped mid-transfer), with the real byte count.
@@ -335,7 +389,7 @@ impl StorageBackend<FtpUser> for MaybeReadOnlyFilesystem {
         input: R,
         path: P,
         start_pos: u64,
-    ) -> libunftp::storage::Result<u64> {
+    ) -> unftp_core::storage::Result<u64> {
         let logged = path.as_ref().to_path_buf();
         self.deny_if_read_only(user, "STOR", &logged)?;
         let started = Instant::now();
@@ -351,7 +405,7 @@ impl StorageBackend<FtpUser> for MaybeReadOnlyFilesystem {
             eof: false,
             on_done: None,
         };
-        let result = self.inner.put(user, input, path, start_pos).await;
+        let result = self.fs()?.put(user, input, path, start_pos).await;
         let record = match &result {
             Ok(bytes) => Self::record_for(user, "STOR", &logged, "ok", true).bytes(*bytes),
             Err(e) => Self::record_for(user, "STOR", &logged, storage_status(e), false)
@@ -365,11 +419,11 @@ impl StorageBackend<FtpUser> for MaybeReadOnlyFilesystem {
         &self,
         user: &FtpUser,
         path: P,
-    ) -> libunftp::storage::Result<()> {
+    ) -> unftp_core::storage::Result<()> {
         let logged = path.as_ref().to_path_buf();
         self.deny_if_read_only(user, "DELE", &logged)?;
         let started = Instant::now();
-        let result = self.inner.del(user, path).await;
+        let result = self.fs()?.del(user, path).await;
         self.log_result(user, "DELE", &logged, started, &result);
         result
     }
@@ -378,11 +432,11 @@ impl StorageBackend<FtpUser> for MaybeReadOnlyFilesystem {
         &self,
         user: &FtpUser,
         path: P,
-    ) -> libunftp::storage::Result<()> {
+    ) -> unftp_core::storage::Result<()> {
         let logged = path.as_ref().to_path_buf();
         self.deny_if_read_only(user, "MKD", &logged)?;
         let started = Instant::now();
-        let result = self.inner.mkd(user, path).await;
+        let result = self.fs()?.mkd(user, path).await;
         self.log_result(user, "MKD", &logged, started, &result);
         result
     }
@@ -392,11 +446,11 @@ impl StorageBackend<FtpUser> for MaybeReadOnlyFilesystem {
         user: &FtpUser,
         from: P,
         to: P,
-    ) -> libunftp::storage::Result<()> {
+    ) -> unftp_core::storage::Result<()> {
         let logged = from.as_ref().to_path_buf();
         self.deny_if_read_only(user, "RNFR", &logged)?;
         let started = Instant::now();
-        let result = self.inner.rename(user, from, to).await;
+        let result = self.fs()?.rename(user, from, to).await;
         self.log_result(user, "RNFR", &logged, started, &result);
         result
     }
@@ -405,11 +459,11 @@ impl StorageBackend<FtpUser> for MaybeReadOnlyFilesystem {
         &self,
         user: &FtpUser,
         path: P,
-    ) -> libunftp::storage::Result<()> {
+    ) -> unftp_core::storage::Result<()> {
         let logged = path.as_ref().to_path_buf();
         self.deny_if_read_only(user, "RMD", &logged)?;
         let started = Instant::now();
-        let result = self.inner.rmd(user, path).await;
+        let result = self.fs()?.rmd(user, path).await;
         self.log_result(user, "RMD", &logged, started, &result);
         result
     }
@@ -418,8 +472,8 @@ impl StorageBackend<FtpUser> for MaybeReadOnlyFilesystem {
         &self,
         user: &FtpUser,
         path: P,
-    ) -> libunftp::storage::Result<()> {
-        self.inner.cwd(user, path).await
+    ) -> unftp_core::storage::Result<()> {
+        self.fs()?.cwd(user, path).await
     }
 }
 
@@ -510,12 +564,12 @@ impl FtpAuthenticator {
 }
 
 #[async_trait]
-impl Authenticator<FtpUser> for FtpAuthenticator {
+impl Authenticator for FtpAuthenticator {
     async fn authenticate(
         &self,
         username: &str,
         creds: &Credentials,
-    ) -> Result<FtpUser, AuthenticationError> {
+    ) -> Result<Principal, AuthenticationError> {
         let ok = self.accepts(username, creds);
         // Only the login name and client address are logged — the password in
         // `creds` is never copied into the record.
@@ -533,9 +587,8 @@ impl Authenticator<FtpUser> for FtpAuthenticator {
         self.activity.record(record);
 
         if ok {
-            Ok(FtpUser {
+            Ok(Principal {
                 username: username.to_string(),
-                client: creds.source_ip,
             })
         } else {
             Err(AuthenticationError::BadPassword)
@@ -850,6 +903,7 @@ mod tests {
             password: password.map(str::to_owned),
             certificate_chain: None,
             source_ip: "127.0.0.1".parse().unwrap(),
+            command_channel_security: unftp_core::auth::ChannelEncryptionState::Plaintext,
         }
     }
 
@@ -920,6 +974,55 @@ mod tests {
             auth.authenticate("alice", &creds(None)).await.unwrap_err(),
             AuthenticationError::BadPassword
         ));
+    }
+
+    // ── libunftp 0.23 adaptation (#3975) ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn authenticator_returns_principal_with_login_name() {
+        let principal = authn(None)
+            .authenticate("alice", &creds(None))
+            .await
+            .expect("accepted");
+        assert_eq!(principal.username, "alice");
+    }
+
+    #[tokio::test]
+    async fn user_provider_attaches_connection_client_address() {
+        let client: IpAddr = "198.51.100.4".parse().expect("ip");
+        let user = FtpUserProvider { client }
+            .provide_user_detail(&Principal {
+                username: "bob".to_string(),
+            })
+            .await
+            .expect("user");
+        assert_eq!(
+            user,
+            FtpUser {
+                username: "bob".to_string(),
+                client,
+            }
+        );
+    }
+
+    #[test]
+    fn passive_ports_keep_the_former_exclusive_span() {
+        // libunftp 0.21 made `passive_ports` inclusive; 0.20 used `49152..65535`.
+        assert_eq!(PASSIVE_PORTS, 49152..=65534);
+    }
+
+    #[tokio::test]
+    async fn missing_root_fails_the_session_instead_of_panicking() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("does-not-exist");
+        let activity = ServerActivity::new();
+        let mut storage = fs(&missing, false, &activity);
+        let user = ftp_user("alice");
+        assert!(StorageBackend::<FtpUser>::enter(&mut storage, &user).is_err());
+        match storage.list(&user, "/").await {
+            Err(err) => assert_eq!(err.kind(), StorageErrorKind::LocalError),
+            Ok(_) => panic!("listing a missing root must fail"),
+        }
     }
 
     // ── Access log (PROD-034) ────────────────────────────────────────────────
