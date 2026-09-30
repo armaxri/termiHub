@@ -21,6 +21,16 @@
 #                             Refuses a private key whose public half is not in
 #                             the trusted file (a mismatched CI secret).
 #   verify <binary>...        Verify each <binary>.sig against the trusted key(s).
+#   select-key [--out <file>] <ENV_VAR>...
+#                             Pick the signing key among private keys held in the
+#                             named environment variables (PEM text, e.g. the
+#                             AGENT_UPDATE_SIGNING_KEY and _NEXT secrets): the
+#                             one matching the FIRST trusted PUBLIC KEY block, so
+#                             during a rotation overlap the old key keeps signing
+#                             and dropping its block switches over (#3329).
+#                             Fails if no candidate matches that block. With
+#                             --out, writes the chosen key there (mode 600);
+#                             without it, only checks. Never prints key material.
 #
 # Common option:
 #   --pub <file>              Trusted public-key file (default:
@@ -39,7 +49,7 @@ PLACEHOLDER_MARKER="TERMIHUB-AGENT-UPDATE-KEY-PLACEHOLDER"
 PUB_FILE="$REPO_ROOT/agent/keys/update-signing.pub.pem"
 
 usage() {
-    sed -n '3,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '3,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 die() {
@@ -50,6 +60,12 @@ die() {
 WORK=""
 cleanup() {
     if [ -n "$WORK" ] && [ -d "$WORK" ]; then
+        # select-key copies candidate private keys in here: overwrite before unlinking.
+        if command -v shred >/dev/null 2>&1; then
+            find "$WORK" -type f -exec shred -u {} + 2>/dev/null || true
+        else
+            find "$WORK" -type f -exec rm -P {} + 2>/dev/null || true
+        fi
         rm -rf "$WORK"
     fi
 }
@@ -168,6 +184,94 @@ cmd_sign() {
     done
 }
 
+# Print the SHA-256 fingerprint of public key $1 (DER SubjectPublicKeyInfo).
+key_fingerprint() {
+    openssl pkey -pubin -in "$1" -outform DER | openssl dgst -sha256 -r | cut -d' ' -f1
+}
+
+cmd_select_key() {
+    local out=""
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+        --out)
+            [ "$#" -ge 2 ] || die "select-key: --out needs a value"
+            out="$2"
+            shift 2
+            ;;
+        --) shift; break ;;
+        -*) die "select-key: unknown option $1" ;;
+        *) break ;;
+        esac
+    done
+    [ "$#" -ge 1 ] || die "select-key: name at least one environment variable holding a private key"
+    cmd_check_key >/dev/null
+
+    # Derive the public half of every non-empty candidate. The private PEM goes
+    # only into $WORK (mode 600, shredded on exit), never onto argv or stdout.
+    local var val usable=()
+    umask 077
+    for var in "$@"; do
+        [[ "$var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] ||
+            die "select-key: not an environment variable name: $var"
+        val="${!var-}"
+        if [ -z "$val" ]; then
+            echo "select-key: $var is not set (skipped)" >&2
+            continue
+        fi
+        printf '%s\n' "$val" >"$WORK/cand-$var.pem"
+        if openssl pkey -in "$WORK/cand-$var.pem" -pubout -out "$WORK/cand-$var.pub" 2>/dev/null &&
+            openssl pkey -pubin -in "$WORK/cand-$var.pub" -noout -text_pub 2>/dev/null |
+            grep -q '^ED25519 Public-Key'; then
+            usable+=("$var")
+        else
+            echo "select-key: $var is not a readable Ed25519 private key (skipped)" >&2
+        fi
+    done
+
+    # The signing key is the private half of the FIRST valid trusted block --
+    # never a later one: during a rotation overlap, deployed agents trust only
+    # the old key, so a missing old secret must fail rather than silently sign
+    # with the staged key. Report every candidate's standing for the release log.
+    local total i f first="" chosen="" pos
+    total="$(grep -c -- '-----BEGIN PUBLIC KEY-----' "$PUB_FILE" || true)"
+    for ((i = 1; i <= total; i++)); do
+        if [ -e "$WORK/pub-$i.pem" ]; then
+            first="$i"
+            break
+        fi
+    done
+    for var in "${usable[@]+"${usable[@]}"}"; do
+        pos=0
+        for ((i = 1; i <= total; i++)); do
+            f="$WORK/pub-$i.pem"
+            [ -e "$f" ] || continue
+            if cmp -s <(openssl pkey -pubin -in "$f" -outform DER) \
+                <(openssl pkey -pubin -in "$WORK/cand-$var.pub" -outform DER); then
+                pos="$i"
+                break
+            fi
+        done
+        if [ "$pos" = "$first" ] && [ -z "$chosen" ]; then
+            chosen="$var"
+        elif [ "$pos" != 0 ]; then
+            echo "select-key: $var matches trusted key #$pos of $total (staged for a rotation, not used yet)"
+        else
+            echo "select-key: warning: $var matches NO trusted key in $PUB_FILE" \
+                "(retired by a switch-over? then delete that secret)" >&2
+        fi
+    done
+    [ -n "$chosen" ] || die "select-key: none of [$*] holds the private half of the FIRST \
+trusted public key (#$first) in $PUB_FILE (secret unset or mismatched; see \
+docs/contributing.md -> 'Agent update signing key')"
+
+    echo "Selected signing key: $chosen (trusted key #$first of $total," \
+        "public SHA-256 $(key_fingerprint "$WORK/cand-$chosen.pub"))"
+    if [ -n "$out" ]; then
+        cp "$WORK/cand-$chosen.pem" "$out"
+        chmod 600 "$out"
+    fi
+}
+
 # --- Argument parsing ---
 SUBCOMMAND=""
 ARGS=()
@@ -201,5 +305,6 @@ case "$SUBCOMMAND" in
 check-key) cmd_check_key ;;
 sign) cmd_sign "${ARGS[@]+"${ARGS[@]}"}" ;;
 verify) cmd_verify "${ARGS[@]+"${ARGS[@]}"}" ;;
-*) die "unknown subcommand: $SUBCOMMAND (expected check-key, sign or verify)" ;;
+select-key) cmd_select_key "${ARGS[@]+"${ARGS[@]}"}" ;;
+*) die "unknown subcommand: $SUBCOMMAND (expected check-key, sign, verify or select-key)" ;;
 esac

@@ -23,6 +23,11 @@
 # ShellCheck lane instead; do NOT add them here. To include a new script, give
 # it a safe `--help` early-exit and add it to SCRIPTS below.
 #
+# A second section runs the agent update signing-key lifecycle for real in
+# `--dry-run` / temp-file mode (#3329): initial setup, --rotate, --switch-over and
+# `agent-update-signing.sh select-key`, all with THROWAWAY keys in a mktemp dir.
+# It needs only OpenSSL 3, uploads nothing and never touches the repo key file.
+#
 # Wired into the `Shell Script Quality` CI job. Run it from anywhere:
 #   scripts/internal/check-script-headless.sh
 
@@ -76,9 +81,111 @@ for script in "${SCRIPTS[@]}"; do
   fi
 done
 
+help_failures="$failures"
+
+# --- Agent update signing-key lifecycle, dry-run (#3329) ---
+# Every key below is generated for this run and destroyed with the temp dir.
+SETUP="scripts/internal/setup-agent-signing-key.sh"
+SIGNING="scripts/internal/agent-update-signing.sh"
+REPO_KEY="agent/keys/update-signing.pub.pem"
+LC="$(mktemp -d)"
+trap 'rm -rf "$LC"' EXIT
+
+lc_step() { # <description> <command...>: run, expect exit 0
+  local desc="$1" out
+  shift
+  if out="$("$@" 2>&1)"; then
+    echo "ok    signing lifecycle: ${desc}"
+  else
+    echo "::error::signing lifecycle: ${desc} failed (exit $?)"
+    printf '%s\n' "$out" | sed 's/^/    | /'
+    failures=$((failures + 1))
+  fi
+}
+lc_refuse() { # <description> <command...>: run, expect a non-zero exit
+  local desc="$1"
+  shift
+  if "$@" >/dev/null 2>&1; then
+    echo "::error::signing lifecycle: ${desc} succeeded but must be refused"
+    failures=$((failures + 1))
+  else
+    echo "ok    signing lifecycle: ${desc} (refused)"
+  fi
+}
+lc_blocks() { # <description> <file> <expected block count>
+  local n
+  n="$(grep -c -- '-----BEGIN PUBLIC KEY-----' "$2" || true)"
+  if [ "$n" = "$3" ]; then
+    echo "ok    signing lifecycle: ${1} (${n} key block(s))"
+  else
+    echo "::error::signing lifecycle: ${1}: expected $3 key block(s), found ${n}"
+    failures=$((failures + 1))
+  fi
+}
+# select_as <expected var> <pub file> <VAR=value...>: select-key must pick <var>.
+select_as() {
+  local want="$1" pub="$2" out
+  shift 2
+  if out="$(env "$@" bash "$SIGNING" --pub "$pub" select-key --out "$LC/chosen.pem" \
+    AGENT_UPDATE_SIGNING_KEY AGENT_UPDATE_SIGNING_KEY_NEXT 2>&1)" &&
+    grep -q "^Selected signing key: ${want} " <<<"$out" &&
+    printf 'payload\n' >"$LC/bin" &&
+    bash "$SIGNING" --pub "$pub" sign --key "$LC/chosen.pem" "$LC/bin" >/dev/null 2>&1; then
+    echo "ok    signing lifecycle: select-key picks ${want} and it signs"
+  else
+    echo "::error::signing lifecycle: select-key should pick ${want}"
+    printf '%s\n' "$out" | sed 's/^/    | /'
+    failures=$((failures + 1))
+  fi
+}
+
+repo_key_before="$(cat "$REPO_KEY")"
+
+lc_step "initial setup --dry-run" bash "$SETUP" --dry-run --pub-file "$LC/pub.pem"
+lc_step "--rotate --dry-run" bash "$SETUP" --rotate --dry-run --pub-file "$LC/pub.pem"
+lc_blocks "after --rotate" "$LC/pub.pem" 2
+lc_refuse "second --rotate while one is in progress" \
+  bash "$SETUP" --rotate --dry-run --pub-file "$LC/pub.pem"
+lc_step "--switch-over --dry-run" bash "$SETUP" --switch-over --dry-run --pub-file "$LC/pub.pem"
+lc_blocks "after --switch-over" "$LC/pub.pem" 1
+lc_refuse "--switch-over with no staged key" \
+  bash "$SETUP" --switch-over --dry-run --pub-file "$LC/pub.pem"
+if grep -q TERMIHUB-AGENT-UPDATE-KEY-PLACEHOLDER "$REPO_KEY"; then
+  echo "skip  signing lifecycle: --rotate --dry-run on the repo key (still the placeholder)"
+else
+  lc_step "--rotate --dry-run on a copy of the repo key" bash "$SETUP" --rotate --dry-run
+fi
+if [ "$(cat "$REPO_KEY")" = "$repo_key_before" ]; then
+  echo "ok    signing lifecycle: $REPO_KEY left untouched"
+else
+  echo "::error::signing lifecycle: a dry run modified $REPO_KEY"
+  failures=$((failures + 1))
+fi
+
+# select-key across the overlap, with two throwaway keypairs standing in for the
+# AGENT_UPDATE_SIGNING_KEY / _NEXT secrets.
+for k in old new; do
+  openssl genpkey -algorithm ed25519 -out "$LC/$k.pem" 2>/dev/null
+  openssl pkey -in "$LC/$k.pem" -pubout -out "$LC/$k.pub"
+done
+cat "$LC/old.pub" "$LC/new.pub" >"$LC/overlap.pem"
+cp "$LC/new.pub" "$LC/switched.pem"
+OLD="$(cat "$LC/old.pem")"
+NEW="$(cat "$LC/new.pem")"
+select_as AGENT_UPDATE_SIGNING_KEY "$LC/overlap.pem" \
+  "AGENT_UPDATE_SIGNING_KEY=$OLD" "AGENT_UPDATE_SIGNING_KEY_NEXT=$NEW"
+select_as AGENT_UPDATE_SIGNING_KEY_NEXT "$LC/switched.pem" \
+  "AGENT_UPDATE_SIGNING_KEY=$OLD" "AGENT_UPDATE_SIGNING_KEY_NEXT=$NEW"
+lc_refuse "select-key during the overlap without the old key" \
+  env -u AGENT_UPDATE_SIGNING_KEY "AGENT_UPDATE_SIGNING_KEY_NEXT=$NEW" \
+  bash "$SIGNING" --pub "$LC/overlap.pem" select-key \
+  AGENT_UPDATE_SIGNING_KEY AGENT_UPDATE_SIGNING_KEY_NEXT
+
 echo ""
 if [ "$failures" -gt 0 ]; then
-  echo "Headless script smoke FAILED: ${failures} script(s) errored on their --help path."
+  echo "Headless script smoke FAILED: ${help_failures} --help path(s) errored," \
+    "$((failures - help_failures)) signing-lifecycle check(s) failed."
   exit 1
 fi
-echo "Headless script smoke OK: ${#SCRIPTS[@]} script(s) executed their --help path cleanly."
+echo "Headless script smoke OK: ${#SCRIPTS[@]} script(s) executed their --help path cleanly;" \
+  "the signing-key dry-run lifecycle passed."
