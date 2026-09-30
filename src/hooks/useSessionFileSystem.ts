@@ -32,7 +32,7 @@ import {
   probeRemoteCopy,
   type PasteTransport,
 } from "./sessionFolderPaste";
-import { downloadToLocal, uploadLocalFile } from "@/services/paneTransfer";
+import { copyPaneEntry, downloadToLocal, uploadLocalFile } from "@/services/paneTransfer";
 
 /** Toast wording for one Upload / Download button leg. */
 const LEG_LABELS = {
@@ -204,9 +204,48 @@ export function useSessionFileSystem() {
   // shared pane transfer engine (#3913): a queued transfer with a seeded
   // Transfer Queue row on a queue-capable session (SFTP / FTP / Docker —
   // progress, pause, cancel, retry), a byte round-trip on an agent session.
+  //
+  // A folder (only reachable from a multi-select Download) is never handed to a
+  // single-file `session_download` (#3944): the user picks a target folder and
+  // the engine copies the tree into it, one queued or byte leg per file.
+  const downloadFolder = useCallback(
+    async (sessionId: string, remotePath: string, folderName: string) => {
+      const label = `Download "${folderName}"`;
+      const targetDir = await pickPathOrReport(label, async () => {
+        const { open } = await import("@tauri-apps/plugin-dialog");
+        return open({
+          title: `Download folder "${folderName}" to...`,
+          directory: true,
+          multiple: false,
+        });
+      });
+      if (!targetDir) return;
+      const remote = { sessionId, queueCapable: transferQueueCapable };
+      const folder: FileEntry = {
+        name: folderName,
+        path: remotePath,
+        isDirectory: true,
+        size: 0,
+        modified: "",
+        permissions: null,
+        writable: null,
+      };
+      await runMaybeTrackedTransfer(
+        label,
+        () => copyPaneEntry("remote", folder, targetDir, remote),
+        { loading: `Downloading ${folderName}…`, success: `Downloaded ${folderName}` }
+      );
+    },
+    [transferQueueCapable]
+  );
+
   const downloadFile = useCallback(
-    async (remotePath: string, fileName: string) => {
+    async (remotePath: string, fileName: string, isDirectory = false) => {
       if (!sessionFileBrowserId) return;
+      if (isDirectory) {
+        await downloadFolder(sessionFileBrowserId, remotePath, fileName);
+        return;
+      }
       const localPath = await pickPathOrReport(`Download "${fileName}"`, () =>
         save({ title: "Save file as...", defaultPath: fileName })
       );
@@ -216,7 +255,7 @@ export function useSessionFileSystem() {
         downloadToLocal(remote, remotePath, localPath)
       );
     },
-    [sessionFileBrowserId, transferQueueCapable]
+    [sessionFileBrowserId, transferQueueCapable, downloadFolder]
   );
 
   const uploadFileFromPath = useCallback(

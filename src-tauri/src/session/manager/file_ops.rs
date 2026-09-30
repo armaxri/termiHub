@@ -14,6 +14,7 @@ use termihub_core::backends::ssh::SftpFileBrowser;
 use termihub_core::files::FileEntry;
 
 use crate::files::sftp::{ElevatedWriteResult, Writability};
+use crate::files::transfer::TransferDirection;
 use crate::session::file_ops::FileOps;
 use crate::utils::errors::TerminalError;
 
@@ -56,6 +57,42 @@ impl SessionManager {
         path: &str,
     ) -> Result<FileEntry, TerminalError> {
         self.file_ops().stat(session_id, path).await
+    }
+
+    /// Refuse a queued single-file transfer whose source is a folder (#3944).
+    ///
+    /// `session_download` / `session_upload` stream one file. Handed a folder,
+    /// every executor creates the destination file first and only then fails on
+    /// the read (SFTP, Docker) or the `RETR` (FTP), after its retries, leaving an
+    /// empty file behind. So the source is checked up front: the remote path via
+    /// the session's `stat` for a download, the local path for an upload, and a
+    /// folder is refused with [`TerminalError::IsDirectory`]. A failed check is
+    /// not a refusal; the transfer then reports its own error as before.
+    pub async fn ensure_transfer_source_is_file(
+        &self,
+        session_id: &str,
+        direction: TransferDirection,
+        remote_path: &str,
+        local_path: &str,
+    ) -> Result<(), TerminalError> {
+        let (source, is_folder) = match direction {
+            TransferDirection::Download => (
+                remote_path,
+                self.stat_file(session_id, remote_path)
+                    .await
+                    .is_ok_and(|entry| entry.is_directory),
+            ),
+            TransferDirection::Upload => (
+                local_path,
+                tokio::fs::metadata(local_path)
+                    .await
+                    .is_ok_and(|meta| meta.is_dir()),
+            ),
+        };
+        if is_folder {
+            return Err(TerminalError::IsDirectory(source.to_string()));
+        }
+        Ok(())
     }
 
     /// Write a file via a session's file browser capability.

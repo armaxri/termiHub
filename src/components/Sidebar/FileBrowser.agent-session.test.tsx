@@ -20,6 +20,21 @@ import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
 import { DEFAULT_AGENT_SETTINGS, type FileEntry } from "@/types/connection";
 
+// The Download pickers (#3944): Save-as for a file, a folder picker for a folder.
+const saveMock = vi.fn((): Promise<string | null> => Promise.resolve("/local/app.log"));
+const openMock = vi.fn(
+  (_options: unknown): Promise<string | null> => Promise.resolve("/local/target")
+);
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  save: () => saveMock(),
+  open: (options: unknown) => openMock(options),
+}));
+
+const writeFileMock = vi.fn((_path: string, _data: Uint8Array) => Promise.resolve());
+vi.mock("@tauri-apps/plugin-fs", () => ({
+  writeFile: (path: string, data: Uint8Array) => writeFileMock(path, data),
+}));
+
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     onDragDropEvent: vi.fn(() => Promise.resolve(vi.fn())),
@@ -34,6 +49,7 @@ vi.mock("@/themes", () => ({
 vi.mock("@/services/events", () => ({
   onVscodeEditComplete: vi.fn(() => Promise.resolve(vi.fn())),
   onLocalDirChanged: vi.fn(() => Promise.resolve(vi.fn())),
+  base64ToBytes: vi.fn(() => new Uint8Array()),
 }));
 
 vi.mock("@/services/api", async (importOriginal) => {
@@ -209,5 +225,55 @@ describe("FileBrowser — agent-hosted sessions (#3242)", () => {
 
     expect(container.textContent).toContain("Permission denied: /root");
     expect(container.textContent).not.toContain("Update the agent");
+  });
+
+  it("downloads a folder in a multi-select Download by its files, never as one file (#3944)", async () => {
+    const sessionId = "docker-on-agent";
+    mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
+      if (cmd === "session_list_files") {
+        const { path } = args as { path: string };
+        return Promise.resolve(
+          path === "/srv/data"
+            ? [{ ...entry("inner.txt"), path: "/srv/data/inner.txt" }]
+            : [entry("app.log"), entry("data", true)]
+        );
+      }
+      if (cmd === "session_read_file") return Promise.resolve("");
+      return Promise.resolve(undefined);
+    });
+    seedAgentSession("docker", sessionId);
+    await renderBrowser();
+
+    const row = (name: string) =>
+      container.querySelector(`[data-testid="file-row-${name}"]`) as HTMLElement;
+    await act(async () => {
+      row("app.log").click();
+    });
+    await act(async () => {
+      row("data").dispatchEvent(new MouseEvent("click", { ctrlKey: true, bubbles: true }));
+    });
+    await act(async () => {
+      row("data").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    });
+    await act(async () => {
+      (document.querySelector('[data-testid="multi-select-download"]') as HTMLElement).click();
+    });
+    await flushAsync();
+    await flushAsync();
+    await flushAsync();
+
+    const readPaths = mockedInvoke.mock.calls
+      .filter(([cmd]) => cmd === "session_read_file")
+      .map(([, args]) => (args as { path: string }).path);
+    // Folders list first; the folder itself is never read as one file.
+    expect([...readPaths].sort()).toEqual(["/srv/app.log", "/srv/data/inner.txt"]);
+    expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ directory: true }));
+    expect(saveMock).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() =>
+      expect(writeFileMock.mock.calls.map(([path]) => path).sort()).toEqual([
+        "/local/app.log",
+        "/local/target/data/inner.txt",
+      ])
+    );
   });
 });
