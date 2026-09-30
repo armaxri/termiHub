@@ -106,6 +106,7 @@ pub mod context;
 pub mod error;
 pub mod ffi;
 pub mod info;
+pub mod marker;
 pub mod output;
 pub mod symbols;
 pub mod toolchain;
@@ -123,6 +124,7 @@ pub use context::{
 pub use error::{PluginError, PluginStatus};
 pub use ffi::{FfiByteSlice, FfiOwnedBytes, FfiStr, FfiString};
 pub use info::{PluginInfo, PluginSessionConfig};
+pub use marker::{abi_marker, ABI_MARKER_LEN, ABI_MARKER_MAGIC};
 pub use output::PluginOutputSender;
 pub use toolchain::{PanicStrategy, Toolchain, ToolchainIncompatibility};
 pub use version::{AbiIncompatibility, AbiVersion};

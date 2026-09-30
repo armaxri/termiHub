@@ -37,7 +37,6 @@ use serde::Deserialize;
 use termihub_plugin_api::{
     HostContext, PluginBackend, PluginError, PluginHostBridge, PluginHostServices, PluginInfo,
     PluginOutputSender, PluginSessionConfig, PluginStatus, PluginTerminalBackend,
-    CURRENT_PLUGIN_ABI_VERSION,
 };
 
 /// Session configuration this backend accepts, matching the `configSchema`
@@ -133,14 +132,13 @@ fn build_backend(
     })
 }
 
-/// ABI version this plugin was compiled against, packed as `major << 16 | minor`.
-/// The host checks it against its own ABI before calling anything else: same
-/// major, and a minor no newer than the host's. `manifest.json`'s `apiVersion`
-/// must mirror it (`"1.1"`).
-#[no_mangle]
-pub extern "C" fn termihub_plugin_abi_version() -> u32 {
-    CURRENT_PLUGIN_ABI_VERSION.to_packed()
-}
+// Export `termihub_plugin_abi_version` — the ABI this plugin was compiled
+// against, packed as `major << 16 | minor` — plus a readable copy of it (the ABI
+// marker). The host checks the exported version against its own before calling
+// anything else: same major, and a minor no newer than the host's.
+// `manifest.json`'s `apiVersion` must mirror it (`"1.1"`); the packer reads the
+// marker and refuses a package whose manifest disagrees.
+termihub_plugin_api::export_plugin_abi_version!();
 
 /// Report this plugin's metadata into the host-allocated `out_info`.
 ///
@@ -246,7 +244,7 @@ pub extern "C" fn termihub_plugin_shutdown() {}
 mod tests {
     use super::*;
     use std::sync::mpsc;
-    use termihub_plugin_api::LoadedBackend;
+    use termihub_plugin_api::{LoadedBackend, CURRENT_PLUGIN_ABI_VERSION};
 
     /// Drive the backend through the safe host-side wrapper, exactly as the host
     /// loader would — no dynamic library needed.

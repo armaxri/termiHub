@@ -47,6 +47,12 @@ const FIXTURE_ABI: AbiVersion = AbiVersion::new(1, 0);
 #[cfg(not(feature = "abi-1-0"))]
 const FIXTURE_ABI: AbiVersion = termihub_plugin_api::CURRENT_PLUGIN_ABI_VERSION;
 
+// The packaging-time copy of `FIXTURE_ABI` the packer reads without loading the
+// library (#3372). The entry point below is hand-written (it honours a test
+// override), so it embeds just the marker rather than using
+// `export_plugin_abi_version!`.
+termihub_plugin_api::embed_plugin_abi_marker!(FIXTURE_ABI);
+
 /// A backend that echoes written input straight back to the host output sink.
 struct EchoBackend {
     output: PluginOutputSender,

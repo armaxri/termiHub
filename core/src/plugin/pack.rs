@@ -21,9 +21,11 @@ use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
+use termihub_plugin_api::AbiVersion;
 use thiserror::Error;
 use zip::write::{SimpleFileOptions, ZipWriter};
 
+use super::abi_check::{check_backend_abi, PackWarning};
 use super::fat_pack::{inject_library_map, MultiPlatformPackError};
 use super::manifest::{
     parse_manifest, ManifestParseError, ManifestValidationError, PluginManifest,
@@ -86,6 +88,43 @@ pub enum PluginPackError {
     /// A multi-platform layout, merge or verification problem (PLG-011).
     #[error(transparent)]
     MultiPlatform(#[from] MultiPlatformPackError),
+
+    /// A native library's embedded ABI marker names a different version than
+    /// the manifest `apiVersion` (#3372). The library is authoritative; the
+    /// host would refuse this package at load time.
+    #[error(
+        "manifest `apiVersion` is \"{manifest}\" but `{library}` exports plugin ABI \
+         {library_abi}; set `apiVersion` to \"{library_abi}\" (the library's ABI is \
+         authoritative)"
+    )]
+    LibraryAbiMismatch {
+        /// The library's `/`-separated path inside the package.
+        library: String,
+        /// The manifest's `apiVersion`, as written.
+        manifest: String,
+        /// The ABI the library's marker records.
+        library_abi: AbiVersion,
+    },
+
+    /// One library carries ABI markers that disagree (e.g. the slices of a
+    /// macOS universal binary were built against different ABIs).
+    #[error("`{library}` embeds conflicting plugin ABI markers ({}); rebuild it", .found.join(", "))]
+    AmbiguousLibraryAbi {
+        /// The library's `/`-separated path inside the package.
+        library: String,
+        /// Every version found, in file order.
+        found: Vec<String>,
+    },
+}
+
+/// A package [`pack_plugin_with_report`] wrote, plus the non-fatal findings
+/// the author should see.
+#[derive(Debug, Clone)]
+pub struct PackedPlugin {
+    /// Path of the written `.termihub-plugin`.
+    pub path: PathBuf,
+    /// Checks that could not be completed (see [`PackWarning`]).
+    pub warnings: Vec<PackWarning>,
 }
 
 impl From<zip::result::ZipError> for PluginPackError {
@@ -112,6 +151,20 @@ impl From<zip::result::ZipError> for PluginPackError {
 /// The output file is named `<id>-<version>.termihub-plugin` from the manifest's
 /// (already-validated, filesystem-safe) `id` and its `version`.
 pub fn pack_plugin(source_dir: &Path, output_dir: &Path) -> Result<PathBuf, PluginPackError> {
+    pack_plugin_with_report(source_dir, output_dir).map(|packed| packed.path)
+}
+
+/// [`pack_plugin`], also returning the [`PackWarning`]s — the entry point for
+/// tools that show them to the author (`termihub-plugin-pack`).
+///
+/// Before anything is written, every native library under `backend/` is checked
+/// against the manifest `apiVersion` via its embedded ABI marker (#3372): a
+/// mismatch fails with [`PluginPackError::LibraryAbiMismatch`], a library
+/// without a marker yields a [`PackWarning::UnverifiedLibraryAbi`].
+pub fn pack_plugin_with_report(
+    source_dir: &Path,
+    output_dir: &Path,
+) -> Result<PackedPlugin, PluginPackError> {
     let manifest_path = source_dir.join(MANIFEST_FILE_NAME);
     if !manifest_path.is_file() {
         return Err(PluginPackError::MissingManifest(source_dir.to_path_buf()));
@@ -127,6 +180,8 @@ pub fn pack_plugin(source_dir: &Path, output_dir: &Path) -> Result<PathBuf, Plug
     let manifest_json = inject_library_map(source_dir, &manifest_json)?;
     let manifest = parse_manifest(&manifest_json)?;
     manifest.validate()?;
+    // The library's exported ABI is authoritative; the manifest must mirror it.
+    let warnings = check_backend_abi(source_dir, &manifest.api_version)?;
 
     fs::create_dir_all(output_dir)?;
     let out_path = output_dir.join(package_file_name(&manifest));
@@ -135,7 +190,10 @@ pub fn pack_plugin(source_dir: &Path, output_dir: &Path) -> Result<PathBuf, Plug
 
     // Round-trip: the artifact we just produced must pass the real validator.
     validate_package(&out_path)?;
-    Ok(out_path)
+    Ok(PackedPlugin {
+        path: out_path,
+        warnings,
+    })
 }
 
 /// Package the plugin source tree at `source_dir` and, when `signing_key` is

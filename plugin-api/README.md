@@ -7,7 +7,7 @@ ABI stability is the whole point.
 
 ## What this crate is (and is not)
 
-It defines the *contract*: the metadata a plugin reports, the session-config it
+It defines the _contract_: the metadata a plugin reports, the session-config it
 receives, the output channel it writes to, the backend trait it implements, and
 the exported symbols its dynamic library must provide. It does **not** contain
 the host-side loader (that lives in a separate crate/issue), and it links no
@@ -42,12 +42,12 @@ acceptance test (`improper_ctypes`).
 3. Export the four `extern "C"` entry points (names live in
    `termihub_plugin_api::symbols`):
 
-   | Symbol | Purpose |
-   | --- | --- |
-   | `termihub_plugin_abi_version` | Return `CURRENT_PLUGIN_ABI_VERSION.to_packed()` you built against. |
-   | `termihub_plugin_init` | Fill an out `PluginInfo` with your metadata. |
-   | `termihub_plugin_create_backend` | Build a backend from the borrowed config + host output sender; return it via `PluginBackend::from_boxed`. |
-   | `termihub_plugin_shutdown` | Process-wide cleanup before unload. |
+   | Symbol                           | Purpose                                                                                                                                                                                        |
+   | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `termihub_plugin_abi_version`    | Return `CURRENT_PLUGIN_ABI_VERSION.to_packed()` you built against — export it with `export_plugin_abi_version!()`, which also embeds the ABI marker the packager checks your manifest against. |
+   | `termihub_plugin_init`           | Fill an out `PluginInfo` with your metadata.                                                                                                                                                   |
+   | `termihub_plugin_create_backend` | Build a backend from the borrowed config + host output sender; return it via `PluginBackend::from_boxed`.                                                                                      |
+   | `termihub_plugin_shutdown`       | Process-wide cleanup before unload.                                                                                                                                                            |
 
 The host checks your reported ABI version against its own and refuses
 incompatible plugins. From ABI 1.1 it also refuses a plugin built with a
