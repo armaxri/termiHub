@@ -1,66 +1,113 @@
 //! Persistent storage for Wake-on-LAN saved devices.
+//!
+//! `wol-devices.json` is version-gated and downgrade-safe through the shared
+//! schema-migration layer ([`crate::utils::migrate`], #3946): a file with no
+//! `version` is legacy v1, a file written by a newer schema is never
+//! overwritten, a corrupt file is backed up and salvaged per device, and
+//! unknown top-level fields survive a save.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use termihub_core::network::WolDevice;
 
+use crate::connection::recovery::RecoveryResult;
 use crate::utils::fs::write_atomic;
+use crate::utils::migrate::{
+    guard_not_newer, load_store_with_recovery, read_unknown_fields, salvage_list_store, Salvage,
+    VersionedStore,
+};
 
 const WOL_DEVICES_FILE: &str = "wol-devices.json";
 
 /// On-disk shape of `wol-devices.json` (also read by the unified backup, PROD-068).
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize)]
 pub(crate) struct WolDevicesFile {
+    /// Schema version. Files written before versioning have none and are read
+    /// as v1.
+    #[serde(default = "current_version")]
+    pub(crate) version: String,
     pub(crate) devices: Vec<WolDevice>,
+    /// Unknown top-level fields, carried through a save verbatim (PER-010).
+    #[serde(flatten, default)]
+    pub(crate) extra: Map<String, Value>,
 }
 
-impl WolDevicesFile {
-    /// The file's schema version. It carries no `version` field yet, so it is
-    /// schema v1; the unified backup (PROD-068) takes the version from here.
-    /// Add a `version` field and bump this together if the shape ever changes.
-    pub(crate) const CURRENT_VERSION: u32 = 1;
+fn current_version() -> String {
+    <WolDevicesFile as VersionedStore>::CURRENT_VERSION.to_string()
+}
+
+impl Default for WolDevicesFile {
+    fn default() -> Self {
+        Self {
+            version: current_version(),
+            devices: Vec::new(),
+            extra: Map::new(),
+        }
+    }
+}
+
+impl VersionedStore for WolDevicesFile {
+    const STORE_NAME: &'static str = WOL_DEVICES_FILE;
+    /// Bump together with a `migrate` step if the shape ever changes; the
+    /// unified backup (PROD-068) takes the version from here.
+    const CURRENT_VERSION: u32 = 1;
+
+    fn salvage(raw: &str, file_name: &str) -> Salvage<Self> {
+        salvage_list_store::<Self, WolDevice>(raw, file_name, "devices")
+    }
 }
 
 /// Resolve the path to the WoL devices file.
-fn devices_path(config_dir: &std::path::Path) -> PathBuf {
+fn devices_path(config_dir: &Path) -> PathBuf {
     config_dir.join(WOL_DEVICES_FILE)
 }
 
-/// Load saved WoL devices from disk. Returns an empty list if the file doesn't
-/// exist yet.
-pub fn load_wol_devices(config_dir: &std::path::Path) -> Result<Vec<WolDevice>> {
-    let path = devices_path(config_dir);
-    if !path.exists() {
-        return Ok(Vec::new());
+/// Load saved WoL devices with recovery: a missing file is an empty list, a
+/// newer file is left untouched (empty list + warning), and a corrupt file is
+/// backed up and salvaged per device (or reset when even that fails).
+pub fn load_wol_devices_with_recovery(config_dir: &Path) -> Result<RecoveryResult<Vec<WolDevice>>> {
+    let result =
+        load_store_with_recovery::<WolDevicesFile>(&devices_path(config_dir), WOL_DEVICES_FILE)?;
+    Ok(RecoveryResult {
+        data: result.data.devices,
+        warnings: result.warnings,
+    })
+}
+
+/// Load saved WoL devices, logging (not returning) any recovery warnings.
+/// The manager uses [`load_wol_devices_with_recovery`] to surface them.
+#[cfg(test)]
+pub fn load_wol_devices(config_dir: &Path) -> Result<Vec<WolDevice>> {
+    let result = load_wol_devices_with_recovery(config_dir)?;
+    for w in &result.warnings {
+        tracing::warn!("{}: {}", w.file_name, w.message);
     }
-    let content =
-        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let file: WolDevicesFile =
-        serde_json::from_str(&content).with_context(|| format!("parsing {}", path.display()))?;
-    Ok(file.devices)
+    Ok(result.data)
 }
 
 /// Persist the current device list to disk.
-pub fn save_wol_devices(config_dir: &std::path::Path, devices: &[WolDevice]) -> Result<()> {
+///
+/// Refuses to overwrite a file written by a newer schema (the version is
+/// re-read from disk here, so this holds across restarts), stamps the current
+/// version, and carries the file's unknown top-level fields forward.
+pub fn save_wol_devices(config_dir: &Path, devices: &[WolDevice]) -> Result<()> {
     let path = devices_path(config_dir);
+    guard_not_newer(
+        &path,
+        WolDevicesFile::STORE_NAME,
+        <WolDevicesFile as VersionedStore>::CURRENT_VERSION,
+    )?;
     let file = WolDevicesFile {
+        version: current_version(),
         devices: devices.to_vec(),
+        extra: read_unknown_fields(&path, &["version", "devices"]),
     };
     let content = serde_json::to_string_pretty(&file).context("serialising WoL devices")?;
     write_atomic(&path, &content).with_context(|| format!("writing {}", path.display()))?;
     Ok(())
-}
-
-/// TEMP pre-fix stub.
-pub fn load_wol_devices_with_recovery(
-    config_dir: &std::path::Path,
-) -> Result<crate::connection::recovery::RecoveryResult<Vec<WolDevice>>> {
-    Ok(crate::connection::recovery::RecoveryResult {
-        data: load_wol_devices(config_dir)?,
-        warnings: Vec::new(),
-    })
 }
 
 #[cfg(test)]

@@ -732,6 +732,7 @@ pub(crate) mod tests {
         let secrets = ServerSecrets::new(store.clone());
         let mut loaded = EmbeddedServerStore {
             version: EmbeddedServerStore::LEGACY_PLAINTEXT_VERSION.to_string(),
+            extra: Default::default(),
             servers: vec![ftp("srv-1", "hunter2"), http("srv-2", "s3cret")],
         };
         assert_eq!(secrets.absorb_legacy(&mut loaded), 2);
@@ -760,6 +761,7 @@ pub(crate) mod tests {
         let secrets = ServerSecrets::new(store.clone());
         let mut loaded = EmbeddedServerStore {
             version: EmbeddedServerStore::LEGACY_PLAINTEXT_VERSION.to_string(),
+            extra: Default::default(),
             servers: vec![ftp("srv-1", "hunter2")],
         };
         secrets.absorb_legacy(&mut loaded);
@@ -792,6 +794,7 @@ pub(crate) mod tests {
         let secrets = ServerSecrets::new(FakeStore::new(UNAVAILABLE));
         let mut loaded = EmbeddedServerStore {
             version: EmbeddedServerStore::LEGACY_PLAINTEXT_VERSION.to_string(),
+            extra: Default::default(),
             servers: vec![ftp("srv-1", "hunter2")],
         };
         secrets.absorb_legacy(&mut loaded);

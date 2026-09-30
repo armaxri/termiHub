@@ -8,70 +8,111 @@
 //!
 //! Mirrors the Wake-on-LAN persistence in [`super::wol_storage`].
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 use super::http_monitor::HttpMonitorConfig;
+use crate::connection::recovery::RecoveryResult;
 use crate::utils::fs::write_atomic;
+use crate::utils::migrate::{
+    guard_not_newer, load_store_with_recovery, read_unknown_fields, salvage_list_store, Salvage,
+    VersionedStore,
+};
 
 const HTTP_MONITORS_FILE: &str = "http-monitors.json";
 
 /// On-disk shape of `http-monitors.json` (also read by the unified backup, PROD-068).
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize)]
 pub(crate) struct HttpMonitorsFile {
+    /// Schema version. Files written before versioning have none and are read
+    /// as v1.
+    #[serde(default = "current_version")]
+    pub(crate) version: String,
     pub(crate) monitors: Vec<HttpMonitorConfig>,
+    /// Unknown top-level fields, carried through a save verbatim (PER-010).
+    #[serde(flatten, default)]
+    pub(crate) extra: Map<String, Value>,
 }
 
-impl HttpMonitorsFile {
-    /// The file's schema version. It carries no `version` field yet, so it is
-    /// schema v1; the unified backup (PROD-068) takes the version from here.
-    /// Add a `version` field and bump this together if the shape ever changes.
-    pub(crate) const CURRENT_VERSION: u32 = 1;
+fn current_version() -> String {
+    <HttpMonitorsFile as VersionedStore>::CURRENT_VERSION.to_string()
+}
+
+impl Default for HttpMonitorsFile {
+    fn default() -> Self {
+        Self {
+            version: current_version(),
+            monitors: Vec::new(),
+            extra: Map::new(),
+        }
+    }
+}
+
+impl VersionedStore for HttpMonitorsFile {
+    const STORE_NAME: &'static str = HTTP_MONITORS_FILE;
+    /// Bump together with a `migrate` step if the shape ever changes; the
+    /// unified backup (PROD-068) takes the version from here.
+    const CURRENT_VERSION: u32 = 1;
+
+    fn salvage(raw: &str, file_name: &str) -> Salvage<Self> {
+        salvage_list_store::<Self, HttpMonitorConfig>(raw, file_name, "monitors")
+    }
 }
 
 /// Resolve the path to the HTTP monitors file.
-fn monitors_path(config_dir: &std::path::Path) -> PathBuf {
+fn monitors_path(config_dir: &Path) -> PathBuf {
     config_dir.join(HTTP_MONITORS_FILE)
 }
 
-/// Load saved HTTP monitor configs from disk. Returns an empty list if the file
-/// doesn't exist yet.
-pub fn load_http_monitors(config_dir: &std::path::Path) -> Result<Vec<HttpMonitorConfig>> {
-    let path = monitors_path(config_dir);
-    if !path.exists() {
-        return Ok(Vec::new());
+/// Load saved HTTP monitor configs with recovery: a missing file is an empty
+/// list, a newer file is left untouched (empty list + warning), and a corrupt
+/// file is backed up and salvaged per monitor (or reset when even that fails).
+pub fn load_http_monitors_with_recovery(
+    config_dir: &Path,
+) -> Result<RecoveryResult<Vec<HttpMonitorConfig>>> {
+    let result = load_store_with_recovery::<HttpMonitorsFile>(
+        &monitors_path(config_dir),
+        HTTP_MONITORS_FILE,
+    )?;
+    Ok(RecoveryResult {
+        data: result.data.monitors,
+        warnings: result.warnings,
+    })
+}
+
+/// Load saved HTTP monitor configs, logging (not returning) any recovery
+/// warnings.
+pub fn load_http_monitors(config_dir: &Path) -> Result<Vec<HttpMonitorConfig>> {
+    let result = load_http_monitors_with_recovery(config_dir)?;
+    for w in &result.warnings {
+        tracing::warn!("{}: {}", w.file_name, w.message);
     }
-    let content =
-        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let file: HttpMonitorsFile =
-        serde_json::from_str(&content).with_context(|| format!("parsing {}", path.display()))?;
-    Ok(file.monitors)
+    Ok(result.data)
 }
 
 /// Persist the current HTTP monitor config list to disk.
-pub fn save_http_monitors(
-    config_dir: &std::path::Path,
-    monitors: &[HttpMonitorConfig],
-) -> Result<()> {
+///
+/// Refuses to overwrite a file written by a newer schema (the version is
+/// re-read from disk here, so this holds across restarts), stamps the current
+/// version, and carries the file's unknown top-level fields forward.
+pub fn save_http_monitors(config_dir: &Path, monitors: &[HttpMonitorConfig]) -> Result<()> {
     let path = monitors_path(config_dir);
+    guard_not_newer(
+        &path,
+        HttpMonitorsFile::STORE_NAME,
+        <HttpMonitorsFile as VersionedStore>::CURRENT_VERSION,
+    )?;
     let file = HttpMonitorsFile {
+        version: current_version(),
         monitors: monitors.to_vec(),
+        extra: read_unknown_fields(&path, &["version", "monitors"]),
     };
     let content = serde_json::to_string_pretty(&file).context("serialising HTTP monitors")?;
     write_atomic(&path, &content).with_context(|| format!("writing {}", path.display()))?;
     Ok(())
-}
-
-/// TEMP pre-fix stub.
-pub fn load_http_monitors_with_recovery(
-    config_dir: &std::path::Path,
-) -> Result<crate::connection::recovery::RecoveryResult<Vec<HttpMonitorConfig>>> {
-    Ok(crate::connection::recovery::RecoveryResult {
-        data: load_http_monitors(config_dir)?,
-        warnings: Vec::new(),
-    })
 }
 
 #[cfg(test)]

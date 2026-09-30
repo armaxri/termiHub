@@ -204,6 +204,27 @@ pub fn guard_not_newer(path: &Path, store: &'static str, current: u32) -> Result
     Ok(())
 }
 
+/// The top-level fields of the store file at `path` that are **not** in `known`
+/// — the unknown fields a save must carry forward (PER-010).
+///
+/// For a store whose save path writes from an in-memory list rather than from
+/// a loaded store value (so it never held the file's `extra` fields), this
+/// re-reads them from disk just before the write. A missing, unparseable or
+/// non-object file yields an empty map. Call it only after [`guard_not_newer`]
+/// has passed, so the fields come from a same-or-older schema.
+pub fn read_unknown_fields(path: &Path, known: &[&str]) -> serde_json::Map<String, Value> {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return serde_json::Map::new();
+    };
+    match serde_json::from_str::<Value>(&raw) {
+        Ok(Value::Object(mut obj)) => {
+            obj.retain(|key, _| !known.contains(&key.as_str()));
+            obj
+        }
+        _ => serde_json::Map::new(),
+    }
+}
+
 /// Outcome of a granular, per-entry salvage attempt on a list-shaped store.
 pub enum Salvage<T> {
     /// The store was rebuilt from the entries that still parse; `warnings`
@@ -711,5 +732,24 @@ mod tests {
             }
             Salvage::Unsalvageable => panic!("expected a granular recovery"),
         }
+    }
+
+    #[test]
+    fn read_unknown_fields_keeps_only_unknown_top_level_keys() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("store.json");
+        assert!(
+            read_unknown_fields(&path, &["items"]).is_empty(),
+            "missing file"
+        );
+        fs::write(&path, "not json").unwrap();
+        assert!(
+            read_unknown_fields(&path, &["items"]).is_empty(),
+            "unparseable"
+        );
+        fs::write(&path, r#"{"version":"1","items":[1],"future":{"a":1}}"#).unwrap();
+        let extra = read_unknown_fields(&path, &["version", "items"]);
+        assert_eq!(extra.len(), 1);
+        assert_eq!(extra.get("future"), Some(&json!({"a": 1})));
     }
 }

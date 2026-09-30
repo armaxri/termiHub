@@ -9,9 +9,25 @@ use super::secrets::strip_store;
 use crate::connection::recovery::{RecoveryResult, RecoveryWarning};
 use crate::utils::config_paths::resolve_config_dir;
 use crate::utils::fs::write_atomic;
-use crate::utils::migrate::{salvage_list_store, Salvage};
+use crate::utils::migrate::{
+    guard_not_newer, load_versioned, salvage_list_store, LoadOutcome, Salvage, VersionedStore,
+};
 
 const FILE_NAME: &str = "embedded_servers.json";
+
+/// `embedded_servers.json` joins the shared schema-migration layer (#3946).
+/// The store type lives in `termihub_core`; the trait lives here.
+impl VersionedStore for EmbeddedServerStore {
+    const STORE_NAME: &'static str = FILE_NAME;
+    // v1 → v2 (#3514) changes no shape — v2 only stops writing passwords, and
+    // the manager moves any v1 plaintext into the credential store — so the
+    // default identity `migrate` is correct and the version is left to it.
+    const CURRENT_VERSION: u32 = EmbeddedServerStore::CURRENT_VERSION;
+
+    fn salvage(raw: &str, file_name: &str) -> Salvage<Self> {
+        salvage_list_store::<Self, EmbeddedServerConfig>(raw, file_name, "servers")
+    }
+}
 
 /// Handles reading/writing the embedded_servers.json configuration file.
 pub struct EmbeddedServerStorage {
@@ -36,7 +52,15 @@ impl EmbeddedServerStorage {
         Self { file_path }
     }
 
-    /// Load with recovery: on parse failure, back up the corrupt file and reset to defaults.
+    /// Load with recovery through the shared schema-migration layer (#3946):
+    ///
+    /// * missing file → defaults;
+    /// * no `version` → legacy v1 (plaintext passwords the manager migrates);
+    /// * written by a **newer** schema → defaults in memory plus a warning, and
+    ///   the file is left untouched (no backup, no rewrite); both save paths
+    ///   refuse to overwrite it afterwards;
+    /// * corrupt → backed up to `.bak`, then salvaged per server, or reset only
+    ///   when even the container is unparseable.
     pub fn load_with_recovery(&self) -> Result<RecoveryResult<EmbeddedServerStore>> {
         if !self.file_path.exists() {
             return Ok(RecoveryResult {
@@ -48,12 +72,33 @@ impl EmbeddedServerStorage {
         let data =
             fs::read_to_string(&self.file_path).context("Failed to read embedded servers file")?;
 
-        if let Ok(store) = serde_json::from_str::<EmbeddedServerStore>(&data) {
-            return Ok(RecoveryResult {
-                data: store,
-                warnings: Vec::new(),
-            });
-        }
+        let parse_error = match load_versioned::<EmbeddedServerStore>(&data) {
+            // A v1 file is not rewritten here: the manager's legacy-password
+            // migration owns that rewrite (#3514).
+            LoadOutcome::Loaded { data: store, .. } => {
+                return Ok(RecoveryResult {
+                    data: store,
+                    warnings: Vec::new(),
+                });
+            }
+            LoadOutcome::Newer(err) => {
+                tracing::error!("{err}");
+                return Ok(RecoveryResult {
+                    data: EmbeddedServerStore::default(),
+                    warnings: vec![RecoveryWarning {
+                        file_name: FILE_NAME.to_string(),
+                        message: format!(
+                            "This file was written by a newer version of termiHub (schema v{}). \
+                             It was left unchanged to avoid data loss; changes made now will not \
+                             be saved over it. Update termiHub to use this data.",
+                            err.found
+                        ),
+                        details: Some(err.to_string()),
+                    }],
+                });
+            }
+            LoadOutcome::Corrupt(detail) => detail,
+        };
 
         // Parse failed — back up the corrupt file first.
         let backup_path = self.file_path.with_extension("json.bak");
@@ -64,14 +109,13 @@ impl EmbeddedServerStorage {
         );
 
         // Granular recovery (PER-004): drop only the individually-corrupt server
-        // entries and keep the rest; reset the whole store only when even the
-        // container is unparseable.
+        // entries and keep the rest (and the unknown top-level fields); reset the
+        // whole store only when even the container is unparseable.
         if let Salvage::Recovered {
             data: store,
             warnings,
-        } = salvage_list_store::<EmbeddedServerStore, EmbeddedServerConfig>(
-            &data, FILE_NAME, "servers",
-        ) {
+        } = EmbeddedServerStore::salvage(&data, FILE_NAME)
+        {
             // Verbatim: the salvaged entries may still carry legacy plaintext
             // passwords the manager has yet to migrate into the credential store
             // (#3514); stripping them here would lose the only copy.
@@ -83,14 +127,10 @@ impl EmbeddedServerStorage {
             });
         }
 
-        let parse_error = serde_json::from_str::<EmbeddedServerStore>(&data)
-            .err()
-            .map(|e| e.to_string());
-
         let warning = RecoveryWarning {
             file_name: FILE_NAME.to_string(),
             message: "Embedded servers file was corrupt and has been reset.".to_string(),
-            details: parse_error,
+            details: Some(parse_error),
         };
 
         let defaults = EmbeddedServerStore::default();
@@ -101,6 +141,17 @@ impl EmbeddedServerStorage {
             data: defaults,
             warnings: vec![warning],
         })
+    }
+
+    /// Refuse to overwrite a file written by a newer schema. Re-reads the
+    /// on-disk version on every save, so it holds across restarts and after a
+    /// newer-version load reset the in-memory store to defaults.
+    fn guard_not_newer(&self) -> Result<()> {
+        guard_not_newer(
+            &self.file_path,
+            EmbeddedServerStore::STORE_NAME,
+            <EmbeddedServerStore as VersionedStore>::CURRENT_VERSION,
+        )
     }
 
     /// Save the store to disk as pretty-printed JSON.
@@ -115,6 +166,7 @@ impl EmbeddedServerStorage {
     /// passwords live in the credential store (#3514). This is enforced here,
     /// independently of the manager, so no save path can leak one to disk.
     pub fn save(&self, store: &EmbeddedServerStore) -> Result<()> {
+        self.guard_not_newer()?;
         let mut stripped = store.clone();
         strip_store(&mut stripped);
         stripped.version = EmbeddedServerStore::CURRENT_VERSION.to_string();
@@ -131,6 +183,7 @@ impl EmbeddedServerStorage {
     /// plaintext passwords whose migration into the credential store is pending
     /// (a locked store), so a rewrite never destroys the only copy (#3514).
     pub fn save_verbatim(&self, store: &EmbeddedServerStore) -> Result<()> {
+        self.guard_not_newer()?;
         let data =
             serde_json::to_string_pretty(store).context("Failed to serialize embedded servers")?;
         write_atomic(&self.file_path, &data).context("Failed to write embedded servers file")?;
@@ -199,6 +252,7 @@ mod tests {
         };
         let store = EmbeddedServerStore {
             version: "1".to_string(),
+            extra: Default::default(),
             servers: vec![server("a"), server("b")],
         };
         storage.save(&store).unwrap();
@@ -254,6 +308,7 @@ mod tests {
 
         let store = EmbeddedServerStore {
             version: "1".to_string(),
+            extra: Default::default(),
             servers: vec![EmbeddedServerConfig {
                 id: "srv-1".to_string(),
                 name: "docs".to_string(),
@@ -326,6 +381,7 @@ mod tests {
 
         let good = EmbeddedServerStore {
             version: "1".to_string(),
+            extra: Default::default(),
             servers: vec![EmbeddedServerConfig {
                 id: "srv-1".to_string(),
                 name: "docs".to_string(),

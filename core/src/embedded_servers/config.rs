@@ -221,8 +221,19 @@ pub struct ServerState {
 /// Top-level schema for the embedded_servers.json file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddedServerStore {
+    /// Schema version. A file written before versioning has none; it is read
+    /// as the legacy v1 (which may still carry plaintext passwords).
+    #[serde(default = "legacy_version")]
     pub version: String,
     pub servers: Vec<EmbeddedServerConfig>,
+    /// Unknown top-level fields, carried through a load/save round trip
+    /// verbatim so an older build never drops what a newer one wrote (#3946).
+    #[serde(flatten, default)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+fn legacy_version() -> String {
+    EmbeddedServerStore::LEGACY_PLAINTEXT_VERSION.to_string()
 }
 
 impl EmbeddedServerStore {
@@ -245,6 +256,7 @@ impl Default for EmbeddedServerStore {
         Self {
             version: Self::CURRENT_VERSION.to_string(),
             servers: Vec::new(),
+            extra: serde_json::Map::new(),
         }
     }
 }
