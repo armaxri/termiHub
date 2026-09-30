@@ -5,24 +5,39 @@
 //! [`Script`] describes the info-request rounds to send and the answers each
 //! round expects; the client side uses [`AcceptAnyKey`] (host-key checking is
 //! out of scope here) or any other handler.
+//!
+//! [`serve_tcp`] runs the same server on a loopback TCP port instead, for tests
+//! whose SSH client lives in **another process** — the agent's session daemon
+//! in the relayed-OTP end-to-end suite (#3436). Once authenticated, a session
+//! channel gets a PTY and a shell that prints [`SHELL_BANNER`], so a real SSH
+//! backend can finish its connect against it.
+//!
+//! Compiled for this crate's tests and, behind the `ssh-test-support` feature,
+//! for other crates' tests. Never part of a shipping build.
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use russh::server::{Auth, Response};
-use russh::{MethodKind, MethodSet};
+use russh::server::{Auth, Msg, Response, Session};
+use russh::{Channel, ChannelId, MethodKind, MethodSet};
 use zeroize::Zeroizing;
 
 use super::keyboard_interactive::{
     KbdInteractiveAnswer, KbdInteractiveRequest, KeyboardInteractivePrompter,
 };
 
+/// What a shell opened on the test server prints first, so a client can tell
+/// its session reached the shell.
+pub const SHELL_BANNER: &str = "ki-test-server shell ready\r\n";
+
 /// One info-request round: what the server asks and what it accepts.
 #[derive(Clone)]
-pub(crate) struct Round {
+pub struct Round {
+    /// Server-supplied challenge name.
     pub name: &'static str,
+    /// Server-supplied instruction text.
     pub instructions: &'static str,
     /// `(prompt text, echo)`.
     pub prompts: Vec<(&'static str, bool)>,
@@ -31,7 +46,8 @@ pub(crate) struct Round {
 }
 
 impl Round {
-    pub(crate) fn new(prompts: Vec<(&'static str, bool)>, expected: Vec<&'static str>) -> Self {
+    /// A round with no name or instructions.
+    pub fn new(prompts: Vec<(&'static str, bool)>, expected: Vec<&'static str>) -> Self {
         Self {
             name: "",
             instructions: "",
@@ -43,7 +59,7 @@ impl Round {
 
 /// How the server treats the `password` method.
 #[derive(Clone, Copy)]
-pub(crate) enum PasswordPolicy {
+pub enum PasswordPolicy {
     /// `PasswordAuthentication no`: always refused, keyboard-interactive offered.
     Disabled,
     /// The password is accepted as the **first** factor only: a correct one
@@ -58,17 +74,23 @@ pub(crate) enum PasswordPolicy {
 
 /// The server's behaviour.
 #[derive(Clone)]
-pub(crate) struct Script {
+pub struct Script {
+    /// The info-request rounds of one keyboard-interactive exchange.
     pub rounds: Vec<Round>,
+    /// How the `password` method is treated.
     pub password: PasswordPolicy,
 }
 
 /// What the server observed, for assertions.
 #[derive(Default)]
-pub(crate) struct Observed {
+pub struct Observed {
     /// Responses received per round (the test server is the only place that
     /// ever sees them in the clear).
     pub responses: Vec<Vec<String>>,
+    /// Keyboard-interactive exchanges that ended in acceptance.
+    pub authenticated: usize,
+    /// Session channels whose shell was started.
+    pub shells: usize,
 }
 
 struct KiServer {
@@ -151,13 +173,50 @@ impl russh::server::Handler for KiServer {
         self.round += 1;
         Ok(match self.script.rounds.get(self.round) {
             Some(next) => partial(next),
-            None => Auth::Accept,
+            None => {
+                self.observed.lock().expect("observed").authenticated += 1;
+                Auth::Accept
+            }
         })
+    }
+
+    async fn channel_open_session(
+        &mut self,
+        _channel: Channel<Msg>,
+        _session: &mut Session,
+    ) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
+
+    async fn pty_request(
+        &mut self,
+        channel: ChannelId,
+        _term: &str,
+        _col_width: u32,
+        _row_height: u32,
+        _pix_width: u32,
+        _pix_height: u32,
+        _modes: &[(russh::Pty, u32)],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        session.channel_success(channel)?;
+        Ok(())
+    }
+
+    async fn shell_request(
+        &mut self,
+        channel: ChannelId,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        self.observed.lock().expect("observed").shells += 1;
+        session.channel_success(channel)?;
+        session.data(channel, SHELL_BANNER.as_bytes())?;
+        Ok(())
     }
 }
 
 /// Client handler that trusts any host key (tests only).
-pub(crate) struct AcceptAnyKey;
+pub struct AcceptAnyKey;
 
 impl russh::client::Handler for AcceptAnyKey {
     type Error = russh::Error;
@@ -173,16 +232,8 @@ impl russh::client::Handler for AcceptAnyKey {
 /// Start a scripted server and return the client end of its byte stream (not
 /// yet handshaken) plus the server's observations — for tests that run the
 /// handshake with their own client handler (e.g. host-key checks, #3527).
-pub(crate) fn serve(script: Script) -> (tokio::io::DuplexStream, Arc<Mutex<Observed>>) {
-    let key = russh::keys::PrivateKey::from(
-        russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&[7u8; 32]),
-    );
-    let server_config = Arc::new(russh::server::Config {
-        keys: vec![key],
-        auth_rejection_time: std::time::Duration::ZERO,
-        auth_rejection_time_initial: Some(std::time::Duration::ZERO),
-        ..Default::default()
-    });
+pub fn serve(script: Script) -> (tokio::io::DuplexStream, Arc<Mutex<Observed>>) {
+    let server_config = server_config();
     let observed = Arc::new(Mutex::new(Observed::default()));
     let handler = KiServer {
         script: Arc::new(script),
@@ -198,9 +249,82 @@ pub(crate) fn serve(script: Script) -> (tokio::io::DuplexStream, Arc<Mutex<Obser
     (client_io, observed)
 }
 
+/// The server's fixed host key (deterministic, so a test can trust it).
+fn host_key() -> russh::keys::PrivateKey {
+    russh::keys::PrivateKey::from(
+        russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&[7u8; 32]),
+    )
+}
+
+fn server_config() -> Arc<russh::server::Config> {
+    Arc::new(russh::server::Config {
+        keys: vec![host_key()],
+        auth_rejection_time: std::time::Duration::ZERO,
+        auth_rejection_time_initial: Some(std::time::Duration::ZERO),
+        ..Default::default()
+    })
+}
+
+/// The server's host public key in OpenSSH form (`ssh-ed25519 AAAA…`), for a
+/// test that pre-trusts it in a `known_hosts` file.
+pub fn host_public_key_openssh() -> String {
+    host_key()
+        .public_key()
+        .to_openssh()
+        .expect("encode host public key")
+}
+
+/// A scripted server listening on a loopback TCP port (see [`serve_tcp`]).
+/// Stops accepting when dropped.
+pub struct TcpServer {
+    /// The bound address (`127.0.0.1:<ephemeral port>`).
+    pub addr: std::net::SocketAddr,
+    /// What the server observed, across every connection.
+    pub observed: Arc<Mutex<Observed>>,
+    accept_task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for TcpServer {
+    fn drop(&mut self) {
+        self.accept_task.abort();
+    }
+}
+
+/// Start a scripted server on `127.0.0.1:0`; every accepted connection runs a
+/// fresh exchange of `script`. Must be called inside a Tokio runtime, which
+/// then drives the server.
+pub async fn serve_tcp(script: Script) -> std::io::Result<TcpServer> {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
+    let addr = listener.local_addr()?;
+    let server_config = server_config();
+    let script = Arc::new(script);
+    let observed = Arc::new(Mutex::new(Observed::default()));
+    let task_observed = observed.clone();
+    let accept_task = tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let handler = KiServer {
+                script: script.clone(),
+                observed: task_observed.clone(),
+                round: 0,
+            };
+            let config = server_config.clone();
+            tokio::spawn(async move {
+                if let Ok(running) = russh::server::run_stream(config, stream, handler).await {
+                    let _ = running.await;
+                }
+            });
+        }
+    });
+    Ok(TcpServer {
+        addr,
+        observed,
+        accept_task,
+    })
+}
+
 /// Start a scripted server and return a connected (unauthenticated) client
 /// handle plus the server's observations.
-pub(crate) async fn connect(
+pub async fn connect(
     script: Script,
 ) -> (russh::client::Handle<AcceptAnyKey>, Arc<Mutex<Observed>>) {
     let (client_io, observed) = serve(script);
@@ -217,20 +341,23 @@ pub(crate) async fn connect(
 /// A prompter that replays scripted answers (`None` = cancel) and records every
 /// request it was shown.
 #[derive(Default)]
-pub(crate) struct ScriptedPrompter {
+pub struct ScriptedPrompter {
     answers: Mutex<VecDeque<Option<Vec<&'static str>>>>,
+    /// Every request the prompter was shown, in order.
     pub seen: Mutex<Vec<KbdInteractiveRequest>>,
 }
 
 impl ScriptedPrompter {
-    pub(crate) fn new(answers: Vec<Option<Vec<&'static str>>>) -> Self {
+    /// A prompter replaying `answers` in order (`None` = cancel).
+    pub fn new(answers: Vec<Option<Vec<&'static str>>>) -> Self {
         Self {
             answers: Mutex::new(answers.into()),
             seen: Mutex::new(Vec::new()),
         }
     }
 
-    pub(crate) fn seen(&self) -> Vec<KbdInteractiveRequest> {
+    /// A snapshot of the requests shown so far.
+    pub fn seen(&self) -> Vec<KbdInteractiveRequest> {
         self.seen.lock().expect("seen").clone()
     }
 }
