@@ -23,6 +23,7 @@ mod registry_daemon;
 mod service;
 mod session;
 mod state;
+mod store_version;
 mod test_parent_watchdog;
 mod transport;
 mod tunnel;
