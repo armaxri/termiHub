@@ -77,6 +77,33 @@ class LayoutUi(HarnessMixin):
 
         return self.wait(settled, what="the panel layout to settle")
 
+    def settled_active_group_id(self, stable_reads: int = 4) -> str:
+        """The active tab group's id once it has stopped changing.
+
+        A new group is created optimistically with a locally minted id and then
+        replaced by the backend's own id after the round-trip (the same churn as
+        panel ids, #2705), so an id read the instant the group becomes active can
+        name a chip that no longer exists (#4017). Wait until the active id is a
+        listed group and identical across ``stable_reads`` consecutive reads.
+        """
+        history: dict[str, Any] = {"prev": None, "count": 0}
+
+        def settled() -> Optional[str]:
+            active = self.driver.get_state("activeTabGroupId")
+            groups = self.driver.get_state("tabGroups")
+            listed = groups if isinstance(groups, list) else []
+            ids = {g.get("id") for g in listed if isinstance(g, dict)}
+            if not isinstance(active, str) or active not in ids:
+                history["prev"], history["count"] = None, 0
+                return None
+            if active == history["prev"]:
+                history["count"] += 1
+            else:
+                history["prev"], history["count"] = active, 1
+            return active if history["count"] >= stable_reads else None
+
+        return self.wait(settled, what="the active tab group id to settle")
+
     def set_sidebar_visible(self, visible: bool) -> None:
         """Bring the sidebar to the wanted visibility via the toolbar toggle.
 
