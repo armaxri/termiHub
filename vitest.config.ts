@@ -45,7 +45,9 @@ export default defineConfig({
       // well-covered, so the numbers barely moved and STILL clear these floors.
       // The thresholds are therefore left unchanged (each still sits a few
       // points below its measured value). Raise these (never lower) as coverage
-      // improves — they are a ratchet, not a target.
+      // improves — they are a ratchet, not a target. Ratcheted 2026-09-30 (#2979)
+      // to ~1 point under the measured statements 86.56%, branches 80.58%,
+      // functions 83.98%, lines 87.89%.
       //
       // Per-directory floors (TFE-011): the global thresholds are a loose ratchet
       // on the whole-app average, so a single new untested file can hide under it.
@@ -64,14 +66,16 @@ export default defineConfig({
       //   src/components/ui/** 94.85 / 92.66 / 92.65 / 96.57
       //   src/utils/**         93.72 / 91.01 / 96.17 / 94.67
       //   src/store/slices/**  85.19 / 68.63 / 86.80 / 86.22
+      //     (re-measured 2026-09-30 after #2979: 98.54 / 94.13 / 98.42 / 99.32,
+      //     floored ~1 point below)
       // (src/plugins is intentionally NOT floored: its direct files are 100% but
       // recursively the subtree is only ~85%, so it is not uniformly covered.)
       // Raise a floor (never lower) as its directory's coverage climbs.
       thresholds: {
-        lines: 75,
-        statements: 74,
-        functions: 70,
-        branches: 67,
+        lines: 86.5,
+        statements: 85.5,
+        functions: 83,
+        branches: 79.5,
         "src/themes/**": {
           statements: 95,
           branches: 88,
@@ -91,10 +95,10 @@ export default defineConfig({
           lines: 90,
         },
         "src/store/slices/**": {
-          statements: 80,
-          branches: 62,
-          functions: 80,
-          lines: 80,
+          statements: 97,
+          branches: 93,
+          functions: 97,
+          lines: 98,
         },
       },
     },
