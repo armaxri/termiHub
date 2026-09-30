@@ -143,6 +143,55 @@ disabled, runner started via a LaunchAgent or `launchctl asuser <uid>`). See the
 module docstring of `tests/system/termihub_harness/display_runner.py` for the
 full rationale and provisioning notes (#2526).
 
+#### Backend-driven agent reconnect across a prolonged transport drop (#2476/#2512)
+
+**Now automated — no operator, no display (#2574).** The full-app agent-reconnect
+UI grade is an automated bridge system-test:
+[`tests/system/tests/test_agent_reconnect_ui.py`](../tests/system/tests/test_agent_reconnect_ui.py).
+It drives the real app through the complete cycle — connect a key-auth agent at a
+harness-controlled loopback sshd, open a shell, start a 1 Hz counter, **sever the
+transport in-process** (the deterministic `test_sever_agent_transport` bridge
+command from #2573), assert the **same** tab shows **Reconnecting** (never
+vanishes or spawns a duplicate), let it re-attach the **same** live session with
+the counter caught up **past** its pre-drop value (never restart-from-0), confirm
+the re-attached shell is interactive, then hold the endpoint down for a
+**permanent** sever that parks in Reconnecting and settles a clean **Disconnected**.
+
+It runs on the nightly `-m integration` lane:
+
+```bash
+./scripts/test-system-py.sh -m integration -k test_agent_reconnect_ui
+```
+
+On CI the grade carries a skip-guard (#2631): it needs a live app→agent SSH
+connect (not merely an `sshd` binary), so it stays skipped unless
+`TERMIHUB_LIVE_AGENT=1` is exported. The nightly `system-integration.yml` lane
+sets that flag in its `display-grades` job on all three legs. On **macOS**
+(#2579) and **Linux** (#2669, the intent of the closed #2634) the harness
+`LocalAgentSshd` stands up its own loopback `sshd` and deploys the release
+`termihub-agent` built earlier in the job, so the grade runs unattended there, no
+operator and no foreground display. The Linux leg was enabled once #2646 restored
+the headless ubuntu app launch. On **Windows** (CI-020, TIN-007) Win32-OpenSSH
+cannot run as a throwaway unprivileged process, so the job first provisions the
+[native sshd fixture](#native-sshd-fixture-macos-windows-linux--ci-020-tin-007)
+(a service, a local test user and a copy of the agent that user can run). The
+harness then drives it through `NativeSshdFixture` / `local_agent_endpoint()`,
+and the counter runs as a PowerShell loop, since the Windows agent's shell is
+PowerShell. Once a leg opts in, an unavailable endpoint **fails** the grade
+instead of skipping. A dev box (no `CI` env) always runs it.
+
+Unlike the retired manual grade it does **not** need a foreground display: the
+client reconnect engine was deleted (#2558) and reconnect is backend-driven
+(#2560), so the outcome cannot be webview-stalled, and the test-bridge
+anti-throttle (`macos_unthrottle`) keeps the projection-mirror overlay ticking
+headless. The retired operator harness (`scripts/internal/verify-agent-reconnect.sh`
+
+- `agent-reconnect-transport.sh`) and the log-based `test_agent_reconnect_live.py`
+  are removed. Correctness at the process level is additionally proven headlessly by
+  the Rust real-sshd continuity tests (#2553/#2573) and the frontend component tests
+  (`TerminalDisconnectOverlay.projection.test.tsx`, `Terminal.agent-reconnect.test.tsx`,
+  `Terminal.agent-reattach-scrollback.test.tsx`).
+
 ## 2. Component Integration Tests
 
 **What it does**: Tests React components with backend integration
@@ -493,7 +542,8 @@ The fixture-backed suites `pytest.skip()` cleanly when no Docker runtime is
 present (`conftest.py` → `docker_compose`), so a macOS/Windows leg is green on
 the coverage it _can_ run rather than failing on fixtures it cannot reach. This
 Docker-daemon boundary is the same one behind the [SSH-tunnel macOS
-carve-out](#ssh-tunnel-startstop-on-macos-manual-carve-out-933) and ADR-5.
+carve-out](#per-feature-walkthrough-triage-3695) (live tunnel UI tests skip on
+macOS; moving them onto the native sshd fixture is #4005) and ADR-5.
 
 ### Agent-crate Docker Rust tests — nightly `agent-docker-integration` job (TIN-008)
 
@@ -673,8 +723,8 @@ It runs in the `polkit-dbus` job of the
 [`integration-fixtures.yml`](../.github/workflows/integration-fixtures.yml) lane
 (nightly, and on PRs touching `tests/docker/**`, the polkit module or the policy
 file) — not in the per-PR lane, since it needs a system bus. The real desktop
-agents' dialogs (GNOME Shell, KDE) remain a manual check — see
-[Linux — keychain export via polkit](#linux--keychain-export-via-polkit-3535).
+agents' dialogs (GNOME Shell, KDE) remain a manual check — MT-CRED-14 on the
+[release-gating checklist](#release-gating-manual-checklist).
 
 ### Per-PR app-shell smoke (#2065)
 
@@ -1669,22 +1719,27 @@ take either side and re-run the same command. CI (`--check`) fails if it is stal
 
 | Category (`--category`)   | Display name          | Platforms      | Release-gating | Pending automation |  Total |
 | ------------------------- | --------------------- | -------------- | -------------: | -----------------: | -----: |
-| `connection-management`   | Connection Management | all            |              0 |                  4 |      4 |
-| `credential-store`        | Credential Store      | all            |              3 |                  0 |      3 |
-| `local-shell`             | Local Shell           | macos, windows |              2 |                  0 |      2 |
+| `app`                     | App                   | all            |              4 |                  0 |      4 |
+| `connection-management`   | Connection Management | all            |              0 |                  1 |      1 |
+| `credential-store`        | Credential Store      | all            |              8 |                  0 |      8 |
+| `editor`                  | Editor                | all            |              1 |                  0 |      1 |
+| `file-browser`            | File Browser          | all            |              2 |                  0 |      2 |
+| `local-shell`             | Local Shell           | macos, windows |              4 |                  0 |      4 |
 | `multi-window`            | Multi-Window          | macos          |              2 |                  0 |      2 |
-| `native-input`            | Native Input          | all            |             19 |                  0 |     19 |
+| `native-input`            | Native Input          | all            |             21 |                  0 |     21 |
 | `network-tools`           | network-tools         | all            |              2 |                  2 |      4 |
 | `portable-mode`           | Portable Mode         | all            |              0 |                  2 |      2 |
 | `remote-agent`            | Remote Agent          | all            |              0 |                 12 |     12 |
-| `serial`                  | Serial                | all            |              1 |                  3 |      4 |
-| `ssh`                     | SSH                   | all            |              1 |                  1 |      2 |
-| `ui-layout`               | UI / Layout           | all            |              2 |                  0 |      2 |
-| **Total (11 categories)** |                       |                |         **32** |             **24** | **56** |
+| `remote-desktop`          | Remote Desktop        | all            |              9 |                  0 |      9 |
+| `serial`                  | Serial                | windows        |              1 |                  0 |      1 |
+| `shell-integration`       | Shell Integration     | all            |              6 |                  0 |      6 |
+| `ssh`                     | SSH                   | all            |              4 |                  1 |      5 |
+| `ui-layout`               | UI / Layout           | all            |              8 |                  0 |      8 |
+| **Total (16 categories)** |                       |                |         **72** |             **18** | **90** |
 
 <!-- manual-inventory:end -->
 
-`tests/system/tests/test_manual_corpus.py` (normal, non-integration lane) enforces this: every remaining YAML item must carry exactly one of `release_gate: true` + `manual_reason`, or `automation_issue: <N>`, and ids must be unique. Follow-up issues: #3682 (serial socat echo fixture — #859 was closed by removing the unreachable container fixture, not by adding one), #3683 (serial prefixes), #3684 (Windows agent host fixture), #3685 (Windows agent CI), #3686 (agent wake/park UI), #3687 (SSH small items — done), #3688 (jump-host reconnect fixture), #3689 (connection management), #3690 (credential auto-lock seam — landed: MT-CRED-04 is now covered by fake-clock unit tests in `src-tauri/src/credential/auto_lock.rs`), #3691 (portable launch), #3692 (network tools fixtures), #3693 (layout / restore — done: MT-TAB-11/12/16 and MT-UI-10/11/12/14/15/37 are covered by `App.openSavedFile.test.tsx`, `test_split_views.py`, `test_settings.py` and `test_session_restore_ui.py`, emptying the `tab-management` category), #3694 (file-browser CWD follow — done: MT-FB-08/09/10 are covered in `FileBrowser.test.tsx`, emptying the `file-browser` category). The per-feature prose walkthroughs further down this section are PR-verification notes, not part of the release gate; triaging them the same way is tracked in #3695. The other two follow-ups the audit named were already done: #1230 (monitoring auto-reconnect) is covered by fault-injection tests over a scripted `MonitoringTransport` in `core/src/backends/ssh/monitoring.rs` (`collect_loop_emits_stale_reconnecting_then_live_on_recovery`, `collect_loop_emits_offline_when_reconnect_exhausted`), and #1336 (FTP transfer queue) by the live `core/tests/ftp_transfer.rs` / `ftp_reconnect.rs` integration tests.
+`tests/system/tests/test_manual_corpus.py` (normal, non-integration lane) enforces this: every remaining YAML item must carry exactly one of `release_gate: true` + `manual_reason`, or `automation_issue: <N>`, and ids must be unique. Follow-up issues: #3682 (serial socat echo fixture — #859 was closed by removing the unreachable container fixture, not by adding one), #3683 (serial prefixes), #3684 (Windows agent host fixture), #3685 (Windows agent CI), #3686 (agent wake/park UI), #3687 (SSH small items — done), #3688 (jump-host reconnect fixture), #3689 (connection management — done except MT-CONN-34, split to #4000), #3690 (credential auto-lock seam — landed: MT-CRED-04 is now covered by fake-clock unit tests in `src-tauri/src/credential/auto_lock.rs`), #3691 (portable launch), #3692 (network tools fixtures), #3693 (layout / restore — done: MT-TAB-11/12/16 and MT-UI-10/11/12/14/15/37 are covered by `App.openSavedFile.test.tsx`, `test_split_views.py`, `test_settings.py` and `test_session_restore_ui.py`, emptying the `tab-management` category), #3694 (file-browser CWD follow — done: MT-FB-08/09/10 are covered in `FileBrowser.test.tsx`, emptying the `file-browser` category; #3695 later refilled it with two OS-native drag items). The per-feature prose walkthroughs that used to follow were triaged the same way in #3695; see [Per-feature walkthrough triage](#per-feature-walkthrough-triage-3695). The other two follow-ups the audit named were already done: #1230 (monitoring auto-reconnect) is covered by fault-injection tests over a scripted `MonitoringTransport` in `core/src/backends/ssh/monitoring.rs` (`collect_loop_emits_stale_reconnecting_then_live_on_recovery`, `collect_loop_emits_offline_when_reconnect_exhausted`), and #1336 (FTP transfer queue) by the live `core/tests/ftp_transfer.rs` / `ftp_reconnect.rs` integration tests.
 
 <details>
 <summary>Triage table: every former YAML item → decision → pointer or issue</summary>
@@ -1694,15 +1749,15 @@ take either side and re-run the same command. CI (`--check`) fails if it is stal
 | MT-CONN-01      | Drag connection onto folder                                                             | Guided-manual pytest  | test_input_routing.py::test_drag_connection_into_folder                                                                             |
 | MT-CONN-08      | Import connections from file                                                            | Guided-manual pytest  | test_native_dialogs.py::test_import_connections_adds_the_connection                                                                 |
 | MT-CONN-09      | Export connections to file                                                              | Guided-manual pytest  | test_native_dialogs.py::test_export_connections_writes_a_json_file                                                                  |
-| MT-CONN-13      | Import encrypted — correct password                                                     | Guided-manual pytest  | test_native_dialogs.py::test_encrypted_export_import_round_trip (Rust round-trip gap in #3689)                                      |
+| MT-CONN-13      | Import encrypted — correct password                                                     | Guided-manual pytest  | test_native_dialogs.py::test_encrypted_export_import_round_trip (+ Rust round-trip in manager_move_credential_tests.rs)             |
 | MT-CONN-17      | SSH key browse button opens file dialog                                                 | Automated (already)   | src/components/Settings/KeyPathInput.test.tsx (Browse opens at ~/.ssh)                                                              |
 | MT-CONN-18      | SSH key browse — select file populates path                                             | Automated (already)   | KeyPathInput.test.tsx 'Browse dialog success reports the chosen path upward'                                                        |
 | MT-CONN-19      | SSH key browse — cancel leaves field unchanged                                          | Automated (already)   | KeyPathInput.test.tsx 'Browse dialog cancel leaves the value untouched'                                                             |
 | MT-CONN-23      | Add File — select existing JSON                                                         | Guided-manual pytest  | test_native_dialogs.py::test_add_external_connection_file                                                                           |
-| MT-CONN-24      | Drag external connections into local folders                                            | Tracked issue         | #3689                                                                                                                               |
-| MT-CONN-33      | Delete multiple selected connections                                                    | Tracked issue         | #3689                                                                                                                               |
-| MT-CONN-34      | Connection changes sync across parallel instances                                       | Tracked issue         | #3689                                                                                                                               |
-| MT-CONN-32      | Drag connection out of folder to root                                                   | Tracked issue         | #3689                                                                                                                               |
+| MT-CONN-24      | Drag external connections into local folders                                            | Automated (#3689)     | manager_move_credential_tests.rs (external → main folder survives reload) + connectionDropTarget.test.ts                            |
+| MT-CONN-33      | Delete multiple selected connections                                                    | Automated (#3689)     | ConnectionList.multiselect.test.tsx 'Ctrl+Click two of three, context-menu Delete, confirm'                                         |
+| MT-CONN-34      | Connection changes sync across parallel instances                                       | Tracked issue         | #4000 (live bridge test)                                                                                                            |
+| MT-CONN-32      | Drag connection out of folder to root                                                   | Automated (#3689)     | src/utils/connectionDropTarget.test.ts 'root drop (MT-CONN-32)'                                                                     |
 | MT-CRED-01      | Windows Credential Manager stores credentials                                           | Release-gating manual | Windows Credential Manager inspection (real OS store)                                                                               |
 | MT-CRED-02      | macOS Keychain stores credentials                                                       | Release-gating manual | macOS Keychain Access inspection (real OS store)                                                                                    |
 | MT-CRED-03      | Linux Secret Service stores credentials                                                 | Release-gating manual | Linux Secret Service inspection (real OS store)                                                                                     |
@@ -1788,9 +1843,9 @@ take either side and re-run the same command. CI (`--check`) fails if it is stal
 | MT-SER-02       | Glyphs render on clean Windows without Nerd Font                                        | Release-gating manual | needs a clean Windows install without a Nerd Font                                                                                   |
 | MT-SER-03       | Serial port not found shows descriptive error overlay                                   | Automated (already)   | core session/serial.rs error classification + TerminalConnectionOverlay.test.tsx serial not-found hint                              |
 | MT-SER-04       | Serial port permission denied shows dialout hint                                        | Automated (already)   | serial.rs EACCES + permission_hint_mentions_dialout_on_linux + overlay test                                                         |
-| MT-SER-06       | Serial port scan prefixes appear in Settings → General                                  | Tracked issue         | #3683                                                                                                                               |
-| MT-SER-07       | Disabling a prefix removes its ports from the serial dropdown                           | Tracked issue         | #3683                                                                                                                               |
-| MT-SER-08       | Adding a custom prefix discovers matching ports                                         | Tracked issue         | #3683                                                                                                                               |
+| MT-SER-06       | Serial port scan prefixes appear in Settings → General                                  | Automated (#3683)     | SerialPortSettings.test.tsx badge / per-prefix toggles + settingsRegistry Serial category                                           |
+| MT-SER-07       | Disabling a prefix removes its ports from the serial dropdown                           | Automated (#3683)     | core session/serial.rs disabled-prefix tests (scan + serial2-enumerated ports)                                                      |
+| MT-SER-08       | Adding a custom prefix discovers matching ports                                         | Automated (#3683)     | core serial.rs custom_prefix_discovers_matching_ports + SerialPortSettings.test.tsx delete                                          |
 | MT-SER-05       | Serial port busy shows 'already in use' hint                                            | Automated (already)   | serial.rs EBUSY classification + overlay 'serial busy hint' test                                                                    |
 | MT-SER-09       | Connect to a virtual serial port, echo data, and handle disconnect                      | Automated (#3682)     | tests/system/tests/test_serial.py::TestSerialLiveEcho (host socat fixture)                                                          |
 | MT-SER-10       | Losing the serial/COM port flips the tab out of green and notifies                      | Automated (already)   | serial.rs::reader_drops_sender_and_closes_channel_on_fatal_error + live TestSerialLiveEcho (#3682)                                  |
@@ -1860,6 +1915,154 @@ take either side and re-run the same command. CI (`--check`) fails if it is stal
 | MT-UI-37        | Open tabs and layout are restored after an app restart                                  | Automated (#3693)     | tests/system/tests/test_session_restore_ui.py::test_tabs_split_and_groups_are_restored_after_restart                                |
 | MT-UI-38        | Disabling Restore Last Session starts the app fresh                                     | Automated (already)   | src/store/appStore.lastSession.test.ts + appStore.restoreMode.test.ts                                                               |
 | MT-UI-39        | Disconnect overlay explains the exit cause and suppresses for user kills                | Automated (already)   | src/components/Terminal/TerminalDisconnectOverlay.test.tsx (+ .exitInfo.test.tsx)                                                   |
+
+</details>
+
+### Per-feature walkthrough triage (#3695)
+
+Until #3695 this section also carried **107 per-feature prose walkthroughs**
+(one heading per PR, about 3,200 lines). They were PR-verification notes, not
+part of the release gate. Each was triaged with the #3681 rules and removed:
+
+| Decision                                                                 | Walkthroughs |
+| ------------------------------------------------------------------------ | -----------: |
+| Automated already: deleted, pointer below                                |           20 |
+| Partly automated; the automatable rest is tracked by a follow-up issue   |           42 |
+| Partly automated; the genuinely manual rest is on the release gate       |           20 |
+| Partly automated; automatable gaps tracked and a manual rest on the gate |           25 |
+| **Total before → after**                                                 |  **107 → 0** |
+
+- **Release gate.** The genuinely manual residue (OS-native windows and dialogs,
+  real hardware or hosts, visual paint) became **40 new `release_gate: true`
+  YAML items** (the corpus grew by 40; see the inventory above
+  and the [checklist](#release-gating-manual-checklist)). Two residues were
+  already walked by guided tests in `test_external_app.py`; five colour/legibility
+  checks were merged into MT-UI-40, and duplicate shell-integration steps into
+  MT-SHI-05/06.
+- **Follow-up issues (automatable gaps).** #4004 (remote desktop), #4005 (SSH
+  fixtures: agent forwarding, keyboard-interactive, macOS tunnels, X11), #4006
+  (FTP/FTPS/symlink fixtures, monitoring fault injection), #4007 (file-browser
+  journeys, editor permission flows), #4008 (live WSL on the Windows lane), #4009
+  (agent update journeys), #4010 (external spawn, shell-integration CLI), #4011
+  (app: log redaction, install smokes, CSP, guided dialogs), #4012 (persistence
+  across restart), #4013 (UI vitest/bridge gaps); existing issues #3685, #3691
+  and #3692 took the rest.
+- **New manual steps go in YAML, not prose.** A PR whose test plan has a step
+  that cannot be automated adds a `tests/manual/*.yaml` item (`release_gate: true`
+  - `manual_reason`, or `automation_issue: <N>`) and re-runs
+    `python3 scripts/manual-inventory.py --write`. Do not add a walkthrough heading
+    here.
+
+<details>
+<summary>Triage list: every former walkthrough → decision → pointer, issue or gate item</summary>
+
+- **Dark theme renders the modern design-system palette (UI-001)** — Automated + Tracked + Release gate. src/themes/contrast.test.ts 'theme text contrast (WCAG 2.2 AA)' (muted/secondary text legibility); src/themes/themes.test.ts 'darkTheme' / 'lightTheme' (key completeness, light differs from dark) · gaps: #4013 · gate: MT-UI-40
+- **Scrollbars are persistently visible on all platforms (#3144)** — Automated + Release gate. src/styles/tokenDiscipline.test.ts 'persistent scrollbar (#3144)' › 'shows the webkit thumb at rest via the token, not transparent'; src/styles/tokenDiscipline.test.ts 'persistent scrollbar (#3144)' › 'shows the Firefox thumb at rest and drops the host-hover reveal'; … · gate: MT-UI-41
+- **Multi-window journeys — automated (#1900, #1903, #1925; TIN-014 #3720)** — Automated. tests/system/tests/test_multi_window.py::TestMultiWindow::test_new_window_opens_an_addressable_second_window; tests/system/tests/test_multi_window.py::TestMultiWindow::test_closing_an_empty_window_needs_no_decision; …
+- **VNC VeNCrypt / TLS authentication (#1714)** — Automated + Tracked. core/tests/vnc.rs::vnc_06_vencrypt_insecure_connect_and_decode; core/tests/vnc.rs::vnc_07_vencrypt_custom_ca_connect_and_decode; … · gaps: #4004
+- **RDP via the IronRDP sidecar (#1747)** — Automated + Tracked + Release gate. core/tests/rdp.rs::rdp_01_connect_and_first_frame; core/tests/rdp.rs::rdp_08_nla_connect_and_first_frame; … · gaps: #4004 · gate: MT-RD-01
+- **Fixed resolution and color depth (#3460, PROD-026)** — Automated. core/tests/rdp.rs::rdp_02_fixed_resolution; core/tests/rdp.rs::rdp_03_dynamic_resize; …
+- **Multi-monitor sessions (#3696)** — Automated + Release gate. core/tests/rdp.rs::rdp_09_multi_monitor_layout; core/tests/vnc.rs::vnc_11_multi_monitor_layout / vnc_12_multi_monitor_degrades_to_the_server_layout; … · gate: MT-RD-02
+- **Drive redirection (RDPDR, #1757)** — Automated + Tracked + Release gate. rdp-sidecar/src/drive.rs (15 unit tests: filesystem backend + sandbox against a temp dir); core/src/backends/rdp_sidecar/config.rs::drive_redirection_resolves_an_existing_directory · gaps: #4004 · gate: MT-RD-03
+- **Audio output redirection (rdpsnd, #1764)** — Automated + Tracked + Release gate. rdp-sidecar/src/audio.rs (12 unit tests: PCM decode + format advertisement); rdp-sidecar/src/rdpsnd_fork_tests.rs · gaps: #4004 · gate: MT-RD-04
+- **Clipboard file transfer (CLIPRDR, #1765 receive / #1778 serve)** — Automated + Tracked + Release gate. rdp-sidecar/src/clipboard.rs (unit tests: sandboxing, size/range serving, name dedup/skip rules, view-only no-offer) · gaps: #4004 · gate: MT-RD-05
+- **Clipboard images (CLIPRDR `CF_DIB`, PROD-021 / #3469)** — Automated + Tracked + Release gate. core/src/connection/clipboard_dib.rs + clipboard_image.rs (DIB↔RGBA, size caps); rdp-sidecar/src/clipboard_image_tests.rs; … · gaps: #4004 · gate: MT-RD-06
+- **Delayed-render paste to the host OS clipboard (macOS, #1804)** — Automated + Tracked + Release gate. src-tauri/src/macos_clipboard.rs (selection/index unit tests); src-tauri graphical_manager unit tests · gaps: #4004 · gate: MT-RD-07
+- **Delayed-render paste to the host OS clipboard (Windows, #1814)** — Automated + Tracked + Release gate. src-tauri/src/windows_clipboard.rs (CF_HDROP builder round-trip, pasteable-index selection); src-tauri graphical_manager unit tests · gaps: #4004 · gate: MT-RD-08
+- **Delayed-render paste to the host OS clipboard (Linux X11 + Wayland, #1815/#1847)** — Automated + Tracked + Release gate. src-tauri/src/linux_clipboard/mod.rs + x11.rs + wayland.rs (index selection, file:// URI encoding, uri-list/gnome/mate formatting, MIME mapping, session detection) · gaps: #4004 · gate: MT-RD-09
+- **Deferred agent update (apply on last disconnect) (#1352)** — Automated + Tracked. agent/tests/self_update_integration.rs::active_shell_session_is_never_interrupted / active_docker_session_is_never_interrupted; agent/tests/self_update_integration.rs::deferred_strategy_auto_applies_on_idle_and_comes_back; … · gaps: #4009
+- **Backend-driven agent reconnect across a prolonged transport drop (#2476/#2512)** — Automated. tests/system/tests/test_agent_reconnect_ui.py::TestAgentReconnectUi::test_agent_reconnect_ui_cycle; src/components/Terminal/TerminalDisconnectOverlay.projection.test.tsx; …
+- **Layout GUI-smoke — live terminal scrollback survives a structural op (#2561)** — Automated. src/components/Terminal/TerminalView.layout-scrollback.test.tsx 'TerminalHost — a layout op preserves live terminal scrollback (#2561)'; src/store/appStore.layoutBridge.test.ts 'E2 — tab id preservation (no live-terminal remount)'; …
+- **Coordinated desktop-push Update deploy (#1616)** — Automated + Tracked. agent/src/update/coordinate.rs::peers_that_disconnect_release_the_update_early / a_peer_that_never_leaves_does_not_block_the_update / the_broadcast_carries_the_notification_verbatim / the_documented_window_is_the_issues_ten_seconds; agent/tests/self_update_integration.rs::coordinated_strategy_stages_without_applying; … · gaps: #4009, #3685
+- **Command palette (#1484)** — Automated + Tracked. src/components/CommandPalette/CommandPalette.test.tsx 'ranks a fuzzy-matched command to the top'; src/components/CommandPalette/CommandPalette.test.tsx 'ranks a fuzzy-matched connection to the top'; … · gaps: #4013
+- **FTP insecure-connection warning & editor behaviors (#1338)** — Automated. src/components/DynamicForm/ConnectionSettingsForm.ftp.test.tsx 'shows the TLS warning notice only when tlsMode is none'; src/components/DynamicForm/ConnectionSettingsForm.ftp.test.tsx 'hides the TLS warning notice for FTPS'; …
+- **Toast close button — light/dark rendering (#1504)** — Automated + Tracked + Release gate. src/components/ui/Toast/ToastProvider.test.tsx 'renders a keyboard-accessible close button with a lucide icon on a toast'; src/components/ui/Toast/ToastProvider.test.tsx 'dismisses the toast immediately when the close button is clicked'; … · gaps: #4013 · gate: MT-UI-40
+- **Credential vault export / import (PROD-063, #3432)** — Automated + Tracked + Release gate. src-tauri/src/credential/vault/tests.rs::round_trip_export_then_import_into_empty_store; src-tauri/src/credential/vault/tests.rs::no_plaintext_reaches_disk_during_export_and_import; … · gaps: #4011 · gate: MT-CRED-10
+- **Shared named credentials (#3557, PROD-065)** — Automated + Tracked. src-tauri/src/credential/named/tests.rs::create_stores_secret_under_named_owner_and_lists_metadata; src-tauri/src/credential/named/tests.rs::rotate_changes_the_secret_for_every_reference; … · gaps: #4012
+- **OS re-authentication and biometric unlock (#3433, PROD-064)** — Automated. src-tauri/src/credential/vault/tests.rs::keychain_export_prompts_every_time_without_caching; src-tauri/src/credential/vault/tests.rs::keychain_export_refused_when_os_verification_cancelled_or_failed; …
+- **macOS — keychain export (Touch ID or login password)** — Automated + Release gate. src-tauri/src/credential/vault/tests.rs::keychain_export_allowed_after_successful_os_verification; src-tauri/src/credential/vault/tests.rs::keychain_export_prompts_every_time_without_caching; … · gate: MT-CRED-11
+- **macOS — biometric unlock (Touch ID only)** — Automated + Release gate. src-tauri/src/credential/biometric_unlock_tests.rs::enable_then_unlock_round_trip; src-tauri/src/credential/biometric_unlock_tests.rs::enable_requires_the_correct_master_password_before_prompting; … · gate: MT-CRED-12
+- **Windows — keychain export and biometric unlock (Windows Hello)** — Automated + Release gate. src-tauri/src/credential/vault/tests.rs::keychain_export_refused_when_os_verification_unavailable; src-tauri/src/credential/biometric_unlock_tests.rs::enable_then_unlock_round_trip; … · gate: MT-CRED-13
+- **Linux — keychain export via polkit (#3535)** — Automated + Release gate. src-tauri/src/credential/os_auth/polkit.rs::authorized_is_the_only_success; src-tauri/src/credential/os_auth/polkit.rs::dismissed_dialog_is_cancelled; … · gate: MT-CRED-14
+- **Unified backup and restore (PROD-068, #3509)** — Automated + Tracked + Release gate. src-tauri/src/backup/tests.rs::round_trip_every_section_encrypted; src-tauri/src/backup/tests.rs::preview_counts_new_and_conflicting_items; … · gaps: #4012 · gate: MT-APP-01
+- **Backup of trusted host keys and plugins (#3515)** — Automated + Tracked. src-tauri/src/backup/tests_trust.rs::trust_stores_round_trip_and_load_in_the_real_stores; src-tauri/src/backup/tests_trust.rs::merge_is_a_union_that_keeps_existing_keys_on_conflict; … · gaps: #4012
+- **Zoomed tab repaints terminal content immediately (#1823)** — Automated + Release gate. src/components/Terminal/TerminalRegistry.test.tsx 'fits the addon and forces a full viewport repaint so reparented content shows'; src/components/Terminal/TerminalRegistry.test.tsx 'fits once the container is laid out at a sane size' · gate: MT-UI-42
+- **OSC 133 command marks: gutter marks and prompt jumps (#3415)** — Automated + Tracked + Release gate. src/services/commandMarks.test.ts 'tracks a full A/B/C/D cycle with its exit code and output lines'; src/services/commandMarks.test.ts 'jumps back through prompts from the bottom, then forward again'; … · gaps: #4013 · gate: MT-UI-43
+- **Terminal output stays in order under scrolling output (#1849)** — Automated + Release gate. src/components/Terminal/Terminal.output-repaint.test.tsx 'forces a full-viewport refresh after appended output'; src/components/Terminal/Terminal.output-repaint.test.tsx 'still refreshes when the user has scrolled up (stale rows stay correct)' · gate: MT-LOCAL-30
+- **Terminal inline images render (SIXEL / iTerm2, PROD-057, PR #3442)** — Automated + Tracked + Release gate. src/components/Terminal/Terminal.inline-images.test.tsx 'loads the image addon by default with the conservative memory limits'; src/components/Terminal/Terminal.inline-images.test.tsx 'toggles the addon live when the setting changes'; … · gaps: #4013 · gate: MT-UI-44
+- **Shipped CSP: no violations in the editor, terminal and plugin UI (WA-CI-035, #3627)** — Automated + Tracked + Release gate. src/security/cspConfig.test.ts 'carries only allow-listed directives and sources'; src/security/cspConfig.test.ts 'allows exactly this platform's plugin origin in script-src (#2266/#3627)'; … · gaps: #4011 · gate: MT-APP-02
+- **Browse Plugins and Install from URL (PROD-048, #3715)** — Automated + Release gate. src-tauri/src/commands/plugin_fetch_tests.rs::strict_fetch_refuses_plain_http_before_any_request; src-tauri/src/commands/plugin_fetch_tests.rs::download_verified_stores_only_a_matching_file; … · gate: MT-APP-03
+- **Right-click paste inserts the clipboard exactly once (Windows/WebView2, #2595)** — Automated + Release gate. src/components/Terminal/Terminal.native-paste.test.tsx 'does NOT let a native textarea paste reach onData/sendInput'; src/components/Terminal/Terminal.native-paste.test.tsx 'still forwards ordinary typed input via onData'; … · gate: MT-NIN-30
+- **Connections sidebar renders fully on first paint (#1828)** — Automated + Release gate. src/hooks/useSectionResize.test.tsx 'never yields a hole or short array on the render where the count grows'; src/hooks/useSectionResize.test.tsx 'returns one flex value per expanded section on the initial render'; … · gate: MT-UI-45
+- **Agent binary SHA-256 checksums (release dry-run, #1350)** — Automated + Tracked. .github/workflows/release.yml 'Verify expected asset set and release notes' (every agent asset + .sha256 + .sig must exist); .github/workflows/release.yml agent-binaries-\* jobs (sha256sum -c on each sidecar before signing); … · gaps: #4011
+- **Keyboard-shortcuts menu discoverability (#1353)** — Automated. src/components/ActivityBar/ActivityBar.shortcuts.test.tsx 'offers a Keyboard Shortcuts item that opens the shortcuts overlay'; src/components/ActivityBar/ActivityBar.shortcuts.test.tsx 'renders the show-shortcuts accelerator on the Keyboard Shortcuts row'; …
+- **Docker/Podman directory-mount container spawn — Podman variant (#1372)** — Automated + Tracked. core/tests/docker_spawn.rs::docker_spawn_mounts_directory_and_opens_cd_to_mount (Docker only, needs --features docker and a daemon; not wired into any CI workflow) · gaps: #4010
+- **Container spawn opens a Spawned Docker tab (frontend consumption, #1446)** — Automated + Tracked. src/hooks/useSpawnRequests.test.ts 'opens a Docker tab with the resolved settings and title, marked spawned'; src/hooks/useSpawnRequests.test.ts 'shows a confirmation toast on a successful spawn'; … · gaps: #4010
+- **Session Picker dialog (SI-3, #1366)** — Automated + Tracked + Release gate. src/components/Spawn/SpawnPicker.test.tsx 'renders a row per detected shell and shows the resolved path'; src/components/Spawn/SpawnPicker.test.tsx 'omits the WSL section when no distributions exist (every non-Windows host)'; … · gaps: #4010 · gate: MT-SHI-01
+- **External local/WSL/SSH spawn opens a shell tab (frontend consumption, #1365)** — Automated + Tracked + Release gate. src-tauri/src/spawn/handler.rs::existing_directory_resolves_to_itself; src-tauri/src/spawn/handler.rs::existing_file_resolves_to_parent_directory; … · gaps: #4010 · gate: MT-SHI-02
+- **External WSL/SSH spawn opens its real backend (#1511)** — Automated + Tracked + Release gate. src-tauri/src/commands/spawn.rs::wsl_spawn_uses_default_distro_and_mount_path; src-tauri/src/commands/spawn.rs::wsl_spawn_prefers_saved_connection_distribution; … · gaps: #4010 · gate: MT-SHI-03
+- **Spawned container grouping survives tab close (#1466)** — Automated. src/components/OpenConnections/OpenConnectionsModal.spawned.test.tsx 'lists the spawned container in its own section'; src/components/OpenConnections/OpenConnectionsModal.spawned.test.tsx 'does not double-list the spawned session under Local Sessions'; …
+- **Shell-integration registration — per-OS file-manager entries (SI-5/6/7)** — Automated + Tracked + Release gate. src-tauri/src/spawn/registry.rs::install_writes_three_key_families_with_correct_command_lines (windows); src-tauri/src/spawn/registry.rs::extended_entry_carries_extended_value (windows); … · gaps: #4010, #3691 · gate: MT-SHI-04, MT-SHI-05, MT-SHI-06
+- **Native-dialog → Modal migration (#1348)** — Automated + Tracked + Release gate. src/components/Sidebar/FileBrowser.rename.test.tsx 'starts an inline edit on F2 with the base name pre-selected'; src/components/Sidebar/FileBrowser.rename.test.tsx 'commits the rename via the backend on Enter'; … · gaps: #4007 · gate: MT-FB-30
+- **File browser rename / new-file / new-folder / copy feedback (#1399)** — Automated. src/components/Sidebar/FileBrowser.actionfeedback.test.tsx 'shows a success toast when a new folder is created'; src/components/Sidebar/FileBrowser.actionfeedback.test.tsx 'shows an error toast when new folder creation fails'; …
+- **File browser drag-to-move (#3454, PROD-006)** — Automated + Tracked. src/components/Sidebar/FileBrowser.drag-move.test.tsx 'moves a file dropped on a folder with a single rename (no copy)'; src/components/Sidebar/FileBrowser.drag-move.test.tsx 'copies instead when Alt/Option is held'; … · gaps: #4007
+- **Dual-pane transfer view (#3558, PROD-007)** — Automated + Tracked. src/components/TransferView/TransferView.test.tsx 'lists the local home and the remote session side by side'; src/components/TransferView/TransferView.test.tsx 'copies the local selection to the remote folder'; … · gaps: #4007
+- **Remote → local paste in the file browser (#3563)** — Automated + Tracked. src/hooks/useFileMoveTransfer.test.ts 'pastes a remote clipboard into a local folder after a conflict check (#3563)'; src/hooks/useFileMoveTransfer.test.ts 'confirms a name clash before a remote → local paste'; … · gaps: #4007
+- **File browser drag-out to the OS file manager (#3457)** — Automated + Release gate. src/components/Sidebar/FileBrowserDndProvider.dragout.test.tsx 'reports the dragged rows once when the pointer leaves the window'; src/hooks/useFileDragOut.test.ts 'starts the native drag with the real paths and ends the in-app drag'; … · gate: MT-FB-31
+- **Network Tools shared field validation (#1381)** — Automated. src/components/NetworkTools/PingPanel.host-validation.test.tsx 'renders the host through the shared field and flags it inline once cleared'; src/components/NetworkTools/PingPanel.host-validation.test.tsx 'blocks Start when the host is empty'; …
+- **Embedded-server delete confirmation (#1393)** — Automated + Tracked. src/components/EmbeddedServerSidebar/EmbeddedServerSidebar.delete.test.tsx 'does not delete until the user confirms'; src/components/EmbeddedServerSidebar/EmbeddedServerSidebar.delete.test.tsx 'leaves the server untouched when the user cancels'; … · gaps: #4012
+- **Embedded-server delete backend-failure toast (#1427)** — Automated. src/components/EmbeddedServerSidebar/EmbeddedServerSidebar.delete.test.tsx 'shows an error toast and keeps the server when the backend delete fails'
+- **Remote-agent update-strategy settings persist (#1354)** — Automated. src/components/DynamicForm/agentSchema.updateStrategy.test.ts 'exposes an updateStrategy select with only the active options (no deferred)'; src/components/DynamicForm/agentSchema.updateStrategy.test.ts 'does NOT expose the non-functional allowSelfUpdate toggle (WA-FE-002)'; …
+- **Connected-host update guard + Update dialog (#1349)** — Automated + Tracked. src/components/Sidebar/UpdateAgentDialog.test.tsx 'renders installed and available versions'; src/components/Sidebar/UpdateAgentDialog.test.tsx 'renders the other-hosts warning listing connected hosts when non-empty'; … · gaps: #4009
+- **Guided Git for Windows install (#1672)** — Automated + Release gate. src/components/ConnectionEditor/ConnectionEditor.gitbash-setup.test.tsx 'offers the setup affordance on Windows when no Unix shell is detected'; src/components/ConnectionEditor/ConnectionEditor.gitbash-setup.test.tsx 'hides the affordance once a Unix shell (Git Bash) is present'; … · gate: MT-LOCAL-31
+- **Windows Explorer context-menu registration (#1368)** — Automated + Tracked. src-tauri/src/spawn/registry.rs::install_writes_three_key_families_with_correct_command_lines (windows); src-tauri/src/spawn/registry.rs::only_selected_target_families_are_written (windows); … · gaps: #4010
+- **Linux file-manager detection in Shell Integration settings (#1397)** — Automated + Tracked. src-tauri/src/spawn/registry.rs::nautilus_version_extracted; src-tauri/src/spawn/registry.rs::dolphin_version_extracted; … · gaps: #4010
+- **macOS app-level Services provider (#1409)** — Automated + Release gate. src-tauri/src/macos_services.rs::maps_each_path_to_a_location_only_request; src-tauri/src/macos_services.rs::trims_paths_and_drops_blank_entries; … · gate: MT-SHI-05
+- **Agent GitHub self-update (opt-in, #1355)** — Automated. src-tauri/src/terminal/backend.rs::agent_exec_command_omits_self_update_flag_by_default; src-tauri/src/terminal/backend.rs::agent_exec_command_appends_self_update_flag_when_enabled; …
+- **Agent self-update auto-apply on idle (#1401)** — Automated + Tracked. src-tauri/src/terminal/backend.rs::agent_exec_command_passes_configured_update_strategy; agent/src/main.rs::update_strategy_parses_from_flag; … · gaps: #4009
+- **Agent version + update-state badge — light/dark colors (#1347)** — Automated + Tracked + Release gate. src/components/AgentVersionBadge/AgentVersionBadge.test.tsx 'renders the version chip prefixed with v'; src/components/AgentVersionBadge/AgentVersionBadge.test.tsx 'applies the %s state modifier class'; … · gaps: #4009 · gate: MT-UI-40
+- **File editor read-only badge + banner (#1325)** — Automated + Tracked + Release gate. src/components/FileEditor/FileEditor.test.tsx 'renders the badge + banner and shows the parsed permissions in the tooltip'; src/components/FileEditor/FileEditor.test.tsx 'dismisses the banner while keeping the badge'; … · gaps: #4007 · gate: MT-UI-40
+- **File editor elevated (sudo) edit mode (#1329)** — Automated + Tracked. src/components/FileEditor/FileEditor.test.tsx 'offers 'Edit with sudo' only when the file is read-only and exec-capable'; src/components/FileEditor/FileEditor.test.tsx 'routes an authorized save through the elevated command and shows the sudo marker'; … · gaps: #4007
+- **Open remote file in VS Code over the session path (#2307)** — Automated. src-tauri/src/session/manager/tests.rs::session_sftp_ops_error_when_browser_not_sftp_backed; src-tauri/src/session/manager/tests.rs::session_sftp_ops_error_when_session_unknown; … · guided: `test_external_app.py::test_open_in_vscode_sftp`
+- **Local folder OS integration: file manager + VS Code workspace (#2656)** — Automated. src/components/Sidebar/FileBrowser.os-integration.test.tsx 'renders both OS-integration actions in local mode'; src/components/Sidebar/FileBrowser.os-integration.test.tsx 'hides both actions in session mode'; … · guided: `test_external_app.py::test_open_file_manager_local` / `::test_open_folder_in_vscode_local`
+- **File editor SFTP-only read-only fallback (#1330)** — Automated + Tracked + Release gate. src/components/FileEditor/FileEditor.test.tsx 'shows the fallback banner, disables Save, and offers copy/download without Edit-with-sudo'; src/components/FileEditor/FileEditor.test.tsx 'writes the buffer to the chosen writable remote path via Save a copy'; … · gaps: #4007 · gate: MT-EDIT-01
+- **Caps Lock warning on password fields (PR #1465, #1360)** — Automated + Release gate. src/components/PasswordInput/PasswordInput.test.tsx 'shows the caps-lock warning when Caps Lock is active during a keystroke'; src/components/PasswordInput/PasswordInput.test.tsx 'hides the caps-lock warning again once Caps Lock is released'; … · gate: MT-NIN-31
+- **SSH tunnel start/stop on macOS (manual carve-out, #933)** — Automated + Tracked. tests/system/tests/test_ssh_tunnels.py::test_save_and_start_connects (Linux lane); tests/system/tests/test_ssh_tunnels.py::test_start_then_stop (Linux lane); … · gaps: #4005
+- **Per-connection port forwards (PROD-023, #3449)** — Automated + Tracked. src/components/ConnectionEditor/ConnectionPortForwardingSection.test.tsx; src/components/TunnelEditor/TunnelEditor.startWithConnection.test.tsx; … · gaps: #4005
+- **SSH keyboard-interactive / OTP prompts (#3371)** — Automated + Tracked. core/src/backends/ssh/keyboard_interactive_tests.rs::single_otp_round_is_prompted_and_succeeds; core/src/backends/ssh/keyboard_interactive_tests.rs::password_is_auto_answered_but_otp_is_prompted; … · gaps: #4005
+- **SSH agent forwarding (#1699)** — Automated + Tracked. core/src/config/mod.rs::ssh_config_forward_agent_roundtrip; core/src/config/mod.rs::ssh_config_forward_agent_defaults_false_and_is_omitted; … · gaps: #4005
+- **SSH agent forwarding through the remote agent (#1719)** — Automated + Tracked. agent/src/daemon/process.rs::daemon_ssh_settings_carry_forward_agent; agent/src/daemon/process.rs::daemon_ssh_settings_default_forward_agent_off; … · gaps: #4005
+- **SSH agent forwarding over the TCP agent transport (#1727)** — Automated + Tracked. agent/src/handler/dispatch.rs::agent_forward_connect_opens_and_disconnect_closes_the_stream; agent/src/handler/dispatch.rs::agent_forward_data_routes_and_succeeds; … · gaps: #4005, #3685
+- **X11 / GUI forwarding** — Automated + Tracked. src-tauri/src/terminal/xserver/manager.rs::adopts_external_server_without_spawning / two_sessions_share_one_process / idle_stop_terminates_managed_when_last_session_closes / drop_terminates_managed_process_no_orphan (lifecycle, refcount, no orphan); src-tauri/src/terminal/xserver/orchestrator.rs (per-platform decision tests, e.g. windows_auto_provisioning_without_vcxsrv_offers_the_winget_install); … · gaps: #4005
+- **Linux X server detect-and-guide edge cases (#1055)** — Automated + Tracked + Release gate. src-tauri/src/terminal/xserver/linux_gap.rs::wayland_session_without_xwayland_or_socket_is_wayland_gap / flatpak_hiding_socket_in_wayland_session_is_sandbox_gap / no_display_no_session_no_binaries_is_headless / normal_desktop_never_misclassifies_as_a_missing_dependency / sandbox_gap_hint_mentions_the_socket_grant / headless_gap_hint_mentions_headless_or_virtual_framebuffer; src-tauri/src/terminal/xserver/orchestrator.rs::linux_wayland_without_xwayland_returns_xwayland_dependency; … · gaps: #4005 · gate: MT-SSH-50
+- **macOS XQuartz detect + guided install (#1054)** — Automated + Release gate. src-tauri/src/terminal/xserver/macos.rs::missing_xquartz_with_brew_installs_via_brew / missing_xquartz_without_brew_requires_homebrew_first / already_installed_short_circuits_regardless_of_brew / brew_install_args_target_the_xquartz_cask / xquartz_paths_are_the_documented_locations; src-tauri/src/terminal/xserver/macos.rs::cancellation_short_cuts_the_wait / readiness_wait_bails_on_tripped_token / never_ready_gives_up_within_budget (#1260 cancellable readiness); … · gate: MT-SSH-51
+- **VcXsrv install via winget (Windows, #1318)** — Automated + Release gate. src-tauri/src/terminal/xserver/windows.rs::missing_vcxsrv_with_winget_installs_via_winget / missing_vcxsrv_without_winget_requires_app_installer_first / already_installed_short_circuits_regardless_of_winget / winget_args_target_the_vcxsrv_package; src-tauri/src/terminal/xserver/types.rs::vcxsrv_missing_uses_backend_install_mode_with_winget_command / winget_required_uses_guided_external_install_mode; … · gate: MT-SSH-52
+- **Connect-triggered X server consent + live progress (Windows, #1116)** — Automated. src-tauri/src/terminal/xserver/consent.rs::windows_undecided_prompts_only_when_no_server_present / enable_reply_resolves_to_proceed / not_now_reply_resolves_to_skip / cancelled_token_mid_prompt_aborts_promptly / non_windows_platforms_never_prompt / windows_already_decided_never_prompts; src/components/OpenConnections/XServerConnectConsent.test.tsx 'opens on the event, replies enable, provisions, and closes on ready', 'replies notNow and closes when the user declines', 'shows a recoverable error screen (not toast+close) on a failed step', 'retries provisioning via x_server_ensure from the error screen', 'offers Install on a dependencyMissing ensure failure after retry'; …
+- **FTP client against the FTP fixture (#1333)** — Automated + Tracked. core/tests/ftp_file_browser.rs::ftp_01_list_seeded_tree / ftp_02_read_seeded_files / ftp_04_crud_round_trip / ftp_05_anonymous_read_only; core/tests/ftp_transfer.rs::ftp_transfer_01_download_byte_exact / ftp_transfer_02_upload_byte_exact; … · gaps: #4006
+- **FTP symlink icon, navigation, and target in properties (#1513)** — Automated + Tracked. core/src/backends/ftp/listing_parser.rs::parses_symlink_target_from_posix_line / parses_symlink_flag_from_mlsd_line / non_symlink_entries_carry_no_symlink_metadata; src/components/Sidebar/FileBrowser.test.tsx 'renders a distinct symlink icon only on the link row', 'shows the link target in the row', 'follows the symlink to its resolved target on double-click' · gaps: #4006
+- **Docker, WSL, and SFTP symlink icon and target (#1523)** — Automated + Tracked. core/src/backends/docker/file_browser.rs::parse_find_output_symlink_with_target / parse_find_output_symlink_to_directory_lists_as_dir / parse_stat_output_symlink; core/src/backends/ssh/sftp.rs::attrs_to_file_entry_symlink_keeps_target; … · gaps: #4006, #4008
+- **WSL init script created inside the distro with mode 0600 (#2837)** — Automated + Tracked. core/src/backends/wsl_init_script.rs::creates_file_with_mode_0600_and_exact_content / rejects_pre_existing_file_without_touching_it / rejects_symlink_to_existing_file_without_following_it / contents_end_with_self_cleanup_and_source_line_matches / distro_args_use_exec_and_positional_path · gaps: #4008
+- **FTP transfer queue: concurrency, pause/resume, retry, resume (#1336)** — Automated + Tracked. core/tests/ftp_transfer.rs::ftp_transfer_03_download_rest_resume / ftp_transfer_04_upload_rest_resume / ftp_transfer_05_concurrent_separate_connections / ftp_transfer_07_upload_relaunch_resumes_via_rest; core/tests/transfer_queue.rs::queue_promotes_next_transfer_when_one_completes / failure_then_backoff_retry_reruns_through_the_scheduler / resume_and_throughput_math_drive_a_partial_transfer; … · gaps: #4006
+- **Queued local and WSL copies (#3567, PARITY-004)** — Automated + Tracked. core/src/files/transfer/local.rs::threshold_keeps_small_files_direct / partial_path_is_a_hidden_tagged_sibling / executor_pause_then_resume_completes / executor_cancel_removes_the_partial_and_keeps_the_destination / executor_restarts_when_the_source_changed_since_the_checkpoint; src/components/Sidebar/FileBrowser.paste-feedback.test.tsx (local_copy_start + 'Pasted "x.txt" to /home' toast); … · gaps: #4008
+- **Queued local folder copies (#3605)** — Automated. core/src/files/transfer/local_folder_tests.rs::a_folder_copy_end_to_end_reproduces_the_tree / cancelling_one_file_cancels_the_rest_of_its_folder / layout_merges_into_an_existing_folder / plan_records_symlinks_without_following_them; src-tauri/src/files/local_copy.rs::plan_and_lay_out_copies_small_files_and_leaves_large_ones_queued / plan_and_lay_out_refuses_a_copy_into_itself_without_writing; …
+- **Transfer Queue: restart gaps (#3629, #3630, #3643, #3912, #3983)** — Automated. src-tauri/src/files/transfer/persist_manager.rs::prune_local_paths_under_drops_staging_records_only (#3629); src-tauri/src/files/transfer/persist.rs::folder_paste_link_round_trips_and_drops_only_recorded_pastes / folder_pastes_round_trip_dedupe_and_cap; …
+- **Transfer Queue panel: rows, controls, minimized state (#1337)** — Automated + Release gate. tests/system/tests/test_transfer_queue.py::test_active_row_shows_rising_percent_and_active_controls / test_paused_row_swaps_pause_for_resume / test_failed_row_offers_retry_and_remove / test_cancel_removes_the_row_when_the_backend_confirms / test_cancel_all_is_enabled_only_while_a_row_is_pending / test_clear_completed_keeps_unfinished_rows / test_minimize_collapses_to_the_indicator_and_restores / test_real_sftp_paste_populates_the_transfer_queue; src/components/TransferQueue/TransferQueue.test.tsx, TransferEntry.test.tsx, TransferControls.test.tsx; … · gate: MT-UI-40
+- **Monitoring auto-reconnect on a mid-stream drop (#1230)** — Automated + Tracked. core/src/backends/ssh/monitoring.rs::collect_loop_emits_stale_reconnecting_then_live_on_recovery / collect_loop_emits_offline_when_reconnect_exhausted; core/src/monitoring/exec_provider.rs::mid_stream_drop_resolves_to_offline; … · gaps: #4006
+- **Design tokens: pill radius + muted text (#1406)** — Automated. src/styles/tokenDiscipline.test.ts 'has no fallback-less var(--token) reference to an undefined token', 'has no fallback-bearing var(--token, …) reference to an undefined token', 'defines the core tokens it depends on (sanity check)'; src/themes/contrast.test.ts (AA contrast of --text-muted on dark/light; Solarized intentionally excluded)
+- **WSL shell-integration note (`/mnt/&lt;drive>` translation, #1029)** — Automated. tests/system/tests/test_windows_shells.py::TestWsl::test_wsl_file_browser_follows_cwd (integration lane, Windows+WSL; MT-LOCAL-19 scalar PROMPT_COMMAND); core/src/session/shell.rs::osc7_bash_handles_array_prompt_command; …
+- **macOS Finder Quick Actions / Services registration (#1369)** — Automated + Release gate. src-tauri/src/spawn/registry.rs::macos::tests (cfg macos): install_creates_one_workflow_bundle_per_entry, document_wflow_carries_the_spawn_command_and_service_metadata, info_plist_declares_nsservices_menu_item_and_owner_marker, send_file_types_map_show_for_targets, xml_special_characters_in_name_are_escaped, install_is_idempotent, reinstall_drops_removed_entries, uninstall_removes_our_bundles, uninstall_preserves_foreign_bundles (steps 2 and 5 file-level) · gate: MT-SHI-05
+- **Linux file-manager registration (#1370)** — Automated + Release gate. src-tauri/src/spawn/registry.rs::linux::tests (cfg linux, Linux CI): install_writes_xdg_desktop_and_refreshes_database, xdg_desktop_only_for_directory_entries, nautilus_installed_when_detected_and_enabled, nautilus_skipped_when_toggle_off_and_foreign_scripts_preserved, kde_skipped_when_not_detected, thunar_appends_action_preserving_foreign, thunar_reinstall_keeps_single_owned_action, thunar_preserves_inter_action_comments_and_whitespace_on_edit_and_remove, uninstall_removes_all_four_and_preserves_foreign_thunar_action (file content, 0o755 mode, foreign preservation) · gate: MT-SHI-06
+- **Sudo-elevated remote save over SFTP (#1328)** — Automated + Tracked. src-tauri/src/files/sftp.rs::elevated_save_success_rewrites_root_file_over_real_ssh (ssh-sudo Docker fixture; owner/mode preserved, no /tmp/termihub-\* leftover); src-tauri/src/files/sftp.rs::elevated_save_wrong_password_leaves_file_untouched (IncorrectPassword, file unchanged, temp cleaned); … · gaps: #4007
+- **Application log file (#1570)** — Automated + Tracked. src-tauri/src/utils/file_log.rs tests: writes_land_in_the_live_file, reopening_appends_rather_than_truncating, rotates_once_the_size_cap_is_exceeded, generations_shift_and_the_oldest_is_dropped, total_disk_usage_stays_bounded_under_sustained_writes, log_dir_matches_platform_convention, the_default_file_directive_clamps_russh, raising_file_detail_does_not_unclamp_russh, file_filter_keeps_info_and_drops_debug; .github/workflows/release-macos-smoke.yml + release-windows-smoke.yml (installed build writes termihub.log at the platform path and logs startup IPC) · gaps: #4011
+- **Local crash reports and Export Diagnostics (#3571, OBS-010)** — Automated + Tracked. core/src/diagnostics/crash_report_tests.rs, core/src/diagnostics/redact_tests.rs; src-tauri/src/utils/diagnostics_bundle_tests.rs::plan_lists_readme_system_info_logs_and_crash_reports_only, plan_never_includes_session_transcripts, written_bundle_matches_the_plan_and_is_redacted; … · gaps: #4009, #4011
+- **Agent crashed since last connect notice (#3593, OBS-010)** — Automated + Tracked. src-tauri/src/utils/agent_crash_notice_tests.rs, src-tauri/src/utils/agent_crash_reports_tests.rs; agent/src/handler/dispatch/tests/crash_reports_tests.rs; … · gaps: #4009
+- **Scheduled workflows and macros (#3523, PROD-043)** — Automated + Tracked. src-tauri/src/schedules/timing_tests.rs, manager_tests.rs, runner_tests.rs, manager_history_tests.rs, manager_connect_tests.rs; src/store/appStore.workflowRun.test.ts, src/store/scheduledConnect.test.ts, src/utils/connectSavedConnection.unattended.test.ts; … · gaps: #4012
+- **Workflow editor menus are clickable inside the modal (#1868)** — Automated + Tracked. tests/system/tests/test_workflow_automation.py::test_add_step_menu_adds_every_kind (real webview clickability, all 5 kinds); tests/system/tests/test_workflow_automation.py::test_edit_reorder_remove_and_save; … · gaps: #4012
+- **Network tool run history (PROD-032, #3456)** — Automated + Tracked. src-tauri/src/network/tool_history.rs, tool_history_manager.rs, tool_history_storage.rs tests; src/components/NetworkTools/runHistory.test.tsx, NetworkToolHistory.test.tsx, NetworkTools.history.test.tsx; … · gaps: #4012
+- **Macro run history (#3543)** — Automated + Tracked. src-tauri/src/macros/history.rs, history_manager.rs, history_storage.rs tests; src/store/appStore.macroRunHistory.test.ts, src/store/appStore.workflowRun.test.ts; … · gaps: #4012
+- **HTTP monitor check history (#3462)** — Automated + Tracked. src-tauri/src/network/monitor_history.rs, monitor_history_manager.rs, monitor_history_storage.rs tests; src/components/NetworkTools/httpMonitorHistory.test.ts, HttpMonitorPanel.history.test.tsx; … · gaps: #4012
+- **Run-location "Run on" selector — Network Tools & Servers (#2191)** — Automated + Tracked. src/components/RunLocationSelect/RunLocationSelect.test.tsx; src/components/NetworkTools/NetworkToolRunLocation.test.tsx; … · gaps: #3692
+- **Single-instance enforcement (findings PER-005, SM-025)** — Automated + Tracked + Release gate. src-tauri/src/utils/single_instance.rs::tests (enforces_for_installed_release, does_not_enforce_for_installed_debug, does_not_enforce_for_portable_release/debug — covers 'dev builds are not locked'); src-tauri/src/utils/single_instance_forward_tests.rs (long_workspace_flag_with_separate_value, relative_workspace_file_resolves_against_second_launch_cwd, unknown_flags_and_positionals_are_ignored_and_reported, forwarded_workspace_is_emitted_to_the_running_frontend); … · gaps: #4011, #3691 · gate: MT-APP-04
 
 </details>
 
@@ -1959,6 +2162,49 @@ This is the **single** manual gate for a release. Run it on each target OS (macO
 - [ ] MT-NIN-13 … MT-NIN-16 — IME in the editor and in form fields, dead keys, the OS emoji picker
 - [ ] MT-NIN-20 … MT-NIN-24 — native focus: app switch, native Save dialog, inactive-window click, two windows, remote-desktop key release
 
+Folded in from the per-feature walkthroughs (#3695):
+
+- [ ] MT-APP-01 — Backup and restore through native file dialogs with restart
+- [ ] MT-APP-02 (macOS) — macOS production build has no CSP violations
+- [ ] MT-APP-03 (macOS) — Plugin index and URL install over real HTTPS
+- [ ] MT-APP-04 — Second launch raises the running window; portable double-launch refused
+- [ ] MT-CRED-10 — Credential vault export and import through native file dialogs
+- [ ] MT-CRED-11 (macOS) — macOS keychain export asks Touch ID every time
+- [ ] MT-CRED-12 (macOS) — macOS Touch ID unlock of the master-password store
+- [ ] MT-CRED-13 (Windows) — Windows Hello export and unlock
+- [ ] MT-CRED-14 (Linux) — Linux polkit dialog for keychain export (GNOME and KDE)
+- [ ] MT-EDIT-01 — Download a read-only SFTP file via the native save dialog
+- [ ] MT-FB-30 — Large directory scrolls smoothly and accepts OS drops
+- [ ] MT-FB-31 — Drag files out to the OS file manager
+- [ ] MT-LOCAL-30 (Windows) — Windows CMD output paints in order
+- [ ] MT-LOCAL-31 (Windows) — Guided Git for Windows install end to end
+- [ ] MT-NIN-30 (Windows) — Windows right-click pastes once
+- [ ] MT-NIN-31 — Real Caps Lock key toggles the password warning
+- [ ] MT-RD-01 — RDP to a real Windows host (NLA + domain account)
+- [ ] MT-RD-02 — RDP spans real local displays on a Windows host
+- [ ] MT-RD-03 — Redirected drive appears in Windows Explorer
+- [ ] MT-RD-04 (macOS, Windows) — RDP remote audio plays on local speakers
+- [ ] MT-RD-05 — Clipboard files move both ways with a Windows host
+- [ ] MT-RD-06 — Remote-desktop image clipboard with local image apps
+- [ ] MT-RD-07 (macOS) — Remote files paste into Finder via delayed render
+- [ ] MT-RD-08 (Windows) — Remote files paste into Explorer via delayed render
+- [ ] MT-RD-09 (Linux) — Remote files paste into Linux file managers (X11 + Wayland)
+- [ ] MT-SHI-01 (Windows) — Spawn picker WSL section and distro pick
+- [ ] MT-SHI-02 — External spawn brings the window to the front
+- [ ] MT-SHI-03 (Windows) — External WSL spawn opens the named distro at /mnt path
+- [ ] MT-SHI-04 (Windows) — Explorer shows and removes Open in termiHub
+- [ ] MT-SHI-05 (macOS) — macOS Finder Quick Actions and Services open termiHub
+- [ ] MT-SHI-06 (Linux) — Linux file managers show and run Open in termiHub
+- [ ] MT-SSH-50 (Linux) — X11 forwarding on a real Linux desktop
+- [ ] MT-SSH-51 (macOS) — XQuartz install and X11 window on macOS
+- [ ] MT-SSH-52 (Windows) — VcXsrv install, consent and X11 window on Windows
+- [ ] MT-UI-40 — Light/dark look sweep: palette, toasts, badges, banners, Transfer Queue
+- [ ] MT-UI-41 — Scrollbar thumb visible at rest in every theme
+- [ ] MT-UI-42 (macOS) — Zoomed terminal repaints without scrolling
+- [ ] MT-UI-43 (macOS) — OSC 133 gutter bars and jump highlight look right
+- [ ] MT-UI-44 (macOS) — Inline SIXEL/iTerm2 images draw correctly
+- [ ] MT-UI-45 (macOS) — Sidebar paints fully on cold launch
+
 **3. Pending automation (interim)** — until its issue lands, each `automation_issue` item in the YAML is still walked by `scripts/test-manual.py` for a release. The issue removes it from the YAML when it automates it.
 
 ### E2E Automation Coverage
@@ -1974,1925 +2220,6 @@ E2E test coverage: all WebdriverIO specs have been ported to the cross-platform 
 - Pre-generated SSH test keys in `tests/fixtures/ssh-keys/`
 - For serial port tests: host-side virtual serial ports via `socat` + echo server, set up by `scripts/test-system-linux.sh` (see also `examples/serial/`)
 - Test on each target OS (macOS, Linux, Windows) for cross-platform items
-
-### Dark theme renders the modern design-system palette (UI-001)
-
-The built-in dark theme was reconciled with the ui-modernization design system:
-`src/themes/dark.ts` now carries the modern `variables.css` palette (the source
-of truth) instead of the old classic VS-Code values. This is a purely visual
-change graded by eye; the token values themselves are locked by unit tests
-(`src/themes/contrast.test.ts`, `src/themes/themes.test.ts`).
-
-Steps (dark theme active — the default):
-
-1. Launch the app (`./scripts/dev.sh`) with the theme set to **Dark**.
-   Expected: the app chrome (editor/terminal background, panels) reads as a deep
-   blue-charcoal (`#0f1117`), not the flat neutral gray `#1e1e1e` of the old
-   theme. There should be **no** white/gray flash on initial paint — the pre-paint
-   background now matches at `#0f1117`.
-2. Look at the accent color — active tab underline, focused control ring, primary
-   buttons, the activity-bar indicator. Expected: a brighter modern blue
-   (`#3d7de8`), not the old teal-ish `#007acc`.
-3. Open a terminal and read some output. Expected: the terminal surface matches
-   the app background (`#0f1117`); ANSI colors render normally (terminal-standard
-   hues, unchanged); muted/secondary text is legible (WCAG AA).
-4. Switch to the **Light** theme and back. Expected: the light theme is
-   completely unchanged by this work; switching back restores the modern dark
-   palette cleanly.
-
-### Scrollbars are persistently visible on all platforms (#3144)
-
-The global scrollbar (`src/styles/global.css`) was previously "subtle, auto-hide":
-the thumb was transparent at rest and only appeared while the scroll host was
-hovered/focused. On Windows this read as "no scrollbar" and made scrolling very
-hard, so the thumb is now shown at rest on every platform (still brightening on
-direct hover). The CSS behavior is locked by unit tests
-(`src/styles/tokenDiscipline.test.ts` → "persistent scrollbar (#3144)"), but the
-visual read on Windows must be confirmed by eye.
-
-Steps (ideally on Windows, where the regression was reported; repeat on
-macOS/Linux for parity):
-
-1. Launch the app (`./scripts/dev.sh`) and open any scrollable surface — the
-   connection sidebar with many entries, the Settings panel, or a terminal with
-   scrollback. Expected: the scrollbar thumb is **visible at rest** (a subtle
-   but clearly present bar in the gutter), without needing to hover the area.
-2. Hover the pointer directly over the thumb. Expected: it **brightens** a step
-   (the hover affordance), then returns to the resting shade when the pointer
-   leaves.
-3. Confirm there is no horizontal or vertical **layout shift** when a surface
-   gains/loses its scrollbar — the gutter stays consistently reserved.
-4. Switch between **Dark**, **Light**, and the **Solarized** themes. Expected:
-   the resting thumb reads well against each background — visible-but-subtle on
-   both dark and light surfaces.
-
-### Multi-window journeys — automated (#1900, #1903, #1925; TIN-014 #3720)
-
-The multi-window journeys run **unattended** in the nightly integration lane
-([`tests/system/tests/test_multi_window.py`](../tests/system/tests/test_multi_window.py)),
-over the multi-window-aware bridge (each window's page dials the runner tagged
-with its window label, so a test addresses any window with
-`driver.window(label)` — see [test-bridge.md](test-bridge.md#multi-window)):
-
-| Journey                                                                                                                                           | Test                                                                             |
-| ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Open a second window with the New Window shortcut (#1902); it boots empty                                                                         | `TestMultiWindow::test_new_window_opens_an_addressable_second_window`            |
-| Close an empty window: it closes at once, no dialog (#1903)                                                                                       | `TestMultiWindow::test_closing_an_empty_window_needs_no_decision`                |
-| Move a live terminal tab to it (#1900/#1901); scrollback replays, the session keeps printing                                                      | `TestMultiWindow::test_moved_live_tab_keeps_its_session_output`                  |
-| Restart; the windowed layout is restored and the restored window's shell is live (#1925)                                                          | `TestMultiWindow::test_windowed_layout_is_restored_after_restart`                |
-| Close a window with a live local shell (#1903): dialog shows "Would be terminated", Cancel keeps it, Move re-parents the tab into the main window | `TestMultiWindow::test_closing_a_window_with_live_tabs_follows_the_close_policy` |
-| Linux/Windows: closing the **last** window quits the app (#1903 per-OS policy)                                                                    | `TestLastWindowQuitPolicy::test_closing_the_last_window_quits_the_app`           |
-
-The classification and dialog branches stay covered by unit tests
-(`src/utils/windowClose.test.ts`, `src/store/appStore.windowClose.test.ts`,
-`src/components/Terminal/CloseWindowDecisionDialog.test.tsx`) and the per-OS
-policy by Rust unit tests (`src-tauri/src/window/mod.rs`).
-
-Only the OS-native **macOS** behaviour stays manual, as release-gating items in
-[`tests/manual/multi-window.yaml`](../tests/manual/multi-window.yaml):
-**MT-WIN-01** (closing the last window keeps the app alive in the Dock; clicking
-the Dock icon recreates a window) and **MT-WIN-02** (Cmd+Q quits with several
-windows open). The bridge cannot drive the Dock or the app menu.
-
-### VNC VeNCrypt / TLS authentication (#1714)
-
-The VNC backend auto-negotiates **VeNCrypt** (RFB security type 19) when the
-server offers it. The live TLS/X509 path is now covered by the **integration
-tests** (VNC-06/07 in `core/tests/vnc.rs`) against the `vnc-vencrypt-server`
-fixture (TigerVNC Xvnc, `-SecurityTypes VeNCrypt,X509Vnc`), which exercise the
-X509Vnc negotiate → TLS handshake → VNC-password → decode path with both
-`tlsVerify=insecure` and `tlsVerify=ca` — see the VNC row in [Test Suites](#test-suites).
-The manual steps below remain useful for the **X509Plain** sub-type and the
-connection-editor UI, which the integration lane does not drive:
-
-1. Generate a self-signed certificate and start a TigerVNC X509 server (Linux
-   host or container):
-
-   ```bash
-   openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
-     -keyout key.pem -out cert.pem -subj "/CN=localhost"
-   printf 'secret\nsecret\n' | vncpasswd -f > /tmp/vncpasswd   # or `vncpasswd`
-   Xvnc :9 -SecurityTypes VeNCrypt,X509Vnc \
-     -X509Cert cert.pem -X509Key key.pem -rfbauth /tmp/vncpasswd -geometry 800x600
-   # attach something to draw: DISPLAY=:9 xterm &
-   ```
-
-2. In the connection editor create a **VNC** connection: host `localhost`,
-   port `5909` (display 9), Password `secret`. Under **VNC Options** set **TLS
-   Certificate Verification** to **Accept self-signed (insecure)**.
-3. Connect. **Expected:** the session comes up over TLS and paints the remote
-   desktop — the VeNCrypt X509Vnc path (TLS handshake + VNC-password second
-   stage) succeeded. The state dot goes connecting → active.
-4. Certificate modes: with **System trust store** selected, the same self-signed
-   server must be **rejected** with a TLS error (the cert is not chained to a
-   public CA). Selecting **Custom CA bundle** and pointing **TLS CA Bundle** at
-   `cert.pem` must connect again (the cert verifies against itself).
-5. X509Plain: restart the server with `-SecurityTypes VeNCrypt,X509Plain` and set
-   the connection's **Username** + **Password**. **Expected:** connects using the
-   Plain second stage over TLS.
-6. Fallback: a server offering only classic `VncAuth` (the existing `vnc`
-   fixture) must still connect exactly as before — VeNCrypt is preferred only
-   when actually offered.
-
-> The anonymous-TLS sub-types (`TLSNone`/`TLSVnc`/`TLSPlain`, 257–259) are **not**
-> supported — rustls has no anonymous-cipher support — so an `x11vnc -ssl` server
-> (anon-TLS) will not connect via VeNCrypt. Tracked as a follow-up.
-
-### RDP via the IronRDP sidecar (#1747)
-
-The RDP backend decodes through the separately-built `termihub-rdp-helper`
-sidecar (workspace-excluded crate; see #1747 / #1725). The wire path is covered by
-unit tests (`termihub-core` `backends::rdp_sidecar` + the sidecar crate) and, since
-issue #3609, by the **automated live suite** `core/tests/rdp.rs` against the `rdp-server`
-fixture (xrdp + a FreeRDP NLA server; see [Test Suites](#test-suites)), which runs
-on the nightly Docker-fixture lane. It now covers what the steps below used to check
-by hand: logon and the first painted frame through the real sidecar, fixed
-resolution, the wrong-password path, clipboard text, the certificate prompt, and the
-"no orphan `termihub-rdp-helper`" check after disconnect (a PID check). What remains
-manual is the app/UI side and Windows-specific behaviour.
-
-Prerequisites: enable experimental features (#1705); build the helper and point
-the app at it.
-
-1. Build the sidecar: `./scripts/build-rdp-sidecar.sh --release` (emits
-   `rdp-sidecar/target/release/termihub-rdp-helper`).
-2. Make it discoverable: either copy it next to the desktop binary, or
-   `export TERMIHUB_RDP_HELPER=<abs-path-to-helper>` before launching via
-   `./scripts/dev.sh`.
-3. Stand up an RDP server (a Windows host with Remote Desktop enabled, or the
-   `rdp-server` fixture: `docker compose -f tests/docker/docker-compose.yml
---profile rdp up -d --wait rdp-server`, then `127.0.0.1:2601` + offset,
-   `testuser` / `testpass`).
-4. In the connection editor create an **RDP** connection: host, port (3389),
-   username, password, and — for a domain account — the **Domain** field; leave
-   Security on **Auto** (NLA/CredSSP).
-5. Connect. **Expected:** the state dot goes connecting → active and the canvas
-   paints (the sidecar-level paint and the helper exiting on disconnect are
-   automated). Move the mouse and type — the remote cursor and input track.
-6. Failure paths: a wrong password against an **NLA** server (Windows, or the
-   fixture's FreeRDP shadow server on `2602` + offset) surfaces an authentication
-   error (state `authFailed`, #3612 — automated as RDP-04b); against the xrdp
-   TLS server (`2601`) the session just ends, since xrdp sends no typed reason;
-   an unreachable host surfaces a connect
-   error; deleting/renaming the helper before connecting surfaces an actionable
-   "failed to launch RDP helper" error that names `scripts/build-rdp-sidecar.sh` /
-   `TERMIHUB_RDP_HELPER`.
-
-#### Fixed resolution and color depth (#3460, PROD-026)
-
-The config mapping, resize suppression and reconnect behavior are unit-tested
-(`graphical_resolution`, `rdp_sidecar::config`, the sidecar connector config,
-`graphical_manager` / `graphical_supervisor`, `useRemoteDesktopSession`,
-`RemoteDesktopTab.scaling`); what the server actually renders needs a live host:
-
-1. In the RDP connection editor set **Resolution** to _Fixed size_, **Width**
-   `1366`, **Height** `768`, **Color Depth** _16-bit (high color)_; connect.
-   **Expected:** the status bar shows `1366×768 · 16-bit`. (That the server
-   renders the fixed size is automated: `rdp_02_fixed_resolution`.)
-2. Resize the tab / window. **Expected:** the canvas rescales locally; the remote
-   resolution stays 1366×768 (no reflow on the remote).
-3. Click the toolbar scaling button repeatedly. **Expected:** it toggles only
-   between _Fit to Tab_ and _1:1 Pixel_ (never _Match Window_).
-4. Drop the network briefly (with Auto-Reconnect on). **Expected:** the session
-   reconnects at 1366×768.
-5. Switch **Resolution** back to _Dynamic_ and reconnect with _Match Window_
-   scaling. **Expected:** the remote follows the tab size as before, also
-   against an xrdp host (covered by the automated `rdp_03_dynamic_resize`, #3611).
-
-#### Multi-monitor sessions (#3696)
-
-Layout math, PDU encoding, the VNC screen layout, the session commands and the
-viewport selector are unit-tested (`graphical_monitors`, `rdp-sidecar`
-`monitors`, `vnc::desktop_size`, `remote_desktop_monitors`, `monitorLayout`,
-`RemoteDesktopTab.monitors`); xrdp and Xvnc accepting a layout is automated
-(RDP-09, VNC-11). What needs real hardware is a Windows host and real local
-displays:
-
-1. With two local displays attached, set **Monitors** to _All local displays_ on
-   an RDP connection to a Windows host; connect. **Expected:** the tab shows one
-   combined desktop; Windows' Display settings list two monitors matching your
-   local arrangement.
-2. Click the toolbar viewport button (`columns-2` icon) repeatedly.
-   **Expected:** it cycles _All_ → _1/2_ → _2/2_ → _All_; each monitor fills the
-   tab and clicks land on the right remote monitor.
-3. Resize the tab. **Expected:** the remote layout does not change; scaling only
-   toggles Fit ↔ 1:1.
-4. Unplug one local display, then focus termiHub again. **Expected:** the remote
-   re-lays to one monitor and the viewport button disappears.
-5. Switch **Monitors** to _Custom count_ with **Monitor Count** 3; reconnect.
-   **Expected:** three side-by-side monitors, each the size of your primary
-   display.
-
-#### Drive redirection (RDPDR, #1757)
-
-Drive redirection is off by default and opt-in per connection. The RDPDR
-filesystem backend is covered by unit tests against a temp directory
-(`rdp-sidecar` `drive` module), but the live mount needs a real server:
-
-1. In the RDP connection editor, enable **Redirect a Local Drive**, set **Shared
-   Folder** to a local directory that has a few files/subfolders, and optionally
-   a **Drive Name** (defaults to `termiHub`).
-2. Connect to a Windows RDP host and open File Explorer on the remote.
-   **Expected:** a redirected drive appears under "This PC" as
-   "`<Drive Name>` on termiHub".
-3. Browse into it — the shared folder's files and subfolders list correctly.
-   Open a file (read), create/edit/save a file (write), rename and delete a file.
-   All changes are reflected in the local shared folder.
-4. Security: confirm only the selected folder is exposed — you cannot navigate
-   above it, and nothing outside it is reachable from the remote.
-5. Leave **Redirect a Local Drive** off and reconnect. **Expected:** no drive
-   appears in the remote session.
-
-#### Audio output redirection (rdpsnd, #1764)
-
-Audio output is off by default and opt-in per connection. The PCM decode and
-format advertisement are covered by unit tests (`rdp-sidecar` `audio` module),
-but audible playback needs a real server and a host audio device, and is
-**macOS/Windows only** in this slice (the Linux sidecar omits the audio backend
-— see PR #1764's Linux follow-up). Verify on macOS or Windows:
-
-1. Build the sidecar and point `TERMIHUB_RDP_HELPER` at it (as above).
-2. In the RDP connection editor, enable **Redirect Audio Output**.
-3. Connect to a Windows RDP host, then play sound in the remote session (e.g. a
-   YouTube clip, a system sound, or `Test-Sound`).
-   **Expected:** the audio is heard through this computer's speakers/output
-   device, reasonably in sync with the remote.
-4. Adjust the remote volume — local playback volume tracks it.
-5. Leave **Redirect Audio Output** off and reconnect. **Expected:** no remote
-   audio plays locally (the client advertises no audio formats).
-6. On a host with no audio device (or headless), confirm the session still
-   connects and runs normally, just without sound.
-
-#### Clipboard file transfer (CLIPRDR, #1765 receive / #1778 serve)
-
-Clipboard file transfer is off by default and opt-in per connection ("Receive
-Clipboard Files"), and reuses the drive-redirection shared folder (#1757) — no
-new local access. The pure logic (sandboxing, size/range serving, name
-dedup/skip rules) is covered by unit tests in the `rdp-sidecar` `clipboard`
-module, but the live PDU exchange needs a real server:
-
-1. Build the sidecar and point `TERMIHUB_RDP_HELPER` at it (as above); in the RDP
-   connection editor enable **Redirect a Local Drive** (with a **Shared Folder**)
-   and **Receive Clipboard Files**, then connect to a Windows RDP host.
-2. **Receive (#1765):** copy one or more files in the remote session (Explorer →
-   Ctrl+C). **Expected:** the files appear in the local shared folder. Oversized
-   files are skipped; colliding names are deduplicated (`file (1).txt`).
-3. **Serve (#1778):** with a file already in the local shared folder **before
-   connecting**, paste into a folder in the remote session (Ctrl+V).
-   **Expected:** the file's contents arrive on the remote intact. Only files
-   directly in the shared folder are offered (subfolders are not yet recursed).
-   Note: the offer is sent when the clipboard format list is first exchanged, so
-   files dropped into the folder _after_ connecting are not re-advertised until
-   the offer is re-sent — dynamic re-advertising is a follow-up (#1788).
-4. **Security:** confirm nothing outside the shared folder is ever served — the
-   remote can only paste files that are in that one folder.
-5. **View-only:** reconnect with **View Only** enabled and a file in the shared
-   folder. **Expected:** the remote sees no local files to paste (nothing is
-   advertised or served).
-6. Leave **Receive Clipboard Files** off and reconnect. **Expected:** no file
-   formats are advertised in either direction; text clipboard still works.
-
-#### Clipboard images (CLIPRDR `CF_DIB`, PROD-021 / #3469)
-
-Image clipboard works over RDP in both directions, and over VNC when the server
-announces the RFB Extended Clipboard's `dib` format (#3472); otherwise the image
-section is hidden for VNC sessions. DIB ↔ RGBA conversion, the size caps and the
-owner gate are unit-tested (`termihub-core` `clipboard_dib` + `clipboard_image`,
-`rdp-sidecar` `clipboard` image tests, `vnc-rs` `ext_clipboard`, and `src-tauri`
-`remote_desktop_image`); the live PDU exchange needs a real server:
-
-1. Build the sidecar and point `TERMIHUB_RDP_HELPER` at it (as above), then
-   connect to a Windows RDP host.
-2. **Remote → local:** in the remote session take a screenshot or copy a picture
-   (e.g. Paint → Select all → Ctrl+C). Open the toolbar **Clipboard** panel.
-   **Expected:** the **Image** section reads `Remote image · W × H`; **Copy
-   image** shows a success toast and the picture pastes into a local image app.
-3. **Local → remote:** copy an image locally (e.g. a screenshot to the
-   clipboard), click **Send local image**. **Expected:** a success toast with its
-   size, and Ctrl+V in remote Paint pastes the picture.
-4. **Caps:** copy a local image larger than 32 MiB of RGBA (e.g. 5120 × 2880) and
-   click **Send local image**. **Expected:** an error toast; nothing is sent.
-5. **View-only:** reconnect with **View Only**. **Expected:** **Send local image**
-   is hidden; copying a remote image still works.
-6. **VNC (TigerVNC, text-only Extended Clipboard):** open the clipboard panel on
-   a VNC session. **Expected:** no Image section; non-Latin-1 text (`日本語 🎉`)
-   and accented text (`café`) round-trip losslessly through the text clipboard
-   (#3472). A server without the extension (x11vnc) still round-trips `café`.
-7. **VNC with `dib` (e.g. RealVNC Server):** **Expected:** the Image section
-   appears; steps 2–4 behave as for RDP.
-
-#### Delayed-render paste to the host OS clipboard (macOS, #1804)
-
-On macOS the remote-copied files are surfaced to the **host OS clipboard** with
-delayed rendering instead of eagerly downloaded into the shared folder: the bytes
-are streamed from the remote only when the user actually pastes into a local app.
-The selection/index logic and manager plumbing are unit-tested (`macos_clipboard`,
-`graphical_manager`), but the live `NSPasteboard` promise + real paste need a
-manual run (per-PR CI does not run the CLIPRDR wire lane, #1569):
-
-1. On **macOS**, build the sidecar and point `TERMIHUB_RDP_HELPER` at it (as
-   above); in the RDP connection editor enable **Redirect a Local Drive** (with a
-   **Shared Folder**) and **Receive Clipboard Files**, then connect to a Windows
-   RDP host.
-2. Copy one or more files in the remote session (Explorer → Ctrl+C). **Expected:**
-   the files do **not** appear in the shared folder (delayed rendering replaces the
-   eager download on macOS).
-3. Open the RemoteDesktop hover toolbar's **Clipboard** panel. **Expected:** a
-   **Remote files** section lists the copied files, with a **Copy to clipboard**
-   button.
-4. Click **Copy to clipboard**. **Expected:** a toast confirms `N file(s) ready`.
-   No bytes have been fetched yet.
-5. Paste into a local app — Finder (Cmd+V into a folder), a mail draft, etc.
-   **Expected:** the real files appear, their contents intact; the fetch happens
-   at this moment (delayed), streamed into a bounded staging file.
-6. **Other-platform regression check:** on a platform whose host binding is not
-   yet wired, repeat step 2 with the same options. **Expected:** unchanged #1765
-   behaviour — files download into the shared folder, and the **Remote files**
-   section does not appear (no host binding, so nothing is surfaced). Windows
-   (#1814) and Linux (#1815) now have their own host bindings — see the two
-   sections below.
-
-#### Delayed-render paste to the host OS clipboard (Windows, #1814)
-
-The Windows sibling of the macOS binding above: remote-copied files are offered to
-the **Windows clipboard** as a delayed-render `CF_HDROP` and served on the real
-paste gesture (`WM_RENDERFORMAT`) from a dedicated message-only owner window. The
-pure parts are unit-tested (`windows_clipboard`: the `CF_HDROP` builder round-trip
-and the pasteable-index selection; `graphical_manager`), but the live
-`WM_RENDERFORMAT` render + real paste need a message loop and a live session, so
-they need a **manual run on Windows** (per-PR CI does not run the CLIPRDR wire
-lane, #1569):
-
-1. On **Windows**, build the sidecar and point `TERMIHUB_RDP_HELPER` at it (as
-   above); in the RDP connection editor enable **Redirect a Local Drive** (with a
-   **Shared Folder**) and **Receive Clipboard Files**, then connect to a Windows
-   RDP host.
-2. Copy one or more files in the remote session (Explorer → Ctrl+C). **Expected:**
-   the files do **not** appear in the shared folder (delayed rendering replaces the
-   eager download on Windows).
-3. Open the RemoteDesktop hover toolbar's **Clipboard** panel. **Expected:** a
-   **Remote files** section lists the copied files, with a **Copy to clipboard**
-   button.
-4. Click **Copy to clipboard**. **Expected:** a toast confirms `N file(s) ready`.
-   No bytes have been fetched yet (the clipboard holds only the delayed-render
-   `CF_HDROP` offer with a NULL handle).
-5. Paste into a local app — Explorer (Ctrl+V into a folder), an Outlook draft, etc.
-   **Expected:** the real files appear, their contents intact; the fetch happens at
-   this moment (delayed), streamed into a bounded staging file, and the `CF_HDROP`
-   is built from the staged local paths.
-6. **Regression check:** the eager shared-folder path (#1765) still applies when
-   **Receive Clipboard Files** is off.
-
-#### Delayed-render paste to the host OS clipboard (Linux X11 + Wayland, #1815/#1847)
-
-On Linux the remote-copied files are surfaced to the **host clipboard** with
-delayed rendering, the sibling of the macOS and Windows bindings: instead of
-eagerly downloading into the shared folder, the app owns the selection and serves
-`text/uri-list` (plus `x-special/gnome-copied-files` /
-`x-special/mate-copied-files`) only when a paste happens, and the bytes are
-streamed from the remote at that moment. There are two owners, chosen by session at
-runtime (`bind_remote_clipboard_files`): the **X11 `CLIPBOARD` selection** owner
-(#1815, `x11rb`), which also covers XWayland-bridged apps; and, on a Wayland
-session, a native **`wlr-data-control` data source** (#1847, `wayland-client` /
-`wayland-protocols-wlr`) that serves its `send` callback on paste so native-only
-Wayland clients see the files. On a Wayland session with XWayland present, both are
-bound (native apps read the Wayland source, XWayland apps read the X11 selection);
-a compositor without `wlr-data-control` degrades to X11/XWayland only. The pure
-parts (index selection, `file://` URI encoding, `text/uri-list` and gnome/mate
-formatting, MIME→target mapping, session detection) are unit-tested
-(`linux_clipboard`), but the live selection ownership + real paste need a manual
-run (per-PR CI does not run the CLIPRDR wire lane, #1569, and cannot exercise a
-live X server or compositor):
-
-1. On a **Linux desktop** (X11 session, or a Wayland session with XWayland — see
-   step 6), build the sidecar and point `TERMIHUB_RDP_HELPER` at it (as above); in
-   the RDP connection editor enable **Redirect a Local Drive** (with a **Shared
-   Folder**) and **Receive Clipboard Files**, then connect to a Windows RDP host.
-2. Copy one or more files in the remote session (Explorer → Ctrl+C). **Expected:**
-   the files do **not** appear in the shared folder (delayed rendering replaces the
-   eager download on Linux now).
-3. Open the RemoteDesktop hover toolbar's **Clipboard** panel. **Expected:** a
-   **Remote files** section lists the copied files, with a **Copy to clipboard**
-   button.
-4. Click **Copy to clipboard**. **Expected:** a toast confirms `N file(s) ready`.
-   No bytes have been fetched yet (the app now owns the `CLIPBOARD` selection).
-5. Paste into a local file manager — Files/Nautilus, Nemo, Caja, or Dolphin
-   (Ctrl+V into a folder). **Expected:** the real files appear, their contents
-   intact; the fetch happens at this moment (delayed), streamed into a bounded
-   staging file. Try both a single file and several at once.
-6. **Wayland coverage (#1847).** On a **pure Wayland session** (e.g. GNOME or a
-   wlroots compositor such as sway/Hyprland; `echo $WAYLAND_DISPLAY` is set), repeat
-   the paste into a **native-only Wayland** file manager — one that reads solely over
-   `wlr-data-control`, not through XWayland (e.g. GNOME Files/Nautilus under Wayland).
-   **Expected:** the files paste with the bytes fetched at the paste, same as X11.
-   Also confirm XWayland-backed apps still work (both owners are bound). On a
-   compositor without `wlr-data-control` support the native source is skipped and
-   XWayland-bridged apps still paste via the X11 selection (no regression).
-7. **Filename check.** Copy a file whose name has a space and a non-ASCII
-   character (e.g. `naïve report.txt`). **Expected:** it pastes with the exact
-   name (the `file://` URI is percent-encoded and decoded back correctly).
-
-### Deferred agent update (apply on last disconnect) (#1352)
-
-Verifies that a deferred agent update never interrupts active sessions and
-applies strictly when the last session disconnects, and that "Apply Now" forces
-it. Requires a real remote agent (SSH) whose staged binary can be swapped — use
-a Unix agent host (the exec-replace is Unix-only). See PR #1352.
-
-1. **No interruption while busy.** Connect to a remote agent and open at least one
-   long-running session (e.g. `tail -f` or `top`). Stage/deploy a newer agent
-   binary and request a deferred update (or trigger the staged-update banner and
-   press **Apply Now**). Expect: the session keeps running uninterrupted, and the
-   banner/toast reports the update is deferred until the last session disconnects
-   (naming the active-session count).
-2. **Applies on last disconnect.** Close the session(s) one by one. Expect: nothing
-   happens until the **last** session closes; when it does, the agent swaps its
-   binary and re-execs (the connection drops).
-3. **New version on reconnect.** Reconnect to the agent. Expect: the agent version
-   badge reports the new version, and any persistent daemon sessions are recovered.
-4. **Apply Now when idle.** With a staged-update banner shown and no active
-   sessions on the agent, press **Apply Now**. Expect: the update applies
-   immediately, the connection drops, and reconnecting shows the new version.
-
-5. **Dismiss.** Press **Dismiss** on the banner. Expect: the banner hides for the
-   session and no update is requested.
-
-### Backend-driven agent reconnect across a prolonged transport drop (#2476/#2512)
-
-**Now automated — no operator, no display (#2574).** The full-app agent-reconnect
-UI grade is an automated bridge system-test:
-[`tests/system/tests/test_agent_reconnect_ui.py`](../tests/system/tests/test_agent_reconnect_ui.py).
-It drives the real app through the complete cycle — connect a key-auth agent at a
-harness-controlled loopback sshd, open a shell, start a 1 Hz counter, **sever the
-transport in-process** (the deterministic `test_sever_agent_transport` bridge
-command from #2573), assert the **same** tab shows **Reconnecting** (never
-vanishes or spawns a duplicate), let it re-attach the **same** live session with
-the counter caught up **past** its pre-drop value (never restart-from-0), confirm
-the re-attached shell is interactive, then hold the endpoint down for a
-**permanent** sever that parks in Reconnecting and settles a clean **Disconnected**.
-
-It runs on the nightly `-m integration` lane:
-
-```bash
-./scripts/test-system-py.sh -m integration -k test_agent_reconnect_ui
-```
-
-On CI the grade carries a skip-guard (#2631): it needs a live app→agent SSH
-connect (not merely an `sshd` binary), so it stays skipped unless
-`TERMIHUB_LIVE_AGENT=1` is exported. The nightly `system-integration.yml` lane
-sets that flag in its `display-grades` job on all three legs. On **macOS**
-(#2579) and **Linux** (#2669, the intent of the closed #2634) the harness
-`LocalAgentSshd` stands up its own loopback `sshd` and deploys the release
-`termihub-agent` built earlier in the job, so the grade runs unattended there, no
-operator and no foreground display. The Linux leg was enabled once #2646 restored
-the headless ubuntu app launch. On **Windows** (CI-020, TIN-007) Win32-OpenSSH
-cannot run as a throwaway unprivileged process, so the job first provisions the
-[native sshd fixture](#native-sshd-fixture-macos-windows-linux--ci-020-tin-007)
-(a service, a local test user and a copy of the agent that user can run). The
-harness then drives it through `NativeSshdFixture` / `local_agent_endpoint()`,
-and the counter runs as a PowerShell loop, since the Windows agent's shell is
-PowerShell. Once a leg opts in, an unavailable endpoint **fails** the grade
-instead of skipping. A dev box (no `CI` env) always runs it.
-
-Unlike the retired manual grade it does **not** need a foreground display: the
-client reconnect engine was deleted (#2558) and reconnect is backend-driven
-(#2560), so the outcome cannot be webview-stalled, and the test-bridge
-anti-throttle (`macos_unthrottle`) keeps the projection-mirror overlay ticking
-headless. The retired operator harness (`scripts/internal/verify-agent-reconnect.sh`
-
-- `agent-reconnect-transport.sh`) and the log-based `test_agent_reconnect_live.py`
-  are removed. Correctness at the process level is additionally proven headlessly by
-  the Rust real-sshd continuity tests (#2553/#2573) and the frontend component tests
-  (`TerminalDisconnectOverlay.projection.test.tsx`, `Terminal.agent-reconnect.test.tsx`,
-  `Terminal.agent-reattach-scrollback.test.tsx`).
-
-### Layout GUI-smoke — live terminal scrollback survives a structural op (#2561)
-
-**Now automated — no operator, no display (#2561).** The "layout GUI-smoke
-matrix" grade (split / drag-to-edge / drag-to-center / cross-panel move / merge /
-tab-move-across-groups / group-switch, each asserting the **live terminal
-scrollback survives** the op) no longer needs a foreground display. After the
-stateless-UI inversion the scrollback lives only in the tab-id-keyed xterm;
-`TerminalHost` mounts one `<Terminal key={tab.id}>` spanning **every** tab group,
-and `SplitView`'s `TerminalSlot` merely reparents that DOM element into the
-visible panel. So "scrollback survives an op" reduces to a keying invariant: as
-long as the op preserves `tab.id`, the terminal must not be **remounted** (a
-remount is what disposes the live xterm and loses its scrollback).
-
-Two automated layers replace the manual grade:
-
-- **Per-PR CI, deterministic, headless** —
-  [`src/components/Terminal/TerminalView.layout-scrollback.test.tsx`](../src/components/Terminal/TerminalView.layout-scrollback.test.tsx)
-  renders the real `TerminalHost` with a `<Terminal>` stub that models the
-  xterm/scrollback lifecycle (mount acquires a scrollback token + sentinel;
-  unmount loses them), applies each of the **seven** ops as the tab-id-preserving
-  structural transition it produces, and asserts every surviving terminal keeps
-  the same token + sentinel — i.e. no remount, scrollback intact. A control case
-  (closing a tab) proves the probe detects a genuine teardown. The store-level
-  companion `src/store/appStore.layoutBridge.test.ts` ("E2 — tab id preservation
-  (no live-terminal remount)") pins the tab-id stability the invariant rests on.
-
-- **Nightly `-m integration`, real app over the bridge** —
-  [`tests/system/tests/test_layout_scrollback_ui.py`](../tests/system/tests/test_layout_scrollback_ui.py)
-  drives real **split**, **merge** (close panel), and **group-switch** ops in the
-  running app and reads the live buffer back through the registry
-  (`read_terminal` → `getTerminalContent`, the reconstructed xterm scrollback,
-  never pixels), asserting a printed sentinel survives each op. Drag-to-edge /
-  drag-to-center / cross-panel move / tab-move-across-groups share the identical
-  keyed render path and are proven per-op by the headless component suite above
-  (their drop-zone drag gestures have no stable testid to drive over the bridge).
-
-  ```bash
-  ./scripts/test-system-py.sh -m integration -k test_layout_scrollback_ui
-  ```
-
-### Coordinated desktop-push Update deploy (#1616)
-
-Verifies that triggering an **Update** (the desktop-push deploy, not just the
-self-update banner) on a **Coordinated**-strategy agent notifies the other hosts
-and lets them reconnect cleanly, on Unix, with a documented Windows fallback.
-Requires three desktops (A, B, C) and one **Unix** agent host, plus a Windows
-agent host for step 4. See PR #1636.
-
-1. **Coordinated Unix deploy notifies others.** Set the agent's update strategy to
-   **Coordinated**. Connect desktops A, B, C to the same Unix agent and open a
-   persistent session on B. From A, open the agent's **Update** dialog and confirm.
-   Expect: A stages the binary and reports how many other hosts were notified; B
-   and C show the "being updated by another host" notice, suspend, and
-   auto-reconnect; B's persistent session survives (detached daemon) and resumes.
-2. **Applies after the window.** The agent applies once B and C disconnect or the
-   10s coordination window closes; A's connection drops as the agent re-execs.
-   Reconnect from A → the agent version badge shows the new version.
-3. **No hard cut.** Confirm B and C never saw an unexplained disconnect — only the
-   coordinated notice + reconnect.
-4. **Windows fallback.** Repeat step 1 against a **Windows** agent host. Expect: the
-   Update falls back to the immediate deploy (shutdown + redeploy); other connected
-   hosts are surfaced by the connected-host guard warning ("Notify Others &
-   Update") exactly as today — the coordinated self-swap is not attempted on
-   Windows, and the update path is not regressed.
-
-### Command palette (#1484)
-
-Verifies the Cmd/Ctrl+P command palette that fuzzy-matches application commands
-and saved connections. Introduced in PR #1484.
-
-1. Press the palette shortcut (macOS **Cmd+P**, Windows/Linux **Ctrl+Shift+P**) →
-   a modal opens with an empty search box focused, listing commands first, then
-   saved connections.
-2. Type part of a command name (e.g. `new term`) → **New Terminal** ranks to the
-   top with its accelerator shown on the right. Press **Enter** → a new terminal
-   tab opens and the palette closes.
-3. Reopen the palette and type part of a saved connection's name or host → the
-   matching connection ranks to the top with its connection-type badge. Press
-   **Enter** → it connects exactly as a sidebar double-click would (including any
-   password/passphrase or credential-store-unlock prompt).
-4. With the palette open, use **Arrow Up/Down** to move the highlight and
-   **Esc** to close without running anything.
-
-### FTP insecure-connection warning & editor behaviors (#1338)
-
-Verifies the plaintext-FTP warning modal, the schema-conditional editor fields,
-and the TLS-mode → port auto-adjust. See PR #1338.
-
-**Editor — conditional fields.**
-
-1. Create a new connection and set Type to **FTP**.
-2. With TLS Mode = **None**, confirm the inline **cleartext warning callout**
-   appears in the Security section.
-3. Switch TLS Mode to **Explicit** or **Implicit** → the warning callout
-   disappears.
-4. Toggle **Use anonymous login** on → Username and Password rows hide; toggle
-   it off → they reappear.
-
-**Editor — port auto-adjust.**
-
-1. On a fresh FTP connection (Port shows 21), switch TLS Mode to **Implicit** →
-   Port becomes **990**. Switch back to **None**/**Explicit** → Port becomes
-   **21**.
-2. Type a custom Port (e.g. **2121**), then switch TLS Mode → the custom port is
-   **preserved** (not overwritten).
-
-**Connect — insecure warning modal.**
-
-1. Save a plain-FTP connection (TLS Mode = None) and connect (double-click).
-   Before any connection is attempted, the **Insecure Connection** modal appears.
-2. Click **Cancel** → nothing connects.
-3. Connect again, then click **Connect Anyway** → the connection proceeds and no
-   flag is persisted (the modal reappears on the next connect).
-4. Connect again, tick **Don't warn again for this connection**, then **Connect
-   Anyway** → the connection proceeds. Reconnect → the modal is **not** shown.
-5. Connect an **FTPS** (explicit or implicit) connection → the modal is **never**
-   shown.
-
-### Toast close button — light/dark rendering (#1504)
-
-Verifies the bottom-right toast close (X) button renders and is styled
-correctly in both themes. See PR #1504.
-
-1. Trigger any toast (e.g. save a connection to get a success toast, or perform
-   an action that fails to get a persistent error toast).
-2. Confirm a close (**X**) button appears in the top-right of the toast, using
-   the lucide `X` icon, not overlapping the message or action button.
-3. Hover the button → it shows a subtle background; **Tab** to it → a visible
-   focus ring appears; press **Enter/Space** or click → the toast dismisses
-   immediately.
-4. Switch between **light** and **dark** themes (Settings → Appearance) and
-   repeat: the icon, hover, and focus ring must remain legible in both.
-5. Repeat across variants (success, error, info). Loading toasts intentionally
-   have no close button; confirm the toast they resolve into (success/error)
-   does.
-
-### Credential vault export / import (PROD-063, #3432)
-
-Verifies the encrypted credential-vault backup round trip in the real app (the
-backend and dialogs are unit-tested; this checks the native save/open dialogs).
-
-1. Master Password mode with at least one saved connection password. Settings →
-   Security → **Export vault…** → enter the master password and a 12+ character
-   passphrase twice → **Export…** → save the file. Expect a success toast; open
-   the file in a text editor: no password or connection id is readable.
-2. Repeat with a wrong master password → inline "master password is incorrect",
-   no save dialog.
-3. Change one saved password, then **Import vault…** → choose the file → enter
-   a wrong passphrase → **Preview** → inline wrong-passphrase error.
-4. Enter the right passphrase → **Preview** shows 1 conflict; choose **Replace
-   them with the imported ones** → **Import** → success toast; connecting uses the
-   exported password again.
-5. Switch to OS Keychain mode: **Export vault…** is enabled and exporting asks
-   for Touch ID / Windows Hello / the polkit password (see the #3433 and #3535
-   steps below); in a Linux AppImage it is disabled with the "requires system
-   authentication" reason.
-   **Import vault…** with the same file works and the credentials land in the OS
-   keychain.
-
-### Shared named credentials (#3557, PROD-065)
-
-The model, resolution, migration and backup are unit-tested; this checks the real connect flow.
-
-1. Master Password mode. Settings → Security → **Shared Credentials** → **New shared credential…**
-   → name "Bastion", kind Password, the SSH password twice → **Create**. The list shows
-   "Password · Not used".
-2. Edit two SSH connections (password auth) to the same host: **Password source** → "Bastion".
-   The Password and Save fields disappear. Save both; the list shows "Used by 2 connections".
-3. Connect with each: no password prompt. Lock the store, connect again → unlock prompt first,
-   then it connects.
-4. Rotate "Bastion" to a wrong password → connecting prompts with "The shared credential was
-   rejected…" and no Save box; the shared credential is still listed. Rotate it back → both
-   connect without a prompt.
-5. **Delete** "Bastion" → refused, listing both connections. Switch one connection back to "This
-   connection's password", then the other; delete now succeeds.
-6. Switch the storage mode to OS Keychain (and back) with a shared credential in use → the
-   connections still connect without a prompt.
-
-### OS re-authentication and biometric unlock (#3433, PROD-064)
-
-The gate logic is unit-tested against a mock verifier; the real OS prompts can only be checked by
-hand. Run on a **real display** (the prompts are system UI). Use a Mac with Touch ID (or an Apple
-keyboard with Touch ID) and a Windows 10/11 machine with Windows Hello (PIN is enough; a fingerprint
-or face sensor for the biometric steps). Each step states the expected result.
-
-#### macOS — keychain export (Touch ID or login password)
-
-1. Settings → Security → storage **OS Keychain**, save one connection password. The Credential Vault
-   Backup section shows "…confirm with Touch ID or your Mac password each time you export";
-   **Export vault…** is enabled.
-2. **Export vault…** → passphrase twice → **Export…** → a system sheet reads _"termiHub is trying to
-   export your saved credentials."_ → touch the sensor → the save dialog opens; saving shows a
-   success toast.
-3. Repeat, but click **Cancel** in the system sheet → inline "System authentication was cancelled —
-   nothing was exported."; no save dialog, no file.
-4. Repeat, choose **Use Password…** in the sheet and enter the Mac login password → export succeeds
-   (the export policy accepts the password).
-5. Export twice in a row → you are prompted **both** times (no caching).
-6. Settings → Backup & Restore → **Back up everything…** → Credentials is checked with "You'll confirm
-   with Touch ID…" → **Save backup…** → Touch ID prompt → backup saves with "N credentials". Cancel
-   instead → inline error, nothing written.
-
-#### macOS — biometric unlock (Touch ID only)
-
-1. Storage **Master Password**, unlocked. Master Password Options shows **Unlock with Touch ID**
-   (hidden on a Mac without Touch ID). Turn it on → enter the master password → **Turn on** → Touch
-   ID sheet _"…turn on biometric unlock for your saved credentials"_ → touch → toggle stays on,
-   success toast. A wrong master password shows an inline error and **no** Touch ID sheet.
-2. Lock the store (status-bar lock) and connect a saved connection → the unlock dialog opens and the
-   Touch ID sheet appears immediately → touch → store unlocks, the connection proceeds.
-3. Lock again → in the sheet choose **Use Master Password** (or Cancel) → the dialog stays open with
-   no error; type the master password → unlocks. **Unlock with Touch ID** retries the sheet.
-4. System Settings → Touch ID → **add a fingerprint**. Lock, unlock with Touch ID → the dialog
-   explains "fingerprints or face data have changed … turned off"; the Touch ID button disappears;
-   the master password unlocks; the setting toggle is off.
-5. Re-enable, then **Change Master Password** → the toggle turns off (enrollment dropped). Re-enable,
-   switch storage to None → back to Master Password: the toggle is off.
-6. Re-enable, wait for the auto-lock timeout → the store auto-locks as before; unlocking with Touch
-   ID works.
-
-#### Windows — keychain export and biometric unlock (Windows Hello)
-
-1. Storage **OS Keychain**: **Export vault…** → passphrase → **Export…** → a Windows Security dialog
-   _"termiHub is trying to export your saved credentials."_ appears **in front of** termiHub →
-   verify (PIN / face / finger) → the save dialog opens. Cancel instead → inline "cancelled", no
-   file. With Windows Hello not set up for the user, the export button is disabled with "Windows
-   Hello is not set up for this user…".
-2. **Back up everything…** with Credentials → Windows Hello dialog → backup saves.
-3. Storage **Master Password**: **Unlock with Windows Hello** → master password → **Turn on** → Hello
-   dialog → verify → on. Lock → the unlock dialog opens the Hello dialog immediately → verify →
-   unlocked. Cancel → master password fallback works.
-4. **Change Master Password** → the toggle turns off. (Adding a fingerprint does **not** invalidate on
-   Windows — documented limitation.)
-
-#### Linux — keychain export via polkit (#3535)
-
-The polkit result mapping is unit-tested against a fake authority, and the real D-Bus path is
-automated headlessly (see [Linux polkit D-Bus path](#linux-polkit-d-bus-path-3553)); the real
-desktop agent dialog still needs a desktop session. Run once on **GNOME** (Ubuntu/Fedora Workstation — GNOME Shell is the agent) and
-once on **KDE Plasma** (`polkit-kde-authentication-agent-1`), installing termiHub from the **.deb**
-(Ubuntu/Debian) or **.rpm** (Fedora/openSUSE) package.
-
-1. After installing the package, `ls /usr/share/polkit-1/actions/com.termihub.app.policy` → the file
-   exists; `pkaction --action-id com.termihub.app.reauthenticate --verbose` → `implicit active:
-auth_self`, `implicit any: no`, `implicit inactive: no`.
-2. Storage **OS Keychain**, save one connection password. The Credential Vault Backup section says
-   to confirm with "your account password"; **Export vault…** is enabled. Export → passphrase twice
-   → **Export…** → the desktop's polkit dialog asks for **your own** password (not root's / an
-   admin's) with "termiHub is trying to export the credentials saved in your keyring…" → enter it →
-   the save dialog opens; saving shows a success toast.
-3. Repeat and click **Cancel** in the polkit dialog → inline "System authentication was cancelled —
-   nothing was exported."; no file. A wrong password makes the agent ask again; cancelling after it
-   also refuses the export.
-4. Export twice in a row → the polkit dialog appears **both** times (no retained authorization).
-5. **Back up everything…** with Credentials checked → polkit dialog → backup saves with "N
-   credentials".
-6. Run the **AppImage** (or remove the policy file with `sudo rm` and wait a second): **Export
-   vault…** and backup Credentials are disabled with "…termiHub's polkit action is not installed.
-   Install termiHub from the .deb or .rpm package…"; import still works.
-7. Storage **Master Password**: no "Unlock with…" toggle is shown (no biometric unlock on Linux); the
-   unlock dialog shows only the password field.
-
-### Unified backup and restore (PROD-068, #3509)
-
-Verifies the backup round trip in the real app, including the restart that applies a restore (the
-backend and dialogs are unit-tested; this checks the native dialogs and the restart).
-
-1. Master Password mode, with a few connections, a macro, a custom theme and a saved password.
-   Settings → **Backup & Restore** → **Back up everything…** → leave everything checked, enter the
-   master password and a 12+ character passphrase twice → **Save backup…** → save the file. Expect a
-   success toast; the file shows only the `termihub-backup` header and ciphertext.
-2. Delete a connection and the macro, and change the theme.
-3. **Restore…** → choose the file → enter the passphrase → **Preview**: every part is listed with
-   counts; Settings says it replaces the current settings.
-4. Keep the defaults (merge) → **Restore and restart**. termiHub restarts; the deleted connection
-   and macro are back, the theme is the backed-up one, and the saved password still connects.
-5. Switch to OS Keychain mode and open **Back up everything…**: on macOS/Windows Credentials is
-   checked and saving asks for Touch ID / Windows Hello / the polkit password first (see the #3433
-   and #3535 steps above); in a Linux AppImage it is disabled with the "requires system
-   authentication" reason and a backup of the rest still saves.
-
-### Backup of trusted host keys and plugins (#3515)
-
-Verifies the new backup parts in the real app (merge/replace, trust rules and the plugin swap are
-unit-tested; this checks the restart and the plugin manager after a restore).
-
-1. Connect once to an SSH host and accept its key; install a theme plugin and a native plugin, turn
-   native plugins on and trust the native plugin.
-2. **Back up everything…** with encryption on: "Trusted SSH host keys" and "Plugins" are listed.
-   Turn encryption off: both are unchecked and disabled ("Trust decisions — needs encryption").
-3. Uninstall both plugins and forget the SSH host key, then **Restore…** the backup (merge) →
-   **Restore and restart**. Expect: the SSH host connects without a host-key prompt; both plugins
-   are installed; the theme plugin is on; the native plugin is **off** and turning it on asks for
-   trust again.
-4. Accept a different key for the SSH host (or edit `ssh_known_hosts.json`), restore again with
-   merge: the preview notes the host is already trusted with a different key, offers no "Use
-   backup" choice, and after the restart the current key is kept.
-
-### Zoomed tab repaints terminal content immediately (#1823)
-
-Verifies that zooming a terminal tab repaints its content at the new size right
-away, with no need to scroll up/down to force a rerender. The fit + refresh path
-has a unit test (`TerminalRegistry.test.tsx` → `fitTerminal`), but the actual GPU
-repaint of the reparented terminal is visual and macOS-WKWebView specific, so it
-stays manual. See PR for #1823.
-
-1. Open a terminal tab and produce a full screen of visible content
-   (e.g. run `ls -la /usr/bin` or `seq 1 200`) so the viewport is not blank.
-2. Zoom the tab into the overlay (**Cmd+Shift+Enter** on macOS,
-   **Ctrl+Shift+Enter** elsewhere, or the tab's zoom control).
-3. **Expected:** the terminal content is visible in the zoom overlay
-   **immediately**, at the new size — you do **not** have to scroll up/down to
-   make it appear.
-4. Repeat several times (the original bug was intermittent) and with both zoom
-   in and out (Esc / the close button to un-zoom). Content must always render
-   without a manual scroll.
-5. Regression check: dragging the split-view splitter to resize a terminal must
-   still reflow and repaint as before.
-
-### OSC 133 command marks: gutter marks and prompt jumps (#3415)
-
-The OSC 133 parser, marker tracking, navigation, selection and the per-shell
-snippets are unit-tested (`src/services/commandMarks.test.ts`,
-`core/src/session/shell.rs`), but the gutter mark's rendering in the `.xterm`
-padding and the jump highlight are visual, so they stay manual.
-
-1. Open a local **zsh** or **bash** terminal (Shell Integration on — the default).
-2. Run `true`, `false`, and `ls /nonexistent`.
-3. **Expected:** a thin **green** bar sits in the left padding next to the
-   `true` prompt, **red** bars next to `false` and `ls /nonexistent`; no bar next
-   to the current (unfinished) prompt. Text is not overlapped.
-4. Run `seq 1 200`, then press **Cmd+Up** (macOS) / **Ctrl+Shift+Up**: the view
-   scrolls to the `seq` prompt and its row is briefly highlighted. Press again to
-   reach earlier prompts; **Cmd+Down** / **Ctrl+Shift+Down** walks back and
-   finally returns to the bottom.
-5. Command palette → **Copy Last Command Output** and paste elsewhere:
-   **Expected:** exactly `1`…`200`, without the prompt or command line.
-6. Settings → Terminal → **Command Status Marks** off: the bars disappear
-   immediately; on: they come back.
-7. Open a shell with Shell Integration **off** (or `sh`): **Expected:** no bars,
-   the palette entries are disabled, and Cmd+Up / Ctrl+Shift+Up reach the shell.
-
-### Terminal output stays in order under scrolling output (#1849)
-
-Verifies that command output paints top-to-bottom in buffer order, with no later
-prompt/command line spliced between an earlier command's output lines. The
-symptom (from image001.png) was a `git status` whose two trailing prompt lines
-were painted in the middle of the untracked-files list, clearing only after the
-tab was resized. The output-flush path forces a full-viewport `xterm.refresh`
-after each write (unit-tested in `Terminal.output-repaint.test.tsx`), but the
-underlying stale-row repaint is renderer/WebView specific — it was reported on
-**Windows local CMD (ConPTY)** — so this stays manual.
-
-Run on **Windows** against a **local CMD** session (the ConPTY path):
-
-1. Open a local CMD terminal tab and `cd` into a directory with **many untracked
-   files** in a fresh git repo (e.g. `git init` in a project folder), so a
-   `git status` produces a long "Untracked files:" list that scrolls the
-   viewport.
-2. Run `git status`, then immediately press Enter a couple of times to emit a
-   few bare prompt lines right after it.
-3. **Expected:** the untracked-files list renders as one contiguous block, and
-   the bare prompt lines appear **after** the whole `git status` output — never
-   spliced into the middle of the file list — **without** resizing the tab.
-4. Repeat a few times (the original glitch was intermittent) and try other
-   scrolling output (e.g. `dir /s`, `type` of a large file). Rows must always
-   stay in order.
-5. Regression check: resizing the tab/window and high-throughput output
-   (e.g. a large file dump) must still render and scroll normally with no
-   visible slowdown.
-
-### Terminal inline images render (SIXEL / iTerm2, PROD-057, PR #3442)
-
-The image addon's wiring, limits and lifecycle are unit-tested
-(`inlineImages.test.ts`, `Terminal.inline-images.test.tsx`), but actual pixel
-rendering needs a real WebView, so it stays manual.
-
-1. In a local shell tab, install a SIXEL encoder (`brew install libsixel chafa`
-   or `apt install libsixel-bin chafa`) and run `img2sixel <some.png>`.
-   **Expected:** the picture renders inline, followed by the prompt.
-2. Run `chafa -f sixel <some.png>` and an iTerm2 `imgcat <some.png>`.
-   **Expected:** both render as pictures, not escape-sequence noise.
-3. Turn **Settings > Terminal > Inline Images** off and repeat step 1.
-   **Expected:** no image renders and the terminal stays usable.
-4. Turn it back on, render an image, then scroll it out of view and back.
-   **Expected:** it scrolls with the text, on both WebGL and DOM renderers.
-5. Disconnect and reconnect the tab. **Expected:** the text scrollback is
-   replayed; the earlier image is gone (by design); the terminal stays usable.
-
-### Shipped CSP: no violations in the editor, terminal and plugin UI (WA-CI-035, #3627)
-
-The CSP only applies to a **production** build (`./scripts/build.sh`); `./scripts/dev.sh` loads
-the Vite dev server without it, so a dev launch cannot confirm this. The allow-list is guarded by
-`src/security/cspConfig.test.ts`, and the nightly `tests/system/tests/test_csp.py` checks terminal
-boot on Linux/Windows. The #3627 review exercised xterm (theme styles, SIXEL WASM decoder, iTerm2
-blob images), Monaco with Shiki (Oniguruma WASM), sonner and a Radix dialog in headless Chrome,
-using the production bundle and the shipped policy. It found no document-level violations.
-WebKit (macOS/Linux) and the plugin origin still need a real build:
-
-1. Build the app with `./scripts/build.sh` and launch the installed or bundled app on each OS.
-   Open the Log Viewer. **Expected:** no `csp` entries at any point in the steps below.
-2. Open a local shell tab, run a command, then `img2sixel <some.png>`. **Expected:** the terminal
-   is coloured, the cursor is visible and the picture renders.
-3. Open a local file in the editor (e.g. a `.sh` or `.yaml`). **Expected:** it is syntax-coloured
-   (Shiki loaded its WASM engine), and a toast and a dialog render as overlays.
-4. Turn on **Settings > Plugins > Enable Frontend (JavaScript) Plugins** and install the
-   `examples/plugins/clock-widget` plugin. **Expected:** the clock widget appears in the status
-   bar. On Windows this checks `http://plugin.localhost`, and on macOS/Linux `plugin://localhost`.
-5. With the Web Inspector / DevTools attached (debug build), open the editor again.
-   **Expected:** no `Refused to …` / `violates the following Content Security Policy` messages,
-   apart from the known Monaco `editorWorkerService` worker error tracked in #3632.
-
-### Browse Plugins and Install from URL (PROD-048, #3715)
-
-The fetch limits, checksum-before-parse, redirect and oversize rejection, and the hand-off to the
-install pipeline are covered against a local HTTP fixture server in
-`src-tauri/src/commands/plugin_index_tests.rs` and `plugin_fetch_tests.rs`; the Browse UI in
-`PluginCatalogSettings.test.tsx`. A real HTTPS round trip stays manual:
-
-1. Open **Settings > Plugins > Browse Plugins**. **Expected:** nothing is fetched yet; the Plugin
-   Index URL field shows the default as its placeholder.
-2. Click **Load plugin index**. **Expected:** the default index loads and says it lists no plugins
-   yet (it only exists on `main`; before the first release merge it reports HTTP 404).
-3. Enter `http://example.com/index.json` as the index URL. **Expected:** an inline "Only https://
-   URLs are allowed." error and Load is disabled. Click **Use default index** after entering a
-   valid custom HTTPS URL to confirm the reset.
-4. Host a packed example plugin (e.g. `examples/plugins/clock-widget`) at any HTTPS URL (a GitHub
-   release asset works), and compute `shasum -a 256` of it. Under **Install from URL**, paste the
-   URL with a wrong checksum. **Expected:** an error toast about the SHA-256 and no install dialog.
-5. Repeat with the correct checksum. **Expected:** the normal install dialog opens with the
-   untrusted/unsigned banner and permission list; nothing is installed until you confirm.
-
-### Right-click paste inserts the clipboard exactly once (Windows/WebView2, #2595)
-
-A single right-click paste in the terminal used to insert the clipboard **twice**
-on Windows. Two paste routes fired for one gesture: termiHub's own right-click
-quick action (`handleQuickAction` → `pasteToTerminal`, debounced) **and** a native
-`paste` event that WebView2/RDP injects into xterm's focused helper `<textarea>`,
-which xterm re-emits as terminal input via `onData` — bypassing termiHub's paste
-debounce and never appearing in the Log Viewer. The fix suppresses xterm's native
-textarea paste (a capture-phase listener that `preventDefault` +
-`stopImmediatePropagation`), so the only paste route is termiHub's
-`pasteToTerminal`. The suppression is unit-tested in
-`Terminal.native-paste.test.tsx`, but the native WebView2/RDP paste event cannot
-be reproduced in CI, so the end-to-end confirmation stays a **manual Windows step**.
-
-Run on **Windows** (native, and ideally also over Remote Desktop / mstsc):
-
-1. Copy a distinctive single-line string to the clipboard (e.g. `echo-once-2595`).
-2. Open any terminal tab (local shell is fine), focus it, and **right-click once**
-   with **no text selected**.
-3. **Expected:** the clipboard string is inserted **exactly once** on the command
-   line — never doubled (`echo-once-2595`, not `echo-once-2595echo-once-2595`).
-4. Regression checks — each must still paste exactly once:
-   - **Ctrl+V** in the terminal.
-   - The context-menu **Paste** item.
-   - Right-click **with text selected** must **copy** the selection (not paste).
-5. Optionally repeat over an RDP session, where the duplicate was most reliably
-   reproduced.
-
-### Connections sidebar renders fully on first paint (#1828)
-
-Verifies that the Connections sidebar lays out completely on launch, with no
-clipped/partial rendering that only clears after resizing the tab or window.
-The underlying flex-sizing fix has a unit test (`useSectionResize.test.tsx`),
-but the residual mis-paint was macOS-WKWebView specific, so this stays manual.
-See PR for #1828.
-
-Requires the **Remote Agents** section (enable experimental features in
-Settings) with at least one saved remote agent, since the glitch appeared as
-those sections mounted after settings/agents loaded.
-
-1. Fully quit and cold-launch the app (do not just reload) so the sidebar mounts
-   from scratch while settings and remote agents load.
-2. **Expected:** the Connections sidebar renders fully and correctly on the
-   first paint — group headers with their chevrons **and** titles, the filter
-   box, and every connection/agent row are laid out at the right width, with no
-   truncated text, stray chevrons, cut-off search box, or clipped rows.
-3. You must **not** need to resize the tab or window to make the sidebar look
-   right.
-4. Repeat a few times (the original bug was intermittent) and at different window
-   sizes, including a narrow window.
-5. Regression check: dragging the sidebar resize handle and the inner
-   section-resize handles (between Connections and Remote Agents, and between
-   expanded agents) must still resize as before.
-
-### Agent binary SHA-256 checksums (release dry-run, #1350)
-
-Verifies that every published agent binary has a matching `*.sha256` asset and
-that the desktop rejects a tampered binary before install. See PR #1350.
-
-**Release-asset presence (release dry-run).**
-
-1. Trigger a release (or inspect the most recent tagged release) so the
-   `agent-binaries-linux`, `agent-binaries-macos`, and `agent-binaries-windows`
-   jobs in [`release.yml`](../.github/workflows/release.yml) run.
-2. On the GitHub Release page, confirm **each** agent artifact has a sibling
-   `.sha256` asset: `termihub-agent-linux-x64`, `-linux-arm64`, `-linux-armv7`,
-   `-macos-arm64`, `-macos-x64`, `termihub-agent-windows-x64.exe`, and
-   `termihub-agent-windows-arm64.exe` each with a matching `<name>.sha256`.
-3. Download one binary and its sidecar and verify locally:
-   `sha256sum -c termihub-agent-linux-x64.sha256` (macOS: `shasum -a 256 -c …`)
-   → prints `OK`.
-
-**Local build sidecars.**
-
-1. Run `./scripts/build-agents.sh --native --dev` (or a cross build).
-2. Confirm a `<binary>.sha256` sidecar sits next to each built agent binary under
-   `target/<triple>/<profile>/` and that `sha256sum -c` on it passes.
-
-**Tampered-binary rejection (desktop).**
-
-1. Let the desktop resolve/deploy an agent once so `~/.cache/termihub/agent-binaries/<version>/termihub-agent-<arch>`
-   and its `.sha256` sidecar are populated.
-2. Corrupt the cached binary without updating the sidecar
-   (e.g. `printf 'x' >> …/termihub-agent-<arch>`).
-3. Deploy/redeploy the agent again → the deploy must **fail** with a checksum
-   verification error naming the expected vs. computed digest, and the corrupted
-   binary must **not** be uploaded/executed on the remote host.
-4. Delete the tampered cache entry; the next deploy re-downloads, re-verifies,
-   and succeeds.
-
-### Keyboard-shortcuts menu discoverability (#1353)
-
-Verifies the shortcuts reference is reachable from a visible menu and that
-Settings-menu rows show their accelerators. The menu item and accelerator
-rendering are covered by unit tests; this manual check confirms the accelerator
-strings render correctly per platform and reflect a user rebinding. See PR #1487.
-
-1. Open the Settings wheel menu in the Activity Bar.
-2. Confirm a **Keyboard Shortcuts** row appears with its accelerator on the
-   right (`Cmd+K Cmd+S` on macOS, `F1` on Windows/Linux), and the **Settings**
-   row shows `Cmd+,` / `Ctrl+,`.
-3. Click **Keyboard Shortcuts** → the keyboard-shortcuts overlay opens.
-4. In Settings, rebind "Open Settings" to a different combo, then reopen the
-   Settings menu → the Settings row accelerator reflects the new binding.
-
-### Docker/Podman directory-mount container spawn — Podman variant (#1372)
-
-The Docker path is covered by the `docker_spawn` integration test
-(`core/tests/docker_spawn.rs`, runs with `--features docker` against a reachable
-daemon). The Podman variant is manual because CI has no Podman daemon. See PR #1372.
-
-**Podman new-container spawn with a mounted directory.**
-
-1. With a working `podman` machine running, create a scratch directory on the
-   host and drop a marker file in it (e.g. `echo hi > ~/tmp/mnt-check/hello.txt`).
-2. Spawn a Podman "new container" for that directory (via the CLI path once SI-3
-   lands, or by driving `resolve_container_spawn` + create session with the
-   returned settings and `runtime: "podman"`). Use a tagged image such as
-   `alpine:3`.
-3. Confirm the shell opens **already `cd`'d into `/workspace`** (`pwd` prints
-   `/workspace`) and that the marker file is visible (`cat hello.txt` prints the
-   content) — proving the host directory is bind-mounted.
-4. Close the session/tab. Run `podman ps -a` and confirm the `termihub-…`
-   container is **still present in an exited state** (stopped, not removed).
-5. Restarting that container (`podman start`) and re-attaching should still see
-   the mounted directory. Remove it manually to clean up.
-
-### Container spawn opens a Spawned Docker tab (frontend consumption, #1446)
-
-The frontend wiring (event listener → `resolve_container_spawn` → open Docker
-tab → "Spawned" badge → separate Open Connections tracking → confirmation toast)
-is covered by unit tests (`src/hooks/useSpawnRequests.test.ts`,
-`src/components/Terminal/Tab.spawned-badge.test.tsx`,
-`src/components/OpenConnections/OpenConnectionsModal.spawned.test.tsx`). A live
-end-to-end run needs Docker + a built app (PR #1464), so the full path below is
-manual.
-
-**Container spawn from the CLI opens a bind-mounted Spawned tab.**
-
-1. With a working Docker daemon and the built app already running, create a
-   scratch directory and drop a marker file (e.g. `echo hi > ~/tmp/spawn/hi.txt`).
-2. From another terminal run
-   `termiHub spawn --location ~/tmp/spawn --container-image alpine:3`.
-3. Confirm a **new Docker terminal tab** opens in the running app, titled
-   `Container: alpine:3 (Spawned)`, and that a brief **confirmation toast**
-   reports the spawn (mentions the location).
-4. Confirm the tab shows a **"Spawned"** badge next to its title.
-5. In the terminal, `pwd` prints `/workspace` and `cat hi.txt` prints `hi` —
-   proving the host directory is bind-mounted at the working directory.
-6. Open **Settings → Open Connections**. Confirm a dedicated **Spawned
-   Containers** section lists the container (with a `spawned` badge) and that it
-   is **not** also listed under **Local Sessions**. Its **Kill** action stops the
-   backend session.
-7. (Boundary) Run `termiHub spawn --location ~/tmp/spawn` with **no**
-   `--container-image`. Confirm this now opens a **local shell tab** `cd`'d to the
-   directory (the SI-2 path below), not a container.
-
-### Session Picker dialog (SI-3, #1366)
-
-Rendering, section visibility, the inline container form, the confirm payload and
-cancel are covered by unit tests (`src/components/Spawn/SpawnPicker.test.tsx`,
-`src/hooks/useSpawnRequests.test.ts`), and the resolution of a picked target by
-Rust unit tests (`src-tauri/src/commands/spawn.rs`). What cannot be automated is
-**cross-platform option enumeration** — the picker reports whatever the host
-actually has — so the steps below are manual and platform-specific.
-
-**The picker enumerates this host's real targets.**
-
-1. With the built app already running, run `termiHub spawn --location ~/tmp/spawn --pick`
-   from another terminal.
-2. Confirm the app window is **focused** and the **Session Picker** opens — and
-   that **no session opens yet**.
-3. Confirm the header shows the resolved path (`~/tmp/spawn`, expanded).
-4. Confirm the **Local shells** section lists the shells this host really has and
-   nothing it does not (compare against the shells offered when creating a local
-   connection). The first is preselected.
-5. Confirm section presence matches the host:
-   - **WSL** — listed with each installed distribution on Windows; **absent
-     entirely** on macOS/Linux.
-   - **Docker** / **Podman** — a section appears only when that runtime's daemon
-     responds. Stop the Docker daemon, reopen the picker, and confirm the Docker
-     section is gone (not merely disabled).
-6. Select a **non-default** shell (e.g. `zsh` when `bash` is preselected) and
-   press **Open**. Confirm the tab opens that shell (`echo $0`), `cd`'d to the
-   target — not the system default.
-7. (Windows) Select a WSL distribution and press **Open**. Confirm the session
-   opens **that** distribution (`cat /etc/os-release`) at the `/mnt/`-converted
-   path, even when a saved WSL connection names a different one.
-
-**The inline container form and runtime pick.**
-
-1. Reopen the picker and select **Docker → New container…**. Confirm the row
-   expands an inline **Image** dropdown (listing local images plus `ubuntu:22.04`)
-   and a **Mount as** field defaulting to `/workspace`.
-2. Confirm selecting a different section **collapses** the form again.
-3. Pick an image, press **Open**, and confirm the container opens with the host
-   directory bind-mounted at the mount path (`pwd`, then read a marker file).
-4. (Both runtimes installed) Repeat via the **Podman** section and confirm the
-   container really runs under **Podman** (`podman ps` shows it; `docker ps` does
-   not) — auto-detection would otherwise have preferred Docker.
-
-**Cancel closes cleanly.**
-
-1. Reopen the picker and press **Cancel** (then repeat with **ESC**, and again by
-   clicking the scrim).
-2. Confirm the picker closes each time, **no session opens**, and no toast fires.
-
-### External local/WSL/SSH spawn opens a shell tab (frontend consumption, #1365)
-
-The wiring (spawn event / cold-start drain → `resolve_shell_spawn` → focus window
-→ open local shell tab `cd`'d to the target → confirmation toast) is covered by
-unit tests (`src-tauri/src/spawn/handler.rs`, `src/hooks/useSpawnRequests.test.ts`).
-A live end-to-end run needs a built app, so the path below is manual (window focus
-per-OS, especially Wayland, is manual-only). Referenced by PR #1508.
-
-**Spawn a local shell at a directory / file / missing path.**
-
-1. With the built app already running, create a scratch directory with a file
-   (e.g. `mkdir -p ~/tmp/spawn && echo hi > ~/tmp/spawn/hi.txt`).
-2. From another terminal run `termiHub spawn --location ~/tmp/spawn`.
-3. Confirm the termiHub **window comes to the foreground**, a **new local shell
-   tab** opens titled `spawn (Spawned)` with a **"Spawned"** badge, and a brief
-   **confirmation toast** reports the shell was opened (mentions the location).
-4. In the terminal, `pwd` prints the target directory — proving the shell opened
-   `cd`'d there.
-5. (File) Run `termiHub spawn --location ~/tmp/spawn/hi.txt`. Confirm the shell
-   opens in the **parent directory** (`~/tmp/spawn`).
-6. (Missing) Run `termiHub spawn --location ~/tmp/does-not-exist`. Confirm the
-   shell opens in your **home directory** and an **info toast** warns the path was
-   not found.
-7. (Windows/WSL) With `--kind wsl`, confirm the WSL shell opens at the target
-   converted to its `/mnt/<drive>/…` path.
-8. (Cold start) Quit the app, then run `termiHub spawn --location ~/tmp/spawn`.
-   Confirm the app launches and, once loaded, focuses and opens the shell tab at
-   the target (the queued cold-start spawn is processed post-UI-ready).
-
-### External WSL/SSH spawn opens its real backend (#1511)
-
-The settings mapping (WSL: distribution + `/mnt/` `startingDirectory`; SSH:
-saved-connection settings + post-connect `cd`) is covered by unit tests
-(`src-tauri/src/spawn/handler.rs`, `src-tauri/src/commands/spawn.rs`,
-`src/hooks/useSpawnRequests.test.ts`). A live end-to-end run needs a real WSL
-distro / SSH host and a built app, so the paths below are manual. Referenced by
-PR #1529.
-
-**WSL spawn opens a distribution at the converted path (Windows).**
-
-1. With a WSL distro installed and the built app running, from a Windows shell run
-   `termiHub spawn --kind wsl --location C:\Users\<you>\project`.
-2. Confirm a **new WSL tab** opens (titled `project (Spawned)`, with the
-   **"Spawned"** badge) running inside the distribution — `uname -a` shows Linux.
-3. In the terminal, `pwd` prints `/mnt/c/Users/<you>/project` — proving the
-   Windows path was converted to its `/mnt/` form and the distro started there.
-4. (Named distro) With a saved WSL connection whose distribution is e.g. `Debian`,
-   run the same command with `--connection <that-connection-id>` and confirm the
-   session uses **that** distribution rather than the default distro.
-
-**SSH spawn opens the saved connection and `cd`s into the target.**
-
-1. With a saved SSH connection (note its id, e.g. `Prod/Web`) and the built app
-   running, run `termiHub spawn --kind ssh --connection Prod/Web --location /srv/app`.
-2. Confirm a **new SSH tab** opens (titled `<connection name> (Spawned)`, with the
-   **"Spawned"** badge) and connects to that host — **not** a local shell.
-3. Once connected, confirm the session has `cd`'d into `/srv/app` (`pwd` prints it)
-   — the `cd` runs after connect since SSH cannot set a start cwd at spawn.
-4. (Error) Run the same command with `--connection does-not-exist`. Confirm an
-   **error toast** reports the connection was not found and **no** tab opens
-   (no silent local-shell fallback). Likewise a `--connection` pointing at a
-   non-SSH connection reports "not an SSH connection".
-
-### Spawned container grouping survives tab close (#1466)
-
-See PR #1495. The spawned origin is now recorded on the backend session
-registry (`SessionInfo.spawned` → `LocalSessionInfo.spawned`), not only on the
-frontend tab, so the **Open Connections** panel groups **Spawned Containers**
-from the authoritative backend marker. This keeps an orphaned spawned container
-(tab closed, backend session leaked) visible and killable in its own section
-instead of silently falling back into **Local Sessions**. Requires Docker/Podman.
-
-1. Spawn a container (CLI `termiHub spawn --location <dir>` / context-menu "new
-   container", or any flow that opens a spawned Docker tab). Confirm the tab
-   carries the **Spawned** badge.
-2. Open **Open Connections** (Settings wheel → Open Connections). Confirm the
-   container appears under **Spawned Containers** (not **Local Sessions**), with a
-   `spawned` badge, and is not double-listed.
-3. **Close the spawned tab** but leave the container's backend session running
-   (e.g. the container keeps running / the session leaks). Re-open **Open
-   Connections**.
-4. Confirm the container is **still listed under Spawned Containers** — it must
-   NOT have moved into **Local Sessions** — and that its **Kill** button (and the
-   section **Kill All**) still terminates it. After killing, the row disappears.
-
-### Shell-integration registration — per-OS file-manager entries (SI-5/6/7)
-
-The "Open in termiHub" **registration** subsystem (`src-tauri/src/spawn/registry.rs`, epic #1363)
-is heavily unit-tested for the artefacts it writes and losslessly removes — Windows registry keys
-(#1368), macOS `.workflow` bundles / `NSServices` (#1369/#1409), and Linux `.desktop` / Nautilus /
-KDE / Thunar files (#1370/#1397). What **cannot** be automated is whether a real OS file manager
-actually surfaces the entry on right-click, the full install → click → uninstall round-trip through
-that file manager, and the binary-path **staleness banner**. Those are consolidated here as one
-per-OS manual pass. All registration is **user-level — it must never prompt for admin/elevation.**
-See the concept
-[`shell-context-menu-integration.html`](../docs/concepts/implemented/shell-context-menu-integration.html)
-and [ADR-13](architecture.md#adr-13-multi-instance-with-a-spawn-ipc-rendezvous).
-
-**Common setup (all platforms).**
-
-1. Build and launch the app. Open **Settings → Shell Integration**.
-2. Ensure at least one entry exists (e.g. the default "Open in termiHub", target: folders). Add a
-   second named entry so the multi-entry surfaces are exercised.
-3. Click **Install** (or run `termiHub install-shell-integration` from a terminal). Confirm it
-   completes **without any elevation/UAC/sudo prompt** and the panel shows the entries as installed.
-
-**Windows (SI-5, #1368).**
-
-1. After installing, right-click a **folder** in Explorer → confirm an **Open in termiHub** entry
-   (with the app icon) appears; right-click **empty space inside a folder** (Background) and the
-   **folder itself** per the entry's targets.
-2. With **three or more** entries configured, confirm they collapse into a single **cascading
-   submenu** rather than cluttering the top level.
-3. Mark an entry **Extended** in settings and re-install → it appears only under
-   **Shift**+right-click, not the normal menu.
-4. Click an entry → the running termiHub window comes to the foreground and opens a session tab
-   `cd`'d into that directory (per the spawn manual tests above).
-5. Click **Uninstall** (or `termiHub uninstall-shell-integration`) → confirm **every** entry is gone
-   from all three right-click contexts and no orphan `HKCU\Software\Classes\…\shell\termihub_*` keys
-   remain (`reg query` under `Directory`, `Directory\Background`, `*`).
-
-**macOS (SI-6, #1369/#1409).**
-
-1. After installing, in **Finder** select a folder → **right-click → Quick Actions** (or the
-   **Services** submenu) → confirm the **Open in termiHub** entry appears. It may require toggling it
-   on once in **System Settings → Keyboard → Keyboard Shortcuts → Services**.
-2. Trigger it → the running app focuses and opens a tab `cd`'d into the selection; verify the
-   app-level entry also appears in the application **Services** menu (served by the native
-   `NSServices` provider), not only as a per-entry Quick Action.
-3. Click **Uninstall** → confirm the `~/Library/Services/*.workflow` bundles termiHub created are
-   removed and the Quick Action disappears from Finder (a Finder/`pbs` refresh or re-login may be
-   needed for the menu cache).
-
-**Linux (SI-7, #1370/#1397).**
-
-1. After installing on a box with **Nautilus (GNOME)**, **Dolphin/KDE**, and/or **Thunar (XFCE)**,
-   right-click a folder in each installed file manager → confirm the **Open in termiHub** action
-   appears. Only file managers actually detected on the machine should have been written to.
-2. Trigger it → the running app focuses and opens a tab `cd`'d into the directory.
-3. Confirm the generated launchers reference the themed `termihub` icon and that the XDG
-   `.desktop` "Open With" entry also lists termiHub.
-4. Click **Uninstall** → confirm the termiHub-owned files are removed
-   (`~/.local/share/applications/termihub-*.desktop`, Nautilus scripts, KDE
-   `kservices5`/`kio/servicemenus` entries, and termiHub's actions removed from Thunar's shared
-   `uca.xml`) while **foreign** entries in `uca.xml` are left intact.
-
-**Binary-path staleness banner (all platforms, #1367/#1371).**
-
-1. With shell integration installed, **move or rename** the app binary/bundle (or copy a portable
-   install to a new folder and launch it from there) so the running exe path no longer matches the
-   `registeredExePath` written at install time.
-2. Launch termiHub from the new location → confirm a **reinstall banner** appears noting the
-   registration points at a stale path.
-3. Re-install from the banner (or Settings) → the banner clears and the context-menu entries now
-   launch the app from its new location. This is the documented mitigation for the portable-mode
-   tension (registration writes absolute exe paths into system-global locations).
-
-### Native-dialog → Modal migration (#1348)
-
-Verifies the three flows that previously used native `window.prompt` /
-`window.confirm` now use the shared Modal / inline-edit affordances. See PR
-for #1348.
-
-**File rename (inline).**
-
-1. Open the file browser on a local or SFTP directory containing a file with an
-   extension (e.g. `report.pdf`).
-2. Select the file and press **F2** (or right-click → **Rename**). The row turns
-   into an inline text input — no native prompt appears.
-3. Confirm the base name (`report`) is pre-selected while the extension
-   (`.pdf`) is preserved. Type a new base name and press **Enter** → the file is
-   renamed and a success toast appears. On error a recoverable error toast is
-   shown.
-4. Start another rename and press **Escape** (or click away with no change) →
-   the edit is abandoned and no rename occurs.
-
-**File browser virtual scrolling — large directories (#1514).**
-
-1. Open the file browser on a directory with several thousand entries (e.g. a
-   large FTP/SFTP listing, or a local folder with a few thousand files).
-2. The list appears instantly and scrolls smoothly top-to-bottom with no freeze
-   or jank; only the visible rows are in the DOM (inspect the element tree — the
-   row count stays small and changes as you scroll). A single scrollbar (the
-   shared/global style) is used — no nested or second scrollbar appears.
-3. Multi-select still works: click a row, then Shift-click a far-off row (scroll
-   to reach it) → the whole range is selected; Ctrl/Cmd-click toggles individual
-   rows; the "N selected" indicator reflects the full selection. Ctrl/Cmd-A
-   selects the entire directory.
-4. Keyboard navigation still works: click a row, then use ArrowDown/ArrowUp,
-   Home/End, and type-ahead. Focus follows the active row and **End** (or a
-   type-ahead match far down) scrolls the previously off-screen focused row into
-   view and keeps focus on it.
-5. Drag a file from the OS (Finder/Explorer) onto the list → the upload/copy
-   drop still works. Start an inline rename (F2) on a row → the inline editor
-   appears in place and commit/cancel behave as before. Trigger a transfer and
-   confirm the transfer footer still renders below the list.
-
-See PR for #1514.
-
-**File multi-delete outcome reporting (#1394).**
-
-1. Open the file browser on a local or SFTP directory. Prepare at least one entry
-   that cannot be deleted (e.g. a read-only / permission-protected file) alongside
-   ordinary files.
-2. Multi-select several files including the undeletable one (Ctrl/Cmd-click), then
-   right-click → **Delete (N items)** and confirm the dialog.
-3. The batch does **not** abort on the first failure: the deletable files are
-   removed and a single toast reports the outcome — "Deleted N items, M failed:
-   \<names>" naming the failed entries. When every item deletes, a "Deleted N
-   items" success toast appears instead.
-4. Delete a **single** undeletable file (right-click → **Delete**, confirm) → an
-   error toast naming the file appears instead of failing silently; deleting a
-   normal single file shows a success toast.
-
-**Wake-on-LAN "Save Current".**
-
-1. Open **Network Tools → Wake-on-LAN**, enter a valid MAC address, then click
-   **Save Current**. A themed modal opens (no native prompt).
-2. Confirm the modal shows a **Device name** field and the MAC address; an
-   invalid MAC shows an inline error and the **Save** button is disabled until a
-   name is present and the MAC is valid.
-3. Enter a name and confirm → the device is saved, the modal closes, and a
-   success toast appears; the saved-devices list refreshes.
-
-**Port Scanner large-scan warning.**
-
-1. Open **Network Tools → Port Scanner**. Enter a single host and a small port
-   list and click **Run** → the scan starts immediately (no modal).
-2. Enter a large port range (e.g. `1-2000`) or a CIDR block (e.g. `10.0.0.0/24`)
-   with a few ports and click **Run** → a themed confirm modal appears (no
-   native confirm) stating the approximate probe count.
-3. **Cancel** → the scan does not start. Re-run and **Start scan** → the scan
-   proceeds.
-
-### File browser rename / new-file / new-folder / copy feedback (#1399)
-
-Verifies every FileBrowser mutating/clipboard action gives success/error
-feedback instead of resolving silently or only logging to the console. See PR
-for #1399.
-
-**New folder / New file.**
-
-1. Open the file browser on a local or SFTP directory. Click **New Folder**
-   (toolbar or background right-click → **New Folder**), type a name, press
-   **Enter** → the folder is created and a `Created folder "<name>"` success
-   toast appears.
-2. Repeat with **New File** → a `Created file "<name>"` success toast appears.
-3. Trigger a failure (e.g. create a folder whose name already exists, or in a
-   read-only directory) → a recoverable error toast naming the target appears
-   instead of a silent no-op.
-
-**Copy Name / Copy Path.**
-
-1. Right-click a file → **Copy Name** → a `Copied name` toast appears and the
-   file's name is on the clipboard (paste to verify).
-
-2. Right-click a file → **Copy Path** → a `Copied path` toast appears and the
-   file's full path is on the clipboard.
-
-### File browser drag-to-move (#3454, PROD-006)
-
-Covers the pointer gesture, which the jsdom unit tests cannot hit-test.
-
-1. Open the file browser on a local directory that has a sub-folder `docs` and a
-   file `a.txt`. Drag `a.txt` onto the `docs` row → while you hover, `docs` has
-   an accent highlight and a floating chip reads `Move "a.txt"`. Release →
-   `a.txt` moves into `docs` (a `Moved "a.txt" to …` toast appears).
-2. Drag a file onto `docs` and hold **Alt/Option** before releasing → the chip
-   switches to `Copy …` and the file is copied (the original stays).
-3. Ctrl/Cmd-click two files, then drag one of them onto a parent breadcrumb in
-   the path bar → both files move up to that folder.
-4. Drag `docs` onto its own row → the row turns red (refused). Releasing shows a
-   "Cannot move … into itself" error and nothing changes.
-5. Put a file with the same name in the destination and drop it again → a
-   **Move and Replace?** dialog appears. Cancel leaves both files untouched.
-6. Repeat step 1 on an SFTP session → the move is an instant server-side rename
-   (no transfer row). Alt-drop copies server-side.
-7. Right-click a file → **Move to…**, type a folder path, press **Enter** → the
-   file moves there. You can do this from the keyboard alone.
-
-### Dual-pane transfer view (#3558, PROD-007)
-
-Covers the pointer drag between panes and real transfers, which the jsdom unit
-tests mock.
-
-1. Open an SSH session, open the file browser on it and click **Open Dual-Pane
-   Transfer View** (columns icon) → a `Transfer: <session>` tab opens with your
-   local home directory on the left and the remote folder from the sidebar on
-   the right.
-2. Click a local file and press the **→** button → a Transfer Queue row appears
-   below the panes with progress. When it finishes, the file shows up in the
-   remote pane.
-3. Drag a remote folder that has a nested subfolder onto the local pane → the
-   local pane highlights while you hover. After you release, one row per file
-   appears and the whole tree lands in the local folder.
-4. Copy the same file again → a **Replace existing items?** dialog appears.
-   **Cancel** leaves the file untouched.
-5. Start copying a large file and press **Cancel** on its row → the transfer
-   stops and no error toast appears.
-6. Keyboard only: **Tab** into the local list, use **↓** / **Enter** to open a
-   folder, **Backspace** to go up, **Space** / **Shift+↓** to select, and
-   **F5** to copy to the remote pane. **Tab** reaches the remote picker, the
-   copy buttons and the remote list.
-7. Close the SSH tab → the remote pane asks you to choose a connection. Reopen
-   the connection and pick it from the **Remote connection** picker → the pane
-   lists it again.
-
-### Remote → local paste in the file browser (#3563)
-
-Covers real downloads, which the unit tests mock.
-
-1. Open an SSH session and its file browser. Right-click a remote file →
-   **Copy**. Switch the file browser to the local disk, open a folder and
-   **Paste** → a `Pasting "<file>"…` toast and a Transfer Queue row appear;
-   when it finishes the file is listed in the local folder.
-2. Copy a remote folder that has a nested subfolder and paste it locally → one
-   row per file appears and the whole tree lands in the local folder.
-3. **Cut** a remote file and paste it locally → it appears locally and is
-   gone from the remote folder once the download finished.
-4. Paste the same file again → a **Paste and Replace?** dialog appears.
-   **Cancel** leaves the local file untouched.
-5. Repeat step 1 on a remote-agent session → a `Pasted "<file>"` success
-   toast appears (no Transfer Queue row: agents copy bytes directly).
-
-### File browser drag-out to the OS file manager (#3457)
-
-Covers the native OS drag, which unit tests can only exercise with the drag
-command mocked. Run on macOS, Windows and Linux (X11 and Wayland).
-
-1. Open the file browser on a local directory. Drag `a.txt` slowly out of the
-   termiHub window onto the desktop / a Finder or Explorer window → as the
-   pointer crosses the window edge the drag turns into an OS file drag (the
-   termiHub icon follows the pointer). Release → a copy of `a.txt` appears
-   there; the original stays in place.
-2. Ctrl/Cmd-click a file and a folder, drag them out together → both land in
-   the file manager (the folder with its contents).
-3. Drag a file out of the window and back over the termiHub file browser, then
-   release inside it → nothing is uploaded or copied (no toast, no new file).
-4. Drag a file onto a folder row without leaving the window → it moves there
-   exactly as before (drag-to-move is unchanged; only crossing the window edge
-   hands the drag to the OS).
-5. Open an SFTP session. Drag a small remote file out of the window and keep
-   holding the button → a `Preparing … to drag out…` toast and a Transfer
-   Queue row appear; once the download finishes the OS drag starts. Release
-   over the desktop → the file lands there with the remote name.
-6. Drag a large remote file out and release immediately → the download keeps
-   running in the Transfer Queue, then a `… ready — drag it out of the window
-again to save` toast appears. Drag it out again → the OS drag starts at once
-   without a second download. Cancel a staging download from the Transfer
-   Queue → no drag starts and no error toast appears.
-7. In the SFTP session, drag a remote folder with a nested subfolder out and
-   keep holding (#3491) → one Transfer Queue row per file appears; once they
-   finish the OS drag starts. Release over the desktop → the folder lands
-   with its whole tree. Cancel one of its rows mid-staging → no drag starts.
-8. Open a Docker session (and, separately, a remote-agent session). Drag a
-   file out and keep holding → a `Preparing … to drag out…` toast appears (no
-   Transfer Queue row — these sessions have no queue); then the OS drag
-   starts and the file lands with the remote name. Drag a folder out → it
-   lands with its contents.
-9. In the Docker session, drag out a folder holding more than 1 GiB → an
-   error toast explains the selection is too large and suggests Download; no
-   drag starts and no staging directory is left behind.
-10. While a staged copy exists, check its directory under the app cache
-    (`…/drag-out/<pid>-<uuid>`) and any staged subfolder are `drwx------`;
-    quit termiHub → the `drag-out` directory is empty.
-
-### Network Tools shared field validation (#1381)
-
-Verifies every Network Tools text input shares one label + input + inline-error
-affordance and blocks the Run/Send button on invalid input. See PR #1436.
-
-1. Open **Network Tools → Ping** (repeat for **Traceroute** and **Port
-   Scanner**). Clear the **Host** field → an inline "Host is required" error
-   appears under the field and the **Start** button is disabled. Type a host →
-   the error clears and the button enables.
-2. Open **Network Tools → DNS Lookup**. Clear the **Hostname** field → an inline
-   "Hostname is required" error appears and **Run** is disabled. The **Server**
-   field renders through the same shared field (optional, no error).
-3. Open **Network Tools → Port Scanner**. Clear the **Ports** field → an inline
-   "Enter at least one port" error appears and **Start** is disabled.
-4. Open **Network Tools → Wake-on-LAN**. Type a malformed MAC (e.g. `zz:zz`) →
-   an inline "Enter a valid MAC address" error appears and **Send** is disabled.
-   Enter a valid MAC (e.g. `AA:BB:CC:DD:EE:FF`) → the error clears and **Send**
-   enables.
-
-5. In every case a pristine, never-touched field shows no error text (only the
-   disabled button) — the inline message appears once you engage the field.
-
-### Embedded-server delete confirmation (#1393)
-
-See PR #1426. Verifies that deleting an embedded server now requires an explicit
-confirmation via the shared `ConfirmDialog`, consistent with tunnels and
-workspaces.
-
-1. Open the **Services** sidebar and create (or select) a **stopped** embedded
-   server. Click its **Delete** (trash) action → a themed confirm dialog appears
-   (no instant deletion). **Cancel** → the server remains. Re-open and click
-   **Delete** in the dialog → the server is removed and a success toast appears.
-2. Start an embedded server so it is **running**. Click its **Delete** action →
-   the confirm dialog's wording states it will **stop and delete the running
-   server**. Confirm → the running server is stopped, deleted, and a success
-   toast appears.
-3. Repeat via the right-click **context menu → Delete** → the same confirmation
-   dialog gates the deletion.
-
-### Embedded-server delete backend-failure toast (#1427)
-
-See PR #1439. Verifies that a backend delete failure surfaces a
-user-visible error toast instead of failing silently (the store used to swallow
-the error to `console.error`).
-
-1. Create an embedded server, then make its delete fail on the backend (e.g.
-   revoke write access to the config store, or otherwise force
-   `delete_embedded_server` to error).
-2. Click **Delete** and confirm in the dialog → an **error toast** ("Failed to
-   delete …") appears with the backend error message, and the server **remains**
-   in the Services list (it is not removed).
-
-### Remote-agent update-strategy settings persist (#1354)
-
-Verifies the per-agent update settings appear in the editor and round-trip
-through save/load. See PR #1388.
-
-1. In the **Remote Agents** sidebar, edit an existing agent (or create one) to
-   open the connection editor, then open the **Agent** tab.
-2. In the **Updates** section confirm two controls appear: an **Update Strategy**
-   select (Immediate / Coordinated / Deferred, defaulting to **Immediate**) and an
-   **Allow agent self-update** toggle (defaulting to **off**).
-3. Set Update Strategy to **Deferred** and turn **Allow agent self-update** on,
-   then save.
-4. Reopen the same agent's editor → the Agent → Updates section still shows
-   **Deferred** and the toggle **on** (values persisted to disk).
-5. Trigger an agent update (redeploy) with a non-Immediate strategy selected →
-   the update still succeeds via the immediate path, and the app log records a
-   warning that the coordinated/deferred strategy is not yet honored (#1351/#1352).
-
-### Connected-host update guard + Update dialog (#1349)
-
-Verifies that updating an agent warns when other hosts are connected and
-requires explicit confirmation. Needs a **shared agent process** so a second
-desktop is visible to the first — run the agent in TCP `--listen` mode (the
-default SSH `--stdio` deployment gives each desktop its own process, so the
-guard correctly sees no other hosts and this warning never fires). See
-PR #1349.
-
-Prerequisites: an agent binary reachable in `--listen` mode, and two termiHub
-desktops (or two app instances) both connected to that same agent.
-
-1. From **desktop A**, connect to the shared agent. From **desktop B**, connect
-   to the **same** agent so two clients are attached.
-2. On desktop A, trigger **Update agent** for that agent → the Update dialog
-   opens showing **Installed** vs **Available** versions and an amber warning
-   reading "1 other host(s) are connected to this agent" that lists desktop B
-   with a relative "connected … ago" time. The primary button reads **Notify
-   Others & Update**.
-3. Click **Cancel** → the dialog closes and nothing is updated (desktop B stays
-   connected).
-4. Reopen the dialog and click **Notify Others & Update** → the update proceeds
-   (via `update_agent_force`); desktop B is disconnected (hard-cut) and, on
-   reconnect, sees the new agent version.
-5. Now disconnect desktop B and repeat **Update agent** from desktop A with no
-   other hosts → the dialog omits the warning, shows "No other hosts are
-   connected. The update applies immediately.", and the primary button reads
-   plain **Update**; clicking it updates without any extra confirmation (same as
-   before this change).
-
-### Guided Git for Windows install (#1672)
-
-Verifies the detect-and-guide flow that offers to install Git for Windows when no
-Unix shell is present. **Windows only** — the gate and helpers are unit-tested on
-every CI platform, but the guided install (winget terminal tab, git-scm.com deep
-link, and post-install re-detection) cannot be exercised by per-PR CI. Tracked in
-issue 1672 and its PR.
-
-Prerequisites: a Windows machine with **Git for Windows not installed** (no Git
-Bash, no WSL bash detected).
-
-1. Launch termiHub and open **Settings → General → Default Shell**.
-2. Confirm the picker shows a **"Git Bash — set up…"** entry (it must not appear
-   once Git Bash or a WSL distro is detected).
-3. Select it → a **"Set up Git Bash"** dialog opens. Nothing is installed yet.
-4. Click **Open git-scm.com** → the official download page opens in the browser.
-   Close the browser; the dialog remains.
-5. Click **Install in terminal** → a local terminal tab titled **"Install Git for
-   Windows"** opens, pre-loaded with `winget install --id Git.Git -e`, and the
-   dialog closes with a success toast.
-6. Complete the winget install in that tab (drive any UAC prompt).
-7. Re-open **Settings → General → Default Shell** (no app restart) → **Git Bash**
-   now appears as a normal selectable row and the "set up…" entry is gone.
-8. On a machine that already has Git Bash or WSL bash, confirm the "set up…" entry
-   never appears.
-
-### Windows Explorer context-menu registration (#1368)
-
-Verifies that shell-integration registration writes/removes the Windows Explorer
-context-menu entries. **Windows only** — the registry writes are `#[cfg(windows)]`
-and validated automatically by the Windows CI job; these steps confirm the live
-Explorer behavior, which CI cannot observe. See PR #1368.
-
-Prerequisites: a Windows build of termiHub, with at least one shell-integration
-entry configured (an "Open in termiHub" folders entry exists by default once the
-settings UI lands; until then, seed `shellIntegration.entries` in `settings.json`).
-
-1. Install from the CLI: run `termiHub.exe install-shell-integration` (or invoke
-   the `install_shell_integration` command from the app). It prints
-   `Shell integration installed.` and exits 0.
-2. In File Explorer, **right-click a folder** → the configured entry (e.g. "Open
-   in termiHub") appears. Choosing it opens termiHub with a session at that folder.
-3. **Right-click empty space** inside an open folder (folder background) → the
-   entry appears and opens a session at the current folder (`%V`).
-4. **Right-click a file** → if the entry enables the _Files_ target, it appears
-   and opens a session at the file's parent directory.
-5. For an entry set to **Extended** visibility: it is hidden on a normal
-   right-click and appears only under **Shift + right-click**.
-6. Configure **three or more** always-visible entries and reinstall → the entries
-   are grouped under a single cascading **termiHub** submenu instead of appearing
-   at the top level.
-7. Reinstall again without changes → no duplicate entries appear (idempotent).
-8. Uninstall: run `termiHub.exe uninstall-shell-integration` (or the
-   `uninstall_shell_integration` command) → all entries and the submenu disappear
-   from every right-click surface, and no `termihub_*` / `termiHubMenu` keys
-   remain under `HKCU\Software\Classes\Directory\shell`,
-   `…\Directory\Background\shell`, or `…\*\shell` (verify with `regedit`).
-
-### Linux file-manager detection in Shell Integration settings (#1397)
-
-Verifies that the Shell Integration settings report the file managers actually
-installed on the host, with versions. **Linux only** — detection shells out to
-each manager's `--version` and reads the per-user file-manager directories,
-which are `#[cfg(target_os = "linux")]`-gated and depend on the live environment,
-so they cannot be validated from macOS CI. The pure version parsers are unit
-tested on every platform; these steps confirm the live probe. See PR for #1397.
-
-Prerequisites: a Linux build of termiHub on a desktop with at least one of
-Nautilus, Dolphin (KDE) or Thunar installed (`nautilus --version` /
-`dolphin --version` / `thunar --version` should print a version at a shell).
-
-1. Open **Settings → Shell Integration**. Under **Linux — File Manager
-   Integrations**, each of Nautilus / KDE service menu / Thunar shows either
-   "— detected: `<Name> <version>`" (e.g. "detected: Nautilus 43.2") for an
-   installed manager, or "— not detected" for an absent one.
-2. Cross-check the shown version against the manager's own `--version` output —
-   they must match.
-3. On a host with **none** of the three installed, all three rows read
-   "— not detected" (the previous behavior was an always-empty list, so nothing
-   was annotated at all).
-4. Install or remove a manager (e.g. `apt install thunar`), reopen the settings
-   panel, and confirm the detected/not-detected state updates accordingly.
-
-### macOS app-level Services provider (#1409)
-
-Verifies the app-level **"Open in termiHub"** entry in the macOS **Services**
-menu is functional — i.e. it opens a session at the selected path rather than
-being an inert menu item. **macOS only** — the native Cocoa service provider is
-`#[cfg(target_os = "macos")]`-gated and needs a running GUI, so it cannot be
-automated (no WKWebView driver; see [ADR-5](#platform-support)). The app-level
-`NSServices` entry (`openInTermiHub`) is declared in `src-tauri/Info.plist`
-(#1369) and wired to `NSApp.servicesProvider` at startup (#1409). See PR #1449.
-
-Prerequisites: an **installed** `termiHub.app` bundle (a plain `cargo run`/dev
-build is not registered with Launch Services, so the OS will not surface its app
-Services). Build the bundle with `./scripts/build.sh`, then move
-`termiHub.app` into `/Applications` and launch it at least once.
-
-1. **Register with Launch Services.** After first launch, open **System
-   Settings → Keyboard → Keyboard Shortcuts → Services** (or right-click a
-   Finder item → **Services**) and confirm **"Open in termiHub"** is listed. If
-   it does not appear immediately, run
-   `/System/Library/CoreServices/pbs -flush` (or log out/in) and re-check.
-2. **Folder.** In Finder, **right-click a folder → Services → "Open in
-   termiHub"** → the running termiHub opens a new session at that folder.
-3. **File.** **Right-click a file → Services → "Open in termiHub"** → a session
-   opens at (or targeting) the selected file's path.
-4. **Multiple selection.** Select several items, invoke the Service → one
-   session opens per selected path.
-5. **No dead item.** Confirm the entry never does nothing: every invocation
-   results in a session (this is the regression the app-level entry previously
-   exhibited — it was declared but not backed by a provider).
-6. The per-entry **Automator Quick Action** bundles under
-   `~/Library/Services` (#1369) remain the primary path and continue to work
-   independently; both surfaces can coexist.
-
-### Agent GitHub self-update (opt-in, #1355)
-
-Verifies the optional agent-side self-update check is gated behind
-`allow_self_update`, notifies on a newer release, verifies checksums, and skips
-cleanly offline. Requires a Linux remote host (agent binaries are Linux-only).
-See PR #1389.
-
-1. **Off by default (no network).** Deploy an agent to a Linux host with **Allow
-   agent self-update** left **off**. Confirm the SSH exec command is
-   `…/termihub-agent --stdio` (no `--allow-self-update`) — e.g. inspect the app
-   log or run `agent_exec_command`. On the host, confirm the agent makes no
-   outbound request to `api.github.com` (e.g. `ss -tnp | grep termihub-agent`
-   shows no GitHub connection).
-2. **Opt in.** Edit the agent, turn **Allow agent self-update** on in **Agent →
-   Updates**, save, and reconnect. Confirm the exec command now ends with
-   `--stdio --allow-self-update` and the agent log records
-   `Agent self-update enabled — checking GitHub … every 24h`.
-3. **Newer release notifies.** With self-update on and the host's agent an older
-   version than the latest published release, wait for (or force) a check. Confirm
-   the desktop receives an `agent.update_available` notification (self-update
-   toast) naming the available version.
-4. **Verified staging when idle.** With no active sessions on that agent, confirm
-   the agent downloads the new binary, verifies its `.sha256`, and records a
-   `pending_update` in the host's `state.json`
-   (`~/.config/termihub-agent/state.json`). A binary whose checksum does not
-   match must be rejected and removed (not staged).
-5. **Offline is graceful.** Block the host's outbound access to `api.github.com`
-   (firewall) with self-update on. Confirm the agent logs a warning
-   (`could not reach GitHub, skipping this cycle`) and keeps serving sessions —
-   it must not crash. `last_check_time` in `state.json` still updates.
-
-### Agent self-update auto-apply on idle (#1401)
-
-Verifies that an agent with self-update enabled automatically applies a staged,
-verified update once its last session closes — respecting the connection's
-update strategy and never interrupting active sessions. Requires a Linux remote
-host. See PR for #1401. (End-to-end apply across a real restart is covered by the
-deferred Docker integration follow-up #1519.)
-
-1. **Strategy reaches the agent.** Edit the agent, turn **Allow agent self-update**
-   on, set **Update Strategy** to **Deferred** (or **Immediate**), save, and
-   reconnect. Confirm the SSH exec command now ends with
-   `--stdio --allow-self-update --update-strategy deferred` (inspect the app log
-   or `agent_exec_command`).
-2. **Active session blocks apply.** With a newer release published and a staged
-   `pending_update` in the host's `state.json`, keep at least one session open on
-   that agent. Wait for (or force) a self-update cycle. Confirm the agent does
-   **not** swap its binary while a session is active (the session keeps running;
-   `pending_update` remains in `state.json`).
-3. **Applies on last disconnect.** Close the last session on that agent. Confirm
-   the agent applies the staged binary (exec-replace), comes back on the new
-   version, and clears `pending_update` from `state.json`. Persistent daemon
-   sessions (if any were re-opened) survive the restart and re-attach.
-4. **Coordinated does not auto-apply.** Repeat step 1 with **Update Strategy** set
-   to **Coordinated**. Confirm that on idle the agent stages and notifies but does
-   **not** auto-apply — `pending_update` stays recorded for a later coordinated
-   apply.
-5. **Retry on failure.** Make the staged binary unusable (e.g. corrupt the staged
-   file after staging) and trigger an apply on last disconnect. Confirm the apply
-   fails, the agent keeps running the old version, logs the failure, and retains
-   `pending_update` so the next cycle retries.
-
-### Agent version + update-state badge — light/dark colors (#1347)
-
-Verifies the agent version chip and update-state badge render with the correct,
-legible colors in both themes, across all four states. See PR for #1347. Badge
-colors: up-to-date = success/green, update available = notice/amber,
-incompatible = error/red, updating = accent/blue.
-
-1. Connect a remote agent whose version matches the desktop. In the Connections
-   sidebar, confirm the agent header shows a neutral monospace version chip
-   (e.g. `v0.1.0`) followed by a green check badge (**up to date**). Hover the
-   badge — the tooltip reads "Agent up to date (v…)".
-2. Toggle the app between light and dark themes (Settings → Appearance). In both
-   themes confirm the chip text stays legible against its neutral background and
-   the green badge is clearly readable (not washed out).
-3. Open **Open Connections** (Settings wheel → Open Connections). Confirm the
-   agent row shows the same version chip plus a **labelled** state badge
-   (e.g. "Up to date"). Verify legibility in both themes.
-4. Simulate the other states (e.g. point the agent at an older/newer/mismatched
-   binary, or temporarily adjust the compared versions): confirm an **amber**
-   up-arrow badge for _update available_, a **red** warning badge for
-   _incompatible_ (major mismatch or unparseable version), and — for the
-   transient _updating_ state — a **blue** spinner that respects
-   `prefers-reduced-motion` (no spin when reduced motion is enabled). Each must
-   remain legible in light and dark.
-5. In the status bar, with at least one agent connected, confirm the
-   `N agents` summary appears; when an agent has an update available, confirm the
-   amber `· M updates available` count shows and clicking the item opens the
-   Connections sidebar.
-
-### File editor read-only badge + banner (#1325)
-
-Verifies a read-only remote (SFTP) file surfaces its state in the editor.
-Detection only — no elevated save is offered. See PR #1486 (#1325).
-
-1. On a remote (SSH/SFTP) connection, browse to a file the connecting user
-   **cannot** write (e.g. a root-owned `/etc/…` file, or `chmod 400`/`chown` a
-   file to another user). Right-click → **Edit** to open it in the editor.
-2. Confirm a **Read-only** lock badge appears in the toolbar next to the
-   **Remote** badge, and a warning-colored info banner appears above the editor
-   explaining the file is read-only. Hover the badge — the tooltip shows the
-   file's permission string (e.g. `-rw-r--r--`).
-3. Click the banner's dismiss (×) control → the banner disappears while the
-   Read-only badge **remains** (the badge is a persistent state indicator).
-4. Open a **writable** remote file (one you own with write permission) → neither
-   the badge nor the banner appears, and Save works as before.
-5. Open a **local** file → neither the badge nor the banner appears (no probe is
-   performed for local files).
-6. Toggle light/dark themes (Settings → Appearance) with a read-only file open →
-   the badge and banner stay legible in both themes.
-
-### File editor elevated (sudo) edit mode (#1329)
-
-Verifies read-only remote files can be saved with `sudo` via the in-app prompt.
-Requires an SSH/SFTP connection whose user has `sudo` rights on the host (e.g. a
-Raspberry Pi). See PR #1508 (#1329).
-
-1. On a remote SSH/SFTP connection, open a **root-owned** file the user cannot
-   write directly (e.g. `/etc/hosts`). Confirm the read-only badge/banner appear
-   and the toolbar action is **Edit with sudo** (not **Save**).
-2. Make an edit, then click **Edit with sudo**. In the prompt confirm the **host**,
-   **user**, and **file** are named and the password field is masked. Leave
-   **Remember for this session** on (default). Enter the correct password →
-   **Authorize**.
-3. The save succeeds (success toast), a persistent accent **sudo** marker appears
-   in the toolbar, and the buffer is clean. Verify the file was actually changed
-   on the host (`cat` it in a shell).
-4. Edit again and press **Save** / `Ctrl+S` → it saves elevated **without**
-   re-prompting (the session password is cached). The `sudo` marker stays.
-5. Open another root-owned file, click **Edit with sudo**, and enter a **wrong**
-   password three times → the prompt shows an "Incorrect password. Attempt N of 3"
-   counter, then after the 3rd failure the dialog closes and the #969 save-error
-   banner appears with the buffer **intact** (still dirty; nothing lost).
-6. With the credential store **locked** (or in `none` mode), open the sudo prompt →
-   the **Save in credential store** option is **hidden**. Unlock the store and
-   reopen the prompt → the option appears; enabling it and authorizing persists
-   the sudo password (a later session reuses it silently).
-7. On a file whose writability was **unknown**, press **Save**, let the direct save
-   fail with a permission error → the #969 banner shows a **Retry with sudo**
-   action; click it to open the prompt and save elevated.
-8. Confirm the sudo password is never visible in the LogViewer (elevated-save DEBUG
-   lines name the host/path only) and never written to workspace/tab state.
-
-### Open remote file in VS Code over the session path (#2307)
-
-Verifies the session/`ConnectionType`-scoped `session_vscode_open_remote`
-command drives the same download → edit (`--wait`) → re-upload flow as the
-standalone `vscode_open_remote`. Both now share the `open_remote_in_vscode`
-helper, differing only in how they resolve the core `SftpFileBrowser`; the
-shared flow is already exercised by the guided-manual harness test
-`test_open_in_vscode_sftp` (`tests/system/tests/test_external_app.py`), and the
-session resolver's error shapes by `session_sftp_ops_error_*` unit tests. This
-manual pass covers the session route end-to-end and is exercisable once the
-frontend cut (#2313, step B) routes SSH remote-edit through the session path.
-
-1. On a remote SSH/SFTP connection with the VS Code CLI (`code`) available,
-   browse to a remote file, right-click → **Open in VS Code**.
-2. Confirm VS Code opens the downloaded file; edit and save it, then close the
-   VS Code tab.
-3. Confirm the change is re-uploaded to the host (`cat` it in a shell) and
-   termiHub is still running (no crash — regression #828).
-
-### Local folder OS integration: file manager + VS Code workspace (#2656)
-
-Two local-only file-browser toolbar actions (and matching folder-row context
-items) act on the currently-browsed folder. The guided-manual harness drives
-them via `test_open_file_manager_local` (MT-FB-21),
-`test_open_folder_in_vscode_local` (MT-FB-22), and
-`test_open_folder_vscode_toolbar_matches_availability` (MT-FB-23) in
-`tests/system/tests/test_external_app.py`; the operator only confirms the
-external result.
-
-1. On a **local** terminal, open the Files sidebar. Click the
-   file-manager toolbar action (labelled per-OS: **Reveal in Finder** /
-   **Show in File Explorer** / **Open in File Manager**). Confirm the OS-native
-   file manager opens at the currently-browsed folder.
-2. With the VS Code CLI (`code`) available, click the **Open Folder in VS Code**
-   toolbar action. Confirm VS Code opens that folder as a workspace.
-3. Confirm both actions are absent for a **remote session** browser, and that
-   the VS Code action is absent when VS Code is not detected.
-
-### File editor SFTP-only read-only fallback (#1330)
-
-Verifies the graceful fallback for a read-only file on an SFTP-only / relayed
-connection (no exec channel, so no `sudo` path). See PR #1525 (#1330).
-
-1. Open a file on an **SFTP-only** connection where the connecting user cannot
-   write it (e.g. a root-owned file, or one `chmod`/`chown`ed to another user). A
-   good source is a remote-agent SFTP relay or an SFTP-only jump, i.e. any
-   connection that does **not** expose a shell/exec channel.
-2. Confirm the **Read-only** badge appears and the banner reads that the file is
-   read-only **and sudo elevation isn't available on this connection**. Confirm
-   there is **no** "Edit with sudo" action and the **Save** button is **disabled**
-   (it stays disabled even after you type an edit).
-3. Click **Save a copy…** → a dialog opens pre-filled with the file's path. Change
-   it to a **writable** remote path (e.g. `~/hosts.copy`) and confirm → a success
-   toast appears and the copy exists on the host (`cat` it in a shell); the copy
-   contains your edited buffer, and the original file is unchanged.
-4. Click **Download** → choose a local destination in the save dialog → a pending
-   toast then a "Downloaded …" success toast; the file exists locally with the
-   remote contents.
-5. Dismiss the banner (×) → it disappears while the Read-only badge remains.
-6. Regression: open a read-only file on a full **SSH+shell** (exec-capable)
-   connection → the **Edit with sudo** action is shown (not the fallback), and no
-   "Save a copy…" / "Download" actions appear in the banner (see #1329).
 
 ### Guided-Manual Tests in the Python Harness (preferred)
 
@@ -3976,655 +2303,20 @@ Migrated guided-manual suites so far:
 
 New irreducibly-manual checks should be written as guided-manual pytest tests. The legacy YAML runner below is being migrated into this flow incrementally (epic [#913](https://github.com/armaxri/termiHub/issues/913)).
 
-#### Caps Lock warning on password fields (PR #1465, #1360)
-
-The Caps Lock indicator depends on the OS keyboard modifier state, which the WebSocket
-harness cannot toggle, so verify it manually:
-
-1. Turn **Caps Lock ON**, then open any password field — the unlock dialog (relaunch
-   with a master-password store), the connect-time password prompt, or **Settings →
-   Security → Change Master Password**. Type a character.
-2. Confirm the amber **"Caps Lock is on"** warning appears directly beneath the field
-   (in all three consumers, since they share `PasswordInput`).
-3. Press **Caps Lock** again to turn it OFF while the field stays focused — the warning
-   must disappear.
-4. With Caps Lock ON and the warning showing, click elsewhere to blur the field — the
-   warning clears.
-5. (Accessibility) With a screen reader active, confirm the warning is announced when it
-   appears (it is an `role="alert"` / `aria-live="assertive"` region).
-
-#### SSH tunnel start/stop on macOS (manual carve-out, #933)
-
-The three **live** SSH tunnel tests in [`test_ssh_tunnels.py`](../tests/system/tests/test_ssh_tunnels.py) — `test_save_and_start_connects`, `test_start_then_stop`, `test_tunnel_runs_alongside_an_ssh_session` — **skip on macOS** and run only in the Linux integration-fixtures CI lane. Docker Desktop on macOS runs containers inside a Linux VM with no host networking, so the host-native app's russh local-forward to the published `ssh-tunnel-target` port does not drive the live tunnel to a running state the way it does under Linux Docker. The editor/list tests (TUNNEL-01..10) need no running tunnel and stay enabled on every platform. This mirrors the [`tauri-driver` macOS carve-out](#platform-support) (ADR-5).
-
-To verify SSH tunnels actually work on macOS, do this manually against the tunnel-target container:
-
-1. Start the fixture: `docker compose -f tests/docker/docker-compose.yml up -d ssh-tunnel-target` (published on `127.0.0.1:2207`, internal HTTP on `:8080`).
-2. In termiHub, enable experimental features, create a **key-auth** SSH connection to `127.0.0.1:2207` (user `testuser`, key `tests/fixtures/ssh-keys/ed25519`).
-3. Open the **Tunnels** sidebar → New Tunnel → **Local** forward: local `127.0.0.1:18083` → remote `localhost:8080`, referencing the SSH connection above. **Save & Start**.
-4. Confirm the tunnel reaches a running state (sidebar shows Stop control) and `curl http://127.0.0.1:18083` returns `TUNNEL_TEST_OK`.
-5. Click **Stop** and confirm the tunnel returns to disconnected and the Start control reappears.
-
-#### Per-connection port forwards (PROD-023, #3449)
-
-The section CRUD, the `startWithConnection` flag, the on-connect trigger and the backend selection are unit-tested (`ConnectionPortForwardingSection.test.tsx`, `TunnelEditor.startWithConnection.test.tsx`, `tunnelSlice.startForConnection.test.ts`, `tunnel_manager.rs` `connection_bound_tunnel_ids_*`). The live "forward comes up when the terminal connects" path is manual, against the same `ssh-tunnel-target` fixture as above:
-
-1. Edit the SSH connection to `127.0.0.1:2207` → **Port Forwarding** → **Add port forward**. The Tunnel editor opens with that connection pre-selected and **Start when a session to this SSH connection opens** on. Create a Local forward `127.0.0.1:18084` → `localhost:8080` and **Save** (not Save & Start).
-2. The connection editor's Port Forwarding section and the **Tunnels** sidebar both list the forward, stopped.
-3. Open a terminal to the connection. Once it connects, the forward turns running and `curl http://127.0.0.1:18084` returns `TUNNEL_TEST_OK`.
-4. Open a second terminal to the same connection — the forward is not restarted (no status flicker).
-5. Turn the row's **Start with connection** toggle off, stop the forward, reconnect the terminal — the forward stays stopped. **Remove** it from the section — it disappears from the Tunnels sidebar too.
-
-### SSH keyboard-interactive / OTP prompts (#3371)
-
-SSH **keyboard-interactive** authentication (OTP / 2FA / PAM challenge prompts)
-is answered through the global **SSH Authentication** dialog. The exchange is
-covered by **Rust unit tests** against an in-process russh server
-(`core/src/backends/ssh/keyboard_interactive_tests.rs`, `auth.rs` — multi-round,
-echo flags, password auto-answer heuristic, cancel → `AuthCancelled`, wrong
-answer → `AuthFailed`, password fallback, partial-success second factor), the
-desktop prompter by `src-tauri/src/session/ssh_keyboard_interactive.rs` tests,
-the prompt-aware connect timeout by `prompt_clock.rs` tests, and the dialog by
-**Vitest/RTL** (`SshKeyboardInteractivePrompt.test.tsx`). A live check needs an
-sshd with keyboard-interactive enabled (e.g. `KbdInteractiveAuthentication yes`,
-`PasswordAuthentication no`, `UsePAM yes`; for a real 2FA add
-`AuthenticationMethods publickey,keyboard-interactive` with a PAM OTP module):
-
-1. Create an SSH connection with **Method → Keyboard-Interactive (OTP / 2FA)**
-   and connect. The dialog shows `user@host:port`, any server instruction text,
-   and one field per prompt; a password prompt is masked. Answer → the terminal
-   connects.
-2. With **Method → Password** and a saved password against the same
-   `PasswordAuthentication no` server: the connection succeeds **without** a
-   dialog (the single masked "Password:" prompt is auto-answered).
-3. Against a password + OTP server: only the OTP field is shown (never
-   auto-filled); a wrong code fails with "Authentication failed".
-4. Click **Cancel** in the dialog → the connect stops without an
-   "Authentication failed" error. Wait longer than the connect timeout (45 s)
-   before answering → the connect still succeeds (prompt time is excluded).
-5. Repeat step 1 through a `ProxyJump` hop whose method is keyboard-interactive,
-   and via **Test Connection** in the editor — both show the same dialog.
-6. Remote agent host (#3377): add a remote agent for the same server with
-   **Auth Method → Keyboard-Interactive (OTP / 2FA)** — no password field is
-   shown. **Connect** it (and run **Setup Agent** on it): no password prompt
-   appears; the same dialog asks for the code and, once answered, the agent
-   connects (or setup detects the architecture). The setting round-trip and the
-   skipped password prompt are covered by Vitest (`remoteAgentConfig.test.ts`,
-   `agentSchema.authMethod.test.tsx`, `AgentSetupDialog.kbdInteractive.test.tsx`,
-   `AgentNode.kbd-interactive.test.tsx`) and a Rust round-trip test
-   (`connection/config.rs`).
-
-### SSH agent forwarding (#1699)
-
-SSH **agent forwarding** (OpenSSH `ForwardAgent`) makes the operator's local
-`ssh-agent` keys reachable on the target host — and, because the forwarded-agent
-channel rides the jump-host tunnel, end to end through a `ProxyJump` chain — so
-onward SSH (or git over a bastion) works without copying private keys onto the
-hosts. The **Forward SSH agent** toggle in the connection editor's SSH section
-drives it (per-connection `forwardAgent`). The config (de)serialization, the
-settings→`SshConfig` mapping, the handler-side opt-in gate, and the
-no-agent-available no-op are covered by **Rust unit tests**
-(`core/src/config/mod.rs`, `core/src/backends/ssh/{mod,handler,agent_forward}.rs`)
-and the toggle by **Vitest/RTL** (`ConnectionEditor.test.tsx`). The forwarding
-itself needs a **live agent + real SSH server**, which per-PR CI does not run
-(integration lane only), so verify it manually:
-
-1. Ensure a local agent has a key: `ssh-add -l` lists at least one identity
-   (add one with `ssh-add` if needed).
-2. Start an SSH fixture, e.g.
-   `docker compose -f tests/docker/docker-compose.yml up -d ssh-jumphost-target ssh-jumphost-bastion`.
-3. **Direct target:** create a key-auth SSH connection to the target, enable
-   **Forward SSH agent**, and connect. On the target run `ssh-add -l` — it must
-   list your local keys, and an onward `ssh` from the target using an agent key
-   must succeed.
-4. **Through a jump chain:** add the bastion as a `ProxyJump` hop to the same
-   connection and reconnect. `ssh-add -l` on the final target must still list the
-   local keys (forwarding survives the multi-hop tunnel).
-5. **No agent:** stop the agent (unset `SSH_AUTH_SOCK` / stop the Windows OpenSSH
-   agent) and connect with the toggle still on — the connection must **succeed**
-   with forwarding silently skipped (a debug log line notes the skip); `ssh-add -l`
-   on the target reports no agent.
-
-Note: intermediate jump hosts are pure transport (termiHub opens no interactive
-shell on a bastion), so the agent is not separately exposed as `$SSH_AUTH_SOCK`
-on a hop — it is reachable on the **final target** through the chain. Genuine
-per-bastion shell agent access would require opening a session on the hop and is
-tracked separately if ever needed.
-
-### SSH agent forwarding through the remote agent (#1719)
-
-Issue #1699 delivered `forwardAgent` for the desktop russh path. When an SSH session is
-routed through a **deployed termiHub agent** instead, the agent reuses the same
-core SSH backend (`agent/src/registry.rs` registers
-`termihub_core::backends::ssh::Ssh`) and runs it in the per-session daemon
-(`agent/src/daemon/process.rs`), so `forwardAgent` is honored on the agent→target
-leg by the very same connector request and handler bridge — no separate agent-side
-implementation.
-
-**Chosen model — agent-host-local agent.** The forwarded-agent channel is bridged
-to the ssh-agent **local to the agent host** (`$SSH_AUTH_SOCK` on Unix, the
-`\\.\pipe\openssh-ssh-agent` OpenSSH pipe on Windows). The session daemon inherits
-the agent's environment (`SystemDaemonLauncher` never clears it), so no bespoke
-transport is added. The important consequence: when the **desktop→agent leg is
-itself SSH with agent forwarding enabled**, the agent host's `$SSH_AUTH_SOCK`
-already points at a socket that forwards to the operator's own agent, so the
-operator's keys reach the final target **end to end** transparently — this is
-standard OpenSSH agent chaining, not a termiHub relay. The no-agent-available case
-(agent host has no live ssh-agent) is the same graceful no-op as the desktop path.
-
-The agent-side seam (the `forwardAgent` flag surviving the settings handoff into
-the daemon — passed over the daemon's stdin, not an env var (AGT-021) — and
-mapping to `SshConfig.forward_agent`) is covered by **Rust unit tests**
-(`agent/src/daemon/process.rs`); the connector request, handler
-bridge and no-op are covered by the core tests from #1699. End-to-end forwarding
-needs a live agent + real SSH server (integration lane only, not per-PR CI), so
-verify manually:
-
-1. Reach a target through a deployed agent (deploy the agent to an intermediate
-   host and add an agent-routed SSH connection to the final target).
-2. Ensure an ssh-agent with a key is reachable on the agent host — either run
-   `ssh-add` there, or reach the agent host over SSH **with agent forwarding on**
-   so its `$SSH_AUTH_SOCK` chains to your local agent.
-3. Enable **Forward SSH agent** on the target connection and connect. On the
-   target run `ssh-add -l` — it must list the forwarded identities, and an onward
-   `ssh` from the target using an agent key must succeed.
-4. **No agent:** with no ssh-agent reachable on the agent host, connect with the
-   toggle still on — the connection must **succeed** with forwarding silently
-   skipped (a debug log notes it).
-
-### SSH agent forwarding over the TCP agent transport (#1727)
-
-Closes the #1719 gap above: when the desktop reaches a deployed agent over the
-**TCP transport** (`--listen`) rather than SSH, there is no SSH leg to piggyback
-agent forwarding on. termiHub now relays the **desktop's** own ssh-agent to the
-session daemon over the desktop↔agent JSON-RPC transport (`agent.forward.*`
-messages), so the operator's keys reach the final target with no ssh-agent on the
-agent host at all. The relay endpoint is handed to the daemon as `$SSH_AUTH_SOCK`
-(unix) or via the dedicated `TERMIHUB_SSH_AGENT_PIPE` named-pipe variable
-(Windows, #2038), so the daemon's core bridge and the target see a normal agent.
-
-The relay's stream plumbing (open/data/close, the local-agent bridge, the
-no-agent no-op) is covered by **Rust unit tests**
-(`agent/src/session/agent_forward.rs`, `agent/src/handler/dispatch.rs`,
-`src-tauri/src/terminal/agent_forward.rs`) — including Windows named-pipe listener
-tests that run on the Windows CI leg. End-to-end forwarding needs a live agent +
-real SSH server reached over TCP (integration lane only, not per-PR CI), so verify
-manually. The relay now works on **both unix and Windows** agent hosts (#1727
-shipped unix; #2038 added the Windows named-pipe path):
-
-1. Ensure a local agent has a key: `ssh-add -l` lists at least one identity.
-2. Deploy the agent to an intermediate host and reach it over the **TCP
-   transport** (`--listen`) — crucially **without** SSH agent forwarding on the
-   desktop→agent leg, and with **no** ssh-agent running on the agent host itself
-   (so #1719's host-local chaining cannot mask the result).
-3. Add an agent-routed SSH connection to a final target (e.g. a `tests/docker`
-   SSH fixture), enable **Forward SSH agent**, and connect. On the target run
-   `ssh-add -l` — it must list **your desktop's** identities, and an onward `ssh`
-   from the target using an agent key must succeed.
-4. **No agent:** stop the desktop's agent (unset `SSH_AUTH_SOCK`) and reconnect
-   with the toggle still on — the connection must **succeed** with forwarding
-   silently skipped; `ssh-add -l` on the target reports no agent.
-
-**Windows agent host (#2038).** Repeat steps 1–4 with the deployed agent running
-on a **Windows** host reached over the TCP transport:
-
-- The daemon's core SSH bridge connects to the per-session relay **named pipe**
-  (`\\.\pipe\termihub-agent-forward-<session>`), injected via
-  `TERMIHUB_SSH_AGENT_PIPE` — it does **not** touch the host's real
-  `\\.\pipe\openssh-ssh-agent`, so a real local OpenSSH agent on the Windows host
-  is neither required nor shadowed. Confirm the target's `ssh-add -l` lists **your
-  desktop's** identities.
-- The desktop bridging can be exercised from either a unix or Windows desktop
-  (`connect_local_agent_boxed` reaches the desktop's own agent — `$SSH_AUTH_SOCK`
-  socket on unix, `\\.\pipe\openssh-ssh-agent` on a Windows desktop).
-- **No agent:** with no desktop agent reachable, connect with the toggle on — the
-  connection must **succeed** with forwarding silently skipped.
-
 ### X11 / GUI forwarding
 
-SSH **X11 forwarding** lets a remote GUI app (`xeyes`, `xclock`, a graphical IDE)
-render as a native window on the machine running termiHub. Making a usable **local
-X server** available — and tearing it down cleanly afterwards — is the X-server
-provisioning subsystem (epic #1047). The strategy is chosen **per platform**, so the
-verification is too. Architecture:
-[X Server Provisioning](architecture.md#x-server-provisioning-ssh-x11-forwarding) and
-[ADR-10](architecture.md#adr-10-per-platform-x-server-provisioning).
-
-**Shipped across:** manual UI — settings toggles + X Servers section + setup dialog
-(#1053, PRs #1110 / #1111 / #1118); connect-triggered consent + live progress (#1116,
-PR #1298); unified consent UI + recoverable error / Retry (#1296, PR #1302);
-cancellable readiness wait (#1260, PR #1285). This section consolidates their manual
-steps in one place.
-
-Everything below the "automated" line needs a **real local X server rendering a real
-window** (or a native OS install dialog), which the harness cannot fake (per ADR-5);
-those steps are the deliverable, executed by a human for the release.
-
-#### What is automated vs. manual
-
-| Layer                                                                                                                                                                                                        | Coverage                                                                                                        |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| Per-platform decision, adopt/spawn lifecycle, session refcount (#1107), consent gate, Linux gap classifier, VcXsrv detect + winget install decision, XQuartz detect + brew args, readiness-wait cancellation | **Rust unit tests** (`src-tauri/src/terminal/xserver/*`, `core/src/backends/ssh/x11.rs`) — run on every CI host |
-| Setup dialog, connect-time consent dialog, X Servers section rows/actions                                                                                                                                    | **Vitest/RTL** component tests (`XServerSetupDialog`, `XServerConnectConsent`, `OpenConnectionsModal.xservers`) |
-| A GUI app renders to an X server **headlessly, in-container** (Xvfb)                                                                                                                                         | **Docker fixture** `ssh-x11` → `render-check.sh` (automatable anywhere Docker runs)                             |
-| Forwarded GUI renders into the **operator's real X server** end to end; per-OS provisioning UX; clean shutdown / no orphan                                                                                   | **Manual** (the release matrix below)                                                                           |
-
-#### Docker fixture: `ssh-x11`
-
-`tests/docker/ssh-x11/` is an sshd container with X11 forwarding enabled plus
-`xeyes` / `xclock` / `xdpyinfo` (host port `2208`; `core/tests/common` exposes
-`port_ssh_x11()`). Two baked-in helper scripts:
-
-- **`render-check.sh`** — brings up an in-container **Xvfb** X server, launches
-  `xeyes` against it, and asserts the client actually mapped a window
-  (`RENDER_CHECK_OK`). This proves the "a GUI client renders to an X server"
-  pipeline with **no host X server**, so it runs in any Docker environment:
-  `docker compose -f tests/docker/docker-compose.yml exec ssh-x11 render-check.sh`.
-- **`test-x11.sh`** — run _inside a forwarded session_
-  (`ssh -X -p 2208 testuser@localhost test-x11.sh`); asserts `DISPLAY` is set and a
-  client can reach the forwarded server (`X11_FORWARDING_OK`). Automatable on Linux
-  with an Xvfb `:0`; on macOS it needs XQuartz (manual). See
-  [`tests/docker/README.md`](../tests/docker/README.md) → _X11 forwarding_.
-
-The container render-check is a genuine capability check, not a stand-in for the
-end-to-end forward into the operator's real display — that remains the manual matrix.
-
-#### Cross-platform release matrix
-
-Execute once per release on a **clean box** of each OS. **This is a human release
-step — it cannot be run by CI or an AI agent** (no real X server, and the per-OS
-install dialogs are native). Record the result against the release.
-
-| OS          | Strategy                                                                | Clean-box procedure                                                                                                                                                                                                                                                                                                                                                                                                                            | Pass criteria                                                                                                                                                                                            |
-| ----------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Windows** | Install VcXsrv via winget (#1318)                                       | Enable X11 on an SSH connection → first connect **pauses for consent** → **Enable** → termiHub runs `winget install -e --id marha.VcXsrv …` (or skips if already installed) → the managed server launches → a forwarded `xeyes` / `xclock` renders as a native window. **Without winget**: the error offers **Install App Installer** (opens the Store) + **Open VcXsrv download**; after installing App Installer, **Retry** installs VcXsrv. | Window renders; nothing installed silently; choice remembered (2nd X11 connect does **not** prompt); on disconnect the managed server shuts down when idle — **no orphan `vcxsrv.exe`** in Task Manager. |
-| **macOS**   | Detect / guide XQuartz (`brew --cask`; guide Homebrew if absent, #1117) | Without XQuartz → connect surfaces **XQuartz-missing** guidance; run **Install**. With Homebrew present → `brew install --cask xquartz` (admin prompt). Without Homebrew → **Install Homebrew** opens a terminal tab running the official installer, then **Retry** installs XQuartz; or **Open xquartz.org** for a manual install. With XQuartz → connect launches it (`open -a XQuartz`) and a forwarded `xclock` renders.                   | Guidance never auto-installs silently; the Homebrew installer runs in a visible terminal; window renders; aborting the connect **while XQuartz is still starting** stops promptly (#1260).               |
-| **Linux**   | Native X, guide-only                                                    | On a normal X / Wayland-with-XWayland desktop → connect **adopts** the running server (no prompt), forwarded `xeyes` renders. On a gap env (Wayland-only, headless, sandboxed) → connect shows the **targeted hint**.                                                                                                                                                                                                                          | Window renders on a normal desktop; each gap yields its specific actionable hint, never a silent failure or generic error (#1055).                                                                       |
-
-Detailed per-OS procedures follow.
-
-#### Linux X server detect-and-guide edge cases (#1055)
-
-The Linux X-server gap classifier (`src-tauri/src/terminal/xserver/linux_gap.rs`)
-turns an unreachable-server failure into a targeted hint. The classification is
-covered exhaustively by unit tests (fixtures → gap → error), but confirming the
-hint actually surfaces in a real edge-case environment is manual. A normal
-graphical desktop must be unaffected (server adopted, no prompt).
-
-To verify the **Wayland-without-XWayland** hint (the headline case):
-
-1. On a Wayland-only VM/session, ensure XWayland is not installed and no X
-   socket exists: `ls /tmp/.X11-unix` is empty and `echo $DISPLAY` is unset.
-2. In termiHub, open an SSH connection with **X11 forwarding** enabled.
-3. Confirm the connect surfaces the **XWayland** dependency hint (install
-   `xwayland`, then reconnect) — not a generic "no display" error.
-
-Optional additional cases:
-
-- **Headless:** on a box with no local display (no `DISPLAY`, no
-  `/tmp/.X11-unix`, no `Xorg`/`Xwayland`), connect with X11 forwarding and
-  confirm the headless hint (graphical session / Xvfb) appears.
-
-- **Sandboxed socket:** run termiHub as a Flatpak/Snap without the X socket
-  granted; confirm the hint names the `--socket=x11` / `--socket=fallback-x11`
-  grant.
-
-#### macOS XQuartz detect + guided install (#1054)
-
-macOS can't embed an X server, so termiHub detects XQuartz and offers an
-explicit, consent-based install (`src-tauri/src/terminal/xserver/macos.rs`).
-Detection is unit-tested (mock FS), but the guided install and forwarded
-rendering are macOS-only and manual (per ADR-5). **No install may ever run
-silently** — it happens only on the explicit install action.
-
-On a clean macOS **without** XQuartz (`/opt/X11` and
-`/Applications/Utilities/XQuartz.app` both absent):
-
-1. Open an SSH connection with **X11 forwarding** enabled. Confirm it surfaces
-   the **XQuartz missing** guidance (with a link to xquartz.org) — no silent
-   install, no generic failure.
-2. Trigger the install action (the `x_server_install_dependency` command, via
-   the #1053 UI once present):
-   - **With Homebrew installed:** confirm `brew install --cask xquartz` runs
-     (admin auth prompted by brew/macOS), progress is shown, and it reports
-     success.
-   - **Without Homebrew (guided Homebrew install, #1117):** confirm the error
-     screen offers **Install Homebrew** and **Open xquartz.org** (not a dead-end
-     message). Click **Install Homebrew** → a new **local terminal tab** opens
-     pre-loaded with the official Homebrew installer (`/bin/bash -c "$(curl …
-install.sh)"`); the installer runs there with its real `sudo` / RETURN
-     prompts (nothing installs silently). After Homebrew finishes, click
-     **Retry** and confirm it now re-detects `brew` and runs
-     `brew install --cask xquartz`. Alternatively, **Open xquartz.org** opens the
-     manual download page (declining Homebrew — help ends there).
-
-With XQuartz **present**:
-
-1. Connect with X11 forwarding to a host running a GUI app (e.g. `xclock`).
-   Confirm termiHub launches XQuartz if it isn't running (`open -a XQuartz`) and
-   the remote window renders locally. (XQuartz's "Allow connections from network
-   clients" preference may be required.)
-
-**Cancellable readiness wait (#1260, PR #1285):** XQuartz takes ~1-2 s to create
-its socket, so termiHub polls for readiness (≤ ~4 s budget). Start an X11-forwarding
-connect on a box where XQuartz is **not yet running**, then **Stop** the connect
-while it is still coming up. Confirm the abort takes effect **promptly** — it must
-not block for the full readiness budget before the Stop is honored.
-
-#### VcXsrv install via winget (Windows, #1318)
-
-termiHub installs VcXsrv via **winget** on first use of SSH X11 forwarding —
-symmetric to the macOS Homebrew path — and launches the installed `vcxsrv.exe`
-(`src-tauri/src/terminal/xserver/windows.rs`). Detection and the install decision
-are unit-tested (mock FS); the install + forwarded rendering are Windows-only and
-manual. **No install may ever run silently** — only on the explicit consent /
-install action.
-
-Verify on a **clean Windows box with winget** (App Installer present), no VcXsrv
-installed:
-
-1. Trigger X server provisioning (open an SSH connection with X11 forwarding, or
-   use the Open Connections **X Servers** control). Confirm termiHub runs
-   `winget install -e --id marha.VcXsrv …` (winget's own UAC prompt appears),
-   reports progress, and installs VcXsrv to `C:\Program Files\VcXsrv\vcxsrv.exe`.
-2. Confirm the managed server then launches and a forwarded `xeyes` / `xclock`
-   displays as a native window.
-3. Already-installed re-run: with VcXsrv present, confirm provisioning **skips**
-   the winget install and launches the server directly.
-
-Verify on a **clean Windows box without winget** (App Installer absent):
-
-1. Trigger the install action. Confirm the error screen offers **Install App
-   Installer** (opens the Microsoft Store to the App Installer page) and **Open
-   VcXsrv download** (sourceforge) — never a silent install or an opaque failure.
-2. After installing App Installer, click **Retry** and confirm termiHub now
-   re-detects winget and installs VcXsrv.
-
-#### Connect-triggered X server consent + live progress (Windows, #1116)
-
-The first time an X11-forwarding SSH connection is opened with no local X server
-and automatic provisioning undecided, termiHub pauses the connect to ask for
-download consent and streams provisioning progress
-(`src-tauri/src/terminal/xserver/mod.rs`, `XServerConnectConsent.tsx`). The
-handshake and progress emission are unit-tested; the on-connect experience is
-Windows-only and manual. Verify on a clean Windows box (no VcXsrv, "Provide X
-server automatically" left at its default/undecided):
-
-1. Open an SSH connection with **X11 forwarding** enabled. Confirm the connect
-   **pauses** and the "Set up X server" consent dialog appears (nothing is
-   downloaded yet).
-2. Choose **Enable**. Confirm live progress is shown, provisioning completes, the
-   remote X client displays, and the choice is remembered — a second X11 connect
-   provisions **without** re-prompting.
-3. Repeat from a fresh undecided state and choose **Not now**. Confirm the SSH
-   connection still opens (shell works) but without X forwarding, and that the
-   next X11 connect prompts again.
-4. Repeat and press **Stop** while the consent dialog is up. Confirm the connect
-   aborts promptly rather than hanging.
-5. Sanity: a non-Windows connect, or a connect with a server already running, is
-   unaffected apart from gaining progress feedback (no prompt).
-6. Force a provisioning **failure** after choosing Enable (e.g. block the VcXsrv
-   download, or use a fault-injected environment). Confirm the dialog now shows a
-   **recoverable error screen** with **Retry** — not a toast-and-close (#1296) —
-   and that Retry re-provisions in place; on a missing-dependency failure an
-   **Install** action appears. The screen must match the manual "X Servers → Set
-   up" dialog (`XServerSetupContent.tsx`).
-
-### FTP client against the FTP fixture (#1333)
-
-Backs the FTP-client epic (#1331). The `ftp-server` Docker fixture (profile
-`ftp`, see [tests/docker/README.md](../tests/docker/README.md)) provides plain
-FTP, explicit FTPS, and implicit FTPS over a deterministic seeded `/pub` tree.
-The **backend-independent** listing/transfer path is already covered by
-`tests/docker/ftp-server/smoke-test.sh`; this manual step verifies the future
-termiHub FTP **client** end-to-end once the backend sub-issues
-(#1334/#1335/#1336/#1339) land.
-
-1. Start the fixture: `docker compose -f tests/docker/docker-compose.yml --profile ftp up -d --wait ftp-server`.
-2. In termiHub, add an FTP connection to `127.0.0.1:2401`, log in as
-   `ftpuser` / `ftppass` (or anonymous), and open it — the file browser should
-   list `/pub` with **3 folders (docs, images, data) and 14 files** of the
-   documented sizes (e.g. `data/dataset-1m.bin` = 1 048 576 bytes).
-3. Download `pub/data/dataset-1k.bin` and confirm it is exactly 1 024 bytes;
-   upload a file into `/uploads` as `ftpuser` (anonymous uploads must be denied).
-4. Repeat with **explicit FTPS** (TLS Mode = Explicit, port 2401) and **implicit
-   FTPS** (TLS Mode = Implicit, port 2402); accept the self-signed cert. The
-   plain-FTP insecure warning must appear only for TLS Mode = None.
-
-### FTP symlink icon, navigation, and target in properties (#1513)
-
-Verifies the file browser's symbolic-link handling. Parser population and the
-frontend rendering/navigation are covered by unit tests
-(`cargo test -p termihub-core --lib backends::ftp`, `pnpm test FileBrowser`);
-this manual step confirms it end-to-end against a real FTP server whose `/pub`
-tree contains a symlink (create one on the host, e.g. `ln -s data linkdir` and
-`ln -s data/dataset-1k.bin linkfile` under the served root).
-
-1. Open the FTP connection and browse to the directory holding the symlinks.
-   Each symlink row must show the distinct **link-badge icon** (not a plain
-   file/folder glyph) and, for `ls -l`-style listings, an inline `→ target`
-   hint after the name (hovering shows the full `Symbolic link → target` title).
-2. Double-click (or select + Enter) the directory symlink `linkdir` — the
-   browser must **follow** it and list the target directory's contents.
-3. Confirm a non-symlink file shows no link icon and no `→ target` hint.
-
-### Docker, WSL, and SFTP symlink icon and target (#1523)
-
-Extends the #1513 symlink handling to the Docker, WSL, and SFTP browsers. The
-Docker `find`/`stat` parsers are covered by unit tests
-(`cargo test -p termihub-core --all-features --lib backends::docker`); the SFTP
-`readlink` and WSL `symlink_metadata` paths need a live server/distribution, so
-confirm them manually. In each case, on the host create a symlink to a file and
-one to a directory (e.g. `ln -s data linkdir` and `ln -s data/file.bin linkfile`).
-
-1. **Docker** — connect to a running container, browse to a directory holding
-   symlinks. Each link row shows the distinct **link-badge icon** and an inline
-   `→ target` hint; a directory symlink follows into the target on double-click.
-2. **SFTP (SSH)** — browse an SSH connection's directory containing symlinks.
-   Each link row shows the link-badge icon and the `→ target` hint (resolved via
-   a best-effort `readlink`); a plain file shows neither.
-3. **WSL** (Windows only) — browse a WSL distribution's directory containing
-   symlinks. Each link row shows the link-badge icon and, where the target could
-   be read, the `→ target` hint.
-
-### WSL init script created inside the distro with mode 0600 (#2837)
-
-The create program's `0600` / reject-existing / reject-symlink behavior is unit
-tested on every platform (`cargo test -p termihub-core --all-features --lib
-backends::wsl_init_script`); the real `wsl.exe` spawn needs Windows + WSL.
-
-1. In a WSL shell of the target distribution, start a watcher:
-   `while :; do ls -l /tmp/.termihub_init-* 2>/dev/null; done`.
-2. In termiHub, open a new WSL tab for that distribution with shell integration
-   on. The watcher briefly prints a `-rw-------` file owned by your user.
-3. In the new tab, only a `source /tmp/.termihub_init-<uuid> 2>/dev/null` line is
-   visible (not the hook body), and `cd /tmp` updates the tab's CWD.
-4. `ls /tmp/.termihub_init-*` afterwards finds nothing (self-cleaned).
-
-### FTP transfer queue: concurrency, pause/resume, retry, resume (#1336)
-
-Verifies the shared transfer-queue model (queue / bounded concurrency /
-pause / resume / auto-retry / `REST` resume) and FTP up/download end-to-end.
-Requires an `ftp`-feature build (default) and the FTP fixture from the section
-above (`--profile ftp`, `127.0.0.1:2401`, `ftpuser` / `ftppass`). The live
-byte-exact + kill/resume Docker integration test is deferred to a follow-up;
-verify manually until it lands. See PR #1509.
-
-1. **Concurrency cap + queue:** start **three** downloads of large files (e.g.
-   `pub/data/dataset-1m.bin` to three local paths) in quick succession. Confirm
-   at most **two** are `active` at once and the third shows `queued`; when one
-   finishes, the queued one promotes to `active` automatically.
-2. **Pause / resume:** pause an active download mid-flight. Confirm it stops
-   moving bytes (state `paused`) and a queued transfer takes its slot. Resume it
-   and confirm it continues from where it stopped (via `REST`) and completes to
-   the exact original byte size — not restarting from zero.
-3. **Cancel:** cancel a queued transfer (it just disappears) and an active one
-   (its partial local file is removed). Both leave browsing responsive.
-4. **Auto-retry / backoff:** start a transfer, then break the server mid-flight
-   (e.g. `docker pause` the `ftp-server` container). Confirm the transfer reports
-   `failed (n/3)` and auto-retries with increasing backoff; unpause the container
-   before the 3rd attempt and confirm it resumes and completes. Leave it paused
-   past 3 attempts to confirm it surfaces a permanent failure, then use retry to
-   restart it once the server is back.
-5. **Upload:** repeat 1–4 for uploads into `/uploads` as `ftpuser`, confirming
-   byte-exact results and that concurrent uploads use separate connections.
-
-### Queued local and WSL copies (#3567, PARITY-004)
-
-Verifies that large local copies run through the Transfer Queue. Automated
-coverage: `core/src/files/transfer/local.rs` unit tests (chunked copy,
-pause/resume from the temp file, cancel cleanup, rename-on-complete, source
-changed since a checkpoint). Prepare a file above the 8 MiB threshold, e.g.
-`dd if=/dev/urandom of=/tmp/big.bin bs=1m count=512`.
-
-1. **Queued paste:** copy `big.bin` in the local file browser and paste it into
-   another folder. A Transfer Queue row appears with progress and speed; while
-   it runs, the destination folder shows only a hidden
-   `.big.bin.<id>.termihub-part` file, never a partial `big.bin`.
-2. **Pause / resume:** pause the row, confirm the bytes stop, resume, and
-   confirm it continues (not from zero) and the result is byte-identical
-   (`cmp`).
-3. **Cancel:** paste over an existing `big.bin`, cancel mid-copy. The old
-   `big.bin` is unchanged and no `.termihub-part` file is left.
-4. **Small files stay direct:** paste a small file — no queue row, one
-   "Pasted …" toast.
-5. **WSL (Windows only):** open a WSL tab, and repeat 1–3 copying between a
-   Windows folder and the distribution's home folder in the sidebar.
-
-### Queued local folder copies (#3605)
-
-Verifies that a large local folder copy queues its big files one row each.
-Automated coverage: `core/src/files/transfer/local_folder_tests.rs` (tree walk,
-limits, symlinks, merge layout, group cancel, end-to-end temp tree) and
-`src-tauri/src/files/local_copy.rs`. Prepare a folder:
-`mkdir -p /tmp/tree/sub && dd if=/dev/urandom of=/tmp/tree/a.bin bs=1m count=256 && dd if=/dev/urandom of=/tmp/tree/sub/b.bin bs=1m count=256 && echo hi > /tmp/tree/sub/small.txt && ln -s sub /tmp/tree/link`.
-
-1. **Rows per large file:** copy `tree` in the local file browser and paste it
-   into another folder. Two Transfer Queue rows (`a.bin`, `b.bin`) appear with
-   progress; `sub/small.txt` and the `link` symlink are already in place.
-2. **Pause / resume / retry** work per row as for a single queued file.
-3. **Cancel the folder:** paste again into a fresh folder and cancel one row —
-   the other row is cancelled too, and no `a.bin` / `b.bin` (nor any
-   `.termihub-part` file) is left at the destination.
-4. **Merge:** paste `tree` into a folder that already has a `tree/` with an
-   unrelated file — the unrelated file stays, same-named files are replaced.
-5. **Into itself:** paste `tree` into `tree/sub` — an error toast says a folder
-   cannot be copied into itself and nothing is written.
-6. **Cancel after a restart (#3613):** paste `tree` into a fresh folder, pause
-   both rows and quit the app. Relaunch: both rows are back as paused. Resume
-   `a.bin`, then cancel it — `b.bin` moves to cancelled too. Repeat, but cancel
-   a paused row without resuming anything — both rows move to cancelled, and
-   neither comes back after another restart. Automated coverage:
-   `src-tauri/src/files/transfer/relaunch.rs` (`cancelling_*` tests).
-
-### Transfer Queue: restart gaps (#3629, #3630, #3643, #3912, #3983)
-
-Automated coverage: `src-tauri/src/files/transfer/persist*.rs`,
-`src-tauri/src/files/drag_out.rs`, `src/hooks/sessionFolderPaste.test.ts` and
-`src/hooks/useInterruptedFolderPastes.test.ts`.
-
-1. **Drag-out staging is not rehydrated (#3629):** in an SFTP session, drag a
-   large remote file out of the window and release immediately; while its
-   Transfer Queue row is still running, quit the app. Relaunch → no staging row
-   comes back. An ordinary download interrupted the same way still comes back
-   as a paused row.
-2. **Interrupted folder paste (#3630):** copy a local folder holding several
-   large files and paste it into an SFTP session; quit while the second file
-   is copying. Relaunch → a notice says pasting the folder did not finish.
-   Press Retry before reconnecting → the notice asks to connect first.
-   Reconnect the saved SFTP connection and press Retry → only the files that
-   were missing (or partly written) are copied, then `Finished pasting …`.
-   The file that was copying at the quit never shows up as a paused Transfer
-   Queue row of its own after the relaunch (#3643): the notice is the only
-   trace of the paste, and after Retry the queue holds no stale row from it.
-3. **Interrupted remote → local folder paste (#3912):** in an SFTP session,
-   copy a folder holding several large files and paste it into a local
-   folder; quit while the second file is downloading. Relaunch → the same
-   notice appears, naming `Local` and the local folder. Retry before
-   reconnecting asks to connect to the SFTP connection first; after
-   reconnecting it downloads only the missing (or partly written) files.
-4. **Interrupted folder Download and dropped-folder Upload (#3983):** in an
-   SFTP session's file browser, select a folder holding several large files,
-   choose **Download** and pick a local target folder; quit while the second
-   file is downloading. Relaunch → the same notice appears, naming `Local` and
-   the target folder; after reconnecting, Retry downloads only the missing
-   (or partly written) files. Then drop a local folder holding several large
-   files from the OS onto the session file browser and quit while the second
-   file is uploading. Relaunch → the notice names the session folder; after
-   reconnecting, Retry uploads only the missing files.
-
-### Transfer Queue panel: rows, controls, minimized state (#1337)
-
-Verifies the connection-type-agnostic Transfer Queue panel UI docked above the
-status bar. Use the FTP fixture from the section above (or an SFTP session) to
-drive real transfers. See PR #1530.
-
-1. **Panel appears with a live row:** start a download of a large file. Confirm
-   the panel docks above the status bar with one row showing the direction
-   arrow, file name, remote path, an animating progress bar, a rising percent,
-   and a live throughput (e.g. `112 KB/s`). The header summary reads
-   `N active …`.
-2. **Per-state controls:** while active the row shows **Pause** + **Cancel**.
-   Pause it → the row turns `paused` (amber bar) and shows **Resume** +
-   **Cancel**; Resume returns it to `active`. Let one complete → it stays as a
-   green `done` row with a **Remove** control. Break the server mid-flight to get
-   a `failed (n/3)` row (red bar, error tooltip) showing **Retry** + **Remove**.
-   Cancel an active transfer → it becomes a `cancelled` row with **Retry** +
-   **Remove**. Confirm every control shows pending feedback and a success/error
-   toast.
-3. **Footer actions:** with a mix of completed and active rows, click **Clear
-   Completed** → only the `done` rows disappear; failed/cancelled/active stay.
-   Click **Cancel All** → every in-progress transfer is cancelled.
-4. **Minimize / restore:** click **Minimize** in the panel header → the panel
-   collapses and a status-bar indicator shows `N transferring` with a count
-   badge. Click the indicator → the panel re-expands. Confirm the indicator
-   disappears when the queue is emptied.
-5. **Visual review (light + dark):** switch themes and confirm the bar colours
-   (accent/amber/green/red), status text colours, and count badge match the
-   concept mockup (`docs/concepts/implemented/ftp-client.html`), with no raw scroll
-   bar or off-token colours.
-
-### Remote system monitoring
-
-#### Monitoring auto-reconnect on a mid-stream drop (#1230)
-
-Verifies that remote system monitoring auto-reconnects after a transient
-transport drop and resolves to `Offline` when the reconnect budget is
-exhausted. Pending a fault-injection system test (follow-up), verify manually:
-
-1. Start the SSH test containers (`tests/docker/`) and open an SSH connection to
-   `ssh-password:2201`. Confirm the status-bar monitoring chips show live CPU /
-   memory / disk (`Live`).
-2. **Transient drop → recovery:** briefly interrupt the monitored host's sshd
-   (e.g. `docker pause`/`unpause` the container, or drop the network for a few
-   seconds via the `network-fault-proxy`). Confirm the status bar dims and shows
-   **Stale**, then **Reconnecting**, and returns to live numbers automatically
-   once the host is reachable again — no manual Kill / re-pick.
-3. **Exhausted backoff → Offline:** stop the monitored host's sshd and leave it
-   down. Confirm monitoring goes `Stale` → `Reconnecting`, retries under an
-   increasing, jittered backoff (capped at 30 s), and after the shared budget of
-   10 attempts (at most ~3 minutes of backoff) resolves to **Offline** and stops
-   retrying (no runaway reconnect loop).
-4. Repeat against a monitored host **behind the agent** (agent monitoring
-   subscription) to confirm the agent mirrors the same behavior.
-
-### Design tokens: pill radius + muted text (#1406)
-
-Verifies the `--radius-full` and `--text-muted` design tokens render their
-intended pill radius / muted color across every theme (they were previously
-referenced but undefined). See PR #1421. Purely visual, so manual.
-
-For **each** theme (Dark, Light, Solarized Dark, Solarized Light — switch via
-Settings):
-
-1. Open the **Open Connections** panel (Settings wheel → Open Connections).
-   Confirm the section-count and `.oc-row__badge` pills have fully rounded
-   (pill) corners, and that muted row text (icons, detail text, muted titles)
-   reads as lower-emphasis than the primary row title — not black/transparent.
-2. Trigger the **X server setup dialog** and confirm the progress bar is fully
-   rounded and any muted helper text renders in the theme's muted color.
-3. Confirm **status bar** muted text renders with the per-theme muted color
-   (visible but de-emphasized) rather than a broken fallback.
+SSH X11 forwarding renders a remote GUI app as a native window on the machine
+running termiHub; the local X server is provisioned per platform (epic #1047,
+[X Server Provisioning](architecture.md#x-server-provisioning-ssh-x11-forwarding),
+[ADR-10](architecture.md#adr-10-per-platform-x-server-provisioning)).
+
+| Layer                                                                                                                                    | Coverage                                                                                                         |
+| ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Per-platform decision, adopt/spawn lifecycle, session refcount, consent gate, Linux gap classifier, VcXsrv/XQuartz install, cancellation | Rust unit tests (`src-tauri/src/terminal/xserver/*`, `core/src/backends/ssh/x11.rs`)                             |
+| Setup dialog, connect-time consent, X Servers rows                                                                                       | Vitest (`XServerSetupDialog`, `XServerConnectConsent`, `OpenConnectionsModal.xservers`)                          |
+| Forwarded channel, `DISPLAY`, graceful degradation                                                                                       | `core/tests/ssh_x11.rs`, `test_ssh.py::TestSshX11Display` against the `ssh-x11` fixture                          |
+| In-container Xvfb render (`render-check.sh`)                                                                                             | Fixture script, see [`tests/docker/README.md`](../tests/docker/README.md); wiring it into CI is tracked in #4005 |
+| A real window on the operator's display, per-OS install UX, no orphan server                                                             | Release gate: MT-SSH-50 (Linux, native X), MT-SSH-51 (macOS, XQuartz), MT-SSH-52 (Windows, VcXsrv via winget)    |
 
 ### Legacy Guided Manual Test Runner (YAML)
 
@@ -4661,6 +2353,12 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 | Portable Mode         | [`portable-mode.yaml`](../tests/manual/portable-mode.yaml)                 | `MT-PORT`  |
 | Network Tools         | [`network-tools.yaml`](../tests/manual/network-tools.yaml)                 | `MT-NET`   |
 | Multi-Window (macOS)  | [`multi-window.yaml`](../tests/manual/multi-window.yaml)                   | `MT-WIN`   |
+| Native Input          | [`native-input.yaml`](../tests/manual/native-input.yaml)                   | `MT-NIN`   |
+| Remote Desktop        | [`remote-desktop.yaml`](../tests/manual/remote-desktop.yaml)               | `MT-RD`    |
+| Shell Integration     | [`shell-integration.yaml`](../tests/manual/shell-integration.yaml)         | `MT-SHI`   |
+| File Browser          | [`file-browser.yaml`](../tests/manual/file-browser.yaml)                   | `MT-FB`    |
+| Editor                | [`editor.yaml`](../tests/manual/editor.yaml)                               | `MT-EDIT`  |
+| App                   | [`app.yaml`](../tests/manual/app.yaml)                                     | `MT-APP`   |
 
 Prefer a guided-manual pytest for a new irreducibly-manual check. If you add a YAML item instead, it must carry `release_gate: true` plus a `manual_reason` (genuinely manual) or `automation_issue: <N>` (automatable, tracked) — `tests/system/tests/test_manual_corpus.py` fails otherwise.
 
@@ -4711,469 +2409,3 @@ Mapping of manual test IDs that have been automated to their Python harness test
 | Workspace / session restore (TIN-013) | `tests/system/tests/test_workspace_restore_ui.py` (split + tabs + groups → last-session restore, `--workspace` CLI launch, sidebar launch, multi-window workspace — #3778)               |
 | MT-NET-10, 12, 14, 17, 18             | `tests/system/tests/test_network_tools_live.py` (loopback + local stdlib servers; no Docker `network` profile)                                                                           |
 | MT-NET-13                             | `src/components/NetworkTools/PortScannerPanel.large-scan.test.tsx` (the warning is now a confirm modal, #1348)                                                                           |
-
-#### WSL shell-integration note (`/mnt/<drive>` translation, #1029)
-
-The WSL file browser follows the shell's CWD via an injected **OSC 7** hook and
-translates `/mnt/<letter>` into a native Windows drive path (`C:/`) rather than
-the inaccessible `\\wsl$\` UNC view. How the shell exposes `PROMPT_COMMAND`
-varies by distro, which affects how the hook must register:
-
-- **Scalar `PROMPT_COMMAND`** (Ubuntu/Debian and most distros) — termiHub
-  prepends its hook as a string.
-- **Array `PROMPT_COMMAND`** (bash 5.1+, e.g. **Fedora**, which also ships no
-  `vte.sh` and tracks context via systemd's OSC 3008) — termiHub appends its
-  hook as a first-class array element (`PROMPT_COMMAND+=(__termihub_osc7)`).
-  A scalar assignment here would only overwrite element `[0]`, which caused the
-  file browser to settle on the `\\wsl$\` UNC root after `cd /mnt/c` (#1029).
-
-`MT-LOCAL-19` (`test_wsl_file_browser_follows_cwd`) exercises the scalar path on
-a general-purpose distro (Ubuntu is preferred by `_pick_wsl_distro`). The
-array-`PROMPT_COMMAND` shape is covered by Rust unit tests
-(`osc7_bash_handles_array_prompt_command`, `osc7_wsl_handles_array_prompt_command`
-in `core/src/session/shell.rs`) and was manually verified end-to-end on
-FedoraLinux-44 (bash 5.3): `cd /mnt/c` emits `file:///mnt/c` → `C:/`.
-
-#### macOS Finder Quick Actions / Services registration (#1369)
-
-termiHub registers each configured shell-integration entry as an Automator
-Quick Action bundle under `~/Library/Services/<name>.workflow`
-(`src-tauri/src/spawn/registry.rs`, macOS arm). The generated bundle layout,
-`document.wflow` command line, `Info.plist` NSServices declaration, XML escaping,
-idempotent install, and owner-aware uninstall are covered by macOS-gated unit
-tests (`spawn::registry::macos_tests`). Confirming that Finder actually surfaces
-and runs the entries is macOS-only and manual (per ADR-5).
-
-On macOS:
-
-1. Configure at least one shell-integration entry, then run the install action
-   (the `install_shell_integration` command, or `termiHub install-shell-integration`).
-2. Confirm a `<entry-name>.workflow` bundle appears under `~/Library/Services/`
-   for each entry (`ls ~/Library/Services`), each containing
-   `Contents/document.wflow` and `Contents/Info.plist`.
-3. In **System Settings → Keyboard → Keyboard Shortcuts → Services** (or
-   right-click a folder/file in Finder → **Quick Actions** / **Services**),
-   confirm the entry is listed. If a new entry does not appear, log out/in or run
-   `/System/Library/CoreServices/pbs -flush` to refresh the Services cache.
-4. Right-click a folder in Finder → choose the entry → confirm termiHub opens a
-   session at that path (the workflow runs
-   `termiHub spawn --entry-id <id> --location "$@"`). Repeat on a file for an
-   entry whose **Show for → Files** is enabled.
-5. Run the uninstall action (`uninstall_shell_integration` /
-   `termiHub uninstall-shell-integration`) and confirm the termiHub `.workflow`
-   bundles are removed from `~/Library/Services/` while any unrelated
-   third-party Quick Actions there are left untouched.
-
-> Note: the app-level `NSServices` entry declared in `src-tauri/Info.plist` is a
-> discovery aid; the fully functional path is the per-entry Quick Action bundles
-> above. Wiring a native Services provider so the **app** entry also runs is
-> tracked as a follow-up.
-
-#### Linux file-manager registration (#1370)
-
-termiHub registers each configured shell-integration entry into the Linux file
-managers (`src-tauri/src/spawn/registry.rs`, Linux arm): a universal XDG
-`.desktop` launcher plus per-manager Nautilus scripts, KDE service menus, and a
-Thunar custom action. The file content, `0o755` script mode, detection logic,
-Thunar `uca.xml` append/de-append (foreign-action preservation), and
-owner-aware uninstall are covered by Linux-gated unit tests
-(`spawn::registry::linux::tests`, validated by the Linux CI job). Confirming
-each file manager actually surfaces and runs the entries is desktop-environment
-specific and manual.
-
-On a Linux desktop (run steps for whichever managers you have installed):
-
-1. Configure at least one shell-integration entry with **Show for → Folders**
-   enabled and its per-manager toggles (Nautilus / KDE / Thunar) on. Run the
-   install action (the `install_shell_integration` command, or
-   `termiHub install-shell-integration`).
-2. **XDG (universal):** confirm a `termihub-<slug>.desktop` file appears under
-   `~/.local/share/applications/` and that `update-desktop-database` ran
-   (`grep -l termiHub ~/.local/share/applications/mimeinfo.cache` or simply
-   right-click a folder → **Open With Other Application** and confirm termiHub is
-   listed for folders).
-3. **Nautilus (GNOME Files):** confirm a script named after the entry exists
-   under `~/.local/share/nautilus/scripts/` and is executable (`ls -l`; mode
-   `0o755`). In Files, right-click a folder → **Scripts → <entry name>** and
-   confirm termiHub opens a session at that path.
-4. **KDE (Dolphin):** confirm a `termihub-<slug>.desktop` service menu exists
-   under `~/.local/share/kio/servicemenus/` (KDE 6) and/or
-   `~/.local/share/kservices5/ServiceMenus/` (KDE 5). Right-click a folder in
-   Dolphin → **Actions** (or the top-level menu) → confirm the entry runs.
-5. **Thunar (XFCE):** confirm the action was appended to
-   `~/.config/Thunar/uca.xml` (`grep termihub- ~/.config/Thunar/uca.xml`) and
-   that **any custom actions you had before are still present**. In Thunar,
-   right-click a folder → confirm the entry appears and opens a termiHub session.
-6. Run the uninstall action (`uninstall_shell_integration` /
-   `termiHub uninstall-shell-integration`) and confirm **all four** artifacts are
-   removed: the XDG `.desktop`, the Nautilus script, the KDE service menu, and
-   termiHub's Thunar action — while any **foreign** Thunar actions in `uca.xml`
-   and unrelated Nautilus scripts remain untouched.
-
-### Sudo-elevated remote save over SFTP (#1328)
-
-Verifies the `sftp_write_file_content_elevated` backend command: a temp upload
-followed by an in-place `sudo -S` rewrite over the exec channel, with typed
-outcomes and guaranteed temp cleanup. The command composition, injection
-neutralization, and sudo error classification are covered by unit tests
-(`cargo test -p termihub --lib files::sftp`); exercising it against a real host
-with `sudo` is manual. See PR for #1328.
-
-On a real host where your SSH user has `sudo` rights (e.g. a Raspberry Pi):
-
-1. Open an SFTP session to the host and pick a **root-owned** file the user
-   cannot write directly (e.g. `/etc/nginx/nginx.conf` or a `root:root`,
-   `-rw-r--r--` file). Change a line and trigger the elevated save
-   (`sftpWriteFileContentElevated`) with the **correct** sudo password.
-2. Confirm the result is `success`, the file's contents are updated, and its
-   owner/mode are **unchanged** (`ls -l` still shows the original `root:root`
-   and permission bits — `cat >` rewrote in place, it did not replace the file).
-   Confirm no `/tmp/termihub-*` file remains (`ls /tmp/termihub-*` → none).
-3. Repeat with a **wrong** password → the result is `incorrectPassword` (safe to
-   re-prompt), the file is unchanged, and no `/tmp/termihub-*` temp is left
-   behind.
-4. On a host where the user is **not** in the sudoers file (or `sudo` is not
-   installed) → the result is `other` with a descriptive message, the file is
-   unchanged, and no temp file remains.
-5. Inspect the LogViewer / backend logs during all of the above and confirm the
-   **sudo password never appears** in any log line.
-
-### Application log file (#1570)
-
-Rotation, capping, the platform log-directory resolution, and the INFO-level file
-filter are covered by unit tests (`src-tauri/src/utils/file_log.rs`). The steps
-below are manual because they need a **bundled** app: only a real install exercises
-the launch path a post-mortem cares about, and the point of the feature is that the
-evidence exists on disk after the process is gone. Referenced by PR #1578.
-
-**A run leaves a log behind, on every platform.**
-
-1. Launch the installed app and open a session, then locate the log file:
-   - macOS: `~/Library/Logs/com.termihub.app/termihub.log`
-   - Windows: `%LOCALAPPDATA%\com.termihub.app\logs\termihub.log`
-   - Linux: `~/.local/share/com.termihub.app/logs/termihub.log`
-2. Confirm the file exists and its first line of the run is the
-   `termiHub starting` banner carrying the **version** and **pid**.
-3. Confirm entries are timestamped, carry a level and a target, and contain **no
-   ANSI escape sequences** (the file is read in a plain editor, not a terminal).
-
-**A clean exit is visible as a clean exit.**
-
-1. Close the app via the **window close button**. Re-open the log and confirm it
-   ends with the full breadcrumb sequence: `Window close requested`,
-   `Exit requested, shutting down`, then `termiHub exited cleanly` — whose absence
-   in the 2026-07-17 investigation forced the reconstruction from Apple's unified
-   log.
-2. Relaunch and quit via the **app menu / Cmd+Q** instead. Confirm the log ends with
-   `termiHub exited cleanly`. Note that this path emits **only** that line — Tauri
-   raises neither `CloseRequested` nor `ExitRequested` for a menu quit, so
-   `termiHub exited cleanly` is the one marker common to every clean exit and the
-   line to look for. Do not treat a missing `Exit requested` as evidence of a crash.
-3. Relaunch, then **kill** the app (`kill -9`, or Force Quit). Confirm the log ends
-   _without_ `termiHub exited cleanly` — a killed run is distinguishable from a clean
-   one by inspection alone, which is the whole point.
-4. Relaunch once more and confirm the new run **appends** below the previous one
-   rather than truncating it, so the run before an incident survives the restart.
-
-**The cap holds and secrets stay out.**
-
-1. Connect to an SSH host using a password and/or unlock the credential store.
-   Confirm the log records the _actions_ ("Unlocking credential store") but that
-   the password, passphrase, and private-key material appear **nowhere** in the
-   file. Confirm terminal contents are not logged.
-2. Relaunch with `TERMIHUB_FILE_LOG=debug` and open an SSH session. Confirm the
-   file gains termiHub's own DEBUG detail but still contains **no `russh` packet
-   logging** — raising termiHub's verbosity must never unclamp SSH internals into
-   a file users paste into issues (`russh` is held at WARN on top of any override).
-3. To exercise rotation without waiting for 5 MiB, append filler to the live file
-   (`python3 -c "open('termihub.log','a').write('x'*(5*1024*1024))"`) and relaunch:
-   the startup banner alone then trips the cap. Confirm `termihub.log` starts fresh
-   with the banner, the previous content moved to `termihub.1.log`, and that after
-   enough churn `termihub.2.log` is the oldest kept — `termihub.3.log` must
-   **never** appear and the directory must stay under ~15 MiB.
-
-### Local crash reports and Export Diagnostics (#3571, OBS-010)
-
-Redaction, bounded retention, the notify-once marker and the bundle contents are
-unit-tested (`core/src/diagnostics/*_tests.rs`,
-`src-tauri/src/utils/diagnostics_bundle_tests.rs`, the panic-hook tests in
-`src-tauri/src/utils/panic_hook.rs` / `agent/src/panic_hook.rs`) and the UI is
-component-tested (`src/components/Diagnostics/*.test.tsx`). These steps check the
-real app. No step needs network access — run them offline to prove it.
-
-1. Quit termiHub. In the log directory (see _Application log file_ above) create
-   `crash-reports/crash-20990101T000000Z-1.txt` containing any text, e.g.
-   `message: test password=hunter2 from 10.1.2.3`.
-2. Launch via `./scripts/dev.sh`. The app starts normally and a notice
-   "termiHub closed unexpectedly last time" appears at the bottom — it must not
-   delay or block the window.
-3. Click **View Report**: the report opens in a dialog. Close it and restart the
-   app: the notice does **not** reappear (one notice per crash).
-4. Add a second, newer report file and restart; choose **Don't show again**.
-   Restart once more: no notice. **Settings → General → Diagnostics → Crash
-   Report Notice** is now off; turning it back on persists.
-5. Settings menu (gear) → **Export Diagnostics…**: the dialog lists `README.txt`,
-   `system-info.txt`, the `logs/termihub*.log` files and the crash reports —
-   nothing from `logs/sessions/`. Click **Save…**, pick a folder, and open the
-   zip: `hunter2`, `10.1.2.3`, your username and your hostname appear nowhere.
-
-### Agent crashed since last connect notice (#3593, OBS-010)
-
-The new/seen/first-connect decision, the seen-store, the old-agent skip and the
-redacted read are unit-tested (`src-tauri/src/utils/agent_crash_notice_tests.rs`,
-`src-tauri/src/utils/agent_crash_reports_tests.rs`); the notice and viewer are
-component-tested (`src/components/Diagnostics/AgentCrashReportNotice.test.tsx`,
-`CrashReportViewer.test.tsx`). These steps check the real app.
-
-1. Launch via `./scripts/dev.sh` and connect the dev agent. Expected: no agent
-   crash notice (the first check only records a baseline, even if the agent
-   already has old reports).
-2. On the agent host, create `<agent config dir>/logs/crash-reports/crash-20990101T000000Z-1.txt`
-   with any text (e.g. `message: test password=hunter2`). Disconnect and
-   reconnect the agent. Expected: one notice "Agent “…” crashed since it was
-   last connected" at the bottom; the connect itself is not delayed.
-3. Click **View Report**. Expected: the report opens in the crash-report
-   dialog with `hunter2` redacted. Reconnect the agent: no notice again.
-4. Add `crash-20990102T000000Z-2.txt`, reconnect, click **Export Diagnostics…**:
-   the export dialog opens and the notice is gone for good.
-5. Turn off **Settings → General → Diagnostics → Crash Report Notice**, add a
-   third report and reconnect: no notice.
-
-### Scheduled workflows and macros (#3523, PROD-043)
-
-The timing, missed-run, overlap, pause and confirmation rules are unit-tested
-(`src-tauri/src/schedules/*_tests.rs`, `src/store/appStore.workflowRun.test.ts`);
-this checks the real app end to end. Enable **Settings → General → Allow
-Experimental Features** first.
-
-**Launch the app** (`./scripts/dev.sh` — never `pnpm tauri dev`) and connect to
-the dev-agent (or any saved) connection so one terminal is open and connected.
-
-1. Workflows panel → create a workflow with one `send-command` step `date`.
-   Click its **Schedule…** action: the editor opens with the workflow
-   pre-selected. Name it, tick the connected connection, set **Minutes**
-   to 1, Save. Expected: toast says it is disabled; the Schedules list
-   shows it as **Disabled**; no status-bar pill yet.
-2. Flip its toggle. Expected: a confirmation lists the connection's name;
-   **Enable schedule** enables it, the list shows **Next: today HH:MM**, and the
-   status bar shows **1 schedule active**.
-3. Wait for the next minute. Expected: `date` is typed into that terminal only
-   (not into another open ad-hoc tab), a "Scheduled run" toast appears, the run
-   history shows it with `scheduled`, and the schedule's **Last** line reads
-   `completed`.
-4. Disconnect the terminal and wait a minute. Expected: nothing is typed; the
-   **Last** line reads `skipped — None of the target connections is connected`.
-5. Turn on **Pause all**. Expected: the status bar reads **Schedules paused** and
-   no run fires; turning it off resumes from the next slot without replaying
-   the paused ones.
-
-**Connect if not connected (#3527).** The refusal paths and the connect-run-close
-are unit-tested (`src/utils/connectSavedConnection.unattended.test.ts`,
-`src/store/scheduledConnect.test.ts`, `core/src/backends/ssh/*unattended*`,
-`src-tauri/src/schedules/manager_connect_tests.rs`); this checks the real app.
-Agent-hosted targets (#3877) are covered agent-side against an in-process SSH
-server (`agent/src/session/unattended_tests.rs`: one-time code, host key,
-password, passphrase, key-auth success), by the routing/gating tests
-(`agent/src/handler/dispatch/tests/unattended_tests.rs`,
-`src-tauri/src/session/remote_proxy/tests/unattended_tests.rs`) and the
-frontend agent-target cases of the unattended suite.
-
-1. Edit the schedule, tick **Connect if not connected**, Save. Expected: the
-   schedule is disabled again; enabling asks for confirmation and says it also
-   connects the hosts.
-2. Close the connection's tab and wait a minute. Expected: a tab for the
-   connection opens, `date` runs in it, and the tab closes again; the **Last**
-   line reads `completed`. A tab you had open yourself stays open.
-3. Point the schedule at a password connection without a saved password (or a
-   host whose key you never trusted) and wait a minute. Expected: no prompt or
-   dialog appears; the **Last** line reads `skipped — <name>: needs a password`
-   (or `host key not trusted`).
-4. Point the schedule at an agent-hosted SSH connection with key auth on a
-   connected agent and close its tab. Expected: a tab opens on the agent,
-   `date` runs, and it closes again. On an agent older than protocol 0.23.0
-   the **Last** line reads `skipped — <name>: agent too old for unattended
-connect` (#3877).
-
-### Workflow editor menus are clickable inside the modal (#1868)
-
-The workflow editor is a modal Radix `Dialog`, which sets `pointer-events: none`
-on `document.body` while open. Any Radix menu/select that portals to
-`document.body` (the default) therefore renders **outside** the dialog and is
-dead/unclickable in a real WebView. jsdom does not enforce `pointer-events`, so
-unit tests structurally cannot catch this — hence a manual test in the running
-app. The fix portals these into the dialog's own content node (via the shared
-`Modal` primitive's portal container). Referenced by PR for #1868.
-
-**Launch the app** (`./scripts/dev.sh` — never `pnpm tauri dev`).
-
-**The "+ Add step…" menu works.**
-
-1. Open the **Workflows** panel → **New Workflow**.
-2. Click **"+ Add step…"**. Confirm the step-kind menu **opens and each item is
-   clickable** (not just visible). Add one of every kind — send-command,
-   run-script, run-macro, wait, run-local-process — confirming each appends a
-   step row.
-
-**Pickers inside the editor work.**
-
-1. On a **Run macro** step, open the **Macro** `Select` and confirm the listbox
-   opens and a macro can be selected (this `Select` portals to the same place
-   and was dead for the same reason).
-2. Reorder, edit, and delete steps as normal to confirm the fix changed nothing
-   else about the editor's behavior.
-3. Save the workflow and confirm it persists with the steps you added.
-
-### Network tool run history (PROD-032, #3456)
-
-Recording, the bounds, the History view and the setting are covered by unit and
-component tests (`tool_history*.rs`, `runHistory.test.tsx`,
-`NetworkToolHistory.test.tsx`, `NetworkTools.history.test.tsx`,
-`networkToolHistoryStore.test.ts`, `SessionSettings.test.tsx`). This pass
-confirms history survives a real app restart.
-
-1. Open **Network Tools → Ping**, ping `127.0.0.1` with Count `3` → after it
-   completes, expand **History** → one row "Completed … 3/3 received …, This
-   computer".
-2. Click the row's **View** (eye) → a read-only dialog shows the host, interval,
-   count, status, summary and the three replies. **Export CSV** writes the
-   replies; close the dialog.
-3. Quit and relaunch the app (`./scripts/dev.sh`), reopen **Ping → History** →
-   the run is still listed. **Re-run** → the Host/Count fields refill and a new
-   run starts and is recorded on top.
-4. **Settings → Sessions → Network Tool History**: turn recording off, run a DNS
-   lookup → its **History** says recording is off and lists no new run. Turn it
-   back on; **Clear Network Tool History** empties every tool's History.
-
-### Macro run history (#3543)
-
-Recording (manual, palette, workflow step, scheduled), the caps and the History
-panel are covered by unit and component tests (`macros/history*.rs`,
-`appStore.macroRunHistory.test.ts`, `appStore.workflowRun.test.ts`,
-`MacroHistorySection.test.tsx`, `MacroSidebar.test.tsx`). This pass confirms the
-history survives a real app restart.
-
-1. Open a local terminal, then **Macros** → play a macro → the **History** panel
-   at the bottom shows one "Completed" row with `N/N`, "manual" and the tab title.
-2. Play it again from the command palette → a new "palette" row appears on top.
-3. Click another macro's **Recent runs** (clock) action → the panel shows only that
-   macro's runs (or "not been played yet"); the **×** shows all again.
-4. Quit and relaunch the app (`./scripts/dev.sh`) → the rows are still listed.
-   **Clear history** empties the panel.
-
-### HTTP monitor check history (#3462)
-
-Recording (desktop- and agent-hosted), the caps, the throttled persistence,
-rehydration and the CSV export are covered by unit and component tests
-(`monitor_history*.rs`, `httpMonitorHistory.test.ts`,
-`HttpMonitorPanel.history.test.tsx`, `SessionSettings.test.tsx`). This pass
-confirms the history survives a real app restart.
-
-1. Open **Network Tools → HTTP Monitor**, start a monitor on a reachable URL
-   with Interval `2` s → after a few checks, click **Stop** → the chart and
-   **Recent Checks** stay visible.
-2. Quit and relaunch the app (`./scripts/dev.sh`), reopen **HTTP Monitor** →
-   the monitor is listed stopped. Click its **Show checks** (chart icon) → the
-   earlier checks are back in the chart and table.
-3. Click **Resume** → new checks append after the earlier ones. **Export**
-   writes a CSV with one row per check (`timestamp,status_code,latency_ms,ok,error`).
-4. **Settings → Sessions → Clear Network Tool History**, then **Show checks**
-   on a stopped monitor → no checks. Removing a monitor also drops its checks.
-
-### Run-location "Run on" selector — Network Tools & Servers (#2191)
-
-The selector, its desktop-only gating, and the backend wiring are covered by
-component tests (`RunLocationSelect.test.tsx`, `NetworkToolRunLocation.test.tsx`,
-`EmbeddedServerRunLocation.test.tsx`, `runLocation.test.ts`,
-`runLocationStore.test.ts`). This manual pass confirms an agent choice actually
-routes execution end-to-end, which per-PR CI cannot (it needs a live agent).
-
-**Prerequisites.** A configured remote agent that connects successfully (see
-"Parallel test isolation" for a dev agent, or any reachable agent).
-
-**Network tool runs on the agent.**
-
-1. Open a Network Tool (e.g. **Ping**). Confirm a **"Run on"** control appears at
-   the top of the panel, defaulting to **This computer**.
-2. Open it → confirm **This computer** plus one **Agent · «name»** entry per
-   connected agent. Pick the agent.
-3. Run the tool against a host reachable from the agent's network → confirm the
-   result reflects the **agent's** vantage (e.g. a host only the agent can reach
-   resolves/pings), and the control keeps showing the agent.
-4. Open **Ping sweep** and **Open ports**, pick the agent, and run them → the
-   sweep lists hosts on the **agent's** subnet, and Open ports lists the **agent
-   host's** listening ports (PROD-033). Switching Open ports' "Run on" clears the
-   list until you press **Refresh**.
-5. Open the **HTTP monitor** tool → confirm the tab-level "Run on" control offers
-   **only This computer** and shows a hint pointing at the monitor's own
-   **"Run on"** field (where a monitor can be hosted on an agent).
-
-**Embedded server hosted on the agent.**
-
-1. In the **Services** sidebar, confirm each server row shows a **"Run on"**
-   control in its details, defaulting to **This computer**.
-2. Pick an agent, then **Start** the server → confirm it comes up hosted on the
-   agent (reachable on the agent's network / port bound there), not the desktop.
-3. Switch back to **This computer** and restart → confirm it is hosted locally
-   again.
-
-### Single-instance enforcement (findings PER-005, SM-025)
-
-termiHub runs as a **single instance per user** in installed release builds: a
-second launch focuses the already-running window and exits instead of opening a
-second process. This prevents two copies clobbering each other's shared config
-and `last_session` files (neither store takes a cross-process lock — PER-005 —
-and `last_session` writes are last-writer-wins — SM-025). The mode-gating logic
-(installed+release only) is covered by unit tests
-(`utils::single_instance::tests`), but exercising two real processes is inherently
-manual. **Enforcement is compiled out of debug builds**, so this must be verified
-against an **installed release build** (`./scripts/build.sh`), not `./scripts/dev.sh`.
-
-**Second launch focuses the existing window (installed release).**
-
-1. Install and launch the release build. Note the window and open a tab or two.
-2. Launch the app a **second time** (double-click the installed app / run its
-   binary again). Confirm **no second window opens** — the existing window comes
-   to the **front and gains focus** (and un-minimizes if it was minimized), and
-   the second process exits on its own.
-3. Confirm your open tabs/state are untouched and the config/session files are
-   **not** duplicated or reset (single writer, so no clobber).
-
-**Second launch forwards `--workspace` to the running instance (installed release, #3101).**
-
-Argument parsing and forwarding are unit-tested (`utils::single_instance::forward_tests`,
-`src/utils/cliWorkspace.test.ts`); the two-process round trip is manual.
-
-1. With the release build running, save a workspace named `Demo`.
-2. Launch the binary again with `--workspace Demo` (e.g.
-   `/Applications/termiHub.app/Contents/MacOS/termiHub --workspace Demo`). Confirm
-   no second window opens and the running window comes to the front and opens `Demo`.
-3. Repeat with `--workspace-file <path to a workspace JSON>` → the workspace is
-   imported and opened in the running window.
-4. Repeat with an unknown flag (`--bogus`) → the window just comes to the front;
-   the Log Viewer shows `ignoring unsupported second-launch arguments`.
-
-**Portable mode in two folders both run (no lock).**
-
-1. Make two separate portable copies (each in its own folder containing a `data/`
-   directory — see the portable-mode notes). Launch **both** at once.
-2. Confirm **both instances run simultaneously** (they use separate `data/` dirs
-   and legitimately do not clobber, so single-instance must **not** block them).
-
-**Same portable folder launched twice is refused (portable, #3100).**
-
-The lock itself — acquire, contention, per-folder scoping, and release when a
-holder process is killed — is unit-tested (`utils::data_dir_lock::tests`); the
-dialog is manual.
-
-1. In one portable folder (containing a `data/` directory), launch termiHub.
-   Confirm `data/.termihub.lock` exists.
-2. Launch the **same** portable copy again. Confirm an error dialog
-   "termiHub is already running" names the `data/` folder, and after **OK** the
-   second process exits without opening a window; the first is untouched.
-3. Force-quit the first instance (Activity Monitor / Task Manager / `kill -9`),
-   then launch again → it starts normally (the stale lock file does not block).
-
-**Dev builds are not locked.**
-
-1. From two checkouts, launch `./scripts/dev.sh` in each. Confirm **both run** —
-   the parallel dev-checkout workflow is unaffected (debug builds skip the lock).

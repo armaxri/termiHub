@@ -274,5 +274,17 @@ Tests: `src/client/ext_clipboard_tests.rs` (round trips, caps, zlib bombs,
 malformed / truncated input, the state machine, negotiation with and without
 the extension through the real client).
 
+## CA PEM parsing without rustls-pemfile (#3975)
+
+The VeNCrypt `TlsVerify::CaPem` trust store (`src/client/vencrypt.rs`) parsed
+its PEM bundle with `rustls-pemfile`, which is unmaintained
+(RUSTSEC-2025-0134). It now uses `CertificateDer::pem_slice_iter` from
+`rustls-pki-types` (the upstream-recommended successor, reached through
+`tokio_rustls::rustls::pki_types`, so no new crate), and the `vencrypt` feature
+no longer pulls `rustls-pemfile`. Behaviour is unchanged: every `CERTIFICATE`
+block is added, other PEM sections are skipped, a malformed block is
+`VncError::Tls("invalid CA PEM: ...")`, and a bundle without certificates is
+still rejected. Tests: `src/client/vencrypt.rs`.
+
 Everything else is upstream `0.5.3`, under the original MIT/Apache-2.0 licenses
 (`LICENSE-MIT`, `LICENSE-APACHE`).

@@ -148,14 +148,19 @@ jobs:
       # every self-update that is not signed by the key compiled into it, so a
       # release built from the committed PLACEHOLDER key file, or without the
       # signing secret, would ship agents that can never be updated.
+      # The signing key is whichever of the two secret slots holds the private half
+      # of the FIRST trusted public key (overlap rotation, #3329); select-key fails
+      # here, before anything is built, when neither does (unset or mismatched).
       - name: Require agent update signing key
         env:
           AGENT_UPDATE_SIGNING_KEY: ${{ secrets.AGENT_UPDATE_SIGNING_KEY }}
+          AGENT_UPDATE_SIGNING_KEY_NEXT: ${{ secrets.AGENT_UPDATE_SIGNING_KEY_NEXT }}
         run: |
           set -euo pipefail
           scripts/internal/agent-update-signing.sh check-key
-          if [ -z "${AGENT_UPDATE_SIGNING_KEY}" ]; then
-            echo "::error::The AGENT_UPDATE_SIGNING_KEY secret is not set. Run scripts/internal/setup-agent-signing-key.sh (maintainer, one-time) — see docs/contributing.md → 'Agent update signing key'."
+          if ! scripts/internal/agent-update-signing.sh select-key \
+            AGENT_UPDATE_SIGNING_KEY AGENT_UPDATE_SIGNING_KEY_NEXT; then
+            echo "::error::No signing secret (AGENT_UPDATE_SIGNING_KEY / _NEXT) holds the private half of the first key in agent/keys/update-signing.pub.pem. Run scripts/internal/setup-agent-signing-key.sh (maintainer) — see docs/contributing.md → 'Agent update signing key'."
             exit 1
           fi
 
@@ -928,6 +933,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.create-release.outputs.version }}
           AGENT_UPDATE_SIGNING_KEY: ${{ secrets.AGENT_UPDATE_SIGNING_KEY }}
+          AGENT_UPDATE_SIGNING_KEY_NEXT: ${{ secrets.AGENT_UPDATE_SIGNING_KEY_NEXT }}
         run: |
           set -euo pipefail
           TAG="v${VERSION}"
@@ -954,11 +960,13 @@ jobs:
             sha256sum -c "${a}.sha256"
           done
 
-          # The private key exists on disk only for the signing call.
+          # The private key exists on disk only for the signing call. select-key
+          # picks the slot matching the FIRST trusted public key (rotation, #3329)
+          # and logs which one; the key itself never leaves the runner.
           umask 077
           key="$RUNNER_TEMP/agent-update-signing-key.pem"
-          printf '%s\n' "$AGENT_UPDATE_SIGNING_KEY" > "$key"
           trap 'shred -u "$key" 2>/dev/null || rm -f "$key"' EXIT
+          "$HELPER" select-key --out "$key" AGENT_UPDATE_SIGNING_KEY AGENT_UPDATE_SIGNING_KEY_NEXT
           "$HELPER" sign --key "$key" "${agents[@]}"
           shred -u "$key"
 

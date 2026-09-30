@@ -839,6 +839,136 @@ async fn failed_apply_keeps_pending_update() {
     assert!(!client.agent_version().is_empty());
 }
 
+/// A "new binary" that stages and swaps cleanly but whose `execve` fails with
+/// `ENOEXEC` on every Unix kernel: no ELF / Mach-O / `#!` magic, just bytes.
+/// This is the shape of a corrupt or wrong-format download that nonetheless
+/// matches its published SHA-256.
+///
+/// It is deliberately *binary* (NULs, high bytes), not text: were the agent to
+/// hand an `ENOEXEC` file to `/bin/sh` — which `execvp` does, and which is how
+/// the revert was once bypassed (#3064) — the shell refuses to run it and exits,
+/// taking the agent with it, rather than silently running it as a script.
+fn unexecutable_agent_bytes() -> Vec<u8> {
+    let mut bytes = b"\0TERMIHUB-TEST: not an executable image\0".to_vec();
+    bytes.extend((0..4096u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8));
+    bytes
+}
+
+/// AGT-006 end to end (#3064): the verified update stages and the swap
+/// succeeds, but the new binary cannot be `execve`d. The apply must revert the
+/// on-disk binary to the previous working one from `<exe>.backup`, keep the
+/// agent process alive and reachable on its original listener, leave no backup
+/// behind, and retain `pending_update` for a retry (the apply returned `Err`).
+///
+/// A successful `execve` replaces the process image, so this path can only be
+/// proven with a live agent process — the revert logic itself is unit-tested in
+/// `agent/src/update/apply.rs`.
+#[tokio::test]
+async fn failed_reexec_reverts_to_the_previous_binary() {
+    let original_bytes = std::fs::read(agent_binary()).expect("read agent bytes");
+    let original_sha = sha256_hex(&original_bytes);
+    drop(original_bytes);
+    let bad_bytes = unexecutable_agent_bytes();
+
+    let server = MockServer::start().await;
+    mount_release(&server, &bad_bytes).await;
+
+    let mut agent = LiveAgent::spawn(&server, "deferred", Duration::from_millis(300));
+    let pid = agent.child.id();
+    let bin_path = agent.bin_path.clone();
+    let backup_path = {
+        let mut name = bin_path.file_name().unwrap().to_os_string();
+        name.push(".backup");
+        bin_path.with_file_name(name)
+    };
+
+    // Wait for the apply to report failure — or for the agent to die, which is
+    // exactly the regression this guards against, so stop waiting at once.
+    let mut exited = None;
+    let apply_failed = wait_until(UPDATE_PIPELINE_TIMEOUT, || {
+        if let Ok(Some(status)) = agent.child.try_wait() {
+            exited = Some(status);
+            return true;
+        }
+        agent.stderr().contains(FAILED_APPLY_LOG)
+    });
+    assert!(
+        exited.is_none(),
+        "the agent process died on the failed re-exec ({:?}) instead of reverting.\n\
+         --- agent stderr ---\n{}",
+        exited,
+        agent.stderr()
+    );
+    assert!(
+        apply_failed,
+        "the self-apply never reported a failed re-exec within {UPDATE_PIPELINE_TIMEOUT:?}.\n\
+         --- agent stderr ---\n{}",
+        agent.stderr()
+    );
+
+    // It failed at the re-exec — after a successful swap — and reverted, not
+    // at some earlier guard (which `failed_apply_keeps_pending_update` covers).
+    let log = agent.stderr();
+    assert!(
+        log.contains("re-exec of") && log.contains("failed"),
+        "the apply failed, but not at the re-exec.\n--- agent stderr ---\n{log}"
+    );
+    assert!(
+        log.contains("restored the previous working binary"),
+        "the failed re-exec did not restore the backup.\n--- agent stderr ---\n{log}"
+    );
+
+    // Still the original process, never replaced: alive, same PID, and it never
+    // announced a second listener.
+    assert!(
+        matches!(agent.child.try_wait(), Ok(None)),
+        "agent must survive a failed re-exec.\n{}",
+        agent.stderr()
+    );
+    assert_eq!(agent.child.id(), pid);
+    assert_eq!(
+        common::listen_addrs(&log).len(),
+        1,
+        "a failed re-exec must not start a second agent incarnation.\n{log}"
+    );
+
+    // The on-disk binary is the restored original: byte-identical, executable,
+    // and actually runnable. The backup was consumed by the restore.
+    let on_disk = std::fs::read(&bin_path).expect("agent binary present after revert");
+    assert_eq!(
+        sha256_hex(&on_disk),
+        original_sha,
+        "the on-disk agent must be the restored original binary, not the bad one"
+    );
+    drop(on_disk);
+    let mode = std::fs::metadata(&bin_path).unwrap().permissions().mode();
+    assert_eq!(mode & 0o111, 0o111, "restored binary must stay executable");
+    assert!(
+        !backup_path.exists(),
+        "the backup {backup_path:?} must be consumed by the restore"
+    );
+    prewarm_first_exec(&bin_path);
+
+    // The apply returned `Err`, so the staged update is kept for a retry.
+    let pending = agent.state()["update"]["pending_update"].clone();
+    assert!(
+        !pending.is_null(),
+        "a failed re-exec must keep pending_update for retry.\n{}",
+        agent.stderr()
+    );
+    assert_eq!(pending["version"], NEWER_VERSION);
+
+    // And the surviving agent still serves on its original listener.
+    let mut client = Client::connect(&agent.addr(0), agent.config_home(), Duration::from_secs(15))
+        .unwrap_or_else(|| {
+            panic!(
+                "agent not reachable after a reverted re-exec.\n{}",
+                agent.stderr()
+            )
+        });
+    assert!(!client.agent_version().is_empty());
+}
+
 /// Never-interrupt: with a live session open, the idle-apply guard must hold — the
 /// poll sees a newer release but neither stages nor applies it, so the session is
 /// never cut and the binary is never swapped. Uses a real local shell session.

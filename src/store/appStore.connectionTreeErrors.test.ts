@@ -548,3 +548,33 @@ describe("connectionTree — reorderConnections error branch", () => {
     );
   });
 });
+
+describe("connectionTree — retargetConnectionEditorFolder (#2979)", () => {
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+  });
+
+  function editorTabId(): string {
+    useAppStore.getState().openConnectionEditorTab("new", "folder-a");
+    const entry = Object.entries(useAppStore.getState().tabContent).find(
+      ([, c]) => c.connectionEditorMeta
+    );
+    return entry![0];
+  }
+
+  it("re-points an open editor's target folder", () => {
+    const tabId = editorTabId();
+    useAppStore.getState().retargetConnectionEditorFolder(tabId, "folder-b");
+    expect(useAppStore.getState().tabContent[tabId].connectionEditorMeta?.folderId).toBe(
+      "folder-b"
+    );
+  });
+
+  it("leaves state untouched for the same folder or a non-editor tab", () => {
+    const tabId = editorTabId();
+    const before = useAppStore.getState().tabContent;
+    useAppStore.getState().retargetConnectionEditorFolder(tabId, "folder-a");
+    useAppStore.getState().retargetConnectionEditorFolder("no-such-tab", "folder-b");
+    expect(useAppStore.getState().tabContent).toBe(before);
+  });
+});

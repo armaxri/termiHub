@@ -72,6 +72,7 @@ import { SidebarGroupHeader } from "./SidebarGroupHeader";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import "./ConnectionList.css";
 import { isImeComposing } from "@/utils/imeComposition";
+import { resolveConnectionDrop } from "@/utils/connectionDropTarget";
 
 /**
  * Shared keyboard-navigation / filter plumbing threaded through the tree so
@@ -1177,58 +1178,28 @@ export function ConnectionList() {
       const draggedConnection = active.data.current?.connection as SavedConnection | undefined;
       if (!draggedConnection) return;
 
-      const overId = over.id as string;
-      let targetFolderId: string | null | undefined;
-
-      if (overId === "root") {
-        targetFolderId = null;
-      } else if (over.data.current?.type === "folder") {
-        targetFolderId = overId;
-      } else if (over.data.current?.type === "connection") {
-        // Dropped onto another connection (#2594). Within the same folder this is a
-        // sibling reorder; across folders it falls back to a move into the target's
-        // folder (so dropping onto a connection behaves like dropping onto its
-        // folder). A multi-select drag always uses the move path so the whole
-        // selection lands together — reorder is single-item.
-        const targetConn = over.data.current.connection as SavedConnection;
-        const isMultiDrag =
-          selectedConnectionIds.has(draggedConnection.id) && selectedConnectionIds.size > 1;
-        if (targetConn.id === draggedConnection.id) {
-          clearConnectionSelection();
-          return;
-        }
-        if (!isMultiDrag && draggedConnection.folderId === targetConn.folderId) {
-          // Indices are into the full, unfiltered region connection list — the same
-          // list the backend reorders — not the experimental-gated render list.
-          const oldIndex = allConnections.findIndex((c) => c.id === draggedConnection.id);
-          const newIndex = allConnections.findIndex((c) => c.id === targetConn.id);
-          if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
-            reorderConnections(oldIndex, newIndex);
-          }
-          clearConnectionSelection();
-          return;
-        }
-        targetFolderId = targetConn.folderId;
-      }
-
-      if (targetFolderId === undefined) return;
-
-      // Move all selected connections, or just the dragged one if it's a single-item drag
-      const idsToMove =
-        selectedConnectionIds.has(draggedConnection.id) && selectedConnectionIds.size > 1
-          ? [...selectedConnectionIds]
-          : [draggedConnection.id];
-
-      // Skip connections already in the target folder
-      const idsToActuallyMove = idsToMove.filter((id) => {
-        const conn = connections.find((c) => c.id === id);
-        return conn?.folderId !== targetFolderId;
+      const action = resolveConnectionDrop({
+        dragged: draggedConnection,
+        over: {
+          id: over.id as string,
+          type: over.data.current?.type as string | undefined,
+          connection: over.data.current?.connection as SavedConnection | undefined,
+        },
+        selectedIds: selectedConnectionIds,
+        connections,
+        allConnections,
       });
 
-      if (idsToActuallyMove.length === 1) {
-        moveConnectionToFolder(idsToActuallyMove[0], targetFolderId);
-      } else if (idsToActuallyMove.length > 1) {
-        bulkMoveConnectionsToFolder(idsToActuallyMove, targetFolderId);
+      if (action.kind === "ignore") return;
+      if (action.kind === "reorder") {
+        reorderConnections(action.oldIndex, action.newIndex);
+      } else if (action.kind === "move") {
+        const { connectionIds, targetFolderId } = action;
+        if (connectionIds.length === 1) {
+          moveConnectionToFolder(connectionIds[0], targetFolderId);
+        } else if (connectionIds.length > 1) {
+          bulkMoveConnectionsToFolder(connectionIds, targetFolderId);
+        }
       }
 
       clearConnectionSelection();

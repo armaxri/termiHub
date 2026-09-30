@@ -722,14 +722,38 @@ fn replace_binary(src: &Path, dst: &Path) -> anyhow::Result<()> {
 
 /// Re-exec `exe` with the current process's CLI arguments. On success this
 /// replaces the process image and never returns; it only returns on failure.
+///
+/// Uses a plain `execv(2)`, **not** `std::process::Command::exec`. The latter
+/// calls `execvp(3)`, which on `ENOEXEC` (a file the kernel does not recognise
+/// as an executable — a corrupt or wrong-format update binary) silently retries
+/// the file under `/bin/sh`. That "exec" succeeds, the shell then refuses the
+/// binary and exits, and the agent is gone without the revert in
+/// [`apply_update_binary_confined`] ever running — leaving the un-runnable new
+/// binary on disk (#3064). `execv` has no such fallback: it returns the error,
+/// so the backup is restored and the agent keeps running.
 #[cfg(unix)]
 fn reexec(exe: &Path) -> anyhow::Result<()> {
-    use std::os::unix::process::CommandExt;
+    use anyhow::Context;
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
 
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    // `exec` replaces the current image with `exe`; control only returns here if
-    // the exec itself failed.
-    let err = std::process::Command::new(exe).args(&args).exec();
+    let path = CString::new(exe.as_os_str().as_bytes())
+        .with_context(|| format!("re-exec of {} failed: NUL in path", exe.display()))?;
+    // argv[0] is the executable path (as `Command` sets it), then the original
+    // arguments byte-for-byte.
+    let mut argv = vec![path.clone()];
+    for arg in std::env::args_os().skip(1) {
+        argv.push(
+            CString::new(arg.as_bytes())
+                .with_context(|| format!("re-exec of {} failed: NUL in argument", exe.display()))?,
+        );
+    }
+    // `execv` replaces the current image with `exe`; control only returns here
+    // if the exec itself failed.
+    let err = match nix::unistd::execv(&path, &argv) {
+        Ok(never) => match never {},
+        Err(errno) => std::io::Error::from(errno),
+    };
     Err(anyhow::anyhow!(
         "re-exec of {} failed: {err}",
         exe.display()

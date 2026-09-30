@@ -6,8 +6,8 @@
 //!
 //! A drained entry is `(key, Some(new subtree) | None-if-absent)`.
 //!
-//! Currently used by the `agents` region (#2888); `session-lifecycle` and
-//! `transfers` still carry byte-identical private copies (#3987).
+//! Used by every keyed-map incremental region: `agents` (#2888),
+//! `session-lifecycle`, `transfers` and `system-monitors` (#3987).
 
 use serde_json::{Map, Value};
 

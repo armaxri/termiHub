@@ -23,6 +23,7 @@ import type {
 import {
   dispatchWorkflowIntent,
   setWorkflowOutputContentForTest,
+  setWorkflowRunViewForTest,
   setWorkflowTransportForTest,
   stopWorkflowSubscription,
 } from "./workflowRunBridge";
@@ -277,6 +278,73 @@ describe("useProjectedWorkflowRun", () => {
     expect(got?.lines).toEqual([]);
     expect(got?.exitCode).toBeNull();
     expect(got?.timedOut).toBe(false);
+    hook.unmount();
+  });
+});
+
+describe("useProjectedWorkflowRun — per-run content matching (#3418)", () => {
+  /** Open the projected panel for `w1`, optionally owned by run `runId`. */
+  function openPanel(runId?: string | null): void {
+    act(() =>
+      setWorkflowRunViewForTest({
+        run: null,
+        output: {
+          ...(runId !== undefined ? { runId } : {}),
+          workflowId: "w1",
+          workflowName: "Deploy",
+          program: "echo",
+          args: [],
+          status: "running",
+        },
+      })
+    );
+  }
+
+  /** Stream content for `w1`, optionally from run `runId`. */
+  function stream(text: string, runId?: string): void {
+    act(() =>
+      setWorkflowOutputContentForTest({
+        workflowId: "w1",
+        ...(runId !== undefined ? { runId } : {}),
+        lines: [{ id: 0, stream: "stdout", text }],
+        exitCode: null,
+        timedOut: false,
+      })
+    );
+  }
+
+  it("shows content streamed by the run that owns the panel", async () => {
+    const hook = renderHook();
+    await flush();
+    openPanel("run-2");
+    stream("mine", "run-2");
+
+    expect(hook.get().workflowRunOutput?.lines.map((l) => l.text)).toEqual(["mine"]);
+    hook.unmount();
+  });
+
+  it("hides content from another run of the same workflow", async () => {
+    const hook = renderHook();
+    await flush();
+    openPanel("run-2");
+    stream("stale", "run-1");
+
+    expect(hook.get().workflowRunOutput?.lines).toEqual([]);
+    hook.unmount();
+  });
+
+  it("matches on the workflow alone when either side has no run id (legacy open)", async () => {
+    const hook = renderHook();
+    await flush();
+    openPanel("run-2");
+    stream("legacy buffer");
+    expect(hook.get().workflowRunOutput?.lines.map((l) => l.text)).toEqual(["legacy buffer"]);
+
+    openPanel(null);
+    stream("tagged buffer", "run-9");
+    expect(hook.get().workflowRunOutput?.lines.map((l) => l.text)).toEqual(["tagged buffer"]);
+    // A failure reason is absent on a running panel.
+    expect(hook.get().workflowRunOutput?.error).toBeUndefined();
     hook.unmount();
   });
 });

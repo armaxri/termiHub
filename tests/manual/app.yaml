@@ -1,0 +1,78 @@
+category: app
+display_name: "App"
+
+# App-level checks that need a native dialog, a real macOS WKWebView build, the real internet or OS window raise.
+# Folded in from the per-feature walkthroughs in docs/testing.md (#3695).
+
+tests:
+  - id: MT-APP-01
+    release_gate: true
+    manual_reason: "OS-native save/open dialog"
+    name: "Backup and restore through native file dialogs with restart"
+    pr: 3509
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Back up everything... with a passphrase and save the file."
+      - "Delete a connection and change the theme."
+      - "Restore..., pick the file, enter the passphrase, Restore and restart."
+    expected:
+      - "Save and Open dialogs appear."
+      - "After the restart the connection and theme are back."
+    verification: manual
+    tags: [os-native]
+
+  - id: MT-APP-02
+    release_gate: true
+    manual_reason: "no macOS WKWebView integration leg"
+    name: "macOS production build has no CSP violations"
+    pr: 3627
+    platforms: [macos]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Build with ./scripts/build.sh and open the Log Viewer."
+      - "Open a local shell, then a .sh file in the editor."
+      - "Turn on JS plugins and install examples/plugins/clock-widget."
+    expected:
+      - "Terminal and editor are coloured and the clock widget shows."
+      - "The Log Viewer has no csp entries."
+    verification: manual
+    tags: [os-native]
+
+  - id: MT-APP-03
+    release_gate: true
+    manual_reason: "real internet HTTPS and published index"
+    name: "Plugin index and URL install over real HTTPS"
+    pr: 3715
+    platforms: [macos]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Settings > Plugins > Browse Plugins > Load plugin index."
+      - "Under Install from URL, paste a GitHub-hosted clock-widget URL with its SHA-256."
+    expected:
+      - "The default index loads from main (no HTTP 404)."
+      - "The install dialog opens with the unsigned banner, and nothing installs before you confirm."
+    verification: manual
+    tags: [network]
+
+  - id: MT-APP-04
+    release_gate: true
+    manual_reason: "OS window focus/raise and the pre-startup native rfd error dialog"
+    name: "Second launch raises the running window; portable double-launch refused"
+    pr: 3100
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Install and launch the release build; minimize its window."
+      - "Launch the installed app a second time."
+      - "Launch a portable copy, then launch the same portable copy again."
+    expected:
+      - "No second window; the existing window un-minimizes and comes to the front with tabs intact."
+      - "The second portable launch shows 'termiHub is already running' naming the data folder."
+      - "After OK the second process exits; the first is untouched."
+    verification: manual
+    tags: [os-native]
