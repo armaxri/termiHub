@@ -64,23 +64,45 @@ impl Fold {
     }
 }
 
+/// Serialises every [`commit`]: one mutation and its folds run to completion
+/// before the next mutation starts (#2831).
+///
+/// A fold reads the manager's disk view, replaces the store with it, and
+/// publishes the diff. Without this lock two concurrent commands can
+/// interleave so that the slower fold publishes a view read *before* the other
+/// command's write — leaving the region behind disk until the next fold. Held
+/// across the write and its folds, it makes every published region equal to
+/// what is on disk at that moment, in write order.
+static COMMIT_LOCK: Mutex<()> = Mutex::new(());
+
 /// The single choke point every `ConnectionManager` mutation command goes
-/// through (TAURI-006, #3762).
+/// through (TAURI-006, #3762), and the **only** writer of the regions it folds
+/// (#2831).
 ///
 /// Runs `op` — the persisted mutation plus any same-step side effect that must
-/// precede the fold (e.g. pruning a deleted connection's bookmarks) — and only
-/// when it succeeds folds each region in `folds`, in the order given. A failed
-/// `op` folds nothing, so a rejected mutation never republishes a region.
+/// precede the fold (e.g. pruning a deleted connection's bookmarks) — then
+/// folds each region in `folds`, in the order given, **whatever the outcome**.
+/// The disk is the truth the fold reflects: a mutation that fails without
+/// touching disk re-folds to an unchanged view and the projector publishes no
+/// diff, while one that fails *after* a partial write (a later step of the
+/// same operation erroring) republishes exactly what reached disk. Either way
+/// the region equals disk when the command returns — there is no client-side
+/// compensating write and no window where a rejected mutation leaves the
+/// region ahead of disk.
+///
+/// The op and its folds run under [`COMMIT_LOCK`], so a command's region
+/// publish is atomic with its disk write with respect to every other command.
 pub(crate) fn commit<R: Runtime, T, E>(
     app: &AppHandle<R>,
     folds: &[Fold],
     op: impl FnOnce() -> Result<T, E>,
 ) -> Result<T, E> {
-    let value = op()?;
+    let _serial = COMMIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let result = op();
     for fold in folds {
         fold.apply(app);
     }
-    Ok(value)
+    result
 }
 
 /// Response containing all connections (unified), folders, and agents.
