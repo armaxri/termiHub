@@ -93,7 +93,11 @@ class TestSplitViews(TerminalUi, TabsUi, LayoutUi, SystemTest):
 
     def _first_size(self) -> float:
         """The first split child's stored size in percent (50 until a resize)."""
-        sizes = self.driver.get_state("rootPanel.sizes")
+        # A split carries no `sizes` until its divider is first dragged, and a
+        # `get_state` of an absent path raises rather than returning None (#4017),
+        # so read the root and treat a missing `sizes` as the even default.
+        root = self.driver.get_state("rootPanel")
+        sizes = root.get("sizes") if isinstance(root, dict) else None
         return float(sizes[0]) if isinstance(sizes, list) and sizes else 50.0
 
     def _panel_px(self, panel_id: str, prop: str) -> float:
