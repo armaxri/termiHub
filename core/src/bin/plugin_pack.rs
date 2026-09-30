@@ -6,7 +6,8 @@
 //! archive. It does **not** build a backend crate itself — the
 //! `scripts/package-plugin.{sh,cmd}` helpers compile the dynamic library, stage
 //! it into `backend/` (or `backend/<target-triple>/` for `--target` builds), and
-//! then invoke this binary. Kept behind the `plugin` cargo feature (see the
+//! then invoke this binary. It checks each staged library's embedded ABI marker
+//! against the manifest `apiVersion` without loading it (#3372). Kept behind the `plugin` cargo feature (see the
 //! `[[bin]]` `required-features` in `core/Cargo.toml`).
 //!
 //! ```text
@@ -18,7 +19,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use termihub_core::plugin::{merge_packages, pack_plugin, package_platform_entries};
+use termihub_core::plugin::{merge_packages, pack_plugin_with_report, package_platform_entries};
 
 const USAGE: &str = "\
 termihub-plugin-pack — package a plugin source directory into a .termihub-plugin
@@ -31,7 +32,10 @@ USAGE:
 OPTIONS:
     --source <dir>   Plugin source directory containing manifest.json. A
                      backend/<target-triple>/ tree becomes a multi-platform
-                     package (the manifest `libraries` map is derived from it)
+                     package (the manifest `libraries` map is derived from it).
+                     Every backend library's embedded ABI marker must equal
+                     the manifest `apiVersion`; a library without one is
+                     packed with a warning
     --merge <pkg>    Merge per-platform packages (built with --target) into one
                      multi-platform package; repeat once per input
     --inspect <pkg>  Print each platform entry as `<triple> <sha256> <path>`
@@ -94,8 +98,11 @@ fn main() -> ExitCode {
 fn run(mode: Mode, out: &Path) -> Result<(), termihub_core::plugin::PluginPackError> {
     match mode {
         Mode::Pack(source) => {
-            let path = pack_plugin(&source, out)?;
-            println!("Created {}", path.display());
+            let packed = pack_plugin_with_report(&source, out)?;
+            for warning in &packed.warnings {
+                eprintln!("warning: {warning}");
+            }
+            println!("Created {}", packed.path.display());
         }
         Mode::Merge(inputs) => {
             let path = merge_packages(&inputs, out)?;
