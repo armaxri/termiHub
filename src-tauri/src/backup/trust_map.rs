@@ -12,12 +12,13 @@ use super::sections::NormalizeError;
 /// The trust-store files carry no `version` field: their on-disk format (a flat
 /// `host → [fingerprint]` object) is deliberately left unchanged, because
 /// adding a `version` key inside that object would make every older termiHub
-/// read the file as corrupt and start with an empty store — the very downgrade
-/// data loss the migration layer exists to prevent (#2745). The format is
-/// versioned where it leaves the machine instead: the backup section records
-/// schema version 1, and a section with a newer version is refused
+/// read the file as corrupt and start with an empty store. The on-disk format
+/// version lives in a sidecar file instead (#2745, see
+/// [`crate::session::trust_store_file`]); the backup section records the same
+/// version, and a section with a newer version is refused
 /// ([`SectionSpec::normalize_section`]).
-pub const TRUST_STORE_SCHEMA_VERSION: u32 = 1;
+pub const TRUST_STORE_SCHEMA_VERSION: u32 =
+    crate::session::trust_store_file::TRUST_STORE_FORMAT_VERSION;
 
 /// Upper bound on hosts in a restored trust store, so a hostile backup cannot
 /// balloon the store.
