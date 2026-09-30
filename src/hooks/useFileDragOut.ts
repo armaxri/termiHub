@@ -55,7 +55,7 @@ async function startNativeDrag(paths: string[], control: DragOutControl): Promis
  * concurrency too; this keeps a large folder from flooding the queue at once
  * and lets a cancel / failure stop the rest promptly.
  */
-export const DRAG_OUT_DOWNLOAD_CONCURRENCY = 4;
+const DRAG_OUT_DOWNLOAD_CONCURRENCY = 4;
 
 /** Remember a finished staging for reuse and schedule its discard. */
 function rememberStaging(

@@ -21,7 +21,7 @@ export interface ProxyJumpContext {
 }
 
 /** Chains deeper than this are allowed but warned about (latency). */
-export const MAX_RECOMMENDED_HOPS = 5;
+const MAX_RECOMMENDED_HOPS = 5;
 
 /**
  * Validate an SSH `proxyJump` chain for the connection editor.

@@ -12,7 +12,7 @@ import type { ConnectionConfig } from "@/types/terminal";
 import type { ConnectionTypeInfo } from "@/types/connection";
 
 /** Graphical type ids an agent can carry through its port forwarding. */
-export const AGENT_TUNNELLED_GRAPHICAL_TYPES: readonly string[] = ["vnc", "rdp"];
+const AGENT_TUNNELLED_GRAPHICAL_TYPES: readonly string[] = ["vnc", "rdp"];
 
 /**
  * Schema group dropped from a tunnelled type: VNC's own SSH tunnel cannot be

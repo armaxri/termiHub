@@ -86,7 +86,7 @@ let cachedNameCollator: Intl.Collator | null = null;
  * throws on a `C`/`POSIX` environment. Cached because constructing a collator is
  * comparatively expensive and the locale is fixed for the session.
  */
-export function nameCollator(): Intl.Collator {
+function nameCollator(): Intl.Collator {
   if (cachedNameCollator === null) {
     cachedNameCollator = new Intl.Collator(resolveUiLocale(), {
       numeric: true,

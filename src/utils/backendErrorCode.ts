@@ -43,7 +43,7 @@ export const SECOND_FACTOR_FAILED_CODE: IpcErrorCode = "second_factor_failed";
  * to an error the agent itself reported (`remote_error`). Mirrors the Rust
  * `TerminalError::AgentTransportClosed` (#2840).
  */
-export const AGENT_TRANSPORT_CLOSED_CODE: IpcErrorCode = "agent_transport_closed";
+const AGENT_TRANSPORT_CLOSED_CODE: IpcErrorCode = "agent_transport_closed";
 
 /**
  * Stable code emitted when an agent request got **no reply** within its
@@ -51,7 +51,7 @@ export const AGENT_TRANSPORT_CLOSED_CODE: IpcErrorCode = "agent_transport_closed
  * (#3959). Distinct from {@link AGENT_TRANSPORT_CLOSED_CODE} and from
  * {@link AGENT_REPORTED_ERROR_CODE}. Mirrors the Rust `TerminalError::AgentTimeout`.
  */
-export const AGENT_TIMEOUT_CODE: IpcErrorCode = "agent_timeout";
+const AGENT_TIMEOUT_CODE: IpcErrorCode = "agent_timeout";
 
 /**
  * Stable code for an error the agent itself reported (it answered the request
@@ -59,7 +59,7 @@ export const AGENT_TIMEOUT_CODE: IpcErrorCode = "agent_timeout";
  * before the request was sent. Since #3959 it no longer covers timeouts, and
  * since #2840 not transport closes.
  */
-export const AGENT_REPORTED_ERROR_CODE: IpcErrorCode = "remote_error";
+const AGENT_REPORTED_ERROR_CODE: IpcErrorCode = "remote_error";
 
 /** User-facing text for a rejected one-time code (#3376). */
 export const SECOND_FACTOR_FAILED_MESSAGE = "Verification code rejected — try again.";

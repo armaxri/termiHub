@@ -448,7 +448,7 @@ jobs:
         run: scripts/release-check.sh --versions-only
 
       # Advisory unused-code report (audit findings TOOL-009 + TOOL-008 JS slice).
-      # knip statically finds unused files, exports, and dependencies; knip.json
+      # knip statically finds unused files, exports, and dependencies; knip.jsonc
       # declares the real entrypoints (src/main.tsx, the vite/vitest configs, test
       # setup + test files, the dynamically-loaded testbridge) so the report is
       # useful-not-noisy. It is REPORT-ONLY: `continue-on-error` plus `|| true`

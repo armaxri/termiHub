@@ -16,9 +16,6 @@ export type { DiagnosticsBundleEntry } from "./generated/DiagnosticsBundleEntry"
 /** Result of writing a diagnostics bundle. */
 export type { DiagnosticsExportResult } from "./generated/DiagnosticsExportResult";
 
-/** One crash report on a remote agent (`CrashReportSummary`, #3574). */
-export type { AgentCrashReportSummary } from "./generated/AgentCrashReportSummary";
-
 /** A connected agent's crash reports, for the export preview (#3574). */
 export type { AgentCrashReports } from "./generated/AgentCrashReports";
 

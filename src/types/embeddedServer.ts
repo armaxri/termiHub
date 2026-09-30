@@ -8,14 +8,11 @@ import type { ServerType } from "./generated/ServerType";
 
 export type { ServerType };
 export type { ServerStatus } from "./generated/ServerStatus";
-export type { FtpAuth } from "./generated/FtpAuth";
-export type { HttpBasicAuth } from "./generated/HttpBasicAuth";
 export type { EmbeddedServerConfig } from "./generated/EmbeddedServerConfig";
 export type { ServerStats } from "./generated/ServerStats";
 export type { ServerState } from "./generated/ServerState";
 export type { AccessLogEntry } from "./generated/AccessLogEntry";
 export type { TopEntry } from "./generated/TopEntry";
-export type { TransferInfo } from "./generated/TransferInfo";
 export type { DetailedServerStats } from "./generated/DetailedServerStats";
 export type { ServerActivity } from "./generated/ServerActivity";
 export type { NetworkInterface } from "./generated/NetworkInterface";

@@ -7,8 +7,6 @@
 // The X server status/progress/consent DTOs are generated from their Rust source
 // of truth (`src-tauri/src/terminal/xserver/types.rs`) via ts-rs (audit DUP-030,
 // ts-rs rollout #3088).
-export type { XServerState } from "./generated/XServerState";
-export type { XServerPlatform } from "./generated/XServerPlatform";
 export type { XServerStatusReport } from "./generated/XServerStatusReport";
 export type { XServerProgress } from "./generated/XServerProgress";
 export type { XServerConsentRequest } from "./generated/XServerConsentRequest";

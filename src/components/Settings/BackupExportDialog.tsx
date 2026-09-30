@@ -23,14 +23,14 @@ interface BackupExportDialogProps {
 const WARNING_TOAST_MS = 15_000;
 
 /** Why a section can only be backed up with encryption turned on. */
-export function encryptionReason(section: BackupSectionInfo): string {
+function encryptionReason(section: BackupSectionInfo): string {
   return section.containsSecrets
     ? "Contains passwords — needs encryption"
     : "Trust decisions — needs encryption";
 }
 
 /** Default file name for a backup, dated so successive backups don't collide. */
-export function defaultBackupFileName(): string {
+function defaultBackupFileName(): string {
   const date = new Date().toISOString().slice(0, 10);
   return `termihub-backup-${date}.json`;
 }

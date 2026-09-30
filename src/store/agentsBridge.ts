@@ -360,8 +360,8 @@ export type AgentIntentKind =
   | "agent.updateFolder"
   | "agent.deleteFolder";
 
-/** Dispatch a granular `agent.*` intent, resolving with the ack (parity tests). */
-export function dispatchAgentIntent(
+/** Dispatch a granular `agent.*` intent, resolving with the ack. */
+function dispatchAgentIntent(
   kind: AgentIntentKind,
   payload: Record<string, unknown>
 ): Promise<IntentAck> {

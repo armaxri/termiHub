@@ -11,23 +11,16 @@ import {
   saveConnectionToFile,
   saveFolder,
   deleteFolderFromBackend,
-  exportConnections,
-  importConnections,
   getSettings,
   saveSettings,
-  saveExternalFile,
   reloadExternalConnections,
   SavedRemoteAgent,
   saveRemoteAgent,
   deleteRemoteAgentFromBackend,
   reorderRemoteAgents as apiReorderRemoteAgents,
   reorderConnections as apiReorderConnections,
-  previewImport,
-  exportConnectionsEncrypted,
-  importConnectionsWithCredentials,
   getRecoveryWarnings,
 } from "./api";
-import type { ImportPreview, ImportResult } from "./api";
 
 /** Load all saved connections, folders, and agents from the backend (unified) */
 export async function loadConnections(): Promise<{
@@ -91,34 +84,14 @@ export async function reorderConnections(connectionIds: string[]): Promise<void>
   await apiReorderConnections(connectionIds);
 }
 
-/** Export all connections as JSON */
-export { exportConnections };
-
-/** Import connections from JSON */
-export { importConnections };
-
 /** Get application settings */
 export { getSettings };
 
 /** Save application settings */
 export { saveSettings };
 
-/** Save an external connection file to disk */
-export { saveExternalFile };
-
 /** Reload external connection files */
 export { reloadExternalConnections };
 
-/** Preview import file contents */
-export { previewImport };
-
-/** Export connections with optional encrypted credentials */
-export { exportConnectionsEncrypted };
-
-/** Import connections with optional credential decryption */
-export { importConnectionsWithCredentials };
-
 /** Get recovery warnings from app startup */
 export { getRecoveryWarnings };
-
-export type { ImportPreview, ImportResult };

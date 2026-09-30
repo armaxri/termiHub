@@ -11,23 +11,12 @@ import { TauriTransport } from "./TauriTransport";
 import type { Transport } from "./Transport";
 import { WebSocketTransport, type JsonRpcSocket } from "./WebSocketTransport";
 
-export type {
-  DiffFrame,
-  DiffOp,
-  Intent,
-  IntentAck,
-  IntentError,
-  ProducedRegion,
-  ProjectionFrame,
-  SnapshotFrame,
-} from "./types";
+export type { DiffFrame, DiffOp, Intent, IntentAck, ProjectionFrame, SnapshotFrame } from "./types";
 export type { FrameHandler, Subscription, Transport } from "./Transport";
-export { TauriTransport } from "./TauriTransport";
 export { InMemoryTransport } from "./InMemoryTransport";
-export { WebSocketTransport, type JsonRpcSocket } from "./WebSocketTransport";
+export type { JsonRpcSocket } from "./WebSocketTransport";
 export {
   ProjectionClient,
-  type CacheListener,
   type OptimisticFold,
   type ProjectionCacheState,
 } from "./ProjectionClient";

@@ -86,7 +86,7 @@ export function onFrontendLog(cb: LogCallback): () => void {
  * Entries are delivered to live listeners (the LogViewer) or, before any
  * listener has mounted, held in the bounded startup buffer.
  */
-export function emitFrontendLog(level: FrontendLogLevel, target: string, message: string): void {
+function emitFrontendLog(level: FrontendLogLevel, target: string, message: string): void {
   const entry: LogEntry = {
     timestamp: new Date().toISOString(),
     level,

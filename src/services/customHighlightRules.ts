@@ -19,7 +19,7 @@ import { newId } from "@/services/transport/ids";
 export const DEFAULT_CUSTOM_RULE_PRIORITY = 1;
 
 /** Default style for a freshly-created custom rule. */
-export function defaultCustomRuleStyle(): HighlightStyle {
+function defaultCustomRuleStyle(): HighlightStyle {
   return { color: "#4fc1ff" };
 }
 

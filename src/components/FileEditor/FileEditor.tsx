@@ -101,7 +101,7 @@ export const LARGE_FILE_THRESHOLD_BYTES = 10 * 1024 * 1024;
  * server has not told us whether the file is writable — as a dismissible note.
  * Mirrored in the user docs (`docs/marketing/quickstart.md`, "Editing files over FTP").
  */
-export const FTP_EDIT_LIMITS =
+const FTP_EDIT_LIMITS =
   "FTP saves re-upload the whole file and are not atomic — an interrupted save can leave a truncated file on the server. There is no elevated (sudo) save over FTP.";
 
 // Use local monaco-editor package instead of CDN (important for Tauri/offline)
