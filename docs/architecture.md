@@ -2725,6 +2725,13 @@ per-region **versioned diff channels** with multi-subscriber fan-out:
   lets a dispatching client apply its own intent to its local view synchronously; the fold is
   version-gated and dropped once the authoritative diff for that version arrives, so there is no
   double-apply and no drift.
+- The `connections` region has **no intents** (#2831): the persist commands are its single writer.
+  Each command writes `connections.json` and folds the disk view into the region inside the `commit`
+  choke point (`commands/connection.rs`), under one lock and whatever the outcome, so a failed or
+  partially-applied write still leaves the region equal to disk. For instant feedback the connections
+  bridge layers a client-local overlay (`persistWithOverlay`) whose lifecycle follows the persist
+  result: once it settles, `ProjectionClient.catchUp()` brings the cache up to the backend's version
+  and the overlay is dropped. No compensating write is ever needed.
 
 Each domain was migrated behind flags via a **per-domain strangler-fig sequence**, landing beside the
 ~206 existing typed commands and ~36 events rather than replacing them wholesale:

@@ -378,8 +378,8 @@ export function dispatchAgentIntent(
  * instantly. Best-effort: any dispatch failure is swallowed and logged (the
  * backend still feeds the region at the source), and a synchronous
  * transport-construction failure (non-Tauri, no socket) is caught too, so it never
- * throws out of a reducer. The twin of the connections bridge's
- * {@link import("./connectionsBridge").mirrorConnectionIntent}.
+ * throws out of a reducer. The twin of the settings bridge's
+ * {@link import("./settingsBridge").mirrorSettingsIntent}.
  */
 export function mirrorAgentIntent(kind: AgentIntentKind, payload: Record<string, unknown>): void {
   try {
