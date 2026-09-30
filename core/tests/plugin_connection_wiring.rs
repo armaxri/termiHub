@@ -19,10 +19,12 @@
 //! genuinely `dlopen`s it, and is gated on the `plugin` feature.
 #![cfg(feature = "plugin")]
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+mod plugin_fixture;
+use plugin_fixture::{artifact_name, fixture_library, Variant};
 
 use termihub_core::connection::{ConnectionType, ConnectionTypeRegistry, FieldType};
 use termihub_core::plugin::{
@@ -46,39 +48,6 @@ fn trust_native(root: &Path, id: &str) {
         .expect("enable native plugins");
     let hash = native_library_hash(root, id).expect("hash the installed backend library");
     trust.acknowledge(id, hash).expect("acknowledge the plugin");
-}
-
-/// Path to the fixture plugin's `Cargo.toml` (the same echo `cdylib` the
-/// round-trip test uses).
-fn fixture_manifest() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join("test-plugin")
-        .join("Cargo.toml")
-}
-
-/// The platform-specific file name cargo produces for the fixture `cdylib`.
-fn artifact_name() -> String {
-    format!(
-        "{}termihub_test_plugin{}",
-        std::env::consts::DLL_PREFIX,
-        std::env::consts::DLL_SUFFIX
-    )
-}
-
-/// Build the fixture into `target_dir`, returning the freshly-built library path.
-fn build_fixture(target_dir: &Path) -> PathBuf {
-    let status = Command::new(env!("CARGO"))
-        .arg("build")
-        .arg("--manifest-path")
-        .arg(fixture_manifest())
-        .arg("--target-dir")
-        .arg(target_dir)
-        .status()
-        .expect("failed to spawn cargo to build the fixture plugin");
-    assert!(status.success(), "building the fixture plugin failed");
-    target_dir.join("debug").join(artifact_name())
 }
 
 /// A manifest declaring a terminal backend of connection type `connection_type`,
@@ -273,7 +242,7 @@ async fn round_trip(conn: &mut Box<dyn ConnectionType>, payload: &[u8]) {
 #[tokio::test]
 async fn plugin_type_is_creatable_and_listed_through_the_registry() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let lib = build_fixture(&tmp.path().join("target"));
+    let lib = fixture_library(Variant::Default, tmp.path());
     let root = tmp.path().join("plugins");
     std::fs::create_dir_all(&root).unwrap();
 
@@ -345,7 +314,7 @@ async fn plugin_type_is_creatable_and_listed_through_the_registry() {
 #[tokio::test]
 async fn plugin_type_ids_do_not_depend_on_load_order() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let lib = build_fixture(&tmp.path().join("target"));
+    let lib = fixture_library(Variant::Default, tmp.path());
     let root = tmp.path().join("plugins");
     std::fs::create_dir_all(&root).unwrap();
     let plugin_a = install(&root, &lib, "echo-a", "Echo A", "echo");
@@ -402,7 +371,7 @@ async fn already_enabled_plugin_is_loaded_at_startup_without_a_toggle() {
     // confirm `load_enabled_plugins` registers and makes the type creatable with
     // no enable() call in sight.
     let tmp = tempfile::TempDir::new().unwrap();
-    let lib = build_fixture(&tmp.path().join("target"));
+    let lib = fixture_library(Variant::Default, tmp.path());
     let root = tmp.path().join("plugins");
     std::fs::create_dir_all(&root).unwrap();
 
@@ -465,7 +434,7 @@ async fn already_enabled_plugin_is_loaded_at_startup_without_a_toggle() {
 #[tokio::test]
 async fn sessions_are_independent_so_closing_one_leaves_the_other_running() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let lib = build_fixture(&tmp.path().join("target"));
+    let lib = fixture_library(Variant::Default, tmp.path());
     let root = tmp.path().join("plugins");
     std::fs::create_dir_all(&root).unwrap();
 
@@ -512,7 +481,7 @@ async fn declared_plugin_settings_are_delivered_to_the_backend_at_connect() {
     // session creation. Before the fix, only the per-connection config reached
     // the backend, so a declared setting silently did nothing.
     let tmp = tempfile::TempDir::new().unwrap();
-    let lib = build_fixture(&tmp.path().join("target"));
+    let lib = fixture_library(Variant::Default, tmp.path());
     let root = tmp.path().join("plugins");
     std::fs::create_dir_all(&root).unwrap();
 
@@ -550,7 +519,7 @@ async fn a_plugin_without_declared_settings_still_creates_a_session() {
     // Back-compat: a plugin that declares no `settings` and has none stored must
     // still create a session fine; an empty `{}` object reaches the backend.
     let tmp = tempfile::TempDir::new().unwrap();
-    let lib = build_fixture(&tmp.path().join("target"));
+    let lib = fixture_library(Variant::Default, tmp.path());
     let root = tmp.path().join("plugins");
     std::fs::create_dir_all(&root).unwrap();
 

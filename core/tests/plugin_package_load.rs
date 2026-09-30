@@ -19,9 +19,11 @@
 #![cfg(feature = "plugin")]
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+mod plugin_fixture;
+use plugin_fixture::{fixture_library, Variant};
 
 use termihub_core::connection::{plugin_type_id, ConnectionTypeRegistry};
 use termihub_core::plugin::{
@@ -51,33 +53,10 @@ const FIXTURE_MANIFEST: &str = r#"{
     }
 }"#;
 
-/// Build the fixture cdylib into `target_dir` and return the library path.
-fn build_fixture(target_dir: &Path) -> PathBuf {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-        .join("test-plugin")
-        .join("Cargo.toml");
-    let status = Command::new(env!("CARGO"))
-        .arg("build")
-        .arg("--manifest-path")
-        .arg(manifest)
-        .arg("--target-dir")
-        .arg(target_dir)
-        .status()
-        .expect("failed to spawn cargo to build the fixture plugin");
-    assert!(status.success(), "building the fixture plugin failed");
-    target_dir.join("debug").join(format!(
-        "{}termihub_test_plugin{}",
-        std::env::consts::DLL_PREFIX,
-        std::env::consts::DLL_SUFFIX
-    ))
-}
-
 /// Pack the fixture as a multi-platform package: this host's library under
 /// `backend/<host-triple>/` plus a decoy under `backend/<foreign-triple>/`.
 fn fixture_package(work: &Path) -> PathBuf {
-    let lib = build_fixture(&work.join("target"));
+    let lib = fixture_library(Variant::Default, work);
     let src = work.join("src");
     let host = host_target_triple();
     let host_dir = src.join("backend").join(host);
