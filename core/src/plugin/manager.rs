@@ -49,6 +49,7 @@ use super::package::{
     validate_package, PluginPackageError, MANIFEST_FILE_NAME, MAX_DECOMPRESSED_ENTRY_BYTES,
     MAX_DECOMPRESSED_TOTAL_BYTES, MAX_PACKAGE_ENTRIES,
 };
+use super::plugin_state::{self, PluginStateRecord, StateError, StateStore, VerifiedBackend};
 use super::security::{assess_trust, TrustAssessment, TrustLevel};
 use super::settings_migration::migrate_settings;
 use super::signature::{self, PackageSignature, VerifiedArchive};
@@ -59,7 +60,6 @@ use super::version_change::{
 };
 
 /// File holding per-plugin enabled/disabled state and install timestamps.
-const STATE_FILE_NAME: &str = "plugin-state.json";
 /// File holding per-plugin user settings.
 const SETTINGS_FILE_NAME: &str = "plugin-settings.json";
 
@@ -270,35 +270,6 @@ pub struct InstallOptions {
     /// package whose installed signer is unknown (#3489). Without it such an
     /// install is refused with [`PluginManagerError::SignerChangeUnconfirmed`].
     pub confirm_signer_change: bool,
-}
-
-/// Per-plugin record persisted in `plugin-state.json`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PluginStateRecord {
-    /// Whether the user has the plugin enabled.
-    enabled: bool,
-    /// Install time in milliseconds since the Unix epoch.
-    installed_at: u64,
-    /// The `sha256:`-prefixed digest of the package this plugin was installed
-    /// from (PLG-012), so a same-version reinstall can tell an identical package
-    /// from a different build. Absent for installs that predate it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    package_sha256: Option<String>,
-    /// Who signed the package this plugin was installed from (#3489), so a later
-    /// replace can tell "same publisher" from "the publisher key changed". Absent
-    /// for installs that predate it — those fall back to the `signature.json`
-    /// extracted into the plugin directory.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    signer: Option<PackageSigner>,
-}
-
-/// The whole `plugin-state.json` document.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct StateStore {
-    /// Records keyed by plugin id.
-    #[serde(default)]
-    plugins: BTreeMap<String, PluginStateRecord>,
 }
 
 /// The whole `plugin-settings.json` document: per-plugin free-form settings.
@@ -656,6 +627,15 @@ impl PluginManager {
             self.migrate_stored_settings(&manifest)?;
         }
 
+        // Bind the installed backend library out of band (#2796): its digest, and
+        // whether its signing key is trusted as of this install, are recorded in
+        // `plugin-state.json` — outside the plugin directory an attacker would
+        // rewrite — so the host refuses a load whose library no longer matches.
+        let signer_trusted = incoming_signer.key_id().is_some_and(|key_id| {
+            TrustStore::load(&self.root).is_ok_and(|store| store.is_trusted(key_id))
+        });
+        let verified_backend = installed_backend_binding(&dest, &manifest, signer_trusted)?;
+
         // Record enabled state with the install timestamp.
         let mut state = self.read_state_store()?;
         state.plugins.insert(
@@ -665,6 +645,8 @@ impl PluginManager {
                 installed_at: now_millis(),
                 package_sha256: Some(package_sha256),
                 signer: Some(incoming_signer),
+                verified_backend,
+                extra: Map::new(),
             },
         );
         self.write_state_store(&state)?;
@@ -830,8 +812,7 @@ impl PluginManager {
             .or_insert_with(|| PluginStateRecord {
                 enabled,
                 installed_at: now_millis(),
-                package_sha256: None,
-                signer: None,
+                ..PluginStateRecord::default()
             });
         record.enabled = enabled;
         self.write_state_store(&state)?;
@@ -1071,20 +1052,16 @@ impl PluginManager {
         }
     }
 
-    fn state_path(&self) -> PathBuf {
-        self.root.join(STATE_FILE_NAME)
-    }
-
     fn settings_path(&self) -> PathBuf {
         self.root.join(SETTINGS_FILE_NAME)
     }
 
     fn read_state_store(&self) -> Result<StateStore, PluginManagerError> {
-        read_json_or_default(&self.state_path())
+        Ok(plugin_state::read(&self.root)?)
     }
 
     fn write_state_store(&self, store: &StateStore) -> Result<(), PluginManagerError> {
-        write_json_atomic(&self.root, &self.state_path(), store)
+        Ok(plugin_state::write(&self.root, store)?)
     }
 
     fn read_settings_store(&self) -> Result<SettingsStore, PluginManagerError> {
@@ -1419,6 +1396,42 @@ where
         Ok(s) => serde_json::from_str(&s).map_err(|e| PluginManagerError::Store(e.to_string())),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
         Err(e) => Err(PluginManagerError::Io(e)),
+    }
+}
+
+/// The install-time backend binding recorded for `manifest`'s extracted plugin
+/// at `plugin_dir` (#2796): the host library the loader will select and the
+/// digest of its bytes as just extracted (bound to the verified signature by
+/// [`extract_package`]). `None` for a plugin without a native backend, or when
+/// no library for this host resolves — such a plugin cannot load anyway, and
+/// the load reports why.
+fn installed_backend_binding(
+    plugin_dir: &Path,
+    manifest: &PluginManifest,
+    signer_trusted: bool,
+) -> Result<Option<VerifiedBackend>, PluginManagerError> {
+    let Some(backend) = manifest.extensions.terminal_backend.as_ref() else {
+        return Ok(None);
+    };
+    let Ok(lib) = super::host::select_backend_library(plugin_dir, backend) else {
+        return Ok(None);
+    };
+    let Ok(rel) = lib.strip_prefix(plugin_dir) else {
+        return Ok(None);
+    };
+    Ok(Some(VerifiedBackend {
+        library: super::host::rel_to_slash(rel),
+        sha256: signature::sha256_file(&lib)?,
+        signer_trusted,
+    }))
+}
+
+impl From<StateError> for PluginManagerError {
+    fn from(e: StateError) -> Self {
+        match e {
+            StateError::Io(io) => Self::Io(io),
+            other => Self::Store(other.to_string()),
+        }
     }
 }
 

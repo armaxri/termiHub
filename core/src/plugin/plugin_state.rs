@@ -1,0 +1,316 @@
+//! The persisted per-plugin install state, `<plugins-root>/plugin-state.json`.
+//!
+//! One record per installed plugin id: its enabled flag, install time, the
+//! package digest and signer the version / signer gates compare against
+//! (PLG-012, #3489), and — since schema v2 (#2796) — the **install-verified
+//! backend binding** the plugin host checks at load time.
+//!
+//! # Why the load binding lives here
+//!
+//! The extracted plugin directory is exactly what a local attacker rewrites to
+//! swap a backend library, and it carries its own `signature.json`, so a
+//! re-verification that only consults the directory can be satisfied by a
+//! re-signed tree. The digest of the library the manager verified at install is
+//! therefore recorded **outside** the plugin directory, here, and the host
+//! refuses a library that no longer matches it (see
+//! [`super::host::PluginHost::load`]). Only a manager install rewrites it.
+//!
+//! # Versioning and downgrade safety
+//!
+//! The document carries a `version` like the other persisted stores (#2744):
+//! a file without one is the pre-versioning v1 shape and is read as-is (the
+//! v1 → v2 change is purely additive, so migration is the identity); a file
+//! written by a **newer** schema is still read — every field this build knows is
+//! optional — but never overwritten ([`write`] refuses); and unknown top-level
+//! and per-record fields round-trip unchanged.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+
+use super::signer_change::PackageSigner;
+
+/// The state file name under the plugins root.
+pub(crate) const STATE_FILE_NAME: &str = "plugin-state.json";
+
+/// The schema version this build reads and writes.
+///
+/// * v1 — the unversioned original (enabled, install time, package digest,
+///   signer).
+/// * v2 (#2796) — adds [`PluginStateRecord::verified_backend`].
+pub(crate) const CURRENT_VERSION: u32 = 2;
+
+/// The version an unversioned file is assumed to carry.
+const ASSUMED_VERSION: u32 = 1;
+
+/// What the manager verified about a plugin's **backend library** at install
+/// time, persisted so the host can bind a load to it (#2796).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct VerifiedBackend {
+    /// The selected host library's path relative to the plugin directory,
+    /// `/`-joined (the signature's key form).
+    pub library: String,
+    /// The `sha256:`-prefixed digest of that library as installed.
+    pub sha256: String,
+    /// Whether the package's signing key was trusted (bundled or pinned) when
+    /// it was installed. `false` for an unsigned or "install once" package.
+    /// A key that *was* trusted at install and is no longer (revoked) is refused
+    /// at load; one that never was loads only bound to this record.
+    pub signer_trusted: bool,
+}
+
+/// Per-plugin record persisted in `plugin-state.json`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PluginStateRecord {
+    /// Whether the user has the plugin enabled.
+    pub enabled: bool,
+    /// Install time in milliseconds since the Unix epoch.
+    pub installed_at: u64,
+    /// The `sha256:`-prefixed digest of the package this plugin was installed
+    /// from (PLG-012), so a same-version reinstall can tell an identical package
+    /// from a different build. Absent for installs that predate it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_sha256: Option<String>,
+    /// Who signed the package this plugin was installed from (#3489), so a later
+    /// replace can tell "same publisher" from "the publisher key changed". Absent
+    /// for installs that predate it — those fall back to the `signature.json`
+    /// extracted into the plugin directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signer: Option<PackageSigner>,
+    /// The install-verified backend binding (#2796). Absent for a plugin
+    /// without a native backend and for installs that predate schema v2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified_backend: Option<VerifiedBackend>,
+    /// Unknown per-record fields, carried forward unchanged.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+/// The whole `plugin-state.json` document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct StateStore {
+    /// Schema version (see [`CURRENT_VERSION`]). Always written as the current
+    /// version; read leniently (absent → v1).
+    #[serde(default = "assumed_version")]
+    pub version: u32,
+    /// Records keyed by plugin id.
+    #[serde(default)]
+    pub plugins: BTreeMap<String, PluginStateRecord>,
+    /// Unknown top-level fields, carried forward unchanged.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+fn assumed_version() -> u32 {
+    ASSUMED_VERSION
+}
+
+impl Default for StateStore {
+    fn default() -> Self {
+        Self {
+            version: CURRENT_VERSION,
+            plugins: BTreeMap::new(),
+            extra: Map::new(),
+        }
+    }
+}
+
+/// Errors reading or writing the state file.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum StateError {
+    /// A filesystem operation failed.
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    /// The file is not a valid state document.
+    #[error("plugin-state.json is invalid: {0}")]
+    Invalid(String),
+    /// The file was written by a newer schema; overwriting it would lose data.
+    #[error(
+        "plugin-state.json was written by a newer version of termiHub (schema v{found}, this \
+         build supports v{CURRENT_VERSION}); refusing to overwrite it"
+    )]
+    Newer {
+        /// The on-disk schema version.
+        found: u32,
+    },
+}
+
+/// The state file path under `plugins_root`.
+pub(crate) fn state_path(plugins_root: &Path) -> PathBuf {
+    plugins_root.join(STATE_FILE_NAME)
+}
+
+/// Read the state store under `plugins_root`. A missing file is an empty store.
+///
+/// A file written by a newer schema is still read (for display and the load
+/// binding); [`write`] refuses to overwrite it.
+pub(crate) fn read(plugins_root: &Path) -> Result<StateStore, StateError> {
+    match std::fs::read_to_string(state_path(plugins_root)) {
+        Ok(raw) => parse(&raw),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(StateStore::default()),
+        Err(e) => Err(StateError::Io(e)),
+    }
+}
+
+/// Parse a state document. v1 → v2 is additive, so no migration step runs.
+fn parse(raw: &str) -> Result<StateStore, StateError> {
+    serde_json::from_str(raw).map_err(|e| StateError::Invalid(e.to_string()))
+}
+
+/// Read one plugin's record, or `None` when the store or the record is absent.
+pub(crate) fn read_record(
+    plugins_root: &Path,
+    id: &str,
+) -> Result<Option<PluginStateRecord>, StateError> {
+    Ok(read(plugins_root)?.plugins.remove(id))
+}
+
+/// Write `store` atomically (temp file + rename), stamped with the current
+/// schema version. Refuses to overwrite a file written by a newer schema.
+pub(crate) fn write(plugins_root: &Path, store: &StateStore) -> Result<(), StateError> {
+    let path = state_path(plugins_root);
+    if let Some(found) = on_disk_version(&path) {
+        if found > CURRENT_VERSION {
+            return Err(StateError::Newer { found });
+        }
+    }
+    std::fs::create_dir_all(plugins_root)?;
+    let mut out = store.clone();
+    out.version = CURRENT_VERSION;
+    let json =
+        serde_json::to_string_pretty(&out).map_err(|e| StateError::Invalid(e.to_string()))?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(())
+}
+
+/// The `version` of the file at `path`, when it exists and parses. Accepts a
+/// number or a numeric string, like the desktop stores.
+fn on_disk_version(path: &Path) -> Option<u32> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let value: Value = serde_json::from_str(&raw).ok()?;
+    match value.get("version")? {
+        Value::Number(n) => u32::try_from(n.as_u64()?).ok(),
+        Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record() -> PluginStateRecord {
+        PluginStateRecord {
+            enabled: true,
+            installed_at: 7,
+            package_sha256: Some("sha256:pkg".into()),
+            signer: Some(PackageSigner::Signed {
+                key_id: "sha256:key".into(),
+            }),
+            verified_backend: Some(VerifiedBackend {
+                library: "backend/libp.so".into(),
+                sha256: "sha256:lib".into(),
+                signer_trusted: true,
+            }),
+            extra: Map::new(),
+        }
+    }
+
+    #[test]
+    fn missing_file_reads_as_an_empty_current_store() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = read(tmp.path()).unwrap();
+        assert!(store.plugins.is_empty());
+        assert_eq!(store.version, CURRENT_VERSION);
+        assert!(read_record(tmp.path(), "p").unwrap().is_none());
+    }
+
+    #[test]
+    fn round_trips_the_verified_backend_and_stamps_the_version() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut store = StateStore::default();
+        store.plugins.insert("p".into(), record());
+        write(tmp.path(), &store).unwrap();
+
+        let raw: Value =
+            serde_json::from_str(&std::fs::read_to_string(state_path(tmp.path())).unwrap())
+                .unwrap();
+        assert_eq!(raw["version"], 2);
+        assert_eq!(
+            raw["plugins"]["p"]["verifiedBackend"]["signerTrusted"],
+            true
+        );
+
+        let back = read_record(tmp.path(), "p").unwrap().unwrap();
+        assert_eq!(back.verified_backend, record().verified_backend);
+    }
+
+    #[test]
+    fn an_unversioned_v1_file_still_reads() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            state_path(tmp.path()),
+            r#"{"plugins":{"p":{"enabled":false,"installedAt":3,"packageSha256":"sha256:x"}}}"#,
+        )
+        .unwrap();
+        let store = read(tmp.path()).unwrap();
+        assert_eq!(store.version, 1);
+        let rec = &store.plugins["p"];
+        assert!(!rec.enabled);
+        assert_eq!(rec.package_sha256.as_deref(), Some("sha256:x"));
+        assert!(rec.verified_backend.is_none());
+
+        // Re-writing upgrades it to the current version.
+        write(tmp.path(), &store).unwrap();
+        assert_eq!(read(tmp.path()).unwrap().version, CURRENT_VERSION);
+    }
+
+    #[test]
+    fn a_newer_file_is_read_but_never_overwritten() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let newer = r#"{"version":99,"plugins":{"p":{"enabled":true,"installedAt":1}}}"#;
+        std::fs::write(state_path(tmp.path()), newer).unwrap();
+
+        let store = read(tmp.path()).unwrap();
+        assert!(store.plugins["p"].enabled);
+        assert!(matches!(
+            write(tmp.path(), &store),
+            Err(StateError::Newer { found: 99 })
+        ));
+        assert_eq!(
+            std::fs::read_to_string(state_path(tmp.path())).unwrap(),
+            newer,
+            "the newer file is left intact"
+        );
+    }
+
+    #[test]
+    fn unknown_fields_round_trip() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            state_path(tmp.path()),
+            r#"{"version":2,"future":{"a":1},"plugins":{"p":{"enabled":true,"installedAt":1,"later":"x"}}}"#,
+        )
+        .unwrap();
+        let store = read(tmp.path()).unwrap();
+        write(tmp.path(), &store).unwrap();
+        let raw: Value =
+            serde_json::from_str(&std::fs::read_to_string(state_path(tmp.path())).unwrap())
+                .unwrap();
+        assert_eq!(raw["future"]["a"], 1);
+        assert_eq!(raw["plugins"]["p"]["later"], "x");
+    }
+
+    #[test]
+    fn a_corrupt_file_is_an_error_not_an_empty_store() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(state_path(tmp.path()), "{not json").unwrap();
+        assert!(matches!(read(tmp.path()), Err(StateError::Invalid(_))));
+    }
+}
