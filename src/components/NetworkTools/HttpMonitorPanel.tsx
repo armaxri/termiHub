@@ -1,6 +1,15 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Play, StopCircle, RefreshCw } from "lucide-react";
-import { Button, Tooltip, toast, Field, Input, NumberInput, Select } from "@/components/ui";
+import {
+  Button,
+  Checkbox,
+  Tooltip,
+  toast,
+  Field,
+  Input,
+  NumberInput,
+  Select,
+} from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import {
   networkHttpMonitorStart,
@@ -51,6 +60,9 @@ export function HttpMonitorPanel() {
   const [method, setMethod] = useState("GET");
   const [expectedStatus, setExpectedStatus] = useState<number | "">(200);
   const [timeoutSecs, setTimeoutSecs] = useState<number | "">(10);
+  // SEC-008 opt-in: loopback / private / unique-local targets are refused unless
+  // the user allows them for this monitor. Off by default (#4017).
+  const [allowPrivateNetwork, setAllowPrivateNetwork] = useState(false);
   const [monitors, setMonitors] = useState<HttpMonitorState[]>([]);
   const [history, setHistory] = useState<HttpCheckResult[]>([]);
   const [activeMonitorId, setActiveMonitorId] = useState<string | null>(null);
@@ -222,7 +234,8 @@ export function HttpMonitorPanel() {
         method,
         expectedStatus !== "" ? expectedStatus : undefined,
         Number(timeoutSecs) * 1000,
-        runLocation
+        runLocation,
+        allowPrivateNetwork
       );
       // Remember where this monitor runs so its row can show the vantage.
       setMonitorLocation(monitorId, runLocation);
@@ -250,6 +263,7 @@ export function HttpMonitorPanel() {
     expectedStatus,
     timeoutSecs,
     runLocation,
+    allowPrivateNetwork,
     setMonitorLocation,
     loadMonitors,
     stopListening,
@@ -466,6 +480,19 @@ export function HttpMonitorPanel() {
             onChange={setRunLocation}
             aria-label="Run HTTP monitor on"
             data-testid="http-monitor-run-location"
+          />
+        </Field>
+        <Field
+          className="network-panel__field network-panel__field--small"
+          label="Private network"
+          htmlFor="http-monitor-allow-private"
+          hint="Allow localhost / LAN"
+        >
+          <Checkbox
+            id="http-monitor-allow-private"
+            checked={allowPrivateNetwork}
+            onCheckedChange={setAllowPrivateNetwork}
+            data-testid="http-monitor-allow-private"
           />
         </Field>
       </div>

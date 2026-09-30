@@ -258,6 +258,7 @@ describe("networkApi", () => {
         expectedStatus: null,
         timeoutMs: null,
         runLocation: null,
+        allowPrivateNetwork: null,
       });
       expect(result).toBe("monitor-1");
     });
@@ -265,10 +266,15 @@ describe("networkApi", () => {
     it("networkHttpMonitorStart passes all optional params", async () => {
       mockedInvoke.mockResolvedValue("monitor-2");
 
-      await networkHttpMonitorStart("https://api.example.com/health", 30000, "GET", 200, 10000, {
-        kind: "agent",
-        agentId: "edge",
-      });
+      await networkHttpMonitorStart(
+        "https://api.example.com/health",
+        30000,
+        "GET",
+        200,
+        10000,
+        { kind: "agent", agentId: "edge" },
+        true
+      );
 
       expect(mockedInvoke).toHaveBeenCalledWith("network_http_monitor_start", {
         url: "https://api.example.com/health",
@@ -277,6 +283,7 @@ describe("networkApi", () => {
         expectedStatus: 200,
         timeoutMs: 10000,
         runLocation: { kind: "agent", agentId: "edge" },
+        allowPrivateNetwork: true,
       });
     });
 
