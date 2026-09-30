@@ -1,0 +1,8 @@
+{
+  // ESLint-only view of tsconfig.json for eslint-import-resolver-typescript
+  // (import-x/no-cycle). `references` is deliberately not inherited through
+  // `extends`: when the resolver follows tsconfig.json's reference to
+  // tsconfig.node.json it drops the `@/*` path alias, every aliased import
+  // goes unresolved, and no-cycle silently sees an almost-empty graph.
+  "extends": "./tsconfig.json"
+}

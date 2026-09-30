@@ -1,6 +1,9 @@
+import { fileURLToPath } from "node:url";
 import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
+import { importX } from "eslint-plugin-import-x";
+import { createTypeScriptImportResolver } from "eslint-import-resolver-typescript";
 
 export default tseslint.config(
   eslint.configs.recommended,
@@ -31,6 +34,34 @@ export default tseslint.config(
     files: ["src/**/*.{ts,tsx}"],
     rules: {
       "no-console": "error",
+    },
+  },
+  {
+    // Import-cycle detection (audit TOOL-014). A cycle makes module init order
+    // depend on which file is imported first, which surfaces as `undefined`
+    // bindings at startup. Only `no-cycle` is enabled — the rest of the
+    // import-x ruleset is out of scope here. The TS resolver understands the
+    // `@/*` path alias and `.ts`/`.tsx` extensions (see tsconfig.eslint.json for
+    // why it does not point at tsconfig.json directly). `import type` edges are
+    // erased at compile time, so import-x ignores them: only runtime cycles count.
+    files: ["src/**/*.{ts,tsx}"],
+    plugins: {
+      "import-x": importX,
+    },
+    settings: {
+      // Parser/extension settings from the plugin's TS preset: without them
+      // import-x only follows `.js` files, so every `.ts`/`.tsx` edge is
+      // dropped and no cycle is ever reported.
+      "import-x/extensions": importX.flatConfigs.typescript.settings["import-x/extensions"],
+      "import-x/parsers": importX.flatConfigs.typescript.settings["import-x/parsers"],
+      "import-x/resolver-next": [
+        createTypeScriptImportResolver({
+          project: fileURLToPath(new URL("./tsconfig.eslint.json", import.meta.url)),
+        }),
+      ],
+    },
+    rules: {
+      "import-x/no-cycle": ["error", { ignoreExternal: true }],
     },
   },
   {
