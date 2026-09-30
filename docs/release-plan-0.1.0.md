@@ -398,7 +398,7 @@ python scripts/test-manual.py --inventory
 | Category (`--category`)   | Display name          | Platforms      | Release-gating | Pending automation |  Total |
 | ------------------------- | --------------------- | -------------- | -------------: | -----------------: | -----: |
 | `app`                     | App                   | all            |              4 |                  0 |      4 |
-| `connection-management`   | Connection Management | all            |              0 |                  4 |      4 |
+| `connection-management`   | Connection Management | all            |              0 |                  1 |      1 |
 | `credential-store`        | Credential Store      | all            |              8 |                  0 |      8 |
 | `editor`                  | Editor                | all            |              1 |                  0 |      1 |
 | `file-browser`            | File Browser          | all            |              2 |                  0 |      2 |
@@ -413,7 +413,7 @@ python scripts/test-manual.py --inventory
 | `shell-integration`       | Shell Integration     | all            |              6 |                  0 |      6 |
 | `ssh`                     | SSH                   | all            |              4 |                  1 |      5 |
 | `ui-layout`               | UI / Layout           | all            |              8 |                  0 |      8 |
-| **Total (16 categories)** |                       |                |         **72** |             **24** | **96** |
+| **Total (16 categories)** |                       |                |         **72** |             **21** | **93** |
 
 <!-- manual-inventory:end -->
 

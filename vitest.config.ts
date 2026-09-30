@@ -68,6 +68,9 @@ export default defineConfig({
       //   src/store/slices/**  85.19 / 68.63 / 86.80 / 86.22
       //     (re-measured 2026-09-30 after #2979: 98.54 / 94.13 / 98.42 / 99.32,
       //     floored ~1 point below)
+      //   src/store/**         97.23 / 92.29 / 97.44 / 98.13 (2026-09-30, #3992)
+      //   src/store/*Bridge.ts 94.96 / 91.00 / 93.58 / 95.81 (2026-09-30, #3992)
+      //     (both floored ~1.5 points below: measured on macOS, CI runs Ubuntu)
       // (src/plugins is intentionally NOT floored: its direct files are 100% but
       // recursively the subtree is only ~85%, so it is not uniformly covered.)
       // Raise a floor (never lower) as its directory's coverage climbs.
@@ -99,6 +102,18 @@ export default defineConfig({
           branches: 93,
           functions: 97,
           lines: 98,
+        },
+        "src/store/**": {
+          statements: 95.5,
+          branches: 90.5,
+          functions: 95.5,
+          lines: 96.5,
+        },
+        "src/store/*Bridge.ts": {
+          statements: 93.5,
+          branches: 89.5,
+          functions: 92,
+          lines: 94.5,
         },
       },
     },

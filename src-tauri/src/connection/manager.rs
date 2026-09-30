@@ -1168,20 +1168,15 @@ impl ConnectionManager {
 
         let mut credentials_imported = 0;
 
-        // Decrypt and store credentials if available
-        if let (Some(ref envelope), Some(pw)) = (&imported.encrypted, password) {
-            let plaintext = decrypt_with_password(pw, envelope)
-                .context("Failed to decrypt credentials — wrong password?")?;
-            let cred_map: HashMap<String, String> =
-                serde_json::from_slice(&plaintext).context("Invalid credential data format")?;
-
-            for (map_key, value) in &cred_map {
-                if let Some(cred_key) = CredentialKey::from_map_key(map_key) {
-                    self.credential_store.set(&cred_key, value)?;
-                    credentials_imported += 1;
-                }
+        // Decrypt credentials up front so a wrong password fails before any change.
+        let cred_map: HashMap<String, String> = match (&imported.encrypted, password) {
+            (Some(envelope), Some(pw)) => {
+                let plaintext = decrypt_with_password(pw, envelope)
+                    .context("Failed to decrypt credentials — wrong password?")?;
+                serde_json::from_slice(&plaintext).context("Invalid credential data format")?
             }
-        }
+            _ => HashMap::new(),
+        };
 
         // Flatten the imported tree
         let (mut imported_conns, imported_folders) = flatten_tree(&imported.children, None);
@@ -1198,8 +1193,13 @@ impl ConnectionManager {
             }
         }
 
+        // Ids actually added by this import. A skipped (already-present) entry
+        // keeps its own saved secrets — the import must not overwrite them (#3689).
+        let mut added_ids: HashSet<String> = HashSet::new();
+
         for conn in imported_conns {
             if !store.connections.iter().any(|c| c.id == conn.id) {
+                added_ids.insert(conn.id.clone());
                 store
                     .connections
                     .push(prepare_for_storage(conn, None, &*self.credential_store)?);
@@ -1208,7 +1208,17 @@ impl ConnectionManager {
 
         for agent in imported.agents {
             if !store.agents.iter().any(|a| a.id == agent.id) {
+                added_ids.insert(agent.id.clone());
                 store.agents.push(agent);
+            }
+        }
+
+        for (map_key, value) in &cred_map {
+            if let Some(cred_key) = CredentialKey::from_map_key(map_key) {
+                if added_ids.contains(&cred_key.connection_id) {
+                    self.credential_store.set(&cred_key, value)?;
+                    credentials_imported += 1;
+                }
             }
         }
 
