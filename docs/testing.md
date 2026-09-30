@@ -1677,10 +1677,10 @@ take either side and re-run the same command. CI (`--check`) fails if it is stal
 | `network-tools`           | network-tools         | all            |              2 |                  2 |      4 |
 | `portable-mode`           | Portable Mode         | all            |              0 |                  2 |      2 |
 | `remote-agent`            | Remote Agent          | all            |              0 |                 15 |     15 |
-| `serial`                  | Serial                | all            |              1 |                  3 |      4 |
+| `serial`                  | Serial                | windows        |              1 |                  0 |      1 |
 | `ssh`                     | SSH                   | all            |              1 |                  1 |      2 |
 | `ui-layout`               | UI / Layout           | all            |              2 |                  0 |      2 |
-| **Total (11 categories)** |                       |                |         **32** |             **27** | **59** |
+| **Total (11 categories)** |                       |                |         **32** |             **24** | **56** |
 
 <!-- manual-inventory:end -->
 
@@ -1788,9 +1788,9 @@ take either side and re-run the same command. CI (`--check`) fails if it is stal
 | MT-SER-02       | Glyphs render on clean Windows without Nerd Font                                        | Release-gating manual | needs a clean Windows install without a Nerd Font                                                                                   |
 | MT-SER-03       | Serial port not found shows descriptive error overlay                                   | Automated (already)   | core session/serial.rs error classification + TerminalConnectionOverlay.test.tsx serial not-found hint                              |
 | MT-SER-04       | Serial port permission denied shows dialout hint                                        | Automated (already)   | serial.rs EACCES + permission_hint_mentions_dialout_on_linux + overlay test                                                         |
-| MT-SER-06       | Serial port scan prefixes appear in Settings → General                                  | Tracked issue         | #3683                                                                                                                               |
-| MT-SER-07       | Disabling a prefix removes its ports from the serial dropdown                           | Tracked issue         | #3683                                                                                                                               |
-| MT-SER-08       | Adding a custom prefix discovers matching ports                                         | Tracked issue         | #3683                                                                                                                               |
+| MT-SER-06       | Serial port scan prefixes appear in Settings → General                                  | Automated (#3683)     | SerialPortSettings.test.tsx badge / per-prefix toggles + settingsRegistry Serial category                                           |
+| MT-SER-07       | Disabling a prefix removes its ports from the serial dropdown                           | Automated (#3683)     | core session/serial.rs disabled-prefix tests (scan + serial2-enumerated ports)                                                      |
+| MT-SER-08       | Adding a custom prefix discovers matching ports                                         | Automated (#3683)     | core serial.rs custom_prefix_discovers_matching_ports + SerialPortSettings.test.tsx delete                                          |
 | MT-SER-05       | Serial port busy shows 'already in use' hint                                            | Automated (already)   | serial.rs EBUSY classification + overlay 'serial busy hint' test                                                                    |
 | MT-SER-09       | Connect to a virtual serial port, echo data, and handle disconnect                      | Automated (#3682)     | tests/system/tests/test_serial.py::TestSerialLiveEcho (host socat fixture)                                                          |
 | MT-SER-10       | Losing the serial/COM port flips the tab out of green and notifies                      | Automated (already)   | serial.rs::reader_drops_sender_and_closes_channel_on_fatal_error + live TestSerialLiveEcho (#3682)                                  |

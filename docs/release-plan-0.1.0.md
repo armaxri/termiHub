@@ -405,10 +405,10 @@ python scripts/test-manual.py --inventory
 | `network-tools`           | network-tools         | all            |              2 |                  2 |      4 |
 | `portable-mode`           | Portable Mode         | all            |              0 |                  2 |      2 |
 | `remote-agent`            | Remote Agent          | all            |              0 |                 15 |     15 |
-| `serial`                  | Serial                | all            |              1 |                  3 |      4 |
+| `serial`                  | Serial                | windows        |              1 |                  0 |      1 |
 | `ssh`                     | SSH                   | all            |              1 |                  1 |      2 |
 | `ui-layout`               | UI / Layout           | all            |              2 |                  0 |      2 |
-| **Total (11 categories)** |                       |                |         **32** |             **27** | **59** |
+| **Total (11 categories)** |                       |                |         **32** |             **24** | **56** |
 
 <!-- manual-inventory:end -->
 

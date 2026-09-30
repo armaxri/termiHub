@@ -84,7 +84,8 @@ export function SerialPortSettings({ visibleFields }: SerialPortSettingsProps) {
         On Linux, termiHub scans <code>/dev</code> for device names matching these prefixes to find
         serial ports that the system library may not enumerate (e.g. <code>ttyAMA*</code> on
         Raspberry Pi). Toggle built-in entries on or off, or add custom prefixes for non-standard
-        hardware.
+        hardware. Disabling a prefix hides all of its ports, including ones the system library
+        lists.
       </p>
 
       {builtIn.length > 0 && (
