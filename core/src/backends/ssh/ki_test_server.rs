@@ -213,6 +213,17 @@ impl russh::server::Handler for KiServer {
         session.data(channel, SHELL_BANNER.as_bytes())?;
         Ok(())
     }
+
+    /// The "shell" echoes its input, so a client can round-trip data.
+    async fn data(
+        &mut self,
+        channel: ChannelId,
+        data: &[u8],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        session.data(channel, data.to_vec())?;
+        Ok(())
+    }
 }
 
 /// Client handler that trusts any host key (tests only).
