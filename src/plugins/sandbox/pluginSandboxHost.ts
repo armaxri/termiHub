@@ -27,6 +27,18 @@
  * chunks straight through once the backlog is deep, and a **head-of-line
  * watchdog** force-passes a stuck head chunk so the terminal keeps flowing even
  * if a parser hangs. Both preserve ordering (they resolve slots in place).
+ *
+ * ## Crash recovery (#2857)
+ * A worker that crashes {@link MAX_WORKER_ERRORS} times in a row is torn down and
+ * the terminal reverts to the synchronous fast path. The host then **self-heals**:
+ * after an exponential backoff it builds a fresh worker and re-loads every tracked
+ * plugin. Rebuilds are bounded ({@link MAX_REBUILDS}) so a deterministically
+ * crashing plugin cannot cause a crash loop — once the budget is spent the sandbox
+ * stays degraded and the LogViewer names the suspect plugin(s). When a crash can be
+ * attributed to one plugin (the `ErrorEvent.filename` points at its `plugin://`
+ * entry point) only that plugin is disabled and the rest are reloaded. The terminal
+ * never waits on a rebuild: `sandboxHasParsers()` stays false until the fresh
+ * worker reports parsers again.
  */
 
 import { frontendLog } from "@/utils/frontendLog";
@@ -67,17 +79,46 @@ const HEAD_WATCHDOG_MS = 500;
  * plugin code should not keep taking terminal output round-trips.
  */
 const MAX_WORKER_ERRORS = 3;
+/** Rebuild delay after the first crash-teardown; doubles on each further rebuild. */
+const REBUILD_BASE_DELAY_MS = 1000;
+/** Upper bound on the rebuild backoff. */
+const REBUILD_MAX_DELAY_MS = 30_000;
+/**
+ * Consecutive rebuilds allowed before giving up and staying on the fast path. A
+ * rebuilt worker that survives {@link REBUILD_STABLE_MS} refills the budget.
+ */
+const MAX_REBUILDS = 3;
+/** A rebuilt worker alive this long without a teardown counts as healed. */
+const REBUILD_STABLE_MS = 60_000;
 
 let worker: Worker | null = null;
 let hasParsers = false;
-/** Plugin ids currently loaded in the sandbox; drives worker create/dispose. */
-const loadedPlugins = new Set<string>();
+/**
+ * Plugins tracked by the sandbox (id → entry URLs); drives worker create/dispose
+ * and lets a rebuilt worker re-load them after a crash-teardown.
+ */
+const loadedPlugins = new Map<string, string[]>();
+/** Tracked plugins whose `load` has been posted to the *current* worker. */
+const workerPlugins = new Set<string>();
+/**
+ * Tracked plugins disabled because a worker crash was attributed to them. They
+ * are not re-loaded into a rebuilt worker until explicitly unloaded + reloaded.
+ */
+const quarantined = new Set<string>();
 let seqCounter = 0;
 /** True after a head chunk timed out; new chunks pass through until the worker recovers. */
 let degraded = false;
 let headTimer: ReturnType<typeof setTimeout> | null = null;
 /** Consecutive uncaught worker errors since the worker last made progress. */
 let workerErrorCount = 0;
+/** Plugin each of those consecutive errors was attributed to (`null` = unknown). */
+let faultAttribution: (string | null)[] = [];
+/** Rebuilds performed since the sandbox was last healthy (bounded by MAX_REBUILDS). */
+let rebuildAttempts = 0;
+/** Pending backoff before the next rebuild. */
+let rebuildTimer: ReturnType<typeof setTimeout> | null = null;
+/** Refills the rebuild budget once a rebuilt worker has stayed up long enough. */
+let stableTimer: ReturnType<typeof setTimeout> | null = null;
 
 const sessions = new Map<string, SessionQueue>();
 const pending = new Map<number, { sessionId: string; slot: Slot }>();
@@ -91,19 +132,67 @@ let workerFactory: () => Worker = () =>
 
 function ensureWorker(): Worker {
   if (worker) return worker;
+  // A worker built for any reason supersedes a pending backoff rebuild.
+  cancelRebuild();
   const w = workerFactory();
   workerErrorCount = 0;
-  w.addEventListener("message", (e: MessageEvent<WorkerToHostMessage>) => handleMessage(e.data));
+  faultAttribution = [];
+  workerPlugins.clear();
+  w.addEventListener("message", (e: MessageEvent<WorkerToHostMessage>) => {
+    if (worker === w) handleMessage(e.data);
+  });
   // An uncaught throw or a dead worker must not silently hang outstanding slots:
   // surface it, and force every pending chunk through untransformed.
-  w.addEventListener("error", (e: ErrorEvent) =>
-    handleWorkerFault("error", e.message || "uncaught error")
-  );
-  w.addEventListener("messageerror", () =>
-    handleWorkerFault("messageerror", "failed to deserialize a message from the worker")
-  );
+  w.addEventListener("error", (e: ErrorEvent) => {
+    if (worker === w) handleWorkerFault("error", e.message || "uncaught error", e.filename);
+  });
+  w.addEventListener("messageerror", () => {
+    if (worker === w)
+      handleWorkerFault("messageerror", "failed to deserialize a message from the worker");
+  });
   worker = w;
+  // After a crash-teardown, any fresh worker (backoff rebuild or explicit load)
+  // that stays up long enough refills the rebuild budget.
+  if (rebuildAttempts > 0) armStableTimer();
   return w;
+}
+
+/** Tracked plugin ids that are not quarantined, in load order. */
+function activePluginIds(): string[] {
+  return Array.from(loadedPlugins.keys()).filter((id) => !quarantined.has(id));
+}
+
+/** Post `load` for every active tracked plugin the current worker does not have yet. */
+function syncWorkerPlugins(): void {
+  for (const id of activePluginIds()) {
+    if (workerPlugins.has(id)) continue;
+    workerPlugins.add(id);
+    post({ t: "load", pluginId: id, entryUrls: loadedPlugins.get(id) ?? [] });
+  }
+}
+
+/**
+ * Attribute a worker error to a tracked plugin from the error's source file.
+ * Plugin code is `importScripts`-ed from `<origin>/load/<encoded id>/<path>`
+ * (`plugin://localhost` or `http://plugin.localhost`), so an uncaught throw from
+ * plugin code — including one from its timers/promises — names that URL.
+ */
+function attributeFault(filename: string | undefined): string | null {
+  if (!filename) return null;
+  for (const [id, urls] of loadedPlugins) {
+    if (urls.includes(filename)) return id;
+  }
+  const match = /^(?:plugin:\/\/localhost|https?:\/\/plugin\.localhost)\/load\/([^/?#]+)\//.exec(
+    filename
+  );
+  if (!match) return null;
+  let id: string;
+  try {
+    id = decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+  return loadedPlugins.has(id) ? id : null;
 }
 
 /**
@@ -114,13 +203,20 @@ function ensureWorker(): Worker {
  * MAX_WORKER_ERRORS} times in a row — tear it down and revert to the synchronous
  * fast path so untrusted plugin code can no longer take output round-trips.
  */
-function handleWorkerFault(kind: "error" | "messageerror", detail: string): void {
+function handleWorkerFault(
+  kind: "error" | "messageerror",
+  detail: string,
+  filename?: string
+): void {
   try {
     workerErrorCount++;
+    const culprit = attributeFault(filename);
+    faultAttribution.push(culprit);
     frontendLog(
       "plugin_sandbox",
-      `Sandbox worker ${kind} (#${workerErrorCount}): ${detail}. ` +
-        `Passing outstanding terminal output through untransformed.`
+      `Sandbox worker ${kind} (#${workerErrorCount})` +
+        (culprit ? ` in plugin "${culprit}"` : "") +
+        `: ${detail}. Passing outstanding terminal output through untransformed.`
     );
     // Treat the worker as degraded: outstanding slots and new chunks pass through.
     degraded = true;
@@ -128,10 +224,13 @@ function handleWorkerFault(kind: "error" | "messageerror", detail: string): void
     if (workerErrorCount >= MAX_WORKER_ERRORS) {
       frontendLog(
         "plugin_sandbox",
-        `Sandbox worker crashed ${workerErrorCount} times; disabling the sandbox ` +
-          `and reverting the terminal to the synchronous fast path.`
+        `Sandbox worker crashed ${workerErrorCount} times; tearing it down and ` +
+          `reverting the terminal to the synchronous fast path.`
       );
+      const attribution = faultAttribution;
       teardownFaultyWorker();
+      quarantineCulprits(attribution);
+      scheduleRebuild(attribution);
     }
   } catch {
     // The fault handler is a liveness guard — swallow anything it hits so it can
@@ -148,20 +247,123 @@ function forceDrainPending(): void {
 
 /**
  * Terminate a repeatedly-crashing worker and revert to the fast path. Plugins
- * stay in {@link loadedPlugins}, so a later load/unload rebuilds a fresh worker;
- * until then `sandboxHasParsers()` is false and the terminal runs synchronously.
+ * stay in {@link loadedPlugins}, so a rebuilt worker (backoff, or an explicit
+ * load) can re-load them; until then `sandboxHasParsers()` is false and the
+ * terminal runs synchronously.
  */
 function teardownFaultyWorker(): void {
   if (worker) {
     worker.terminate();
     worker = null;
   }
+  workerPlugins.clear();
   hasParsers = false; // → sandboxHasParsers() false → terminal reverts to fast path
   degraded = false;
   workerErrorCount = 0;
+  faultAttribution = [];
+  clearStableTimer();
   if (headTimer) {
     clearTimeout(headTimer);
     headTimer = null;
+  }
+  // The dead worker's widgets are stale; the reloaded plugins re-upsert theirs.
+  clearStatusBarWidgets();
+}
+
+/**
+ * Disable the plugin(s) a majority of the teardown's crashes were attributed to,
+ * so a single deterministically-crashing plugin does not take the whole sandbox
+ * (and every other plugin) down with it.
+ */
+function quarantineCulprits(attribution: (string | null)[]): void {
+  const counts = new Map<string, number>();
+  for (const id of attribution) {
+    if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  for (const [id, n] of counts) {
+    if (n * 2 <= attribution.length || !loadedPlugins.has(id)) continue;
+    quarantined.add(id);
+    frontendLog(
+      "plugin_sandbox",
+      `Plugin "${id}" repeatedly crashed the sandbox worker and has been disabled. ` +
+        `Disable and re-enable it to try loading it again.`
+    );
+  }
+}
+
+/** Current backoff before the next rebuild: base · 2^attempts, capped. */
+function rebuildDelay(): number {
+  return Math.min(REBUILD_BASE_DELAY_MS * 2 ** rebuildAttempts, REBUILD_MAX_DELAY_MS);
+}
+
+/**
+ * After a crash-teardown, schedule a fresh worker (with every active plugin
+ * re-loaded) after an exponential backoff — or, once {@link MAX_REBUILDS} is
+ * spent, stay on the fast path and name the suspect plugin(s) in the LogViewer.
+ */
+function scheduleRebuild(attribution: (string | null)[]): void {
+  cancelRebuild();
+  const active = activePluginIds();
+  if (active.length === 0) return;
+  if (rebuildAttempts >= MAX_REBUILDS) {
+    const attributed = Array.from(new Set(attribution.filter((id): id is string => !!id)));
+    const suspects = (attributed.length > 0 ? attributed : active)
+      .map((id) => `"${id}"`)
+      .join(", ");
+    frontendLog(
+      "plugin_sandbox",
+      `Sandbox worker kept crashing after ${MAX_REBUILDS} rebuilds; giving up and ` +
+        `leaving frontend plugins disabled (terminal output passes through ` +
+        `untransformed). Suspect plugin(s): ${suspects}. Disable the offending ` +
+        `plugin, then re-enable plugins to retry.`
+    );
+    return;
+  }
+  const delay = rebuildDelay();
+  frontendLog(
+    "plugin_sandbox",
+    `Rebuilding the sandbox worker in ${delay} ms (attempt ${rebuildAttempts + 1}/` +
+      `${MAX_REBUILDS}) and reloading ${active.length} plugin(s).`
+  );
+  rebuildTimer = setTimeout(rebuildWorker, delay);
+}
+
+/** Backoff elapsed: build a fresh worker and re-load every active plugin. */
+function rebuildWorker(): void {
+  rebuildTimer = null;
+  try {
+    if (worker || activePluginIds().length === 0) return;
+    rebuildAttempts++;
+    ensureWorker();
+    syncWorkerPlugins();
+  } catch (err) {
+    // Building the worker itself failed — stay on the fast path, never throw.
+    frontendLog(
+      "plugin_sandbox",
+      `Failed to rebuild the sandbox worker: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+}
+
+function cancelRebuild(): void {
+  if (rebuildTimer) {
+    clearTimeout(rebuildTimer);
+    rebuildTimer = null;
+  }
+}
+
+function armStableTimer(): void {
+  clearStableTimer();
+  stableTimer = setTimeout(() => {
+    stableTimer = null;
+    rebuildAttempts = 0; // the rebuilt worker stayed up → the sandbox healed
+  }, REBUILD_STABLE_MS);
+}
+
+function clearStableTimer(): void {
+  if (stableTimer) {
+    clearTimeout(stableTimer);
+    stableTimer = null;
   }
 }
 
@@ -170,12 +372,17 @@ function post(message: HostToWorkerMessage, transfer?: Transferable[]): void {
 }
 
 function disposeWorkerIfIdle(): void {
-  if (loadedPlugins.size > 0 || !worker) return;
+  if (activePluginIds().length > 0) return;
+  cancelRebuild();
+  clearStableTimer();
+  if (!worker) return;
   worker.terminate();
   worker = null;
+  workerPlugins.clear();
   hasParsers = false;
   degraded = false;
   workerErrorCount = 0;
+  faultAttribution = [];
   if (headTimer) {
     clearTimeout(headTimer);
     headTimer = null;
@@ -198,6 +405,7 @@ function handleMessage(msg: WorkerToHostMessage): void {
       // Any reply means the worker is making progress again.
       degraded = false;
       workerErrorCount = 0;
+      faultAttribution = [];
       resolveSlot(msg.seq, msg.changed ? (msg.bytes ?? null) : null);
       break;
     case "widgetUpsert":
@@ -280,20 +488,27 @@ function onWatchdog(): void {
  * worker `importScripts` in order (#2266).
  */
 export function loadPluginInSandbox(pluginId: string, entryUrls: string[]): void {
+  // An explicit (re)load is a fresh chance for a previously quarantined plugin.
+  quarantined.delete(pluginId);
+  loadedPlugins.set(pluginId, entryUrls);
+  // Builds the worker if absent — including mid-backoff after a crash-teardown,
+  // in which case every other tracked plugin is re-loaded along with this one.
   ensureWorker();
-  loadedPlugins.add(pluginId);
-  post({ t: "load", pluginId, entryUrls });
+  syncWorkerPlugins();
 }
 
 /** Unload a plugin from the sandbox; terminates the worker once none remain. */
 export function unloadPluginFromSandbox(pluginId: string): void {
-  if (!worker) return;
-  post({ t: "unload", pluginId });
+  if (worker && workerPlugins.has(pluginId)) {
+    post({ t: "unload", pluginId });
+  }
+  workerPlugins.delete(pluginId);
   loadedPlugins.delete(pluginId);
+  quarantined.delete(pluginId);
   disposeWorkerIfIdle();
 }
 
-/** Number of plugins currently loaded in the sandbox (introspection/tests). */
+/** Number of plugins tracked by the sandbox, quarantined included (introspection/tests). */
 export function sandboxLoadedCount(): number {
   return loadedPlugins.size;
 }
@@ -338,8 +553,9 @@ export function enqueueSandboxTransform(
   const slot: Slot = { seq, done: false, original: bytes, out: null };
   q.slots.push(slot);
 
-  if (degraded || q.slots.length > MAX_PENDING_PER_SESSION) {
-    // Backpressure / degraded: skip the round-trip and pass the chunk through.
+  if (degraded || !worker || q.slots.length > MAX_PENDING_PER_SESSION) {
+    // Backpressure / degraded / worker torn down (awaiting a rebuild): skip the
+    // round-trip and pass the chunk through — never spawn a worker from here.
     // The slot stays in the FIFO and is resolved in place, so ordering behind
     // any still-pending earlier slots is preserved.
     slot.out = bytes;
@@ -399,9 +615,15 @@ export function __resetSandboxHost(): void {
   worker = null;
   hasParsers = false;
   loadedPlugins.clear();
+  workerPlugins.clear();
+  quarantined.clear();
   seqCounter = 0;
   degraded = false;
   workerErrorCount = 0;
+  faultAttribution = [];
+  rebuildAttempts = 0;
+  cancelRebuild();
+  clearStableTimer();
   if (headTimer) {
     clearTimeout(headTimer);
     headTimer = null;
