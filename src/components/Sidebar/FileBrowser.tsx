@@ -1582,12 +1582,14 @@ export function FileBrowser() {
           break;
         case "download": {
           // Reuse the single-download path for each selected entry (PROD-005):
-          // every download surfaces its own transfer feedback, and a selected
-          // directory recurses through the same backend copy the single
-          // download uses. Sequential so the local Save-as dialogs don't race.
+          // every download surfaces its own transfer feedback. A selected
+          // folder is flagged so a session download copies its tree into a
+          // picked folder instead of a single-file download of the folder path
+          // (#3944); a local Save-as copies a folder in the backend. Sequential
+          // so the Save-as dialogs don't race.
           void (async () => {
             for (const entry of entries) {
-              await downloadFile(entry.path, entry.name);
+              await downloadFile(entry.path, entry.name, entry.isDirectory);
             }
           })();
           break;

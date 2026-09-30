@@ -27,6 +27,7 @@ vi.mock("@/services/api", () => ({
   sftpClose: vi.fn(),
   sftpListDir: vi.fn(),
   localListDir: vi.fn(() => Promise.resolve([])),
+  localMkdir: vi.fn(() => Promise.resolve()),
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
   sessionListFiles: vi.fn(() => Promise.resolve([])),
   sessionReadFile: vi.fn(() => Promise.resolve(new Uint8Array())),
@@ -1752,5 +1753,160 @@ describe("useSessionFileSystem — button + drop transfer contract (#3913)", () 
       });
       expect(refreshSession).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+// #3944: a multi-select Download that includes a folder must never start a
+// single-file `session_download` on the folder path. The folder is copied
+// recursively through the shared engine into a picked target folder instead,
+// with the same pending / success / error feedback and queue rows as a file.
+describe("useSessionFileSystem — folder in a Download selection (#3944)", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+  const refreshSession = vi.fn(() => Promise.resolve());
+  const child: FileEntry = {
+    name: "notes.txt",
+    path: "/remote/dir/sub/notes.txt",
+    isDirectory: false,
+    size: 3,
+    modified: "",
+    permissions: null,
+    writable: null,
+  };
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+    vi.mocked(toast.loading).mockReturnValue("toast-1");
+    vi.mocked(sessionHasExecCapability).mockRejectedValue(new Error("not sftp-backed"));
+    vi.mocked(sessionSupportsRemoteCopy).mockResolvedValue(false);
+    vi.mocked(sessionListFiles).mockImplementation(async (_s, path) =>
+      path === "/remote/dir/sub" ? [child] : []
+    );
+    vi.mocked(sessionDownload).mockImplementation(async (_s, _r, _l, onRegistered) => {
+      onRegistered?.("t-down");
+      return 3;
+    });
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  type SessionFs = ReturnType<typeof useSessionFileSystem>;
+
+  async function mountHook(queueCapable: boolean): Promise<SessionFs> {
+    vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(queueCapable);
+    useAppStore.setState({ sessionFileBrowserId: "sess-9", refreshSession });
+    seedFileBrowsers({
+      session: { path: "/remote/dir", entries: [], loading: false, error: null },
+    });
+    let api: SessionFs | undefined;
+    function Harness() {
+      api = useSessionFileSystem();
+      return null;
+    }
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    return api!;
+  }
+
+  async function pickTargetFolder(path: string | null) {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(open).mockResolvedValueOnce(path);
+  }
+
+  it("queue-capable: copies the folder tree into the picked folder with seeded rows", async () => {
+    const { save, open } = await import("@tauri-apps/plugin-dialog");
+    const { localMkdir } = await import("@/services/api");
+    await pickTargetFolder("/local/target");
+    const api = await mountHook(true);
+    await act(async () => {
+      await api.downloadFile("/remote/dir/sub", "sub", true);
+    });
+
+    // A folder picker, never a Save-as for a file.
+    expect(vi.mocked(open)).toHaveBeenCalledWith(
+      expect.objectContaining({ directory: true, multiple: false })
+    );
+    expect(vi.mocked(save)).not.toHaveBeenCalled();
+    // Never a single-file download of the folder path itself.
+    expect(vi.mocked(sessionDownload)).not.toHaveBeenCalledWith(
+      "sess-9",
+      "/remote/dir/sub",
+      expect.anything(),
+      expect.anything()
+    );
+    expect(vi.mocked(localMkdir)).toHaveBeenCalledWith("/local/target/sub");
+    expect(vi.mocked(sessionDownload)).toHaveBeenCalledWith(
+      "sess-9",
+      "/remote/dir/sub/notes.txt",
+      "/local/target/sub/notes.txt",
+      expect.any(Function)
+    );
+    expect(vi.mocked(dispatchTransferIntentBestEffort)).toHaveBeenCalledWith("transfer.seed", {
+      seed: {
+        id: "t-down",
+        sessionId: "sess-9",
+        direction: "download",
+        name: "notes.txt",
+        path: "/remote/dir/sub/notes.txt",
+      },
+    });
+    expect(vi.mocked(toast.loading)).toHaveBeenCalledWith("Downloading sub…");
+    // The queued legs' event path owns the success toast.
+    expect(vi.mocked(toast.dismiss)).toHaveBeenCalledWith("toast-1");
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
+  });
+
+  it("byte-based: writes every file of the folder locally with its own success toast", async () => {
+    const { writeFile } = await import("@tauri-apps/plugin-fs");
+    await pickTargetFolder("/local/target");
+    const api = await mountHook(false);
+    await act(async () => {
+      await api.downloadFile("/remote/dir/sub", "sub", true);
+    });
+    expect(vi.mocked(sessionReadFile)).not.toHaveBeenCalledWith("sess-9", "/remote/dir/sub");
+    expect(vi.mocked(sessionReadFile)).toHaveBeenCalledWith("sess-9", "/remote/dir/sub/notes.txt");
+    expect(vi.mocked(writeFile)).toHaveBeenCalledWith(
+      "/local/target/sub/notes.txt",
+      expect.any(Uint8Array)
+    );
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Downloaded sub", { id: "toast-1" });
+  });
+
+  it("a failure inside the folder names the folder in the error toast", async () => {
+    vi.mocked(sessionListFiles).mockRejectedValueOnce(new Error("permission denied"));
+    await pickTargetFolder("/local/target");
+    const api = await mountHook(false);
+    await act(async () => {
+      await api.downloadFile("/remote/dir/sub", "sub", true);
+    });
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+      'Download "sub" failed: permission denied',
+      { id: "toast-1" }
+    );
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+  });
+
+  it("a cancelled folder picker downloads nothing", async () => {
+    await pickTargetFolder(null);
+    const api = await mountHook(true);
+    await act(async () => {
+      await api.downloadFile("/remote/dir/sub", "sub", true);
+    });
+    expect(vi.mocked(sessionDownload)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionListFiles)).not.toHaveBeenCalled();
+    expect(vi.mocked(toast.loading)).not.toHaveBeenCalled();
   });
 });
