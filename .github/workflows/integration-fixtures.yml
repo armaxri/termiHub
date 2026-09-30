@@ -48,7 +48,7 @@ on:
       # there can break a live backend path as surely as a backends/** edit.
       # Deliberately NOT widened to agent/** or all of src-tauri/**: this lane
       # runs `-p termihub-core` plus only the desktop crate's two SFTP fixture
-      # suites (#3039), so the rest of an agent/desktop change gains no coverage
+      # suites (#3039) and its in-crate Docker tests (#3978), so the rest of an agent/desktop change gains no coverage
       # here (the agent's Docker/live suites run in system-integration and Code
       # Quality). Cargo.lock is also left out: lockfile bumps land weekly and
       # would run this Docker lane on every one; the nightly run and the release
@@ -66,6 +66,13 @@ on:
       # executor they drive (src-tauri/tests/sftp_transfer*.rs → files/transfer).
       - "src-tauri/tests/**"
       - "src-tauri/src/files/transfer/**"
+      # The desktop crate's in-crate Docker tests (#3978): elevated SFTP save
+      # (files/sftp.rs), agent deploy (utils/remote_exec.rs + the ssh_auth
+      # connect it drives), and their shared skip-or-hard-fail gate.
+      - "src-tauri/src/files/sftp.rs"
+      - "src-tauri/src/utils/remote_exec.rs"
+      - "src-tauri/src/utils/ssh_auth.rs"
+      - "src-tauri/src/utils/docker_fixture_gate.rs"
       # The Linux polkit verifier's D-Bus transport + the shipped action file
       # (the polkit-dbus job below; its fixture is under tests/docker/**).
       - "src-tauri/src/credential/os_auth/polkit.rs"
@@ -323,6 +330,27 @@ jobs:
           cargo test -p termihub --no-fail-fast
           --test sftp_transfer --test sftp_transfer_resume
           -- --test-threads=1
+
+      - name: Run desktop in-crate Docker tests against the fixtures
+        # The elevated SFTP save tests (src-tauri/src/files/sftp.rs, against the
+        # default-profile `ssh-sudo` :2212 and `ssh-nosudo` :2213) and the agent
+        # deploy test (src-tauri/src/utils/remote_exec.rs, against `ssh-password`
+        # :2201). They drive private desktop-crate code, so they live in the lib
+        # test binary rather than src-tauri/tests. TERMIHUB_REQUIRE_DOCKER=1 turns
+        # an absent fixture into a hard failure via utils::docker_fixture_gate
+        # (#3978), the same gate as the suites above.
+        #
+        # The name filters select exactly those four tests out of the lib binary.
+        # Runs even when an earlier suite failed; `--test-threads=1` because the
+        # elevated-save tests share one root-owned file in `ssh-sudo`.
+        if: ${{ !cancelled() }}
+        env:
+          TERMIHUB_REQUIRE_DOCKER: "1"
+        run: >-
+          cargo test -p termihub --lib --no-fail-fast
+          -- --test-threads=1
+          files::sftp::tests::elevated_save
+          utils::remote_exec::tests::agent_deploy
 
       - name: Export integration coverage (lcov)
         # advisory: a coverage hiccup must never red the fixture lane, whose
