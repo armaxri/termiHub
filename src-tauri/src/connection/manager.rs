@@ -3293,3 +3293,7 @@ mod jump_host_scope_tests;
 #[cfg(test)]
 #[path = "manager_graphical_password_tests.rs"]
 mod graphical_password_tests;
+
+#[cfg(test)]
+#[path = "manager_unknown_fields_tests.rs"]
+mod unknown_fields_tests;
