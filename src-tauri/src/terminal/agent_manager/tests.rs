@@ -1987,7 +1987,7 @@ fn old_agent_auth_rejection_without_data_stays_remote_error() {
     )
     .into_terminal_error();
     assert!(matches!(err, TerminalError::RemoteError(_)), "{err:?}");
-    assert_eq!(err.code(), crate::utils::errors::IpcErrorCode::RemoteError);
+    assert_eq!(err.code(), IpcErrorCode::RemoteError);
 }
 
 /// An older agent sends no `data` (and a newer one may send a kind this build
@@ -2008,7 +2008,7 @@ fn agent_connect_failure_without_a_known_kind_stays_remote_error() {
         )
         .into_terminal_error();
         assert!(matches!(err, TerminalError::RemoteError(_)));
-        assert_eq!(err.code(), crate::utils::errors::IpcErrorCode::RemoteError);
+        assert_eq!(err.code(), IpcErrorCode::RemoteError);
         let envelope = serde_json::to_value(&err).unwrap();
         assert_eq!(
             envelope["message"],
