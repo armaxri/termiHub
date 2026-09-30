@@ -18,61 +18,11 @@ tests:
     verification: manual
     tags: [visual]
 
-  # --- Configurable serial port scan prefixes (now under Settings → Serial) ---
-
-  - id: MT-SER-06
-    automation_issue: 3683
-    name: "Serial port scan prefixes appear in Settings → General"
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Open Settings (gear icon in the Activity Bar)"
-      - "Navigate to General"
-      - "Scroll to the 'Serial Port Scan Prefixes' section"
-    expected:
-      - "The section shows a badge with the count of enabled / total prefixes (e.g. '42 / 42 enabled')"
-      - "A list of built-in prefixes is shown, each with a toggle switch"
-      - "An 'Add' input and button are present at the bottom"
-    verification: manual
-    tags: [settings, serial]
-
-  - id: MT-SER-07
-    automation_issue: 3683
-    name: "Disabling a prefix removes its ports from the serial dropdown"
-    platforms: [linux]
-    prerequisites:
-      - app: true
-      - hardware: "A Linux machine with at least one /dev/ttyS* device present"
-    instructions:
-      - "Open Settings → General → Serial Port Scan Prefixes"
-      - "Toggle the 'ttyS' prefix off"
-      - "Open a connection editor for a Serial connection type"
-      - "Click the Port dropdown"
-    expected:
-      - "No /dev/ttyS* ports appear in the dropdown"
-      - "Toggle 'ttyS' back on; re-open the dropdown — the ports reappear"
-    verification: manual
-    tags: [settings, serial]
-
-  - id: MT-SER-08
-    automation_issue: 3683
-    name: "Adding a custom prefix discovers matching ports"
-    platforms: [linux]
-    prerequisites:
-      - app: true
-      - hardware: "A Linux machine with a device matching a non-default /dev prefix (e.g. create a test symlink: sudo ln -s /dev/null /dev/ttyTEST0)"
-    instructions:
-      - "Open Settings → General → Serial Port Scan Prefixes"
-      - "Type 'ttyTEST' in the add-prefix input and click Add"
-      - "Open a connection editor for a Serial connection type"
-      - "Click the Port dropdown"
-    expected:
-      - "The custom prefix 'ttyTEST' appears in the list with a delete button"
-      - "/dev/ttyTEST0 appears in the port dropdown"
-      - "Deleting the custom prefix and reopening the dropdown removes the port"
-    verification: manual
-    tags: [settings, serial]
+  # --- Configurable serial port scan prefixes (Settings → Serial) ---
+  # Automated (#3683): SerialPortSettings.test.tsx covers the badge, per-prefix
+  # toggles and custom-prefix delete; core session/serial.rs covers custom-prefix
+  # discovery and disabled-prefix hiding. The former MT-SER-06/07/08 items were
+  # retired from this corpus.
 
   # --- Live virtual-serial happy path (ported from E2E SERIAL-02/03/04, PR #813) ---
   # Automated: tests/system/tests/test_serial.py::TestSerialLiveEcho drives connect,
