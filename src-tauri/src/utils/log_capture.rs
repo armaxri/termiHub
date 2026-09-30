@@ -19,6 +19,13 @@ const MAX_BUFFER_SIZE: usize = 2000;
 /// cipher logs that otherwise flood the log even while the app is idle.
 const DEFAULT_LOG_DIRECTIVE: &str = "info,termihub=debug,termihub_lib=debug,termihub_core=debug,termihub_agent=debug,frontend=debug,plugin=debug,russh=warn";
 
+/// Static `tracing` target the desktop re-emits agent `--stdio` log records
+/// under (#2854, OBS-004). A callsite's target must be static, so the agent's
+/// real target travels in the `agent_target` field; [`LogCaptureLayer`] puts it
+/// back as the LogViewer entry's target. Sits under `termihub_agent` so the
+/// default directive's `termihub_agent=debug` governs it.
+pub const AGENT_REEMIT_TARGET: &str = "termihub_agent::remote";
+
 /// Build the tracing [`EnvFilter`] used by the application.
 ///
 /// Honors the `RUST_LOG` environment variable when set; otherwise falls back to
@@ -131,6 +138,63 @@ impl Visit for MessageVisitor {
     }
 }
 
+/// Visitor for a re-emitted agent record ([`AGENT_REEMIT_TARGET`]): collects
+/// the message, the agent's real target, and the join fields.
+#[derive(Default)]
+struct AgentRecordVisitor {
+    message: String,
+    agent_target: Option<String>,
+    agent_id: Option<String>,
+    correlation_id: Option<String>,
+    agent_fields: Option<String>,
+}
+
+impl AgentRecordVisitor {
+    fn set(&mut self, name: &str, value: String) {
+        match name {
+            "message" => self.message = value,
+            "agent_target" => self.agent_target = Some(value),
+            "agent_id" => self.agent_id = Some(value),
+            "correlation_id" => self.correlation_id = Some(value),
+            "agent_fields" => self.agent_fields = Some(value),
+            _ => {}
+        }
+    }
+
+    /// The LogViewer entry's `(target, message)`: the agent's real target, and
+    /// the message followed by the join/structured fields so a record can be
+    /// found by correlation id from the in-app viewer too.
+    fn into_target_and_message(self, fallback_target: &str) -> (String, String) {
+        let mut message = self.message;
+        for (key, value) in [
+            ("agent_id", self.agent_id),
+            ("correlation_id", self.correlation_id),
+        ] {
+            if let Some(v) = value {
+                message.push_str(&format!(" {key}={v}"));
+            }
+        }
+        if let Some(fields) = self.agent_fields {
+            message.push(' ');
+            message.push_str(&fields);
+        }
+        let target = self
+            .agent_target
+            .unwrap_or_else(|| fallback_target.to_string());
+        (target, message)
+    }
+}
+
+impl Visit for AgentRecordVisitor {
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        self.set(field.name(), format!("{:?}", value));
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.set(field.name(), value.to_string());
+    }
+}
+
 impl<S> Layer<S> for LogCaptureLayer
 where
     S: tracing::Subscriber,
@@ -139,14 +203,21 @@ where
         let metadata = event.metadata();
         let level = *metadata.level();
 
-        let mut visitor = MessageVisitor::new();
-        event.record(&mut visitor);
+        let (target, message) = if metadata.target() == AGENT_REEMIT_TARGET {
+            let mut visitor = AgentRecordVisitor::default();
+            event.record(&mut visitor);
+            visitor.into_target_and_message(metadata.target())
+        } else {
+            let mut visitor = MessageVisitor::new();
+            event.record(&mut visitor);
+            (metadata.target().to_string(), visitor.message)
+        };
 
         let entry = LogEntry {
             timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
             level: level_to_string(level),
-            target: metadata.target().to_string(),
-            message: visitor.message,
+            target,
+            message,
         };
 
         // Buffer the entry
