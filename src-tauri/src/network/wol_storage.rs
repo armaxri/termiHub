@@ -122,6 +122,7 @@ mod tests {
             mac: "AA:BB:CC:DD:EE:FF".to_string(),
             broadcast: "255.255.255.255".to_string(),
             port: 9,
+            extra: Default::default(),
         }
     }
 

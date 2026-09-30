@@ -26,6 +26,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use tauri::{AppHandle, Emitter};
 use termihub_core::service::drain_broadcast;
+use termihub_core::util::entry_extra::{upsert_keeping_extra, without_extra};
 
 use super::activity::ActivitySnapshot;
 use super::config::{
@@ -737,7 +738,8 @@ pub(super) fn service_start_params(
     server_id: &str,
     config: &EmbeddedServerConfig,
 ) -> Result<serde_json::Value, TerminalError> {
-    let config_value = serde_json::to_value(config).map_err(|e| {
+    // The desktop file's unknown fields (#3951) are not the agent's business.
+    let config_value = serde_json::to_value(without_extra(config)).map_err(|e| {
         TerminalError::EmbeddedServerError(format!("Failed to serialize server config: {e}"))
     })?;
     serde_json::to_value(ServiceStartParams {
@@ -751,13 +753,11 @@ pub(super) fn service_start_params(
 }
 
 /// Replace the server with `config`'s id, or append `config` when there is none.
-/// Pure so the save path is unit-testable.
+///
+/// The entry keeps the unknown fields it had on disk and drops the IPC copy's
+/// (#3951). Pure so the save path is unit-testable.
 pub(super) fn upsert_server(store: &mut EmbeddedServerStore, config: EmbeddedServerConfig) {
-    if let Some(existing) = store.servers.iter_mut().find(|s| s.id == config.id) {
-        *existing = config;
-    } else {
-        store.servers.push(config);
-    }
+    upsert_keeping_extra(&mut store.servers, config);
 }
 
 /// Parse an agent `service.start` reply into the desktop [`ServerState`] (#2214).
@@ -971,6 +971,7 @@ mod tests {
             ftp_auth: None,
             http_auth: None,
             max_transfer_bytes: None,
+            extra: Default::default(),
         }
     }
 

@@ -249,6 +249,7 @@ mod tests {
                 password: "s3cret".to_string(),
             }),
             max_transfer_bytes: None,
+            extra: Default::default(),
         };
         let store = EmbeddedServerStore {
             version: "1".to_string(),
@@ -322,6 +323,7 @@ mod tests {
                 ftp_auth: None,
                 http_auth: None,
                 max_transfer_bytes: None,
+                extra: Default::default(),
             }],
         };
         storage.save(&store).unwrap();
@@ -395,6 +397,7 @@ mod tests {
                 ftp_auth: None,
                 http_auth: None,
                 max_transfer_bytes: None,
+                extra: Default::default(),
             }],
         };
         // Serialize the valid store, then append a corrupt (non-object) entry so

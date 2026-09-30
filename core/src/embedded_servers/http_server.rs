@@ -875,6 +875,7 @@ mod tests {
             ftp_auth: None,
             http_auth: None,
             max_transfer_bytes: None,
+            extra: Default::default(),
         };
         let shutdown = ShutdownSignal::new();
         let stats = AtomicServerStats::new();
@@ -991,6 +992,7 @@ mod tests {
             ftp_auth: None,
             http_auth: None,
             max_transfer_bytes: None,
+            extra: Default::default(),
         };
 
         let shutdown = ShutdownSignal::new();

@@ -46,6 +46,7 @@ use termihub_core::protocol::methods::{
 };
 use termihub_core::service::Service;
 use termihub_core::tool::ToolRegistry;
+use termihub_core::util::entry_extra::{upsert_keeping_extra, without_extra};
 
 use crate::run_location::{Locality, ResolvedLocation, RunLocation, RunLocationResolver};
 use crate::terminal::agent_manager::AgentRpcClient;
@@ -569,7 +570,8 @@ impl NetworkManager {
         let client = self.agent_rpc_client().ok_or_else(|| {
             TerminalError::NetworkError("Agent manager is not available".to_string())
         })?;
-        let config_value = serde_json::to_value(&config)
+        // The desktop file's unknown fields (#3951) stay on the desktop.
+        let config_value = serde_json::to_value(without_extra(&config))
             .map_err(|e| TerminalError::NetworkError(format!("serialize monitor config: {e}")))?;
         let params = serde_json::to_value(ServiceStartParams {
             instance_id: id.clone(),
@@ -834,7 +836,8 @@ impl NetworkManager {
                         ))
                     })?;
             } else {
-                let config_value = serde_json::to_value(&config).map_err(|e| {
+                // The desktop file's unknown fields (#3951) stay on the desktop.
+                let config_value = serde_json::to_value(without_extra(&config)).map_err(|e| {
                     TerminalError::NetworkError(format!("serialize monitor config: {e}"))
                 })?;
                 let params = serde_json::to_value(ServiceStartParams {
@@ -901,11 +904,8 @@ impl NetworkManager {
     /// same ID.
     fn persist_monitor_config(&self, config: HttpMonitorConfig) -> Result<(), TerminalError> {
         let mut configs = self.load_persisted_monitor_configs();
-        if let Some(existing) = configs.iter_mut().find(|c| c.id == config.id) {
-            *existing = config;
-        } else {
-            configs.push(config);
-        }
+        // Keep the entry's unknown on-disk fields, drop the IPC copy's (#3951).
+        upsert_keeping_extra(&mut configs, config);
         http_monitor_storage::save_http_monitors(&self.config_dir, &configs)
             .map_err(|e| TerminalError::InternalError(e.to_string()))
     }
@@ -985,12 +985,9 @@ impl NetworkManager {
             .wol_devices
             .lock()
             .map_err(|_| TerminalError::InternalError("wol devices lock poisoned".into()))?;
-        // Replace existing device with same ID, or append.
-        if let Some(existing) = guard.iter_mut().find(|d| d.id == device.id) {
-            *existing = device;
-        } else {
-            guard.push(device);
-        }
+        // Replace existing device with same ID, or append. The entry keeps its
+        // unknown on-disk fields and drops the IPC copy's (#3951).
+        upsert_keeping_extra(&mut guard, device);
         wol_storage::save_wol_devices(&self.config_dir, &guard)
             .map_err(|e| TerminalError::InternalError(e.to_string()))
     }

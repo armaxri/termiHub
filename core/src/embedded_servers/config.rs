@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::activity::ServerActivity;
 use crate::service::ServiceStatus;
+use crate::util::entry_extra::{EntryExtra, StoreEntry};
 
 /// Protocol type for an embedded server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -136,6 +137,21 @@ pub struct EmbeddedServerConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional, type = "number"))]
     pub max_transfer_bytes: Option<u64>,
+    /// Unknown fields of this entry in `embedded_servers.json`, kept verbatim
+    /// so an older build's save does not erase them (#3951). Not part of the
+    /// generated TS type; see [`crate::util::entry_extra`].
+    #[serde(flatten, default)]
+    #[cfg_attr(test, ts(skip))]
+    pub extra: EntryExtra,
+}
+
+impl StoreEntry for EmbeddedServerConfig {
+    fn entry_id(&self) -> &str {
+        &self.id
+    }
+    fn entry_extra_mut(&mut self) -> &mut EntryExtra {
+        &mut self.extra
+    }
 }
 
 /// Current status of an embedded server.
@@ -322,6 +338,7 @@ mod tests {
             ftp_auth: None,
             http_auth: None,
             max_transfer_bytes: None,
+            extra: Default::default(),
         };
         let json = serde_json::to_string(&config).unwrap();
         let de: EmbeddedServerConfig = serde_json::from_str(&json).unwrap();
