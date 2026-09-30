@@ -6,6 +6,8 @@
 
 pub mod agent_stream;
 pub mod agent_tools;
+#[cfg(test)]
+mod entry_extra_tests;
 pub mod events;
 pub mod http_monitor;
 pub mod http_monitor_storage;
