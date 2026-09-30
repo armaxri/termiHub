@@ -6,5 +6,5 @@
   over it is refused. A corrupt file is backed up to `.json.bak` and only the broken
   entries are dropped — previously an unreadable Wake-on-LAN or HTTP monitor file
   was silently replaced on the next save, losing every saved entry. An embedded
-  servers file without a `version` field loads as before instead of being reset, and
+  servers file without a `version` field now loads instead of being reset, and
   settings a newer build added at the top level of these files survive a save.
