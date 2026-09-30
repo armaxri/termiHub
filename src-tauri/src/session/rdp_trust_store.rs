@@ -156,6 +156,19 @@ impl RdpTrustStore {
         removed
     }
 
+    /// Drain the problems found when the store was loaded. Not implemented
+    /// yet (#2745): always empty.
+    pub fn take_load_warnings(&self) -> Vec<crate::connection::recovery::RecoveryWarning> {
+        Vec::new()
+    }
+
+    /// Whether this store refuses to write its file. Not implemented yet
+    /// (#2745): always `false`.
+    #[cfg(test)]
+    pub fn is_write_refused(&self) -> bool {
+        false
+    }
+
     /// Write the current entries to disk (no-op for an in-memory store).
     fn persist(&self) {
         let Some(path) = &self.path else { return };
@@ -246,7 +259,7 @@ mod tests {
         assert_eq!(reopened.lookup("host:3389", FP_B), TrustLookup::Changed);
     }
 
-    /// The atomic write must leave only the store file behind — no leftover
+    /// The atomic write must leave only the store files behind — no leftover
     /// temporary write artifacts in the config directory.
     #[test]
     fn persist_leaves_no_stray_files() {
@@ -256,15 +269,17 @@ mod tests {
         store.remember("host:3389", FP_A);
         store.remember("host:3389", FP_B);
 
-        let names: Vec<String> = std::fs::read_dir(&dir)
+        let mut names: Vec<String> = std::fs::read_dir(&dir)
             .unwrap()
             .filter_map(|e| e.ok())
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
+        names.sort();
+        // The store file plus its format-version sidecar (#2745), nothing else.
         assert_eq!(
             names,
-            vec![FILE_NAME.to_string()],
-            "atomic persist must leave only the store file, got {names:?}"
+            vec![FILE_NAME.to_string(), format!("{FILE_NAME}.version")],
+            "atomic persist must leave only the store file and its sidecar, got {names:?}"
         );
     }
 
