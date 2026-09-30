@@ -409,11 +409,11 @@ python scripts/test-manual.py --inventory
 | `portable-mode`           | Portable Mode         | all            |              0 |                  2 |      2 |
 | `remote-agent`            | Remote Agent          | all            |              0 |                 15 |     15 |
 | `remote-desktop`          | Remote Desktop        | all            |              9 |                  0 |      9 |
-| `serial`                  | Serial                | all            |              1 |                  3 |      4 |
+| `serial`                  | Serial                | windows        |              1 |                  0 |      1 |
 | `shell-integration`       | Shell Integration     | all            |              6 |                  0 |      6 |
 | `ssh`                     | SSH                   | all            |              4 |                  1 |      5 |
 | `ui-layout`               | UI / Layout           | all            |              8 |                  0 |      8 |
-| **Total (16 categories)** |                       |                |         **72** |             **27** | **99** |
+| **Total (16 categories)** |                       |                |         **72** |             **24** | **96** |
 
 <!-- manual-inventory:end -->
 

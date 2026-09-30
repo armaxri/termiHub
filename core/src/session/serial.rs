@@ -391,8 +391,10 @@ pub fn list_serial_ports() -> Vec<String> {
 /// List available serial ports using a caller-supplied set of Linux `/dev` prefixes.
 ///
 /// Useful when the caller wants to respect a user-configured prefix list rather
-/// than the built-in defaults. On non-Linux platforms the `enabled_prefixes`
-/// argument is ignored.
+/// than the built-in defaults. On Linux a built-in prefix missing from
+/// `enabled_prefixes` also hides the matching ports `serial2` enumerates itself
+/// (see `merge_linux_serial_ports`). On non-Linux platforms the
+/// `enabled_prefixes` argument is ignored.
 pub fn list_serial_ports_with_enabled_prefixes(enabled_prefixes: &[&str]) -> Vec<String> {
     list_serial_ports_with_dev_and_prefixes(std::path::Path::new("/dev"), enabled_prefixes)
 }
@@ -415,14 +417,8 @@ fn list_serial_ports_with_dev_and_prefixes(
 
     #[cfg(target_os = "linux")]
     {
-        let mut ports = crate_ports;
-        for extra in scan_extra_linux_serial_ports(dev_dir, extra_prefixes) {
-            if !ports.contains(&extra) {
-                ports.push(extra);
-            }
-        }
-        ports.sort();
-        ports
+        let scanned = scan_extra_linux_serial_ports(dev_dir, extra_prefixes);
+        merge_linux_serial_ports(crate_ports, scanned, extra_prefixes)
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -430,6 +426,47 @@ fn list_serial_ports_with_dev_and_prefixes(
         let _ = (dev_dir, extra_prefixes);
         crate_ports
     }
+}
+
+/// Merge `serial2`'s enumeration with the `/dev` scan hits, deduplicated and sorted.
+///
+/// The scan prefixes double as a visibility filter: a crate-enumerated port whose
+/// device name matches a built-in prefix ([`DEFAULT_EXTRA_LINUX_PREFIXES`]) that the
+/// user disabled is dropped, so disabling e.g. `ttyS` hides real `/dev/ttyS*` UARTs
+/// that `serial2` lists on its own — not just the ones the scan would have added.
+/// A port is kept when any enabled prefix matches it (mirroring the scan, so an
+/// enabled `ttySAC` keeps `ttySAC0` even with `ttyS` disabled). Ports matching no
+/// built-in prefix at all (e.g. USB adapters `ttyUSB*` / `ttyACM*`) are never
+/// filtered, since the settings offer no toggle for them.
+#[cfg(target_os = "linux")]
+fn merge_linux_serial_ports(
+    crate_ports: Vec<String>,
+    scanned: Vec<String>,
+    enabled_prefixes: &[&str],
+) -> Vec<String> {
+    let mut ports: Vec<String> = crate_ports
+        .into_iter()
+        .filter(|port| !hidden_by_disabled_prefix(port, enabled_prefixes))
+        .collect();
+    for extra in scanned {
+        if !ports.contains(&extra) {
+            ports.push(extra);
+        }
+    }
+    ports.sort();
+    ports.dedup();
+    ports
+}
+
+/// Whether `port` belongs to a built-in scan prefix that is not enabled.
+#[cfg(target_os = "linux")]
+fn hidden_by_disabled_prefix(port: &str, enabled_prefixes: &[&str]) -> bool {
+    let name = std::path::Path::new(port)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let matches = |prefix: &&str| name.starts_with(*prefix);
+    !enabled_prefixes.iter().any(matches) && DEFAULT_EXTRA_LINUX_PREFIXES.iter().any(matches)
 }
 
 /// Scan `dev_dir` for Linux UART devices not always enumerated by `serial2`
@@ -835,6 +872,75 @@ mod tests {
             let mut sorted = ports.clone();
             sorted.sort();
             assert_eq!(ports, sorted, "ports should be sorted alphabetically");
+        }
+
+        // --- Former manual items MT-SER-07 / MT-SER-08 (#3683) -------------
+
+        #[test]
+        fn custom_prefix_discovers_matching_ports() {
+            let dir = TempDir::new().unwrap();
+            make_dev_entries(dir.path(), &["ttyTEST0", "ttyS0"]);
+            let ports = list_serial_ports_with_dev_and_prefixes(dir.path(), &["ttyTEST"]);
+            assert!(ports.iter().any(|p| p.ends_with("/ttyTEST0")), "{ports:?}");
+        }
+
+        #[test]
+        fn removed_custom_prefix_no_longer_discovers_ports() {
+            let dir = TempDir::new().unwrap();
+            make_dev_entries(dir.path(), &["ttyTEST0"]);
+            let ports = list_serial_ports_with_dev_and_prefixes(dir.path(), &[]);
+            assert!(!ports.iter().any(|p| p.ends_with("/ttyTEST0")), "{ports:?}");
+        }
+
+        #[test]
+        fn disabled_prefix_hides_scanned_ports() {
+            let dir = TempDir::new().unwrap();
+            make_dev_entries(dir.path(), &["ttyS0", "ttyAMA0"]);
+            let ports = list_serial_ports_with_dev_and_prefixes(dir.path(), &["ttyAMA"]);
+            assert!(ports.iter().any(|p| p.ends_with("/ttyAMA0")), "{ports:?}");
+            assert!(!ports.iter().any(|p| p.ends_with("/ttyS0")), "{ports:?}");
+        }
+
+        fn owned(v: &[&str]) -> Vec<String> {
+            v.iter().map(|s| (*s).to_string()).collect()
+        }
+
+        #[test]
+        fn disabled_builtin_prefix_hides_crate_enumerated_ports() {
+            // `serial2` enumerates real `/dev/ttyS*` UARTs on its own; a disabled
+            // `ttyS` prefix must hide them too, not just the `/dev` scan hits.
+            let crate_ports = owned(&["/dev/ttyS0", "/dev/ttyS1", "/dev/ttyAMA0"]);
+            let ports = merge_linux_serial_ports(crate_ports, Vec::new(), &["ttyAMA"]);
+            assert_eq!(ports, owned(&["/dev/ttyAMA0"]));
+        }
+
+        #[test]
+        fn crate_ports_without_a_builtin_prefix_are_always_listed() {
+            // USB adapters (`ttyUSB`, `ttyACM`) have no toggleable prefix, so the
+            // prefix settings must never hide them.
+            let crate_ports = owned(&["/dev/ttyUSB0", "/dev/ttyACM0", "/dev/ttyS0"]);
+            let ports = merge_linux_serial_ports(crate_ports, Vec::new(), &[]);
+            assert_eq!(ports, owned(&["/dev/ttyACM0", "/dev/ttyUSB0"]));
+        }
+
+        #[test]
+        fn enabled_longer_prefix_keeps_ports_under_a_disabled_shorter_one() {
+            // `ttySAC` (enabled) overlaps `ttyS` (disabled): the scan would find
+            // `ttySAC0`, so the crate-enumerated copy must be kept as well.
+            let crate_ports = owned(&["/dev/ttySAC0", "/dev/ttyS0"]);
+            let ports = merge_linux_serial_ports(crate_ports, Vec::new(), &["ttySAC"]);
+            assert_eq!(ports, owned(&["/dev/ttySAC0"]));
+        }
+
+        #[test]
+        fn merge_deduplicates_and_sorts() {
+            let crate_ports = owned(&["/dev/ttyUSB0", "/dev/ttyS0"]);
+            let scanned = owned(&["/dev/ttyS0", "/dev/ttyAMA0"]);
+            let ports = merge_linux_serial_ports(crate_ports, scanned, &["ttyS", "ttyAMA"]);
+            assert_eq!(
+                ports,
+                owned(&["/dev/ttyAMA0", "/dev/ttyS0", "/dev/ttyUSB0"])
+            );
         }
     }
 

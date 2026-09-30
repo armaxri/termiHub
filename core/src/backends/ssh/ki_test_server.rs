@@ -86,6 +86,13 @@ pub struct Script {
 }
 
 /// What the server observed, for assertions.
+///
+/// Ordering: `responses` and `authenticated` are recorded **before** the
+/// server answers the auth message that caused them, so once the client has
+/// seen that answer (success or failure) a read is exact. `shells` has no such
+/// guarantee: a client that sends the shell request with `want_reply = false`
+/// (as core's SSH backend does) sees nothing that orders it before a read, so
+/// tests must poll it with a deadline rather than assert it directly (#3999).
 #[derive(Default)]
 pub struct Observed {
     /// Responses received per round (the test server is the only place that
@@ -93,7 +100,7 @@ pub struct Observed {
     pub responses: Vec<Vec<String>>,
     /// Keyboard-interactive exchanges that ended in acceptance.
     pub authenticated: usize,
-    /// Session channels whose shell was started.
+    /// Session channels whose shell was started (see the ordering note above).
     pub shells: usize,
 }
 
