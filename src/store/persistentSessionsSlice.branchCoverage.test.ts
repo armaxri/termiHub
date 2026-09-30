@@ -34,6 +34,8 @@ import type { PersistentSessionEntry } from "@/types/connection";
 import type { ConnectionConfig } from "@/types/terminal";
 import type { SpawnRequestPayload } from "@/services/events";
 import { collectLiveTabs } from "./layoutHelpers";
+import { setConnectionsViewForTest } from "./connectionsBridge";
+import type { SavedConnection } from "@/types/connection";
 
 const AGENT = "agent-1";
 const CONN = `${AGENT}:def-1`;
@@ -92,6 +94,7 @@ function tab(tabId: string) {
 describe("persistentSessionsSlice — branch coverage (#2979)", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
+    setConnectionsViewForTest({ folders: [], connections: [] });
     m.startPersistentSession.mockReset().mockResolvedValue("s-new");
     m.attachPersistentTab.mockReset().mockResolvedValue(1);
   });
@@ -137,6 +140,35 @@ describe("persistentSessionsSlice — branch coverage (#2979)", () => {
         sessionId: null,
         state: "error",
         errorMessage: "agent gone",
+        attachedTabIds: [],
+      });
+    });
+
+    it("a failed saved-connection start records a well-formed error entry after a drop", async () => {
+      setConnectionsViewForTest({
+        folders: [],
+        connections: [
+          {
+            id: "saved-1",
+            name: "Saved",
+            config: { type: "local", config: {} },
+            folderId: null,
+          } as unknown as SavedConnection,
+        ],
+      });
+      const start = deferred<string>();
+      m.startPersistentSession.mockReturnValue(start.promise);
+
+      const pending = useAppStore.getState().startPersistentSession("saved-1");
+      dropEntry();
+      start.reject(new Error("spawn failed"));
+      await pending;
+
+      expect(useAppStore.getState().persistentSessions["saved-1"]).toEqual({
+        connectionId: "saved-1",
+        sessionId: null,
+        state: "error",
+        errorMessage: "spawn failed",
         attachedTabIds: [],
       });
     });
