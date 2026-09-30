@@ -46,9 +46,10 @@ on:
       # defaults), the transfer suites through `files`, the tunnel suite through
       # `tunnel`, and the FTP/SSH backends retry through `reconnect_backoff`. A change
       # there can break a live backend path as surely as a backends/** edit.
-      # Deliberately NOT widened to agent/** or src-tauri/**: this lane runs
-      # `-p termihub-core` only, so an agent/desktop change gains no coverage here
-      # (the agent's Docker/live suites run in system-integration and Code
+      # Deliberately NOT widened to agent/** or all of src-tauri/**: this lane
+      # runs `-p termihub-core` plus only the desktop crate's two SFTP fixture
+      # suites (#3039), so the rest of an agent/desktop change gains no coverage
+      # here (the agent's Docker/live suites run in system-integration and Code
       # Quality). Cargo.lock is also left out: lockfile bumps land weekly and
       # would run this Docker lane on every one; the nightly run and the release
       # gate catch a dependency regression before it ships.
@@ -61,6 +62,10 @@ on:
       - "core/Cargo.toml"
       # The RDP sidecar is backend source too: rdp.rs drives it end to end.
       - "rdp-sidecar/**"
+      # The desktop crate's SFTP fixture suites (#3039) and the transfer
+      # executor they drive (src-tauri/tests/sftp_transfer*.rs → files/transfer).
+      - "src-tauri/tests/**"
+      - "src-tauri/src/files/transfer/**"
       # The Linux polkit verifier's D-Bus transport + the shipped action file
       # (the polkit-dbus job below; its fixture is under tests/docker/**).
       - "src-tauri/src/credential/os_auth/polkit.rs"
@@ -201,6 +206,16 @@ jobs:
           sudo apt-get install -y libasound2-dev
           ./scripts/build-rdp-sidecar.sh
 
+      - name: Install desktop-crate system dependencies
+        # The desktop SFTP suites below (#3039) build the `termihub` (Tauri)
+        # crate, which links webkit2gtk/gtk on Linux — same set as Code Quality.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
       - name: Build the Docker fixture images
         # Bounded retry (#2768): the image builds fetch from Ubuntu/Debian apt
         # mirrors, and a transient mirror outage used to red unrelated PRs. The
@@ -285,6 +300,28 @@ jobs:
           else
             cargo test -p termihub-core --all-features -- --test-threads=1
           fi
+
+      - name: Run desktop SFTP suites against the fixtures
+        # src-tauri/tests/sftp_transfer.rs + sftp_transfer_resume.rs (#3039) drive
+        # the desktop transfer executor against the `sftp-stress` fixture (the
+        # `stress` profile above, port 2210; the resume drop tests also
+        # `docker exec` into `termihub-sftp-stress`). The per-PR Run Tests gate
+        # has no containers up, so there they self-skip — this is the one lane
+        # where they run for real. TERMIHUB_REQUIRE_DOCKER=1 turns an absent or
+        # broken fixture into a hard failure instead of a false-green skip, the
+        # same gate as the core suite above (TBE-006, #2970).
+        #
+        # Runs even when the core suite failed, so one red suite never hides
+        # the other. Plain `cargo test` (not instrumented): integration coverage
+        # is measured for termihub-core only. `--test-threads=1` because every
+        # test shares the one sftp-stress container.
+        if: ${{ !cancelled() }}
+        env:
+          TERMIHUB_REQUIRE_DOCKER: "1"
+        run: >-
+          cargo test -p termihub
+          --test sftp_transfer --test sftp_transfer_resume
+          -- --test-threads=1
 
       - name: Export integration coverage (lcov)
         # advisory: a coverage hiccup must never red the fixture lane, whose
@@ -394,7 +431,6 @@ jobs:
       needs.changes.outputs.sidecar != 'false' ||
       needs.changes.outputs.scripts != 'false') }}
     timeout-minutes: 20
-
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0

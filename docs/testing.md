@@ -550,11 +550,14 @@ The [`integration-fixtures.yml`](../.github/workflows/integration-fixtures.yml)
 lane (nightly, on `tests/docker`/`core/tests`/backend and core session-plumbing
 changes, and via the release candidate run on every release commit — see
 [Release integration gate](contributing.md#release-integration-gate)) brings the
-fixtures up and runs the suite — it is the natural place to opt in. Its
-bring-up currently omits the `vnc` and `ftp` profiles (and `vnc` is separately
-known-flaky, #1585), so `TERMIHUB_REQUIRE_DOCKER=1` cannot be flipped on
-blanket there until those fixtures are brought up or the corresponding tests are
-excluded from the required run; that wiring is tracked as a follow-up.
+fixtures up and runs these suites with `TERMIHUB_REQUIRE_DOCKER=1` (#2970), so a
+missing fixture reds the lane. It brings up every profile a gated test needs
+(default, `stress`, `fault`, `network`, `ftp`, `vnc`, `rdp`) and runs both
+`cargo test -p termihub-core --all-features` and the desktop
+`sftp_transfer` / `sftp_transfer_resume` suites (#3039), each with
+`--test-threads=1`. A new gated suite whose fixture sits in another profile must
+add that profile to the lane's bring-up in the same PR, or it will hard-fail
+there.
 
 ### Native sshd fixture (macOS, Windows, Linux) — CI-020, TIN-007
 
