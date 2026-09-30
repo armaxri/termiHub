@@ -157,6 +157,13 @@ describe("tabRuntimeSlice (#2979)", () => {
     useAppStore.setState(useAppStore.getInitialState());
   });
 
+  it("tracks the working directory per tab", () => {
+    useAppStore.getState().setTabCwd("t1", "/home");
+    useAppStore.getState().setTabCwd("t1", "/tmp");
+    useAppStore.getState().setTabCwd("t2", "/srv");
+    expect(useAppStore.getState().tabCwds).toEqual({ t1: "/tmp", t2: "/srv" });
+  });
+
   it("tracks horizontal scrolling per tab", () => {
     useAppStore.getState().setTabHorizontalScrolling("t1", true);
     useAppStore.getState().setTabHorizontalScrolling("t2", false);
