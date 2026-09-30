@@ -155,10 +155,11 @@ export const createPersistentSessionsSlice: StateCreator<
         persistentSessions: {
           ...state.persistentSessions,
           [connectionId]: {
-            connectionId,
-            sessionId: null,
-            attachedTabIds: [],
-            ...state.persistentSessions[connectionId],
+            ...(state.persistentSessions[connectionId] ?? {
+              connectionId,
+              sessionId: null,
+              attachedTabIds: [],
+            }),
             state: "error",
             errorMessage: errorMessage(err),
           },
@@ -287,10 +288,11 @@ export const createPersistentSessionsSlice: StateCreator<
         persistentSessions: {
           ...state.persistentSessions,
           [connectionId]: {
-            connectionId,
-            sessionId: null,
-            attachedTabIds: [],
-            ...state.persistentSessions[connectionId],
+            ...(state.persistentSessions[connectionId] ?? {
+              connectionId,
+              sessionId: null,
+              attachedTabIds: [],
+            }),
             state: "error",
             errorMessage: errorMessage(err),
           },
