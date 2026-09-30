@@ -271,7 +271,7 @@ pub(super) async fn agent_io_task<R: Runtime>(
                                 Ok(line) => {
                                     if let Err(e) = channel.data(line.as_bytes()).await {
                                         let _ = response_tx
-                                            .send(Err(format!("Write failed: {}", e).into()));
+                                            .send(Err(AgentRpcFailure::transport_closed(format!("Write failed: {}", e))));
                                     } else {
                                         pending_responses.insert(request_id, response_tx);
                                     }
@@ -559,7 +559,9 @@ pub(super) async fn agent_io_task<R: Runtime>(
         // drains below then run against an already-empty map (the io_task does
         // not touch `command_rx`/`pending_responses` while reconnecting).
         for (_, tx) in pending_responses.drain() {
-            let _ = tx.send(Err("Agent connection lost".to_string().into()));
+            let _ = tx.send(Err(AgentRpcFailure::transport_closed(
+                "Agent connection lost",
+            )));
         }
 
         match reconnect_agent(&config, &agent_settings, &mut request_id, &alive).await {
@@ -675,7 +677,9 @@ pub(super) async fn agent_io_task<R: Runtime>(
                 crate::utils::agent_crash_notice::spawn_check(&app_handle, &agent_id);
                 // Notify all pending requests that the connection was lost
                 for (_, tx) in pending_responses.drain() {
-                    let _ = tx.send(Err("Connection lost during request".to_string().into()));
+                    let _ = tx.send(Err(AgentRpcFailure::transport_closed(
+                        "Connection lost during request",
+                    )));
                 }
                 continue 'outer;
             }
@@ -697,7 +701,7 @@ pub(super) async fn agent_io_task<R: Runtime>(
                 reap_agent(&agents, &agent_id);
                 // Notify all pending requests
                 for (_, tx) in pending_responses.drain() {
-                    let _ = tx.send(Err("Agent disconnected".to_string().into()));
+                    let _ = tx.send(Err(AgentRpcFailure::transport_closed("Agent disconnected")));
                 }
                 return;
             }

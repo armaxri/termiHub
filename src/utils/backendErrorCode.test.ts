@@ -4,6 +4,7 @@ import {
   parseBackendError,
   isAuthFailure,
   isSecondFactorFailure,
+  isAgentTransportClosed,
   backendErrorMessage,
 } from "./backendErrorCode";
 
@@ -102,6 +103,28 @@ describe("backendErrorCode", () => {
       expect(
         backendErrorMessage({ code: "spawn_failed", message: "Failed to spawn terminal: x" })
       ).toBe("Failed to spawn terminal: x");
+    });
+  });
+
+  describe("isAgentTransportClosed (#2840)", () => {
+    it("is true only for the structured agent_transport_closed code", () => {
+      expect(
+        isAgentTransportClosed({
+          code: "agent_transport_closed",
+          message: "Remote agent error: Agent connection lost",
+        })
+      ).toBe(true);
+      expect(
+        isAgentTransportClosed({
+          code: "remote_error",
+          message: "Remote agent error: Agent connection lost",
+        })
+      ).toBe(false);
+    });
+
+    it("never classifies by message text", () => {
+      expect(isAgentTransportClosed(new Error("Agent connection lost"))).toBe(false);
+      expect(isAgentTransportClosed("connection closed")).toBe(false);
     });
   });
 });
