@@ -16,8 +16,13 @@
 //! When a store's schema changes (for example a settings-key rename), bump its
 //! current version and add a numbered step to its `migrate` function; the version
 //! gate then makes the change forward-migrating and downgrade-safe.
+//!
+//! A store that is genuinely **corrupt** (not a newer version) is copied aside
+//! with [`backup_corrupt`] before anything may overwrite it (#3931), so no path
+//! can lose saved data without a copy on disk.
 
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
@@ -99,6 +104,44 @@ pub fn guard_not_newer(
     }
 }
 
+/// Copy the raw bytes of a corrupt store aside, next to it, as
+/// `<file name>.corrupt-<UTC timestamp>` (with a `-<n>` suffix when that name is
+/// taken), and return the backup's path.
+///
+/// The backup is created with `create_new`, so an earlier backup is never
+/// overwritten, and it is fsynced before this returns — callers may only
+/// overwrite the store once this has succeeded (#3931).
+pub fn backup_corrupt(path: &Path, contents: &[u8]) -> std::io::Result<PathBuf> {
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "store".to_string());
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
+    let base = format!("{file_name}.corrupt-{stamp}");
+    for attempt in 0u32.. {
+        let name = if attempt == 0 {
+            base.clone()
+        } else {
+            format!("{base}-{attempt}")
+        };
+        let backup = path.with_file_name(name);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&backup)
+        {
+            Ok(mut file) => {
+                file.write_all(contents)?;
+                file.sync_all()?;
+                return Ok(backup);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    unreachable!("u32 backup-name space exhausted")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,6 +193,21 @@ mod tests {
         assert!(guard_not_newer(&path, "s", 2).is_ok());
         std::fs::write(&path, r#"{}"#).unwrap();
         assert!(guard_not_newer(&path, "s", 2).is_ok());
+    }
+
+    #[test]
+    fn backup_corrupt_copies_bytes_and_never_overwrites() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("s.json");
+        let first = backup_corrupt(&path, b"one").unwrap();
+        let second = backup_corrupt(&path, b"two").unwrap();
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read(&first).unwrap(), b"one");
+        assert_eq!(std::fs::read(&second).unwrap(), b"two");
+        for backup in [&first, &second] {
+            let name = backup.file_name().unwrap().to_str().unwrap();
+            assert!(name.starts_with("s.json.corrupt-"), "{name}");
+        }
     }
 
     #[test]
