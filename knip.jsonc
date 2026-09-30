@@ -19,6 +19,13 @@
   // future caller name it. Un-exporting such types removes no code, so they
   // are not reported. Values are still reported: an exported constant or
   // function only used in its own file should lose its `export`.
+  "ignoreIssues": {
+    // The shared UI primitive kit (UI Modernization) exports each primitive's
+    // props/variant types from its barrel as part of the documented import
+    // surface, whether or not a call site names them yet.
+    "src/components/ui/index.ts": ["types"],
+    "src/components/ui/Toast/index.ts": ["types"],
+  },
   "ignoreExportsUsedInFile": { "interface": true, "type": true },
   "vite": {
     "config": ["vite.config.ts", "vitest.config.ts"],
