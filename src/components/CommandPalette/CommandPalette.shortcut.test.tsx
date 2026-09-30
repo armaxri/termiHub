@@ -7,7 +7,7 @@
  * `command-palette` action → store flag → palette rendered with its search box.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
