@@ -28,7 +28,12 @@ import { readConfigBoolean, readConfigNumber, readConfigString } from "./connect
 
 /** Narrow an unknown value to the `RemoteAgentConfig.authMethod` union, defaulting to `"password"`. */
 function toAuthMethod(value: unknown): RemoteAgentConfig["authMethod"] {
-  return value === "key" || value === "agent" || value === "password" ? value : "password";
+  return value === "key" ||
+    value === "agent" ||
+    value === "password" ||
+    value === "keyboard-interactive"
+    ? value
+    : "password";
 }
 
 /** Narrow an unknown value to the {@link UpdateStrategy} union, or `undefined` when absent/invalid. */

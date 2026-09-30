@@ -78,10 +78,15 @@ pub struct RemoteAgentConfig {
     pub port: u16,
     pub username: String,
     // ts-rs widens `String` to the structural `string`, dropping the literal
-    // union the frontend relies on — restore it explicitly (matches the deleted
-    // hand-written `authMethod: "password" | "key" | "agent"`).
+    // union the frontend relies on — restore it explicitly. `keyboard-interactive`
+    // (#3377) answers OTP / 2FA rounds in the in-app prompt (#3371). Kept a
+    // `String` on purpose: an older build loads an unknown method without error
+    // (core falls back to password auth) instead of rejecting the saved agent.
     #[serde(default = "default_auth_method")]
-    #[cfg_attr(test, ts(type = "\"password\" | \"key\" | \"agent\""))]
+    #[cfg_attr(
+        test,
+        ts(type = "\"password\" | \"key\" | \"agent\" | \"keyboard-interactive\"")
+    )]
     pub auth_method: String,
     // `skip_serializing_if` is invisible to ts-rs, so these `Option` fields would
     // emit as required `field: T | null`; `#[ts(optional)]` restores the `field?:

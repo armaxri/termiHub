@@ -4037,6 +4037,15 @@ sshd with keyboard-interactive enabled (e.g. `KbdInteractiveAuthentication yes`,
    before answering → the connect still succeeds (prompt time is excluded).
 5. Repeat step 1 through a `ProxyJump` hop whose method is keyboard-interactive,
    and via **Test Connection** in the editor — both show the same dialog.
+6. Remote agent host (#3377): add a remote agent for the same server with
+   **Auth Method → Keyboard-Interactive (OTP / 2FA)** — no password field is
+   shown. **Connect** it (and run **Setup Agent** on it): no password prompt
+   appears; the same dialog asks for the code and, once answered, the agent
+   connects (or setup detects the architecture). The setting round-trip and the
+   skipped password prompt are covered by Vitest (`remoteAgentConfig.test.ts`,
+   `agentSchema.authMethod.test.tsx`, `AgentSetupDialog.kbdInteractive.test.tsx`,
+   `AgentNode.kbd-interactive.test.tsx`) and a Rust round-trip test
+   (`connection/config.rs`).
 
 ### SSH agent forwarding (#1699)
 
