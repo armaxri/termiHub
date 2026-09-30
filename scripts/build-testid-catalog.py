@@ -63,6 +63,15 @@ _COLLAPSE = re.compile(r"\*+")  # runs of glob stars
 _EQ = re.compile(r"\s*=\s*")  # the `=` between attribute name and value
 _IDENT = re.compile(r"[A-Za-z0-9_$]")  # a JS identifier character
 
+# The coarse "this text may carry a test id" gate. Every sink form below —
+# ``data-testid``, any ``*TestId`` name, ``*TestIdPrefix``, and
+# ``setAttribute("data-testid", …)`` — contains this pattern, and
+# ``scan_testids`` skips text without it, so a new sink that does not contain it
+# would be dropped from the catalog (and fail the harness tests). The autoformat
+# hook (``scripts/internal/regen-testid-catalog.mjs``) uses this exact pattern
+# to decide when to regenerate; a unit test pins the two together (#1526).
+_TRIGGER = re.compile(r"[Tt]est[Ii]d")
+
 # A test-id *sink*: the literal ``data-testid`` DOM attribute, or any prop /
 # variable / object key whose name ends in ``TestId`` (``testId``, ``nameTestId``,
 # ``toggleTestId``, ``footerTestId``, ``modalTestId`` …). The shared sidebar shell
@@ -250,6 +259,8 @@ def scan_testids(text: str) -> "list[tuple[str, str]]":
     expression — the quotes are gone by then.
     """
     out: "list[tuple[str, str]]" = []
+    if not _TRIGGER.search(text):
+        return out
     for m in _SINK.finditer(text):
         eq = _EQ.match(text, m.end())
         if eq and text[eq.end() : eq.end() + 1] != "=":  # not `==` / `===`
