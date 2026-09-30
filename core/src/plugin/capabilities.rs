@@ -29,8 +29,8 @@ use termihub_plugin_api::capabilities::{
     PluginBridgeDestroyFn, PluginFileMetadata, PluginWriteMode,
 };
 use termihub_plugin_api::{
-    FfiByteSlice, FfiOwnedBytes, FfiStr, PluginHostBridge, PluginHostBridgeVTable, PluginStatus,
-    PluginTcpStream,
+    AbiVersion, FfiByteSlice, FfiOwnedBytes, FfiStr, PluginHostBridge, PluginHostBridgeVTable,
+    PluginStatus, PluginTcpStream, CURRENT_PLUGIN_ABI_VERSION,
 };
 
 use super::manifest::ConnectionPolicyManifest;
@@ -124,9 +124,16 @@ impl ConnectionPolicy {
 /// interpret its fields. ASCII "thubBRDG".
 const BRIDGE_CONTEXT_MAGIC: u64 = 0x746875_6242524447;
 
+/// Adapts a status the host is about to return to a plugin built for ABI `peer`.
+///
+/// Always [`PluginStatus::for_peer`] in production; a seam only so tests can
+/// simulate a variant appended in a later minor (every variant is 1.0 today, so
+/// the real downgrade has nothing to downgrade for any 1.x peer — #3373).
+type StatusForPeerFn = fn(PluginStatus, AbiVersion) -> PluginStatus;
+
 /// Owned context behind a [`PluginHostBridge`]: the session's granted
-/// permissions, its [`ConnectionPolicy`], and the live count of mediated
-/// connections it currently holds open.
+/// permissions, its [`ConnectionPolicy`], the live count of mediated
+/// connections it currently holds open, and the plugin's ABI version.
 struct BridgeContext {
     /// Sanity tag; see [`BRIDGE_CONTEXT_MAGIC`]. Kept first so it sits at a fixed
     /// offset that [`context`] can check before trusting the rest.
@@ -138,9 +145,39 @@ struct BridgeContext {
     /// Mediated connections currently open for this session. Shared with each
     /// open connection's [`ConnectionGuard`], which decrements it on drop.
     active_connections: Arc<AtomicUsize>,
+    /// The ABI version the plugin was built against. Every status a callback
+    /// returns is downgraded for it (#3373): a plugin built for an older minor
+    /// cannot decode a `PluginStatus` discriminant appended after it was
+    /// compiled (undefined behavior for a `#[repr(i32)]` enum).
+    plugin_abi: AbiVersion,
+    /// How a status is adapted for [`plugin_abi`](Self::plugin_abi);
+    /// [`PluginStatus::for_peer`] outside tests.
+    status_for_peer: StatusForPeerFn,
 }
 
 impl BridgeContext {
+    /// A fresh context for a session: no connections held yet.
+    fn new(
+        permissions: PermissionSet,
+        policy: ConnectionPolicy,
+        plugin_abi: AbiVersion,
+        status_for_peer: StatusForPeerFn,
+    ) -> Self {
+        Self {
+            magic: BRIDGE_CONTEXT_MAGIC,
+            permissions,
+            policy,
+            active_connections: Arc::new(AtomicUsize::new(0)),
+            plugin_abi,
+            status_for_peer,
+        }
+    }
+
+    /// `status` as the plugin this bridge belongs to can decode it.
+    fn status_for_plugin(&self, status: PluginStatus) -> PluginStatus {
+        (self.status_for_peer)(status, self.plugin_abi)
+    }
+
     /// Try to reserve one connection slot, returning a [`ConnectionGuard`] that
     /// releases it on drop, or `None` if the session is already at its
     /// concurrent-connection ceiling.
@@ -177,17 +214,28 @@ impl Drop for ConnectionGuard {
 }
 
 /// Build the host capability bridge for a session granted `permissions`, using
-/// the host's default [`ConnectionPolicy`].
+/// the host's default [`ConnectionPolicy`], for a plugin built against the
+/// host's own ABI ([`CURRENT_PLUGIN_ABI_VERSION`]).
 ///
 /// A convenience over [`build_host_bridge_with_policy`] for callers (and tests)
-/// that do not customise the connection policy.
+/// that do not customise the connection policy. A loaded plugin must use
+/// [`build_host_bridge_with_policy`] with its reported ABI instead.
 #[must_use]
 pub fn build_host_bridge(permissions: PermissionSet) -> PluginHostBridge {
-    build_host_bridge_with_policy(permissions, ConnectionPolicy::default())
+    build_host_bridge_with_policy(
+        permissions,
+        ConnectionPolicy::default(),
+        CURRENT_PLUGIN_ABI_VERSION,
+    )
 }
 
 /// Build the host capability bridge for a session granted `permissions` and
-/// governed by `policy`.
+/// governed by `policy`, for a plugin built against ABI `plugin_abi`.
+///
+/// Every status the bridge callbacks return is passed through
+/// [`PluginStatus::for_peer`]`(plugin_abi)`, so a plugin built for an older
+/// minor is never handed a status variant appended after it was compiled
+/// (#3373).
 ///
 /// The returned [`PluginHostBridge`] is passed by value into the plugin's
 /// `create_backend`; the plugin owns it thereafter and drops it (running the
@@ -199,17 +247,22 @@ pub fn build_host_bridge(permissions: PermissionSet) -> PluginHostBridge {
 pub fn build_host_bridge_with_policy(
     permissions: PermissionSet,
     policy: ConnectionPolicy,
+    plugin_abi: AbiVersion,
 ) -> PluginHostBridge {
-    // The bridge context owns the granted permission set, the connection policy,
-    // and this session's live connection counter. Leaked as a raw pointer to
-    // cross the ABI; `bridge_destroy` reclaims it.
-    let ctx = Box::into_raw(Box::new(BridgeContext {
-        magic: BRIDGE_CONTEXT_MAGIC,
+    bridge_from_context(BridgeContext::new(
         permissions,
         policy,
-        active_connections: Arc::new(AtomicUsize::new(0)),
-    }))
-    .cast::<core::ffi::c_void>();
+        plugin_abi,
+        PluginStatus::for_peer,
+    ))
+}
+
+/// Leak `context` behind a [`PluginHostBridge`] wired to the host callbacks.
+fn bridge_from_context(context: BridgeContext) -> PluginHostBridge {
+    // The bridge context owns the granted permission set, the connection policy,
+    // this session's live connection counter, and the plugin's ABI. Leaked as a
+    // raw pointer to cross the ABI; `bridge_destroy` reclaims it.
+    let ctx = Box::into_raw(Box::new(context)).cast::<core::ffi::c_void>();
     let destroy: PluginBridgeDestroyFn = bridge_destroy;
     // SAFETY: `ctx` is a leaked `Box<BridgeContext>`; every callback in
     // `BRIDGE_VTABLE` only ever interprets it as exactly that, and `destroy`
@@ -299,6 +352,34 @@ unsafe fn context(ctx: &*mut core::ffi::c_void) -> Option<&BridgeContext> {
     Some(cx)
 }
 
+/// Run one bridge callback `body` against the context behind `ctx`, returning a
+/// status the plugin can decode.
+///
+/// A panic in `body` is contained and reported as [`PluginStatus::Panic`] (it
+/// must never unwind across the FFI boundary), and **every** status — success,
+/// refusal, I/O error or panic — is downgraded for the plugin's ABI via
+/// [`BridgeContext::status_for_plugin`] (#3373). A null/wrong-type `ctx` is
+/// refused with [`PluginStatus::Other`] undowngraded: without a context the
+/// plugin's ABI is unknown, and `Other` is a 1.0 variant every 1.x peer decodes
+/// (it is also what `for_peer` falls back to).
+///
+/// # Safety
+///
+/// Same contract as [`context`]: a non-null `ctx` must be a live bridge context.
+unsafe fn with_bridge_context(
+    ctx: *mut core::ffi::c_void,
+    body: impl FnOnce(&BridgeContext) -> PluginStatus,
+) -> PluginStatus {
+    // SAFETY: upheld by the caller. A null/wrong-type `ctx` is refused rather than
+    // dereferenced; the borrow cannot escape this call.
+    let Some(cx) = (unsafe { context(&ctx) }) else {
+        return PluginStatus::Other;
+    };
+    let status = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(cx)))
+        .unwrap_or(PluginStatus::Panic);
+    cx.status_for_plugin(status)
+}
+
 /// `open_connection` callback: enforce the `network` permission and the session's
 /// concurrent-connection ceiling, then connect within the policy's timeout.
 ///
@@ -319,12 +400,7 @@ unsafe extern "C" fn bridge_open_connection(
     port: u16,
     out_stream: *mut PluginTcpStream,
 ) -> PluginStatus {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: upheld by this function's contract. A null/wrong-type `ctx` is
-        // refused rather than dereferenced; the borrow cannot escape this call.
-        let Some(cx) = (unsafe { context(&ctx) }) else {
-            return PluginStatus::Other;
-        };
+    let body = |cx: &BridgeContext| {
         // Runtime enforcement: refuse before touching the network if the plugin
         // never requested `network`.
         if cx.permissions.require(PluginPermission::Network).is_err() {
@@ -353,8 +429,10 @@ unsafe extern "C" fn bridge_open_connection(
             // Dropping `guard` here frees the slot the failed dial-out reserved.
             Err(_) => PluginStatus::Io,
         }
-    }));
-    result.unwrap_or(PluginStatus::Panic)
+    };
+    // SAFETY: upheld by this function's contract — `ctx` is the context the
+    // host handed the plugin (or null / wrong-type, which is refused).
+    unsafe { with_bridge_context(ctx, body) }
 }
 
 /// `read_file` callback: resolve the path against the plugin's declared scope,
@@ -369,12 +447,7 @@ unsafe extern "C" fn bridge_read_file(
     path: FfiStr,
     out_bytes: *mut FfiOwnedBytes,
 ) -> PluginStatus {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: upheld by this function's contract. A null/wrong-type `ctx`
-        // is refused rather than dereferenced; the borrow cannot escape this call.
-        let Some(cx) = (unsafe { context(&ctx) }) else {
-            return PluginStatus::Other;
-        };
+    let body = |cx: &BridgeContext| {
         let perms = &cx.permissions;
         // SAFETY: `path` is a valid borrowed `&str` for the call.
         let requested = unsafe { path.as_str() };
@@ -391,8 +464,10 @@ unsafe extern "C" fn bridge_read_file(
             },
             Err(e) => scope_error_status(&e),
         }
-    }));
-    result.unwrap_or(PluginStatus::Panic)
+    };
+    // SAFETY: upheld by this function's contract — `ctx` is the context the
+    // host handed the plugin (or null / wrong-type, which is refused).
+    unsafe { with_bridge_context(ctx, body) }
 }
 
 /// `write_file` callback: resolve the path against the plugin's declared scope,
@@ -412,12 +487,7 @@ unsafe extern "C" fn bridge_write_file(
     data: FfiByteSlice,
     mode: PluginWriteMode,
 ) -> PluginStatus {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: upheld by this function's contract. A null/wrong-type `ctx`
-        // is refused rather than dereferenced; the borrow cannot escape this call.
-        let Some(cx) = (unsafe { context(&ctx) }) else {
-            return PluginStatus::Other;
-        };
+    let body = |cx: &BridgeContext| {
         let perms = &cx.permissions;
         // SAFETY: `path`/`data` are valid borrowed views for the call.
         let requested = unsafe { path.as_str() };
@@ -438,8 +508,10 @@ unsafe extern "C" fn bridge_write_file(
             Ok(()) => PluginStatus::Ok,
             Err(_) => PluginStatus::Io,
         }
-    }));
-    result.unwrap_or(PluginStatus::Panic)
+    };
+    // SAFETY: upheld by this function's contract — `ctx` is the context the
+    // host handed the plugin (or null / wrong-type, which is refused).
+    unsafe { with_bridge_context(ctx, body) }
 }
 
 /// `stat_path` callback: resolve the path against the plugin's declared scope,
@@ -456,12 +528,7 @@ unsafe extern "C" fn bridge_stat_path(
     path: FfiStr,
     out_meta: *mut PluginFileMetadata,
 ) -> PluginStatus {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: upheld by this function's contract. A null/wrong-type `ctx`
-        // is refused rather than dereferenced; the borrow cannot escape this call.
-        let Some(cx) = (unsafe { context(&ctx) }) else {
-            return PluginStatus::Other;
-        };
+    let body = |cx: &BridgeContext| {
         let perms = &cx.permissions;
         // SAFETY: `path` is a valid borrowed `&str` for the call.
         let requested = unsafe { path.as_str() };
@@ -481,8 +548,10 @@ unsafe extern "C" fn bridge_stat_path(
         // SAFETY: `out_meta` is a valid, writable out-parameter.
         unsafe { out_meta.write(meta) };
         PluginStatus::Ok
-    }));
-    result.unwrap_or(PluginStatus::Panic)
+    };
+    // SAFETY: upheld by this function's contract — `ctx` is the context the
+    // host handed the plugin (or null / wrong-type, which is refused).
+    unsafe { with_bridge_context(ctx, body) }
 }
 
 /// `list_dir` callback: resolve the path against the plugin's declared scope,
@@ -515,12 +584,7 @@ unsafe extern "C" fn bridge_list_dir(
     path: FfiStr,
     out_entries: *mut FfiOwnedBytes,
 ) -> PluginStatus {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: upheld by this function's contract. A null/wrong-type `ctx`
-        // is refused rather than dereferenced; the borrow cannot escape this call.
-        let Some(cx) = (unsafe { context(&ctx) }) else {
-            return PluginStatus::Other;
-        };
+    let body = |cx: &BridgeContext| {
         let perms = &cx.permissions;
         // SAFETY: `path` is a valid borrowed `&str` for the call.
         let requested = unsafe { path.as_str() };
@@ -546,8 +610,10 @@ unsafe extern "C" fn bridge_list_dir(
         // SAFETY: `out_entries` is a valid, writable out-parameter.
         unsafe { out_entries.write(FfiOwnedBytes::from_vec(encoded)) };
         PluginStatus::Ok
-    }));
-    result.unwrap_or(PluginStatus::Panic)
+    };
+    // SAFETY: upheld by this function's contract — `ctx` is the context the
+    // host handed the plugin (or null / wrong-type, which is refused).
+    unsafe { with_bridge_context(ctx, body) }
 }
 
 /// Encode directory entry names with the length-prefixed framing documented on
@@ -663,8 +729,11 @@ mod tests {
         });
 
         let policy = ConnectionPolicy::new(2, DEFAULT_CONNECT_TIMEOUT);
-        let bridge =
-            build_host_bridge_with_policy(perms(&[PluginPermission::Network], &[]), policy);
+        let bridge = build_host_bridge_with_policy(
+            perms(&[PluginPermission::Network], &[]),
+            policy,
+            CURRENT_PLUGIN_ABI_VERSION,
+        );
 
         // Two concurrent connections fit under the ceiling of 2.
         let c1 = bridge
@@ -708,8 +777,11 @@ mod tests {
         // Ceiling of 1, and a short timeout so a refusal (Linux/Windows) or a
         // dropped SYN (macOS) resolves fast.
         let policy = ConnectionPolicy::new(1, Duration::from_secs(2));
-        let bridge =
-            build_host_bridge_with_policy(perms(&[PluginPermission::Network], &[]), policy);
+        let bridge = build_host_bridge_with_policy(
+            perms(&[PluginPermission::Network], &[]),
+            policy,
+            CURRENT_PLUGIN_ABI_VERSION,
+        );
 
         // The refused connect fails with an I/O error, not a permission denial…
         let err = bridge
@@ -739,8 +811,11 @@ mod tests {
         assert_eq!(policy.connect_timeout(), Duration::from_millis(300));
         assert_eq!(policy.max_connections(), DEFAULT_MAX_CONNECTIONS);
 
-        let bridge =
-            build_host_bridge_with_policy(perms(&[PluginPermission::Network], &[]), policy);
+        let bridge = build_host_bridge_with_policy(
+            perms(&[PluginPermission::Network], &[]),
+            policy,
+            CURRENT_PLUGIN_ABI_VERSION,
+        );
         let start = std::time::Instant::now();
         let err = bridge.open_connection("192.0.2.1", 9).unwrap_err();
         let elapsed = start.elapsed();
@@ -1049,12 +1124,12 @@ mod tests {
     #[test]
     fn context_borrows_a_live_pointer() {
         // A genuine leaked BridgeContext is accepted and its permissions read back.
-        let ctx = Box::into_raw(Box::new(BridgeContext {
-            magic: BRIDGE_CONTEXT_MAGIC,
-            permissions: perms(&[PluginPermission::Terminal], &[]),
-            policy: ConnectionPolicy::default(),
-            active_connections: Arc::new(AtomicUsize::new(0)),
-        }))
+        let ctx = Box::into_raw(Box::new(BridgeContext::new(
+            perms(&[PluginPermission::Terminal], &[]),
+            ConnectionPolicy::default(),
+            CURRENT_PLUGIN_ABI_VERSION,
+            PluginStatus::for_peer,
+        )))
         .cast::<core::ffi::c_void>();
 
         // SAFETY: freshly leaked, non-null, correct type.
@@ -1064,6 +1139,196 @@ mod tests {
         // Reclaim the box so the test does not leak.
         // SAFETY: `ctx` is the box leaked just above, freed exactly once here.
         drop(unsafe { Box::from_raw(ctx.cast::<BridgeContext>()) });
+    }
+
+    /// A downgrade that behaves as if `PermissionDenied` and `ResourceLimit` had
+    /// been appended in ABI 1.1 — the same rule as [`PluginStatus::for_peer`],
+    /// with a simulated `since`. Lets the tests exercise the routing that the
+    /// real downgrade makes a no-op today (every variant is 1.0; #3373).
+    fn simulated_1_1_variants(status: PluginStatus, peer: AbiVersion) -> PluginStatus {
+        let since = match status {
+            PluginStatus::PermissionDenied | PluginStatus::ResourceLimit => AbiVersion::new(1, 1),
+            _ => AbiVersion::new(1, 0),
+        };
+        if peer.supports(since) {
+            status
+        } else {
+            PluginStatus::Other
+        }
+    }
+
+    /// A bridge for a plugin built for `peer`, downgrading with
+    /// [`simulated_1_1_variants`].
+    fn simulated_bridge(
+        permissions: PermissionSet,
+        policy: ConnectionPolicy,
+        peer: AbiVersion,
+    ) -> PluginHostBridge {
+        bridge_from_context(BridgeContext::new(
+            permissions,
+            policy,
+            peer,
+            simulated_1_1_variants,
+        ))
+    }
+
+    #[test]
+    fn older_minor_peer_never_sees_a_newer_status_variant() {
+        // A 1.0 plugin must get `Other`, not a (simulated) 1.1 discriminant it
+        // cannot decode, from every refusal path of every callback.
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("outside.txt");
+        let outside_str = outside.to_str().unwrap();
+        let bridge = simulated_bridge(
+            perms(&[PluginPermission::Terminal], &[]),
+            ConnectionPolicy::default(),
+            AbiVersion::new(1, 0),
+        );
+        let other = |r: Result<(), termihub_plugin_api::PluginError>| {
+            assert!(
+                matches!(r, Err(termihub_plugin_api::PluginError::Other(_))),
+                "1.0 peer must be handed Other, got {r:?}"
+            );
+        };
+        other(bridge.open_connection("127.0.0.1", 9).map(drop));
+        other(bridge.read_file(outside_str).map(drop));
+        other(bridge.write_file(outside_str, b"x", PluginWriteMode::Truncate));
+        other(bridge.stat(outside_str).map(drop));
+        other(bridge.list_dir(outside_str).map(drop));
+        assert!(!outside.exists(), "refused write must not create the file");
+    }
+
+    #[test]
+    fn older_minor_peer_gets_other_for_a_newer_resource_limit() {
+        // The concurrency-ceiling refusal is routed through the downgrade too.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let policy = ConnectionPolicy::new(0, DEFAULT_CONNECT_TIMEOUT);
+
+        let old = simulated_bridge(
+            perms(&[PluginPermission::Network], &[]),
+            policy,
+            AbiVersion::new(1, 0),
+        );
+        let err = old.open_connection("127.0.0.1", port).unwrap_err();
+        assert!(
+            matches!(err, termihub_plugin_api::PluginError::Other(_)),
+            "1.0 peer must be handed Other for ResourceLimit, got {err:?}"
+        );
+
+        let current = simulated_bridge(
+            perms(&[PluginPermission::Network], &[]),
+            policy,
+            AbiVersion::new(1, 1),
+        );
+        let err = current.open_connection("127.0.0.1", port).unwrap_err();
+        assert!(
+            matches!(err, termihub_plugin_api::PluginError::ResourceLimit),
+            "1.1 peer knows ResourceLimit, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn peer_that_knows_the_variant_keeps_it_and_known_statuses_pass_through() {
+        // A 1.1 plugin receives the (simulated) 1.1 variant unchanged, and a 1.0
+        // plugin still gets 1.0 statuses — including `Ok` — untouched.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_str().unwrap().to_owned();
+        let outside = std::env::temp_dir().join("thub-3373-outside-scope.txt");
+        let outside_str = outside.to_str().unwrap();
+
+        let new_peer = simulated_bridge(
+            perms(&[PluginPermission::Filesystem], &[&root]),
+            ConnectionPolicy::default(),
+            AbiVersion::new(1, 1),
+        );
+        let err = new_peer.read_file(outside_str).unwrap_err();
+        assert!(
+            matches!(err, termihub_plugin_api::PluginError::PermissionDenied),
+            "1.1 peer knows PermissionDenied, got {err:?}"
+        );
+
+        let old_peer = simulated_bridge(
+            perms(&[PluginPermission::Filesystem], &[&root]),
+            ConnectionPolicy::default(),
+            AbiVersion::new(1, 0),
+        );
+        let inside = dir.path().join("inside.txt");
+        let inside_str = inside.to_str().unwrap();
+        old_peer
+            .write_file(inside_str, b"hi", PluginWriteMode::Truncate)
+            .expect("Ok is a 1.0 status and passes through");
+        assert_eq!(old_peer.read_file(inside_str).unwrap(), b"hi");
+        let missing = old_peer
+            .read_file(dir.path().join("missing").to_str().unwrap())
+            .unwrap_err();
+        assert!(
+            matches!(missing, termihub_plugin_api::PluginError::Io(_)),
+            "Io is a 1.0 status and passes through, got {missing:?}"
+        );
+    }
+
+    #[test]
+    fn production_bridge_downgrades_with_the_plugins_real_abi() {
+        // The real bridge uses `PluginStatus::for_peer` with the ABI it was built
+        // for: a peer that predates every 1.0 variant (a simulated pre-freeze
+        // 0.x library) is handed `Other` instead of `PermissionDenied`, while a
+        // current-ABI peer keeps the precise status.
+        let pre_freeze = build_host_bridge_with_policy(
+            perms(&[PluginPermission::Terminal], &[]),
+            ConnectionPolicy::default(),
+            AbiVersion::new(0, 9),
+        );
+        let err = pre_freeze.open_connection("127.0.0.1", 9).unwrap_err();
+        assert!(
+            matches!(err, termihub_plugin_api::PluginError::Other(_)),
+            "got {err:?}"
+        );
+
+        let current = build_host_bridge_with_policy(
+            perms(&[PluginPermission::Terminal], &[]),
+            ConnectionPolicy::default(),
+            CURRENT_PLUGIN_ABI_VERSION,
+        );
+        let err = current.open_connection("127.0.0.1", 9).unwrap_err();
+        assert!(
+            matches!(err, termihub_plugin_api::PluginError::PermissionDenied),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn a_panicking_callback_is_contained_and_downgraded() {
+        // The panic path goes through the same downgrade as every other status.
+        let ctx = BridgeContext::new(
+            perms(&[PluginPermission::Terminal], &[]),
+            ConnectionPolicy::default(),
+            AbiVersion::new(0, 9),
+            PluginStatus::for_peer,
+        );
+        let raw = (&ctx as *const BridgeContext)
+            .cast_mut()
+            .cast::<core::ffi::c_void>();
+        // SAFETY: `raw` points at a live BridgeContext for the whole call.
+        let status = unsafe { with_bridge_context(raw, |_| panic!("boom")) };
+        assert_eq!(
+            status,
+            PluginStatus::Other,
+            "Panic downgraded for a 0.9 peer"
+        );
+
+        let ctx = BridgeContext::new(
+            perms(&[PluginPermission::Terminal], &[]),
+            ConnectionPolicy::default(),
+            CURRENT_PLUGIN_ABI_VERSION,
+            PluginStatus::for_peer,
+        );
+        let raw = (&ctx as *const BridgeContext)
+            .cast_mut()
+            .cast::<core::ffi::c_void>();
+        // SAFETY: as above.
+        let status = unsafe { with_bridge_context(raw, |_| panic!("boom")) };
+        assert_eq!(status, PluginStatus::Panic);
     }
 
     #[test]
