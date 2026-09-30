@@ -1269,38 +1269,44 @@ pub(crate) mod tests {
 
     #[test]
     fn decide_attach_fresh_when_no_writer_attached() {
-        // With no live writer, intent is irrelevant — always a fresh attach.
-        assert_eq!(
-            decide_attach(false, INTENT_RECOVERY),
-            AttachDecision::FreshAttach
-        );
-        assert_eq!(
-            decide_attach(false, INTENT_TAKEOVER),
-            AttachDecision::FreshAttach
-        );
+        // With no live writer, intent is irrelevant — always a fresh attach,
+        // even for a newcomer that declared none.
+        for intent in [Some(INTENT_RECOVERY), Some(INTENT_TAKEOVER), None] {
+            assert_eq!(decide_attach(false, intent), AttachDecision::FreshAttach);
+        }
     }
 
     #[test]
     fn decide_attach_refuses_recovery_when_writer_attached() {
         // A recovery connect must not steal a live peer's session (AGT-015).
         assert_eq!(
-            decide_attach(true, INTENT_RECOVERY),
+            decide_attach(true, Some(INTENT_RECOVERY)),
             AttachDecision::RefuseOwnedByLivePeer
         );
     }
 
     #[test]
-    fn decide_attach_evicts_on_takeover_when_writer_attached() {
-        // A takeover (or an absent/unknown intent defaulting to takeover) evicts
-        // the incumbent — the OBS-012 eviction that must be logged.
+    fn decide_attach_evicts_only_on_a_declared_takeover() {
+        // A declared takeover evicts the incumbent — the OBS-012 eviction that
+        // must be logged.
         assert_eq!(
-            decide_attach(true, INTENT_TAKEOVER),
+            decide_attach(true, Some(INTENT_TAKEOVER)),
             AttachDecision::EvictAndTakeover
+        );
+    }
+
+    #[test]
+    fn decide_attach_refuses_an_undeclared_or_unknown_intent() {
+        // #3932: a newcomer that never declared a takeover (no intent within
+        // the bound, or an unknown intent byte) must never evict a live holder.
+        assert_eq!(
+            decide_attach(true, None),
+            AttachDecision::RefuseOwnedByLivePeer
         );
         let unknown_intent = 0xEE;
         assert_eq!(
-            decide_attach(true, unknown_intent),
-            AttachDecision::EvictAndTakeover
+            decide_attach(true, Some(unknown_intent)),
+            AttachDecision::RefuseOwnedByLivePeer
         );
     }
 
