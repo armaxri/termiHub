@@ -101,14 +101,13 @@ pub fn app_progress_sink(app: AppHandle) -> ProgressSink {
         // folding here feeds the store the whole register → queue → progress →
         // pause → resume → finish → cancel lifecycle. Additive: the Tauri event
         // below still fires and the frontend mirror is untouched, so no
-        // user-facing behavior changes; the fold serializes the event to the same
-        // camelCase JSON the frontend receives, so the store transition matches
-        // the client `transfer.progress` route exactly. Best-effort: skipped when
-        // the store/projection is unmanaged (e.g. a collector-sink integration
-        // test) or the event does not serialize.
-        if let Ok(value) = serde_json::to_value(progress) {
-            crate::transfers_projection::projection::fold_transfer_progress(&app, &value);
-        }
+        // user-facing behavior changes; the fold converts the event directly into
+        // the store's type (#2973 — no JSON round-trip, so the emit below is the
+        // only serialization), yielding exactly what the client
+        // `transfer.progress` route parses from the same camelCase JSON, so the
+        // store transition matches it exactly. Best-effort: skipped when the
+        // store/projection is unmanaged (e.g. a collector-sink integration test).
+        crate::transfers_projection::projection::fold_transfer_progress(&app, progress);
         // Durable queue (PROD-0011): fold every lifecycle/progress transition
         // into the persisted queue at the same choke point. Fire-and-forget and
         // debounced inside the manager (status change / coarse checkpoint only),
