@@ -33,6 +33,9 @@ use std::time::{Duration, SystemTime};
 /// could even race the creating worker's own attach. Every such window is
 /// bounded by the create's connect timeout (seconds), so anything younger than
 /// this is left alone — a real orphan is simply reclaimed by a later sweep.
+///
+/// Unix-only: its sole user is [`default_config`], and windows has no sweep.
+#[cfg(unix)]
 pub const DEFAULT_MIN_AGE: Duration = Duration::from_secs(10 * 60);
 
 /// Where the sweep looks and how old a session's files must be.
@@ -44,7 +47,7 @@ pub struct OrphanSweepConfig {
     pub min_age: Duration,
 }
 
-/// The production sweep: the per-user socket dir, with [`DEFAULT_MIN_AGE`].
+/// The production sweep: the per-user socket dir, with `DEFAULT_MIN_AGE` (unix only).
 ///
 /// `None` on windows, where a session's named pipes vanish with its daemon and
 /// no files are left to reclaim (AGT-019 is unix-only).
