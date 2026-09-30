@@ -22,6 +22,8 @@ vi.mock("@/services/api", () => ({
   removeCredential: vi.fn(),
   storeCredential: vi.fn(),
   resolveCredential: vi.fn(() => Promise.resolve(null)),
+  deleteConnectionFromBackend: vi.fn(() => Promise.resolve()),
+  stopPersistentSession: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("@/utils/frontendLog", () => ({
@@ -342,5 +344,51 @@ describe("ConnectionList — multi-select", () => {
     expect(item1.classList.contains("connection-tree__item--selected")).toBe(true);
     expect(item2.classList.contains("connection-tree__item--selected")).toBe(true);
     expect(item3.classList.contains("connection-tree__item--selected")).toBe(true);
+  });
+
+  it("Ctrl+Click two of three, context-menu Delete, confirm → only the third remains (MT-CONN-33)", async () => {
+    seedConnectionsRegion({
+      connections: [
+        makeConnection({ id: "conn-1" }),
+        makeConnection({ id: "conn-2" }),
+        makeConnection({ id: "conn-3" }),
+      ],
+    });
+
+    await renderList(root);
+
+    const q = (id: string) => document.querySelector(`[data-testid="${id}"]`) as HTMLElement | null;
+    const item1 = q("connection-item-conn-1")!;
+    const item2 = q("connection-item-conn-2")!;
+
+    act(() => {
+      item1.click();
+    });
+    act(() => {
+      item2.dispatchEvent(new MouseEvent("click", { ctrlKey: true, bubbles: true }));
+    });
+
+    act(() => {
+      item2.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    });
+    const del = q("context-connection-delete");
+    expect(del).not.toBeNull();
+    act(() => del!.click());
+
+    const dialog = q("confirm-delete-dialog");
+    expect(dialog).not.toBeNull();
+    expect(dialog!.textContent).toContain("Delete 2 connections?");
+
+    await act(async () => {
+      q("confirm-delete-confirm")!.click();
+    });
+    await flushAsync();
+
+    await vi.waitFor(() => {
+      expect(q("connection-item-conn-1")).toBeNull();
+      expect(q("connection-item-conn-2")).toBeNull();
+    });
+    expect(q("connection-item-conn-3")).not.toBeNull();
+    expect(q("confirm-delete-dialog")).toBeNull();
   });
 });

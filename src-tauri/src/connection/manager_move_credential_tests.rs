@@ -406,3 +406,111 @@ fn renaming_an_external_connection_leaves_a_main_connections_same_id_secret_alon
     );
     assert_eq!(store.value(&owner_id("x", Some(&scope)), PW), None);
 }
+
+// ── #3689: automated manual-corpus items ───────────────────────────────────
+
+fn enable_external_file(mgr: &ConnectionManager, file: &str) {
+    let mut settings = mgr.get_settings();
+    settings.external_connection_files = vec![crate::connection::settings::ExternalFileConfig {
+        path: file.to_string(),
+        enabled: true,
+    }];
+    mgr.save_settings(settings).unwrap();
+}
+
+/// MT-CONN-24: dragging an external-file connection into a local (main-store)
+/// folder persists that folder, and it survives a reload of the external file.
+#[test]
+fn an_external_connection_dropped_into_a_main_folder_keeps_it_across_reload() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mgr, _recorded) = manager(dir.path(), Arc::new(NullStore));
+    mgr.save_folder(folder("Local", "Local", None)).unwrap();
+    let file = external_path(dir.path(), "shared.json");
+    enable_external_file(&mgr, &file);
+    let mut c = local("x", "x", None);
+    c.source_file = Some(file.clone());
+    mgr.save_connection_routed(c.clone()).unwrap();
+
+    // The drop: same connection, now with the main store's folder id.
+    c.folder_id = Some("Local".to_string());
+    mgr.save_connection_routed(c).unwrap();
+
+    let sources = mgr.load_external_sources();
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].error, None);
+    let conns = &sources[0].connections;
+    assert_eq!(conns.len(), 1, "{conns:?}");
+    assert_eq!(conns[0].name, "x");
+    assert_eq!(conns[0].folder_id.as_deref(), Some("Local"));
+    assert_eq!(conns[0].source_file.as_deref(), Some(file.as_str()));
+}
+
+/// The gap behind the guided MT-CONN-13: an encrypted export carries a saved
+/// password into a fresh install, and the import reports it.
+#[test]
+fn an_encrypted_export_round_trips_a_saved_password() {
+    let src_dir = tempfile::tempdir().unwrap();
+    let src_store = Arc::new(RecordingStore::default());
+    let (src, _r) = manager(src_dir.path(), src_store.clone());
+    src.save_connection(with_password(ssh("a", "a", None), "s3cret"))
+        .unwrap();
+    assert_eq!(src_store.value("a", PW).as_deref(), Some("s3cret"));
+
+    let json = src.export_encrypted_json(Some("export-pw"), None).unwrap();
+    assert!(
+        !json.contains("s3cret"),
+        "the export must not carry plaintext"
+    );
+
+    let dst_dir = tempfile::tempdir().unwrap();
+    let dst_store = Arc::new(RecordingStore::default());
+    let (dst, _r) = manager(dst_dir.path(), dst_store.clone());
+    let result = dst.import_encrypted_json(&json, Some("export-pw")).unwrap();
+
+    assert_eq!(result.connections_imported, 1);
+    assert_eq!(result.credentials_imported, 1);
+    assert_eq!(main_ids(&dst), vec!["a"]);
+    assert_eq!(dst_store.value("a", PW).as_deref(), Some("s3cret"));
+}
+
+#[test]
+fn an_encrypted_import_with_the_wrong_password_imports_nothing() {
+    let src_dir = tempfile::tempdir().unwrap();
+    let (src, _r) = manager(src_dir.path(), Arc::new(RecordingStore::default()));
+    src.save_connection(with_password(ssh("a", "a", None), "s3cret"))
+        .unwrap();
+    let json = src.export_encrypted_json(Some("export-pw"), None).unwrap();
+
+    let dst_dir = tempfile::tempdir().unwrap();
+    let dst_store = Arc::new(RecordingStore::default());
+    let (dst, _r) = manager(dst_dir.path(), dst_store.clone());
+    assert!(dst.import_encrypted_json(&json, Some("wrong")).is_err());
+    assert!(main_ids(&dst).is_empty());
+    assert!(dst_store.snapshot().is_empty());
+}
+
+/// Importing a connection whose id already exists skips it — and must not
+/// overwrite that existing connection's own saved password either.
+#[test]
+fn an_encrypted_import_does_not_clobber_a_skipped_connections_password() {
+    let src_dir = tempfile::tempdir().unwrap();
+    let (src, _r) = manager(src_dir.path(), Arc::new(RecordingStore::default()));
+    src.save_connection(with_password(ssh("a", "a", None), "FROM-EXPORT"))
+        .unwrap();
+    src.save_connection(with_password(ssh("b", "b", None), "B"))
+        .unwrap();
+    let json = src.export_encrypted_json(Some("export-pw"), None).unwrap();
+
+    let dst_dir = tempfile::tempdir().unwrap();
+    let dst_store = Arc::new(RecordingStore::default());
+    let (dst, _r) = manager(dst_dir.path(), dst_store.clone());
+    dst.save_connection(with_password(ssh("a", "a", None), "LOCAL"))
+        .unwrap();
+
+    let result = dst.import_encrypted_json(&json, Some("export-pw")).unwrap();
+
+    assert_eq!(main_ids(&dst), vec!["a", "b"]);
+    assert_eq!(dst_store.value("a", PW).as_deref(), Some("LOCAL"));
+    assert_eq!(dst_store.value("b", PW).as_deref(), Some("B"));
+    assert_eq!(result.credentials_imported, 1);
+}
