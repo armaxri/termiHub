@@ -47,6 +47,15 @@ vi.mock("@/services/api", () => ({
   sessionMkdir: vi.fn(() => Promise.resolve()),
   sessionUpload: vi.fn(() => Promise.resolve(1)),
   sessionWriteFile: vi.fn(() => Promise.resolve()),
+  // A session → local folder paste is recorded in the interrupted-paste manifest (#3912).
+  folderPasteBegin: vi.fn(() => Promise.resolve("paste-1")),
+  folderPasteEnd: vi.fn(() => Promise.resolve()),
+  folderPasteLinkTransfer: vi.fn(() => Promise.resolve()),
+  sessionCopy: vi.fn(() => Promise.resolve()),
+  sessionCopyRemote: vi.fn(() => Promise.resolve(0)),
+  sessionHasExecCapability: vi.fn(() => Promise.resolve()),
+  sessionRenameFile: vi.fn(() => Promise.resolve()),
+  sessionSupportsRemoteCopy: vi.fn(() => Promise.resolve(false)),
 }));
 
 const fsMock = vi.hoisted(() => ({ readFile: vi.fn(), writeFile: vi.fn(() => Promise.resolve()) }));
@@ -301,6 +310,9 @@ describe("useLocalFileSystem — uploadFileFromPath API call", () => {
 import { save } from "@tauri-apps/plugin-dialog";
 import type { FileEntry } from "@/types/connection";
 import {
+  folderPasteBegin,
+  folderPasteEnd,
+  folderPasteLinkTransfer,
   localMkdir,
   localWriteFile,
   localDelete,
@@ -907,6 +919,74 @@ describe("useLocalFileSystem — action wiring", () => {
       expect(vi.mocked(sessionDownload)).toHaveBeenCalledTimes(1);
       expect(vi.mocked(sessionDeleteFile)).not.toHaveBeenCalled();
       expect(currentFileBrowsersView().clipboard?.entries).toHaveLength(2);
+    });
+
+    describe("interrupted-paste manifest (#3912)", () => {
+      const remoteFolder = { ...remoteFile("proj"), isDirectory: true };
+
+      it("records a remote folder paste until its last file landed", async () => {
+        vi.mocked(sessionListFiles).mockResolvedValueOnce([remoteFile("x", "/srv/proj")]);
+        vi.mocked(sessionDownload).mockImplementationOnce(async (_s, _r, _l, onRegistered) => {
+          onRegistered?.("xfer-x");
+          return 1;
+        });
+        const api = await mountHook("/home/user");
+        setRemoteClipboard([remoteFolder]);
+        await act(async () => {
+          await api.pasteEntry();
+        });
+        expect(vi.mocked(folderPasteBegin)).toHaveBeenCalledWith(
+          "copy",
+          { sessionId: "ssh-1", connectionId: null, label: null, path: "/srv/proj" },
+          { sessionId: null, connectionId: null, label: "Local", path: "/home/user/proj" }
+        );
+        // The in-flight download is reported through the paste after a restart (#3643).
+        expect(vi.mocked(folderPasteLinkTransfer)).toHaveBeenCalledWith("paste-1", "xfer-x");
+        expect(vi.mocked(folderPasteEnd)).toHaveBeenCalledWith("paste-1");
+        const begin = vi.mocked(folderPasteBegin).mock.invocationCallOrder[0];
+        const download = vi.mocked(sessionDownload).mock.invocationCallOrder[0];
+        const end = vi.mocked(folderPasteEnd).mock.invocationCallOrder[0];
+        expect(begin).toBeLessThan(download);
+        expect(download).toBeLessThan(end);
+      });
+
+      it("keeps the manifest when a file of the folder fails", async () => {
+        vi.mocked(sessionListFiles).mockResolvedValueOnce([remoteFile("x", "/srv/proj")]);
+        vi.mocked(sessionDownload).mockRejectedValueOnce(new Error("Connection lost"));
+        const api = await mountHook("/home/user");
+        setRemoteClipboard([remoteFolder]);
+        await act(async () => {
+          await api.pasteEntry();
+        });
+        expect(vi.mocked(folderPasteBegin)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(folderPasteEnd)).not.toHaveBeenCalled();
+      });
+
+      it("removes a moved folder's remote source before ending the manifest", async () => {
+        const api = await mountHook("/home/user");
+        setRemoteClipboard([remoteFolder], "cut");
+        await act(async () => {
+          await api.pasteEntry();
+        });
+        expect(vi.mocked(folderPasteBegin)).toHaveBeenCalledWith(
+          "cut",
+          expect.objectContaining({ sessionId: "ssh-1", path: "/srv/proj" }),
+          expect.objectContaining({ sessionId: null, path: "/home/user/proj" })
+        );
+        expect(vi.mocked(sessionDeleteFile)).toHaveBeenCalledWith("ssh-1", "/srv/proj");
+        const del = vi.mocked(sessionDeleteFile).mock.invocationCallOrder[0];
+        const end = vi.mocked(folderPasteEnd).mock.invocationCallOrder[0];
+        expect(del).toBeLessThan(end);
+      });
+
+      it("never records a single-file paste (its transfer row resumes on its own)", async () => {
+        const api = await mountHook("/home/user");
+        setRemoteClipboard([remoteFile("a.log")]);
+        await act(async () => {
+          await api.pasteEntry();
+        });
+        expect(vi.mocked(folderPasteBegin)).not.toHaveBeenCalled();
+      });
     });
 
     it("reports a remote clipboard whose session is gone instead of doing nothing", async () => {

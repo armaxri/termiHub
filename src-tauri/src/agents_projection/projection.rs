@@ -60,6 +60,7 @@ use std::sync::Arc;
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
+use crate::agents_projection::delta::apply_agents_delta;
 use crate::agents_projection::store::{
     AgentConnectionState, AgentDefinition, AgentEntry, AgentFolder, AgentSession, AgentsStore,
     SavedAgentSeed,
@@ -68,8 +69,8 @@ use crate::commands::projection::ProjectionState;
 use crate::connection::config::SavedRemoteAgent;
 use crate::connection::manager::ConnectionManager;
 use crate::projection::{
-    bad_payload, optional_str, optional_typed, required_str, required_usize, HandlerRegistry,
-    Intent, ProducedRegion, Projector,
+    bad_payload, optional_str, optional_typed, report_perf006_divergence, required_str,
+    required_usize, HandlerRegistry, Intent, ProducedRegion, Projector,
 };
 
 /// The projection region id for the agents domain (shared, per Open Design
@@ -79,8 +80,44 @@ pub const AGENTS_REGION: &str = "agents";
 /// Publish the `agents` region from the store, fanning a diff out to every
 /// subscriber and returning the advanced region for the intent ack (empty when
 /// the view did not change).
+///
+/// # Incremental publish (PERF-006, #2888)
+///
+/// The store hands over only what a fold touched ([`AgentsStore::drain_delta`]):
+/// the whole ordered `agents` list if it changed, plus the touched agent ids'
+/// entries in the keyed `sessions` / `definitions` / `folders` maps. A per-agent
+/// definition/folder/session fold therefore costs O(that agent's sub-state)
+/// instead of re-serializing and diffing every agent's sub-state. The emitted
+/// diff is **byte-identical** to the whole-region diff — see
+/// [`crate::agents_projection::delta`] for the proof and the debug cross-check.
+///
+/// The delta is drained **inside** the region lock (the #3788 / #3780 pattern),
+/// so concurrent fold-and-publish threads (the intent dispatcher and the
+/// server-side [`fold_agent_transition`] callers) apply their drains in order; a
+/// fold landing after our drain stays dirty and is carried by the next publish.
 pub fn publish_agents(projector: &Projector, store: &AgentsStore) -> Vec<ProducedRegion> {
-    match projector.publish_with(AGENTS_REGION, || store.snapshot()) {
+    let mut divergence = None;
+    let published = projector.publish_delta(AGENTS_REGION, |view| {
+        // Debug builds also take the whole-region snapshot atomically with the
+        // drain, as the ground truth for the PERF-006 cross-check.
+        let (delta, truth) = if cfg!(debug_assertions) {
+            let (delta, truth) = store.drain_delta_with_snapshot();
+            (delta, Some(truth))
+        } else {
+            (store.drain_delta(), None)
+        };
+        #[cfg(test)]
+        crate::projection::publish_hook::fire_after_drain();
+        let (ops, diverged) = apply_agents_delta(view, &delta, truth.as_ref(), || store.snapshot());
+        divergence = diverged;
+        ops
+    });
+    // Reported only after `publish_delta` returned: the (resynced) frame has
+    // already been fanned out and the region lock released.
+    if let Some(reason) = divergence {
+        report_perf006_divergence(AGENTS_REGION, &reason);
+    }
+    match published {
         Some(version) => vec![ProducedRegion {
             region: AGENTS_REGION.to_string(),
             version,

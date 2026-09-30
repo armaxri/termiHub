@@ -190,12 +190,53 @@ struct Inner {
     /// is never resurrected.
     pending_folders: HashMap<String, Vec<AgentFolder>>,
     pending_definitions: HashMap<String, Vec<AgentDefinition>>,
+    /// Whether the ordered `agents` list changed since the last
+    /// [`AgentsStore::drain_delta`] (PERF-006, #2888). The list is a
+    /// position-ordered array — `json_patch` diffs arrays index by index, so an
+    /// insert / remove / reorder shifts every later index — and is therefore
+    /// always republished and diffed **whole** when touched. Over-marking is safe:
+    /// an unchanged list diffs to no ops.
+    dirty_agents: bool,
+    /// Agent ids whose `sessions` / `definitions` / `folders` map entries were
+    /// touched since the last drain (PERF-006, #2888). One set covers all three
+    /// keyed maps: an id's entry is re-serialized in each of them, so a fold that
+    /// touches only one map costs O(that agent's sub-state), never O(region). A
+    /// superset of the changed ids is always safe (unchanged entries diff to no
+    /// ops and never reorder the rest).
+    dirty_ids: HashSet<String>,
 }
 
 impl Inner {
     /// Find one agent by id for in-place mutation.
     fn agent_mut(&mut self, id: &str) -> Option<&mut AgentEntry> {
         self.agents.iter_mut().find(|a| a.id == id)
+    }
+
+    /// Find one agent by id and mark the ordered list dirty (PERF-006) — the
+    /// accessor every per-agent field write goes through, so a field change can
+    /// never skip the dirty mark.
+    fn touch_agent(&mut self, id: &str) -> Option<&mut AgentEntry> {
+        let agent = self.agents.iter_mut().find(|a| a.id == id)?;
+        self.dirty_agents = true;
+        Some(agent)
+    }
+
+    /// Mark one agent's `sessions` / `definitions` / `folders` entries dirty.
+    fn touch_maps(&mut self, id: &str) {
+        self.dirty_ids.insert(id.to_string());
+    }
+
+    /// Mark every map key currently present dirty — used before a fold that may
+    /// drop or rewrite arbitrary keys (`reflect_saved_agents`, `replace`).
+    fn touch_all_map_keys(&mut self) {
+        let keys: Vec<String> = self
+            .sessions
+            .keys()
+            .chain(self.definitions.keys())
+            .chain(self.folders.keys())
+            .cloned()
+            .collect();
+        self.dirty_ids.extend(keys);
     }
 
     /// Record a folder as an unconfirmed local create so a later stale snapshot
@@ -299,13 +340,27 @@ impl AgentsStore {
     /// Pure with respect to agent state (never mutates), so the projector can
     /// safely diff two consecutive snapshots.
     pub fn snapshot(&self) -> Value {
-        let inner = self.lock();
-        json!({
-            "agents": inner.agents,
-            "sessions": inner.sessions,
-            "definitions": inner.definitions,
-            "folders": inner.folders,
-        })
+        snapshot_of(&self.lock())
+    }
+
+    /// Drain the dirty marks into an [`AgentsDelta`] — the input to the region's
+    /// incremental publish (PERF-006, #2888). Serializes the whole ordered
+    /// `agents` list only if it was touched, plus each touched agent id's entry in
+    /// the three keyed maps (`None` when absent, so the diff emits a `remove`).
+    /// O(touched sub-state + list-if-touched), not O(region).
+    pub fn drain_delta(&self) -> AgentsDelta {
+        drain_delta_of(&mut self.lock())
+    }
+
+    /// [`Self::drain_delta`] plus a whole-region [`Self::snapshot`], both taken
+    /// under **one** store lock so no fold can land between them (the #3788 /
+    /// #3780 pattern). The snapshot is exactly the state the drained delta brings
+    /// the region to — the ground truth for the debug PERF-006 cross-check in
+    /// [`crate::agents_projection::delta`].
+    pub fn drain_delta_with_snapshot(&self) -> (AgentsDelta, Value) {
+        let mut inner = self.lock();
+        let delta = drain_delta_of(&mut inner);
+        (delta, snapshot_of(&inner))
     }
 
     // ── Agent definition/config lifecycle (the persisted agent list) ──────────
@@ -317,6 +372,7 @@ impl AgentsStore {
         if inner.agents.iter().any(|a| a.id == id) {
             return;
         }
+        inner.dirty_agents = true;
         inner
             .agents
             .push(AgentEntry::new(id, name, config, agent_settings));
@@ -350,6 +406,9 @@ impl AgentsStore {
     /// with the still-present client `agent.*` mirror without drift.
     pub fn reflect_saved_agents(&self, seeds: Vec<SavedAgentSeed>) {
         let mut inner = self.lock();
+        // PERF-006: the list is rebuilt, and any map key may be dropped below.
+        inner.dirty_agents = true;
+        inner.touch_all_map_keys();
         // Index the current entries by id so surviving agents keep their live status.
         let mut previous: HashMap<String, AgentEntry> = std::mem::take(&mut inner.agents)
             .into_iter()
@@ -392,7 +451,7 @@ impl AgentsStore {
     /// with the runtime fields carried over. A no-op for an unknown id.
     pub fn update(&self, id: &str, name: &str, config: Value, agent_settings: Value) {
         let mut inner = self.lock();
-        if let Some(agent) = inner.agent_mut(id) {
+        if let Some(agent) = inner.touch_agent(id) {
             agent.name = name.to_string();
             agent.config = config;
             agent.agent_settings = agent_settings;
@@ -403,7 +462,7 @@ impl AgentsStore {
     /// (`updateAgentSettings`). A no-op for an unknown id.
     pub fn apply_settings(&self, id: &str, agent_settings: Value) {
         let mut inner = self.lock();
-        if let Some(agent) = inner.agent_mut(id) {
+        if let Some(agent) = inner.touch_agent(id) {
             agent.agent_settings = agent_settings;
         }
     }
@@ -412,6 +471,8 @@ impl AgentsStore {
     /// (`deleteRemoteAgent`). Idempotent.
     pub fn remove(&self, id: &str) {
         let mut inner = self.lock();
+        inner.dirty_agents = true;
+        inner.touch_maps(id);
         inner.agents.retain(|a| a.id != id);
         inner.sessions.remove(id);
         inner.definitions.remove(id);
@@ -427,6 +488,7 @@ impl AgentsStore {
         if old_index >= len || new_index >= len {
             return;
         }
+        inner.dirty_agents = true;
         let moved = inner.agents.remove(old_index);
         inner.agents.insert(new_index, moved);
     }
@@ -435,7 +497,7 @@ impl AgentsStore {
     /// (`toggleRemoteAgent`). A no-op for an unknown id.
     pub fn toggle_expanded(&self, id: &str) {
         let mut inner = self.lock();
-        if let Some(agent) = inner.agent_mut(id) {
+        if let Some(agent) = inner.touch_agent(id) {
             agent.is_expanded = !agent.is_expanded;
         }
     }
@@ -448,7 +510,7 @@ impl AgentsStore {
     /// leave it untouched otherwise. A no-op for an unknown id.
     pub fn set_status(&self, id: &str, state: AgentConnectionState, error: Option<String>) {
         let mut inner = self.lock();
-        if let Some(agent) = inner.agent_mut(id) {
+        if let Some(agent) = inner.touch_agent(id) {
             let next_error = match state {
                 // Record the error on `disconnected` (falling back to the stored
                 // one), clear it on `connecting`/`connected`, and keep it on
@@ -476,7 +538,7 @@ impl AgentsStore {
     /// (`setAgentCapabilities`). A no-op for an unknown id.
     pub fn set_capabilities(&self, id: &str, capabilities: Value) {
         let mut inner = self.lock();
-        if let Some(agent) = inner.agent_mut(id) {
+        if let Some(agent) = inner.touch_agent(id) {
             agent.capabilities = Some(capabilities);
         }
     }
@@ -488,10 +550,11 @@ impl AgentsStore {
     pub fn disconnect(&self, id: &str) {
         let mut inner = self.lock();
         let known = inner.agent_mut(id).is_some();
-        if let Some(agent) = inner.agent_mut(id) {
+        if let Some(agent) = inner.touch_agent(id) {
             agent.connection_state = AgentConnectionState::Disconnected;
         }
         if known {
+            inner.touch_maps(id);
             inner.sessions.insert(id.to_string(), Vec::new());
             inner.folders.insert(id.to_string(), Vec::new());
             // The live folder view is reset; the next connect's refresh reloads it
@@ -517,6 +580,7 @@ impl AgentsStore {
         if inner.agent_mut(id).is_none() {
             return;
         }
+        inner.touch_maps(id);
         inner.sessions.insert(id.to_string(), sessions);
         // Reconcile the once-per-connect snapshot with unconfirmed local creates so a
         // create racing this refresh survives it (#2486).
@@ -531,6 +595,7 @@ impl AgentsStore {
     pub fn clear_sessions(&self, id: &str) {
         let mut inner = self.lock();
         if inner.agent_mut(id).is_some() {
+            inner.touch_maps(id);
             inner.sessions.insert(id.to_string(), Vec::new());
         }
     }
@@ -545,6 +610,7 @@ impl AgentsStore {
     pub fn set_sessions(&self, id: &str, sessions: Vec<AgentSession>) {
         let mut inner = self.lock();
         if inner.agent_mut(id).is_some() {
+            inner.touch_maps(id);
             inner.sessions.insert(id.to_string(), sessions);
         }
     }
@@ -554,6 +620,7 @@ impl AgentsStore {
     /// is unknown; idempotent.
     pub fn remove_session(&self, id: &str, session_id: &str) {
         let mut inner = self.lock();
+        inner.touch_maps(id);
         if let Some(list) = inner.sessions.get_mut(id) {
             list.retain(|s| s.session_id != session_id);
         }
@@ -566,6 +633,7 @@ impl AgentsStore {
     pub fn set_definitions(&self, id: &str, definitions: Vec<AgentDefinition>) {
         let mut inner = self.lock();
         if inner.agent_mut(id).is_some() {
+            inner.touch_maps(id);
             // Preserve unconfirmed local creates a stale snapshot would drop (#2486).
             let definitions = inner.reconcile_definitions(id, definitions);
             inner.definitions.insert(id.to_string(), definitions);
@@ -578,6 +646,7 @@ impl AgentsStore {
     pub fn set_folders(&self, id: &str, folders: Vec<AgentFolder>) {
         let mut inner = self.lock();
         if inner.agent_mut(id).is_some() {
+            inner.touch_maps(id);
             // Preserve unconfirmed local creates a stale snapshot would drop (#2486).
             let folders = inner.reconcile_folders(id, folders);
             inner.folders.insert(id.to_string(), folders);
@@ -599,6 +668,7 @@ impl AgentsStore {
     pub fn save_definition(&self, id: &str, definition: AgentDefinition) {
         let mut inner = self.lock();
         inner.track_pending_definition(id, &definition);
+        inner.touch_maps(id);
         let list = inner.definitions.entry(id.to_string()).or_default();
         list.retain(|d| d.id != definition.id);
         list.push(definition);
@@ -617,6 +687,7 @@ impl AgentsStore {
         {
             inner.track_pending_definition(id, &definition);
         }
+        inner.touch_maps(id);
         if let Some(list) = inner.definitions.get_mut(id) {
             if let Some(slot) = list.iter_mut().find(|d| d.id == definition.id) {
                 *slot = definition;
@@ -630,6 +701,7 @@ impl AgentsStore {
         let mut inner = self.lock();
         // A locally deleted definition must stay deleted — stop protecting it (#2486).
         inner.untrack_pending_definition(id, definition_id);
+        inner.touch_maps(id);
         if let Some(list) = inner.definitions.get_mut(id) {
             list.retain(|d| d.id != definition_id);
         }
@@ -655,6 +727,7 @@ impl AgentsStore {
     pub fn create_folder(&self, id: &str, folder: AgentFolder) {
         let mut inner = self.lock();
         inner.track_pending_folder(id, &folder);
+        inner.touch_maps(id);
         let list = inner.folders.entry(id.to_string()).or_default();
         list.retain(|f| f.id != folder.id);
         list.push(folder);
@@ -672,6 +745,7 @@ impl AgentsStore {
         {
             inner.track_pending_folder(id, &folder);
         }
+        inner.touch_maps(id);
         if let Some(list) = inner.folders.get_mut(id) {
             if let Some(slot) = list.iter_mut().find(|f| f.id == folder.id) {
                 *slot = folder;
@@ -686,6 +760,9 @@ impl AgentsStore {
         let mut inner = self.lock();
         // A locally deleted folder must stay deleted — stop protecting it (#2486).
         inner.untrack_pending_folder(id, folder_id);
+        // Touches both the folder list and (reparenting) the definition list of
+        // this one agent — both are keyed by `id`, so one mark covers them.
+        inner.touch_maps(id);
         if let Some(list) = inner.folders.get_mut(id) {
             list.retain(|f| f.id != folder_id);
         }
@@ -715,6 +792,18 @@ impl AgentsStore {
         folders: HashMap<String, Vec<AgentFolder>>,
     ) {
         let mut inner = self.lock();
+        // PERF-006: mark every key that could differ — the old set (removals /
+        // changes) and the incoming set (adds / changes). A whole-slice replace is
+        // the one intrinsically O(region) fold.
+        inner.dirty_agents = true;
+        inner.touch_all_map_keys();
+        let incoming: Vec<String> = sessions
+            .keys()
+            .chain(definitions.keys())
+            .chain(folders.keys())
+            .cloned()
+            .collect();
+        inner.dirty_ids.extend(incoming);
         inner.agents = agents;
         inner.sessions = sessions;
         inner.definitions = definitions;
@@ -754,6 +843,63 @@ impl AgentsStore {
         // panicked mid-mutation (a bug) — recover rather than cascade.
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
+}
+
+/// The drained, serialized change set of the `agents` region since the previous
+/// [`AgentsStore::drain_delta`] (PERF-006, #2888).
+#[derive(Debug, Default)]
+pub struct AgentsDelta {
+    /// The whole serialized ordered `agents` list, present only if it was
+    /// touched. Array diffs are index-based, so the list is never reduced.
+    pub agents: Option<Value>,
+    /// `(agentId, Some(serialized list) | None-if-absent)` per touched id.
+    pub sessions: Vec<(String, Option<Value>)>,
+    /// As [`Self::sessions`], for the `definitions` map.
+    pub definitions: Vec<(String, Option<Value>)>,
+    /// As [`Self::sessions`], for the `folders` map.
+    pub folders: Vec<(String, Option<Value>)>,
+}
+
+/// The whole-region view model of the locked store (see [`AgentsStore::snapshot`]).
+fn snapshot_of(inner: &Inner) -> Value {
+    json!({
+        "agents": inner.agents,
+        "sessions": inner.sessions,
+        "definitions": inner.definitions,
+        "folders": inner.folders,
+    })
+}
+
+/// Serialize one agent id's entry of a keyed map — `None` when the key is
+/// absent. Uses the same `serde_json` serialization as [`snapshot_of`]; these
+/// plain structs cannot fail to serialize, and a failure would degrade to absence
+/// (caught by the debug cross-check).
+fn entry_of<T: Serialize>(map: &HashMap<String, Vec<T>>, id: &str) -> Option<Value> {
+    map.get(id).and_then(|list| serde_json::to_value(list).ok())
+}
+
+/// Drain the locked store's dirty marks into an [`AgentsDelta`].
+fn drain_delta_of(inner: &mut Inner) -> AgentsDelta {
+    let agents = std::mem::take(&mut inner.dirty_agents)
+        .then(|| serde_json::to_value(&inner.agents).ok())
+        .flatten();
+    let ids: Vec<String> = inner.dirty_ids.drain().collect();
+    let mut delta = AgentsDelta {
+        agents,
+        ..AgentsDelta::default()
+    };
+    for id in ids {
+        delta
+            .sessions
+            .push((id.clone(), entry_of(&inner.sessions, &id)));
+        delta
+            .definitions
+            .push((id.clone(), entry_of(&inner.definitions, &id)));
+        delta
+            .folders
+            .push((id.clone(), entry_of(&inner.folders, &id)));
+    }
+    delta
 }
 
 #[cfg(test)]

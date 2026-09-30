@@ -39,10 +39,6 @@ ignore = [
     # unic-ucd-version: unmaintained, via the unic-* unicode stack.
     "RUSTSEC-2025-0098",
     # -- unsound (no vulnerability path in our usage; no upstream fix) --
-    # git2: unsound (UB in Remote::list()), build-dep of ssh2-config 0.7 (0.8 uses git2 0.21).
-    "RUSTSEC-2026-0183",
-    # git2: unsound (UB via BlameHunk Signature), build-dep of ssh2-config 0.7; as above.
-    "RUSTSEC-2026-0184",
     # glib: unsound VariantStrIter impls, glib 0.18 pinned by Tauri/wry GTK3; fix is 0.20+.
     "RUSTSEC-2024-0429",
 ]

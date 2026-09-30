@@ -41,7 +41,7 @@ unmaintained = "none"
 #   ssh-key). We only extract raw RSA key components and rebuild via OpenSSL;
 #   we never decrypt through this crate, so the sidechannel does not apply.
 #
-# Transitive `unsound` advisories (git2, glib; #3054) are NOT listed here:
+# Transitive `unsound` advisories (glib; #3054) are NOT listed here:
 # cargo-deny's default `unsound = "workspace"` only reports unsoundness in
 # crates a workspace member depends on directly, so it never matches them and
 # an ignore entry would be stale (`advisory-not-detected`). cargo-audit does
