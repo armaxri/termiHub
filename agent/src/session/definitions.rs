@@ -1438,6 +1438,224 @@ mod tests {
         assert!(folders.is_empty());
     }
 
+    // ── Corrupt-file backup + salvage, unknown-field round-trip (#3931) ──
+
+    /// Every `connections.json.corrupt-*` backup next to `path`, sorted.
+    fn corrupt_backups(path: &Path) -> Vec<PathBuf> {
+        let dir = path.parent().unwrap();
+        let prefix = format!("{}.corrupt-", path.file_name().unwrap().to_str().unwrap());
+        let mut found: Vec<PathBuf> = fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with(&prefix))
+            })
+            .collect();
+        found.sort();
+        found
+    }
+
+    /// Read the store file back as untyped JSON.
+    fn read_json(path: &Path) -> serde_json::Value {
+        serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    /// A store entry by id from the raw file.
+    fn raw_entry<'a>(file: &'a serde_json::Value, list: &str, id: &str) -> &'a serde_json::Value {
+        file[list]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == json!(id))
+            .unwrap_or_else(|| panic!("{list} entry {id} missing from {file}"))
+    }
+
+    /// A corrupt file is copied aside, byte-for-byte, before startup's
+    /// `ensure_default_shell` rewrites it — previously the saved connections
+    /// were silently wiped with no copy kept.
+    #[tokio::test]
+    async fn corrupt_file_is_backed_up_before_default_shell_overwrites_it() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let original = "{\"connections\": [{\"id\": \"conn-1\", \"name\": \"Prod\"";
+        fs::write(&path, original).unwrap();
+
+        let store = ConnectionStore::new(path.clone());
+        store.ensure_default_shell().await;
+
+        let backups = corrupt_backups(&path);
+        assert_eq!(backups.len(), 1, "expected exactly one backup");
+        assert_eq!(fs::read_to_string(&backups[0]).unwrap(), original);
+        // The live file is valid again (default shell seeded after the backup).
+        let file = read_json(&path);
+        assert_eq!(file["connections"].as_array().unwrap().len(), 1);
+    }
+
+    /// A file that is not even UTF-8 is still backed up rather than treated
+    /// as missing and overwritten.
+    #[tokio::test]
+    async fn non_utf8_file_is_backed_up_before_overwrite() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let original: &[u8] = &[0xff, 0xfe, b'{', 0x00, 0x9f];
+        fs::write(&path, original).unwrap();
+
+        let store = ConnectionStore::new(path.clone());
+        store.ensure_default_shell().await;
+
+        let backups = corrupt_backups(&path);
+        assert_eq!(backups.len(), 1, "expected exactly one backup");
+        assert_eq!(fs::read(&backups[0]).unwrap(), original);
+    }
+
+    /// A second corruption never overwrites the first backup.
+    #[tokio::test]
+    async fn repeated_corruption_keeps_every_backup() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+
+        fs::write(&path, "first corrupt").unwrap();
+        ConnectionStore::new(path.clone())
+            .ensure_default_shell()
+            .await;
+        fs::write(&path, "second corrupt").unwrap();
+        ConnectionStore::new(path.clone())
+            .ensure_default_shell()
+            .await;
+
+        let contents: Vec<String> = corrupt_backups(&path)
+            .iter()
+            .map(|p| fs::read_to_string(p).unwrap())
+            .collect();
+        assert_eq!(contents.len(), 2, "{contents:?}");
+        assert!(contents.contains(&"first corrupt".to_string()));
+        assert!(contents.contains(&"second corrupt".to_string()));
+    }
+
+    /// A readable file with one bad entry keeps every parseable connection and
+    /// folder (mirroring the desktop's per-entry salvage), and backs the
+    /// original up so the dropped entry is not lost either.
+    #[tokio::test]
+    async fn corrupt_entry_is_dropped_and_the_rest_salvaged() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let original = json!({
+            "version": "1",
+            "connections": [
+                {"id": "conn-good", "name": "Good", "session_type": "shell"},
+                {"id": "conn-bad", "name": 42, "session_type": "shell"},
+                {"id": "conn-good-2", "name": "Good 2", "session_type": "ssh"}
+            ],
+            "folders": [
+                {"id": "folder-good", "name": "Work"},
+                {"id": "folder-bad"}
+            ]
+        })
+        .to_string();
+        fs::write(&path, &original).unwrap();
+
+        let store = ConnectionStore::new(path.clone());
+        store.ensure_default_shell().await;
+
+        let (conns, folders) = store.list().await;
+        let mut ids: Vec<&str> = conns.iter().map(|c| c.id.as_str()).collect();
+        ids.sort();
+        assert_eq!(ids, vec!["conn-good", "conn-good-2"]);
+        assert_eq!(folders.len(), 1);
+        assert_eq!(folders[0].id, "folder-good");
+
+        let backups = corrupt_backups(&path);
+        assert_eq!(backups.len(), 1);
+        assert_eq!(fs::read_to_string(&backups[0]).unwrap(), original);
+    }
+
+    /// Unknown top-level and per-entry fields survive a load + save, and are
+    /// not leaked onto the wire snapshot.
+    #[tokio::test]
+    async fn unknown_fields_survive_a_round_trip() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        fs::write(
+            &path,
+            json!({
+                "version": "1",
+                "futureTopLevel": {"keep": true},
+                "connections": [{
+                    "id": "conn-1",
+                    "name": "Prod",
+                    "session_type": "shell",
+                    "config": {"shell": "/bin/bash"},
+                    "futureConnField": [1, 2, 3]
+                }],
+                "folders": [{
+                    "id": "folder-1",
+                    "name": "Work",
+                    "futureFolderField": "x"
+                }]
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let store = ConnectionStore::new(path.clone());
+        // Mutate both entries so both are re-serialized from memory.
+        store
+            .update(
+                "conn-1",
+                Some("Prod renamed".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        store
+            .update_folder("folder-1", Some("Work renamed".to_string()), None, None)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let file = read_json(&path);
+        assert_eq!(file["futureTopLevel"], json!({"keep": true}));
+        assert_eq!(file["version"], json!("1"));
+        let conn = raw_entry(&file, "connections", "conn-1");
+        assert_eq!(conn["name"], json!("Prod renamed"));
+        assert_eq!(conn["futureConnField"], json!([1, 2, 3]));
+        let folder = raw_entry(&file, "folders", "folder-1");
+        assert_eq!(folder["name"], json!("Work renamed"));
+        assert_eq!(folder["futureFolderField"], json!("x"));
+
+        // Wire shape unchanged: unknown fields stay on disk only.
+        let (conns, folders) = store.list().await;
+        let wire_conn = serde_json::to_value(&conns[0]).unwrap();
+        assert!(wire_conn.get("futureConnField").is_none(), "{wire_conn}");
+        let wire_folder = serde_json::to_value(&folders[0]).unwrap();
+        assert!(
+            wire_folder.get("futureFolderField").is_none(),
+            "{wire_folder}"
+        );
+
+        // And a reload + save keeps them too (no duplicate `version` key).
+        let reloaded = ConnectionStore::new(path.clone());
+        reloaded
+            .create(make_connection("conn-2", "Other", false))
+            .await
+            .unwrap();
+        let file = read_json(&path);
+        assert_eq!(file["futureTopLevel"], json!({"keep": true}));
+        assert_eq!(
+            raw_entry(&file, "connections", "conn-1")["futureConnField"],
+            json!([1, 2, 3])
+        );
+        assert_eq!(file["version"], json!("1"));
+    }
+
     // ── Migration from legacy sessions.json ─────────────────────────
 
     #[tokio::test]
