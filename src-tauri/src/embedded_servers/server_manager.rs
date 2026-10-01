@@ -257,9 +257,11 @@ impl EmbeddedServerManager {
 
     /// Delete a configuration. Stops the server first if it is running.
     pub fn delete_config(&self, server_id: &str) -> Result<(), TerminalError> {
-        self.stop_server(server_id)?;
+        // An agent-hosted server is stopped on its agent; a desktop-hosted one
+        // is shut down and dropped so its listen port closes (#1393).
+        self.stop_agent_service(server_id);
         if let Ok(mut services) = self.services.lock() {
-            services.remove(server_id);
+            remove_local_service(&mut services, server_id);
         }
         if let Ok(mut locations) = self.run_locations.lock() {
             locations.remove(server_id);
@@ -718,6 +720,25 @@ fn clear_agent_activity_via(
 }
 
 /// A synthetic `Stopped` [`ServerState`] for a server that is not running.
+/// Shut down a desktop-hosted server (if running) and drop its service, the
+/// local half of [`EmbeddedServerManager::delete_config`] (#1393). Returns
+/// whether a service was listed under `server_id`.
+///
+/// Split out so the "deleting a running server closes its port" guarantee is
+/// testable with a real listener and no Tauri `AppHandle`.
+fn remove_local_service(
+    services: &mut HashMap<String, EmbeddedServerService>,
+    server_id: &str,
+) -> bool {
+    match services.remove(server_id) {
+        Some(mut service) => {
+            service.shutdown();
+            true
+        }
+        None => false,
+    }
+}
+
 fn stopped_state(server_id: &str) -> ServerState {
     ServerState {
         server_id: server_id.to_string(),
@@ -950,6 +971,10 @@ fn spawn_event_bridge(app: AppHandle, events: termihub_core::service::ServiceEve
         .await;
     });
 }
+
+#[cfg(test)]
+#[path = "server_manager_delete_tests.rs"]
+mod delete_tests;
 
 #[cfg(test)]
 mod tests {
