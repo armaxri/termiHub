@@ -57,7 +57,10 @@ function agent(
 function renderStatusBar(root: Root) {
   // Zero delay so a focus reveals the tooltip synchronously.
   root.render(
-    React.createElement(TooltipProvider, { delayDuration: 0 }, React.createElement(StatusBar))
+    React.createElement(TooltipProvider, {
+      delayDuration: 0,
+      children: React.createElement(StatusBar),
+    })
   );
 }
 
