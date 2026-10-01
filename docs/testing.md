@@ -542,8 +542,8 @@ The fixture-backed suites `pytest.skip()` cleanly when no Docker runtime is
 present (`conftest.py` → `docker_compose`), so a macOS/Windows leg is green on
 the coverage it _can_ run rather than failing on fixtures it cannot reach. This
 Docker-daemon boundary is the same one behind the [SSH-tunnel macOS
-carve-out](#per-feature-walkthrough-triage-3695) (live tunnel UI tests skip on
-macOS; moving them onto the native sshd fixture is #4005) and ADR-5.
+carve-out](#per-feature-walkthrough-triage-3695) (the live tunnel UI tests run
+on macOS against the native loopback sshd instead, #4005) and ADR-5.
 
 ### Agent-crate Docker Rust tests — nightly `agent-docker-integration` job (TIN-008)
 
@@ -1383,6 +1383,13 @@ flag). It is a separate service from `remote-agent` on purpose: the on-attach
 update announcement would otherwise surface a banner in the banner-_surfacing_
 suite, whose gating tests assert none appears until they announce one.
 
+A third build of the same image, `remote-agent-kbdint` (compose profile `agent`,
+host port 2217), sets the `KBDINT_ONLY` build arg: its sshd accepts **only**
+keyboard-interactive auth (PAM asks `Password:` as a keyboard-interactive prompt).
+`tests/system/tests/test_ssh_kbd_interactive.py` connects a remote agent whose
+auth method is "Keyboard-Interactive" to it and answers the in-app SSH
+Authentication dialog (#3377, #4005).
+
 #### Projection-assertion harness (#2164)
 
 The stateless-UI projection substrate (#2149) pushes per-region **versioned diff
@@ -2067,9 +2074,9 @@ part of the release gate. Each was triaged with the #3681 rules and removed:
 - **Local folder OS integration: file manager + VS Code workspace (#2656)** — Automated. src/components/Sidebar/FileBrowser.os-integration.test.tsx 'renders both OS-integration actions in local mode'; src/components/Sidebar/FileBrowser.os-integration.test.tsx 'hides both actions in session mode'; … · guided: `test_external_app.py::test_open_file_manager_local` / `::test_open_folder_in_vscode_local`
 - **File editor SFTP-only read-only fallback (#1330)** — Automated + Tracked + Release gate. src/components/FileEditor/FileEditor.test.tsx 'shows the fallback banner, disables Save, and offers copy/download without Edit-with-sudo'; src/components/FileEditor/FileEditor.test.tsx 'writes the buffer to the chosen writable remote path via Save a copy'; src-tauri/src/files/sftp.rs::sftp_only_host_takes_the_read_only_fallback_and_saves_a_copy (live ssh-sftp-only: not exec-capable, root-owned file readOnly, copy saved to home); … · gaps: #4007 (live bridge banner render) · gate: MT-EDIT-01
 - **Caps Lock warning on password fields (PR #1465, #1360)** — Automated + Release gate. src/components/PasswordInput/PasswordInput.test.tsx 'shows the caps-lock warning when Caps Lock is active during a keystroke'; src/components/PasswordInput/PasswordInput.test.tsx 'hides the caps-lock warning again once Caps Lock is released'; … · gate: MT-NIN-31
-- **SSH tunnel start/stop on macOS (manual carve-out, #933)** — Automated + Tracked. tests/system/tests/test_ssh_tunnels.py::test_save_and_start_connects (Linux lane); tests/system/tests/test_ssh_tunnels.py::test_start_then_stop (Linux lane); … · gaps: #4005
-- **Per-connection port forwards (PROD-023, #3449)** — Automated + Tracked. src/components/ConnectionEditor/ConnectionPortForwardingSection.test.tsx; src/components/TunnelEditor/TunnelEditor.startWithConnection.test.tsx; … · gaps: #4005
-- **SSH keyboard-interactive / OTP prompts (#3371)** — Automated + Tracked. core/src/backends/ssh/keyboard_interactive_tests.rs::single_otp_round_is_prompted_and_succeeds; core/src/backends/ssh/keyboard_interactive_tests.rs::password_is_auto_answered_but_otp_is_prompted; … · gaps: #4005
+- **SSH tunnel start/stop on macOS (manual carve-out, #933)** — Automated. tests/system/tests/test_ssh_tunnels.py::TestSshTunnels::test_save_and_start_connects / test_start_then_stop / test_tunnel_runs_alongside_an_ssh_session (every lane; on macOS against the native loopback sshd + an in-process HTTP server instead of Docker, and asserting `connected` plus TUNNEL_TEST_OK through the local port, #4005)
+- **Per-connection port forwards (PROD-023, #3449)** — Automated. src/components/ConnectionEditor/ConnectionPortForwardingSection.test.tsx; src/components/TunnelEditor/TunnelEditor.startWithConnection.test.tsx; tests/system/tests/test_ssh_tunnels.py::TestSshTunnels::test_per_connection_forward_follows_terminal_sessions (live: the first terminal brings the forward up and TUNNEL_TEST_OK flows, a second terminal does not restart it, stopped + unflagged it stays down, #4005)
+- **SSH keyboard-interactive / OTP prompts (#3371)** — Automated. core/src/backends/ssh/keyboard_interactive_tests.rs; core/tests/ssh_mfa.rs (ssh-mfa); tests/system/tests/test_ssh_kbd_interactive.py::TestSshKeyboardInteractive::test_dialog_answer_connects_terminal / test_test_connection_shows_dialog / test_proxyjump_hop_shows_dialog (ssh-mfa key + OTP dialog) and ::TestRemoteAgentKeyboardInteractive::test_agent_connect_via_keyboard_interactive (remote-agent-kbdint), each also asserting the sshd `Accepted keyboard-interactive/pam` log line (#4005)
 - **SSH agent forwarding (#1699)** — Automated. core/tests/ssh_agent_forward.rs::afwd_01_direct_connect_lists_forwarded_key / afwd_02_proxy_jump_target_lists_forwarded_key / afwd_03_no_local_agent_connects_cleanly / afwd_04_disabled_forwarding_does_not_expose_agent (live ssh-agent + bastion/ProxyJump fixtures); core/src/config/mod.rs::ssh_config_forward_agent_roundtrip; core/src/config/mod.rs::ssh_config_forward_agent_defaults_false_and_is_omitted; …
 - **SSH agent forwarding through the remote agent (#1719)** — Automated. agent/tests/agent_forward_integration.rs::stdio_agent_forwards_desktop_key_to_target / stdio_agent_without_desktop_agent_connects_cleanly (real agent over --stdio, live bastion fixture); agent/src/daemon/process.rs::daemon_ssh_settings_carry_forward_agent; agent/src/daemon/process.rs::daemon_ssh_settings_default_forward_agent_off; …
 - **SSH agent forwarding over the TCP agent transport (#1727)** — Automated + Tracked. agent/tests/agent_forward_integration.rs::tcp_agent_forwards_desktop_key_to_target / tcp_agent_without_desktop_agent_connects_cleanly (real agent over --listen TCP, live bastion fixture); agent/src/handler/dispatch.rs::agent_forward_connect_opens_and_disconnect_closes_the_stream; agent/src/handler/dispatch.rs::agent_forward_data_routes_and_succeeds; … · gaps: #3685
