@@ -1753,37 +1753,15 @@ All 169 legacy YAML items in [`tests/manual/`](../tests/manual/) were triaged in
 | Walked by a guided-manual pytest                   | 41      | Deleted from the YAML; the guided suite is on the release checklist                                |
 | Automatable, tracked by a follow-up issue          | 46      | Kept in the YAML with `automation_issue: <N>`; deleted once its issue lands (see the triage table) |
 | Genuinely manual                                   | 11      | Kept in the YAML with `release_gate: true` + `manual_reason`; on the release checklist             |
-| **Total triaged**                                  | **169** | Snapshot of the #3681 triage; the current corpus is the generated inventory below, not this table  |
+| **Total triaged**                                  | **169** | Snapshot of the #3681 triage; for the current corpus run `python3 scripts/manual-inventory.py`     |
 
-The current corpus, per category, is generated from the YAMLs — never hand-edit
-the block between the markers. After adding or deleting a YAML item, run
-`python3 scripts/manual-inventory.py --write`; on a merge conflict in the block,
-take either side and re-run the same command. CI (`--check`) fails if it is stale.
-
-<!-- manual-inventory:start -->
-
-<!-- Generated from tests/manual/*.yaml by scripts/manual-inventory.py; do not edit by hand.
-     On a merge conflict here, take either side and run: python3 scripts/manual-inventory.py --write -->
-
-| Category (`--category`)   | Display name      | Platforms      | Release-gating | Pending automation |  Total |
-| ------------------------- | ----------------- | -------------- | -------------: | -----------------: | -----: |
-| `app`                     | App               | all            |              4 |                  0 |      4 |
-| `credential-store`        | Credential Store  | all            |              8 |                  0 |      8 |
-| `editor`                  | Editor            | all            |              1 |                  0 |      1 |
-| `file-browser`            | File Browser      | all            |              2 |                  0 |      2 |
-| `local-shell`             | Local Shell       | macos, windows |              4 |                  0 |      4 |
-| `multi-window`            | Multi-Window      | macos          |              2 |                  0 |      2 |
-| `native-input`            | Native Input      | all            |             21 |                  0 |     21 |
-| `network-tools`           | network-tools     | all            |              2 |                  0 |      2 |
-| `remote-agent`            | Remote Agent      | all            |              0 |                  7 |      7 |
-| `remote-desktop`          | Remote Desktop    | all            |              9 |                  0 |      9 |
-| `serial`                  | Serial            | windows        |              1 |                  0 |      1 |
-| `shell-integration`       | Shell Integration | all            |              6 |                  0 |      6 |
-| `ssh`                     | SSH               | all            |              4 |                  0 |      4 |
-| `ui-layout`               | UI / Layout       | all            |              8 |                  0 |      8 |
-| **Total (14 categories)** |                   |                |         **72** |              **7** | **79** |
-
-<!-- manual-inventory:end -->
+The current corpus, per category, is deliberately **not** committed here: the
+YAMLs are the only source of truth, so PRs that automate different manual items
+never conflict on a shared count row (#4070, after #3721). To see it, run
+`python3 scripts/manual-inventory.py` (Markdown table) or
+`python scripts/test-manual.py --inventory` (plain listing), or open the
+**Manual-test inventory** job summary of the _Frontend Code Quality_ CI job,
+whose `--check` step also fails if a doc reintroduces a committed count block.
 
 `tests/system/tests/test_manual_corpus.py` (normal, non-integration lane) enforces this: every remaining YAML item must carry exactly one of `release_gate: true` + `manual_reason`, or `automation_issue: <N>`, and ids must be unique. Follow-up issues: #3682 (serial socat echo fixture — #859 was closed by removing the unreachable container fixture, not by adding one), #3683 (serial prefixes), #3684 (Windows agent host fixture), #3685 (Windows agent CI), #3686 (agent wake/park UI), #3687 (SSH small items — done), #3688 (jump-host reconnect fixture — done: MT-SSH-44 is covered by `core/tests/ssh_advanced.rs` SSH-JUMP-07 and `test_ssh_jump_host.py`), #3689 (connection management — done; its last item MT-CONN-34 is covered by `test_connection_sync.py` via #4000, emptying the `connection-management` category), #3690 (credential auto-lock seam — landed: MT-CRED-04 is now covered by fake-clock unit tests in `src-tauri/src/credential/auto_lock.rs`), #3691 (portable launch), #3692 (network tools fixtures), #3693 (layout / restore — done: MT-TAB-11/12/16 and MT-UI-10/11/12/14/15/37 are covered by `App.openSavedFile.test.tsx`, `test_split_views.py`, `test_settings.py` and `test_session_restore_ui.py`, emptying the `tab-management` category), #3694 (file-browser CWD follow — done: MT-FB-08/09/10 are covered in `FileBrowser.test.tsx`, emptying the `file-browser` category; #3695 later refilled it with two OS-native drag items). The per-feature prose walkthroughs that used to follow were triaged the same way in #3695; see [Per-feature walkthrough triage](#per-feature-walkthrough-triage-3695). The other two follow-ups the audit named were already done: #1230 (monitoring auto-reconnect) is covered by fault-injection tests over a scripted `MonitoringTransport` in `core/src/backends/ssh/monitoring.rs` (`collect_loop_emits_stale_reconnecting_then_live_on_recovery`, `collect_loop_emits_offline_when_reconnect_exhausted`), and #1336 (FTP transfer queue) by the live `core/tests/ftp_transfer.rs` / `ftp_reconnect.rs` integration tests.
 
@@ -1995,9 +1973,8 @@ part of the release gate. Each was triaged with the #3681 rules and removed:
   and #3692 took the rest.
 - **New manual steps go in YAML, not prose.** A PR whose test plan has a step
   that cannot be automated adds a `tests/manual/*.yaml` item (`release_gate: true`
-  - `manual_reason`, or `automation_issue: <N>`) and re-runs
-    `python3 scripts/manual-inventory.py --write`. Do not add a walkthrough heading
-    here.
+  - `manual_reason`, or `automation_issue: <N>`); no count needs updating. Do
+    not add a walkthrough heading here.
 
 <details>
 <summary>Triage list: every former walkthrough → decision → pointer, issue or gate item</summary>
