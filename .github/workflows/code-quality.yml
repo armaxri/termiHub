@@ -636,7 +636,9 @@ jobs:
       # script's non-destructive `--help` fast path (real shebang + set flags +
       # top-of-file sourcing + arg parser) and asserts a clean exit 0. Scoped to
       # the safe --help path so it needs no Docker/network/app-build and is
-      # deterministic, not flaky.
+      # deterministic, not flaky. It also runs build-agents.sh's real .sha256
+      # sidecar writer on a dummy binary and checks it with `sha256sum -c`
+      # (#1350; the .cmd twin is the Windows cmd Script Smoke job below).
       - name: Headless smoke of shell scripts (--help paths)
         run: ./scripts/internal/check-script-headless.sh
 
