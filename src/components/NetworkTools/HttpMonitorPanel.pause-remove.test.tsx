@@ -144,6 +144,32 @@ describe("HttpMonitorPanel — pause/resume + stop vs remove (#1147 gaps #5, #6)
     ).not.toBeNull();
   });
 
+  it("tags a stopped monitor's Resume and Remove controls with stable test ids (#4012)", async () => {
+    vi.mocked(networkHttpMonitorList).mockResolvedValue([makeMonitor("mon-1", { running: false })]);
+    await renderPanel();
+
+    const resumeBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="monitor-resume-mon-1"]'
+    );
+    const removeBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="monitor-remove-mon-1"]'
+    );
+    expect(resumeBtn?.getAttribute("aria-label")).toBe("Resume monitoring https://example.com");
+    expect(removeBtn?.getAttribute("aria-label")).toBe("Remove monitor https://example.com");
+
+    await act(async () => {
+      resumeBtn!.click();
+    });
+    await flush();
+    expect(networkHttpMonitorResume).toHaveBeenCalledWith("mon-1");
+
+    await act(async () => {
+      removeBtn!.click();
+    });
+    await flush();
+    expect(networkHttpMonitorRemove).toHaveBeenCalledWith("mon-1");
+  });
+
   it("Remove calls the remove API (not stop) and toasts", async () => {
     vi.mocked(networkHttpMonitorList).mockResolvedValue([makeMonitor("mon-1")]);
     await renderPanel();

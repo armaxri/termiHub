@@ -66,6 +66,7 @@ export function HttpMonitorRow({
             icon={<Play size={13} />}
             onClick={() => onResume(id)}
             aria-label={`Resume monitoring ${m.config.url}`}
+            data-testid={`monitor-resume-${id}`}
           />
         </Tooltip>
       )}
@@ -87,6 +88,7 @@ export function HttpMonitorRow({
           icon={<Trash2 size={13} />}
           onClick={() => onRemove(id)}
           aria-label={`Remove monitor ${m.config.url}`}
+          data-testid={`monitor-remove-${id}`}
         />
       </Tooltip>
     </div>

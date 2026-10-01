@@ -90,6 +90,7 @@ import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { buildGatedTypeOptions } from "@/utils/experimentalTypes";
+import { connectionTabContentType } from "@/utils/connectionTabContentType";
 import {
   agentGraphicalTabConfig,
   isAgentTunnelledGraphicalType,
@@ -1273,7 +1274,15 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       };
     }
 
-    addTab(saved.name, saved.config.type, config, { terminalOptions: saved.terminalOptions });
+    // Open the same tab the sidebar would: a graphical type (VNC/RDP) gets its
+    // canvas, a terminal-less type (FTP) its browser — not a terminal (#4017).
+    addTab(saved.name, saved.config.type, config, {
+      terminalOptions: saved.terminalOptions,
+      contentType: connectionTabContentType(
+        useAppStore.getState().connectionTypes,
+        saved.config.type
+      ),
+    });
     closeThisTab();
   }, [
     isAgentDefinitionMode,
