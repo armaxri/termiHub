@@ -131,11 +131,88 @@ pub(crate) fn choose_delivery(
     }
 }
 
+/// Result of reading the init-script UUID back out of a terminal transcript.
+///
+/// Test-only: the live WSL test (#4008) recovers the per-session path from the
+/// echoed `source` line to prove the file was removed afterwards.
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum EchoedUuid {
+    /// Every byte so far could still be part of the UUID — the echo was split
+    /// across PTY reads and the rest has not arrived yet; read more.
+    Incomplete,
+    /// A complete, terminated, UUID-shaped (8-4-4-4-12 lowercase hex) id.
+    Complete(String),
+    /// The text after the prefix is not a UUID.
+    Malformed(String),
+}
+
+/// Parse the UUID that follows [`INIT_SCRIPT_PATH_PREFIX`] in the echoed
+/// `source` line. `after_prefix` is the (CSI-stripped) transcript starting
+/// right after the prefix. The id only counts as complete once a terminating
+/// byte (the space before `2>/dev/null`) has arrived, so a read that ends
+/// mid-UUID is reported as [`EchoedUuid::Incomplete`] instead of a fragment.
+#[cfg(test)]
+pub(crate) fn echoed_init_uuid(after_prefix: &[u8]) -> EchoedUuid {
+    const UUID_LEN: usize = 36;
+    let is_uuid_byte = |b: &u8| b.is_ascii_hexdigit() || *b == b'-';
+    let len = after_prefix.iter().take_while(|b| is_uuid_byte(b)).count();
+    let id = String::from_utf8_lossy(&after_prefix[..len]).into_owned();
+    if len == after_prefix.len() && len <= UUID_LEN {
+        return EchoedUuid::Incomplete;
+    }
+    let shaped = id.len() == UUID_LEN
+        && id.split('-').map(str::len).eq([8, 4, 4, 4, 12])
+        && !id.bytes().any(|b| b.is_ascii_uppercase());
+    if shaped {
+        EchoedUuid::Complete(id)
+    } else {
+        EchoedUuid::Malformed(id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const UUID_PATH: &str = "/tmp/.termihub_init-3f2b8c1e-9d4a-4e7b-8c21-0a1b2c3d4e5f";
+
+    #[test]
+    fn echoed_uuid_complete_once_terminated() {
+        let uuid = "3f2b8c1e-9d4a-4e7b-8c21-0a1b2c3d4e5f";
+        assert_eq!(
+            echoed_init_uuid(format!("{uuid} 2>/dev/null\r\n").as_bytes()),
+            EchoedUuid::Complete(uuid.to_string())
+        );
+    }
+
+    #[test]
+    fn echoed_uuid_split_mid_id_is_incomplete_not_a_fragment() {
+        // The #4008 lane failure: the echo was split after `9a70`.
+        for partial in ["", "9a70", "3f2b8c1e-9d4a-4e7b-8c21-0a1b2c3d4e5f"] {
+            assert_eq!(
+                echoed_init_uuid(partial.as_bytes()),
+                EchoedUuid::Incomplete,
+                "{partial:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn echoed_uuid_rejects_non_uuid_text() {
+        for bad in [
+            "9a70 2>/dev/null",
+            "3f2b8c1e9d4a4e7b8c210a1b2c3d4e5f---- ",
+            "3F2B8C1E-9D4A-4E7B-8C21-0A1B2C3D4E5F ",
+            "3f2b8c1e-9d4a-4e7b-8c21-0a1b2c3d4e5f0 ",
+            "3f2b8c1e-9d4a-4e7b-8c21-0a1b2c3d4e5f00",
+        ] {
+            assert!(
+                matches!(echoed_init_uuid(bad.as_bytes()), EchoedUuid::Malformed(_)),
+                "{bad:?}"
+            );
+        }
+    }
 
     #[test]
     fn safe_path_accepts_uuid_path() {
