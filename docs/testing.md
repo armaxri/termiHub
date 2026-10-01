@@ -1723,29 +1723,28 @@ take either side and re-run the same command. CI (`--check`) fails if it is stal
 <!-- Generated from tests/manual/*.yaml by scripts/manual-inventory.py; do not edit by hand.
      On a merge conflict here, take either side and run: python3 scripts/manual-inventory.py --write -->
 
-| Category (`--category`)   | Display name          | Platforms      | Release-gating | Pending automation |  Total |
-| ------------------------- | --------------------- | -------------- | -------------: | -----------------: | -----: |
-| `app`                     | App                   | all            |              4 |                  0 |      4 |
-| `connection-management`   | Connection Management | all            |              0 |                  1 |      1 |
-| `credential-store`        | Credential Store      | all            |              8 |                  0 |      8 |
-| `editor`                  | Editor                | all            |              1 |                  0 |      1 |
-| `file-browser`            | File Browser          | all            |              2 |                  0 |      2 |
-| `local-shell`             | Local Shell           | macos, windows |              4 |                  0 |      4 |
-| `multi-window`            | Multi-Window          | macos          |              2 |                  0 |      2 |
-| `native-input`            | Native Input          | all            |             21 |                  0 |     21 |
-| `network-tools`           | network-tools         | all            |              2 |                  2 |      4 |
-| `portable-mode`           | Portable Mode         | all            |              0 |                  2 |      2 |
-| `remote-agent`            | Remote Agent          | all            |              0 |                 12 |     12 |
-| `remote-desktop`          | Remote Desktop        | all            |              9 |                  0 |      9 |
-| `serial`                  | Serial                | windows        |              1 |                  0 |      1 |
-| `shell-integration`       | Shell Integration     | all            |              6 |                  0 |      6 |
-| `ssh`                     | SSH                   | all            |              4 |                  1 |      5 |
-| `ui-layout`               | UI / Layout           | all            |              8 |                  0 |      8 |
-| **Total (16 categories)** |                       |                |         **72** |             **18** | **90** |
+| Category (`--category`)   | Display name      | Platforms      | Release-gating | Pending automation |  Total |
+| ------------------------- | ----------------- | -------------- | -------------: | -----------------: | -----: |
+| `app`                     | App               | all            |              4 |                  0 |      4 |
+| `credential-store`        | Credential Store  | all            |              8 |                  0 |      8 |
+| `editor`                  | Editor            | all            |              1 |                  0 |      1 |
+| `file-browser`            | File Browser      | all            |              2 |                  0 |      2 |
+| `local-shell`             | Local Shell       | macos, windows |              4 |                  0 |      4 |
+| `multi-window`            | Multi-Window      | macos          |              2 |                  0 |      2 |
+| `native-input`            | Native Input      | all            |             21 |                  0 |     21 |
+| `network-tools`           | network-tools     | all            |              2 |                  2 |      4 |
+| `portable-mode`           | Portable Mode     | all            |              0 |                  2 |      2 |
+| `remote-agent`            | Remote Agent      | all            |              0 |                 12 |     12 |
+| `remote-desktop`          | Remote Desktop    | all            |              9 |                  0 |      9 |
+| `serial`                  | Serial            | windows        |              1 |                  0 |      1 |
+| `shell-integration`       | Shell Integration | all            |              6 |                  0 |      6 |
+| `ssh`                     | SSH               | all            |              4 |                  1 |      5 |
+| `ui-layout`               | UI / Layout       | all            |              8 |                  0 |      8 |
+| **Total (15 categories)** |                   |                |         **72** |             **17** | **89** |
 
 <!-- manual-inventory:end -->
 
-`tests/system/tests/test_manual_corpus.py` (normal, non-integration lane) enforces this: every remaining YAML item must carry exactly one of `release_gate: true` + `manual_reason`, or `automation_issue: <N>`, and ids must be unique. Follow-up issues: #3682 (serial socat echo fixture — #859 was closed by removing the unreachable container fixture, not by adding one), #3683 (serial prefixes), #3684 (Windows agent host fixture), #3685 (Windows agent CI), #3686 (agent wake/park UI), #3687 (SSH small items — done), #3688 (jump-host reconnect fixture), #3689 (connection management — done except MT-CONN-34, split to #4000), #3690 (credential auto-lock seam — landed: MT-CRED-04 is now covered by fake-clock unit tests in `src-tauri/src/credential/auto_lock.rs`), #3691 (portable launch), #3692 (network tools fixtures), #3693 (layout / restore — done: MT-TAB-11/12/16 and MT-UI-10/11/12/14/15/37 are covered by `App.openSavedFile.test.tsx`, `test_split_views.py`, `test_settings.py` and `test_session_restore_ui.py`, emptying the `tab-management` category), #3694 (file-browser CWD follow — done: MT-FB-08/09/10 are covered in `FileBrowser.test.tsx`, emptying the `file-browser` category; #3695 later refilled it with two OS-native drag items). The per-feature prose walkthroughs that used to follow were triaged the same way in #3695; see [Per-feature walkthrough triage](#per-feature-walkthrough-triage-3695). The other two follow-ups the audit named were already done: #1230 (monitoring auto-reconnect) is covered by fault-injection tests over a scripted `MonitoringTransport` in `core/src/backends/ssh/monitoring.rs` (`collect_loop_emits_stale_reconnecting_then_live_on_recovery`, `collect_loop_emits_offline_when_reconnect_exhausted`), and #1336 (FTP transfer queue) by the live `core/tests/ftp_transfer.rs` / `ftp_reconnect.rs` integration tests.
+`tests/system/tests/test_manual_corpus.py` (normal, non-integration lane) enforces this: every remaining YAML item must carry exactly one of `release_gate: true` + `manual_reason`, or `automation_issue: <N>`, and ids must be unique. Follow-up issues: #3682 (serial socat echo fixture — #859 was closed by removing the unreachable container fixture, not by adding one), #3683 (serial prefixes), #3684 (Windows agent host fixture), #3685 (Windows agent CI), #3686 (agent wake/park UI), #3687 (SSH small items — done), #3688 (jump-host reconnect fixture), #3689 (connection management — done; its last item MT-CONN-34 is covered by `test_connection_sync.py` via #4000, emptying the `connection-management` category), #3690 (credential auto-lock seam — landed: MT-CRED-04 is now covered by fake-clock unit tests in `src-tauri/src/credential/auto_lock.rs`), #3691 (portable launch), #3692 (network tools fixtures), #3693 (layout / restore — done: MT-TAB-11/12/16 and MT-UI-10/11/12/14/15/37 are covered by `App.openSavedFile.test.tsx`, `test_split_views.py`, `test_settings.py` and `test_session_restore_ui.py`, emptying the `tab-management` category), #3694 (file-browser CWD follow — done: MT-FB-08/09/10 are covered in `FileBrowser.test.tsx`, emptying the `file-browser` category; #3695 later refilled it with two OS-native drag items). The per-feature prose walkthroughs that used to follow were triaged the same way in #3695; see [Per-feature walkthrough triage](#per-feature-walkthrough-triage-3695). The other two follow-ups the audit named were already done: #1230 (monitoring auto-reconnect) is covered by fault-injection tests over a scripted `MonitoringTransport` in `core/src/backends/ssh/monitoring.rs` (`collect_loop_emits_stale_reconnecting_then_live_on_recovery`, `collect_loop_emits_offline_when_reconnect_exhausted`), and #1336 (FTP transfer queue) by the live `core/tests/ftp_transfer.rs` / `ftp_reconnect.rs` integration tests.
 
 <details>
 <summary>Triage table: every former YAML item → decision → pointer or issue</summary>
@@ -1762,7 +1761,7 @@ take either side and re-run the same command. CI (`--check`) fails if it is stal
 | MT-CONN-23      | Add File — select existing JSON                                                         | Guided-manual pytest  | test_native_dialogs.py::test_add_external_connection_file                                                                           |
 | MT-CONN-24      | Drag external connections into local folders                                            | Automated (#3689)     | manager_move_credential_tests.rs (external → main folder survives reload) + connectionDropTarget.test.ts                            |
 | MT-CONN-33      | Delete multiple selected connections                                                    | Automated (#3689)     | ConnectionList.multiselect.test.tsx 'Ctrl+Click two of three, context-menu Delete, confirm'                                         |
-| MT-CONN-34      | Connection changes sync across parallel instances                                       | Tracked issue         | #4000 (live bridge test)                                                                                                            |
+| MT-CONN-34      | Connection changes sync across parallel instances                                       | Automated (#4000)     | test_connection_sync.py::test_external_add_and_delete_sync_into_running_app                                                         |
 | MT-CONN-32      | Drag connection out of folder to root                                                   | Automated (#3689)     | src/utils/connectionDropTarget.test.ts 'root drop (MT-CONN-32)'                                                                     |
 | MT-CRED-01      | Windows Credential Manager stores credentials                                           | Release-gating manual | Windows Credential Manager inspection (real OS store)                                                                               |
 | MT-CRED-02      | macOS Keychain stores credentials                                                       | Release-gating manual | macOS Keychain Access inspection (real OS store)                                                                                    |
@@ -2347,24 +2346,23 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 
 ### Test Categories
 
-| Category              | YAML File                                                                  | ID Prefix  |
-| --------------------- | -------------------------------------------------------------------------- | ---------- |
-| Local Shell           | [`local-shell.yaml`](../tests/manual/local-shell.yaml)                     | `MT-LOCAL` |
-| SSH                   | [`ssh.yaml`](../tests/manual/ssh.yaml)                                     | `MT-SSH`   |
-| Serial                | [`serial.yaml`](../tests/manual/serial.yaml)                               | `MT-SER`   |
-| Connection Management | [`connection-management.yaml`](../tests/manual/connection-management.yaml) | `MT-CONN`  |
-| UI / Layout           | [`ui-layout.yaml`](../tests/manual/ui-layout.yaml)                         | `MT-UI`    |
-| Remote Agent          | [`remote-agent.yaml`](../tests/manual/remote-agent.yaml)                   | `MT-AGENT` |
-| Credential Store      | [`credential-store.yaml`](../tests/manual/credential-store.yaml)           | `MT-CRED`  |
-| Portable Mode         | [`portable-mode.yaml`](../tests/manual/portable-mode.yaml)                 | `MT-PORT`  |
-| Network Tools         | [`network-tools.yaml`](../tests/manual/network-tools.yaml)                 | `MT-NET`   |
-| Multi-Window (macOS)  | [`multi-window.yaml`](../tests/manual/multi-window.yaml)                   | `MT-WIN`   |
-| Native Input          | [`native-input.yaml`](../tests/manual/native-input.yaml)                   | `MT-NIN`   |
-| Remote Desktop        | [`remote-desktop.yaml`](../tests/manual/remote-desktop.yaml)               | `MT-RD`    |
-| Shell Integration     | [`shell-integration.yaml`](../tests/manual/shell-integration.yaml)         | `MT-SHI`   |
-| File Browser          | [`file-browser.yaml`](../tests/manual/file-browser.yaml)                   | `MT-FB`    |
-| Editor                | [`editor.yaml`](../tests/manual/editor.yaml)                               | `MT-EDIT`  |
-| App                   | [`app.yaml`](../tests/manual/app.yaml)                                     | `MT-APP`   |
+| Category             | YAML File                                                          | ID Prefix  |
+| -------------------- | ------------------------------------------------------------------ | ---------- |
+| Local Shell          | [`local-shell.yaml`](../tests/manual/local-shell.yaml)             | `MT-LOCAL` |
+| SSH                  | [`ssh.yaml`](../tests/manual/ssh.yaml)                             | `MT-SSH`   |
+| Serial               | [`serial.yaml`](../tests/manual/serial.yaml)                       | `MT-SER`   |
+| UI / Layout          | [`ui-layout.yaml`](../tests/manual/ui-layout.yaml)                 | `MT-UI`    |
+| Remote Agent         | [`remote-agent.yaml`](../tests/manual/remote-agent.yaml)           | `MT-AGENT` |
+| Credential Store     | [`credential-store.yaml`](../tests/manual/credential-store.yaml)   | `MT-CRED`  |
+| Portable Mode        | [`portable-mode.yaml`](../tests/manual/portable-mode.yaml)         | `MT-PORT`  |
+| Network Tools        | [`network-tools.yaml`](../tests/manual/network-tools.yaml)         | `MT-NET`   |
+| Multi-Window (macOS) | [`multi-window.yaml`](../tests/manual/multi-window.yaml)           | `MT-WIN`   |
+| Native Input         | [`native-input.yaml`](../tests/manual/native-input.yaml)           | `MT-NIN`   |
+| Remote Desktop       | [`remote-desktop.yaml`](../tests/manual/remote-desktop.yaml)       | `MT-RD`    |
+| Shell Integration    | [`shell-integration.yaml`](../tests/manual/shell-integration.yaml) | `MT-SHI`   |
+| File Browser         | [`file-browser.yaml`](../tests/manual/file-browser.yaml)           | `MT-FB`    |
+| Editor               | [`editor.yaml`](../tests/manual/editor.yaml)                       | `MT-EDIT`  |
+| App                  | [`app.yaml`](../tests/manual/app.yaml)                             | `MT-APP`   |
 
 Prefer a guided-manual pytest for a new irreducibly-manual check. If you add a YAML item instead, it must carry `release_gate: true` plus a `manual_reason` (genuinely manual) or `automation_issue: <N>` (automatable, tracked) — `tests/system/tests/test_manual_corpus.py` fails otherwise.
 
