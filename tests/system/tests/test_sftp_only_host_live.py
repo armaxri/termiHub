@@ -38,6 +38,7 @@ from termihub_harness import (
     PasswordPromptUi,
     SftpUi,
     SidebarUi,
+    SshServerControl,
     SshUi,
     SystemTest,
     TabsUi,
@@ -59,13 +60,7 @@ SFTP_ONLY_HOME = "/home/testuser"
 FILES_ONLY_PANEL = "terminal-files-only-panel"
 FILES_ONLY_OPEN_FILES = "terminal-files-only-open-files"
 DISCONNECT_OVERLAY = "terminal-disconnect-overlay"
-#: Editor read-only / fallback affordances (#1325 / #1330).
-READONLY_BADGE = "file-editor-readonly-badge"
-READONLY_BANNER = "file-editor-readonly-banner"
-EDIT_WITH_SUDO = "file-editor-edit-with-sudo"
-SAVE = "file-editor-save"
-SAVE_COPY = "file-editor-save-copy"
-DOWNLOAD = "file-editor-download"
+#: The editor's "Save a copy" dialog (#1330).
 SAVE_COPY_DIALOG = "save-copy-dialog"
 SAVE_COPY_INPUT = "save-copy-input"
 SAVE_COPY_SUBMIT = "save-copy-submit"
@@ -82,18 +77,12 @@ def sftp_only_fixture():
     return fixture
 
 
-def _container_read(path: str) -> bytes:
-    """``cat`` ``path`` inside this checkout's ``ssh-sftp-only`` container."""
-    runtime = container_runtime()
-    if runtime is None:
+def _container_read(path: str) -> str:
+    """``path`` read inside this checkout's ``ssh-sftp-only`` container."""
+    host = SshServerControl(SSH_SFTP_ONLY_SERVICE)
+    if not host.available:
         pytest.skip("no container runtime to read the saved copy back")
-    container = f"{compose_project()}-{SSH_SFTP_ONLY_SERVICE}"
-    return subprocess.run(
-        [runtime, "exec", container, "cat", path],
-        check=True,
-        timeout=30,
-        capture_output=True,
-    ).stdout
+    return host.read_file(path)
 
 
 def _container_remove(path: str) -> None:
@@ -110,11 +99,11 @@ def _container_remove(path: str) -> None:
     )
 
 
-def _flip_eol(data: bytes) -> bytes:
-    """``data`` with its line endings toggled LF <-> CRLF, as the EOL toggle does."""
-    if b"\r\n" in data:
-        return data.replace(b"\r\n", b"\n")
-    return data.replace(b"\n", b"\r\n")
+def _flip_eol(text: str) -> str:
+    """``text`` with its line endings toggled LF <-> CRLF, as the EOL toggle does."""
+    if "\r\n" in text:
+        return text.replace("\r\n", "\n")
+    return text.replace("\n", "\r\n")
 
 
 @pytest.mark.usefixtures("sftp_only_fixture")
@@ -188,23 +177,20 @@ class TestSftpOnlyHostLive(
         self._browse_to_etc()
         self.open_file_in_editor("hostname")
 
-        self.wait(
-            lambda: self.driver.exists(READONLY_BADGE) and self.driver.exists(READONLY_BANNER),
-            what="the read-only badge and banner",
-        )
+        self.wait_for_readonly()
         # The SFTP-only fallback: copy / download, never sudo, Save disabled.
-        self.wait(lambda: self.driver.exists(SAVE_COPY), what="the Save a copy action")
-        assert self.driver.exists(DOWNLOAD)
-        assert not self.driver.exists(EDIT_WITH_SUDO)
+        self.wait(lambda: self.driver.exists(self.SAVE_COPY), what="the Save a copy action")
+        assert self.driver.exists(self.DOWNLOAD)
+        assert not self.driver.exists(self.EDIT_WITH_SUDO)
 
         original = _container_read("/etc/hostname")
         self.dirty_editor()
         # Even with a dirty buffer, Save stays disabled on the read-only file.
-        assert self.driver.exists(SAVE)
-        assert self.driver.get_attribute(SAVE, "disabled") is not None
+        assert self.driver.exists(self.SAVE)
+        assert self.driver.get_attribute(self.SAVE, "disabled") is not None
 
         copy_path = f"{SFTP_ONLY_HOME}/{unique_name('hostname-copy')}.txt"
-        self.driver.click(SAVE_COPY)
+        self.driver.click(self.SAVE_COPY)
         self.wait(lambda: self.driver.exists(SAVE_COPY_INPUT), what="the Save a copy dialog")
         self.driver.type(SAVE_COPY_INPUT, copy_path)
         self.driver.click(SAVE_COPY_SUBMIT)
