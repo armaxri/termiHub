@@ -43,6 +43,20 @@ class EditorUi(HarnessMixin):
     LANG_SEARCH = "lang-menu-search"
     #: The Monaco hidden input, tagged in FileEditor so pressKey can target it.
     INPUT = "editor-input"
+    #: Remote-permission affordances (#1325 / #1329 / #1330).
+    REMOTE_BADGE = "file-editor-remote-badge"
+    READONLY_BADGE = "file-editor-readonly-badge"
+    READONLY_BANNER = "file-editor-readonly-banner"
+    READONLY_BANNER_DISMISS = "file-editor-readonly-banner-dismiss"
+    EDIT_WITH_SUDO = "file-editor-edit-with-sudo"
+    SUDO_BADGE = "file-editor-sudo-badge"
+    SAVE_ERROR = "file-editor-save-error"
+    SAVE_COPY = "file-editor-save-copy"
+    DOWNLOAD = "file-editor-download"
+    SUDO_DIALOG = "sudo-prompt-dialog"
+    SUDO_INPUT = "sudo-prompt-input"
+    SUDO_SUBMIT = "sudo-prompt-submit"
+    SUDO_ERROR = "sudo-prompt-error"
 
     if TYPE_CHECKING:  # provided by FilesUi / TabsUi, with which suites combine this
         def wait_for_file_row(self, name: str, *, timeout: float = ...) -> None: ...
@@ -122,6 +136,25 @@ class EditorUi(HarnessMixin):
     def save_editor(self) -> None:
         """Click the toolbar Save button (clears the dirty flag)."""
         self.driver.click(self.SAVE)
+
+    # -- remote permissions (read-only / sudo / SFTP-only fallback) -------------
+    def wait_for_readonly(self) -> None:
+        """Wait for the write probe to mark the open file read-only.
+
+        The badge and the banner render together once ``checkWritable`` reports
+        ``readOnly`` — the probe runs after the file loads, so this polls.
+        """
+        self.wait(
+            lambda: self.driver.exists(self.READONLY_BADGE)
+            and self.driver.exists(self.READONLY_BANNER),
+            what="the read-only badge and banner",
+        )
+
+    def submit_sudo_password(self, password: str) -> None:
+        """Type ``password`` into the open sudo prompt and click Authorize."""
+        self.wait(lambda: self.driver.exists(self.SUDO_INPUT), what="the sudo prompt")
+        self.driver.type(self.SUDO_INPUT, password)
+        self.driver.click(self.SUDO_SUBMIT)
 
     # -- status-bar controls -----------------------------------------------------
     def set_indent(self, size: int, *, spaces: bool = True) -> None:
