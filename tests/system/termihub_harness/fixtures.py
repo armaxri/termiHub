@@ -632,6 +632,11 @@ class SshServerControl:
         # listening for other/future sessions (only these PIDs die).
         self._exec(["kill", "-9", *targets])
 
+    def path_exists(self, path: str) -> bool:
+        """Whether ``path`` exists inside the container (e.g. a leftover upload)."""
+        out = self._exec(["sh", "-c", 'if [ -e "$1" ]; then echo yes; else echo no; fi', "sh", path])
+        return out.strip() == "yes"
+
     def _exec(self, argv: Sequence[str], *, timeout: float = 30.0) -> str:
         """Run ``argv`` inside the container via the detected runtime.
 

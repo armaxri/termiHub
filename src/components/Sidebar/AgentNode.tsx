@@ -226,6 +226,7 @@ function AgentConnectionItem({
           dragging={isDragging}
           selected={isSelected}
           persistent={definition.persistent}
+          testId={`agent-definition-${definition.id}`}
           title={`${definition.name} (${definition.sessionType}${definition.persistent ? ", persistent" : ""})`}
           dragAttributes={attributes}
           dragListeners={listeners}

@@ -70,9 +70,11 @@ pub enum PasswordPolicy {
     /// yields partial success with keyboard-interactive remaining (sshd
     /// `AuthenticationMethods password,keyboard-interactive`).
     ///
-    /// Caveat: russh 0.61's server clears `partial_success` on every password
-    /// rejection, so the client actually receives `partial_success: false` and
-    /// takes the password-fallback path, not the second-factor path.
+    /// Caveat: russh's server (0.61, still in 0.63) clears `partial_success` on
+    /// every password rejection, so the client actually receives
+    /// `partial_success: false` and takes the password-fallback path, not the
+    /// second-factor path. The real partial-success → second-factor path is
+    /// covered live against OpenSSH by `core/tests/ssh_mfa.rs` (#3384).
     FirstFactor(&'static str),
     /// `PasswordAuthentication yes` on its own: the given password fully
     /// authenticates (plain password login, e.g. the app-log secrecy test, #4011).
