@@ -77,7 +77,8 @@ describe.each(SHELLS)("real %s transcript (OSC 133)", (shell) => {
     const finished = tracker.getCommands().filter((c) => c.state === "finished");
     expect(finished.map((c) => c.exitCode)).toEqual([0, 1]);
     // The prompt after `false` is the live one, waiting for input.
-    expect(tracker.getCommands().at(-1)?.state).not.toBe("finished");
+    const commands = tracker.getCommands();
+    expect(commands[commands.length - 1].state).not.toBe("finished");
   });
 
   it("copies exactly the seq output as the last command output", async () => {
