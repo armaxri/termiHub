@@ -571,6 +571,17 @@ the old WebdriverIO find-by-title lookups. Tab lookups use the `TabsUi` mixin's
   each instance pins its WebView2 user-data folder (via `WEBVIEW2_USER_DATA_FOLDER`)
   so `stop()` can reap the `msedgewebview2.exe` hosts, which live outside the app
   process tree and would otherwise leak across back-to-back runs (issue #1022).
+- `AppInstance(portable="marker" | "data")` — the **portable launch mode** (#3691).
+  Every other launch sets `TERMIHUB_CONFIG_DIR`, which overrides portable mode.
+  This mode instead copies the built app (the whole `.app` bundle on macOS) into
+  a fresh portable root with a `portable.marker` file or a `data/` directory. It
+  launches the copy **without** `TERMIHUB_CONFIG_DIR`, so `config_dir` is the
+  app-resolved `<root>/data/`. The captured log and the WebView2 folder live in a
+  separate scratch dir. On Linux the installed-mode profile is redirected to a
+  throwaway `XDG_CONFIG_HOME`. `profile_config_dir()` plus
+  `termihub_harness.portable.snapshot()` / `changed_paths()` check that nothing
+  is written there. `kill_hard()` SIGKILLs the tree (a `kill -9`). A suite opts
+  in with the `portable_mode` class attribute; see `tests/test_portable_mode.py`.
 - `AgentInstance(host?, port?)` — `start()`, `stop()`, `restart()` for a
   `termihub-agent --listen` process, with process-tree teardown via `psutil`.
 

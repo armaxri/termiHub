@@ -75,3 +75,17 @@ export function getRenderedCellWidth(xterm: XTerm): number | undefined {
   const width = readRawRenderedCellWidth(xterm);
   return width !== undefined && width > 0 ? width : undefined;
 }
+
+/**
+ * Read the renderer's current CSS cell height from the same private render
+ * service as {@link readRawRenderedCellWidth}, without a positivity guard.
+ *
+ * Only the test bridge's `measureTerminal` verb (#2988) uses it, to prove a
+ * real WebView measured a non-degenerate cell; kept here so all access to
+ * xterm's private render dimensions stays behind this one adapter.
+ */
+export function readRawRenderedCellHeight(xterm: XTerm): number | undefined {
+  const height = (xterm as unknown as XtermWithPrivateCore)._core?._renderService?.dimensions?.css
+    ?.cell?.height;
+  return typeof height === "number" ? height : undefined;
+}

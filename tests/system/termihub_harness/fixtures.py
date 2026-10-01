@@ -58,6 +58,18 @@ SSH_TUNNEL_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_TUNNEL_PORT", 2207)
 #: auto-assert that the server allocates a forwarded ``$DISPLAY`` (#957).
 SSH_X11_SERVICE = "ssh-x11"
 SSH_X11_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_X11_PORT", 2208)
+#: Service + host port for the two-factor SSH container (#3384): OpenSSH with
+#: ``AuthenticationMethods password,keyboard-interactive
+#: publickey,keyboard-interactive``, so a correct password or key is only a
+#: partial success and keyboard-interactive then asks "Verification code: " (see
+#: ``tests/docker/ssh-mfa``). The live driver for the in-app SSH Authentication
+#: dialog (#3371). Same ``testuser`` / ``testpass`` and fixture keys as the others.
+SSH_MFA_SERVICE = "ssh-mfa"
+SSH_MFA_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_MFA_PORT", 2216)
+#: ``container_name`` suffix of :data:`SSH_MFA_SERVICE` (``<project>-ssh-mfa``).
+SSH_MFA_CONTAINER_SUFFIX = "ssh-mfa"
+#: The fixture's fixed one-time code (``pam_fixture_otp.c``).
+SSH_MFA_OTP = "424242"
 #: Service + host port for the password-required-sudoer SSH container: the
 #: account password is also the sudo password, and it ships a root-owned
 #: :data:`ELEVATED_TARGET_PATH` (see ``tests/docker/ssh-sudo/Dockerfile``).
@@ -151,6 +163,15 @@ REMOTE_AGENT_PORT = dev_local.service_port("TERMIHUB_TEST_REMOTE_AGENT_PORT", 22
 REMOTE_AGENT_PENDING_SERVICE = "remote-agent-pending-update"
 REMOTE_AGENT_PENDING_PORT = dev_local.service_port(
     "TERMIHUB_TEST_REMOTE_AGENT_PENDING_PORT", 2214
+)
+#: Service + host port for the deployed-agent container behind a
+#: keyboard-interactive-only sshd (compose profile ``agent``, #4005): the same
+#: image built with ``KBDINT_ONLY``, so PAM asks the password as a
+#: keyboard-interactive prompt and a remote agent with the "Keyboard-Interactive"
+#: auth method must answer it in the in-app SSH Authentication dialog (#3377).
+REMOTE_AGENT_KBDINT_SERVICE = "remote-agent-kbdint"
+REMOTE_AGENT_KBDINT_PORT = dev_local.service_port(
+    "TERMIHUB_TEST_REMOTE_AGENT_KBDINT_PORT", 2217
 )
 #: Version the armed image advertises (mirrors the compose build arg), so the test
 #: can assert the banner names it.
@@ -776,7 +797,20 @@ class ContainerControl:
         """Restart the container, resetting its server to the image's state."""
         self._run(["restart", "-t", str(grace), self.container])
 
-    def _run(self, args: Sequence[str], *, timeout: float = 60.0) -> None:
+    def logs(self) -> str:
+        """The container's combined stdout + stderr log so far.
+
+        The SSH fixtures run ``sshd -D -e``, so every auth decision lands here
+        (``Accepted keyboard-interactive/pam for testuser …``) — a server-side
+        signal a test can count before and after a connect, independent of what
+        the UI shows (#4005).
+        """
+        result = self._run(["logs", self.container])
+        return (result.stdout or "") + (result.stderr or "")
+
+    def _run(
+        self, args: Sequence[str], *, timeout: float = 60.0
+    ) -> "subprocess.CompletedProcess[str]":
         """Run a runtime subcommand, mapping failures to the skip-signal error."""
         if self._runtime is None:
             raise ContainerRuntimeUnavailable(
@@ -784,7 +818,7 @@ class ContainerControl:
                 "(need Docker or Podman)"
             )
         try:
-            subprocess.run(
+            return subprocess.run(
                 [self._runtime, *args],
                 check=True,
                 timeout=timeout,

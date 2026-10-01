@@ -228,6 +228,14 @@ async fn upload_temp(sftp: &RusshSftp, temp_path: &str, content: &[u8]) -> Resul
         .write_all(content)
         .await
         .map_err(|e| FileError::OperationFailed(format!("write remote temp file: {e}")))?;
+    // `write_all` only queues the SFTP writes; their acks arrive later. Wait
+    // for every ack and close the handle before the sudo exec runs, or `cat`
+    // can read the temp before the server has written it (an empty or partial
+    // destination), and a failed write would go unnoticed.
+    remote
+        .shutdown()
+        .await
+        .map_err(|e| FileError::OperationFailed(format!("finish remote temp file: {e}")))?;
     Ok(())
 }
 

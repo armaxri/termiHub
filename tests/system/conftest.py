@@ -19,6 +19,8 @@ from termihub_harness.manual import (
 )
 
 from termihub_harness import (
+    REMOTE_AGENT_KBDINT_PORT,
+    REMOTE_AGENT_KBDINT_SERVICE,
     REMOTE_AGENT_PENDING_PORT,
     REMOTE_AGENT_PENDING_SERVICE,
     REMOTE_AGENT_PORT,
@@ -31,6 +33,8 @@ from termihub_harness import (
     SSH_JUMP_TARGET_SERVICE,
     SSH_KEYS_PORT,
     SSH_KEYS_SERVICE,
+    SSH_MFA_PORT,
+    SSH_MFA_SERVICE,
     SSH_PASSWORD_PORT,
     SSH_PASSWORD_SERVICE,
     SSH_NOSUDO_PORT,
@@ -330,6 +334,20 @@ def ssh_tunnel_fixtures():
 
 
 @pytest.fixture(scope="session")
+def ssh_mfa_fixtures():
+    """Two-factor SSH container (port 2216) plus the key-auth ``ssh-keys`` (2203).
+
+    ``ssh-mfa`` asks a keyboard-interactive one-time code after a password or key
+    (#3384), driving the in-app SSH Authentication dialog (#3371). ``ssh-keys`` is
+    the jump-host *target* the ProxyJump test reaches through it — by its compose
+    service name on the shared ``test-net``.
+    """
+    return _ensure_ssh_services(
+        [(SSH_MFA_SERVICE, SSH_MFA_PORT), (SSH_KEYS_SERVICE, SSH_KEYS_PORT)]
+    )
+
+
+@pytest.fixture(scope="session")
 def ssh_permission_fixtures():
     """The editor-permission SSH containers: ``ssh-sudo`` (2212, a
     password-required sudoer) and ``ssh-nosudo`` (2213, a shell but no
@@ -451,6 +469,29 @@ def remote_agent_pending_fixtures():
         )
     except ContainerRuntimeUnavailable as exc:
         pytest.skip(f"armed deployed-agent container fixture unavailable: {exc}")
+    return fixture
+
+
+@pytest.fixture(scope="session")
+def remote_agent_kbdint_fixtures():
+    """Deployed-agent container behind a keyboard-interactive-only sshd (port 2217).
+
+    Same image as ``remote-agent`` built with ``KBDINT_ONLY``: PAM asks the
+    password as a keyboard-interactive prompt, so an agent whose auth method is
+    "Keyboard-Interactive" connects only once the in-app dialog is answered
+    (#3377 / #4005). Reuses the shared agent binary staging, and skips cleanly on
+    the same contract as :func:`remote_agent_fixtures`.
+    """
+    try:
+        stage_remote_agent_binary()
+        fixture = ComposeFixture()
+        fixture.ensure(
+            REMOTE_AGENT_KBDINT_SERVICE,
+            ports=[(SSH_HOST, REMOTE_AGENT_KBDINT_PORT)],
+            build=True,
+        )
+    except ContainerRuntimeUnavailable as exc:
+        pytest.skip(f"keyboard-interactive deployed-agent fixture unavailable: {exc}")
     return fixture
 
 

@@ -807,6 +807,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                 id={`start-with-connection-${tabId}`}
                 checked={field.value}
                 onCheckedChange={field.onChange}
+                data-testid="tunnel-editor-start-with-connection"
               />
             )}
           />
