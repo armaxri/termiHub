@@ -1736,13 +1736,13 @@ take either side and re-run the same command. CI (`--check`) fails if it is stal
 | `native-input`            | Native Input          | all            |             21 |                  0 |     21 |
 | `network-tools`           | network-tools         | all            |              2 |                  0 |      2 |
 | `portable-mode`           | Portable Mode         | all            |              0 |                  2 |      2 |
-| `remote-agent`            | Remote Agent          | all            |              0 |                 12 |     12 |
+| `remote-agent`            | Remote Agent          | all            |              0 |                  7 |      7 |
 | `remote-desktop`          | Remote Desktop        | all            |              9 |                  0 |      9 |
 | `serial`                  | Serial                | windows        |              1 |                  0 |      1 |
 | `shell-integration`       | Shell Integration     | all            |              6 |                  0 |      6 |
 | `ssh`                     | SSH                   | all            |              4 |                  1 |      5 |
 | `ui-layout`               | UI / Layout           | all            |              8 |                  0 |      8 |
-| **Total (16 categories)** |                       |                |         **72** |             **16** | **88** |
+| **Total (16 categories)** |                       |                |         **72** |             **11** | **83** |
 
 <!-- manual-inventory:end -->
 
