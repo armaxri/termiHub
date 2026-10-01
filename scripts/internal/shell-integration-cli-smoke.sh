@@ -136,6 +136,8 @@ si["entries"] = [{
     "visibility": "always",
     "showFor": {"folders": True, "files": False, "folderBackground": True},
 }]
+# Per-manager surfaces are opt-in: enable Nautilus (detected via its dir).
+si.setdefault("linuxFileManagers", {})["nautilus"] = True
 json.dump(doc, open(path, "w"), indent=2)
 EOF
 }
