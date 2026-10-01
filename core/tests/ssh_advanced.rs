@@ -4,6 +4,8 @@
 //! Tests termiHub's SSH backend for advanced scenarios:
 //! - SSH-JUMP-01: 2-hop ProxyJump via bastion (port 2204 → internal target)
 //! - SSH-JUMP-06: a hung intermediate hop times out within its per-hop budget
+//! - SSH-JUMP-07: two sessions reconnect through ONE new shared gateway after the
+//!   bastion container is stopped and restarted (MT-SSH-44, #3688)
 //! - SSH-SHELL-01/02: Restricted shell (rbash) on port 2205
 //! - SSH-TUNNEL-01/02: Port forwarding through SSH tunnel on port 2207
 //!
