@@ -13,7 +13,9 @@ use std::time::Duration;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use tracing::{debug, info, warn};
 
-use super::wsl_exec::{distro_sh_args, CREATE_NO_WINDOW};
+use super::wsl_exec::{
+    distro_sh_args, parse_readlink_targets, readlink_targets_args, CREATE_NO_WINDOW, READLINK_BATCH,
+};
 use super::wsl_init_script::{
     choose_delivery, distro_create_args, init_script_contents, source_line, InitDelivery,
 };
@@ -130,19 +132,28 @@ pub(crate) struct WslFileBrowser {
     /// Windows UNC prefix, e.g. `\\wsl.localhost\Ubuntu` or `\\wsl$\Ubuntu`.
     /// Detected at construction via [`wsl_unc_prefix`].
     unc_prefix: String,
+    /// Distribution name, used to read symlink targets inside the distro
+    /// (see [`resolve_symlink_targets`]).
+    distribution: String,
 }
 
 impl WslFileBrowser {
     #[cfg(all(windows, test))]
     pub(crate) fn new(distribution: String) -> Self {
         let unc_prefix = wsl_unc_prefix(&distribution);
-        Self { unc_prefix }
+        Self {
+            unc_prefix,
+            distribution,
+        }
     }
 
     /// Test-only constructor that bypasses UNC prefix detection.
     #[cfg(test)]
-    pub(crate) fn new_with_prefix(_distribution: String, unc_prefix: String) -> Self {
-        Self { unc_prefix }
+    pub(crate) fn new_with_prefix(distribution: String, unc_prefix: String) -> Self {
+        Self {
+            unc_prefix,
+            distribution,
+        }
     }
 
     /// Convert a Linux path to a Windows UNC path for the WSL distribution.
@@ -196,6 +207,44 @@ fn read_symlink_unc(unc_path: &str) -> (bool, Option<String>) {
     }
 }
 
+/// Fill in the target of every symlink entry the UNC share could not read.
+///
+/// Windows sees a WSL symlink over `\\wsl$` as a reparse point it can flag but
+/// not resolve (`read_link` fails), so the target is read **inside the
+/// distribution** instead: one `wsl.exe --exec sh` per [`READLINK_BATCH`] links,
+/// running `readlink` on their Linux paths (#1523, #4008). Best-effort — a
+/// failed spawn leaves the targets `None`, and the listing still succeeds.
+fn resolve_symlink_targets(distribution: &str, entries: &mut [FileEntry]) {
+    use std::os::windows::process::CommandExt;
+
+    if distribution.is_empty() {
+        return;
+    }
+    let pending: Vec<usize> = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.is_symlink && e.symlink_target.is_none())
+        .map(|(i, _)| i)
+        .collect();
+    for batch in pending.chunks(READLINK_BATCH) {
+        let paths: Vec<&str> = batch.iter().map(|&i| entries[i].path.as_str()).collect();
+        let output = std::process::Command::new("wsl.exe")
+            .args(readlink_targets_args(distribution, &paths))
+            .stdin(std::process::Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+        match output {
+            Ok(out) => {
+                let targets = parse_readlink_targets(&out.stdout, batch.len());
+                for (&i, target) in batch.iter().zip(targets) {
+                    entries[i].symlink_target = target;
+                }
+            }
+            Err(e) => debug!("WSL symlink targets not read via wsl.exe: {e}"),
+        }
+    }
+}
+
 /// Build a `FileEntry` from filesystem metadata.
 ///
 /// `unc_path` is the Windows UNC path backing this entry; it is used to detect
@@ -241,6 +290,7 @@ impl FileBrowser for WslFileBrowser {
     async fn list_dir(&self, path: &str) -> Result<Vec<FileEntry>, FileError> {
         let unc_path = self.to_unc_path(path);
         let linux_parent = path.to_string();
+        let distribution = self.distribution.clone();
         tokio::task::spawn_blocking(move || {
             let entries =
                 std::fs::read_dir(&unc_path).map_err(|e| map_io_error(e, &linux_parent))?;
@@ -262,6 +312,7 @@ impl FileBrowser for WslFileBrowser {
                 let entry_unc = entry_unc.to_string_lossy();
                 result.push(entry_from_metadata(name, full_path, &metadata, &entry_unc));
             }
+            resolve_symlink_targets(&distribution, &mut result);
 
             result.sort_by(|a, b| {
                 b.is_directory
@@ -326,6 +377,7 @@ impl FileBrowser for WslFileBrowser {
     async fn stat(&self, path: &str) -> Result<FileEntry, FileError> {
         let unc_path = self.to_unc_path(path);
         let linux_path = path.to_string();
+        let distribution = self.distribution.clone();
         tokio::task::spawn_blocking(move || {
             let metadata =
                 std::fs::metadata(&unc_path).map_err(|e| map_io_error(e, &linux_path))?;
@@ -333,7 +385,9 @@ impl FileBrowser for WslFileBrowser {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| linux_path.clone());
-            Ok(entry_from_metadata(name, linux_path, &metadata, &unc_path))
+            let mut entry = entry_from_metadata(name, linux_path, &metadata, &unc_path);
+            resolve_symlink_targets(&distribution, std::slice::from_mut(&mut entry));
+            Ok(entry)
         })
         .await
         .map_err(|e| FileError::OperationFailed(e.to_string()))?
@@ -1173,6 +1227,7 @@ impl ConnectionType for Wsl {
         let unc_prefix = wsl_unc_prefix(&distribution);
         self.file_browser_provider = Some(Arc::new(WslFileBrowser {
             unc_prefix: unc_prefix.clone(),
+            distribution: distribution.clone(),
         }));
 
         // Create the system-monitoring provider (#3182): reads `/proc` inside the
@@ -1310,6 +1365,11 @@ impl ConnectionType for Wsl {
             .map(|p| p.clone() as Arc<dyn ProcessManager + Send + Sync>)
     }
 }
+
+// Live tests against a real distribution, gated by `TERMIHUB_REQUIRE_WSL` (#4008).
+#[cfg(test)]
+#[path = "wsl_live_tests.rs"]
+mod live_tests;
 
 #[cfg(test)]
 mod tests {
