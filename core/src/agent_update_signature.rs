@@ -172,6 +172,15 @@ impl SignaturePolicy {
         Self::new(trusted_keys, false)
     }
 
+    /// This policy, additionally trusting `keys`. The unsigned allowance and
+    /// every verification rule stay exactly as they are — only the key set
+    /// grows. The agent uses it to add the committed **test-only** key in
+    /// `test-hooks` system-test builds (#4083); a shipped build never calls it.
+    pub fn with_extra_trusted_keys(mut self, keys: impl IntoIterator<Item = VerifyingKey>) -> Self {
+        self.trusted_keys.extend(keys);
+        self
+    }
+
     /// Whether a missing signature is tolerated (dev/debug builds only).
     pub fn allows_unsigned(&self) -> bool {
         self.allow_unsigned
@@ -320,6 +329,32 @@ pub mod test_support {
     pub fn sign_digest(key: &SigningKey, digest_hex: &str) -> String {
         let message = signed_message(digest_hex).expect("valid digest");
         BASE64.encode(key.sign(&message).to_bytes())
+    }
+
+    /// Parse an Ed25519 private key from an `openssl genpkey` PKCS#8 PEM (text
+    /// outside the `PRIVATE KEY` block ignored). Used to load the committed
+    /// TEST-ONLY key (`agent/keys/test-only/`, #4083).
+    pub fn signing_key_from_pkcs8_pem(pem: &str) -> SigningKey {
+        /// DER prefix of an Ed25519 PKCS#8 v1 private key (RFC 8410); the
+        /// 32-byte seed follows it.
+        const ED25519_PKCS8_PREFIX: [u8; 16] = [
+            0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22,
+            0x04, 0x20,
+        ];
+        let body: String = pem
+            .lines()
+            .skip_while(|l| l.trim() != "-----BEGIN PRIVATE KEY-----")
+            .skip(1)
+            .take_while(|l| l.trim() != "-----END PRIVATE KEY-----")
+            .map(str::trim)
+            .collect();
+        let der = BASE64.decode(body).expect("private key PEM is base64");
+        let seed: [u8; 32] = der
+            .strip_prefix(&ED25519_PKCS8_PREFIX[..])
+            .expect("an Ed25519 PKCS#8 private key")
+            .try_into()
+            .expect("a 32-byte Ed25519 seed");
+        SigningKey::from_bytes(&seed)
     }
 
     /// The PEM SPKI encoding of `key`'s public half, as the setup script writes it.
@@ -472,6 +507,64 @@ mod tests {
             SignaturePolicy::for_build().allow_unsigned,
             cfg!(debug_assertions)
         );
+    }
+
+    #[test]
+    fn extra_trusted_keys_extend_the_set_without_relaxing_the_policy() {
+        let policy = strict_for(1).with_extra_trusted_keys([test_signing_key(2).verifying_key()]);
+        for seed in [1, 2] {
+            let sig = sign_digest(&test_signing_key(seed), DIGEST);
+            assert_eq!(
+                policy.verify(DIGEST, Some(&sig)),
+                Ok(SignatureVerdict::Verified)
+            );
+        }
+        // Still strict: unsigned and foreign signatures are refused.
+        assert!(!policy.allows_unsigned());
+        assert_eq!(
+            policy.verify(DIGEST, None),
+            Err(UpdateSignatureError::Missing)
+        );
+        let foreign = sign_digest(&test_signing_key(3), DIGEST);
+        assert_eq!(
+            policy.verify(DIGEST, Some(&foreign)),
+            Err(UpdateSignatureError::Invalid)
+        );
+    }
+
+    /// The committed TEST-ONLY key (#4083) must never be trusted by the
+    /// embedded (shipped) key set: neither the agent's build policy nor the
+    /// desktop's embedded policy may accept a test-key signature.
+    #[test]
+    fn embedded_policies_never_trust_the_test_only_key() {
+        let test_pub = include_str!("../../agent/keys/test-only/update-signing-TEST-ONLY.pub.pem");
+        let test_keys = parse_public_keys_pem(test_pub);
+        assert_eq!(
+            test_keys.len(),
+            1,
+            "the test-only key file must hold one key"
+        );
+        let embedded = parse_public_keys_pem(EMBEDDED_PUBLIC_KEYS_PEM);
+        assert!(
+            !embedded.contains(&test_keys[0]),
+            "the TEST-ONLY key must never be added to agent/keys/update-signing.pub.pem"
+        );
+        // And a real signature made with the committed private half is refused
+        // by both shipped policies.
+        let private = signing_key_from_pkcs8_pem(include_str!(
+            "../../agent/keys/test-only/update-signing-TEST-ONLY.key.pem"
+        ));
+        assert_eq!(private.verifying_key(), test_keys[0]);
+        let sig = sign_digest(&private, DIGEST);
+        for policy in [
+            SignaturePolicy::for_build(),
+            SignaturePolicy::embedded(false),
+        ] {
+            assert!(matches!(
+                policy.verify(DIGEST, Some(&sig)),
+                Err(UpdateSignatureError::Invalid | UpdateSignatureError::KeyNotConfigured)
+            ));
+        }
     }
 
     #[test]

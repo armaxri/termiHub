@@ -106,7 +106,20 @@ impl TestUpdateHook {
     /// — `None` (a fully inert hook) unless `TERMIHUB_AGENT_TEST_PENDING_UPDATE`
     /// is set to a truthy value.
     pub fn from_env() -> Self {
-        Self(TestPendingUpdate::from_env())
+        let current_exe = std::env::current_exe().ok();
+        Self(TestPendingUpdate::from_env().filter(|hook| {
+            // #4083: after a real swap this process runs the staged bytes, so
+            // re-staging the same update would only re-apply it on every idle.
+            let applied = hook.already_applied(current_exe.as_deref());
+            if applied {
+                tracing::info!(
+                    "TEST HOOK: the staged update {} is already the running binary — \
+                     standing down",
+                    hook.binary_path
+                );
+            }
+            !applied
+        }))
     }
 
     /// Stage the armed pending update into the agent's state. A no-op when the
@@ -229,7 +242,7 @@ pub struct UpdateConfig {
     /// auto-applies on idle (#1401).
     pub update_strategy: UpdateStrategy,
     /// Which signing keys a downloaded binary must be signed by (AGT-005).
-    /// Always [`SignaturePolicy::for_build`] in production; tests substitute a
+    /// Always [`signature::agent_policy`] in production; tests substitute a
     /// strict policy trusting a test key.
     pub signature_policy: SignaturePolicy,
 }
@@ -275,7 +288,7 @@ impl UpdateConfig {
             staging_dir: AgentState::config_dir().join("updates"),
             user_agent: format!("termihub-agent/{current_version}"),
             update_strategy,
-            signature_policy: SignaturePolicy::for_build(),
+            signature_policy: signature::agent_policy(),
         }
     }
 

@@ -20,7 +20,9 @@ use tracing::debug;
 use tracing::{info, warn};
 
 use super::build_version::{VersionPolicy, VersionPolicyError};
-use super::signature::{SignaturePolicy, UpdateSignatureError};
+#[cfg(unix)]
+use super::signature::SignaturePolicy;
+use super::signature::UpdateSignatureError;
 use super::version;
 use crate::state::persistence::{AgentState, PendingUpdate};
 
@@ -221,7 +223,7 @@ fn pending_update_is_applied(
 ///
 /// Any I/O error means "cannot prove identical" → `false`, which keeps the
 /// pending update rather than dropping it on a guess.
-fn files_identical(a: &Path, b: &Path) -> bool {
+pub(super) fn files_identical(a: &Path, b: &Path) -> bool {
     let (Ok(meta_a), Ok(meta_b)) = (std::fs::metadata(a), std::fs::metadata(b)) else {
         return false;
     };
@@ -288,13 +290,13 @@ pub trait UpdateApplier: Send + Sync + 'static {
     /// initiator's expected SHA-256; the apply path re-binds it to the on-disk
     /// bytes and re-verifies the signature immediately before the swap.
     ///
-    /// Defaults to the build's policy ([`SignaturePolicy::for_build`]).
+    /// Defaults to the build's policy ([`super::signature::agent_policy`]).
     fn check_signature(
         &self,
         digest_hex: &str,
         signature: Option<&str>,
     ) -> Result<(), UpdateSignatureError> {
-        SignaturePolicy::for_build()
+        super::signature::agent_policy()
             .verify(digest_hex, signature)
             .map(|_| ())
     }
@@ -355,7 +357,7 @@ fn apply_update_binary(
         signature,
         pinned_version,
         &production_staging_roots(),
-        &SignaturePolicy::for_build(),
+        &super::signature::agent_policy(),
         &VersionPolicy::for_build(),
     )
 }
