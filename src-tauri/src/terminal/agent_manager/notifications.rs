@@ -168,6 +168,7 @@ fn handle_session_evicted_notification<R: Runtime>(
 /// notification that arrived during the `initialize` handshake is buffered and
 /// replayed through this same function once init completes, so on-attach
 /// notifications are no longer silently dropped.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn dispatch_agent_notification<R: Runtime>(
     app_handle: &AppHandle<R>,
     agent_id: &str,
