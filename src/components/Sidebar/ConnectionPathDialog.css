@@ -82,6 +82,14 @@
   animation: th-spin 1s linear infinite;
 }
 
+/* Steady "Connecting…" text beside the static spinner under reduced motion
+   only (ConnectionPathDialog.tsx, #4039). */
+.connection-path-dialog__status-label {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
 .connection-path-dialog__error {
   margin: var(--spacing-xxs) 0 0 30px;
   color: var(--color-error);

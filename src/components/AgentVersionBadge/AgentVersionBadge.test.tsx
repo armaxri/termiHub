@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { AgentVersionBadge } from "./AgentVersionBadge";
+import { mockReducedMotion } from "@/test/reducedMotion";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -41,9 +42,9 @@ describe("AgentVersionBadge", () => {
   });
 
   // #2603: while updating, the badge icon is the sole "work in progress" cue.
-  // The `motion-essential-spinner` marker keeps it pulsing under reduced motion
-  // instead of freezing. It must be present only in the updating state so idle
-  // states are not made to pulse.
+  // The `motion-essential-spinner` marker renders it static under reduced motion
+  // (#4039) beside a steady label. It must be present only in the updating state
+  // so idle states keep their plain icon.
   it("marks the icon as essential motion only while updating", () => {
     render(<AgentVersionBadge version="0.1.0" state="updating" />);
     const updatingIcon = container.querySelector(".agent-version-badge__icon") as HTMLElement;
@@ -54,6 +55,30 @@ describe("AgentVersionBadge", () => {
     render(<AgentVersionBadge version="0.1.0" state="up-to-date" />);
     const idleIcon = container.querySelector(".agent-version-badge__icon") as HTMLElement;
     expect(idleIcon.getAttribute("class")).not.toContain("motion-essential-spinner");
+  });
+
+  // #4039: under reduced motion the updating icon is static, so the steady
+  // "Updating…" word is shown even where the label is normally hidden.
+  it("shows the steady 'Updating…' label only while updating under reduced motion", () => {
+    const motion = mockReducedMotion(true);
+    try {
+      render(<AgentVersionBadge version="0.1.0" state="updating" />);
+      expect(container.querySelector(".agent-version-badge__label")?.textContent).toBe("Updating…");
+      render(<AgentVersionBadge version="0.1.0" state="up-to-date" />);
+      expect(container.querySelector(".agent-version-badge__label")).toBeNull();
+    } finally {
+      motion.restore();
+    }
+  });
+
+  it("keeps the label hidden while updating with full motion (nothing changes)", () => {
+    const motion = mockReducedMotion(false);
+    try {
+      render(<AgentVersionBadge version="0.1.0" state="updating" />);
+      expect(container.querySelector(".agent-version-badge__label")).toBeNull();
+    } finally {
+      motion.restore();
+    }
   });
 
   it("exposes an accessible label describing the update state", () => {

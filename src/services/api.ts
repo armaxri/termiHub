@@ -2484,8 +2484,9 @@ export async function updateAgent(
 
 /**
  * Force an agent update, bypassing the connected-host guard. Call after the
- * user confirms in the Update dialog that other connected hosts may be
- * hard-cut (#1349).
+ * user confirms in the Update dialog that other hosts are connected (#1349).
+ * Those hosts are not cut off: their workers keep running and move to the new
+ * version when they reconnect (#4037).
  */
 export async function updateAgentForce(
   agentId: string,
@@ -2493,6 +2494,15 @@ export async function updateAgentForce(
   deployConfig: AgentDeployConfig
 ): Promise<AgentDeployResult> {
   return await invoke<AgentDeployResult>("update_agent_force", { agentId, config, deployConfig });
+}
+
+/**
+ * List the hosts connected to the agent other than this desktop (#4038). The
+ * backend sends `agent.list_connections` and drops this desktop's own
+ * `client_id`. Read-only; feeds the Update dialog's connected-host warning.
+ */
+export async function listAgentHosts(agentId: string): Promise<ConnectedHost[]> {
+  return await invoke<ConnectedHost[]>("list_agent_hosts", { agentId });
 }
 
 // --- Agent persistence commands ---

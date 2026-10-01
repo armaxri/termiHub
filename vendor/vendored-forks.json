@@ -114,6 +114,10 @@
             "https://github.com/armaxri/termiHub/issues/3499",
             "https://github.com/armaxri/termiHub/pull/3512"
           ]
+        },
+        {
+          "summary": "Pre-v8 SNDC_WAVE playback ported from upstream 2d9a9bf1: WaveInfo + bare Wave reassembled via an ExpectingWave state and confirmed (short payload / bad wFormatNo confirmed unplayed); WavePdu is WaveInfo-only plus a new WaveDataPdu",
+          "refs": ["https://github.com/armaxri/termiHub/issues/3510"]
         }
       ],
       "watch": {

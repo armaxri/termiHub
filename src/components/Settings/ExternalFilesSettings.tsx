@@ -9,6 +9,7 @@ import { Button, Input, Toggle, Tooltip, EmptyState } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { SettingsField } from "./SettingsField";
 import { isImeComposing } from "@/utils/imeComposition";
+import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 
 /**
  * External connection file management, extracted from SettingsPanel.
@@ -18,6 +19,9 @@ export function ExternalFilesSettings() {
   const updateSettings = useAppStore((s) => s.updateSettings);
   const reloadExternalConnections = useAppStore((s) => s.reloadExternalConnections);
   const [reloading, setReloading] = useState(false);
+  // The reload spinner is static under reduced motion (#4039); the button text
+  // then says "Reloading…" so the in-progress state is still readable.
+  const reducedMotion = usePrefersReducedMotion();
   const [showCreatePrompt, setShowCreatePrompt] = useState(false);
   const [createName, setCreateName] = useState("Shared Connections");
 
@@ -120,7 +124,7 @@ export function ExternalFilesSettings() {
               disabled={reloading}
               title="Reload all external files"
             >
-              Reload
+              {reloading && reducedMotion ? "Reloading…" : "Reload"}
             </Button>
             <Button
               variant="secondary"

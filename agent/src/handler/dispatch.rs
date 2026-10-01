@@ -2741,7 +2741,7 @@ fn register_agent_request_update(
 
         // No registry handle at all (a unit-test handler, or a worker whose
         // transport never wired one) is the same situation as a registry that
-        // cannot answer: no host-wide view, so proceed as the pre-#1351 hard cut
+        // cannot answer: no host-wide view, so proceed un-notified as pre-#1351
         // did rather than block an update on absent infrastructure.
         let outcome = match registry {
             Some(registry) => {

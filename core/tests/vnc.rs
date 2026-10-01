@@ -1,5 +1,5 @@
 #![cfg(feature = "vnc")]
-//! VNC (RFB) Integration Tests (VNC-01 through VNC-13).
+//! VNC (RFB) Integration Tests (VNC-01 through VNC-16).
 //!
 //! Exercises termiHub's `vnc` graphical backend against a real VNC server — the
 //! live negotiate -> authenticate -> decode path (#1681/#1715) that only exists
@@ -7,7 +7,7 @@
 //! brings up Docker, so this path is otherwise uncovered; these tests are the
 //! `require_docker!`-gated coverage that a *local* container run verifies.
 //!
-//! Two fixtures, both under the `vnc` compose profile:
+//! Three fixtures, all under the `vnc` compose profile:
 //!
 //! * `vnc-server` on port 2501 (x11vnc + Xvfb) — classic RFB VncAuth, password
 //!   `testpass`. Covers VNC-01..05, VNC-08 (16-bit color depth and Tight
@@ -18,21 +18,27 @@
 //!   Covers VNC-06 (`tlsVerify=insecure`) and VNC-07 (`tlsVerify=ca`), the
 //!   VeNCrypt/TLS path added in #1714, and VNC-09 (fixed and dynamic remote
 //!   resolution through RFB ExtendedDesktopSize / SetDesktopSize, #3463), and
-//!   VNC-13 (lossless UTF-8 through the RFB Extended Clipboard, #3472).
+//!   VNC-13 (lossless UTF-8 through the RFB Extended Clipboard, #3472), and
+//!   VNC-14 (the default `tlsVerify=system` refuses its self-signed leaf,
+//!   #4004).
+//! * `vnc-vencrypt-plain-server` on port 2503 — the same TigerVNC image serving
+//!   VeNCrypt with the X509Plain sub-type only: TLS, then a username/password
+//!   stage (`testuser`/`testpass`, checked by Xvnc through PAM). Covers VNC-15
+//!   (connect + decode) and VNC-16 (wrong password rejected), #1714/#4004.
 //!
-//! Both serve the same static four-quadrant test pattern (TL red, TR green,
+//! All serve the same static four-quadrant test pattern (TL red, TR green,
 //! BL blue, BR white) at 1024x768, so a decoded framebuffer asserts exactly.
 //!
 //! Requires: `cd tests/docker && docker compose --profile vnc up -d`
-//! (brings up both fixtures). Skips gracefully otherwise. Ports via
-//! `TERMIHUB_TEST_VNC_PORT` / `TERMIHUB_TEST_VNC_VENCRYPT_PORT` (per-checkout
-//! offset applied).
+//! (brings up all three fixtures). Skips gracefully otherwise. Ports via
+//! `TERMIHUB_TEST_VNC_PORT` / `TERMIHUB_TEST_VNC_VENCRYPT_PORT` /
+//! `TERMIHUB_TEST_VNC_VENCRYPT_PLAIN_PORT` (per-checkout offset applied).
 
 mod common;
 
 use std::time::Duration;
 
-use common::{port_vnc, port_vnc_vencrypt, require_docker};
+use common::{port_vnc, port_vnc_vencrypt, port_vnc_vencrypt_plain, require_docker};
 use termihub_core::backends::vnc::Vnc;
 use termihub_core::connection::{ConnectionType, FrameReceiver, FrameUpdate, InputEvent};
 
@@ -50,6 +56,9 @@ const VNC_SERVER_CLIPBOARD: &str = "termiHub vnc server clipboard 4711";
 /// offers through the RFB Extended Clipboard (#3472). MUST match
 /// `CLIPBOARD_TEXT` in `tests/docker/vnc-vencrypt-server/entrypoint.sh`.
 const VNC_UTF8_CLIPBOARD: &str = "termiHub 日本語 🎉 4711";
+
+/// The X509Plain fixture's account (see `tests/docker/vnc-vencrypt-server`).
+const PLAIN_USERNAME: &str = "testuser";
 
 /// Serializes the tests that depend on the VeNCrypt fixture's desktop size:
 /// VNC-09 resizes the (shared, long-lived) Xvnc desktop and restores it, while
@@ -739,4 +748,85 @@ async fn vnc_12_multi_monitor_degrades_to_the_server_layout() {
     }
     assert!(graphical.monitor_layout().is_empty());
     vnc.disconnect().await.expect("disconnect should succeed");
+}
+
+// ── VNC-14: VeNCrypt with tlsVerify=system rejects a self-signed leaf ─
+
+/// The default verification mode trusts only the public web PKI roots, so the
+/// fixture's leaf (signed by the committed test CA) must be refused during the
+/// TLS handshake — before any password is sent (#1714, #4004).
+#[tokio::test]
+async fn vnc_14_vencrypt_system_trust_rejects_self_signed_cert() {
+    require_docker!(port_vnc_vencrypt());
+
+    let mut vnc = Vnc::new();
+    let result = vnc
+        .connect(vencrypt_settings(port_vnc_vencrypt(), "system", None))
+        .await;
+    let err = match result {
+        Ok(()) => panic!("VNC-14: tlsVerify=system must refuse the self-signed fixture"),
+        Err(e) => e.to_string(),
+    };
+    assert!(
+        err.contains("TLS handshake failed"),
+        "VNC-14: expected a TLS handshake failure, got {err:?}"
+    );
+    assert!(
+        err.to_ascii_lowercase().contains("certificate"),
+        "VNC-14: the failure should name the untrusted certificate, got {err:?}"
+    );
+    assert!(
+        !vnc.is_connected(),
+        "VNC-14: a refused certificate leaves the session disconnected"
+    );
+}
+
+// ── VNC-15 / VNC-16: VeNCrypt X509Plain (username + password) ───────
+
+/// Settings JSON for the X509Plain fixture: the CA-verified TLS handshake,
+/// then the username/password second stage.
+fn vencrypt_plain_settings(password: &str) -> serde_json::Value {
+    let ca_path = vencrypt_ca_path();
+    let mut settings = vencrypt_settings(
+        port_vnc_vencrypt_plain(),
+        "ca",
+        Some(ca_path.to_str().expect("CA path is valid UTF-8")),
+    );
+    settings["username"] = serde_json::json!(PLAIN_USERNAME);
+    settings["password"] = serde_json::json!(password);
+    settings
+}
+
+/// The server offers only X509Plain, so a successful session proves the
+/// fork's Plain sub-auth (username + password after TLS) works against a real
+/// server, not just the loopback unit tests.
+#[tokio::test]
+async fn vnc_15_vencrypt_x509plain_connect_and_decode() {
+    require_docker!(port_vnc_vencrypt_plain());
+
+    let mut vnc = Vnc::new();
+    vnc.connect(vencrypt_plain_settings(VNC_PASSWORD))
+        .await
+        .expect("VNC-15: VeNCrypt X509Plain connect should succeed against the fixture");
+
+    assert!(vnc.is_connected(), "VNC-15: session should be connected");
+    assert_pattern_decodes(&vnc, "VNC-15").await;
+
+    vnc.disconnect().await.expect("disconnect should succeed");
+}
+
+#[tokio::test]
+async fn vnc_16_vencrypt_x509plain_wrong_password_rejected() {
+    require_docker!(port_vnc_vencrypt_plain());
+
+    let mut vnc = Vnc::new();
+    let result = vnc.connect(vencrypt_plain_settings("wrongpw")).await;
+    assert!(
+        result.is_err(),
+        "VNC-16: X509Plain with a wrong password must fail, got {result:?}"
+    );
+    assert!(
+        !vnc.is_connected(),
+        "VNC-16: a rejected login leaves the session disconnected"
+    );
 }

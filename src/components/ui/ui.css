@@ -797,13 +797,14 @@
     transition: none;
   }
   /* `.ui-btn__spinner` and the indeterminate `.ui-progress__fill` are essential
-     progress cues — they carry `.motion-essential-spinner`, which degrades them
-     to an opacity pulse here rather than freezing (see animations.css, #2603).
-     The sweep positioned a 40%-wide bar via its animation; with that swapped for
-     an opacity pulse, restore the full track width so the pulse reads as an
-     active indeterminate bar rather than a misleading ~40%-complete one. */
+     progress cues — they carry `.motion-essential-spinner`, which renders them
+     static here (animations.css, #4039). The sweep positioned a 40%-wide bar via
+     its animation; with it gone, fill the whole track with a still diagonal
+     stripe — the conventional "indeterminate" pattern — so the bar reads as
+     "working" rather than as a misleading ~40%- or 100%-complete one. */
   .ui-progress--indeterminate .ui-progress__fill {
     width: 100%;
+    background: repeating-linear-gradient(-45deg, var(--accent-color) 0 6px, transparent 6px 12px);
   }
 }
 
@@ -845,7 +846,7 @@
    consolidating ~two dozen per-component `.*__spinner` / `.*__spin` classes that
    each re-declared the same rotation. Owns the shared `th-spin` rotation and
    carries `.motion-essential-spinner` at the call site, so under reduced motion
-   it degrades to an opacity pulse instead of freezing (see animations.css). */
+   it renders as a static icon next to a steady text label (animations.css). */
 .ui-spinner {
   animation: th-spin 1s linear infinite;
   flex-shrink: 0;

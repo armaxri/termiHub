@@ -59,8 +59,9 @@ describe("Progress", () => {
 
   // #2603: the indeterminate sweep is an essential progress cue. Under
   // `prefers-reduced-motion: reduce` the global backstop would freeze it into a
-  // static bar that reads as hung. The `motion-essential-spinner` marker opts
-  // the fill out into a gentle opacity pulse. jsdom cannot compute the frame, so
+  // bar stranded mid-sweep. The `motion-essential-spinner` marker opts the fill
+  // out into a deliberate static, full-width striped bar (#4039 — no pulse; the
+  // row's steady status text carries progress). jsdom cannot compute it, so
   // assert the wiring: the marker is present only in indeterminate mode.
   it("marks the indeterminate fill as essential motion (but not the determinate fill)", () => {
     render(<Progress indeterminate label="Transferring" />);

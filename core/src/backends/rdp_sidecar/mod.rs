@@ -166,6 +166,40 @@ fn resolve_helper_binary_with(search: &HelperSearch) -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from(HELPER_BIN_NAME))
 }
 
+/// Verify `helper` against the build-time digest (see [`integrity`]) and spawn
+/// it with piped stdin/stdout, returning the child and the [`integrity::PinnedHelper`]
+/// the caller must [`confirm_after_spawn`](integrity::PinnedHelper::confirm_after_spawn)
+/// before writing anything to it.
+///
+/// A helper that cannot be launched — most commonly a dev checkout where the
+/// sidecar was never built — fails with an actionable message naming
+/// `scripts/build-rdp-sidecar.sh` and [`HELPER_PATH_ENV`].
+fn spawn_helper(
+    helper: &Path,
+    override_active: bool,
+    expected_sha256: Option<&str>,
+) -> Result<(tokio::process::Child, integrity::PinnedHelper), SessionError> {
+    let pinned = integrity::verify_helper_integrity(helper, override_active, expected_sha256)
+        .map_err(SessionError::SpawnFailed)?;
+    let mut command = pinned.command().map_err(SessionError::SpawnFailed)?;
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .kill_on_drop(true);
+    // Suppress the console-window flash on Windows (#1758). No-op elsewhere.
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+    let child = command.spawn().map_err(|e| {
+        SessionError::SpawnFailed(format!(
+            "failed to launch RDP helper '{}': {e}. Build it with \
+             scripts/build-rdp-sidecar.sh (or set {HELPER_PATH_ENV}).",
+            helper.display()
+        ))
+    })?;
+    Ok((child, pinned))
+}
+
 /// Wrap a message as a [`SessionError::Io`] (its inner type is a
 /// [`std::io::Error`], so a plain string needs boxing).
 fn io_error(message: impl Into<String>) -> SessionError {
@@ -674,28 +708,8 @@ impl ConnectionType for SidecarRdp {
         // `fexecve`) checks the path still names the hashed inode before and after
         // the spawn. The per-OS residual guarantee is documented in [`integrity`].
         let override_active = std::env::var_os(HELPER_PATH_ENV).is_some();
-        let pinned = integrity::verify_helper_integrity(
-            &helper,
-            override_active,
-            integrity::EXPECTED_HELPER_SHA256,
-        )
-        .map_err(SessionError::SpawnFailed)?;
-        let mut command = pinned.command().map_err(SessionError::SpawnFailed)?;
-        command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .kill_on_drop(true);
-        // Suppress the console-window flash on Windows (#1758). No-op elsewhere.
-        #[cfg(windows)]
-        command.creation_flags(CREATE_NO_WINDOW);
-        let mut child = command.spawn().map_err(|e| {
-            SessionError::SpawnFailed(format!(
-                "failed to launch RDP helper '{}': {e}. Build it with \
-                 scripts/build-rdp-sidecar.sh (or set {HELPER_PATH_ENV}).",
-                helper.display()
-            ))
-        })?;
+        let (mut child, pinned) =
+            spawn_helper(&helper, override_active, integrity::EXPECTED_HELPER_SHA256)?;
         // Re-verify the pinned file before the child is sent anything — the
         // connect payload below carries credentials. On a mismatch the child is
         // killed (fail-closed) and never sees them.
@@ -1118,6 +1132,70 @@ mod tests {
     #[test]
     fn graphical_none_until_connected() {
         assert!(SidecarRdp::new().graphical().is_none());
+    }
+
+    // ── missing helper (#4004) ────────────────────────────────────────────────
+
+    /// Assert a helper-launch failure is actionable: it names the missing path,
+    /// the build script and the override env var.
+    fn assert_actionable_missing_helper(
+        result: Result<(), SessionError>,
+        path: &Path,
+        label: &str,
+    ) {
+        let msg = match result {
+            Err(SessionError::SpawnFailed(m)) => m,
+            other => panic!("{label}: expected SpawnFailed, got {other:?}"),
+        };
+        assert!(
+            msg.contains(&path.display().to_string()),
+            "{label}: names the helper path: {msg}"
+        );
+        assert!(
+            msg.contains("scripts/build-rdp-sidecar.sh"),
+            "{label}: names the build script: {msg}"
+        );
+        assert!(
+            msg.contains(HELPER_PATH_ENV),
+            "{label}: names the override: {msg}"
+        );
+    }
+
+    /// A dev checkout that never built the sidecar (no embedded digest, or the
+    /// `$TERMIHUB_RDP_HELPER` override pointing nowhere) gets the actionable
+    /// "failed to launch RDP helper" error instead of a bare spawn error.
+    #[tokio::test]
+    async fn missing_helper_yields_actionable_launch_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join(HELPER_BIN_NAME);
+        for (override_active, label) in [(false, "no digest"), (true, "override")] {
+            let result = spawn_helper(&missing, override_active, None).map(|_| ());
+            if let Err(SessionError::SpawnFailed(m)) = &result {
+                assert!(
+                    m.starts_with("failed to launch RDP helper"),
+                    "{label}: launch failure: {m}"
+                );
+            }
+            assert_actionable_missing_helper(result, &missing, label);
+        }
+    }
+
+    /// With a build-time digest embedded (release builds), a missing helper
+    /// fails the integrity read before any spawn — and that message is just as
+    /// actionable as the launch failure.
+    #[tokio::test]
+    async fn missing_helper_with_embedded_digest_is_actionable() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join(HELPER_BIN_NAME);
+        let digest = "0".repeat(64);
+        let result = spawn_helper(&missing, false, Some(&digest)).map(|_| ());
+        if let Err(SessionError::SpawnFailed(m)) = &result {
+            assert!(
+                m.contains("for integrity verification"),
+                "fails the integrity read: {m}"
+            );
+        }
+        assert_actionable_missing_helper(result, &missing, "embedded digest");
     }
 
     // ── clipboard-fetch progress guard (CORE-014) ─────────────────────────────

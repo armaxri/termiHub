@@ -1003,6 +1003,20 @@ jobs:
           CI_RUST_TESTS_SPLIT_SERIAL: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
         run: ./scripts/internal/ci-rust-tests.sh heavy --workspace
 
+      # Windows shell-integration CLI smoke (#4010, #1368): build the desktop
+      # binary and run `termiHub.exe install-shell-integration` /
+      # `uninstall-shell-integration` for real. Both must exit 0 and print their
+      # confirmation; the Explorer verb must land under HKCU only (no elevation)
+      # and be removed again. The script refuses to run outside GitHub Actions,
+      # since the HKCU class store cannot be sandboxed on a developer machine.
+      - name: Shell-integration CLI smoke (Windows, HKCU only)
+        if: ${{ !cancelled() && matrix.os == 'windows-latest' && needs.changes.outputs.rust != 'false' }}
+        shell: pwsh
+        run: |
+          cargo build -p termihub --bin termihub
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./scripts/internal/shell-integration-cli-smoke.ps1 -Exe target/debug/termihub.exe
+
       # Run coverage-gated tests once (Ubuntu) to enforce the vitest coverage
       # floors from vitest.config.ts (#2066). Coverage is computed from the
       # platform-independent TS sources, so gating on a single leg avoids
