@@ -70,6 +70,25 @@ jobs:
           wsl-version: 2
           use-cache: "true"
 
+      - name: Skip the distribution's first-launch user setup
+        # Modern `.wsl` distributions run an OOBE ("Enter new UNIX username:") on
+        # the first INTERACTIVE launch. setup-wsl only ever runs commands, so the
+        # flag is still set and the tests' ConPTY session would land in that
+        # prompt instead of a shell. Clear WSL's per-distro `RunOOBE` registry
+        # value (read by the service at instance start; see microsoft/WSL
+        # DistributionRegistration.h) and restart the distro, so an interactive
+        # `wsl.exe -d` opens a root bash like a set-up user distro does.
+        shell: pwsh
+        run: |
+          $name = 'Debian-12'
+          $lxss = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss'
+          $key = Get-ChildItem $lxss |
+            Where-Object { (Get-ItemProperty $_.PSPath).DistributionName -eq $name }
+          if (-not $key) { throw "no Lxss registration for $name" }
+          Set-ItemProperty -Path $key.PSPath -Name RunOOBE -Value 0 -Type DWord
+          wsl.exe --terminate $name
+          (Get-ItemProperty $key.PSPath) | Select-Object DistributionName, RunOOBE, DefaultUid
+
       - name: Show the installed distributions
         shell: pwsh
         env:

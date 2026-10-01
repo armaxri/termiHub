@@ -347,7 +347,15 @@ async fn live_wsl_session_sources_init_script_silently_self_cleans_and_tracks_cw
 
     // 1. Only the `source` line is injected; the script's own notice follows.
     let prefix = format!("source {INIT_SCRIPT_PREFIX}");
-    let at = out.wait_for(prefix.as_bytes(), 0).await;
+    let (which, at) = out.wait_any(&[prefix.as_bytes(), OOBE_PROMPT], 0).await;
+    assert_eq!(
+        which,
+        0,
+        "distribution {distro} is still in its first-launch user setup (OOBE), so the \
+         session never reached a shell; create a default user or clear its RunOOBE \
+         registry value:\n{:?}",
+        out.text()
+    );
     let uuid: String = out.buf[at + prefix.len()..]
         .iter()
         .take_while(|b| b.is_ascii_hexdigit() || **b == b'-')
@@ -386,6 +394,10 @@ async fn live_wsl_session_sources_init_script_silently_self_cleans_and_tracks_cw
 
     wsl.disconnect().await.expect("disconnect");
 }
+
+/// Prompt of a distribution's first-launch user setup (OOBE). An interactive
+/// session that shows it never reaches a shell.
+const OOBE_PROMPT: &[u8] = b"Enter new UNIX username";
 
 /// Prefix of every per-session init-script path.
 const INIT_SCRIPT_PREFIX: &str = super::super::wsl_init_script::INIT_SCRIPT_PATH_PREFIX;
