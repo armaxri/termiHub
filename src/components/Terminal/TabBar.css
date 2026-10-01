@@ -181,10 +181,18 @@
 }
 
 /* The connecting spinner is the sole progress cue, so it carries
-   `.motion-essential-spinner` (Tab.tsx) — under reduced motion it degrades to a
-   gentle pulse instead of freezing (animations.css). */
+   `.motion-essential-spinner` (Tab.tsx) — under reduced motion it renders static
+   and Tab.tsx adds the steady `.tab__state-label` beside it (#4039). */
 .tab__state-dot--connecting svg {
   animation: th-spin 1s linear infinite;
+}
+
+/* Steady "Connecting…" text shown next to the static connecting glyph under
+   reduced motion only (Tab.tsx, #4039). */
+.tab__state-label {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--state-connecting);
 }
 
 .tab__state-dot--disconnected {

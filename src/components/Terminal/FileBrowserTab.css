@@ -60,4 +60,4 @@
 
 /* The loading spinner is an essential progress cue — it carries
    `.motion-essential-spinner` (animations.css, #2603), so under reduced motion
-   it degrades to an opacity pulse rather than freezing. */
+   it renders static beside the steady "Connecting…" heading (#4039). */

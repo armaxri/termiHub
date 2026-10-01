@@ -8,6 +8,7 @@ import {
   flushSessionRegion,
   installSessionLifecycleHarness,
 } from "@/test/sessionLifecycleRegionTestHarness";
+import { mockReducedMotion, type ReducedMotionMock } from "@/test/reducedMotion";
 
 // Render the lucide icons as inspectable spans so the spinner's className is
 // visible in the DOM (the real SVG is not needed to assert the motion wiring).
@@ -73,16 +74,49 @@ describe("TerminalConnectionOverlay — connecting spinner motion", () => {
 
   // Regression for #2601: the connecting spinner is the sole "work in progress"
   // cue. Under `prefers-reduced-motion: reduce` the global backstop collapses
-  // every animation to a single 0.01ms frame, which froze this spinner into a
-  // static icon (reads as "hung"). The `motion-essential-spinner` marker opts the
-  // element out of that freeze into a gentle opacity pulse, so the spinner keeps
-  // signalling progress. jsdom does not run animations, so assert the wiring
-  // (the marker class + the spin class both present) rather than a computed frame.
-  it("marks the spinner as essential motion so reduced-motion pulses instead of freezing", async () => {
+  // every animation to a single 0.01ms frame. The `motion-essential-spinner`
+  // marker opts the element out of that collapse into a deliberate *static* icon
+  // (#4039 — the earlier opacity pulse read as blinking). jsdom does not run
+  // animations, so assert the wiring (marker class + spin class) here; the CSS
+  // contract itself is pinned in `styles/animations.reducedMotion.test.ts`.
+  it("marks the spinner as essential motion so reduced motion renders it static", async () => {
     await renderConnecting();
     const spinner = container.querySelector("[data-testid='icon-loader']");
     expect(spinner).not.toBeNull();
     expect(spinner?.className).toContain("terminal-connection-overlay__icon--spin");
     expect(spinner?.className).toContain("motion-essential-spinner");
+  });
+
+  describe("steady status label (#4039)", () => {
+    let motion: ReducedMotionMock;
+
+    afterEach(() => motion.restore());
+
+    function statusLabel() {
+      return container.querySelector(".ui-content-overlay__heading");
+    }
+
+    it("reduced motion: static spinner sits beside a steady, announced 'Connecting…' label", async () => {
+      motion = mockReducedMotion(true);
+      await renderConnecting();
+      const spinner = container.querySelector("[data-testid='icon-loader']");
+      expect(spinner?.className).toContain("motion-essential-spinner");
+      const label = statusLabel();
+      expect(label?.textContent).toBe("Connecting…");
+      expect(label?.getAttribute("role")).toBe("status");
+      expect(label?.getAttribute("aria-live")).toBe("polite");
+      // Adjacent: the label is the spinner's next sibling in the overlay body.
+      expect(spinner?.nextElementSibling).toBe(label);
+      expect(label?.parentElement?.getAttribute("aria-busy")).toBe("true");
+    });
+
+    it("full motion: renders the same spinner and label (nothing changes)", async () => {
+      motion = mockReducedMotion(false);
+      await renderConnecting();
+      const spinner = container.querySelector("[data-testid='icon-loader']");
+      expect(spinner?.className).toContain("terminal-connection-overlay__icon--spin");
+      expect(spinner?.className).toContain("motion-essential-spinner");
+      expect(statusLabel()?.textContent).toBe("Connecting…");
+    });
   });
 });

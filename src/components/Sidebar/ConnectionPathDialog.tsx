@@ -17,6 +17,7 @@ import { readConfigString } from "@/utils/connectionConfigFields";
 import { probeConnectionPath, cancelConnectionPathProbe } from "@/services/api";
 import { onJumpHostHopStatus, onJumpHostProbeComplete, HopProbeStatus } from "@/services/events";
 import { frontendLog } from "@/utils/frontendLog";
+import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import "./ConnectionPathDialog.css";
 
 interface ConnectionPathDialogProps {
@@ -66,6 +67,9 @@ export function ConnectionPathDialog({ open, connection, onClose }: ConnectionPa
   const settings = connection.config.config;
   const targetHost = readConfigString(connection.config, "host") ?? connection.name;
   const targetUser = readConfigString(connection.config, "username") ?? "";
+  // Under reduced motion the connecting spinner is static (#4039), so a steady
+  // "Connecting…" label beside it carries the progress signal.
+  const reducedMotion = usePrefersReducedMotion();
 
   // One status per probed node (gateway hops + target), excluding the "You"
   // origin. Keyed by the probe's node index so events map straight onto it.
@@ -183,6 +187,11 @@ export function ConnectionPathDialog({ open, connection, onClose }: ConnectionPa
                 <Icon size={15} className="connection-path-dialog__icon" />
                 <span className="connection-path-dialog__label">{node.label}</span>
                 <span className="connection-path-dialog__detail">{node.detail}</span>
+                {spin && reducedMotion && (
+                  <span className="connection-path-dialog__status-label" aria-hidden>
+                    Connecting…
+                  </span>
+                )}
                 <StatusIcon
                   size={15}
                   className={`connection-path-dialog__status connection-path-dialog__status--${status}${

@@ -91,6 +91,7 @@ import { useFileDragOut } from "@/hooks/useFileDragOut";
 import { useFileBookmarkScope } from "@/hooks/useFileBookmarkScope";
 import "./FileBrowser.css";
 import { isImeComposing } from "@/utils/imeComposition";
+import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 
 /**
  * Fixed row height in px, matching `.file-browser__row` in FileBrowser.css. Rows
@@ -1023,6 +1024,9 @@ function FileBrowserErrorActions({
 
 export function FileBrowser() {
   const { navigateToCwd, hasCwd, cdToCurrentPath, canCd } = useFileBrowserSync();
+  // The refresh spinner is static under reduced motion (#4039); the refresh
+  // button then carries a steady "Refreshing…" label instead.
+  const reducedMotion = usePrefersReducedMotion();
 
   const {
     fileEntries,
@@ -1773,7 +1777,9 @@ export function FileBrowser() {
                 onClick={refresh}
                 aria-label="Refresh file list"
                 data-testid="file-browser-refresh"
-              />
+              >
+                {isLoading && reducedMotion ? "Refreshing…" : undefined}
+              </Button>
             </Tooltip>
             <Tooltip content="Open Dual-Pane Transfer View" side="top">
               <Button

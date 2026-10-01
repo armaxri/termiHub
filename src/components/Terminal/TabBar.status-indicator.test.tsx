@@ -14,6 +14,7 @@ import {
   installSessionLifecycleHarness,
 } from "@/test/sessionLifecycleRegionTestHarness";
 import { flushAsync } from "@/test/flushAsync";
+import { mockReducedMotion } from "@/test/reducedMotion";
 
 // Render the real Tab so we exercise the actual status-indicator markup, but stub
 // the dnd-kit sortable wrapper and the terminal registry so it mounts in jsdom.
@@ -137,12 +138,40 @@ describe("TabBar — non-colour status indicator (UX-014)", () => {
     expect(new Set(shapes).size).toBe(shapes.length);
   });
 
-  it("marks the connecting spinner as essential motion so reduced-motion pulses instead of freezing", async () => {
+  it("marks the connecting spinner as essential motion so reduced motion renders it static (#4039)", async () => {
     harness.transport.setSession("t1", connecting());
     await render([makeTerminalTab("t1", true)]);
     await flushSessionRegion();
     const icon = dotFor("t1")?.querySelector("svg");
     expect(icon?.getAttribute("class")).toContain("motion-essential-spinner");
+  });
+
+  // #4039: under reduced motion the connecting glyph is static, so a steady
+  // "Connecting…" text label appears beside it; with full motion it does not.
+  it("shows a steady 'Connecting…' label beside the static spinner under reduced motion", async () => {
+    const motion = mockReducedMotion(true);
+    try {
+      harness.transport.setSession("t1", connecting());
+      await render([makeTerminalTab("t1", true)]);
+      await flushSessionRegion();
+      const label = document.querySelector("[data-testid='tab-state-label-t1']");
+      expect(label?.textContent).toBe("Connecting…");
+      expect(dotFor("t1")?.nextElementSibling).toBe(label);
+    } finally {
+      motion.restore();
+    }
+  });
+
+  it("adds no extra connecting label with full motion", async () => {
+    const motion = mockReducedMotion(false);
+    try {
+      harness.transport.setSession("t1", connecting());
+      await render([makeTerminalTab("t1", true)]);
+      await flushSessionRegion();
+      expect(document.querySelector("[data-testid='tab-state-label-t1']")).toBeNull();
+    } finally {
+      motion.restore();
+    }
   });
 
   it("keeps a persistent accessible name on the indicator (legible without hover)", async () => {
