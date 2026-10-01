@@ -78,6 +78,11 @@ on:
       - "src-tauri/src/credential/os_auth/polkit.rs"
       - "src-tauri/src/credential/os_auth/polkit/**"
       - "src-tauri/packaging/linux/com.termihub.app.policy"
+      # The agent's ssh-agent relay suite (#4005) and the relay it drives.
+      - "agent/tests/agent_forward_integration.rs"
+      - "agent/src/session/agent_forward.rs"
+      # The headless X detection probe (#4005).
+      - "src-tauri/src/terminal/xserver/linux_gap.rs"
       - ".github/workflows/integration-fixtures.yml"
 
 # A fixture run is self-contained; cancel an in-flight run when a newer commit
@@ -351,6 +356,45 @@ jobs:
           -- --test-threads=1
           files::sftp::tests::elevated_save
           utils::remote_exec::tests::agent_deploy
+
+      - name: Run the agent ssh-agent relay suite against the fixtures
+        # agent/tests/agent_forward_integration.rs (#4005, #1719/#1727): the real
+        # termihub-agent, over --stdio and over --listen TCP, opens an SSH
+        # session with forwardAgent to the default-profile `ssh-jumphost-bastion`
+        # while the test plays the desktop and relays agent.forward.* to its own
+        # ssh-agent; `ssh-add -l` on the bastion must list that key. Without a
+        # desktop agent the session must still connect. The per-PR gate has no
+        # fixture up, so there the suite self-skips; TERMIHUB_REQUIRE_DOCKER=1
+        # makes a missing bastion a failure here. Runs even when an earlier
+        # suite failed.
+        if: ${{ !cancelled() }}
+        env:
+          TERMIHUB_REQUIRE_DOCKER: "1"
+        run: cargo test -p termihub-agent --test agent_forward_integration
+
+      - name: Headless X detection in a clean container
+        # LinuxXEnv::detect() (#1055, #4005) against a real headless Linux box:
+        # no DISPLAY, no Wayland, no X socket, no X server binary. The runner
+        # itself is not a clean probe (it ships Xvfb and its env is not ours),
+        # so the desktop lib test binary built above runs in a fresh
+        # ubuntu:24.04 container (the runner's release, so glibc matches) with
+        # only its runtime libraries installed. The test skips unless
+        # TERMIHUB_HEADLESS_X_PROBE is set, and the grep turns a skipped or
+        # renamed test into a failure instead of a false green.
+        if: ${{ !cancelled() }}
+        run: |
+          bin="$(cargo test -p termihub --lib --no-run --message-format=json \
+            | jq -r 'select(.profile.test == true and .target.kind == ["lib"]) | .executable // empty' \
+            | tail -n 1)"
+          test -x "$bin"
+          docker run --rm -e TERMIHUB_HEADLESS_X_PROBE=1 -v "$bin:/probe:ro" ubuntu:24.04 bash -c '
+            set -euo pipefail
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends \
+              libwebkit2gtk-4.1-0 libgtk-3-0t64 libayatana-appindicator3-1 librsvg2-2 >/dev/null
+            /probe --exact terminal::xserver::linux_gap::tests::detect_in_a_headless_container
+          ' | tee headless-x.log
+          grep -q "test result: ok. 1 passed" headless-x.log
 
       - name: Export integration coverage (lcov)
         # advisory: a coverage hiccup must never red the fixture lane, whose
