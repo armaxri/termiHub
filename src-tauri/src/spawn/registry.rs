@@ -2851,7 +2851,11 @@ mod linux {
             let xdg = TempXdg::new("detect-path");
             let bin = xdg.data_local.join("bin");
             std::fs::create_dir_all(&bin).unwrap();
-            fake_binary(&bin, "thunar", "echo 'Thunar 4.18.4'; echo 'Copyright (c) 2004-2023'");
+            fake_binary(
+                &bin,
+                "thunar",
+                "echo 'Thunar 4.18.4'; echo 'Copyright (c) 2004-2023'",
+            );
             // Some managers print their banner on stderr only.
             fake_binary(&bin, "nautilus", "echo 'GNOME nautilus 46.2' >&2");
             let detected = path_registrar(&xdg, &bin).detect();
@@ -2923,7 +2927,10 @@ mod linux {
             assert_eq!(ids, ["nautilus", "kde", "thunar"]);
             for manager in &detected {
                 if manager.version.is_some() {
-                    assert!(manager.detected, "{manager:?} has a version but is undetected");
+                    assert!(
+                        manager.detected,
+                        "{manager:?} has a version but is undetected"
+                    );
                 }
                 let on_path = which::which(match manager.id.as_str() {
                     "kde" => "dolphin",
