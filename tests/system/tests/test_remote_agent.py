@@ -26,6 +26,9 @@ Divergences from the original, by design:
 * **MT-AGENT-03/05/06/08** in the old suite only asserted that a selector string
   contained a substring (tautologies); the setup-dialog fields they referenced
   are covered here by :meth:`test_setup_wizard_opens_and_detects`.
+* **Cancel an in-progress setup** (MT-AGENT-29, #3686) uploads a large local
+  file to the password container, cancels while the setup runs, and asserts the
+  partial upload is rolled back (no ``/tmp/termihub-agent-upload`` left behind).
 * **A successful agent connect + child sessions** (old pending describes) needs a
   remote host with the agent binary deployed and is out of scope here — tracked in
   #995 (a deployed-agent Docker fixture).
@@ -33,10 +36,13 @@ Divergences from the original, by design:
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from termihub_harness import (
     AgentUi,
+    SshServerControl,
     PasswordPromptUi,
     SettingsUi,
     SidebarUi,
@@ -46,10 +52,19 @@ from termihub_harness import (
     SSH_USERNAME,
     SystemTest,
     TabsUi,
+    TerminalUi,
     unique_name,
 )
 
 pytestmark = pytest.mark.integration
+
+#: Where the setup uploads the binary before installing it (twin of the Rust
+#: ``agent_install::POSIX_UPLOAD_PATH``).
+UPLOAD_PATH = "/tmp/termihub-agent-upload"
+
+#: Size of the throwaway "binary" the cancel test uploads — large enough that the
+#: SFTP upload is still running when Cancel Setup lands.
+CANCEL_UPLOAD_BYTES = 256 * 1024 * 1024
 
 # A localhost port nothing listens on — a connect attempt is refused promptly,
 # so the error dialog appears without waiting out a network timeout.
@@ -63,6 +78,7 @@ class TestRemoteAgent(
     SettingsUi,
     SidebarUi,
     TabsUi,
+    TerminalUi,
     SystemTest,
 ):
     """One app for the whole suite; each test creates its own uniquely-named agent."""
@@ -153,3 +169,39 @@ class TestRemoteAgent(
         assert self.driver.exists(self.SETUP_REMOTE_PATH)
         assert self.driver.exists(self.SETUP_ARCH)
         self.cancel_agent_setup()
+
+    def test_cancel_setup_leaves_no_partial_upload(self, tmp_path):
+        # MT-AGENT-29 (#3686): cancelling a running setup aborts it and rolls the
+        # partial upload back. The throwaway file is random (incompressible) and
+        # not an ELF binary, so the arch check is skipped and the upload proceeds.
+        server = SshServerControl()
+        if not server.available:
+            pytest.skip("no container runtime to inspect the SSH container")
+        if server.path_exists(UPLOAD_PATH):
+            pytest.skip(f"{UPLOAD_PATH} already exists in the container (stale run)")
+
+        binary = tmp_path / "termihub-agent"
+        with binary.open("wb") as fh:
+            chunk = os.urandom(1024 * 1024)
+            for _ in range(CANCEL_UPLOAD_BYTES // len(chunk)):
+                fh.write(chunk)
+
+        name = unique_name("agent-setup-cancel")
+        self.create_remote_agent(
+            name, host=SSH_HOST, port=SSH_PASSWORD_PORT, username=SSH_USERNAME
+        )
+        self.open_agent_setup(name)
+        self.handle_password_prompt(SSH_PASSWORD)
+        self.wait(self.setup_ready, what="the agent-setup form after arch detection", timeout=40.0)
+
+        self.start_local_agent_setup(str(binary))
+        self.cancel_running_agent_setup()
+
+        # The setup terminal reports the cancellation once the backend stops ...
+        self.wait_for_output("termiHub agent setup cancelled.", timeout=120.0)
+        # ... and the partial upload has been rolled back.
+        self.wait(
+            lambda: not server.path_exists(UPLOAD_PATH),
+            what=f"the partial upload {UPLOAD_PATH} to be rolled back",
+            timeout=30.0,
+        )

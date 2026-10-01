@@ -1,11 +1,10 @@
-"""Unit tests for the generated manual-inventory doc blocks (#3721).
+"""Unit tests for ``scripts/manual-inventory.py`` (#3721, #4070).
 
-Loads ``scripts/manual-inventory.py`` directly (it is a script, not a package)
-and checks its parser, aggregation and Markdown rendering on synthetic corpora,
-plus that the blocks committed in ``docs/testing.md`` and
-``docs/release-plan-0.1.0.md`` match a fresh render of the live corpus. Pure
-file parsing — no app, bridge, Docker or PyYAML — so it runs in the normal
-(non-integration) lane.
+Loads the script directly (it is a script, not a package) and checks its
+parser, aggregation and Markdown rendering on synthetic corpora, plus that no
+doc carries a committed count block (committed counts made every pair of
+test-automation PRs conflict, #4070). Pure file parsing — no app, bridge,
+Docker or PyYAML — so it runs in the normal (non-integration) lane.
 """
 
 from __future__ import annotations
@@ -87,58 +86,74 @@ def test_inventory_splits_release_gate_from_pending_and_sorts(tmp_path):
 
 def test_render_is_deterministic_and_carries_totals(tmp_path):
     corpus = _corpus(tmp_path, alpha=ALPHA, beta=BETA)
-    block = mod.render(mod.inventory(mod.load_items(corpus)))
-    assert block == mod.render(mod.inventory(mod.load_items(corpus)))
-    lines = block.splitlines()
-    assert lines[0] == mod.START and lines[-1] == mod.END
-    assert mod.REGEN_CMD in block
-    table = [ln for ln in lines if ln.startswith("|")]
-    total = [c.strip() for c in table[-1].strip("|").split("|")]
+    table = mod.render(mod.inventory(mod.load_items(corpus)))
+    assert table == mod.render(mod.inventory(mod.load_items(corpus)))
+    lines = table.splitlines()
+    assert all(ln.startswith("|") for ln in lines)
+    total = [c.strip() for c in lines[-1].strip("|").split("|")]
     assert total == ["**Total (2 categories)**", "", "", "**1**", "**2**", "**3**"]
     # Every table row has the same width (Prettier's aligned table layout).
-    assert len({len(ln) for ln in table}) == 1
+    assert len({len(ln) for ln in lines}) == 1
 
 
-def test_apply_replaces_only_the_marked_block():
-    doc = f"intro\n\n{mod.START}\nstale\n{mod.END}\n\noutro\n"
-    new = f"{mod.START}\nfresh\n{mod.END}"
-    assert mod.apply(doc, new) == f"intro\n\n{new}\n\noutro\n"
-    assert mod.apply("no markers here", new) is None
-
-
-@pytest.mark.parametrize("stale", [False, True])
-def test_check_and_write_modes(tmp_path, monkeypatch, capsys, stale):
-    corpus = _corpus(tmp_path, alpha=ALPHA)
-    doc = tmp_path / "doc.md"
-    fresh = mod.render(mod.inventory(mod.load_items(corpus)))
-    body = f"{mod.START}\nold\n{mod.END}" if stale else fresh
-    doc.write_text(f"# Doc\n\n{body}\n", encoding="utf-8")
+def _isolate(monkeypatch, tmp_path, corpus, docs_dir):
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(mod, "MANUAL_DIR", corpus)
-    monkeypatch.setattr(mod, "DOCS", (doc,))
+    monkeypatch.setattr(mod, "DOCS_DIR", docs_dir)
 
-    assert mod.main(["--check"]) == (1 if stale else 0)
-    if stale:
-        assert mod.REGEN_CMD in capsys.readouterr().err
-    assert mod.main(["--write"]) == 0
+
+def test_check_prints_table_and_appends_job_summary(tmp_path, monkeypatch, capsys):
+    corpus = _corpus(tmp_path, alpha=ALPHA)
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "clean.md").write_text("# Doc\n\nRun the script for counts.\n", encoding="utf-8")
+    summary = tmp_path / "summary.md"
+    summary.write_text("earlier step\n", encoding="utf-8")
+    _isolate(monkeypatch, tmp_path, corpus, docs)
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+
     assert mod.main(["--check"]) == 0
-    assert doc.read_text(encoding="utf-8") == f"# Doc\n\n{fresh}\n"
+    table = mod.render(mod.inventory(mod.load_items(corpus)))
+    assert table in capsys.readouterr().out
+    written = summary.read_text(encoding="utf-8")
+    assert written.startswith("earlier step\n")  # appended, not overwritten
+    assert "### Manual-test inventory" in written and table in written
 
 
-def test_check_fails_when_doc_has_no_block(tmp_path, monkeypatch):
-    doc = tmp_path / "doc.md"
-    doc.write_text("# Doc without markers\n", encoding="utf-8")
-    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(mod, "DOCS", (doc,))
+def test_check_without_summary_env_still_passes(tmp_path, monkeypatch):
+    corpus = _corpus(tmp_path, alpha=ALPHA)
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    _isolate(monkeypatch, tmp_path, corpus, docs)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    assert mod.main(["--check"]) == 0
+
+
+def test_check_fails_when_a_doc_reintroduces_a_committed_block(tmp_path, monkeypatch, capsys):
+    corpus = _corpus(tmp_path, alpha=ALPHA)
+    docs = tmp_path / "docs" / "nested"
+    docs.mkdir(parents=True)
+    (docs / "bad.md").write_text(f"{mod.LEGACY_MARKER}\n| x |\n", encoding="utf-8")
+    _isolate(monkeypatch, tmp_path, corpus, tmp_path / "docs")
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    assert mod.main(["--check"]) == 1
+    assert "docs/nested/bad.md" in capsys.readouterr().err
+
+
+def test_check_fails_on_empty_corpus(tmp_path, monkeypatch):
+    empty = tmp_path / "manual"
+    empty.mkdir()
+    _isolate(monkeypatch, tmp_path, empty, tmp_path)
     assert mod.main(["--check"]) == 1
 
 
-def test_committed_doc_blocks_match_the_live_corpus():
-    """The real docs must carry a fresh block (what CI's ``--check`` enforces)."""
-    block = mod.render(mod.inventory(mod.load_items()))
-    for doc in mod.DOCS:
-        text = doc.read_text(encoding="utf-8")
-        assert mod.apply(text, block) == text, (
-            f"{doc.relative_to(REPO_ROOT)}: manual-inventory block is stale; "
-            f"run `{mod.REGEN_CMD}`"
-        )
+def test_retired_write_is_a_noop_that_explains(tmp_path, monkeypatch, capsys):
+    _isolate(monkeypatch, tmp_path, tmp_path, tmp_path)
+    assert mod.main(["--write"]) == 0
+    assert "retired" in capsys.readouterr().err
+
+
+def test_live_docs_carry_no_committed_inventory_block():
+    """What CI's ``--check`` enforces on the real tree (#4070)."""
+    assert mod.docs_with_committed_block() == []
+    assert mod.inventory(mod.load_items()), "live corpus must not be empty"

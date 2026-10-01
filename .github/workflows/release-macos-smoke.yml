@@ -16,7 +16,11 @@ name: Release macOS Smoke
 #   6. launches the app, waits for the frontend's first IPC call to reach the
 #      backend (logged to the durable app log), asserts it stays alive, then
 #      terminates it and asserts it exits,
-#   7. downloads the matching standalone agent binary, checks its .sha256 sidecar
+#   7. runs scripts/internal/release-smoke-app-lifecycle.sh (#4011): the app
+#      log's banner (version + pid), no ANSI, "termiHub exited cleanly" after a
+#      Quit AppleEvent, append across relaunch, single-instance forwarding of
+#      --workspace / --workspace-file, and no clean-exit line after kill -9,
+#   8. downloads the matching standalone agent binary, checks its .sha256 sidecar
 #      and attestation, and runs `termihub-agent --version`.
 #
 # The Intel leg matters most: release.yml cross-compiles the macos-x64 DMG on an
@@ -121,6 +125,12 @@ jobs:
           echo "Resolved release tag: $TAG"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout code
+        # Only for scripts/internal/release-smoke-app-lifecycle.* (#4011).
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: scripts/internal
 
       - name: Assert native runner architecture
         env:
@@ -320,6 +330,20 @@ jobs:
           echo "app exited after SIGTERM"
           cp "$APP_LOG" app.log
 
+      - name: App log + single-instance lifecycle
+        env:
+          EXE: ${{ steps.app.outputs.exe }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          # The Quit is sent as an AppleEvent. If the runner refuses to deliver it
+          # (Automation consent), the script stops the app with SIGTERM and reports
+          # the clean-exit check as skipped (a ::warning::), never as passed.
+          ./scripts/internal/release-smoke-app-lifecycle.sh \
+            --exe "$EXE" --log "$HOME/Library/Logs/com.termihub.app/termihub.log" \
+            --version "$VERSION" --close applevent --bundle-id com.termihub.app \
+            --clear-log --out lifecycle 2>&1 | tee lifecycle.log
+
       - name: Run termihub-agent --version
         env:
           AGENT: ${{ steps.download.outputs.agent }}
@@ -357,6 +381,8 @@ jobs:
             version.log
             launch.log
             app.log
+            lifecycle.log
+            lifecycle/
             agent-version.log
           if-no-files-found: ignore
           retention-days: 14

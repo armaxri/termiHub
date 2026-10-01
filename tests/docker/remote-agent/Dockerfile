@@ -70,14 +70,34 @@ RUN if [ -n "$PENDING_UPDATE_VERSION" ]; then \
         chmod 600 /home/testuser/.ssh/environment; \
     fi
 
+# ── Keyboard-interactive-only transport (#4005 / #3377) ─────────────────────────
+# When KBDINT_ONLY is a non-empty build arg, sshd accepts ONLY keyboard-interactive
+# auth: PAM's pam_unix asks "Password: " as a keyboard-interactive prompt (not the
+# SSH password method), so a remote agent whose auth method is
+# "Keyboard-Interactive (OTP / 2FA)" must answer it in the desktop's in-app prompt.
+# The live driver for the agent-transport KI connect (the `remote-agent-kbdint`
+# compose service). sshd keeps the FIRST value it reads and sshd_config.d/ is
+# included at the top of sshd_config, so this drop-in wins over the stock
+# `KbdInteractiveAuthentication no`. The default image leaves the arg empty.
+ARG KBDINT_ONLY=""
+RUN if [ -n "$KBDINT_ONLY" ]; then \
+        printf '%s\n' \
+            'UsePAM yes' \
+            'KbdInteractiveAuthentication yes' \
+            'PasswordAuthentication no' \
+            'PubkeyAuthentication no' \
+            'AuthenticationMethods keyboard-interactive' \
+            > /etc/ssh/sshd_config.d/10-kbdint-only.conf; \
+    fi
+
 # Deploy the pre-built agent binary to the POSIX default install path. The file
 # is staged into the build context by the harness fixture before `build`.
 COPY termihub-agent /home/testuser/.local/bin/termihub-agent
 RUN chown -R testuser:testuser /home/testuser/.local && \
     chmod 755 /home/testuser/.local/bin/termihub-agent
 
-# Generate host keys
-RUN ssh-keygen -A
+# Generate host keys (and validate the final config)
+RUN ssh-keygen -A && /usr/sbin/sshd -t
 
 EXPOSE 22
 

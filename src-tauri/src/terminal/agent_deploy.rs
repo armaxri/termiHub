@@ -369,34 +369,66 @@ pub fn deploy_agent(
         }
     }
 
-    // 5. Determine the platform-specific install plan. Windows hosts need
-    //    PowerShell/cmd commands and a different upload/install location; no
-    //    POSIX-only commands (`mkdir -p`, `mv -f`, `chmod`, `/tmp`) are issued.
+    // 5. Read the binary and re-verify the release signature over exactly the
+    //    bytes we upload (AGT-005, #3330: resolution already verified the file;
+    //    this closes the swap window).
+    bail_if_cancelled(cancel)?;
+    let binary_bytes = std::fs::read(&binary_path)
+        .map_err(|e| TerminalError::RemoteError(format!("Failed to read binary: {e}")))?;
+    agent_binary::verify_deploy_bytes(&binary_path, &binary_bytes, version)
+        .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
+
+    // 6–9. Upload, install, verify, resolve the install path.
+    let progress = |step: &str, message: &str, pct: f64| {
+        emit_progress(app_handle, agent_id, step, message, pct);
+    };
+    install_agent_bytes(
+        &session,
+        &remote_os,
+        remote_path,
+        &binary_bytes,
+        &progress,
+        cancel,
+    )
+}
+
+/// Upload already-resolved agent bytes over an authenticated `session` and
+/// install them — the host-side half of [`deploy_agent`] (steps after binary
+/// resolution).
+///
+/// Picks the platform-specific [`InstallPlan`] (Windows hosts get `cmd.exe` or
+/// PowerShell commands matching the detected OpenSSH `DefaultShell`; POSIX hosts
+/// the `mkdir -p`/`mv -f`/`chmod` plan at `remote_path`), uploads via SFTP,
+/// moves the binary into place, verifies it with `--version` and resolves the
+/// absolute install path. `progress(step, message, fraction)` reports each step.
+///
+/// Split out of [`deploy_agent`] (which needs a Tauri `AppHandle` to resolve the
+/// binary and emit events) so the live Windows SSH-host lane can drive the real
+/// install against a real OpenSSH server (#3684).
+pub fn install_agent_bytes(
+    session: &termihub_core::backends::ssh::handler::SshSession,
+    remote_os: &str,
+    remote_path: &str,
+    binary_bytes: &[u8],
+    progress: &dyn Fn(&str, &str, f64),
+    cancel: Option<&CancellationToken>,
+) -> Result<AgentDeployResult, TerminalError> {
+    // Determine the platform-specific install plan. Windows hosts need
+    // PowerShell/cmd commands and a different upload/install location; no
+    // POSIX-only commands (`mkdir -p`, `mv -f`, `chmod`, `/tmp`) are issued.
     let (plan, windows_shell): (InstallPlan, Option<agent_install::WindowsShell>) =
-        if agent_binary::is_windows_os(&remote_os) {
-            let shell = detect_windows_shell(&session);
+        if agent_binary::is_windows_os(remote_os) {
+            let shell = detect_windows_shell(session);
             info!("Remote host is Windows; using {shell:?} install commands");
             (windows_install_plan(shell), Some(shell))
         } else {
             (posix_install_plan(remote_path), None)
         };
 
-    // 6. Read binary and upload via SFTP
+    // Upload via SFTP.
     bail_if_cancelled(cancel)?;
-    emit_progress(
-        app_handle,
-        agent_id,
-        "uploading",
-        "Uploading agent binary…",
-        0.4,
-    );
-    let binary_bytes = std::fs::read(&binary_path)
-        .map_err(|e| TerminalError::RemoteError(format!("Failed to read binary: {e}")))?;
-    // AGT-005 (#3330): re-verify the release signature over exactly the bytes we
-    // upload (resolution already verified the file; this closes the swap window).
-    agent_binary::verify_deploy_bytes(&binary_path, &binary_bytes, version)
-        .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
-    upload_binary_or_rollback(&session, &binary_bytes, &plan.upload_path, cancel)?;
+    progress("uploading", "Uploading agent binary…", 0.4);
+    upload_binary_or_rollback(session, binary_bytes, &plan.upload_path, cancel)?;
     info!(
         "Uploaded {} bytes to {}",
         binary_bytes.len(),
@@ -406,19 +438,13 @@ pub fn deploy_agent(
     // A cancel that landed during the upload must not leave the temp file
     // behind — roll it back before returning (G10, #1242).
     if let Err(e) = bail_if_cancelled(cancel) {
-        rollback_partial_upload(&session, &plan.upload_path);
+        rollback_partial_upload(session, &plan.upload_path);
         return Err(e);
     }
 
-    // 7. Install: create dir + move binary into place (POSIX also sets +x).
-    emit_progress(
-        app_handle,
-        agent_id,
-        "installing",
-        "Installing agent binary…",
-        0.7,
-    );
-    run_remote_command(&session, &plan.install_command).map_err(|e| {
+    // Install: create dir + move binary into place (POSIX also sets +x).
+    progress("installing", "Installing agent binary…", 0.7);
+    run_remote_command(session, &plan.install_command).map_err(|e| {
         // Keep a timeout typed so the UI reports the frozen server (#3698).
         if e.is_timeout() {
             e
@@ -427,18 +453,12 @@ pub fn deploy_agent(
         }
     })?;
 
-    // 8. Verify
+    // Verify
     bail_if_cancelled(cancel)?;
-    emit_progress(
-        app_handle,
-        agent_id,
-        "verifying",
-        "Verifying installation…",
-        0.9,
-    );
+    progress("verifying", "Verifying installation…", 0.9);
     // A frozen server during verify fails the deploy with the typed timeout
     // rather than reporting "installed but --version failed" (#3698).
-    let verify_output = match run_remote_command(&session, &plan.verify_command) {
+    let verify_output = match run_remote_command(session, &plan.verify_command) {
         Err(e) if e.is_timeout() => return Err(e),
         other => other,
     };
@@ -466,7 +486,7 @@ pub fn deploy_agent(
     // Resolve the concrete install path. On Windows this expands
     // `%LOCALAPPDATA%`/`$env:LOCALAPPDATA` to an absolute, shell-agnostic path.
     let installed_path = match windows_shell {
-        Some(shell) => run_remote_command(&session, &windows_resolve_command(shell))
+        Some(shell) => run_remote_command(session, &windows_resolve_command(shell))
             .ok()
             .filter(|p| !p.is_empty())
             .or_else(|| Some(plan.install_path.clone())),
@@ -474,9 +494,7 @@ pub fn deploy_agent(
     };
 
     let success = installed_version.is_some();
-    emit_progress(
-        app_handle,
-        agent_id,
+    progress(
         "done",
         if success {
             "Agent deployed successfully"

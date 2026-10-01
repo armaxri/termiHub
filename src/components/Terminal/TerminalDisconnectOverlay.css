@@ -93,3 +93,10 @@
   word-break: break-word;
   white-space: pre-wrap;
 }
+
+/* Files-only "no shell" panel (#4078): informational, not a warning. */
+.terminal-files-only-panel__icon {
+  color: var(--accent-color);
+  opacity: 0.85;
+  flex-shrink: 0;
+}

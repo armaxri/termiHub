@@ -93,3 +93,32 @@ def test_windows_without_the_fixture_is_unavailable(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(local_agent, "_IS_WINDOWS", True)
     with pytest.raises(LocalAgentUnavailable, match="native sshd fixture"):
         local_agent_endpoint()
+
+
+def _no_agent_build(monkeypatch: pytest.MonkeyPatch) -> None:
+    def missing() -> Path:
+        raise FileNotFoundError("built agent not found")
+
+    monkeypatch.setattr(local_agent, "agent_binary_path", missing)
+
+
+def test_missing_agent_build_is_unavailable_by_default(
+    native_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("TERMIHUB_NATIVE_SSHD_AGENT_BIN")
+    _no_agent_build(monkeypatch)
+    with pytest.raises(LocalAgentUnavailable, match="built agent not found"):
+        local_agent_endpoint()
+
+
+def test_sshd_only_endpoint_tolerates_a_missing_agent_build(
+    native_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The macOS live tunnels need only the sshd, not the agent (#4005)."""
+    monkeypatch.delenv("TERMIHUB_NATIVE_SSHD_AGENT_BIN")
+    _no_agent_build(monkeypatch)
+    endpoint = local_agent_endpoint(require_agent=False)
+    assert isinstance(endpoint, NativeSshdFixture)
+    assert endpoint.port == 30400
+    with pytest.raises(LocalAgentUnavailable, match="require_agent=False"):
+        endpoint.agent_binary_path

@@ -69,6 +69,11 @@ class AgentUi(HarnessMixin):
     SETUP_CANCEL = "agent-setup-cancel"
     SETUP_REMOTE_PATH = "agent-setup-remote-path"
     SETUP_ARCH = "agent-setup-arch-select"
+    SETUP_SUBMIT = "agent-setup-submit"
+    SETUP_SOURCE_LOCAL = "agent-setup-source-local"
+    SETUP_BINARY_PATH = "agent-setup-binary-path"
+    SETUP_PROGRESS = "agent-setup-progress"
+    SETUP_CANCEL_RUNNING = "agent-setup-cancel-running"
 
     # Deferred-update banner (#1352), rendered under a *connected* agent's row.
     # The id suffix is the agent id. Apply Now's *deferred/busy* outcome is driven
@@ -291,6 +296,19 @@ class AgentUi(HarnessMixin):
             timeout=timeout,
         )
 
+    def open_persistent_definition(self, def_id: str) -> None:
+        """Double-click a persistent definition's sidebar row (start + attach a tab)."""
+        self.driver.double_click(f"agent-definition-{def_id}")
+
+    def persistent_dot_is_green(self, def_id: str) -> bool:
+        """Whether the definition's run-state dot shows the green (live) tone.
+
+        ``running`` / ``attached`` render the ``connected`` tone; stopped renders a
+        dimmed neutral dot (see ``persistentRunStateDotStyle``).
+        """
+        classes = self.driver.get_attribute(f"persistent-state-dot-{def_id}", "class") or ""
+        return "status-dot--connected" in classes.split()
+
     # ── connection-error dialog ─────────────────────────────────────────────────
     def connection_error_present(self) -> bool:
         return self.driver.exists(self.ERROR_TITLE)
@@ -323,6 +341,34 @@ class AgentUi(HarnessMixin):
         succeeds.
         """
         return self.driver.exists(self.SETUP_ARCH)
+
+    def start_local_agent_setup(self, binary_path: str) -> None:
+        """From the ready setup form, pick a local binary and click Start Setup.
+
+        Waits until the dialog enters its running phase (the live-step row with
+        the Cancel Setup button), which happens once the backend opened the setup
+        SSH session and the background upload is under way.
+        """
+        self.driver.click(self.SETUP_SOURCE_LOCAL)
+        self.wait(
+            lambda: self.driver.exists(self.SETUP_BINARY_PATH),
+            what="the local-binary path field",
+        )
+        self.driver.type(self.SETUP_BINARY_PATH, binary_path)
+        self.driver.click(self.SETUP_SUBMIT)
+        self.wait(
+            lambda: self.driver.exists(self.SETUP_CANCEL_RUNNING),
+            what="the agent setup to enter its running phase",
+            timeout=40.0,
+        )
+
+    def cancel_running_agent_setup(self) -> None:
+        """Click Cancel Setup on a running setup and wait for the dialog to close."""
+        self.driver.click(self.SETUP_CANCEL_RUNNING)
+        self.wait(
+            lambda: not self.driver.exists(self.SETUP_CANCEL_RUNNING),
+            what="the agent-setup dialog to close after Cancel Setup",
+        )
 
     def cancel_agent_setup(self) -> None:
         """Cancel the agent-setup dialog and wait for it to close."""

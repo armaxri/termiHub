@@ -1,4 +1,4 @@
-"""Content-Security-Policy guard (#2059).
+"""Content-Security-Policy guard (#2059, #4011).
 
 CSP is only enforced in a **production** WebView build (never in ``dev``), so a
 policy that blocks something the app needs — the class of regression that nearly
@@ -6,6 +6,18 @@ shipped in #2048 — is invisible until a real build is driven. This suite close
 that gap: it launches the built app under the enforced CSP, confirms the app
 boots and a terminal actually renders (output flows back), and asserts the
 frontend saw **zero** CSP violations.
+
+Beyond boot, it drives the three surfaces that load code or media the default
+policy could block (WA-CI-035, #3627, #4011), asserting zero violations after
+each:
+
+- the **editor**: a ``.toml`` file opens in Monaco, whose highlighting comes from
+  Shiki's TextMate engine (Oniguruma WASM, needs ``'wasm-unsafe-eval'``) and whose
+  language services run in bundled Monaco workers (``worker-src``);
+- a **SIXEL** inline image printed in a terminal (decoded to a canvas through
+  ``createImageBitmap``); POSIX shells only, since the bytes are ``cat``-ed;
+- the **clock-widget** example JavaScript plugin (``examples/plugins``), whose
+  code the frontend-plugin sandbox worker loads from the ``plugin://`` origin.
 
 Runs on every non-macOS integration leg (Linux/Windows). The bridge itself needs
 a loopback ``ws://`` that the production CSP forbids; the test-bridge build
@@ -15,17 +27,93 @@ Every other directive, including this platform's IPC origin, is identical to
 production, so a broken shipped CSP still fails here.
 """
 
+import json
+import shutil
+import sys
+import time
+from pathlib import Path
+
 import pytest
 
-from termihub_harness import SystemTest, TerminalUi
+from termihub_harness import (
+    EditorUi,
+    FilesUi,
+    PluginsUi,
+    ShellFsUi,
+    SidebarUi,
+    SystemTest,
+    TabsUi,
+    TerminalUi,
+    unique_name,
+)
 
 pytestmark = pytest.mark.integration
 
 # Must match CSP_VIOLATION_SINK_TESTID in src/security/cspViolationReporter.ts.
 CSP_SINK = "csp-violations"
 
+#: How long a surface must stay violation-free after it rendered. A violation is
+#: reported asynchronously (``securitypolicyviolation`` fires after the blocked
+#: load), so a single read straight after the render could miss it.
+SETTLE_SECONDS = 3.0
 
-class TestContentSecurityPolicy(TerminalUi, SystemTest):
+#: A 4x6 px red SIXEL image (DCS q … ST) — the same bytes as
+#: ``test_terminal_inline_images.py``.
+SIXEL = b"\x1bPq#0;2;100;0;0#0~~~~-\x1b\\"
+
+#: The example JavaScript status-bar plugin shipped in the repo.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+CLOCK_PLUGIN_SRC = REPO_ROOT / "examples" / "plugins" / "clock-widget"
+CLOCK_PLUGIN_ID = "clock-widget"
+#: ``PluginStatusBarWidgets.tsx`` mounts a widget as ``plugin-widget-<widget id>``.
+CLOCK_WIDGET_TESTID = "plugin-widget-clock-widget"
+
+
+class TestContentSecurityPolicy(
+    TerminalUi, TabsUi, SidebarUi, FilesUi, EditorUi, ShellFsUi, PluginsUi, SystemTest
+):
+    # -- helpers ---------------------------------------------------------------
+    def _violations(self) -> tuple[str, str]:
+        """The sink's violation count and its details text."""
+        assert self.driver.exists(CSP_SINK), (
+            "CSP violation sink missing — the frontend did not boot, or the "
+            "reporter was removed from main.tsx"
+        )
+        return (
+            self.driver.get_attribute(CSP_SINK, "data-count"),
+            self.driver.get_text(CSP_SINK),
+        )
+
+    def _assert_no_violations(self, surface: str) -> None:
+        """Zero violations now and for :data:`SETTLE_SECONDS` afterwards."""
+        deadline = time.monotonic() + SETTLE_SECONDS
+        while True:
+            count, details = self._violations()
+            assert count == "0", (
+                f"the shipped CSP blocked {count} resource(s) with {surface}:\n{details}"
+            )
+            if time.monotonic() >= deadline:
+                return
+            time.sleep(0.5)
+
+    def _seed_clock_plugin(self) -> None:
+        """Install the clock-widget example as an enabled plugin, gate on.
+
+        Runs while the app is down (the restart's ``between`` hook), exactly like
+        :meth:`PluginsUi.write_sandbox_plugin`, so the relaunch scans it, promotes
+        it to ``active`` and — with the frontend-plugin gate persisted on — loads
+        its JS into the sandbox worker at startup.
+        """
+        dest = self.plugins_root() / CLOCK_PLUGIN_ID
+        shutil.rmtree(dest, ignore_errors=True)
+        shutil.copytree(CLOCK_PLUGIN_SRC, dest, ignore=shutil.ignore_patterns("*.md"))
+        state = {"plugins": {CLOCK_PLUGIN_ID: {"enabled": True, "installedAt": 1_700_000_000_000}}}
+        (self.plugins_root() / "plugin-state.json").write_text(
+            json.dumps(state, indent=2), encoding="utf-8"
+        )
+        self.write_gate_setting(True)
+
+    # -- tests -------------------------------------------------------------------
     def test_app_boots_and_terminal_renders_under_csp(self):
         # A terminal that opens, runs a command, and echoes output back proves
         # scripts executed and IPC worked under the enforced CSP — i.e. the
@@ -37,10 +125,56 @@ class TestContentSecurityPolicy(TerminalUi, SystemTest):
     def test_no_csp_violations_were_reported(self):
         # The reporter installs its sink before React mounts, so its presence
         # confirms the frontend booted far enough to run main.tsx.
-        assert self.driver.exists(CSP_SINK), (
-            "CSP violation sink missing — the frontend did not boot, or the "
-            "reporter was removed from main.tsx"
-        )
-        count = self.driver.get_attribute(CSP_SINK, "data-count")
-        details = self.driver.get_text(CSP_SINK)
+        count, details = self._violations()
         assert count == "0", f"the shipped CSP blocked {count} resource(s):\n{details}"
+
+    def test_editor_with_a_shiki_grammar_reports_no_violations(self):
+        # TOML is one of the built-in Shiki-backed languages
+        # (monacoCustomLanguages.ts), so the open file is tokenised by the
+        # TextMate/Oniguruma WASM engine and Monaco starts its bundled workers.
+        self.ensure_terminal()
+        self.remove_home_glob("e2e_csp_*")
+        name = f"e2e_csp_{unique_name('f')}.toml"
+        self.write_home_file(name, '[package]\nname = "csp"\nversion = "1.0.0"\n')
+        try:
+            self.open_file_browser()
+            self.open_file_in_editor(name)
+            self.wait(
+                lambda: (self.editor_status() or {}).get("language") == "toml",
+                what="the editor to open the file as TOML",
+            )
+            self._assert_no_violations("the editor open on a Shiki-highlighted file")
+        finally:
+            self.remove_home(name)
+
+    @pytest.mark.skipif(sys.platform.startswith("win"), reason="drives `cat` in a POSIX shell")
+    def test_sixel_inline_image_reports_no_violations(self):
+        # The image bytes are a file on disk that `cat` prints, so no escape
+        # sequence is typed into the shell (#4025).
+        image = f"th_csp_sixel_{unique_name('i')}.txt"
+        self.write_home_bytes(image, b"TH_CSP_SIXEL_BEFORE\n" + SIXEL + b"TH_CSP_SIXEL_AFTER\n")
+        try:
+            self.restart_app()
+            self.ensure_terminal()
+            self.run_command(f"cat ~/{image}")
+            self.wait_for_output("TH_CSP_SIXEL_AFTER")
+            self.wait(
+                lambda: (self.driver.inspect_terminal()["inlineImages"] or {}).get(
+                    "storageUsage", 0
+                )
+                > 0,
+                what="the SIXEL image to be decoded and stored",
+            )
+            self._assert_no_violations("a SIXEL image in the terminal")
+        finally:
+            self.remove_home(image)
+
+    def test_clock_widget_plugin_reports_no_violations(self):
+        assert CLOCK_PLUGIN_SRC.is_dir(), f"example plugin missing at {CLOCK_PLUGIN_SRC}"
+        self.restart_app(between=self._seed_clock_plugin)
+        # A rendered widget proves the plugin's JS ran in the sandbox worker.
+        self.wait(
+            lambda: self.driver.exists(CLOCK_WIDGET_TESTID),
+            what="the clock-widget plugin's status-bar widget to render",
+        )
+        self._assert_no_violations("the clock-widget JavaScript plugin loaded")

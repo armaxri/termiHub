@@ -58,6 +58,44 @@ SSH_TUNNEL_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_TUNNEL_PORT", 2207)
 #: auto-assert that the server allocates a forwarded ``$DISPLAY`` (#957).
 SSH_X11_SERVICE = "ssh-x11"
 SSH_X11_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_X11_PORT", 2208)
+#: Service + host port for the two-factor SSH container (#3384): OpenSSH with
+#: ``AuthenticationMethods password,keyboard-interactive
+#: publickey,keyboard-interactive``, so a correct password or key is only a
+#: partial success and keyboard-interactive then asks "Verification code: " (see
+#: ``tests/docker/ssh-mfa``). The live driver for the in-app SSH Authentication
+#: dialog (#3371). Same ``testuser`` / ``testpass`` and fixture keys as the others.
+SSH_MFA_SERVICE = "ssh-mfa"
+SSH_MFA_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_MFA_PORT", 2216)
+#: ``container_name`` suffix of :data:`SSH_MFA_SERVICE` (``<project>-ssh-mfa``).
+SSH_MFA_CONTAINER_SUFFIX = "ssh-mfa"
+#: The fixture's fixed one-time code (``pam_fixture_otp.c``).
+SSH_MFA_OTP = "424242"
+#: Service + host port for the password-required-sudoer SSH container: the
+#: account password is also the sudo password, and it ships a root-owned
+#: :data:`ELEVATED_TARGET_PATH` (see ``tests/docker/ssh-sudo/Dockerfile``).
+SSH_SUDO_SERVICE = "ssh-sudo"
+SSH_SUDO_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_SUDO_PORT", 2212)
+#: Service + host port for the shell-but-no-``sudo`` SSH container, with the
+#: same root-owned :data:`ELEVATED_TARGET_PATH`.
+SSH_NOSUDO_SERVICE = "ssh-nosudo"
+SSH_NOSUDO_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_NOSUDO_PORT", 2213)
+#: Root-owned (``root:root``, 0644) file on ``ssh-sudo`` / ``ssh-nosudo`` that the
+#: test user can read but not write — the editor's read-only / sudo target.
+ELEVATED_TARGET_DIR = "/etc"
+ELEVATED_TARGET_NAME = "termihub-elevated-target.txt"
+ELEVATED_TARGET_PATH = f"{ELEVATED_TARGET_DIR}/{ELEVATED_TARGET_NAME}"
+#: Service + host port for the jump-host bastion (key auth, TCP forwarding on).
+#: It bridges the host to :data:`SSH_JUMP_TARGET_SERVICE` on the isolated
+#: ``jumphost-net`` (see ``tests/docker/ssh-jumphost-bastion/Dockerfile``).
+SSH_BASTION_SERVICE = "ssh-jumphost-bastion"
+SSH_BASTION_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_BASTION_PORT", 2204)
+#: ``container_name`` suffix of :data:`SSH_BASTION_SERVICE` (``<project>-ssh-bastion``).
+SSH_BASTION_CONTAINER_SUFFIX = "ssh-bastion"
+#: The jump-host target: no host port, reachable only through the bastion, at
+#: this docker-network name and port. Its home holds ``marker.txt``.
+SSH_JUMP_TARGET_SERVICE = "ssh-jumphost-target"
+SSH_JUMP_TARGET_HOST = "ssh-jumphost-target"
+SSH_JUMP_TARGET_PORT = 22
 #: Credentials shared by the test SSH containers.
 SSH_USERNAME = "testuser"
 SSH_PASSWORD = "testpass"
@@ -110,6 +148,92 @@ VNC_QUADRANT_COLORS: dict[str, tuple[int, int, int]] = {
     "bottom-right": (255, 255, 255),
 }
 
+# ── RDP fixture coordinates (mirror tests/docker/docker-compose.yml) ─────────
+# One container (``rdp-server``, profile ``rdp``) runs two servers: xrdp with TLS
+# security on 3389 and a FreeRDP shadow server with NLA/CredSSP on 3390. Naming
+# the service in ``compose up -d <service>`` activates its profile, exactly as
+# for the VNC fixtures. See ``tests/docker/rdp-server/`` and ``core/tests/rdp.rs``.
+#: Host the published RDP ports are reachable on.
+RDP_HOST = "127.0.0.1"
+#: Service + host port of the xrdp server (TLS, PAM logon, xorgxrdp session).
+RDP_SERVICE = "rdp-server"
+RDP_PORT = dev_local.service_port("TERMIHUB_TEST_RDP_PORT", 2601)
+#: Host port of the same container's FreeRDP shadow server (NLA/CredSSP).
+RDP_NLA_PORT = dev_local.service_port("TERMIHUB_TEST_RDP_NLA_PORT", 2602)
+#: ``container_name`` suffix of :data:`RDP_SERVICE` (``<project>-rdp``).
+RDP_CONTAINER_SUFFIX = "rdp"
+#: The fixture's RDP account (both servers).
+RDP_USERNAME = "testuser"
+RDP_PASSWORD = "testpass"
+#: The xrdp session paints its whole root window this colour (``startwm.sh``);
+#: xrdp's own grey login screen never shows it.
+RDP_DESKTOP_COLOR = (255, 0, 0)
+#: The FreeRDP shadow server's Xvfb root colour and size (``entrypoint.sh``).
+RDP_NLA_DESKTOP_COLOR = (0, 0, 255)
+#: Env var the app's RDP backend reads the sidecar path from (mirrors
+#: ``rdp_sidecar::HELPER_PATH_ENV``).
+RDP_HELPER_ENV = "TERMIHUB_RDP_HELPER"
+#: The sidecar's binary name as ``scripts/build-rdp-sidecar.sh`` builds it.
+RDP_HELPER_NAME = (
+    "termihub-rdp-helper.exe" if platform.system() == "Windows" else "termihub-rdp-helper"
+)
+
+#: An X.224 Connection Request carrying an RDP Negotiation Request for TLS +
+#: CredSSP (MS-RDPBCGR 2.2.1.1): 4-byte TPKT header, 7-byte X.224 CR TPDU, 8-byte
+#: RDP_NEG_REQ. A live RDP server answers with a TPKT (``03 00``) Connection
+#: Confirm; Docker's port forwarder alone accepts and then just closes.
+_RDP_X224_CONNECTION_REQUEST = bytes.fromhex(
+    "03000013" "0ee00000000000" "0100080003000000"
+)
+
+
+def find_rdp_helper() -> Optional[Path]:
+    """The built ``termihub-rdp-helper`` sidecar the app should spawn, if any.
+
+    ``$TERMIHUB_RDP_HELPER`` wins (when it names a file), else the debug/release
+    output of ``scripts/build-rdp-sidecar.sh`` under ``rdp-sidecar/target/``. The
+    app resolves the helper next to its own executable otherwise, which a
+    harness-built app never has — so the RDP suites point it here explicitly.
+    """
+    override = os.environ.get(RDP_HELPER_ENV)
+    if override:
+        path = Path(override)
+        return path if path.is_file() else None
+    for profile in ("debug", "release"):
+        path = REPO_ROOT / "rdp-sidecar" / "target" / profile / RDP_HELPER_NAME
+        if path.is_file():
+            return path
+    return None
+
+
+def wait_for_rdp(host: str, port: int, *, timeout: float) -> None:
+    """Block until an RDP server on ``host:port`` answers an X.224 Connection Request.
+
+    RDP clients speak first, so :func:`wait_for_banner` cannot be used, and a bare
+    TCP connect only proves Docker's forwarder is up. Sending the first PDU of a
+    real connect and reading a TPKT reply proves the server itself is listening.
+    Raises :class:`ContainerRuntimeUnavailable` on timeout.
+    """
+    deadline = time.monotonic() + timeout
+    last: object = None
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=2.0) as sock:
+                sock.settimeout(2.0)
+                sock.sendall(_RDP_X224_CONNECTION_REQUEST)
+                reply = sock.recv(4)
+                if reply.startswith(b"\x03\x00"):
+                    return
+                last = reply
+        except OSError as exc:
+            last = exc
+        time.sleep(0.25)
+    raise ContainerRuntimeUnavailable(
+        f"{host}:{port} did not answer an RDP connection request within {timeout}s "
+        f"(last: {last!r})"
+    )
+
+
 # ── Remote-agent fixture coordinates (mirror tests/docker/docker-compose.yml) ──
 #: Service + host port for the deployed-agent SSH container (compose profile
 #: ``agent``). Unlike ``ssh-password``, this image ships the ``termihub-agent``
@@ -125,6 +249,15 @@ REMOTE_AGENT_PORT = dev_local.service_port("TERMIHUB_TEST_REMOTE_AGENT_PORT", 22
 REMOTE_AGENT_PENDING_SERVICE = "remote-agent-pending-update"
 REMOTE_AGENT_PENDING_PORT = dev_local.service_port(
     "TERMIHUB_TEST_REMOTE_AGENT_PENDING_PORT", 2214
+)
+#: Service + host port for the deployed-agent container behind a
+#: keyboard-interactive-only sshd (compose profile ``agent``, #4005): the same
+#: image built with ``KBDINT_ONLY``, so PAM asks the password as a
+#: keyboard-interactive prompt and a remote agent with the "Keyboard-Interactive"
+#: auth method must answer it in the in-app SSH Authentication dialog (#3377).
+REMOTE_AGENT_KBDINT_SERVICE = "remote-agent-kbdint"
+REMOTE_AGENT_KBDINT_PORT = dev_local.service_port(
+    "TERMIHUB_TEST_REMOTE_AGENT_KBDINT_PORT", 2217
 )
 #: Version the armed image advertises (mirrors the compose build arg), so the test
 #: can assert the banner names it.
@@ -632,8 +765,23 @@ class SshServerControl:
         # listening for other/future sessions (only these PIDs die).
         self._exec(["kill", "-9", *targets])
 
-    def _exec(self, argv: Sequence[str], *, timeout: float = 30.0) -> str:
+    def read_file(self, path: str) -> str:
+        """The contents of ``path`` inside the container (read as root).
+
+        Newlines are kept exactly (no ``text=True`` translation), so a test can
+        tell an LF file from a CRLF one.
+        """
+        return self._exec(["cat", path], text=False).decode("utf-8")
+
+    def path_exists(self, path: str) -> bool:
+        """Whether ``path`` exists inside the container (e.g. a leftover upload)."""
+        out = self._exec(["sh", "-c", 'if [ -e "$1" ]; then echo yes; else echo no; fi', "sh", path])
+        return out.strip() == "yes"
+
+    def _exec(self, argv: Sequence[str], *, timeout: float = 30.0, text: bool = True):
         """Run ``argv`` inside the container via the detected runtime.
+
+        Returns stdout as ``str`` (``text=True``, the default) or raw ``bytes``.
 
         Raises :class:`ContainerRuntimeUnavailable` (→ a clean ``pytest.skip`` at
         the call site) when no runtime is reachable or the exec fails.
@@ -646,17 +794,23 @@ class SshServerControl:
         cmd = [self._runtime, "exec", self._container, *argv]
         try:
             result = subprocess.run(
-                cmd, check=True, timeout=timeout, capture_output=True, text=True
+                cmd, check=True, timeout=timeout, capture_output=True, text=text
             )
         except subprocess.CalledProcessError as exc:
+            output = exc.stderr or exc.stdout
+            if isinstance(output, bytes):
+                output = output.decode("utf-8", "replace")
             raise ContainerRuntimeUnavailable(
                 f"`exec` into {self._container} failed (exit {exc.returncode}):\n"
-                f"{_tail(exc.stderr or exc.stdout)}"
+                f"{_tail(output)}"
             ) from exc
         except subprocess.TimeoutExpired as exc:
+            output = exc.stderr
+            if isinstance(output, bytes):
+                output = output.decode("utf-8", "replace")
             raise ContainerRuntimeUnavailable(
                 f"`exec` into {self._container} timed out after {timeout}s:\n"
-                f"{_tail(exc.stderr)}"
+                f"{_tail(output)}"
             ) from exc
         return result.stdout
 
@@ -689,7 +843,20 @@ class ContainerControl:
         """Restart the container, resetting its server to the image's state."""
         self._run(["restart", "-t", str(grace), self.container])
 
-    def _run(self, args: Sequence[str], *, timeout: float = 60.0) -> None:
+    def logs(self) -> str:
+        """The container's combined stdout + stderr log so far.
+
+        The SSH fixtures run ``sshd -D -e``, so every auth decision lands here
+        (``Accepted keyboard-interactive/pam for testuser …``) — a server-side
+        signal a test can count before and after a connect, independent of what
+        the UI shows (#4005).
+        """
+        result = self._run(["logs", self.container])
+        return (result.stdout or "") + (result.stderr or "")
+
+    def _run(
+        self, args: Sequence[str], *, timeout: float = 60.0
+    ) -> "subprocess.CompletedProcess[str]":
         """Run a runtime subcommand, mapping failures to the skip-signal error."""
         if self._runtime is None:
             raise ContainerRuntimeUnavailable(
@@ -697,7 +864,7 @@ class ContainerControl:
                 "(need Docker or Podman)"
             )
         try:
-            subprocess.run(
+            return subprocess.run(
                 [self._runtime, *args],
                 check=True,
                 timeout=timeout,
@@ -714,3 +881,145 @@ class ContainerControl:
                 f"`{args[0]}` of {self.container} timed out after {timeout}s:\n"
                 f"{_tail(exc.stderr)}"
             ) from exc
+
+
+#: Run ``$CMD`` as the fixture user on the xrdp session's X display (:10 and up;
+#: :1 is the FreeRDP shadow server's Xvfb). Empty output when no session runs.
+_XRDP_SESSION_EXEC = (
+    'for d in /tmp/.X11-unix/X1?; do [ -e "$d" ] || continue; '
+    'su testuser -c "DISPLAY=:${d##*X} $CMD"; done'
+)
+#: The xrdp session's input probe log (``tests/docker/rdp-server/startwm.sh``).
+_XRDP_INPUT_LOG = "/home/testuser/termihub-input.log"
+
+
+class RdpSessionProbe(ContainerControl):
+    """Stop / start the RDP fixture and read what its xrdp session received.
+
+    The fixture session logs every key and button event the client sends
+    (``xev -root``) and can report its pointer position (``xdotool``), so a UI
+    test can prove input typed into the canvas really reached the server — not
+    just that the canvas handled a DOM event.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(RDP_CONTAINER_SUFFIX)
+
+    def restore(self, *, timeout: float = 90.0) -> None:
+        """Start the container (a no-op when running) and wait for both servers."""
+        self.start()
+        wait_for_rdp(RDP_HOST, RDP_PORT, timeout=timeout)
+        wait_for_rdp(RDP_HOST, RDP_NLA_PORT, timeout=timeout)
+
+    def _exec(self, script: str, *, env: Optional[dict[str, str]] = None) -> str:
+        if self._runtime is None:
+            raise ContainerRuntimeUnavailable(
+                f"no container runtime available to exec into {self.container}"
+            )
+        args = [self._runtime, "exec"]
+        for key, value in (env or {}).items():
+            args += ["-e", f"{key}={value}"]
+        try:
+            result = subprocess.run(
+                [*args, self.container, "bash", "-c", script],
+                check=True,
+                timeout=30.0,
+                capture_output=True,
+                text=True,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            raise ContainerRuntimeUnavailable(
+                f"`exec` into {self.container} failed: {exc}"
+            ) from exc
+        return result.stdout
+
+    def session_exec(self, command: str) -> str:
+        """Run ``command`` as the fixture user on the live xrdp session's display."""
+        return self._exec(_XRDP_SESSION_EXEC, env={"CMD": command})
+
+    def pointer(self) -> Optional[tuple[int, int]]:
+        """The session's pointer position, or ``None`` while no session runs."""
+        fields = dict(
+            part.split(":", 1)
+            for part in self.session_exec("xdotool getmouselocation").split()
+            if ":" in part
+        )
+        try:
+            return int(fields["x"]), int(fields["y"])
+        except (KeyError, ValueError):
+            return None
+
+    def move_pointer(self, x: int, y: int) -> None:
+        """Move the session's pointer server-side (to make a later move observable)."""
+        self.session_exec(f"xdotool mousemove {int(x)} {int(y)}")
+
+    def input_events(self, event: str, detail: str) -> int:
+        """How many ``event`` lines (``KeyPress``, ``ButtonPress``…) the session's
+        input probe logged whose details contain ``detail`` (e.g. ``"button 1,"``,
+        ``"keysym 0x61, a)"``). xev prints the details on the lines after the
+        event name, so each event line is paired with the next three."""
+        lines = self._exec(f"cat {_XRDP_INPUT_LOG} 2>/dev/null || true").splitlines()
+        return sum(
+            1
+            for i, line in enumerate(lines)
+            if line.startswith(event) and any(detail in nxt for nxt in lines[i : i + 4])
+        )
+
+
+#: POSIX-shell one-liner counting the bastion's authenticated SSH connections.
+#: OpenSSH 9.6 runs one ``sshd: <user> [priv]`` monitor per authenticated
+#: connection; a target session rides a ``direct-tcpip`` channel on its gateway
+#: connection and adds none, so the count is the number of gateway sessions. The
+#: scanning shell itself is skipped (``$$``) because its cmdline embeds the match.
+_SSHD_GATEWAY_COUNT = (
+    "n=0; for p in /proc/[0-9]*; do "
+    'pid=${p#/proc/}; '
+    '[ "$pid" = "$$" ] && continue; '
+    'c=$(tr "\\0" " " < "$p/cmdline" 2>/dev/null) || continue; '
+    f'case "$c" in "sshd: {SSH_USERNAME} [priv]"*) n=$((n+1));; esac; '
+    'done; echo "$n"'
+)
+
+
+class BastionControl(ContainerControl):
+    """Stop / restart the jump-host bastion and count its gateway sessions.
+
+    The jump-host reconnect test (MT-SSH-44, #3688) drops every session that
+    rides the bastion by stopping its container, brings it back, and then needs
+    to know how many gateway sessions the reconnected tabs opened through it —
+    one shared gateway, not one per tab. :meth:`gateway_sessions` reads that
+    from the bastion's own process table.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(SSH_BASTION_CONTAINER_SUFFIX)
+
+    @property
+    def available(self) -> bool:
+        """Whether a container runtime is reachable to control the bastion."""
+        return self._runtime is not None
+
+    def restore(self, *, timeout: float = 90.0) -> None:
+        """Start the bastion (a no-op when running) and wait for its SSH port."""
+        self.start()
+        wait_for_port(SSH_HOST, SSH_BASTION_PORT, timeout=timeout)
+
+    def gateway_sessions(self) -> int:
+        """Authenticated SSH connections the bastion is serving right now."""
+        if self._runtime is None:
+            raise ContainerRuntimeUnavailable(
+                f"no container runtime available to exec into {self.container}"
+            )
+        try:
+            result = subprocess.run(
+                [self._runtime, "exec", self.container, "sh", "-c", _SSHD_GATEWAY_COUNT],
+                check=True,
+                timeout=30.0,
+                capture_output=True,
+                text=True,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            raise ContainerRuntimeUnavailable(
+                f"`exec` into {self.container} failed: {exc}"
+            ) from exc
+        return int(result.stdout.strip() or "0")

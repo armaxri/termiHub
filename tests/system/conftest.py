@@ -1,6 +1,7 @@
 """Shared pytest fixtures and CLI options for the system-test harness."""
 
 import datetime
+import os
 import sys
 
 import pytest
@@ -19,17 +20,33 @@ from termihub_harness.manual import (
 )
 
 from termihub_harness import (
+    RDP_HELPER_ENV,
+    RDP_HOST,
+    RDP_NLA_PORT,
+    RDP_PORT,
+    RDP_SERVICE,
+    REMOTE_AGENT_KBDINT_PORT,
+    REMOTE_AGENT_KBDINT_SERVICE,
     REMOTE_AGENT_PENDING_PORT,
     REMOTE_AGENT_PENDING_SERVICE,
     REMOTE_AGENT_PORT,
     REMOTE_AGENT_SERVICE,
     SSH_BANNER_PORT,
     SSH_BANNER_SERVICE,
+    SSH_BASTION_PORT,
+    SSH_BASTION_SERVICE,
     SSH_HOST,
+    SSH_JUMP_TARGET_SERVICE,
     SSH_KEYS_PORT,
     SSH_KEYS_SERVICE,
+    SSH_MFA_PORT,
+    SSH_MFA_SERVICE,
     SSH_PASSWORD_PORT,
     SSH_PASSWORD_SERVICE,
+    SSH_NOSUDO_PORT,
+    SSH_NOSUDO_SERVICE,
+    SSH_SUDO_PORT,
+    SSH_SUDO_SERVICE,
     SSH_TUNNEL_PORT,
     SSH_TUNNEL_SERVICE,
     SSH_X11_PORT,
@@ -50,8 +67,10 @@ from termihub_harness import (
     SerialEchoPair,
     SerialEchoUnavailable,
     require_test_bridge_build,
+    find_rdp_helper,
     stage_remote_agent_binary,
     wait_for_banner,
+    wait_for_rdp,
 )
 
 
@@ -297,9 +316,57 @@ def ssh_banner_fixtures():
 
 
 @pytest.fixture(scope="session")
+def ssh_bastion_fixtures():
+    """Jump-host bastion (port 2204) plus its internal target (no host port).
+
+    The target lives only on the isolated ``jumphost-net``, so readiness is
+    probed on the bastion's port alone; a connect through the bastion proves the
+    target is up (MT-SSH-44, #3688).
+    """
+    fixture = ComposeFixture()
+    try:
+        fixture.ensure(
+            SSH_BASTION_SERVICE,
+            SSH_JUMP_TARGET_SERVICE,
+            ports=[(SSH_HOST, SSH_BASTION_PORT)],
+        )
+    except ContainerRuntimeUnavailable as exc:
+        pytest.skip(f"SSH jump-host container fixtures unavailable: {exc}")
+    return fixture
+
+
+@pytest.fixture(scope="session")
 def ssh_tunnel_fixtures():
     """Tunnel-target SSH container with internal HTTP (port 2207)."""
     return _ensure_ssh_services([(SSH_TUNNEL_SERVICE, SSH_TUNNEL_PORT)])
+
+
+@pytest.fixture(scope="session")
+def ssh_mfa_fixtures():
+    """Two-factor SSH container (port 2216) plus the key-auth ``ssh-keys`` (2203).
+
+    ``ssh-mfa`` asks a keyboard-interactive one-time code after a password or key
+    (#3384), driving the in-app SSH Authentication dialog (#3371). ``ssh-keys`` is
+    the jump-host *target* the ProxyJump test reaches through it — by its compose
+    service name on the shared ``test-net``.
+    """
+    return _ensure_ssh_services(
+        [(SSH_MFA_SERVICE, SSH_MFA_PORT), (SSH_KEYS_SERVICE, SSH_KEYS_PORT)]
+    )
+
+
+@pytest.fixture(scope="session")
+def ssh_permission_fixtures():
+    """The editor-permission SSH containers: ``ssh-sudo`` (2212, a
+    password-required sudoer) and ``ssh-nosudo`` (2213, a shell but no
+    ``sudo``). Both ship the root-owned ``/etc/termihub-elevated-target.txt``.
+    """
+    return _ensure_ssh_services(
+        [
+            (SSH_SUDO_SERVICE, SSH_SUDO_PORT),
+            (SSH_NOSUDO_SERVICE, SSH_NOSUDO_PORT),
+        ]
+    )
 
 
 @pytest.fixture(scope="session")
@@ -342,6 +409,42 @@ def vnc_vencrypt_fixtures():
     dynamic-resolution session's remote desktop really follows the tab.
     """
     return _ensure_vnc_service(VNC_VENCRYPT_SERVICE, VNC_VENCRYPT_PORT)
+
+
+@pytest.fixture(scope="session")
+def rdp_fixtures():
+    """xrdp (TLS, port 2601) + FreeRDP shadow (NLA, port 2602), profile ``rdp``.
+
+    RDP decodes through the separately built ``termihub-rdp-helper`` sidecar,
+    which a harness-built app has no copy of next to its executable. So this
+    points the app at the sidecar via ``$TERMIHUB_RDP_HELPER`` (inherited by
+    every app the harness launches afterwards) and skips the suite when none is
+    built — build it with ``./scripts/build-rdp-sidecar.sh`` (the nightly Linux
+    lane does, via ``scripts/internal/build-system-test-app.sh``). Readiness is
+    an answered X.224 Connection Request on each port, not a bare TCP connect.
+    """
+    helper = find_rdp_helper()
+    if helper is None:
+        pytest.skip(
+            "RDP sidecar not built: run ./scripts/build-rdp-sidecar.sh "
+            f"or set {RDP_HELPER_ENV}"
+        )
+    os.environ[RDP_HELPER_ENV] = str(helper)
+    fixture = ComposeFixture()
+    try:
+        # build=True: the session's input probe lives in the image (startwm.sh),
+        # so a stale local image without it must be rebuilt (cached layers make
+        # this cheap when nothing changed).
+        fixture.ensure(
+            RDP_SERVICE,
+            ports=[(RDP_HOST, RDP_PORT), (RDP_HOST, RDP_NLA_PORT)],
+            build=True,
+        )
+        wait_for_rdp(RDP_HOST, RDP_PORT, timeout=90.0)
+        wait_for_rdp(RDP_HOST, RDP_NLA_PORT, timeout=90.0)
+    except ContainerRuntimeUnavailable as exc:
+        pytest.skip(f"RDP container fixture unavailable: {exc}")
+    return fixture
 
 
 @pytest.fixture
@@ -410,6 +513,29 @@ def remote_agent_pending_fixtures():
         )
     except ContainerRuntimeUnavailable as exc:
         pytest.skip(f"armed deployed-agent container fixture unavailable: {exc}")
+    return fixture
+
+
+@pytest.fixture(scope="session")
+def remote_agent_kbdint_fixtures():
+    """Deployed-agent container behind a keyboard-interactive-only sshd (port 2217).
+
+    Same image as ``remote-agent`` built with ``KBDINT_ONLY``: PAM asks the
+    password as a keyboard-interactive prompt, so an agent whose auth method is
+    "Keyboard-Interactive" connects only once the in-app dialog is answered
+    (#3377 / #4005). Reuses the shared agent binary staging, and skips cleanly on
+    the same contract as :func:`remote_agent_fixtures`.
+    """
+    try:
+        stage_remote_agent_binary()
+        fixture = ComposeFixture()
+        fixture.ensure(
+            REMOTE_AGENT_KBDINT_SERVICE,
+            ports=[(SSH_HOST, REMOTE_AGENT_KBDINT_PORT)],
+            build=True,
+        )
+    except ContainerRuntimeUnavailable as exc:
+        pytest.skip(f"keyboard-interactive deployed-agent fixture unavailable: {exc}")
     return fixture
 
 

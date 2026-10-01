@@ -275,7 +275,7 @@ feat(scope): implement <feature name> (Closes #N)
 - For bug fixes, **always** add a regression test that would fail without the fix
 - For new features, add tests covering the core functionality and key edge cases
 - Run `./scripts/test.sh` after adding tests to verify they pass before committing
-- **Manual test tracking**: When a PR includes a test-plan step that cannot be automated, add it as an item in `tests/manual/*.yaml` with `release_gate: true` + `manual_reason` (genuinely manual: OS-native window/dialog, real hardware, visual paint) or `automation_issue: <N>` (automatable, tracked), reference the PR number, and run `python3 scripts/manual-inventory.py --write`. Do not add prose walkthrough headings to `docs/testing.md` (they were triaged away in #3695).
+- **Manual test tracking**: When a PR includes a test-plan step that cannot be automated, add it as an item in `tests/manual/*.yaml` with `release_gate: true` + `manual_reason` (genuinely manual: OS-native window/dialog, real hardware, visual paint) or `automation_issue: <N>` (automatable, tracked), and reference the PR number (no doc counts to update — they are not committed, #4070). Do not add prose walkthrough headings to `docs/testing.md` (they were triaged away in #3695).
 - **System/E2E tests**: run through the **Python bridge harness** (`tests/system/`, via `./scripts/test-system-py.sh`), which drives the app over a WebSocket bridge and works on macOS, Linux, and Windows. The WebdriverIO/`tauri-driver` scaffold was fully retired (#1027). The only remaining `tauri-driver` consumer is the smoke test (`scripts/smoke-test.sh`); `tauri-driver` still has no macOS WKWebView driver, so its UI checks are Linux/Windows-only (see ADR-5 in [architecture.md](../docs/architecture.md)). macOS-specific rendering must be verified via manual tests.
 
 ### Debugging / Logging
@@ -367,7 +367,7 @@ A PostToolUse hook in `.claude/settings.json` runs `scripts/internal/autoformat.
 **Before pushing or creating a PR**, complete all outstanding internal tasks first. Do not defer these to after pushing. When the user asks to push, **stop and report** which of the following items are still pending, then ask for permission before proceeding:
 
 1. **Change fragment** — for every user-facing change, `docs/changes/<branch-name>.md` exists with the Keep a Changelog notes (not `CHANGELOG.md`; see [Git Workflow](#git-workflow))
-2. **Manual test items** — a `tests/manual/*.yaml` item (plus `manual-inventory.py --write`) if the PR includes a step that cannot be automated
+2. **Manual test items** — a `tests/manual/*.yaml` item if the PR includes a step that cannot be automated
 3. **Concept documents** — if working on a `Concept` issue, ensure `docs/concepts/<name>.md` is written and committed
 4. **Other documentation** — any doc updates implied by the changes (architecture.md, README references, JSDoc, doc comments, etc.)
 5. **Code quality** — run `/simplify` on changed code to review for reuse, quality, and efficiency; commit any improvements as a separate commit

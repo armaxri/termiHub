@@ -41,6 +41,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::{reload, EnvFilter, Registry};
 
+use super::portable::detect_app_mode;
+
 /// The app's bundle identifier, matching `tauri.conf.json`.
 ///
 /// Used to build the platform log directory. Kept in sync with the bundle id by
@@ -167,7 +169,41 @@ pub type FileLogReloadHandle = reload::Handle<EnvFilter, Registry>;
 /// nothing live to reload.
 pub struct FileLogReload(pub Option<FileLogReloadHandle>);
 
+/// Name of the log subdirectory inside the portable `data/` directory.
+const PORTABLE_LOG_SUBDIR: &str = "logs";
+
 /// Resolve the directory the application log is written to.
+///
+/// In portable mode (#4065) this is `<portable data dir>/logs`, so a portable
+/// launch — from a USB stick, say — leaves nothing in the host's profile. Every
+/// other durable artifact derived from this directory (session transcripts in
+/// `sessions/`, local crash reports, the diagnostics bundle) follows it.
+/// Portable detection runs here directly because the subscriber is initialized
+/// before the Tauri app (and any `AppHandle`) exists.
+///
+/// Otherwise it follows each platform's own convention — see
+/// [`platform_log_dir`].
+///
+/// Returns `None` when no directory can be resolved, in which case file logging
+/// is skipped rather than guessed at.
+pub fn log_dir() -> Option<PathBuf> {
+    let portable_data_dir = detect_app_mode()
+        .ok()
+        .and_then(|mode| mode.data_dir().map(Path::to_path_buf));
+    resolve_log_dir(portable_data_dir.as_deref(), platform_log_dir())
+}
+
+/// Pick the log directory from explicit inputs: the portable `data/` directory
+/// wins when present, otherwise the platform directory. Split out from
+/// [`log_dir`] so the precedence is testable without a real portable install.
+fn resolve_log_dir(portable_data_dir: Option<&Path>, platform: Option<PathBuf>) -> Option<PathBuf> {
+    match portable_data_dir {
+        Some(data_dir) => Some(data_dir.join(PORTABLE_LOG_SUBDIR)),
+        None => platform,
+    }
+}
+
+/// The installed-mode log directory.
 ///
 /// Follows each platform's own convention rather than inventing one — notably
 /// on macOS this is `~/Library/Logs/<bundle-id>/`, which is where the #1570
@@ -178,10 +214,7 @@ pub struct FileLogReload(pub Option<FileLogReloadHandle>);
 /// - macOS: `~/Library/Logs/com.termihub.app`
 /// - Windows: `%LOCALAPPDATA%\com.termihub.app\logs`
 /// - Linux: `$XDG_DATA_HOME/com.termihub.app/logs` (i.e. `~/.local/share/...`)
-///
-/// Returns `None` when the platform base directory cannot be resolved, in which
-/// case file logging is skipped rather than guessed at.
-pub fn log_dir() -> Option<PathBuf> {
+fn platform_log_dir() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         dirs::home_dir().map(|h| h.join("Library").join("Logs").join(BUNDLE_ID))
@@ -547,8 +580,64 @@ mod tests {
     }
 
     #[test]
+    fn portable_mode_puts_the_log_under_the_portable_data_dir() {
+        // Regression for #4065: a portable launch must not write its log (or
+        // the transcripts / crash reports beside it) into the host's profile.
+        let data_dir = Path::new("/media/usb/termiHub/data");
+        let platform = Some(PathBuf::from(
+            "/home/user/.local/share/com.termihub.app/logs",
+        ));
+
+        let dir = resolve_log_dir(Some(data_dir), platform.clone())
+            .expect("a portable data dir always resolves a log dir");
+
+        assert_eq!(dir, data_dir.join("logs"));
+        assert!(
+            dir.starts_with(data_dir),
+            "portable log dir {dir:?} must stay inside the portable data dir"
+        );
+        assert_ne!(
+            Some(dir),
+            platform,
+            "portable mode must not use the profile"
+        );
+    }
+
+    #[test]
+    fn portable_mode_ignores_an_unresolvable_platform_dir() {
+        // A host without a resolvable profile base must not disable the log in
+        // portable mode: the portable folder is all it needs.
+        let data_dir = Path::new("/media/usb/termiHub/data");
+        assert_eq!(
+            resolve_log_dir(Some(data_dir), None),
+            Some(data_dir.join("logs"))
+        );
+    }
+
+    #[test]
+    fn installed_mode_uses_the_platform_log_dir() {
+        let platform = Some(PathBuf::from(
+            "/home/user/.local/share/com.termihub.app/logs",
+        ));
+        assert_eq!(resolve_log_dir(None, platform.clone()), platform);
+        assert_eq!(resolve_log_dir(None, None), None);
+    }
+
+    #[test]
+    fn log_dir_follows_the_detected_app_mode() {
+        // `log_dir()` is the composition of detection + resolution; whatever
+        // mode the test binary detects, the two must agree.
+        let expected = match detect_app_mode().expect("app mode resolves on test hosts") {
+            crate::utils::portable::AppMode::Portable { data_dir } => Some(data_dir.join("logs")),
+            crate::utils::portable::AppMode::Installed => platform_log_dir(),
+        };
+        assert_eq!(log_dir(), expected);
+    }
+
+    #[test]
     fn log_dir_matches_platform_convention() {
-        let dir = log_dir().expect("a platform log directory should resolve on test hosts");
+        let dir =
+            platform_log_dir().expect("a platform log directory should resolve on test hosts");
 
         assert!(
             dir.ends_with(BUNDLE_ID) || dir.ends_with(Path::new(BUNDLE_ID).join("logs")),

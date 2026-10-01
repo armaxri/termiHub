@@ -378,6 +378,8 @@ termiHub also writes a durable, size-capped log file that survives restarts and 
 | Windows  | `%LOCALAPPDATA%\com.termihub.app\logs\termihub.log` |
 | Linux    | `~/.local/share/com.termihub.app/logs/termihub.log` |
 
+In portable mode (a `portable.marker` file or `data/` folder next to the executable) the log lives in the portable folder instead, at `data/logs/termihub.log`, so nothing is written to the host's profile. Session transcripts and crash reports beside it follow the same rule.
+
 The file is rotated automatically and capped at roughly 15 MB total (the current file plus two archives named `termihub.1.log` / `termihub.2.log`), so it can never grow without bound. Passwords, key material, and terminal contents are never written to it.
 
 ### Controlling how much is logged

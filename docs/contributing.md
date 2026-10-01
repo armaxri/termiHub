@@ -269,7 +269,7 @@ one to read (it covers all earlier merges). **Watch `develop`'s own runs after
 merging**: a failure there is a real regression (or a new advisory) and needs a follow-up fix, since the PR
 that caused it was not gated on it. The nightly system-integration and Docker
 fixture lanes are unchanged, and a release additionally requires them green on the exact
-release commit (see [Release integration gate](#release-integration-gate)). The weekly **Vendored Forks** upstream-drift job keeps one
+release commit (see [Release integration gate](#release-integration-gate)). The nightly **WSL Live (Windows)** lane ([`wsl-live.yml`](../.github/workflows/wsl-live.yml), #4008) runs the live WSL tests against a real distribution; PRs touching the WSL code paths run it too. The weekly **Vendored Forks** upstream-drift job keeps one
 `supply-chain` tracking issue current (see [Vendored forks](supply-chain.md#vendored-forks)).
 
 **Concurrency rule (#3588).** Every workflow sets a per-ref `concurrency` group,
@@ -820,7 +820,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 See the [Manual Testing section in testing.md](testing.md#manual-testing) for the full checklist.
 
-After adding or deleting an item in `tests/manual/*.yaml` — or on a merge conflict in a `manual-inventory` block — run `python3 scripts/manual-inventory.py --write`; never hand-edit the generated counts in `docs/testing.md` / `docs/release-plan-0.1.0.md` (CI checks them with `--check`).
+Adding or deleting an item in `tests/manual/*.yaml` needs no doc update: the per-category counts are deliberately not committed anywhere (#4070), so test-automation PRs never conflict on them. View them with `python3 scripts/manual-inventory.py`; CI (`--check`) validates the corpus, publishes the table as a job summary, and fails if a doc reintroduces a committed count block.
 
 For UI changes, test at minimum:
 

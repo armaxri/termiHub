@@ -313,7 +313,11 @@ export function Tab({
         </span>
       )}
       {tab.spawned && (
-        <span className="tab__spawned-badge" title="Spawned container">
+        <span
+          className="tab__spawned-badge"
+          title="Spawned container"
+          data-testid={`tab-spawned-badge-${tab.id}`}
+        >
           Spawned
         </span>
       )}

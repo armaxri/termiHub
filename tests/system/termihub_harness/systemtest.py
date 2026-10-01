@@ -123,6 +123,12 @@ class SystemTest:
     #: not slow the common path.
     request_timeout: ClassVar[float] = DEFAULT_REQUEST_TIMEOUT
 
+    #: Portable launch flavor for the suite's app (``"marker"`` / ``"data"``, see
+    #: :mod:`termihub_harness.portable`), or ``None`` for the normal launch with
+    #: an isolated ``TERMIHUB_CONFIG_DIR``. Portable suites (#3691) set it to run
+    #: a staged copy of the app that must find its own ``data/`` dir.
+    portable_mode: ClassVar[Optional[str]] = None
+
     @pytest.fixture(scope="class", autouse=True)
     @classmethod
     def _system_test_app(cls, request: pytest.FixtureRequest):
@@ -143,7 +149,7 @@ class SystemTest:
         echo_logs = force_echo or not manual
         try:
             # fresh isolated config dir per suite
-            app = AppInstance(echo_logs=echo_logs)
+            app = AppInstance(echo_logs=echo_logs, portable=request.cls.portable_mode)
         except FileNotFoundError as exc:
             pytest.skip(str(exc))
         # A bridgeless build must fail loudly here, not time out 30s later (#3664).

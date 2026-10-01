@@ -189,10 +189,12 @@ impl<R: tauri::Runtime> GraphicalEventSink for tauri::AppHandle<R> {
 
 // ── Session record ─────────────────────────────────────────────────
 
-/// The host + fingerprint of a cert prompt awaiting the user's verdict, held so
-/// [`cert_decision`](GraphicalSessionManager::cert_decision) can persist the
-/// fingerprint on "Accept for host" (#1767).
-pub(crate) type PendingCert = Arc<Mutex<Option<(String, String)>>>;
+/// The cert prompt awaiting the user's verdict, held so
+/// [`cert_decision`](GraphicalSessionManager::cert_decision) can persist its
+/// host + fingerprint on "Accept for host" (#1767), and so a tab that subscribed
+/// after the prompt event fired can still fetch it
+/// ([`pending_cert_prompt`](GraphicalSessionManager::pending_cert_prompt), #4004).
+pub(crate) type PendingCert = Arc<Mutex<Option<RemoteDesktopCertPromptEvent>>>;
 
 /// A live graphical session.
 struct GraphicalSession {
@@ -516,8 +518,8 @@ impl GraphicalSessionManager {
         // send races a teardown), then clear the pending marker.
         let pending_entry = pending.lock().await.take();
         if accept && remember {
-            if let Some((host, fingerprint)) = &pending_entry {
-                self.trust_store.remember(host, fingerprint);
+            if let Some(prompt) = &pending_entry {
+                self.trust_store.remember(&prompt.host, &prompt.fingerprint);
             }
         }
 
@@ -616,6 +618,28 @@ impl GraphicalSessionManager {
     /// next full frame, so this forces a prompt repaint instead of waiting for
     /// the protocol's next natural keyframe. The re-emitted frame flows out on
     /// `remote-desktop-frame` through the session's already-running frame pump.
+    /// The certificate prompt the session is waiting on, if any (#4004).
+    ///
+    /// The cert pump emits `remote-desktop-cert-prompt` as soon as the sidecar
+    /// raises it — right after `connect` returns, which can be before the tab
+    /// has learned its session id and subscribed. A missed event would leave the
+    /// session blocked on a verdict nobody is asked for, so the tab fetches the
+    /// pending prompt once it listens. Cleared by [`Self::cert_decision`].
+    pub async fn pending_cert_prompt(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<RemoteDesktopCertPromptEvent>, TerminalError> {
+        let pending = {
+            let sessions = self.sessions.lock().await;
+            let s = sessions
+                .get(session_id)
+                .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+            s.pending_cert.clone()
+        };
+        let prompt = pending.lock().await.clone();
+        Ok(prompt)
+    }
+
     pub async fn request_full_frame(&self, session_id: &str) -> Result<(), TerminalError> {
         let conn = self.connection_of(session_id).await?;
         let guard = conn.lock().await;
@@ -1071,18 +1095,21 @@ pub(crate) async fn cert_pump<S: GraphicalEventSink>(
             }
             lookup @ (TrustLookup::Unknown | TrustLookup::Changed) => {
                 let changed = lookup == TrustLookup::Changed;
-                *pending.lock().await = Some((host.clone(), fingerprint.clone()));
                 if changed {
                     warn!(session_id = %session_id, host = %host, "RDP certificate fingerprint CHANGED for a trusted host (possible MITM)");
                 }
-                sink.emit_cert_prompt(&RemoteDesktopCertPromptEvent {
+                let event = RemoteDesktopCertPromptEvent {
                     session_id: session_id.clone(),
                     host: host.clone(),
                     fingerprint,
                     subject,
                     issuer,
                     changed,
-                });
+                };
+                // Record it before emitting, so a tab that subscribes after this
+                // event can still fetch it (`pending_cert_prompt`, #4004).
+                *pending.lock().await = Some(event.clone());
+                sink.emit_cert_prompt(&event);
                 // The verdict returns via `cert_decision`; keep pumping in case
                 // the backend re-prompts (it will not for a single connect).
             }
@@ -1642,6 +1669,17 @@ mod tests {
         host: &str,
         fingerprint: &str,
     ) -> RecordingSink {
+        run_cert_pump_with_pending(trust_store, host, fingerprint)
+            .await
+            .0
+    }
+
+    /// [`run_cert_pump`], also returning the pending-prompt slot it filled.
+    async fn run_cert_pump_with_pending(
+        trust_store: Arc<RdpTrustStore>,
+        host: &str,
+        fingerprint: &str,
+    ) -> (RecordingSink, PendingCert) {
         use termihub_core::connection::ConnectionType;
         let sink = RecordingSink::default();
         let (tx, rx) = tokio::sync::mpsc::channel(4);
@@ -1659,7 +1697,7 @@ mod tests {
             sink.clone(),
             connection,
             trust_store,
-            pending,
+            pending.clone(),
         ));
 
         tx.send(CertPrompt {
@@ -1671,7 +1709,32 @@ mod tests {
         .unwrap();
         drop(tx);
         handle.await.unwrap();
-        sink
+        (sink, pending)
+    }
+
+    #[tokio::test]
+    async fn cert_pump_keeps_an_unanswered_prompt_for_a_late_subscriber() {
+        // The prompt event can fire before the tab listens (#4004): the same
+        // prompt stays fetchable until the user decides.
+        let store = Arc::new(RdpTrustStore::in_memory());
+        let (sink, pending) = run_cert_pump_with_pending(store, "h:3389", "sha256:AA").await;
+        let emitted = sink.cert_prompts.lock().unwrap()[0].clone();
+        let kept = pending.lock().await.clone().expect("the prompt is kept");
+        assert_eq!(kept.session_id, emitted.session_id);
+        assert_eq!(kept.host, "h:3389");
+        assert_eq!(kept.fingerprint, "sha256:AA");
+        assert!(!kept.changed);
+    }
+
+    #[tokio::test]
+    async fn cert_pump_keeps_nothing_for_a_remembered_fingerprint() {
+        let store = Arc::new(RdpTrustStore::in_memory());
+        store.remember("h:3389", "sha256:AA");
+        let (_, pending) = run_cert_pump_with_pending(store, "h:3389", "sha256:AA").await;
+        assert!(
+            pending.lock().await.is_none(),
+            "auto-accepted: nothing to ask"
+        );
     }
 
     #[tokio::test]

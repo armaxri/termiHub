@@ -379,6 +379,30 @@ describe("TerminalDisconnectOverlay — error (reconnect failed) state", () => {
     // is the retry counter bump.
     expect(useAppStore.getState().terminalRetryCounters[TAB]).toBe(1);
   });
+
+  it("view-scrollback button enters view mode without retrying (MT-AGENT-09)", async () => {
+    harness.transport.setSession(TAB, failed("Failed to reconnect after 10 attempts"));
+    act(() => {
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
+    });
+    await flushSessionRegion();
+
+    const btn = container.querySelector(
+      "[data-testid='terminal-disconnect-view-btn']"
+    ) as HTMLButtonElement | null;
+    expect(btn).not.toBeNull();
+    expect(btn!.textContent).toContain("View Scrollback");
+    act(() => {
+      btn!.click();
+    });
+
+    const state = useAppStore.getState();
+    // The failed tab stays exited in the region (banner shows) and enters view mode;
+    // viewing the scrollback must not kick a reconnect.
+    expect(state.terminalViewMode[TAB]).toBe(true);
+    expect(regionExited(currentSessionView()[TAB])).toBe(true);
+    expect(state.terminalRetryCounters[TAB]).toBeUndefined();
+  });
 });
 
 describe("appStore disconnect actions", () => {

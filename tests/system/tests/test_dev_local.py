@@ -12,6 +12,14 @@ import pytest
 from termihub_harness import dev_local
 
 
+#: A host port the fixture compose file publishes: a single ``*_PORT`` or either
+#: end of a port range (``*_PASV_MIN`` / ``*_PASV_MAX``, #4094).
+_COMPOSE_PORT_RE = r"\$\{(TERMIHUB_TEST_\w+(?:_PORT|_PASV_MIN|_PASV_MAX)):-(\d+)\}"
+
+#: Slots the coordinator runs side by side (``dev0`` … ``dev9``).
+_SLOTS = range(10)
+
+
 def _write(tmp_path, data):
     (tmp_path / "dev.local.json").write_text(json.dumps(data), encoding="utf-8")
     return tmp_path
@@ -102,6 +110,33 @@ def test_compose_env_covers_project_and_every_service(tmp_path):
     assert all(isinstance(v, str) for v in env.values())
 
 
+def test_base_ports_cover_every_compose_published_port():
+    """Every ``${TERMIHUB_TEST_*_PORT:-<base>}`` (and every port-range end,
+    ``*_PASV_MIN`` / ``*_PASV_MAX``) the compose file publishes is in
+    :data:`BASE_PORTS` with the same base (#4004, #4094).
+
+    A var missing here is never put in :func:`compose_env`, so ``compose up``
+    publishes the service on its *base* port while the harness probes the
+    *offset* one — the RDP fixture came up on 2601 and the suite waited on 5601.
+    """
+    compose = (dev_local.REPO_ROOT / "tests" / "docker" / "docker-compose.yml").read_text(
+        encoding="utf-8"
+    )
+    published = {
+        var: int(base)
+        for var, base in re.findall(_COMPOSE_PORT_RE, compose)
+    }
+    assert published, "no published test ports found in docker-compose.yml"
+    missing = {var: base for var, base in published.items() if var not in dev_local.BASE_PORTS}
+    assert not missing, f"add these to dev_local.BASE_PORTS: {missing}"
+    mismatched = {
+        var: (base, dev_local.BASE_PORTS[var])
+        for var, base in published.items()
+        if dev_local.BASE_PORTS[var] != base
+    }
+    assert not mismatched, f"compose base vs BASE_PORTS: {mismatched}"
+
+
 def test_dev_agent_port_does_not_collide_with_e2e_ssh_port():
     """Regression for #1536.
 
@@ -122,7 +157,7 @@ def _compose_port_defaults() -> dict[str, int]:
     )
     return {
         var: int(default)
-        for var, default in re.findall(r"\$\{(TERMIHUB_TEST_\w+_PORT):-(\d+)\}", text)
+        for var, default in re.findall(_COMPOSE_PORT_RE, text)
     }
 
 
@@ -153,13 +188,73 @@ def test_every_compose_fixture_port_is_offset_per_checkout():
             assert dev_local.BASE_PORTS[var] == base, f"{var}: dev_local.py base differs"
 
 
+def _host_ports(bases: dict[str, int], offset: int) -> dict[int, str]:
+    """Expand ``bases`` at ``offset`` into ``{host_port: owner}``, ranges included.
+
+    A ``*_PASV_MIN`` / ``*_PASV_MAX`` pair publishes every port in between, so the
+    whole range is claimed. Raises on a port claimed twice.
+    """
+    claimed: dict[int, str] = {}
+
+    def claim(port: int, owner: str) -> None:
+        assert port not in claimed, f"{owner} and {claimed[port]} both use host port {port}"
+        claimed[port] = owner
+
+    for var, base in bases.items():
+        if var.endswith("_PASV_MAX"):
+            continue
+        if var.endswith("_PASV_MIN"):
+            top = bases[var[: -len("_MIN")] + "_MAX"]
+            assert top >= base, f"{var} range is empty: {base}-{top}"
+            for port in range(base, top + 1):
+                claim(port + offset, var[: -len("_MIN")])
+        else:
+            claim(base + offset, var)
+    return claimed
+
+
 def test_compose_fixture_ports_do_not_share_a_host_port():
     """Two fixtures with the same default host port cannot run side by side
-    (``ssh-sftp-only`` and ``remote-agent`` both used 2211 until #4007)."""
-    seen: dict[int, str] = {}
-    for var, port in _compose_port_defaults().items():
-        assert port not in seen, f"{var} and {seen[port]} both default to host port {port}"
-        seen[port] = var
+    (``ssh-sftp-only`` and ``remote-agent`` both used 2211 until #4007). Passive
+    port ranges count as every port they span (#4094)."""
+    _host_ports(_compose_port_defaults(), 0)
+
+
+def test_compose_env_offsets_ftp_passive_ranges(tmp_path):
+    """Regression for #4094: ``compose_env`` must offset the ftp-server passive
+    ranges, or every checkout publishes 30000-30019 and the second ``compose up``
+    fails to bind."""
+    _write(tmp_path, {"compose_project": "termihub-test-7", "test_port_offset": 7000})
+    env = dev_local.compose_env(tmp_path)
+    assert env["TERMIHUB_TEST_FTP_PASV_MIN"] == "37000"
+    assert env["TERMIHUB_TEST_FTP_PASV_MAX"] == "37009"
+    assert env["TERMIHUB_TEST_FTPS_IMPLICIT_PASV_MIN"] == "37010"
+    assert env["TERMIHUB_TEST_FTPS_IMPLICIT_PASV_MAX"] == "37019"
+
+
+def test_python_and_shell_resolvers_agree_on_every_base():
+    """``dev_local.BASE_PORTS`` and ``dev-local-env.sh`` offset the same vars from
+    the same bases (the shell side additionally owns the examples/ E2E ports)."""
+    shell = _shell_port_bases()
+    missing = sorted(var for var in dev_local.BASE_PORTS if var not in shell)
+    assert not missing, f"BASE_PORTS vars not offset by dev-local-env.sh: {missing}"
+    differ = {
+        var: (base, shell[var]) for var, base in dev_local.BASE_PORTS.items() if shell[var] != base
+    }
+    assert not differ, f"dev_local.py vs dev-local-env.sh base: {differ}"
+
+
+def test_slots_never_share_a_host_port():
+    """Every fixture host port of every slot — passive ranges expanded — is unique
+    across ``dev0`` … ``dev9`` at the documented 1000-per-slot offset (#4094)."""
+    owners: dict[int, str] = {}
+    for slot in _SLOTS:
+        for port, owner in _host_ports(
+            dev_local.BASE_PORTS, slot * dev_local.OFFSET_PER_SLOT
+        ).items():
+            assert port not in owners, f"dev{slot} {owner} reuses {owners[port]}'s port {port}"
+            owners[port] = f"dev{slot} {owner}"
+    assert max(owners) <= 65535, f"highest slot port {max(owners)} is not a valid port"
 
 
 # --- TIN-016: fail fast on a silently-colliding dev.local.json -----------------
