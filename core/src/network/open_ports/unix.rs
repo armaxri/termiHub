@@ -61,7 +61,15 @@ fn parse_lsof_output(text: &str) -> Result<Vec<OpenPort>, NetworkError> {
         }
         let process = cols[0].to_string();
         let pid: Option<u32> = cols[1].parse().ok();
-        let name_col = cols[cols.len() - 1]; // last column is the address
+        // NAME is the address column. For TCP, lsof appends the socket state as a
+        // separate trailing column (`127.0.0.1:5432 (LISTEN)`), so the address
+        // is the last column that is not a parenthesised state (#3692).
+        let name_col = cols[8..]
+            .iter()
+            .rev()
+            .find(|c| !(c.starts_with('(') && c.ends_with(')')))
+            .copied()
+            .unwrap_or(cols[cols.len() - 1]);
         let proto_col = cols[7]; // TYPE column (TCP or UDP)
 
         let protocol = if proto_col.contains("TCP") || name_col.contains("TCP") {
@@ -233,6 +241,37 @@ fn build_inode_to_pid_map() -> HashMap<u64, (u32, String)> {
 mod tests {
     #[cfg(target_os = "linux")]
     use super::*;
+
+    /// lsof prints the TCP socket state as its own trailing column; the parser
+    /// must take the address, not `(LISTEN)` (found by the live agent Open
+    /// Ports test, #3692).
+    #[cfg(any(
+        target_os = "macos",
+        not(any(target_os = "macos", target_os = "linux"))
+    ))]
+    #[test]
+    fn lsof_tcp_address_skips_trailing_state_column() {
+        use super::{parse_lsof_output, Protocol};
+        let text = "\
+COMMAND     PID USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+postgres    101 arne    7u  IPv4 0x1234567890abcdef      0t0  TCP 127.0.0.1:5432 (LISTEN)
+sshd        102 root    3u  IPv6 0x1234567890abcdee      0t0  TCP [::1]:22 (LISTEN)
+mDNSRespo   103 root    5u  IPv4 0x1234567890abcded      0t0  UDP *:5353
+";
+        let ports = parse_lsof_output(text).unwrap();
+        let got: Vec<(Protocol, &str, Option<u32>)> = ports
+            .iter()
+            .map(|p| (p.protocol.clone(), p.local_addr.as_str(), p.pid))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (Protocol::Tcp, "127.0.0.1:5432", Some(101)),
+                (Protocol::Tcp, "[::1]:22", Some(102)),
+                (Protocol::Udp, "*:5353", Some(103)),
+            ]
+        );
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

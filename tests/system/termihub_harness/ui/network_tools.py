@@ -10,7 +10,7 @@ gated behind experimental features) and :class:`~termihub_harness.ui.SidebarUi`
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from .base import HarnessMixin
 
@@ -71,11 +71,62 @@ class NetworkToolsUi(HarnessMixin):
         self.driver.type("port-scanner-ports", ports)
         self.driver.click("port-scanner-run")
 
-    def run_dns_lookup(self, hostname: str) -> None:
-        """Open the DNS Lookup panel and resolve ``hostname``."""
+    def run_dns_lookup(
+        self,
+        hostname: str,
+        *,
+        record_type: Optional[str] = None,
+        server: Optional[str] = None,
+    ) -> None:
+        """Open the DNS Lookup panel and resolve ``hostname``.
+
+        ``record_type`` (``"MX"``, ``"TXT"``, …) picks the Type dropdown;
+        ``server`` fills the custom resolver field — a bare IP or an ``ip:port``
+        such as a :class:`~termihub_harness.StubDnsServer` address (#3692).
+        """
         self.open_tool_panel("dns-lookup", "dns-lookup-panel")
         self.driver.type("dns-hostname", hostname)
+        if record_type is not None:
+            self.driver.select("dns-record-type", record_type)
+        if server is not None:
+            self.driver.type("dns-server", server)
         self.driver.click("dns-run")
+
+    # ── run location ("Run on", #2191 / #3692) ──────────────────────────────────
+
+    def _try_select_run_location(self, tool: str, value: str) -> bool:
+        self.driver.select(f"network-runloc-{tool}", value)
+        return True
+
+    def set_tool_run_location(self, tool: str, agent_id: Optional[str]) -> None:
+        """Set the open ``tool`` panel's "Run on" selector.
+
+        ``agent_id`` picks that agent (option value ``agent:<id>``); ``None``
+        picks This computer. The agent option appears only once the agent is in
+        the projected agent list, so the select is retried until it exists.
+        """
+        value = "this" if agent_id is None else f"agent:{agent_id}"
+        self.wait(
+            lambda: self._try_select_run_location(tool, value),
+            what=f"the {tool!r} Run-on option {value!r}",
+        )
+
+    def refresh_open_ports(self) -> str:
+        """Open the Open Ports panel, click Refresh, and return the panel text
+        once the "N listening port(s)" footer reflects the completed run."""
+        self.open_tool_panel("open-ports", "open-ports-panel")
+        self.wait(
+            lambda: not self.driver.exists("open-ports-refresh")
+            or "Refreshing" not in (self.driver.get_text("open-ports-refresh") or ""),
+            what="any in-flight open-ports listing to finish",
+        )
+        self.driver.click("open-ports-refresh")
+        self.wait(
+            lambda: "Refreshing" not in (self.driver.get_text("open-ports-refresh") or "")
+            and "listening port(s)" in (self.driver.get_text("open-ports-panel") or ""),
+            what="the open-ports listing to complete",
+        )
+        return self.driver.get_text("open-ports-panel") or ""
 
     def start_http_monitor(self, url: str, *, allow_private_network: bool = False) -> None:
         """Open the HTTP Monitor panel, target ``url``, and start monitoring.

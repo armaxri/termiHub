@@ -7,16 +7,6 @@ prefix: MT-NET
 feature: Network Tools
 
 tests:
-  - id: MT-NET-15
-    automation_issue: 3692
-    title: DNS Lookup — multiple record types
-    automated_by: null
-    steps:
-      - Open the DNS Lookup panel
-      - Test each record type (MX, CNAME, NS, TXT) for a domain that has them (e.g. `google.com`)
-    expected:
-      - Results match the expected records for each type (verify against `dig` or similar)
-
   - id: MT-NET-16
     release_gate: true
     manual_reason: "traceroute needs raw ICMP (root); hop rendering is unit-tested"
@@ -30,19 +20,6 @@ tests:
       - Hop rows stream in as TTL probes return
       - Each row shows hop number, address, and three RTT columns
       - Trace completes (or times out with `* * *` rows for unresponsive hops)
-
-  - id: MT-NET-19
-    automation_issue: 3692
-    title: Remote agent — open ports via tool.run
-    automated_by: null
-    steps:
-      - Configure an SSH connection with a remote agent
-      - Connect and ensure the agent is deployed
-      - Open the Network Tools sidebar while the remote agent connection is active
-      - Open the Open Ports panel and click Refresh
-    expected:
-      - Results return showing the listening ports on the remote machine
-      - Port list differs from the local machine's ports
 
   - id: MT-NET-21
     release_gate: true
