@@ -34,6 +34,7 @@ import {
   XCircle,
   Unplug,
   Power,
+  ArrowUpCircle,
 } from "lucide-react";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import {
@@ -54,7 +55,10 @@ import {
   removeCredential,
   storeCredential,
   cancelConnectAgent,
+  listAgentHosts,
+  type ConnectedHost,
 } from "@/services/api";
+import type { RemoteAgentConfig } from "@/types/terminal";
 import { classifyAgentError, ClassifiedAgentError } from "@/utils/classifyAgentError";
 import { isAuthFailure } from "@/utils/backendErrorCode";
 import { connectionStateLabel } from "@/utils/statusLabel";
@@ -69,6 +73,7 @@ import { useRovingListNav } from "@/hooks/useRovingListNav";
 import { AgentTreeFilter, filterAgentTree } from "@/utils/agentTreeSearch";
 import { computeAgentTreeNodes, type AgentVisibleNode } from "@/utils/computeAgentTreeNodes";
 import { AgentSetupDialog } from "./AgentSetupDialog";
+import { UpdateAgentDialog } from "./UpdateAgentDialog";
 import { AgentRunningSessionsDialog } from "./AgentRunningSessionsDialog";
 import { sessionBoundDefinition, type OpenableAgentSession } from "@/utils/sessionBoundDefinition";
 import { ConnectionErrorDialog } from "./ConnectionErrorDialog";
@@ -699,6 +704,12 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
 
   const [connecting, setConnecting] = useState(false);
   const [setupDialogOpen, setSetupDialogOpen] = useState(false);
+  // Update dialog payload (#4038): the SSH config with its password resolved and
+  // the other hosts attached to the agent, captured when "Update Agent..." runs.
+  const [updateDialog, setUpdateDialog] = useState<{
+    config: RemoteAgentConfig;
+    otherHosts: ConnectedHost[];
+  } | null>(null);
   const [runningSessionsOpen, setRunningSessionsOpen] = useState(false);
   const [connectionError, setConnectionError] = useState<ClassifiedAgentError | null>(null);
   const [errorDialogOpen, setErrorDialogOpen] = useState(false);
@@ -709,7 +720,8 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
   const isDisconnected = agent.connectionState === "disconnected";
   const Chevron = agent.isExpanded ? ChevronDown : ChevronRight;
 
-  // Agent version + derived update state (visible only; no update triggering yet, #1347).
+  // Agent version + derived update state (#1347). An outdated or incompatible
+  // agent offers "Update Agent..." in its context menu (#4038).
   // The desktop version is the expected version the agent is checked against,
   // mirroring the Rust `check_version` rule. While the desktop version is still
   // loading, the badge stays hidden ("unknown") rather than flashing incompatible.
@@ -718,6 +730,9 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
   const agentUpdateState = isConnected
     ? resolveAgentUpdateState(agentVersion, desktopVersion)
     : "unknown";
+  const canUpdateAgent =
+    !!desktopVersion &&
+    (agentUpdateState === "update-available" || agentUpdateState === "incompatible");
 
   // Derived: root-level folders and definitions (no parent/folder)
   const rootFolders = useMemo(
@@ -948,6 +963,42 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
         : "Agent shut down"
     );
   }, [agent.id, shutdownRemoteAgent]);
+
+  // Open the Update dialog (#4038). The update re-uses the SSH config, so a
+  // password agent resolves its password first (stored credential, else a
+  // prompt), exactly like a connect. Then `agent.list_connections` (minus this
+  // desktop) tells the dialog whether to warn about other connected hosts.
+  const handleOpenUpdate = useCallback(async () => {
+    const proceed = await ensureCredentialStoreUnlocked({
+      authMethod: agent.config.authMethod,
+      savePassword: agent.config.savePassword,
+      credentialRef: agent.config.credentialRef,
+    });
+    if (!proceed) return;
+    try {
+      const config: RemoteAgentConfig = { ...agent.config };
+      if (config.authMethod === "password" && !config.password) {
+        const resolution = await resolveConnectionCredential(
+          agent.id,
+          config.authMethod,
+          config.savePassword,
+          config.credentialRef
+        );
+        if (resolution.usedStoredCredential && resolution.password) {
+          config.password = resolution.password;
+        } else {
+          const pw = await requestPassword(config.host, config.username);
+          if (!pw) return;
+          config.password = pw;
+        }
+      }
+      const otherHosts = await listAgentHosts(agent.id);
+      setUpdateDialog({ config, otherHosts });
+    } catch (err) {
+      frontendLog("agent_node", `Failed to prepare agent update: ${err}`);
+      toast.error(`Could not check who is connected to ${agent.name}: ${err}`);
+    }
+  }, [agent.id, agent.name, agent.config, requestPassword]);
 
   // Cancel an in-flight connect (G1, #1235). Fires cancel_connect_agent, which
   // aborts the blocking SSH + initialize handshake; the backend then emits
@@ -1420,6 +1471,16 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
                   <Terminal size={14} />
                   Running Sessions...
                 </ContextMenu.Item>
+                {isConnected && canUpdateAgent && (
+                  <ContextMenu.Item
+                    className="context-menu__item"
+                    onSelect={() => void handleOpenUpdate()}
+                    data-testid="context-agent-update"
+                  >
+                    <ArrowUpCircle size={14} />
+                    Update Agent...
+                  </ContextMenu.Item>
+                )}
                 <ContextMenu.Separator className="context-menu__separator" />
                 <ContextMenu.Item
                   className="context-menu__item"
@@ -1484,6 +1545,27 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
       {isConnected && <AgentUpdateBanner agentId={agent.id} agentName={agent.name} />}
 
       <AgentSetupDialog open={setupDialogOpen} onOpenChange={setSetupDialogOpen} agent={agent} />
+      {updateDialog && desktopVersion && (
+        <UpdateAgentDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setUpdateDialog(null);
+          }}
+          agentId={agent.id}
+          agentName={agent.name}
+          config={updateDialog.config}
+          installedVersion={agentVersion ?? null}
+          availableVersion={desktopVersion}
+          otherHosts={updateDialog.otherHosts}
+          onUpdated={(result) => {
+            // A host connected after the dialog opened: the guard refused the
+            // plain update. Show the hosts so the next confirm forces it.
+            if (result.kind === "otherHostsConnected") {
+              setUpdateDialog((prev) => (prev ? { ...prev, otherHosts: result.hosts } : prev));
+            }
+          }}
+        />
+      )}
       {runningSessionsOpen && (
         <AgentRunningSessionsDialog
           open={runningSessionsOpen}

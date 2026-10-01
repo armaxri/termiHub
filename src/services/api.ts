@@ -2495,6 +2495,15 @@ export async function updateAgentForce(
   return await invoke<AgentDeployResult>("update_agent_force", { agentId, config, deployConfig });
 }
 
+/**
+ * List the hosts connected to the agent other than this desktop (#4038). The
+ * backend sends `agent.list_connections` and drops this desktop's own
+ * `client_id`. Read-only; feeds the Update dialog's connected-host warning.
+ */
+export async function listAgentHosts(agentId: string): Promise<ConnectedHost[]> {
+  return await invoke<ConnectedHost[]>("list_agent_hosts", { agentId });
+}
+
 // --- Agent persistence commands ---
 
 /** Save (add or update) a remote agent definition to disk. */

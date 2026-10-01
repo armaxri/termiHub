@@ -817,6 +817,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::agent::deploy_agent,
             commands::agent::update_agent,
             commands::agent::update_agent_force,
+            commands::agent::list_agent_hosts,
             // Logs
             commands::logs::get_logs,
             commands::logs::clear_logs,
