@@ -52,6 +52,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use base64::Engine as _;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
@@ -369,12 +370,39 @@ struct Client {
     reader: BufReader<TcpStream>,
     writer: TcpStream,
     next_id: i64,
+    /// Decoded `connection.output` bytes seen so far, from any read path, so a
+    /// shell's output that arrives while an RPC waits for its response is kept
+    /// rather than skipped.
+    output: Vec<u8>,
+    /// Other notifications seen while waiting for an RPC response, oldest
+    /// first, for [`Self::wait_for_notification`].
+    notifications: Vec<Value>,
 }
 
 impl Client {
     /// Connect and complete the `initialize` handshake, retrying until the agent
     /// is listening (it may still be mid-restart after a self-apply).
     fn connect(addr: &str, config_home: &Path, timeout: Duration) -> Option<Self> {
+        // Re-read the token on every attempt: a self-apply **re-execs** the
+        // agent, which regenerates its per-instance token, so a token captured
+        // before the restart would be stale. Reading the file each attempt lets
+        // the retry loop converge on the re-execed agent's fresh token.
+        Self::connect_as(addr, timeout, "self-update-it", || {
+            common::read_listen_token(config_home)
+        })
+    }
+
+    /// [`connect`](Self::connect) for a named desktop (`client` in
+    /// `initialize`, which `agent.list_connections` reports), taking the auth
+    /// token from `token` on each attempt. Used when several workers share one
+    /// config dir, and so one token file, and a caller has to keep the token of
+    /// a worker that is no longer the file's last writer.
+    fn connect_as(
+        addr: &str,
+        timeout: Duration,
+        client_name: &str,
+        token: impl Fn() -> String,
+    ) -> Option<Self> {
         let deadline = Instant::now() + timeout;
         // Bound each handshake read to a fraction of the overall budget (#1579).
         // A single stalled `initialize` read must not consume the entire
@@ -392,20 +420,17 @@ impl Client {
                     reader: BufReader::new(stream),
                     writer,
                     next_id: 1,
+                    output: Vec::new(),
+                    notifications: Vec::new(),
                 };
-                // Auth handshake first (AGT-002/SEC-004). Re-read the token on
-                // every attempt: a self-apply **re-execs** the agent, which
-                // regenerates its per-instance token, so a token captured before
-                // the restart would be stale. Reading the file each attempt lets
-                // the retry loop converge on the re-execed agent's fresh token.
-                let token = common::read_listen_token(config_home);
-                if !client.authenticate(&token) {
+                // Auth handshake first (AGT-002/SEC-004).
+                if !client.authenticate(&token()) {
                     std::thread::sleep(Duration::from_millis(100));
                     continue;
                 }
                 let resp = client.rpc(
                     "initialize",
-                    json!({"protocolVersion": "0.3.0", "client": "self-update-it", "clientVersion": "0.1.0"}),
+                    json!({"protocolVersion": "0.3.0", "client": client_name, "clientVersion": "0.1.0"}),
                 );
                 if resp.get("result").is_some() {
                     // Handshake done: restore a generous read timeout for the
@@ -486,8 +511,101 @@ impl Client {
             if msg.get("id").and_then(Value::as_i64) == Some(id) {
                 return msg;
             }
-            // otherwise a notification for an earlier/other id — keep reading
+            // otherwise a notification (or a response to an earlier id): keep
+            // it for the output/notification waits and keep reading
+            self.keep(msg);
         }
+    }
+
+    /// Buffer a message that is not the response being waited for.
+    fn keep(&mut self, msg: Value) {
+        if msg.get("id").is_some() {
+            return;
+        }
+        if msg["method"] == "connection.output" {
+            let data = msg["params"]["data"].as_str().unwrap_or_default();
+            if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) {
+                self.output.extend(bytes);
+            }
+        } else {
+            self.notifications.push(msg);
+        }
+    }
+
+    /// Read and buffer messages until `done` holds or `timeout` elapses.
+    /// Returns whether `done` held. Each read is bounded, so the loop re-checks
+    /// promptly; a closed connection ends the wait at once.
+    fn pump_until(&mut self, timeout: Duration, mut done: impl FnMut(&Self) -> bool) -> bool {
+        let deadline = Instant::now() + timeout;
+        let socket = self.reader.get_ref().try_clone().expect("clone stream");
+        let result = loop {
+            if done(self) {
+                break true;
+            }
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                break false;
+            };
+            socket
+                .set_read_timeout(Some(remaining.min(Duration::from_millis(200))))
+                .expect("set read timeout");
+            let mut line = String::new();
+            match self.reader.read_line(&mut line) {
+                Ok(0) => break done(self),
+                Ok(_) => {
+                    if let Ok(msg) = serde_json::from_str::<Value>(line.trim()) {
+                        self.keep(msg);
+                    }
+                }
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut => {}
+                Err(_) => break done(self),
+            }
+        };
+        socket
+            .set_read_timeout(Some(Duration::from_secs(15)))
+            .expect("restore read timeout");
+        result
+    }
+
+    /// Wait until the session output seen on this connection contains `needle`.
+    fn wait_for_output(&mut self, needle: &str, timeout: Duration) -> bool {
+        self.pump_until(timeout, |c| {
+            String::from_utf8_lossy(&c.output).contains(needle)
+        })
+    }
+
+    /// Wait for a notification named `method` and return it.
+    fn wait_for_notification(&mut self, method: &str, timeout: Duration) -> Option<Value> {
+        self.pump_until(timeout, |c| {
+            c.notifications.iter().any(|n| n["method"] == method)
+        });
+        self.notifications
+            .iter()
+            .find(|n| n["method"] == method)
+            .cloned()
+    }
+
+    /// Type `data` into a session.
+    fn write_input(&mut self, session_id: &str, data: &str) -> Value {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(data.as_bytes());
+        self.rpc(
+            "connection.write",
+            json!({"session_id": session_id, "data": encoded}),
+        )
+    }
+
+    /// Run `printf '%s-%s\n' <word> <tag>` in a session and wait for its
+    /// `<word>-<tag>` output. The typed command echoes `<word> <tag>`, never
+    /// the joined form, so only the shell actually running it can produce the
+    /// needle.
+    fn run_marker(&mut self, session_id: &str, word: &str, tag: &str) -> bool {
+        let written = self.write_input(session_id, &format!("printf '%s-%s\\n' {word} {tag}\n"));
+        assert!(
+            written.get("result").is_some(),
+            "connection.write to {session_id} failed: {written}"
+        );
+        self.wait_for_output(&format!("{word}-{tag}"), Duration::from_secs(30))
     }
 
     fn agent_version(&mut self) -> String {
@@ -1054,4 +1172,441 @@ async fn assert_never_interrupts(
         "the active session must not be interrupted by the self-update check"
     );
     client.close_session(&session_id);
+}
+
+// ── One host, several desktops (#1401, #1349) ───────────────────────────────
+//
+// On a real host every desktop gets its own agent **worker** process (`--stdio`
+// over its SSH link), all run from the one installed binary and sharing the
+// user's config dir: one `state.json`, one staging dir, one host-wide registry
+// (ADR-11). A `--listen` agent serves a single client at a time, so the suite
+// models each desktop's link as its own `--listen` worker over a shared
+// `XDG_CONFIG_HOME` and a shared install dir. Ending a desktop's connection
+// ends its worker, as an SSH disconnect ends a `--stdio` one.
+
+/// The shared side of one simulated host: the installed agent binary and the
+/// config dir every worker on it uses.
+struct Host {
+    _install_dir: TempDir,
+    bin_path: PathBuf,
+    home: TempDir,
+}
+
+impl Host {
+    fn new() -> Self {
+        let install_dir = TempDir::new().expect("install dir");
+        let bin_path = install_dir.path().join("termihub-agent");
+        {
+            // Copy under the fork lock (#1597), as `LiveAgent::spawn` does.
+            let _fork_guard = common::fork_guard();
+            std::fs::copy(agent_binary(), &bin_path).expect("copy agent binary");
+            std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod agent copy");
+        }
+        prewarm_first_exec(&bin_path);
+        Host {
+            _install_dir: install_dir,
+            bin_path,
+            home: TempDir::new().expect("host config home"),
+        }
+    }
+
+    fn agent_dir(&self) -> PathBuf {
+        self.home.path().join("termihub-agent")
+    }
+
+    fn state(&self) -> Value {
+        std::fs::read_to_string(self.agent_dir().join("state.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(Value::Null)
+    }
+
+    /// The host-wide registry endpoint the workers share (see
+    /// [`common::isolated_registry_env`]).
+    fn registry_endpoint(&self) -> String {
+        self.home
+            .path()
+            .join("registry.sock")
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// Start a `--listen` worker from the installed binary with `args` and
+    /// `envs`, wait for it to listen, and capture its auth token.
+    ///
+    /// Workers share the token file, so the token is read right after this
+    /// worker announced its listener and before any other worker is started:
+    /// at that point the file holds this worker's token.
+    fn spawn_worker(&self, args: &[&str], envs: &[(&str, String)]) -> Worker {
+        let stderr_file = tempfile::NamedTempFile::new().expect("stderr file");
+        let stderr_path = stderr_file.path().to_path_buf();
+        let (stderr_handle, _keep) = stderr_file.keep().expect("persist stderr file");
+
+        let fork_guard = common::fork_guard();
+        let child = Command::new(&self.bin_path)
+            .args(["--listen", "127.0.0.1:0"])
+            .args(args)
+            .env("XDG_CONFIG_HOME", self.home.path())
+            .envs(common::isolated_registry_env(self.home.path()))
+            .envs(envs.iter().map(|(k, v)| (*k, v.as_str())))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::from(stderr_handle))
+            .spawn_guarded()
+            .expect("spawn agent worker");
+        drop(fork_guard);
+
+        let mut worker = Worker {
+            child,
+            stderr_path,
+            token: String::new(),
+        };
+        worker.addr(0);
+        worker.token = common::read_listen_token(self.home.path());
+        worker
+    }
+}
+
+/// One desktop's agent worker on a [`Host`].
+struct Worker {
+    child: Child,
+    stderr_path: PathBuf,
+    /// This worker's own auth token (the shared file may since hold another's).
+    token: String,
+}
+
+impl Drop for Worker {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Worker {
+    fn stderr(&self) -> String {
+        std::fs::read_to_string(&self.stderr_path).unwrap_or_default()
+    }
+
+    /// The listener of the worker's `generation`-th incarnation.
+    fn addr(&self, generation: usize) -> String {
+        common::wait_for_listen_addr(&self.stderr_path, generation, Duration::from_secs(30))
+            .unwrap_or_else(|| {
+                panic!(
+                    "worker incarnation {generation} never logged a `Listening on` address.\n\
+                     --- worker stderr ---\n{}",
+                    self.stderr()
+                )
+            })
+    }
+
+    /// Connect as desktop `name` with this worker's own token.
+    fn connect(&self, name: &str) -> Client {
+        let token = self.token.clone();
+        Client::connect_as(&self.addr(0), Duration::from_secs(30), name, move || {
+            token.clone()
+        })
+        .unwrap_or_else(|| panic!("desktop {name} could not connect.\n{}", self.stderr()))
+    }
+
+    fn is_running(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+}
+
+/// Reaps what a test leaves running outside its own `Child` handles if it
+/// fails midway: the shell's session daemon and the host's registry daemon.
+/// Each is killed by the exact PID serving its endpoint (see
+/// [`common::daemon_reaper`]), and only if it still serves it.
+#[derive(Default)]
+struct DaemonReapers(Vec<common::daemon_reaper::DaemonGuard>);
+
+impl DaemonReapers {
+    fn watch(&mut self, endpoint: &str) {
+        if wait_until(Duration::from_secs(10), || {
+            std::os::unix::net::UnixStream::connect(endpoint).is_ok()
+        }) {
+            if let Some(guard) = common::daemon_reaper::DaemonGuard::discover(endpoint) {
+                self.0.push(guard);
+            }
+        }
+    }
+}
+
+/// Open a persistent shell session as `desktop` and prove it runs, returning
+/// its id. Shell sessions are daemon-backed (persistent) on unix.
+fn open_persistent_shell(desktop: &mut Client, reapers: &mut DaemonReapers, tag: &str) -> String {
+    let session_id = desktop.create_session("shell", json!({}));
+    reapers.watch(&common::daemon_reaper::session_endpoint(&session_id));
+    assert!(
+        desktop.run_marker(&session_id, "before", tag),
+        "the shell session never ran a command.\n--- output ---\n{}",
+        String::from_utf8_lossy(&desktop.output)
+    );
+    session_id
+}
+
+/// Reconnect desktop `name` to `worker`, re-attach `session_id`, and prove it
+/// is the same live shell: its scrollback replays the output from before, and
+/// a new command still runs.
+fn reattach_and_prove_alive(worker: &Worker, name: &str, session_id: &str, tag: &str) -> Client {
+    let mut desktop = worker.connect(name);
+    let attach = desktop.rpc("connection.attach", json!({"session_id": session_id}));
+    assert!(
+        attach.get("result").is_some(),
+        "re-attaching {session_id} failed: {attach}\n--- worker stderr ---\n{}",
+        worker.stderr()
+    );
+    assert!(
+        desktop.wait_for_output(&format!("before-{tag}"), Duration::from_secs(30)),
+        "the re-attached session did not replay its earlier output, so it is not the \
+         same shell.\n--- output ---\n{}",
+        String::from_utf8_lossy(&desktop.output)
+    );
+    assert!(
+        desktop.run_marker(session_id, "after", tag),
+        "the re-attached shell did not run a new command.\n--- output ---\n{}",
+        String::from_utf8_lossy(&desktop.output)
+    );
+    desktop
+}
+
+/// Close `session_id` and wait until its daemon is gone.
+fn close_and_reap(desktop: &mut Client, session_id: &str) {
+    let closed = desktop.close_session(session_id);
+    assert!(
+        closed.get("result").is_some(),
+        "closing {session_id} failed: {closed}"
+    );
+    let endpoint = common::daemon_reaper::session_endpoint(session_id);
+    assert!(
+        wait_until(Duration::from_secs(15), || {
+            std::os::unix::net::UnixStream::connect(&endpoint).is_err()
+        }),
+        "the session daemon of {session_id} outlived its close"
+    );
+}
+
+/// #1401: an idle auto-apply re-execs the agent, and the persistent daemon
+/// sessions on the host survive it and can be re-attached.
+///
+/// A worker counts only its own sessions toward "idle". So desktop A's
+/// worker is idle and auto-applies the self-update (swap the installed
+/// binary, re-exec) while desktop B's worker holds a persistent shell. The
+/// swap and re-exec must leave that shell alone: still served to B, and
+/// re-attachable from a fresh connection afterwards. (One worker that holds a
+/// session never auto-applies at all; see
+/// `active_shell_session_is_never_interrupted`.)
+#[tokio::test]
+async fn idle_auto_apply_keeps_the_hosts_persistent_sessions() {
+    let agent_bytes = std::fs::read(agent_binary()).expect("read agent bytes");
+    let server = MockServer::start().await;
+    mount_release(&server, &agent_bytes).await;
+
+    let host = Host::new();
+    let mut reapers = DaemonReapers::default();
+
+    // Desktop B: a plain worker holding a persistent shell.
+    let mut worker_b = host.spawn_worker(&[], &[]);
+    reapers.watch(&host.registry_endpoint());
+    let mut desktop_b = worker_b.connect("desktop-b");
+    let session_id = open_persistent_shell(&mut desktop_b, &mut reapers, "1401");
+
+    // Desktop A: a worker with self-update on, deferred strategy. It holds no
+    // session, so its first poll stages the release and applies it at once.
+    let bin_inode_before = inode(&host.bin_path).expect("installed binary present");
+    let worker_a = host.spawn_worker(
+        &["--allow-self-update", "--update-strategy", "deferred"],
+        &[
+            (
+                "TERMIHUB_AGENT_UPDATE_API_URL",
+                format!("{}/releases/latest", server.uri()),
+            ),
+            (
+                "TERMIHUB_AGENT_UPDATE_ASSET_SUFFIX",
+                AGENT_SUFFIX.to_string(),
+            ),
+            ("TERMIHUB_AGENT_UPDATE_INITIAL_DELAY_MS", "300".to_string()),
+        ],
+    );
+
+    assert!(
+        wait_until(UPDATE_PIPELINE_TIMEOUT, || {
+            inode(&host.bin_path).is_some_and(|i| i != bin_inode_before)
+        }),
+        "desktop A's idle worker did not swap the installed binary within \
+         {UPDATE_PIPELINE_TIMEOUT:?}.\n--- worker A stderr ---\n{}",
+        worker_a.stderr()
+    );
+    // A re-execed onto the swapped binary and serves again.
+    let mut desktop_a =
+        Client::connect(&worker_a.addr(1), host.home.path(), Duration::from_secs(30))
+            .unwrap_or_else(|| {
+                panic!(
+                    "worker A did not come back after the self-apply.\n{}",
+                    worker_a.stderr()
+                )
+            });
+    assert!(!desktop_a.agent_version().is_empty());
+    assert!(
+        wait_until(Duration::from_secs(15), || {
+            host.state()["update"]["pending_update"].is_null()
+        }),
+        "the applied update must leave no pending_update; state was {}",
+        host.state()
+    );
+
+    // B's shell survived the swap and the re-exec: still running on B's live
+    // connection, and still recorded in the host's shared state.
+    assert!(worker_b.is_running(), "worker B must not be touched");
+    assert!(
+        desktop_b.run_marker(&session_id, "during", "1401"),
+        "B's shell stopped running across A's self-apply.\n--- worker A stderr ---\n{}",
+        worker_a.stderr()
+    );
+    assert!(
+        !host.state()["sessions"][&session_id].is_null(),
+        "the session must stay in the shared state.json; state was {}",
+        host.state()
+    );
+
+    // B's connection drops and comes back: the session re-attaches.
+    drop(desktop_b);
+    let mut desktop_b = reattach_and_prove_alive(&worker_b, "desktop-b", &session_id, "1401");
+    close_and_reap(&mut desktop_b, &session_id);
+}
+
+/// #1349 at the agent level: desktop A updates the host while desktop B is
+/// connected with a persistent session.
+///
+/// 1. The guard's view: A's `agent.list_connections` lists B (the hosts the
+///    Update dialog warns about).
+/// 2. A's update notifies B (`agent.update_pending`).
+/// 3. B ignores the notice, so the update is forced through when its window
+///    closes: A's worker swaps the installed binary and re-execs.
+/// 4. B's connection ends and B reconnects. That spawns a fresh worker from the
+///    installed binary, so B is now on the new binary, and B's persistent
+///    session re-attaches there.
+#[test]
+fn forced_update_notifies_the_other_desktop_which_reconnects_to_the_new_binary() {
+    let host = Host::new();
+    let mut reapers = DaemonReapers::default();
+
+    let worker_b = host.spawn_worker(&[], &[]);
+    reapers.watch(&host.registry_endpoint());
+    let mut desktop_b = worker_b.connect("desktop-b");
+    let session_id = open_persistent_shell(&mut desktop_b, &mut reapers, "1349");
+
+    let worker_a = host.spawn_worker(&[], &[]);
+    let desktop_a = worker_a.connect("desktop-a");
+
+    // 1. The connected-host guard's input: A sees B, with the fields the
+    //    Update dialog renders.
+    let mut desktop_a = desktop_a;
+    let mut connections = Vec::new();
+    assert!(
+        wait_until(Duration::from_secs(15), || {
+            let resp = desktop_a.rpc("agent.list_connections", json!({}));
+            connections = resp["result"]["connections"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            connections.len() == 2
+        }),
+        "A must see both desktops on the host: {connections:?}"
+    );
+    let b = connections
+        .iter()
+        .find(|c| c["client"] == "desktop-b")
+        .unwrap_or_else(|| panic!("desktop-b missing from A's view: {connections:?}"));
+    assert_eq!(b["client_version"], "0.1.0", "{b}");
+    assert!(
+        b["client_id"].as_str().is_some_and(|s| !s.is_empty()),
+        "{b}"
+    );
+    assert!(
+        b["connected_since"].as_str().is_some_and(|s| !s.is_empty()),
+        "{b}"
+    );
+
+    // 2–3. A requests the update with a staged binary; B gets the notice and
+    //      does nothing, so the update goes ahead when the window closes.
+    let staging = host.agent_dir().join("updates");
+    std::fs::create_dir_all(&staging).expect("create staging dir");
+    let staged = staging.join("termihub-agent-newer");
+    {
+        let _fork_guard = common::fork_guard();
+        std::fs::copy(agent_binary(), &staged).expect("stage new binary");
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod staged binary");
+    }
+    let staged_sha = sha256_hex(&std::fs::read(&staged).expect("read staged binary"));
+    let bin_inode_before = inode(&host.bin_path).expect("installed binary present");
+
+    // The apply re-hashes the ~100 MB binary before it swaps, which is slow on
+    // a loaded host. Keep the requester reading for as long as the pipeline
+    // may take: closing its connection early would end the request.
+    desktop_a
+        .reader
+        .get_ref()
+        .set_read_timeout(Some(UPDATE_PIPELINE_TIMEOUT))
+        .expect("set requester read timeout");
+    let params = json!({
+        "binaryPath": staged,
+        "version": NEWER_VERSION,
+        "expectedSha256": staged_sha,
+        "ackTimeoutSecs": 2,
+        "authToken": worker_a.token,
+    });
+    let requester = std::thread::spawn(move || desktop_a.rpc("agent.request_update", params));
+
+    let notice = desktop_b
+        .wait_for_notification("agent.update_pending", Duration::from_secs(15))
+        .unwrap_or_else(|| {
+            panic!(
+                "desktop-b never got the update notice.\n--- worker B stderr ---\n{}",
+                worker_b.stderr()
+            )
+        });
+    assert_eq!(notice["params"]["requestedByVersion"], "0.1.0", "{notice}");
+
+    assert!(
+        wait_until(UPDATE_PIPELINE_TIMEOUT, || {
+            inode(&host.bin_path).is_some_and(|i| i != bin_inode_before)
+        }),
+        "the forced update did not swap the installed binary.\n--- worker A stderr ---\n{}",
+        worker_a.stderr()
+    );
+    // The apply execs before it can answer, so the request ends with A's
+    // connection: no response, or a successful one. Never an error.
+    let response = requester.join().expect("requester thread");
+    assert!(
+        response.is_null() || response["result"]["applied"] == true,
+        "the forced update must apply: {response}"
+    );
+    let mut desktop_a =
+        Client::connect(&worker_a.addr(1), host.home.path(), Duration::from_secs(30))
+            .unwrap_or_else(|| panic!("worker A did not come back.\n{}", worker_a.stderr()));
+    assert!(!desktop_a.agent_version().is_empty());
+    assert_eq!(
+        sha256_hex(&std::fs::read(&host.bin_path).expect("read installed binary")),
+        staged_sha,
+        "the installed binary must now be the staged one"
+    );
+    drop(desktop_a);
+
+    // 4. B's connection ends, and its worker with it; B reconnects through a
+    //    fresh worker, which runs the swapped-in binary.
+    drop(desktop_b);
+    drop(worker_b);
+    let new_bin_inode = inode(&host.bin_path).expect("installed binary present");
+    let worker_b2 = host.spawn_worker(&[], &[]);
+    assert_eq!(
+        inode(&host.bin_path),
+        Some(new_bin_inode),
+        "B's new worker must start from the swapped-in binary"
+    );
+    let mut desktop_b = reattach_and_prove_alive(&worker_b2, "desktop-b", &session_id, "1349");
+    close_and_reap(&mut desktop_b, &session_id);
+    drop(worker_a);
 }
