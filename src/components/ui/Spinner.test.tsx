@@ -39,7 +39,7 @@ describe("Spinner", () => {
     expect(el.getAttribute("aria-label")).toBe("Connecting");
   });
 
-  it("carries the essential-motion marker so reduced motion pulses instead of freezing", () => {
+  it("carries the essential-motion marker so reduced motion renders it static (#4039)", () => {
     render(<Spinner />);
     const el = container.querySelector(".ui-spinner") as SVGElement;
     expect(el.classList.contains("motion-essential-spinner")).toBe(true);
