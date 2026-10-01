@@ -10,7 +10,9 @@ use super::recovery::RecoveryResult;
 use super::shell_integration::ShellIntegrationSettings;
 use crate::utils::config_paths::resolve_config_dir;
 use crate::utils::fs::write_atomic;
-use crate::utils::migrate::{guard_not_newer, load_store_with_recovery, VersionedStore};
+use crate::utils::migrate::{
+    guard_not_newer, load_store_with_recovery, load_versioned, LoadOutcome, VersionedStore,
+};
 
 const FILE_NAME: &str = "settings.json";
 
@@ -806,6 +808,23 @@ impl SettingsStorage {
         load_store_with_recovery::<AppSettings>(&self.file_path, FILE_NAME)
     }
 
+    /// Read the settings **without any recovery side effects** (#4017).
+    ///
+    /// Returns the parsed (and, in memory only, migrated) settings, or `None` when
+    /// the file is missing, unreadable, corrupt, or written by a newer schema. It
+    /// never backs up, resets or rewrites the file. Pre-init readers (the
+    /// file-log level in `boot::logging`) must use this: if they ran
+    /// [`load_with_recovery`](Self::load_with_recovery) first, a corrupt file
+    /// would be backed up and reset before boot's own load, and the user-facing
+    /// recovery warning would be silently lost.
+    pub fn peek(&self) -> Option<AppSettings> {
+        let raw = fs::read_to_string(&self.file_path).ok()?;
+        match load_versioned::<AppSettings>(&raw) {
+            LoadOutcome::Loaded { data, .. } => Some(data),
+            LoadOutcome::Newer(_) | LoadOutcome::Corrupt(_) => None,
+        }
+    }
+
     /// Save settings to disk (pretty-printed JSON).
     ///
     /// Before writing, [`guard_not_newer`] refuses to overwrite a file written by
@@ -938,6 +957,60 @@ mod tests {
             std::fs::read_to_string(&backup).unwrap(),
             "not valid json {{{"
         );
+    }
+
+    /// Regression (#4017): the pre-init file-log-level read ran
+    /// `load_with_recovery`, which backed up and reset a corrupt settings.json
+    /// *before* boot's own load — so boot saw a healthy file and the user never
+    /// got the "settings reset" recovery warning. `peek` must leave the corrupt
+    /// file untouched so the later recovery load still reports it.
+    #[test]
+    fn peek_leaves_corrupt_settings_for_recovery_to_report() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        std::fs::write(&storage.file_path, "{ not valid json").unwrap();
+
+        assert!(storage.peek().is_none(), "a corrupt file peeks as None");
+        assert_eq!(
+            std::fs::read_to_string(&storage.file_path).unwrap(),
+            "{ not valid json",
+            "peek must not reset the corrupt file"
+        );
+        let backup = storage.file_path.with_extension("json.bak");
+        assert!(!backup.exists(), "peek must not back the file up");
+
+        let result = storage.load_with_recovery().unwrap();
+        assert_eq!(result.warnings.len(), 1, "boot's load still warns");
+        assert!(backup.exists());
+    }
+
+    #[test]
+    fn peek_reads_valid_settings_and_tolerates_a_missing_file() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        assert!(storage.peek().is_none(), "no file peeks as None");
+
+        let settings = AppSettings {
+            theme: Some("light".to_string()),
+            ..Default::default()
+        };
+        storage.save(&settings).unwrap();
+        let before = std::fs::read_to_string(&storage.file_path).unwrap();
+
+        let peeked = storage.peek().expect("a valid file peeks as Some");
+        assert_eq!(peeked.theme.as_deref(), Some("light"));
+        assert_eq!(std::fs::read_to_string(&storage.file_path).unwrap(), before);
+    }
+
+    #[test]
+    fn peek_leaves_a_newer_schema_file_untouched() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let newer = r#"{"version":"99","theme":"dark"}"#;
+        std::fs::write(&storage.file_path, newer).unwrap();
+
+        assert!(storage.peek().is_none());
+        assert_eq!(std::fs::read_to_string(&storage.file_path).unwrap(), newer);
     }
 
     #[test]
