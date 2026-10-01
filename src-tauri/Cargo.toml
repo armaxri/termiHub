@@ -340,3 +340,7 @@ termihub-agent = { path = "../agent" }
 # entirely absent from the release binary (`cargo build`). Generation = running
 # the emitted `export_bindings_*` tests; a CI gate then fails on stale output.
 ts-rs = "12"
+# Parse the crate's own sources in the window-creation guard test (#4024): no
+# synchronous Tauri command may reach `WebviewWindowBuilder` (WebView2 deadlock
+# on Windows). syn 2 is already in the tree via the proc-macro stack.
+syn = { version = "2", features = ["full", "visit"] }
