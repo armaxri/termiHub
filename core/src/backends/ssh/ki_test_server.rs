@@ -74,6 +74,9 @@ pub enum PasswordPolicy {
     /// rejection, so the client actually receives `partial_success: false` and
     /// takes the password-fallback path, not the second-factor path.
     FirstFactor(&'static str),
+    /// `PasswordAuthentication yes` on its own: the given password fully
+    /// authenticates (plain password login, e.g. the app-log secrecy test, #4011).
+    Sole(&'static str),
 }
 
 /// The server's behaviour.
@@ -98,7 +101,8 @@ pub struct Observed {
     /// Responses received per round (the test server is the only place that
     /// ever sees them in the clear).
     pub responses: Vec<Vec<String>>,
-    /// Keyboard-interactive exchanges that ended in acceptance.
+    /// Exchanges that ended in acceptance (keyboard-interactive, or a
+    /// [`PasswordPolicy::Sole`] password login).
     pub authenticated: usize,
     /// Session channels whose shell was started (see the ordering note above).
     pub shells: usize,
@@ -141,7 +145,11 @@ impl russh::server::Handler for KiServer {
                 proceed_with_methods: Some(only_keyboard_interactive()),
                 partial_success: true,
             },
-            PasswordPolicy::FirstFactor(_) => Auth::Reject {
+            PasswordPolicy::Sole(expected) if expected == password => {
+                self.observed.lock().expect("observed").authenticated += 1;
+                Auth::Accept
+            }
+            PasswordPolicy::FirstFactor(_) | PasswordPolicy::Sole(_) => Auth::Reject {
                 proceed_with_methods: Some(MethodSet::from(
                     &[MethodKind::Password, MethodKind::KeyboardInteractive][..],
                 )),

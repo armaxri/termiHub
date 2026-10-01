@@ -315,7 +315,10 @@ pub(crate) fn auto_lock_permits_unlock(timer_installed: bool) -> Result<(), &'st
 ///
 /// Refuses the unlock (leaving the store locked) when no auto-lock timer is
 /// installed, otherwise performs the classified unlock and notifies the timer.
-fn guarded_unlock(manager: &CredentialManager, password: &str) -> Result<(), UnlockError> {
+pub(crate) fn guarded_unlock(
+    manager: &CredentialManager,
+    password: &str,
+) -> Result<(), UnlockError> {
     auto_lock_permits_unlock(manager.has_auto_lock_timer()).map_err(|message| UnlockError {
         message: message.to_string(),
         corrupted: false,
