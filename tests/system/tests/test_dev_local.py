@@ -115,6 +115,53 @@ def test_dev_agent_port_does_not_collide_with_e2e_ssh_port():
     assert _committed_dev_agent_port() != _committed_e2e_ssh_base()
 
 
+def _compose_port_defaults() -> dict[str, int]:
+    """Every ``${VAR:-default}`` host port published by the fixture compose file."""
+    text = (dev_local.REPO_ROOT / "tests" / "docker" / "docker-compose.yml").read_text(
+        encoding="utf-8"
+    )
+    return {
+        var: int(default)
+        for var, default in re.findall(r"\$\{(TERMIHUB_TEST_\w+_PORT):-(\d+)\}", text)
+    }
+
+
+def _shell_port_bases() -> dict[str, int]:
+    """Every ``_thdl_port VAR base`` line of the shell resolver."""
+    text = (
+        dev_local.REPO_ROOT / "scripts" / "internal" / "dev-local-env.sh"
+    ).read_text(encoding="utf-8")
+    return {
+        var: int(base) for var, base in re.findall(r"^_thdl_port (\w+)\s+(\d+)", text, re.M)
+    }
+
+
+def test_every_compose_fixture_port_is_offset_per_checkout():
+    """Regression for #4007: ``ssh-sftp-only`` was published on a fixed host port.
+
+    A compose port the resolvers do not offset is bound at the same host port by
+    every checkout, so the second checkout to start it fails or, worse, its
+    tests talk to another checkout's container.
+    """
+    compose = _compose_port_defaults()
+    shell = _shell_port_bases()
+    missing = sorted(var for var in compose if var not in shell)
+    assert not missing, f"compose ports not offset by dev-local-env.sh: {missing}"
+    for var, base in compose.items():
+        assert shell[var] == base, f"{var}: compose default {base} != shell base {shell[var]}"
+        if var in dev_local.BASE_PORTS:
+            assert dev_local.BASE_PORTS[var] == base, f"{var}: dev_local.py base differs"
+
+
+def test_compose_fixture_ports_do_not_share_a_host_port():
+    """Two fixtures with the same default host port cannot run side by side
+    (``ssh-sftp-only`` and ``remote-agent`` both used 2211 until #4007)."""
+    seen: dict[int, str] = {}
+    for var, port in _compose_port_defaults().items():
+        assert port not in seen, f"{var} and {seen[port]} both default to host port {port}"
+        seen[port] = var
+
+
 # --- TIN-016: fail fast on a silently-colliding dev.local.json -----------------
 
 

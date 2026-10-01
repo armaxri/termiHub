@@ -1,8 +1,9 @@
-//! Application log secrecy (#1570, #4011).
+//! Application log secrecy (#1570, #4011, #4007).
 //!
 //! The durable application log is a file users attach to bug reports, so it
-//! must never contain an SSH password, the credential-store passphrase or
-//! anything typed into / printed by a terminal. These tests drive the real code
+//! must never contain an SSH password, the credential-store passphrase, a sudo
+//! password (elevated remote save, #1328/#1329) or anything typed into /
+//! printed by a terminal. These tests drive the real code
 //! paths with marker secrets while the real file sink is installed (the
 //! [`RotatingLogFile`] writer, the `fmt` layer without ANSI, and the file
 //! filter built by [`env_filter_for_level`]) and then grep the log file.
@@ -35,6 +36,7 @@ use crate::credential::{
 };
 use crate::session::manager::SessionManager;
 use crate::session::registry::build_desktop_registry;
+use crate::utils::docker_fixture_gate::fixture_ready;
 use crate::utils::file_log::{env_filter_for_level, RotatingLogFile};
 use termihub_core::backends::ssh::host_key::{set_host_key_verifier, HostKeyInfo, HostKeyVerifier};
 use termihub_core::backends::ssh::ki_test_server::{serve_tcp, PasswordPolicy, Script};
@@ -237,4 +239,108 @@ impl crate::credential::auto_lock::Clock for TestClock {
     fn now(&self) -> std::time::Instant {
         std::time::Instant::now()
     }
+}
+
+// ── Sudo password (elevated remote save, #1328 step 5 / #1329) ──────────
+
+/// Root-owned file the `ssh-sudo` fixture ships (see `tests/docker/ssh-sudo`).
+const ELEVATED_TARGET: &str = "/etc/termihub-elevated-target.txt";
+/// The `ssh-sudo` fixture's account password, which is both the SSH login
+/// password and the sudo password (a password-required sudoer).
+const FIXTURE_SUDO_PASSWORD: &str = "testpass";
+/// A rejected sudo password; the failure path logs too.
+const WRONG_SUDO_PASSWORD: &str = "Log-Secrecy-Wrong-Sudo-Pw-5d19c3";
+
+/// A wrong and then the right sudo password, through the session manager's
+/// elevated save (the path the `session_write_file_elevated` command takes),
+/// against the live `ssh-sudo` fixture. Neither password may reach the file
+/// sink at trace.
+///
+/// Shares the fixture's one root-owned file with the `files::sftp`
+/// elevated-save tests, so it joins their `elevated_save` serial group. Skips
+/// without the container; hard-fails under `TERMIHUB_REQUIRE_DOCKER=1`.
+#[test]
+#[serial_test::serial(elevated_save)]
+fn sudo_password_of_an_elevated_save_stays_out_of_the_app_log() {
+    let port = std::env::var("TERMIHUB_TEST_SSH_SUDO_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2212);
+    if !fixture_ready("ssh-sudo", port) {
+        return;
+    }
+
+    let log_dir = tempfile::tempdir().expect("temp log dir");
+    let dispatch = file_log_dispatch(log_dir.path());
+    let _guard = tracing::dispatcher::set_default(&dispatch);
+    trust_all_host_keys();
+    let runtime = runtime_logging_to(&dispatch);
+    runtime.block_on(elevated_save_wrong_then_right(port));
+    drop(runtime);
+
+    let log = read_log(log_dir.path());
+    // Positive controls: the connect and both elevated saves logged here.
+    assert!(
+        log.contains("Connecting SSH session"),
+        "expected the SSH connect line in the log:\n{log}"
+    );
+    assert_eq!(
+        log.matches("SFTP elevated save: completed").count(),
+        2,
+        "expected both elevated saves to log their outcome:\n{log}"
+    );
+    assert_absent(&log, FIXTURE_SUDO_PASSWORD, "sudo / SSH password");
+    assert_absent(&log, WRONG_SUDO_PASSWORD, "rejected sudo password");
+}
+
+/// Log in to the `ssh-sudo` fixture through the session manager, then save the
+/// root-owned file elevated: first with a wrong sudo password, then the right.
+async fn elevated_save_wrong_then_right(port: u16) {
+    use termihub_core::backends::ssh::sftp_ops::ElevatedWriteResult;
+
+    let manager = SessionManager::new(build_desktop_registry(), Arc::new(NullAgent));
+    let emitter = MockEventEmitter::new();
+    let settings = serde_json::json!({
+        "host": "127.0.0.1",
+        "port": port,
+        "username": "testuser",
+        "authMethod": "password",
+        "password": FIXTURE_SUDO_PASSWORD,
+        "shellIntegration": false,
+    });
+    let session_id = manager
+        .create_connection(
+            "ssh",
+            settings,
+            None,
+            Some("log-secrecy-sudo-tab:0"),
+            false,
+            false,
+            emitter,
+        )
+        .await
+        .expect("SSH password login to the ssh-sudo fixture");
+
+    let content = format!("log-secrecy-elevated-{}\n", uuid::Uuid::new_v4());
+    let rejected = manager
+        .session_write_file_elevated(&session_id, ELEVATED_TARGET, &content, WRONG_SUDO_PASSWORD)
+        .await
+        .expect("elevated save with a wrong password completes");
+    assert_eq!(rejected, ElevatedWriteResult::IncorrectPassword);
+
+    let saved = manager
+        .session_write_file_elevated(
+            &session_id,
+            ELEVATED_TARGET,
+            &content,
+            FIXTURE_SUDO_PASSWORD,
+        )
+        .await
+        .expect("elevated save with the right password completes");
+    assert_eq!(saved, ElevatedWriteResult::Success);
+
+    manager
+        .close_session(&session_id)
+        .await
+        .expect("close the session");
 }
