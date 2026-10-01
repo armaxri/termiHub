@@ -329,15 +329,27 @@ done
 STUB
 chmod +x "$LS/stub-app"
 
-# lifecycle_run <label> <expect: pass|fail> [VAR=value...]: run the smoke on the stub.
+# The bash smoke and its PowerShell twin (the Windows release smoke), the latter
+# only where pwsh is installed (GitHub's ubuntu runners have it).
+lifecycle_cmd() { # <sh|ps1>: the smoke command line for the stub
+  if [ "$1" = sh ]; then
+    echo bash scripts/internal/release-smoke-app-lifecycle.sh --exe "$LS/stub-app" \
+      --log "$LS/termihub.log" --version 9.8.7 --close sigterm --out "$LS/out"
+  else
+    echo pwsh -NoProfile -File scripts/internal/release-smoke-app-lifecycle.ps1 -Exe "$LS/stub-app" \
+      -Log "$LS/termihub.log" -Version 9.8.7 -Close signal -OutDir "$LS/out"
+  fi
+}
+# lifecycle_run <sh|ps1> <label> <expect: pass|fail> [VAR=value...]: run the smoke on the stub.
 lifecycle_run() {
-  local label="$1" expect="$2" out rc=0
-  shift 2
+  local kind="$1" label="$2" expect="$3" out rc=0
+  local -a cmd
+  shift 3
+  read -r -a cmd <<<"$(lifecycle_cmd "$kind")"
+  label="(${kind}) ${label}"
   rm -rf "$LS/lock" "$LS/termihub.log"
   out="$(env STUB_LOG="$LS/termihub.log" STUB_LOCK="$LS/lock" STUB_VERSION=9.8.7 \
-    SMOKE_IPC_TIMEOUT=20 SMOKE_EXIT_TIMEOUT=5 SMOKE_LOG_TIMEOUT=5 "$@" \
-    bash scripts/internal/release-smoke-app-lifecycle.sh --exe "$LS/stub-app" \
-    --log "$LS/termihub.log" --version 9.8.7 --close sigterm --out "$LS/out" 2>&1)" || rc=$?
+    SMOKE_IPC_TIMEOUT=20 SMOKE_EXIT_TIMEOUT=5 SMOKE_LOG_TIMEOUT=5 "$@" "${cmd[@]}" 2>&1)" || rc=$?
   if { [ "$expect" = pass ] && [ "$rc" -eq 0 ]; } || { [ "$expect" = fail ] && [ "$rc" -eq 1 ]; }; then
     echo "ok    app lifecycle smoke: ${label} (exit ${rc})"
   else
@@ -347,9 +359,17 @@ lifecycle_run() {
     failures=$((failures + 1))
   fi
 }
-lifecycle_run "passes on a faithful stub app" pass
-lifecycle_run "fails when the clean-exit line is missing" fail STUB_NO_CLEAN_EXIT=1
-lifecycle_run "fails when a second instance keeps running" fail STUB_NO_SINGLE=1
+lifecycle_kinds=(sh)
+if command -v pwsh >/dev/null 2>&1; then
+  lifecycle_kinds+=(ps1)
+else
+  echo "skip  app lifecycle smoke: PowerShell twin (pwsh not installed)"
+fi
+for kind in "${lifecycle_kinds[@]}"; do
+  lifecycle_run "$kind" "passes on a faithful stub app" pass
+  lifecycle_run "$kind" "fails when the clean-exit line is missing" fail STUB_NO_CLEAN_EXIT=1
+  lifecycle_run "$kind" "fails when a second instance keeps running" fail STUB_NO_SINGLE=1
+done
 rm -rf "$LS/lock"
 
 echo ""
