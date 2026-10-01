@@ -20,7 +20,9 @@ use tracing::debug;
 use tracing::{info, warn};
 
 use super::build_version::{VersionPolicy, VersionPolicyError};
-use super::signature::{SignaturePolicy, UpdateSignatureError};
+#[cfg(unix)]
+use super::signature::SignaturePolicy;
+use super::signature::UpdateSignatureError;
 use super::version;
 use crate::state::persistence::{AgentState, PendingUpdate};
 

@@ -76,6 +76,10 @@ ALLOWLIST=(
   # Release app-lifecycle smoke (#4011): the Linux/macOS half; the Windows leg
   # drives the installed app via PowerShell, so its twin is a .ps1, not a .cmd.
   "scripts/internal/release-smoke-app-lifecycle.sh" # release CI smoke (-> .ps1 on Windows)
+  # Test-only signing-key guard (#4083): CI-only gate run by agent.yml on every
+  # agent build (Windows leg via `shell: bash`, i.e. Git Bash) and by release.yml
+  # on Ubuntu; never run by hand, so a `.cmd` twin would be dead weight.
+  "scripts/internal/assert-no-test-signing-key.sh" # CI-only binary grep (bash on every runner)
 )
 
 in_allowlist() {

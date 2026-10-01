@@ -19,6 +19,11 @@
 
 set -euo pipefail
 
+# Byte-wise matching: the binaries are not valid UTF-8, and the needle is plain
+# ASCII base64. The C locale keeps grep from tripping over encoding errors (and
+# makes it faster), identically on Linux, macOS and Windows Git Bash.
+export LC_ALL=C
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TEST_PUB="$REPO_ROOT/agent/keys/test-only/update-signing-TEST-ONLY.pub.pem"
