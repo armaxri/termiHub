@@ -4309,7 +4309,8 @@ mod saved_connections;
 /// Files-only sessions on hosts that refuse the shell (#4078).
 mod files_only;
 
-/// Application log secrecy: SSH password, store passphrase, terminal content (#1570).
+/// Application log secrecy: SSH password, store passphrase, sudo password and
+/// terminal content (#1570, #4007).
 mod log_secrecy;
 
 // ── tab close cancels the connect's OTP prompt (#3437) ─────────────────

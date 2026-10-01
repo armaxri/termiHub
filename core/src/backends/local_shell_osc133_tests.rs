@@ -143,9 +143,28 @@ impl Session {
         );
     }
 
-    /// Submit `line` and return everything printed from the submission until the
-    /// shell's next prompt-start mark (`A`).
+    /// Wait until the shell's latest prompt has been drawn in full, i.e. the
+    /// input-start mark (`B`) follows the last prompt-start mark (`A`).
+    ///
+    /// `A` alone is not enough (#4071): bash prints it from `PROMPT_COMMAND`,
+    /// *before* readline puts the terminal into raw mode and draws `PS1`. Input
+    /// written in that window is echoed by the tty itself, then again by
+    /// readline after the prompt, so the early echo and the prompt line land
+    /// between `C` and `D` when there is no `C` (bash < 4.4). `B` is part of
+    /// `PS1`, so once it is out the line editor owns the terminal.
+    async fn wait_for_input_start(&mut self) {
+        let (a, b) = (mark("A"), mark("B"));
+        self.read_until("a fully drawn prompt (A … B)", |out| {
+            out.rfind(&a)
+                .is_some_and(|pos| out[pos + a.len()..].contains(&b))
+        })
+        .await;
+    }
+
+    /// Wait for the prompt, submit `line`, and return everything printed from
+    /// the submission until the shell's next prompt-start mark (`A`).
     async fn run(&mut self, line: &str) -> String {
+        self.wait_for_input_start().await;
         let start = self.output.len();
         self.shell
             .write(format!("{line}\r").as_bytes())
@@ -181,11 +200,9 @@ async fn assert_marks_bracket_real_commands(shell_name: &str) {
     }
     let mut session = Session::start(shell_name).await;
     // The integration snippet is typed into the shell's stdin; once it has run,
-    // every prompt starts with the `A` mark.
+    // every prompt is bracketed by `A` … `B`, and `run` waits for that before
+    // it types anything.
     let a = mark("A");
-    session
-        .read_until("the first marked prompt", |out| out.contains(&a))
-        .await;
 
     // seq: exit 0, output exactly three lines.
     let seq = strip_non_marks(&session.run("seq 3").await);
@@ -198,10 +215,9 @@ async fn assert_marks_bracket_real_commands(shell_name: &str) {
         Some(pos) => pos + c.len(),
         // bash < 4.4 has no PS0, so no `C`; the frontend then takes the output
         // as starting on the line after the input — mirror that here.
-        None => seq
-            .find("\r\n")
-            .map(|p| p + 2)
-            .expect("echoed command line"),
+        None => end_of_echo(&seq, "seq 3").unwrap_or_else(|| {
+            panic!("without C, the segment must open with the echoed command: {seq:?}")
+        }),
     };
     assert!(output_start <= d, "C must precede D: {seq:?}");
     let rest = seq[output_start..d]
@@ -230,6 +246,40 @@ async fn assert_marks_bracket_real_commands(shell_name: &str) {
     session.close().await;
 }
 
+/// The index just past the line break that ends the echo of `line` at the very
+/// start of `text`, or `None` if `text` does not open with that echo.
+///
+/// The echo may be wrapped: a prompt that fills the line (CI runners have very
+/// long host names) makes readline break the input with a CR and padding
+/// rather than a `\r\n`, e.g. `se \rq 3\r\n`. So only the command's own
+/// non-blank characters are matched, in order, skipping blanks and line-break
+/// characters between them; after the last one only blanks may precede `\r\n`.
+fn end_of_echo(text: &str, line: &str) -> Option<usize> {
+    let mut want = line.chars().filter(|c| !c.is_whitespace()).peekable();
+    let mut matched_to = 0;
+    for (i, ch) in text.char_indices() {
+        if want.peek().is_none() {
+            break;
+        }
+        matched_to = i + ch.len_utf8();
+        if matches!(ch, ' ' | '\r' | '\n') {
+            continue;
+        }
+        if want.next() != Some(ch) {
+            return None;
+        }
+    }
+    if want.peek().is_some() {
+        return None;
+    }
+    let tail = &text[matched_to..];
+    let nl = tail.find("\r\n")?;
+    tail[..nl]
+        .chars()
+        .all(|c| c == ' ' || c == '\r')
+        .then_some(matched_to + nl + 2)
+}
+
 /// zsh's PROMPT_SP: after a command, zsh prints `%` (`#` for root) plus a row of
 /// padding and then `\r \r`, which overwrites the `%` again when the output
 /// ended in a newline. It runs before `precmd`, so it sits between the output
@@ -253,6 +303,10 @@ fn dump_transcript(shell_name: &str, output: &str) {
     let Ok(dir) = std::env::var("TERMIHUB_OSC133_TRANSCRIPT_DIR") else {
         return;
     };
+    // Fixtures are per shell name; a path-valued run (`/bin/bash`) has none.
+    if shell_name.contains('/') {
+        return;
+    }
     let from = output.find(&mark("A")).unwrap_or(0);
     let mut text = output[from..].to_string();
     let user = std::env::var("USER").unwrap_or_default();
@@ -282,6 +336,15 @@ fn short_hostname() -> Option<String> {
 #[serial(local_pty)]
 async fn bash_marks_commands_with_their_exit_codes() {
     assert_marks_bracket_real_commands("bash").await;
+}
+
+/// `/bin/bash` by path: on macOS that is the system bash 3.2, which has no
+/// `PS0` and so no `C` mark — the path the macOS CI runner took in #4071, which
+/// a Homebrew `bash` earlier on `PATH` would otherwise hide on a developer Mac.
+#[tokio::test]
+#[serial(local_pty)]
+async fn system_bash_marks_commands_with_their_exit_codes() {
+    assert_marks_bracket_real_commands("/bin/bash").await;
 }
 
 #[tokio::test]
@@ -318,6 +381,32 @@ fn prompt_sp_is_recognised_but_real_output_is_not() {
     assert!(is_prompt_sp("#  \r \r"));
     assert!(!is_prompt_sp("4\r\n"));
     assert!(!is_prompt_sp("%  extra\r \r"));
+}
+
+#[test]
+fn echo_end_is_found_through_wraps_but_not_past_a_prompt() {
+    // Plain echo.
+    assert_eq!(end_of_echo("seq 3\r\n1\r\n", "seq 3"), Some(7));
+    // Wrapped at the right margin (both shapes seen from readline).
+    let wrapped = "se \rq 3\r\n1\r\n";
+    assert_eq!(
+        end_of_echo(wrapped, "seq 3"),
+        Some(wrapped.find('1').unwrap())
+    );
+    let wrapped = "seq \r 3\r\n1\r\n";
+    assert_eq!(
+        end_of_echo(wrapped, "seq 3"),
+        Some(wrapped.find('1').unwrap())
+    );
+    // The #4071 shape (input typed before the prompt: an early tty echo, the
+    // prompt, then readline's echo) is not something this can untangle — the
+    // output would be taken to start at the prompt line, so the `seq 3` check
+    // fails loudly. Waiting for `B` before typing is what rules this shape out.
+    let raced = "seq 3\r\nhost:~ user$ \x1b]133;B\x07seq 3\r\n1\r\n";
+    assert_eq!(end_of_echo(raced, "seq 3"), Some(7));
+    // Not the echo at all.
+    assert_eq!(end_of_echo("host:~ user$ seq 3\r\n", "seq 3"), None);
+    assert_eq!(end_of_echo("seq 3 extra\r\n", "seq 3"), None);
 }
 
 #[test]

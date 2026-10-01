@@ -23,6 +23,10 @@
 
 use super::{MockEventEmitter, NullAgent};
 
+/// In-process SSH + SFTP + scripted-`sudo` server, so the sudo-password check
+/// runs on every PR (#4007).
+mod sudo_sftp_server;
+
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -343,4 +347,131 @@ async fn elevated_save_wrong_then_right(port: u16) {
         .close_session(&session_id)
         .await
         .expect("close the session");
+}
+
+// ── Sudo password, per-PR (no Docker) (#4007) ───────────────────────────
+
+/// Root-owned file on the in-process server the elevated saves rewrite.
+const IN_PROCESS_TARGET: &str = "/etc/termihub-in-process-target.conf";
+/// A rejected sudo password for the in-process server.
+const IN_PROCESS_WRONG_SUDO_PASSWORD: &str = "Log-Secrecy-Wrong-Sudo-Pw-e07b52";
+
+/// The same wrong-then-right elevated save as
+/// [`sudo_password_of_an_elevated_save_stays_out_of_the_app_log`], but against
+/// the in-process SSH/SFTP/`sudo` server, so it runs on every PR rather than
+/// only where the `ssh-sudo` container is up.
+///
+/// Positive controls make the check non-vacuous: the scripted `sudo` must have
+/// received exactly the two passwords on stdin, the right one must really have
+/// rewritten the target, and both saves must have logged their outcome. Then
+/// neither sudo password nor the login password may appear in the trace-level
+/// file sink.
+#[test]
+fn sudo_password_stays_out_of_the_app_log_against_an_in_process_server() {
+    let log_dir = tempfile::tempdir().expect("temp log dir");
+    let dispatch = file_log_dispatch(log_dir.path());
+    let _guard = tracing::dispatcher::set_default(&dispatch);
+    trust_all_host_keys();
+    let runtime = runtime_logging_to(&dispatch);
+    runtime.block_on(in_process_elevated_save_wrong_then_right());
+    drop(runtime);
+
+    let log = read_log(log_dir.path());
+    assert!(
+        log.contains("Connecting SSH session"),
+        "expected the SSH connect line in the log:\n{log}"
+    );
+    assert_eq!(
+        log.matches("SFTP elevated save: completed").count(),
+        2,
+        "expected both elevated saves to log their outcome:\n{log}"
+    );
+    assert_absent(&log, sudo_sftp_server::SUDO_PASSWORD, "sudo password");
+    assert_absent(
+        &log,
+        IN_PROCESS_WRONG_SUDO_PASSWORD,
+        "rejected sudo password",
+    );
+    assert_absent(&log, sudo_sftp_server::LOGIN_PASSWORD, "SSH password");
+}
+
+async fn in_process_elevated_save_wrong_then_right() {
+    use sudo_sftp_server::{LOGIN_PASSWORD, SUDO_PASSWORD};
+    use termihub_core::backends::ssh::sftp_ops::ElevatedWriteResult;
+
+    let server = sudo_sftp_server::serve(&[(IN_PROCESS_TARGET, "original\n")]).await;
+    let manager = SessionManager::new(build_desktop_registry(), Arc::new(NullAgent));
+    let settings = serde_json::json!({
+        "host": "127.0.0.1",
+        "port": server.addr.port(),
+        "username": "sudo-user",
+        "authMethod": "password",
+        "password": LOGIN_PASSWORD,
+        "shellIntegration": false,
+    });
+    let session_id = manager
+        .create_connection(
+            "ssh",
+            settings,
+            None,
+            Some("log-secrecy-in-process-sudo-tab:0"),
+            false,
+            false,
+            MockEventEmitter::new(),
+        )
+        .await
+        .expect("SSH password login to the in-process server");
+
+    let content = format!("in-process-elevated-{}\n", uuid::Uuid::new_v4());
+    let rejected = manager
+        .session_write_file_elevated(
+            &session_id,
+            IN_PROCESS_TARGET,
+            &content,
+            IN_PROCESS_WRONG_SUDO_PASSWORD,
+        )
+        .await
+        .expect("elevated save with a wrong password completes");
+    assert_eq!(rejected, ElevatedWriteResult::IncorrectPassword);
+
+    let saved = manager
+        .session_write_file_elevated(&session_id, IN_PROCESS_TARGET, &content, SUDO_PASSWORD)
+        .await
+        .expect("elevated save with the right password completes");
+    assert_eq!(saved, ElevatedWriteResult::Success);
+
+    manager
+        .close_session(&session_id)
+        .await
+        .expect("close the session");
+
+    let observed = server.observed.lock().expect("observed");
+    // The passwords really travelled to sudo — and only on its stdin.
+    assert_eq!(
+        observed.sudo_stdin,
+        vec![
+            format!("{IN_PROCESS_WRONG_SUDO_PASSWORD}\n"),
+            format!("{SUDO_PASSWORD}\n"),
+        ]
+    );
+    for command in &observed.commands {
+        assert!(
+            !command.contains(SUDO_PASSWORD) && !command.contains(IN_PROCESS_WRONG_SUDO_PASSWORD),
+            "a sudo password reached a remote command line: {command}"
+        );
+    }
+    // The right password rewrote the target; no temp upload was left behind.
+    assert_eq!(
+        observed.files.get(IN_PROCESS_TARGET).map(Vec::as_slice),
+        Some(content.as_bytes())
+    );
+    let leftovers: Vec<_> = observed
+        .files
+        .keys()
+        .filter(|p| p.starts_with("/tmp/termihub-"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "temp uploads left behind: {leftovers:?}"
+    );
 }
