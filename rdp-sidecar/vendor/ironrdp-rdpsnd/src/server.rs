@@ -198,13 +198,29 @@ impl RdpsndServer {
             };
             RdpsndSvcMessages::new(vec![pdu::ServerAudioOutputPdu::Wave2(pdu).into()])
         } else {
-            let pdu = pdu::WavePdu {
+            // termiHub vendored-fork change (#3510, upstream `2d9a9bf1`): pre-v8 is
+            // a WaveInfo PDU (§2.2.3.3) followed by a bare Wave payload (§2.2.3.4),
+            // now that `WavePdu` carries WaveInfo only.
+            if data.len() < usize::from(pdu::WavePdu::MIN_AUDIO_LENGTH) {
+                return Err(pdu_other_err!("wave data shorter than WaveInfo Data prefix"));
+            }
+            let audio_length = u16::try_from(data.len())
+                .ok()
+                .filter(|len| *len <= pdu::WavePdu::MAX_AUDIO_LENGTH)
+                .ok_or_else(|| pdu_other_err!("wave data too large for WaveInfo BodySize"))?;
+            let mut data_prefix = [0u8; 4];
+            data_prefix.copy_from_slice(&data[..4]);
+            let info = pdu::WavePdu {
                 block_no: self.block_no,
                 format_no,
                 timestamp: 0,
-                data: data.into(),
+                data_prefix,
+                audio_length,
             };
-            RdpsndSvcMessages::new(vec![pdu::ServerAudioOutputPdu::Wave(pdu).into()])
+            let wave_data = pdu::WaveDataPdu {
+                data: data[4..].to_vec(),
+            };
+            RdpsndSvcMessages::new(vec![pdu::ServerAudioOutputPdu::Wave(info).into(), wave_data.into()])
         };
 
         self.block_no = self.block_no.overflowing_add(1).0;

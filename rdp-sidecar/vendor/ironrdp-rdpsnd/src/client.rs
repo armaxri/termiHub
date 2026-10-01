@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use ironrdp_core::{Decode as _, EncodeResult, ReadCursor, cast_length, impl_as_any};
+use ironrdp_core::{Decode as _, Encode as _, EncodeResult, ReadCursor, cast_length, impl_as_any};
 use ironrdp_pdu::gcc::ChannelName;
 use ironrdp_pdu::{PduResult, encode_err, pdu_other_err};
 use ironrdp_svc::{CompressionCondition, SvcClientProcessor, SvcMessage, SvcProcessor};
@@ -66,7 +66,22 @@ enum RdpsndState {
     Start,
     WaitingForTraining,
     Ready,
+    /// termiHub vendored-fork state (#3510, upstream `2d9a9bf1`): waiting for
+    /// the bare Wave payload that follows a pre-v8 WaveInfo PDU.
+    ExpectingWave,
     Stop,
+}
+
+/// Pre-v8 WaveInfo fields kept until the following bare Wave payload arrives
+/// (termiHub vendored-fork change #3510, upstream `2d9a9bf1`).
+#[derive(Debug, Clone)]
+struct PendingWave {
+    timestamp: u16,
+    format_no: u16,
+    block_no: u8,
+    data_prefix: [u8; 4],
+    /// Total audio length including the four-byte prefix (MS-RDPEA `n`).
+    audio_length: u16,
 }
 
 /// Required for rdpdr to work: [\[MS-RDPEFS\] Appendix A<1>]
@@ -83,6 +98,9 @@ pub struct Rdpsnd {
     /// remembering it is what lets `wave` recover the concrete `AudioFormat`
     /// rather than a bare index into a list the handler never sees.
     negotiated_formats: Vec<AudioFormat>,
+    /// termiHub vendored-fork field (#3510): the WaveInfo awaiting its payload
+    /// while in [`RdpsndState::ExpectingWave`].
+    pending_wave: Option<PendingWave>,
 }
 
 impl Rdpsnd {
@@ -94,6 +112,7 @@ impl Rdpsnd {
             state: RdpsndState::Start,
             server_format: None,
             negotiated_formats: Vec::new(),
+            pending_wave: None,
         }
     }
 
@@ -189,6 +208,70 @@ impl Rdpsnd {
             pdu::ClientAudioOutputPdu::WaveConfirm(pdu).into(),
         ]))
     }
+
+    /// Hand a wave block to the handler with the concrete negotiated format.
+    ///
+    /// termiHub vendored-fork change (#1773): `format_no` is resolved against the
+    /// exact list advertised in `client_formats()`. An out-of-range `format_no`
+    /// (a misbehaving server) is dropped rather than guessed; the caller still
+    /// confirms the block.
+    fn play_wave(&mut self, format_no: u16, ts: u32, data: Cow<'_, [u8]>) {
+        match self.negotiated_formats.get(usize::from(format_no)) {
+            Some(format) => self.handler.wave(format, ts, data),
+            None => warn!(
+                format_no,
+                n_formats = self.negotiated_formats.len(),
+                "Ignoring wave with out-of-range format_no"
+            ),
+        }
+    }
+
+    /// (Re)start format negotiation for a server Audio Formats PDU.
+    fn begin_format_negotiation(&mut self, af: ServerAudioFormatPdu) -> PduResult<Vec<SvcMessage>> {
+        self.server_format = Some(af);
+        self.pending_wave = None;
+        self.state = RdpsndState::WaitingForTraining;
+        let mut msgs: Vec<SvcMessage> = self.client_formats()?.into();
+        if self.version()? >= pdu::Version::V6 {
+            let mut m = self.quality_mode()?.into();
+            msgs.append(&mut m);
+        }
+        Ok(msgs)
+    }
+
+    /// Complete a pre-v8 transfer from the pending WaveInfo and the bare Wave
+    /// payload bytes (termiHub vendored-fork change #3510, upstream `2d9a9bf1`).
+    fn finish_pending_wave(&mut self, wave_payload: &[u8]) -> PduResult<Vec<SvcMessage>> {
+        self.state = RdpsndState::Ready;
+        let Some(pending) = self.pending_wave.take() else {
+            warn!("Received Wave payload without a pending WaveInfo");
+            return Ok(vec![]);
+        };
+
+        // The payload is bPad[4] followed by the audio after the WaveInfo `Data`
+        // prefix; its total wire length equals the WaveInfo `audio_length` (`n`).
+        // `WavePdu::decode` guarantees `audio_length >= 4`.
+        let expected_len = usize::from(pending.audio_length);
+        match wave_payload.get(4..expected_len) {
+            Some(remaining) if wave_payload.len() >= expected_len => {
+                let mut data = Vec::with_capacity(expected_len);
+                data.extend_from_slice(&pending.data_prefix);
+                data.extend_from_slice(remaining);
+                self.play_wave(pending.format_no, u32::from(pending.timestamp), data.into());
+            }
+            _ => {
+                // MS-RDPEA §3.2.5.2.1.6: still confirm so the server's latency
+                // accounting advances.
+                warn!(
+                    got = wave_payload.len(),
+                    expected = expected_len,
+                    "Wave payload shorter than WaveInfo audio length; confirming without playback"
+                );
+            }
+        }
+
+        Ok(self.wave_confirm(pending.timestamp, pending.block_no)?.into())
+    }
 }
 
 impl_as_any!(Rdpsnd);
@@ -203,6 +286,14 @@ impl SvcProcessor for Rdpsnd {
     }
 
     fn process(&mut self, payload: &[u8]) -> PduResult<Vec<SvcMessage>> {
+        // termiHub vendored-fork change (#3510, upstream `2d9a9bf1`): the pre-v8
+        // Wave payload has no RDPSND header (MS-RDPEA §2.2.3.4), so it must not be
+        // decoded as a PDU.
+        if self.state == RdpsndState::ExpectingWave {
+            debug!(len = payload.len(), "Completing pending WaveInfo with Wave payload");
+            return self.finish_pending_wave(payload);
+        }
+
         // termiHub vendored-fork change (#3499, upstream `c87ab68e` "isolate
         // malformed encrypted waves"): a malformed audio PDU is dropped and the
         // channel state kept, so later valid audio still plays. Upstream 0.9.0
@@ -224,14 +315,7 @@ impl SvcProcessor for Rdpsnd {
                     self.state = RdpsndState::Stop;
                     return Ok(vec![]);
                 };
-                self.server_format = Some(af);
-                self.state = RdpsndState::WaitingForTraining;
-                let mut msgs: Vec<SvcMessage> = self.client_formats()?.into();
-                if self.version()? >= pdu::Version::V6 {
-                    let mut m = self.quality_mode()?.into();
-                    msgs.append(&mut m);
-                }
-                msgs
+                self.begin_format_negotiation(af)?
             }
             RdpsndState::WaitingForTraining => {
                 let pdu::ServerAudioOutputPdu::Training(pdu) = pdu else {
@@ -244,18 +328,31 @@ impl SvcProcessor for Rdpsnd {
             }
             RdpsndState::Ready => {
                 match pdu {
-                    // TODO: handle WaveInfo for < v8
-                    pdu::ServerAudioOutputPdu::Wave2(pdu) => {
-                        let format_no = usize::from(pdu.format_no);
-                        let ts = pdu.audio_timestamp;
-                        // termiHub vendored-fork change (#1773): resolve the index
-                        // against the exact list we advertised and hand the handler
-                        // the concrete `AudioFormat`. An out-of-range `format_no`
-                        // (a misbehaving server) is dropped rather than guessed.
-                        match self.negotiated_formats.get(format_no) {
-                            Some(format) => self.handler.wave(format, ts, pdu.data),
-                            None => error!(format_no, "Wave2 format_no out of range"),
+                    // termiHub vendored-fork change (#3510, upstream `2d9a9bf1`):
+                    // MS-RDPEA §2.2.3.3 WaveInfo only; the next SVC message is the
+                    // bare Wave (§2.2.3.4). Some stacks concatenate the Wave after
+                    // the WaveInfo in one buffer — finish at once when trailing
+                    // bytes are present.
+                    pdu::ServerAudioOutputPdu::Wave(pdu) => {
+                        self.pending_wave = Some(PendingWave {
+                            timestamp: pdu.timestamp,
+                            format_no: pdu.format_no,
+                            block_no: pdu.block_no,
+                            data_prefix: pdu.data_prefix,
+                            audio_length: pdu.audio_length,
+                        });
+                        self.state = RdpsndState::ExpectingWave;
+
+                        // SNDPROLOG (4 bytes) + WaveInfo body; anything after it is
+                        // a concatenated Wave payload.
+                        let header_and_info = 4 + pdu.size();
+                        if let Some(trailing) = payload.get(header_and_info..).filter(|t| !t.is_empty()) {
+                            return self.finish_pending_wave(trailing);
                         }
+                        return Ok(vec![]);
+                    }
+                    pdu::ServerAudioOutputPdu::Wave2(pdu) => {
+                        self.play_wave(pdu.format_no, pdu.audio_timestamp, pdu.data);
                         return Ok(self.wave_confirm(pdu.timestamp, pdu.block_no)?.into());
                     }
                     pdu::ServerAudioOutputPdu::Volume(pdu) => {
@@ -270,28 +367,13 @@ impl SvcProcessor for Rdpsnd {
                     pdu::ServerAudioOutputPdu::Training(pdu) => return Ok(self.training_confirm(&pdu)?.into()),
                     pdu::ServerAudioOutputPdu::AudioFormat(af) => {
                         self.handler.close();
-                        self.server_format = Some(af);
-                        self.state = RdpsndState::WaitingForTraining;
-                        let mut msgs: Vec<SvcMessage> = self.client_formats()?.into();
-                        if self.version()? >= pdu::Version::V6 {
-                            let mut m = self.quality_mode()?.into();
-                            msgs.append(&mut m);
-                        }
-                        return Ok(msgs);
+                        return self.begin_format_negotiation(af);
                     }
                     // termiHub vendored-fork change (#3499, upstream `2d9a9bf1`):
                     // optional PDUs this client does not implement keep the
                     // channel alive instead of silencing audio for the session.
                     pdu::ServerAudioOutputPdu::CryptKey(_) | pdu::ServerAudioOutputPdu::WaveEncrypt(_) => {
                         warn!(?pdu, "Ignoring unsupported RDPSND PDU");
-                    }
-                    // Pre-v8 WaveInfo + bare Wave transfers are not supported by
-                    // this fork (upstream added them in `2d9a9bf1`, tracked as a
-                    // termiHub follow-up #3510); stop as upstream 0.9.0 did.
-                    pdu::ServerAudioOutputPdu::Wave(_) => {
-                        error!("Unsupported pre-v8 Wave PDU");
-                        self.state = RdpsndState::Stop;
-                        return Ok(vec![]);
                     }
                 }
                 vec![]

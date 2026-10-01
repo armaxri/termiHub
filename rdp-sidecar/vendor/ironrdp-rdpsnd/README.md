@@ -20,7 +20,8 @@ yet — see `docs/supply-chain.md` → "Vendored forks". Update both when re-bas
 reviewing upstream again.
 
 There are **two functional changes** of our own plus **upstream fixes ported
-from after 0.9.0** (see below), all in `src/client.rs`.
+from after 0.9.0** (see below), in `src/client.rs` — and, for the pre-v8 Wave
+port, `src/pdu/mod.rs` and `src/server.rs`.
 
 ### 1. `wave` receives the concrete `AudioFormat` ([#1773])
 
@@ -70,17 +71,27 @@ Reviewed upstream `crates/ironrdp-rdpsnd` up to IronRDP
   ignored instead of stopping audio for the rest of the session.
 - **`get_format(format_no)` indexes the negotiated client list** (from upstream
   `2d9a9bf1`), matching MS-RDPEA; 0.9.0 indexed the server's list.
+- **Pre-v8 `WaveInfo` + bare `Wave` playback** ([#3510], from upstream
+  `2d9a9bf1`): a server below RDPSND v8 sends `SNDC_WAVE` WaveInfo (§2.2.3.3)
+  and then the rest of the sample as a separate, header-less Wave message
+  (§2.2.3.4). 0.9.0 decoded `SNDC_WAVE` as one PDU and the client then stopped,
+  so such servers got no audio. The client now waits in an `ExpectingWave`
+  state, reassembles the sample from the WaveInfo prefix and the bare payload
+  (or from trailing bytes when both arrive in one buffer), plays it with the
+  negotiated `AudioFormat` (change 1) and confirms it; a short payload or an
+  out-of-range `wFormatNo` is confirmed without playback. In `pdu/mod.rs`
+  `WavePdu` is now WaveInfo-only (`data_prefix`, `audio_length`) and the bare
+  payload is the new `WaveDataPdu`; `server.rs`'s pre-v8 send uses the pair.
 
-Deliberately **not** ported: pre-v8 `WaveInfo` + bare `Wave` playback (feature,
-upstream `2d9a9bf1`; follow-up [#3510]), upstream's own
-client-format ordering (superseded by change 2 above), quality-mode selection
+Deliberately **not** ported: upstream's own client-format ordering (superseded by change 2 above), quality-mode selection
 (`14ef4fd4`), error byte offsets (`8607ac5d`, needs a newer `ironrdp-core`),
 the AUDIO_INPUT helper (`50fa88b2`), server-side wave timestamps/confirms
 (`160752fc`, server only) and the toolchain bump (`0aeea76e`). Regression tests
 live in `rdp-sidecar/src/rdpsnd_fork_tests.rs` (this crate builds with
 `test = false`).
 
-`pdu.rs`, `server.rs` and `lib.rs` are byte-for-byte upstream 0.9.0. The intended
+`lib.rs` is byte-for-byte upstream 0.9.0; `pdu/mod.rs` and `server.rs` differ
+only by the #3510 Wave split. The intended
 upstream contribution is changes 1 and 2. Sibling `ironrdp-*` deps
 remain registry versions so nothing else forks.
 
