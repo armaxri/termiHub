@@ -63,6 +63,8 @@ describe("Tab — Spawned badge (#1446)", () => {
     const badge = document.querySelector(".tab__spawned-badge");
     expect(badge).not.toBeNull();
     expect(badge?.textContent).toContain("Spawned");
+    // Stable per-tab testid for the bridge system tests (#4010).
+    expect(badge?.getAttribute("data-testid")).toBe("tab-spawned-badge-t1");
   });
 
   it("does not render the badge for a regular tab", () => {

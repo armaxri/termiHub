@@ -89,7 +89,12 @@ export function Modal({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="ui-modal__overlay" />
+        {/* The scrim carries `<testid>-overlay` so system tests can exercise
+            click-outside-to-dismiss (#4010). */}
+        <Dialog.Overlay
+          className="ui-modal__overlay"
+          data-testid={rest["data-testid"] ? `${rest["data-testid"]}-overlay` : undefined}
+        />
         <Dialog.Content
           ref={setContentEl}
           className={size === "lg" ? "ui-modal ui-modal--lg" : "ui-modal"}
