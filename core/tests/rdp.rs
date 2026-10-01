@@ -1,5 +1,5 @@
 #![cfg(feature = "rdp-sidecar")]
-//! RDP Integration Tests (RDP-01 through RDP-11, #3609 / TIN-005).
+//! RDP Integration Tests (RDP-01 through RDP-14, #3609 / TIN-005).
 //!
 //! Exercises termiHub's `rdp` graphical backend — the IronRDP sidecar
 //! (`termihub-rdp-helper`) spawned and bridged by [`SidecarRdp`] — against a
@@ -31,7 +31,8 @@ use std::time::Duration;
 use common::{port_rdp, port_rdp_nla, require_docker};
 use termihub_core::backends::rdp_sidecar::{SidecarRdp, HELPER_PATH_ENV};
 use termihub_core::connection::{
-    ConnectionType, FrameReceiver, FrameUpdate, GraphicalBackend, MonitorLayout,
+    ClipboardImage, ConnectionType, FrameReceiver, FrameUpdate, GraphicalBackend, InputEvent,
+    MonitorLayout,
 };
 use termihub_core::errors::SessionError;
 
@@ -950,4 +951,470 @@ async fn rdp_11_audio_redirection_off_by_default() {
 
     rdp.disconnect().await.expect("disconnect should succeed");
     assert_helper_gone(pid, "RDP-11").await;
+}
+
+// ── RDP-12: pointer and keyboard input reach the server (#4004) ─────
+
+/// Run `cmd` as the fixture user on the xrdp session's X display (:10 and up —
+/// :1 is the FreeRDP shadow server's Xvfb) inside this checkout's container.
+fn xrdp_session_exec(cmd: &str, label: &str) -> String {
+    let script = format!(
+        "for d in /tmp/.X11-unix/X1?; do su testuser -c \"DISPLAY=:${{d##*X}} {cmd}\"; done"
+    );
+    common::docker_cli(&[
+        "exec",
+        &common::fixture_container("rdp"),
+        "bash",
+        "-c",
+        &script,
+    ])
+    .unwrap_or_else(|e| panic!("{label}: {e}"))
+}
+
+/// Where the session's X server has the pointer (`xdotool getmouselocation`).
+fn xrdp_pointer(label: &str) -> Option<(u32, u32)> {
+    let out = xrdp_session_exec("xdotool getmouselocation", label);
+    let field = |name: &str| {
+        out.split_whitespace()
+            .find_map(|part| part.strip_prefix(name)?.parse::<u32>().ok())
+    };
+    Some((field("x:")?, field("y:")?))
+}
+
+/// How many `event` lines (`KeyPress`, `ButtonPress`, …) the session's input
+/// probe has logged (`xev -root`, see `tests/docker/rdp-server/startwm.sh`).
+fn xrdp_input_events(event: &str, detail: &str, label: &str) -> usize {
+    let out = common::docker_cli(&[
+        "exec",
+        &common::fixture_container("rdp"),
+        "sh",
+        "-c",
+        "cat /home/testuser/termihub-input.log 2>/dev/null || true",
+    ])
+    .unwrap_or_else(|e| panic!("{label}: {e}"));
+    // xev prints the event name on one line and its details (the keysym) on the
+    // following ones, so pair each event line with the next few lines.
+    let lines: Vec<&str> = out.lines().collect();
+    lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.starts_with(event))
+        .filter(|(i, _)| {
+            lines[*i..(*i + 4).min(lines.len())]
+                .iter()
+                .any(|l| l.contains(detail))
+        })
+        .count()
+}
+
+/// Poll `probe` until it returns true or 20 s pass, re-sending `input` every
+/// couple of seconds — the session may still be settling right after logon.
+async fn input_until(
+    graphical: &dyn GraphicalBackend,
+    input: &[InputEvent],
+    mut probe: impl FnMut() -> bool,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    while tokio::time::Instant::now() < deadline {
+        for event in input {
+            graphical
+                .send_input(event.clone())
+                .await
+                .expect("input should be accepted");
+        }
+        let window = tokio::time::Instant::now() + Duration::from_secs(2);
+        while tokio::time::Instant::now() < window {
+            if probe() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+    false
+}
+
+/// Pointer moves, a left click and a key press sent through the sidecar arrive
+/// at the xrdp session's X server: the pointer lands where it was sent, and the
+/// input probe logs the button and the `a` key. This is the server-side ground
+/// truth the UI suite (`tests/system/tests/test_rdp.py`) asserts the same way.
+#[tokio::test]
+async fn rdp_12_pointer_and_keyboard_input_reach_the_server() {
+    let _serial = SERIAL.lock().await;
+    require_rdp!();
+    assert_no_helpers("RDP-12");
+
+    let mut rdp = SidecarRdp::new();
+    rdp.connect(rdp_settings(port_rdp(), RDP_PASSWORD))
+        .await
+        .expect("RDP-12: connect");
+    let pid = spawned_helper_pid("RDP-12");
+    let graphical = rdp.graphical().expect("RDP-12: graphical backend present");
+    let mut frames = graphical.subscribe_frames();
+    wait_for_xrdp_session(&mut frames, "RDP-12").await;
+    let drain = tokio::spawn(async move { while frames.recv().await.is_some() {} });
+
+    let target = (123, 77);
+    let moved = input_until(
+        graphical,
+        &[InputEvent::Pointer {
+            x: target.0,
+            y: target.1,
+            buttons: 0,
+        }],
+        || xrdp_pointer("RDP-12 pointer") == Some(target),
+    )
+    .await;
+    assert!(
+        moved,
+        "RDP-12: the session pointer never reached {target:?} (last {:?})",
+        xrdp_pointer("RDP-12 pointer")
+    );
+
+    let buttons_before = xrdp_input_events("ButtonPress", "button 1,", "RDP-12 click");
+    let clicked = input_until(
+        graphical,
+        &[
+            InputEvent::Pointer {
+                x: target.0,
+                y: target.1,
+                buttons: 1,
+            },
+            InputEvent::Pointer {
+                x: target.0,
+                y: target.1,
+                buttons: 0,
+            },
+        ],
+        || xrdp_input_events("ButtonPress", "button 1,", "RDP-12 click") > buttons_before,
+    )
+    .await;
+    assert!(clicked, "RDP-12: the left click never reached the session");
+
+    let keys_before = xrdp_input_events("KeyPress", "keysym 0x61, a)", "RDP-12 key");
+    let typed = input_until(
+        graphical,
+        &[
+            InputEvent::Key {
+                code: "KeyA".into(),
+                pressed: true,
+            },
+            InputEvent::Key {
+                code: "KeyA".into(),
+                pressed: false,
+            },
+        ],
+        || xrdp_input_events("KeyPress", "keysym 0x61, a)", "RDP-12 key") > keys_before,
+    )
+    .await;
+    assert!(typed, "RDP-12: the `a` key press never reached the session");
+
+    rdp.disconnect().await.expect("disconnect should succeed");
+    drain.abort();
+    assert_helper_gone(pid, "RDP-12").await;
+}
+
+// ── RDP-13: clipboard images (CLIPRDR CF_DIB) both ways (PROD-021) ──
+
+/// A 4x2 test image, one distinct colour per pixel, as RGBA rows top-down.
+const DIB_PIXELS: [[u8; 3]; 8] = [
+    [255, 0, 0],
+    [0, 255, 0],
+    [0, 0, 255],
+    [255, 255, 255],
+    [0, 0, 0],
+    [255, 255, 0],
+    [0, 255, 255],
+    [255, 0, 255],
+];
+const DIB_WIDTH: u32 = 4;
+const DIB_HEIGHT: u32 = 2;
+
+fn dib_rgba() -> Vec<u8> {
+    DIB_PIXELS
+        .iter()
+        .flat_map(|[r, g, b]| [*r, *g, *b, 255])
+        .collect()
+}
+
+/// The test image as a 24-bit bottom-up BMP file (what X clients exchange as
+/// `image/bmp`, and what xrdp's chansrv maps to and from CF_DIB).
+fn dib_bmp() -> Vec<u8> {
+    let row = (DIB_WIDTH * 3).div_ceil(4) * 4;
+    let data_len = row * DIB_HEIGHT;
+    let mut bmp = Vec::new();
+    bmp.extend_from_slice(b"BM");
+    bmp.extend_from_slice(&(54 + data_len).to_le_bytes());
+    bmp.extend_from_slice(&[0; 4]);
+    bmp.extend_from_slice(&54u32.to_le_bytes());
+    bmp.extend_from_slice(&40u32.to_le_bytes());
+    bmp.extend_from_slice(&(DIB_WIDTH as i32).to_le_bytes());
+    bmp.extend_from_slice(&(DIB_HEIGHT as i32).to_le_bytes());
+    bmp.extend_from_slice(&1u16.to_le_bytes());
+    bmp.extend_from_slice(&24u16.to_le_bytes());
+    bmp.extend_from_slice(&[0; 24]);
+    for y in (0..DIB_HEIGHT).rev() {
+        let start = bmp.len();
+        for x in 0..DIB_WIDTH {
+            let [r, g, b] = DIB_PIXELS[(y * DIB_WIDTH + x) as usize];
+            bmp.extend_from_slice(&[b, g, r]);
+        }
+        bmp.resize(start + row as usize, 0);
+    }
+    bmp
+}
+
+/// Decode a 24/32-bit uncompressed BMP (or a headerless DIB) to top-down RGB
+/// pixels, returning `(width, height, pixels)`.
+fn decode_bmp(bytes: &[u8]) -> Option<(u32, u32, Vec<[u8; 3]>)> {
+    let le32 = |at: usize| Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
+    let le16 = |at: usize| Some(u16::from_le_bytes(bytes.get(at..at + 2)?.try_into().ok()?));
+    let (header, data_at) = if bytes.starts_with(b"BM") {
+        (14, le32(10)? as usize)
+    } else {
+        (0, le32(0)? as usize)
+    };
+    let width = le32(header + 4)? as i32;
+    let height = le32(header + 8)? as i32;
+    let bpp = u32::from(le16(header + 14)?) / 8;
+    if width <= 0 || height == 0 || !(3..=4).contains(&bpp) {
+        return None;
+    }
+    let (w, h) = (width as u32, height.unsigned_abs());
+    let row = (w * bpp).div_ceil(4) * 4;
+    let mut pixels = Vec::new();
+    for y in 0..h {
+        let src_y = if height > 0 { h - 1 - y } else { y };
+        for x in 0..w {
+            let at = data_at + (src_y * row + x * bpp) as usize;
+            let px = bytes.get(at..at + 3)?;
+            pixels.push([px[2], px[1], px[0]]);
+        }
+    }
+    Some((w, h, pixels))
+}
+
+/// Run `script` (bash) as root in this checkout's rdp fixture container.
+fn fixture_bash(script: &str, label: &str) -> String {
+    common::docker_cli(&[
+        "exec",
+        &common::fixture_container("rdp"),
+        "bash",
+        "-c",
+        script,
+    ])
+    .unwrap_or_else(|e| panic!("{label}: {e}"))
+}
+
+/// A local image copied in the session arrives at the server as an X
+/// `image/bmp` selection with the same pixels (client -> server), and an image
+/// an X client copies on the server arrives at the client as the same RGBA
+/// (server -> client) — both through xrdp's chansrv CF_DIB mapping.
+#[tokio::test]
+async fn rdp_13_clipboard_image_round_trips_both_ways() {
+    let _serial = SERIAL.lock().await;
+    require_rdp!();
+    assert_no_helpers("RDP-13");
+
+    let mut rdp = SidecarRdp::new();
+    rdp.connect(rdp_settings(port_rdp(), RDP_PASSWORD))
+        .await
+        .expect("RDP-13: connect");
+    let pid = spawned_helper_pid("RDP-13");
+    let graphical = rdp.graphical().expect("RDP-13: graphical backend present");
+    let mut frames = graphical.subscribe_frames();
+    wait_for_xrdp_session(&mut frames, "RDP-13").await;
+    let drain = tokio::spawn(async move { while frames.recv().await.is_some() {} });
+
+    // Client -> server: offer the image, then paste it on the server side.
+    let image = ClipboardImage::new(DIB_WIDTH, DIB_HEIGHT, dib_rgba()).expect("valid image");
+    let read_server = "xclip -selection clipboard -t image/bmp -o 2>/dev/null | od -An -v -tx1";
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
+    let mut pasted = None;
+    while tokio::time::Instant::now() < deadline && pasted.is_none() {
+        graphical
+            .set_clipboard_image(image.clone())
+            .await
+            .expect("RDP-13: set_clipboard_image");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let hex = xrdp_session_exec(read_server, "RDP-13 paste");
+        let bytes: Vec<u8> = hex
+            .split_whitespace()
+            .filter_map(|b| u8::from_str_radix(b, 16).ok())
+            .collect();
+        pasted = decode_bmp(&bytes);
+    }
+    let (w, h, pixels) = pasted.expect("RDP-13: the server never received the image as image/bmp");
+    assert_eq!((w, h), (DIB_WIDTH, DIB_HEIGHT), "RDP-13: pasted image size");
+    assert_eq!(pixels, DIB_PIXELS.to_vec(), "RDP-13: pasted image pixels");
+
+    // Server -> client: an X client copies an image/bmp selection.
+    let encoded: String = dib_bmp().iter().map(|b| format!("\\x{b:02x}")).collect();
+    fixture_bash(
+        &format!("printf '{encoded}' > /tmp/termihub-dib.bmp && chmod 644 /tmp/termihub-dib.bmp"),
+        "RDP-13 stage",
+    );
+    let copy = "xclip -selection clipboard -t image/bmp -i /tmp/termihub-dib.bmp";
+    xrdp_session_exec(&format!("{copy} >/dev/null 2>&1 &"), "RDP-13 copy");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
+    let mut received = None;
+    while tokio::time::Instant::now() < deadline {
+        received = graphical
+            .get_clipboard_image()
+            .await
+            .filter(|img| img.rgba == dib_rgba());
+        if received.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let received =
+        received.unwrap_or_else(|| panic!("RDP-13: the client never received the server's image"));
+    assert_eq!((received.width, received.height), (DIB_WIDTH, DIB_HEIGHT));
+
+    rdp.disconnect().await.expect("disconnect should succeed");
+    drain.abort();
+    assert_helper_gone(pid, "RDP-13").await;
+}
+
+// ── RDP-14: remote-copied files, listed then fetched on paste (#1765/#1793) ─
+
+/// Stage three files on the server — two sharing the name `report.txt` in
+/// different folders, one with a non-ASCII name — tagged with `nonce`, and have
+/// an X client copy them as a `text/uri-list` selection, which xrdp's chansrv
+/// offers to the client as a CLIPRDR file list.
+fn copy_files_on_server(nonce: &str, label: &str) {
+    fixture_bash(
+        &format!(
+            "rm -rf /tmp/tf && mkdir -p /tmp/tf/a /tmp/tf/b /tmp/tf/c \
+             && printf 'alpha {nonce}' > /tmp/tf/a/report.txt \
+             && printf 'bravo {nonce}' > /tmp/tf/b/report.txt \
+             && printf 'gruss {nonce}' > \"/tmp/tf/c/$(printf 'gr\\303\\274\\303\\237e.txt')\" \
+             && printf '%s\\r\\n' file:///tmp/tf/a/report.txt file:///tmp/tf/b/report.txt \
+                file:///tmp/tf/c/gr%C3%BC%C3%9Fe.txt > /tmp/tf/uris \
+             && chmod -R a+rX /tmp/tf"
+        ),
+        label,
+    );
+    let copy = "xclip -selection clipboard -t text/uri-list -i /tmp/tf/uris";
+    xrdp_session_exec(&format!("{copy} >/dev/null 2>&1 &"), label);
+}
+
+/// Poll the session's surfaced remote file list until it has `want` entries
+/// (re-copying on the server every few seconds while CLIPRDR initialises), or
+/// `secs` pass. Returns the last list seen.
+async fn wait_for_remote_files(
+    graphical: &dyn GraphicalBackend,
+    nonce: &str,
+    want: usize,
+    secs: u64,
+    label: &str,
+) -> Vec<termihub_core::connection::RemoteClipboardFile> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
+    let mut copied_at: Option<tokio::time::Instant> = None;
+    let mut files = Vec::new();
+    while tokio::time::Instant::now() < deadline {
+        if copied_at.is_none_or(|t| t.elapsed() > Duration::from_secs(5)) {
+            copy_files_on_server(nonce, label);
+            copied_at = Some(tokio::time::Instant::now());
+        }
+        files = graphical.remote_clipboard_files().await;
+        if files.len() >= want {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    files
+}
+
+/// Opted in ("Receive Clipboard Files" with a shared folder), files an X client
+/// copies on the server are surfaced as a sanitized list — same-named files and
+/// a non-ASCII name intact — and each one's bytes are fetched over CLIPRDR only
+/// when pasted (delayed rendering, the path every desktop OS uses). Off by
+/// default: the same copy surfaces nothing.
+#[tokio::test]
+async fn rdp_14_remote_clipboard_files_are_listed_and_fetched_on_paste() {
+    let _serial = SERIAL.lock().await;
+    require_rdp!();
+    assert_no_helpers("RDP-14");
+    let nonce = format!("{}", std::process::id());
+
+    // Opted in first, on a fresh xrdp session: chansrv keeps one set of CLIPRDR
+    // capability flags per session and ANDs every client's into it, so after
+    // any client without file streams (every other test here) it stops
+    // offering CB_STREAM_FILECLIP_ENABLED to later clients of that session.
+    end_xrdp_session("RDP-14").await;
+    // The last pass opts in again on the session the default pass has now
+    // poisoned: the server declines file streams, so no list may be offered
+    // (its bytes could never be fetched) and the session must survive.
+    for (receive, declined) in [(true, false), (false, false), (true, true)] {
+        let label = match (receive, declined) {
+            (true, false) => "RDP-14 opted in",
+            (false, _) => "RDP-14 default",
+            (true, true) => "RDP-14 streams declined",
+        };
+        let shared = tempfile::tempdir().expect("temp shared folder");
+        let mut settings = rdp_settings(port_rdp(), RDP_PASSWORD);
+        settings["driveRedirection"] = serde_json::json!(true);
+        settings["sharedFolderPath"] = serde_json::json!(shared.path());
+        settings["clipboardFileTransfer"] = serde_json::json!(receive);
+        let mut rdp = SidecarRdp::new();
+        rdp.connect(settings).await.expect("RDP-14: connect");
+        let pid = spawned_helper_pid(label);
+        let graphical = rdp.graphical().expect("RDP-14: graphical backend present");
+        let mut frames = graphical.subscribe_frames();
+        wait_for_xrdp_session(&mut frames, label).await;
+        let drain = tokio::spawn(async move { while frames.recv().await.is_some() {} });
+
+        if !receive || declined {
+            let files = wait_for_remote_files(graphical, &nonce, 1, 8, label).await;
+            assert!(
+                files.is_empty(),
+                "{label}: no unfetchable file list may be surfaced: {files:?}"
+            );
+            assert!(rdp.fatal_error().is_none(), "{label}: the session survives");
+            assert_eq!(
+                own_helper_pids(),
+                pid.into_iter().collect::<Vec<_>>(),
+                "{label}: the sidecar is still running"
+            );
+        } else {
+            let files = wait_for_remote_files(graphical, &nonce, 3, 45, label).await;
+            let mut names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
+            names.sort_unstable();
+            assert_eq!(
+                names,
+                ["grüße.txt", "report.txt", "report.txt"],
+                "{label}: the surfaced list"
+            );
+            let mut contents = Vec::new();
+            for file in &files {
+                assert!(!file.is_dir, "{label}: {} is a file", file.name);
+                let path = tokio::time::timeout(
+                    Duration::from_secs(30),
+                    graphical.fetch_remote_clipboard_file(file.index),
+                )
+                .await
+                .unwrap_or_else(|_| panic!("{label}: fetching {} timed out", file.name))
+                .unwrap_or_else(|e| panic!("{label}: fetch {}: {e}", file.name));
+                contents.push(std::fs::read_to_string(&path).expect("fetched file readable"));
+            }
+            contents.sort();
+            assert_eq!(
+                contents,
+                [
+                    format!("alpha {nonce}"),
+                    format!("bravo {nonce}"),
+                    format!("gruss {nonce}")
+                ],
+                "{label}: each pasted file's bytes"
+            );
+        }
+
+        rdp.disconnect().await.expect("disconnect should succeed");
+        drain.abort();
+        assert_helper_gone(pid, label).await;
+    }
+    // Hand later tests a fresh session: this one's chansrv has had its file
+    // capabilities cut and its clipboard owned by a file list.
+    end_xrdp_session("RDP-14").await;
 }
