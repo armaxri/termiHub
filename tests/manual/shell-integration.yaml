@@ -1,0 +1,120 @@
+category: shell-integration
+display_name: "Shell Integration"
+
+# OS file-manager entries and external spawn: the OS menus, window raise and real WSL distros are outside the webview.
+# Folded in from the per-feature walkthroughs in docs/testing.md (#3695).
+
+tests:
+  - id: MT-SHI-01
+    release_gate: true
+    manual_reason: "needs a real Windows host with WSL distros"
+    name: "Spawn picker WSL section and distro pick"
+    pr: 1366
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Install at least two WSL distributions."
+      - "With termiHub running, run `termiHub spawn --location <dir> --pick`."
+      - "Check the WSL section, then pick a non-default distribution and press Open."
+    expected:
+      - "The WSL section lists every installed distribution."
+      - "The tab runs the picked distribution (`cat /etc/os-release`)."
+      - "`pwd` shows the `/mnt/` form of the directory."
+    verification: manual
+    tags: [hardware]
+
+  - id: MT-SHI-02
+    release_gate: true
+    manual_reason: "OS window-manager focus/raise, esp. Wayland"
+    name: "External spawn brings the window to the front"
+    pr: 1365
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Start termiHub and put another app window in front of it."
+      - "From another terminal run `termiHub spawn --location ~`."
+      - "On Linux repeat once under X11 and once under Wayland."
+    expected:
+      - "The termiHub window comes to the foreground."
+      - "A new `(Spawned)` local shell tab is focused."
+    verification: manual
+    tags: [os-native]
+
+  - id: MT-SHI-03
+    release_gate: true
+    manual_reason: "needs a real Windows host with WSL"
+    name: "External WSL spawn opens the named distro at /mnt path"
+    pr: 1511
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Save a WSL connection for a non-default distro (e.g. Debian)."
+      - "Run `termiHub spawn --kind wsl --location C:\\Users\\<you>` ."
+      - "Run it again adding `--connection <that id>`."
+    expected:
+      - "A `(Spawned)` WSL tab opens; `pwd` is `/mnt/c/Users/<you>`."
+      - "With `--connection` the tab runs the saved distro."
+    verification: manual
+    tags: [hardware]
+
+  - id: MT-SHI-04
+    release_gate: true
+    manual_reason: "Explorer context menu is OS-native"
+    name: "Explorer shows and removes Open in termiHub"
+    pr: 1368
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Settings > Shell Integration: add 3 entries (one Extended, one with Files target), click Install."
+      - "Right-click a folder, folder background and a file in Explorer; also Shift+right-click."
+      - "Click an entry."
+      - "Click Uninstall and right-click again."
+    expected:
+      - "No UAC prompt; always-visible entries sit in one termiHub submenu; Extended only on Shift."
+      - "The app comes forward with a tab cd'd to that folder (file: its parent)."
+      - "After uninstall no entry remains in any menu."
+    verification: manual
+    tags: [os-native]
+
+  - id: MT-SHI-05
+    release_gate: true
+    manual_reason: "Finder Quick Actions / Services menus are OS-native"
+    name: "macOS Finder Quick Actions and Services open termiHub"
+    pr: 1369
+    platforms: [macos]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Install termiHub.app in /Applications; Settings > Shell Integration: Install (entry with Folders + Files)"
+      - "In Finder right-click a folder > Quick Actions (enable under Keyboard > Services if needed; pbs -flush if missing)"
+      - "Run the entry on a folder, on a file, and on three selected items; also via the app Services menu"
+      - "Click Uninstall and right-click again"
+    expected:
+      - "No password prompt; the entry is listed under Quick Actions and Services"
+      - "The app focuses with one session per item, cd'd to the folder (file: its location)"
+      - "After uninstall the termiHub Quick Action is gone; other Quick Actions remain"
+    verification: manual
+    tags: [os-native]
+
+  - id: MT-SHI-06
+    release_gate: true
+    manual_reason: "real file-manager context menus are OS-native per desktop environment"
+    name: "Linux file managers show and run Open in termiHub"
+    pr: 1370
+    platforms: [linux]
+    prerequisites:
+      - app: true
+    instructions:
+      - "On a box with Nautilus, Dolphin and/or Thunar: Settings > Shell Integration > Install"
+      - "Right-click a folder in each manager (Files: Scripts; Dolphin: Actions; Thunar; Open With) and run the entry"
+      - "Click Uninstall and right-click again"
+    expected:
+      - "No sudo prompt; only detected managers get the entry, with the termiHub icon"
+      - "The app focuses with a tab cd'd to the folder; termiHub is listed under Open With"
+      - "After uninstall all four artifacts are gone; your own Thunar actions and Nautilus scripts remain"
+    verification: manual
+    tags: [os-native]

@@ -1,0 +1,44 @@
+category: file-browser
+display_name: "File Browser"
+
+# OS-native drag in/out and scroll smoothness; the file-browser logic is unit- and bridge-tested.
+# Folded in from the per-feature walkthroughs in docs/testing.md (#3695).
+
+tests:
+  - id: MT-FB-30
+    release_gate: true
+    manual_reason: "scroll smoothness is visual; OS-native drag source"
+    name: "Large directory scrolls smoothly and accepts OS drops"
+    pr: 1514
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open the file browser on a folder with ~5000 files."
+      - "Scroll top to bottom quickly."
+      - "Drag a file from Finder/Explorer/Files onto the list."
+    expected:
+      - "Scrolling is smooth with no freeze; only one scrollbar shows."
+      - "The dropped file is uploaded/copied into the folder."
+    verification: manual
+    tags: [visual, os-native]
+
+  - id: MT-FB-31
+    release_gate: true
+    manual_reason: "OS-native drag into Finder/Explorer/Files"
+    name: "Drag files out to the OS file manager"
+    pr: 3457
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Drag a local file, then a file+folder selection, out of termiHub onto the desktop."
+      - "In an SFTP session drag a remote folder out and hold until staged, then drop."
+      - "Repeat with a file from a Docker or agent session."
+      - "On Linux run once under X11 and once under Wayland."
+    expected:
+      - "Each drag becomes an OS file drag and lands a copy with its name."
+      - "Remote folders land with their full tree."
+      - "The originals stay in place."
+    verification: manual
+    tags: [os-native]
