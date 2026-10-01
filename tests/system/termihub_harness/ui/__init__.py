@@ -16,6 +16,7 @@ Mixin → concern:
 - :class:`ConnectionsUi`     — connection editor + connection-list flows
 - :class:`ConfigRecoveryUi`  — corrupt a config file, restart, inspect recovery
 - :class:`CredentialStoreUi` — switch/unlock the master-password credential store
+- :class:`CrashReportUi`     — seed crash reports, drive the local/agent crash notices
 - :class:`PasswordPromptUi`  — the SSH password-prompt modal
 - :class:`SshUi`             — the one-call password-SSH connect flow
 - :class:`JumpHostUi`        — the editor's Jump Host section (inline ProxyJump hops)
@@ -42,6 +43,7 @@ from .agent import AgentUi
 from .config_recovery import ConfigRecoveryUi
 from .connections import ConnectionsUi
 from .credential_store import CredentialStoreUi
+from .diagnostics import CrashReportUi
 from .editor import EditorUi
 from .embedded_services import EmbeddedServicesUi
 from .files import FilesUi, file_row_testid
@@ -79,6 +81,7 @@ __all__ = [
     "ConfigRecoveryUi",
     "ConnectionsUi",
     "CredentialStoreUi",
+    "CrashReportUi",
     "TerminalUi",
     "TabsUi",
     "LayoutUi",

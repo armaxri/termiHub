@@ -671,10 +671,37 @@ class SshServerControl:
         out = self._exec(["sh", "-c", 'if [ -e "$1" ]; then echo yes; else echo no; fi', "sh", path])
         return out.strip() == "yes"
 
-    def _exec(self, argv: Sequence[str], *, timeout: float = 30.0, text: bool = True):
+    def write_file(self, path: str, content: str, *, user: str) -> None:
+        """Write ``content`` to ``path`` inside the container **as** ``user``.
+
+        Missing parent directories are created as ``user`` too, so a file seeded
+        into a program's own config tree (e.g. the agent's ``crash-reports/``)
+        never leaves a root-owned directory the program can no longer write.
+        """
+        self._exec(
+            ["sh", "-c", 'mkdir -p "$(dirname "$1")" && cat > "$1"', "sh", path],
+            user=user,
+            stdin=content,
+        )
+
+    def remove_path(self, path: str) -> None:
+        """Remove ``path`` (file or directory tree) inside the container, if present."""
+        self._exec(["rm", "-rf", "--", path])
+
+    def _exec(
+        self,
+        argv: Sequence[str],
+        *,
+        timeout: float = 30.0,
+        text: bool = True,
+        user: Optional[str] = None,
+        stdin: Optional[str] = None,
+    ):
         """Run ``argv`` inside the container via the detected runtime.
 
         Returns stdout as ``str`` (``text=True``, the default) or raw ``bytes``.
+        ``user`` runs it as that container user (default: the image's, root);
+        ``stdin`` is fed to the command's standard input.
 
         Raises :class:`ContainerRuntimeUnavailable` (→ a clean ``pytest.skip`` at
         the call site) when no runtime is reachable or the exec fails.
@@ -684,10 +711,23 @@ class SshServerControl:
                 "no container runtime available to exec into "
                 f"{self._container} (need Docker or Podman)"
             )
-        cmd = [self._runtime, "exec", self._container, *argv]
+        cmd = [self._runtime, "exec"]
+        if stdin is not None:
+            cmd.append("-i")
+        if user is not None:
+            cmd += ["-u", user]
+        cmd += [self._container, *argv]
+        feed = None
+        if stdin is not None:
+            feed = stdin if text else stdin.encode("utf-8")
         try:
             result = subprocess.run(
-                cmd, check=True, timeout=timeout, capture_output=True, text=text
+                cmd,
+                check=True,
+                timeout=timeout,
+                capture_output=True,
+                text=text,
+                input=feed,
             )
         except subprocess.CalledProcessError as exc:
             output = exc.stderr or exc.stdout
