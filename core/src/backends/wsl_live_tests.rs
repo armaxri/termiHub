@@ -276,28 +276,60 @@ fn live_wsl_init_script_is_created_0600_with_exact_content_and_never_clobbered()
     assert_eq!(String::from_utf8_lossy(&stdout), format!("600\n{contents}"));
 }
 
-/// Everything a live session printed, searchable while it streams in.
+/// Drop every CSI escape sequence (`ESC [ … final`) from terminal output,
+/// keeping the text and OSC sequences (OSC 7 is asserted on).
+///
+/// Bash's readline and ConPTY interleave CSI sequences with echoed text — e.g.
+/// readline turns bracketed paste off (`ESC [?2004l`) in the middle of the
+/// echoed `source …` line once Enter is processed — so a byte-exact match on
+/// the raw stream misses text that is plainly on screen.
+fn strip_csi(raw: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(raw.len());
+    let mut i = 0;
+    while i < raw.len() {
+        if raw[i] == 0x1b && raw.get(i + 1) == Some(&b'[') {
+            i += 2;
+            while i < raw.len() && !(0x40..=0x7e).contains(&raw[i]) {
+                i += 1;
+            }
+            i += 1; // the final byte
+        } else {
+            out.push(raw[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Everything a live session printed, searchable (CSI-stripped, see
+/// [`strip_csi`]) while it streams in.
 struct Transcript<'a> {
     rx: &'a mut OutputReceiver,
-    buf: Vec<u8>,
+    distro: String,
+    raw: Vec<u8>,
+    plain: Vec<u8>,
 }
 
 impl<'a> Transcript<'a> {
-    fn new(rx: &'a mut OutputReceiver) -> Self {
+    fn new(rx: &'a mut OutputReceiver, distro: &str) -> Self {
         Self {
             rx,
-            buf: Vec::new(),
+            distro: distro.to_string(),
+            raw: Vec::new(),
+            plain: Vec::new(),
         }
     }
 
-    /// Wait until one of `needles` appears at or after byte `from`; returns
-    /// `(needle index, match offset)`. Panics with the transcript on timeout.
+    /// Wait until one of `needles` appears in the CSI-stripped output at or
+    /// after offset `from`; returns `(needle index, match offset)`. Panics on
+    /// timeout with the raw transcript plus a non-interactive probe of the
+    /// distro, so a failure says whether WSL itself works.
     async fn wait_any(&mut self, needles: &[&[u8]], from: usize) -> (usize, usize) {
         let deadline = tokio::time::Instant::now() + SESSION_TIMEOUT;
         loop {
             for (i, needle) in needles.iter().enumerate() {
                 if let Some(pos) = self
-                    .buf
+                    .plain
                     .get(from..)
                     .and_then(|hay| hay.windows(needle.len()).position(|w| w == *needle))
                 {
@@ -306,14 +338,20 @@ impl<'a> Transcript<'a> {
             }
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             match tokio::time::timeout(remaining, self.rx.recv()).await {
-                Ok(Some(chunk)) => self.buf.extend_from_slice(&chunk),
+                Ok(Some(chunk)) => {
+                    self.raw.extend_from_slice(&chunk);
+                    self.plain = strip_csi(&self.raw);
+                }
                 _ => panic!(
-                    "none of {:?} appeared in the WSL session output:\n{:?}",
+                    "none of {:?} appeared in the WSL session output:\n{:?}\n\n\
+                     non-interactive probe of {}: {}",
                     needles
                         .iter()
                         .map(|n| String::from_utf8_lossy(n))
                         .collect::<Vec<_>>(),
-                    String::from_utf8_lossy(&self.buf)
+                    self.text(),
+                    self.distro,
+                    probe_distro(&self.distro)
                 ),
             }
         }
@@ -323,9 +361,37 @@ impl<'a> Transcript<'a> {
         self.wait_any(&[needle], from).await.1
     }
 
+    /// The raw transcript, for diagnostics.
     fn text(&self) -> String {
-        String::from_utf8_lossy(&self.buf).into_owned()
+        String::from_utf8_lossy(&self.raw).into_owned()
     }
+}
+
+/// Run a few commands in `distro` without a terminal and describe the result,
+/// for failure messages: separates "WSL is broken" from "the session is".
+fn probe_distro(distro: &str) -> String {
+    let out = wsl_sh(
+        distro,
+        "echo ok; id; echo \"shell=$(getent passwd \"$(id -un)\" | cut -d: -f7)\"",
+        &[],
+    );
+    format!(
+        "{} stdout={:?} stderr={:?}",
+        out.status,
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
+#[test]
+fn strip_csi_removes_csi_but_keeps_text_and_osc() {
+    let raw =
+        b"# source /tmp/.termihub_i\x1b[?2004lnit-1 2>/dev/null\r\n\x1b]7;file:///root\x07\x1b[K";
+    assert_eq!(
+        strip_csi(raw),
+        b"# source /tmp/.termihub_init-1 2>/dev/null\r\n\x1b]7;file:///root\x07".to_vec()
+    );
+    assert_eq!(strip_csi(b"tail\x1b[1;2"), b"tail".to_vec());
 }
 
 #[tokio::test]
@@ -343,7 +409,7 @@ async fn live_wsl_session_sources_init_script_silently_self_cleans_and_tracks_cw
         .expect("connect");
     // Wide enough that the echoed `source` line never wraps mid-path.
     wsl.resize(400, 50).expect("resize");
-    let mut out = Transcript::new(&mut rx);
+    let mut out = Transcript::new(&mut rx, &distro);
 
     // 1. Only the `source` line is injected; the script's own notice follows.
     let prefix = format!("source {INIT_SCRIPT_PREFIX}");
@@ -356,7 +422,7 @@ async fn live_wsl_session_sources_init_script_silently_self_cleans_and_tracks_cw
          registry value:\n{:?}",
         out.text()
     );
-    let uuid: String = out.buf[at + prefix.len()..]
+    let uuid: String = out.plain[at + prefix.len()..]
         .iter()
         .take_while(|b| b.is_ascii_hexdigit() || **b == b'-')
         .map(|b| char::from(*b))
