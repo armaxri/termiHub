@@ -698,7 +698,9 @@ jobs:
   # cheap job (no Rust/Node setup, no build) executes build-agents.cmd's
   # --help and its fail-fast argument/validation paths on a real Windows cmd.exe,
   # and runs the exact PowerShell line build-agents.cmd uses to write .sha256
-  # sidecars, checking the result is byte-identical to `sha256sum`. It also runs
+  # sidecars, checking the result is byte-identical to `sha256sum` -- launched
+  # from cmd AND from pwsh (pwsh leaks its PSModulePath into powershell.exe,
+  # which broke cmdlet autoload in the old Get-FileHash line, #4029). It also runs
   # build-rdp-sidecar.cmd end to end against a stub cargo (#3475). PR lane: only
   # when scripts change. Post-merge: always.
   cmd-scripts-windows:
@@ -735,8 +737,15 @@ jobs:
           dir="$(cygpath -u "$RUNNER_TEMP")/sha"
           mkdir -p "$dir"
           printf 'termihub agent checksum smoke\n' >"$dir/termihub-agent.exe"
-          line="$(grep -m1 -E '^powershell .*Get-FileHash' scripts/build-agents.cmd | tr -d '\r')"
+          line="$(grep -m1 -E '^powershell .*SHA256' scripts/build-agents.cmd | tr -d '\r')"
           [ -n "$line" ] || { echo "::error::checksum line not found in build-agents.cmd"; exit 1; }
+          # build-rdp-sidecar.cmd must carry the identical line (one tested copy).
+          rdp="$(grep -m1 -E '^powershell .*SHA256' scripts/build-rdp-sidecar.cmd | tr -d '\r')"
+          [ "$line" = "$rdp" ] || { echo "::error::build-rdp-sidecar.cmd checksum line differs from build-agents.cmd"; exit 1; }
+          # A cmdlet in the line breaks when launched from pwsh (#4029).
+          if grep -qiE 'Get-FileHash|Resolve-Path' <<<"$line"; then
+            echo "::error::checksum line must use .NET only, no cmdlets (#4029)"; exit 1
+          fi
           printf '@echo off\r\n%s\r\nexit /b %%errorlevel%%\r\n' "$line" >"$dir/hash.cmd"
 
       - name: Write a .sha256 sidecar with build-agents.cmd's PowerShell line
@@ -759,6 +768,23 @@ jobs:
             od -c termihub-agent.exe.sha256
             exit 1
           fi
+          sha256sum -c termihub-agent.exe.sha256
+          rm termihub-agent.exe.sha256
+
+      # The agent workflow runs build-agents.cmd from pwsh; powershell.exe then
+      # inherits pwsh's PSModulePath (#4029). Re-run the line from there.
+      - name: Write the .sha256 sidecar again, launched from pwsh
+        shell: pwsh
+        run: |
+          & "$env:RUNNER_TEMP\sha\hash.cmd" "$env:RUNNER_TEMP\sha\termihub-agent.exe"
+          if ($LASTEXITCODE -ne 0) { Write-Error "hash.cmd exited $LASTEXITCODE"; exit 1 }
+
+      - name: pwsh-launched sidecar matches sha256sum byte-for-byte
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$(cygpath -u "$RUNNER_TEMP")/sha"
+          cmp expected.sha256 termihub-agent.exe.sha256 || { od -c termihub-agent.exe.sha256; exit 1; }
           sha256sum -c termihub-agent.exe.sha256
 
       # build-rdp-sidecar.cmd (#3475): --help, the fail-fast argument paths, and

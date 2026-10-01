@@ -41,6 +41,10 @@ echo [setup] capturing full output to %LOGFILE%
 echo.
 
 set "PYTHONUNBUFFERED=1"
+REM Tee-Object needs module autoload. Launched from pwsh, powershell.exe would
+REM inherit pwsh's PSModulePath and fail to find it (#4029); with the variable
+REM unset, Windows PowerShell rebuilds its own default. setlocal scopes this.
+set "PSModulePath="
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "& '%~dp0test-system-py.cmd' --manual -s -rs %SELECT% 2>&1 | Tee-Object -FilePath '%LOGFILE%'"
 set "STATUS=%ERRORLEVEL%"
