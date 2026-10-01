@@ -218,8 +218,9 @@ targets so they resolve inside the chroot. ProFTPD's MLSD reports them as
 FTP passive data connections are advertised as the **same** port number the host
 publishes, so the whole passive range is mapped **1:1** (host port == container
 port). Two ranges are used — `30000-30009` (plain/explicit) and `30010-30019`
-(implicit) — and both the port and the range are offset per checkout via
-`scripts/internal/dev-local-env.sh` (`TERMIHUB_TEST_FTP_PORT`,
+(implicit) — and both the port and the range are offset per checkout, identically
+by `scripts/internal/dev-local-env.sh` and the Python harness's
+`dev_local.compose_env()` (`TERMIHUB_TEST_FTP_PORT`,
 `TERMIHUB_TEST_FTPS_IMPLICIT_PORT`, `TERMIHUB_TEST_FTP_PASV_MIN/MAX`,
 `TERMIHUB_TEST_FTPS_IMPLICIT_PASV_MIN/MAX`). The container templates ProFTPD's
 `PassivePorts` from those same values at start-up.
