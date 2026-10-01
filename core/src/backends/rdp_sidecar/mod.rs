@@ -1048,7 +1048,14 @@ impl GraphicalBackend for SidecarRdp {
         let mut written: u64 = 0;
         let mut chunk_index: u64 = 0;
         loop {
-            match rx.recv().await {
+            // A sidecar that exits mid-fetch ends the reader task, which cancels
+            // the session token; stop waiting then instead of hanging the paste
+            // forever on chunks that will never come (#4004).
+            let event = tokio::select! {
+                event = rx.recv() => event,
+                _ = rt.cancel.cancelled() => None,
+            };
+            match event {
                 Some(FetchEvent::Chunk {
                     position,
                     data,
@@ -1827,6 +1834,80 @@ mod tests {
         drop(sidecar_stdout);
         let _ = reader.await;
         assert_eq!(*shared.remote_clipboard_files.lock().await, files);
+    }
+
+    /// A sidecar that exits mid-fetch (it tore its session down on a CLIPRDR
+    /// error, #4004) must fail the pending paste promptly instead of leaving it
+    /// waiting forever on chunks that will never come.
+    #[tokio::test]
+    async fn fetch_remote_clipboard_file_fails_when_the_sidecar_exits_mid_fetch() {
+        let (host_write, mut sidecar_stdin) = tokio::io::duplex(1024 * 1024);
+        let (sidecar_stdout, host_read) = tokio::io::duplex(1024 * 1024);
+        let (frame_tx, _f) = mpsc::channel(CHANNEL_DEPTH);
+        let (cursor_tx, _c) = mpsc::channel(CHANNEL_DEPTH);
+        let (cert_tx, _ce) = mpsc::channel(CHANNEL_DEPTH);
+        let (to_sidecar, sidecar_rx) = mpsc::channel(CHANNEL_DEPTH);
+        let shared = Arc::new(SidecarShared {
+            clipboard: Mutex::new(String::new()),
+            clipboard_image: Mutex::new(None),
+            remote_clipboard_files: Mutex::new(vec![RemoteClipboardFile {
+                name: "hello.txt".to_string(),
+                relative_path: None,
+                size: Some(5),
+                is_dir: false,
+                index: 0,
+            }]),
+            fetches: StdMutex::new(HashMap::new()),
+            view_only: false,
+            failure: StdMutex::new(None),
+            monitor_layout: StdMutex::new(None),
+        });
+        let cancel = CancellationToken::new();
+        let reader = tokio::spawn(run_reader(
+            host_read,
+            frame_tx,
+            cursor_tx,
+            cert_tx,
+            shared.clone(),
+            cancel.clone(),
+        ));
+        let writer = tokio::spawn(run_writer(host_write, sidecar_rx, cancel.clone()));
+        // A fake sidecar that receives the fetch request, then exits without
+        // answering: its stdout closes.
+        let fake = tokio::spawn(async move {
+            let msg = read_message::<_, HostMessage>(&mut sidecar_stdin)
+                .await
+                .expect("fetch request");
+            assert!(matches!(msg, HostMessage::FetchClipboardFile { .. }));
+            drop(sidecar_stdout);
+        });
+        let rdp = SidecarRdp {
+            runtime: Some(Arc::new(SidecarRuntime {
+                to_sidecar,
+                shared: shared.clone(),
+                next_fetch_id: AtomicU64::new(1),
+                cancel: cancel.clone(),
+            })),
+            frame_rx: StdMutex::new(None),
+            cursor_rx: StdMutex::new(None),
+            cert_prompt_rx: StdMutex::new(None),
+            tasks: Vec::new(),
+        };
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            rdp.fetch_remote_clipboard_file(0),
+        )
+        .await
+        .expect("the fetch must not hang after the sidecar exited");
+        assert!(
+            matches!(result, Err(SessionError::NotRunning(_))),
+            "expected NotRunning, got {result:?}"
+        );
+        assert!(shared.fetches.lock().unwrap().is_empty());
+        let _ = reader.await;
+        let _ = writer.await;
+        let _ = fake.await;
     }
 
     /// The full host round-trip: `fetch_remote_clipboard_file` sends a
