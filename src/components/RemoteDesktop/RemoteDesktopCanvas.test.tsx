@@ -4,6 +4,8 @@ import { createRoot, Root } from "react-dom/client";
 import { flushAsync } from "@/test/flushAsync";
 import { installCanvas2DStub, type CanvasStubHandle } from "@/test/canvasMock";
 import { RemoteDesktopCanvas } from "./RemoteDesktopCanvas";
+import { onRemoteDesktopFrame } from "@/services/events";
+import { remoteDesktopRequestFullFrame } from "@/services/api";
 import { MAX_FRAMEBUFFER_DIMENSION } from "@/types/remoteDesktop";
 import type {
   RemoteDesktopFramePayload,
@@ -29,6 +31,10 @@ vi.mock("@/services/events", () => ({
     cursorCb = cb;
     return Promise.resolve(cursorUnlisten);
   }),
+}));
+
+vi.mock("@/services/api", () => ({
+  remoteDesktopRequestFullFrame: vi.fn(() => Promise.resolve()),
 }));
 
 const SESSION = "sess-1";
@@ -143,6 +149,27 @@ describe("RemoteDesktopCanvas", () => {
     expect(canvas.tabIndex).toBe(0);
     expect(canvas.className).toContain("rd-canvas__surface");
     expect(surfaceEl().className).toContain("rd-canvas--fit");
+  });
+
+  it("asks for a full frame once the frame feed is subscribed (#4017)", async () => {
+    render();
+    expect(remoteDesktopRequestFullFrame).not.toHaveBeenCalled();
+    await flushAsync();
+    expect(remoteDesktopRequestFullFrame).toHaveBeenCalledExactlyOnceWith(SESSION);
+  });
+
+  it("keeps one frame subscription across re-renders with new callbacks (#4017)", async () => {
+    render();
+    await flushAsync();
+    const second = render();
+    await flushAsync();
+    // A re-subscription would drop the frames sent in between.
+    expect(onRemoteDesktopFrame).toHaveBeenCalledOnce();
+    expect(frameUnlisten).not.toHaveBeenCalled();
+    expect(remoteDesktopRequestFullFrame).toHaveBeenCalledOnce();
+    // The latest onDimensions is the one notified.
+    emitFrame(makeFrame(100, 50));
+    expect(second.onDimensions).toHaveBeenCalledWith(100, 50);
   });
 
   it("subscribes to the frame and cursor feeds once on mount", () => {

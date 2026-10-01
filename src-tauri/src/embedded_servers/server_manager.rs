@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Runtime, Wry};
 use termihub_core::service::drain_broadcast;
 use termihub_core::util::entry_extra::{upsert_keeping_extra, without_extra};
 
@@ -93,7 +93,7 @@ impl AgentHosted for AgentServerHandle {
 ///
 /// Follows the same pattern as `NetworkManager` (#2172): holds the services and
 /// routes each start through the [`RunLocationResolver`].
-pub struct EmbeddedServerManager {
+pub struct EmbeddedServerManager<R: Runtime = Wry> {
     configs: Mutex<EmbeddedServerStore>,
     storage: EmbeddedServerStorage,
     /// FTP / HTTP Basic passwords: kept in the credential store, never in
@@ -122,14 +122,17 @@ pub struct EmbeddedServerManager {
     /// least one agent-hosted server exists, self-reaping once none remain; the
     /// shared [`AgentStatusPoller`] owns the task lifecycle (DUP-020).
     agent_status_poller: AgentStatusPoller,
-    app_handle: AppHandle,
+    app_handle: AppHandle<R>,
     recovery_warnings: Mutex<Vec<RecoveryWarning>>,
 }
 
-impl EmbeddedServerManager {
+impl<R: Runtime> EmbeddedServerManager<R> {
     /// Create a new manager, loading saved configurations from disk and
     /// migrating any legacy plaintext passwords into `credential_store` (#3514).
-    pub fn new(app_handle: &AppHandle, credential_store: Arc<dyn CredentialStore>) -> Result<Self> {
+    pub fn new(
+        app_handle: &AppHandle<R>,
+        credential_store: Arc<dyn CredentialStore>,
+    ) -> Result<Self> {
         let storage = EmbeddedServerStorage::new(app_handle)
             .context("Failed to initialise embedded server storage")?;
         let secrets = ServerSecrets::new(credential_store);
@@ -257,9 +260,11 @@ impl EmbeddedServerManager {
 
     /// Delete a configuration. Stops the server first if it is running.
     pub fn delete_config(&self, server_id: &str) -> Result<(), TerminalError> {
-        self.stop_server(server_id)?;
+        // An agent-hosted server is stopped on its agent; a desktop-hosted one
+        // is shut down and dropped so its listen port closes (#1393).
+        self.stop_agent_service(server_id);
         if let Ok(mut services) = self.services.lock() {
-            services.remove(server_id);
+            remove_local_service(&mut services, server_id);
         }
         if let Ok(mut locations) = self.run_locations.lock() {
             locations.remove(server_id);
@@ -718,6 +723,25 @@ fn clear_agent_activity_via(
 }
 
 /// A synthetic `Stopped` [`ServerState`] for a server that is not running.
+/// Shut down a desktop-hosted server (if running) and drop its service, the
+/// local half of [`EmbeddedServerManager::delete_config`] (#1393). Returns
+/// whether a service was listed under `server_id`.
+///
+/// Split out so the "deleting a running server closes its port" guarantee is
+/// testable with a real listener and no Tauri `AppHandle`.
+fn remove_local_service(
+    services: &mut HashMap<String, EmbeddedServerService>,
+    server_id: &str,
+) -> bool {
+    match services.remove(server_id) {
+        Some(mut service) => {
+            service.shutdown();
+            true
+        }
+        None => false,
+    }
+}
+
 fn stopped_state(server_id: &str) -> ServerState {
     ServerState {
         server_id: server_id.to_string(),
@@ -844,12 +868,12 @@ fn synth_state_from_service_status(server_id: &str, status: &ServiceStatus) -> S
 /// [`poll_agent_server_states`]), and the write-back that re-emits
 /// [`SERVER_STATUS_EVENT`] only on a status/error transition — matching the
 /// desktop service, which emits on transitions, not every tick.
-struct EmbeddedServerPoll {
+struct EmbeddedServerPoll<R: Runtime> {
     agent_servers: AgentInstances<AgentServerHandle>,
-    app: AppHandle,
+    app: AppHandle<R>,
 }
 
-impl AgentStatusPollDelegate for EmbeddedServerPoll {
+impl<R: Runtime> AgentStatusPollDelegate for EmbeddedServerPoll<R> {
     type Sample = ServerState;
 
     fn interval(&self) -> Duration {
@@ -939,7 +963,10 @@ fn poll_agent_server_states(
 /// as a [`SERVER_STATUS_EVENT`] Tauri event so the frontend receives the same
 /// `ServerState` payload as before the lift. The task ends when the service is
 /// dropped (channel closed).
-fn spawn_event_bridge(app: AppHandle, events: termihub_core::service::ServiceEventReceiver) {
+fn spawn_event_bridge<R: Runtime>(
+    app: AppHandle<R>,
+    events: termihub_core::service::ServiceEventReceiver,
+) {
     // Not app-owned (#3105): ends when the server's service (and its channel) drops.
     tauri::async_runtime::spawn(async move {
         drain_broadcast(events, move |event| {
@@ -950,6 +977,10 @@ fn spawn_event_bridge(app: AppHandle, events: termihub_core::service::ServiceEve
         .await;
     });
 }
+
+#[cfg(test)]
+#[path = "server_manager_delete_tests.rs"]
+mod delete_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1336,3 +1367,7 @@ mod tests {
         assert_eq!(params["config"]["name"], "Docs");
     }
 }
+
+#[cfg(test)]
+#[path = "server_manager_e2e_tests.rs"]
+mod e2e_tests;

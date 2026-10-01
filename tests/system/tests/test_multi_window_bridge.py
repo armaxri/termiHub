@@ -7,11 +7,13 @@ hijacks the main-window ``wait_for_app`` contract (including across a restart
 that respawns windows), and an untagged (legacy) client is still the main window.
 """
 
+import json
 import time
 
 import pytest
 
 from termihub_harness import BridgeError
+from termihub_harness.ui.windows import last_session_window_tab_count, last_session_windows
 from fake_app import FakeApp
 
 
@@ -159,3 +161,47 @@ def test_close_and_list_window_verbs_round_trip(bridge):
         main.close_window()
         assert main.list_windows() == [{"label": "main"}, {"label": "win-1"}]
         assert [c["action"] for c in received] == ["closeWindow", "listWindows"]
+
+
+# ── last-session.json helpers (#4017) ────────────────────────────────────────
+def _write_last_session(config_dir, document):
+    (config_dir / "last-session.json").write_text(json.dumps(document), encoding="utf-8")
+
+
+def _leaf(*titles):
+    return {"type": "leaf", "tabs": [{"title": t} for t in titles]}
+
+
+def test_window_tab_count_ignores_a_save_that_lists_the_window_empty(tmp_path):
+    # Saved before the tab moved: the window is listed, the tab is still main's.
+    _write_last_session(
+        tmp_path,
+        {
+            "tabGroups": [{"name": "Main", "layout": _leaf("Terminal")}],
+            "windows": [{"id": "main"}, {"id": "win-1"}],
+        },
+    )
+    assert "win-1" in last_session_windows(tmp_path)
+    assert last_session_window_tab_count(tmp_path, "win-1") == 0
+
+
+def test_window_tab_count_counts_tabs_in_the_windows_groups(tmp_path):
+    split = {"type": "split", "direction": "horizontal", "children": [_leaf("a"), _leaf("b", "c")]}
+    _write_last_session(
+        tmp_path,
+        {
+            "tabGroups": [
+                {"name": "Main", "layout": _leaf("main-tab")},
+                {"name": "Main", "windowId": "win-1", "layout": split},
+            ],
+            "windows": [{"id": "main"}, {"id": "win-1"}],
+        },
+    )
+    assert last_session_window_tab_count(tmp_path, "win-1") == 3
+    assert last_session_window_tab_count(tmp_path, "win-2") == 0
+
+
+def test_window_tab_count_is_zero_without_a_readable_save(tmp_path):
+    assert last_session_window_tab_count(tmp_path, "win-1") == 0
+    (tmp_path / "last-session.json").write_text("{not json", encoding="utf-8")
+    assert last_session_window_tab_count(tmp_path, "win-1") == 0

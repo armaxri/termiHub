@@ -19,6 +19,7 @@ use super::wsl_exec::{
 use super::wsl_init_script::{
     choose_delivery, distro_create_args, init_script_contents, source_line, InitDelivery,
 };
+use super::wsl_shell_ready::{wait_for_shell_ready, ReadyTimings};
 use crate::config::WslConfig;
 use crate::connection::{
     Capabilities, ConnectionType, FieldType, FilePathKind, OutputReceiver, OutputSender,
@@ -568,50 +569,6 @@ async fn wait_for_bytes(
     result.unwrap_or(false)
 }
 
-/// Wait until the shell signals it is ready.
-///
-/// Returns as soon as one of:
-/// - an OSC 7 sequence (`ESC ] 7 ;`) is seen — bash emits this on the first
-///   prompt via the `PROMPT_COMMAND` env var set in `connect()`.
-/// - output has been silent for `idle_ms` milliseconds after the first chunk
-///   arrived — covers zsh which does not emit PROMPT_COMMAND-driven OSC 7.
-/// - `max_wait` expires — hard deadline so the task always makes progress.
-async fn wait_for_shell_ready(
-    rx: &mut tokio::sync::mpsc::Receiver<Vec<u8>>,
-    idle_ms: u64,
-    max_wait: Duration,
-) {
-    let deadline = tokio::time::Instant::now() + max_wait;
-    let idle_dur = Duration::from_millis(idle_ms);
-    let mut got_output = false;
-
-    loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            return;
-        }
-        // Once we've seen at least one chunk, switch to the shorter idle timeout.
-        let timeout = if got_output {
-            remaining.min(idle_dur)
-        } else {
-            remaining
-        };
-        match tokio::time::timeout(timeout, rx.recv()).await {
-            // Idle timeout after first output → settled.
-            Err(_) => return,
-            // Channel closed.
-            Ok(None) => return,
-            Ok(Some(chunk)) => {
-                got_output = true;
-                // OSC 7 is the definitive "bash prompt appeared" signal.
-                if chunk.windows(4).any(|w| w == b"\x1b]7;") {
-                    return;
-                }
-            }
-        }
-    }
-}
-
 /// Write raw bytes to the PTY writer, flushing immediately.
 ///
 /// A failed write silently loses user input, so surface the error via a warning
@@ -727,10 +684,12 @@ fn write_init_script_unc(unc_script_path: &str, contents: &[u8]) -> Result<(), S
 ///
 /// # Protocol
 ///
-/// 1. Wait for the shell to be ready: either an OSC 7 sequence (bash
-///    PROMPT_COMMAND fired → `.bashrc` has run, startup noise is done) or
-///    500 ms of silence after the first output chunk (zsh / other shells).
-///    Hard deadline: 5 s.
+/// 1. Wait for the shell to be ready ([`wait_for_shell_ready`]): an OSC 7 /
+///    OSC 133 prompt marker, or 500 ms of quiet after visible output (zsh /
+///    other shells), or a still-streaming shell at the 5 s deadline. Never
+///    while the distro's first-launch user setup (`Enter new UNIX username:`)
+///    or another input prompt is waiting, and never blind before any output
+///    (#4057); those wait up to 10 min for a shell prompt, then skip.
 ///
 /// 2. Create the setup script at a per-session path (see
 ///    [`init_script_linux_path`]) **inside the distribution** with mode `0600`
@@ -755,8 +714,14 @@ async fn wsl_setup(
     distribution: String,
     unc_prefix: String,
 ) {
-    // Phase 1 — wait for the shell to be ready.
-    wait_for_shell_ready(&mut tap_rx, 500, Duration::from_secs(5)).await;
+    // Phase 1 — wait for the shell to be ready. On a never-launched distro the
+    // PTY is running the first-launch user setup, not a shell: never type into
+    // it (#4057). If no shell prompt follows within the setup cap, skip the
+    // injection — the next session (setup done) gets shell integration.
+    if !wait_for_shell_ready(&mut tap_rx, ReadyTimings::DEFAULT).await {
+        info!("WSL setup: no shell prompt confirmed; skipping shell-integration injection");
+        return;
+    }
 
     // Phase 2 — create the setup script. The path is unpredictable per session
     // (CORE-019); the script self-cleans via its trailing `rm -f`.
@@ -1410,7 +1375,7 @@ mod live_tests;
 mod tests {
     use std::time::Duration;
 
-    use super::{init_script_linux_path, wait_for_bytes, wait_for_shell_ready, *};
+    use super::{init_script_linux_path, wait_for_bytes, *};
     use crate::connection::validate_settings;
 
     #[test]
@@ -1882,42 +1847,8 @@ mod tests {
         assert!(!found);
     }
 
-    /// wait_for_shell_ready returns immediately on OSC 7.
-    #[tokio::test]
-    async fn wait_for_shell_ready_on_osc7() {
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
-        tx.send(b"\x1b]7;file:///home/user\x07".to_vec())
-            .await
-            .unwrap();
-        let start = tokio::time::Instant::now();
-        wait_for_shell_ready(&mut rx, 500, Duration::from_secs(5)).await;
-        // Should finish well under the idle timeout
-        assert!(start.elapsed() < Duration::from_millis(400));
-    }
-
-    /// wait_for_shell_ready returns after idle_ms when output stops.
-    #[tokio::test]
-    async fn wait_for_shell_ready_settles_after_idle() {
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
-        tx.send(b"some startup noise".to_vec()).await.unwrap();
-        // send nothing more — should settle after ~100 ms idle
-        let start = tokio::time::Instant::now();
-        wait_for_shell_ready(&mut rx, 100, Duration::from_secs(5)).await;
-        let elapsed = start.elapsed();
-        assert!(elapsed >= Duration::from_millis(90), "elapsed: {elapsed:?}");
-        assert!(elapsed < Duration::from_millis(500), "elapsed: {elapsed:?}");
-    }
-
-    /// wait_for_shell_ready respects the hard max_wait when no output arrives.
-    #[tokio::test]
-    async fn wait_for_shell_ready_hard_deadline() {
-        let (_tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
-        let start = tokio::time::Instant::now();
-        wait_for_shell_ready(&mut rx, 500, Duration::from_millis(80)).await;
-        let elapsed = start.elapsed();
-        assert!(elapsed >= Duration::from_millis(70), "elapsed: {elapsed:?}");
-        assert!(elapsed < Duration::from_millis(400), "elapsed: {elapsed:?}");
-    }
+    // `wait_for_shell_ready` (readiness + first-launch setup) is tested on every
+    // platform in `wsl_shell_ready` (#4057).
 
     // -----------------------------------------------------------------------
     // WslFileBrowser unit tests
