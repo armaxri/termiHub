@@ -4,10 +4,11 @@ import React from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { useAppStore, deriveEditorHostLabel } from "@/store/appStore";
+import { useAppStore, deriveEditorHostLabel, getComposedLayout } from "@/store/appStore";
 import { FileEditor } from "./FileEditor";
 import type { EditorTabMeta, LeafPanel, TerminalTab } from "@/types/terminal";
 import { seedLayoutState } from "@/test/layoutState";
+import { onFrontendLog } from "@/utils/frontendLog";
 
 // Render Monaco as a plain textarea so the editor mounts in jsdom and we can
 // drive content changes through its onChange.
@@ -804,6 +805,92 @@ describe("FileEditor — sudo host label from the session (#2424 / #2426)", () =
     // The credential is keyed by the host label, not the file path.
     expect(store?.args.connectionId).toBe("pi@raspberrypi:22");
     expect(store?.args.credentialType).toBe("sudo_password");
+  });
+
+  it("keeps the sudo password out of persisted tab and workspace state (#1329)", async () => {
+    // A distinctive password so any leak is unambiguous.
+    const SUDO_PW = "Persist-Secrecy-Sudo-Pw-8e41d7";
+    const { elevatedCalls } = mockBackend();
+    const persisted: Array<{ cmd: string; args: unknown }> = [];
+    const base = mockedInvoke.getMockImplementation()!;
+    mockedInvoke.mockImplementation((cmd, args) => {
+      if (cmd === "restore_resolve_mode") return Promise.resolve("always");
+      if (cmd === "save_last_session" || cmd === "save_workspace") {
+        persisted.push({ cmd, args });
+        return Promise.resolve(undefined);
+      }
+      if (cmd === "list_workspaces") return Promise.resolve([]);
+      return base(cmd, args);
+    });
+
+    // Every frontend log line (the LogViewer and the durable log's source).
+    const logLines: string[] = [];
+    const unsubscribe = onFrontendLog((e) => logLines.push(`${e.target} ${e.message}`));
+
+    // The owning SSH terminal tab plus this editor tab, as a restorable layout.
+    seedOwningTab();
+    const editorTab = {
+      id: TAB_ID,
+      sessionId: null,
+      title: "hosts",
+      connectionType: "local",
+      contentType: "editor",
+      editorMeta: SSH_META,
+      config: { type: "local", config: {} },
+      panelId: "leaf-1",
+      isActive: false,
+    } as unknown as TerminalTab;
+    const owner = getComposedLayout(useAppStore.getState()).rootPanel as LeafPanel;
+    seedLayoutState({
+      rootPanel: { ...owner, tabs: [...owner.tabs, editorTab] },
+      activePanelId: "leaf-1",
+    });
+
+    render(SSH_META);
+    await flush();
+    editContent("127.0.0.1 localhost\nedited\n");
+    await flush();
+    await act(async () => {
+      (query("file-editor-edit-with-sudo") as HTMLButtonElement).click();
+    });
+    await flush();
+    typeInto(docQuery("sudo-prompt-input") as HTMLInputElement, SUDO_PW);
+    await act(async () => {
+      (docQuery("sudo-prompt-submit") as HTMLButtonElement).click();
+    });
+    await flush();
+    // The save went through elevated and the tab is now in sudo mode.
+    expect(elevatedCalls).toHaveLength(1);
+    expect(elevatedCalls[0].sudoPassword).toBe(SUDO_PW);
+    expect(query("file-editor-sudo-badge")).not.toBeNull();
+
+    // Persist the layout both ways the app does: last-session auto-save and an
+    // explicit "save as workspace".
+    await act(async () => {
+      await useAppStore.getState().saveLastSession();
+      await useAppStore.getState().saveCurrentAsWorkspace("ws", "all");
+    });
+
+    // Positive control: both payloads captured the layout (the owning SSH tab;
+    // editor tabs themselves are not part of the persisted shape).
+    expect(persisted.map((p) => p.cmd).sort()).toEqual(["save_last_session", "save_workspace"]);
+    for (const p of persisted) {
+      expect(JSON.stringify(p.args)).toContain("raspberrypi");
+      expect(JSON.stringify(p.args)).not.toContain(SUDO_PW);
+    }
+    // Nor does the in-memory store (what every persisted shape is captured from)
+    // carry it.
+    expect(JSON.stringify(useAppStore.getState())).not.toContain(SUDO_PW);
+    // The only IPC that ever carried the password is the elevated write itself:
+    // not a log line, a credential call or any other persisted state.
+    const carriers = mockedInvoke.mock.calls
+      .filter(([, args]) => JSON.stringify(args ?? null).includes(SUDO_PW))
+      .map(([cmd]) => cmd);
+    expect(carriers).toEqual(["session_write_file_elevated"]);
+    unsubscribe();
+    // Positive control: the elevated save did log.
+    expect(logLines.some((l) => l.includes("elevated save succeeded"))).toBe(true);
+    expect(logLines.filter((l) => l.includes(SUDO_PW))).toEqual([]);
   });
 
   it("resolves a saved sudo password under the host label without prompting", async () => {
