@@ -13,7 +13,7 @@ sidebar/editor re-renders instead of sleeping.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from ..bridge import BridgeError
 from .base import HarnessMixin
@@ -271,6 +271,7 @@ class ConnectionsUi(HarnessMixin):
         save_password: bool = False,
         auto_reconnect: bool = True,
         connect: bool = False,
+        before_save: Optional[Callable[[], None]] = None,
     ) -> None:
         """Fill the editor for an SSH connection and save (or Save & Connect).
 
@@ -285,6 +286,9 @@ class ConnectionsUi(HarnessMixin):
         ``auto_reconnect=False`` flips the default-on "Auto-Reconnect" toggle off
         (PARITY-008), for a test that exercises the manual disconnect overlay
         rather than the automatic reconnect loop.
+        ``before_save`` runs after the SSH fields are filled and before the save
+        click — the hook :class:`~termihub_harness.ui.JumpHostUi` uses to fill the
+        Jump Host section of the same form.
         """
         self.open_new_connection_editor()
         self.driver.type("connection-editor-name-input", name)
@@ -320,6 +324,8 @@ class ConnectionsUi(HarnessMixin):
                 what="the Auto-Reconnect toggle",
             )
             self.driver.click("field-autoReconnect")
+        if before_save is not None:
+            before_save()
         self._click_editor_save(connect)
 
     def _click_editor_save(self, connect: bool) -> None:

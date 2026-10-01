@@ -730,10 +730,15 @@ mod tests {
         assert_eq!(observed.lock().unwrap().responses.len(), 2);
     }
 
-    /// `AuthenticationMethods password,keyboard-interactive`: a correct password
-    /// is a partial success and the OTP completes the login.
+    /// [`PasswordPolicy::FirstFactor`] with a correct OTP: the in-process server
+    /// cannot send a real partial success (russh clears the flag), so the client
+    /// sees "password refused, keyboard-interactive offered" and completes the
+    /// login through the password-fallback path, prompting only for the OTP.
+    ///
+    /// The genuine partial-success → [`KiMode::SecondFactor`] path is covered
+    /// live against OpenSSH by `core/tests/ssh_mfa.rs` (#3384).
     #[tokio::test]
-    async fn partial_success_continues_with_second_factor() {
+    async fn first_factor_policy_completes_via_password_fallback_with_otp() {
         let (mut session, _observed) = ki_connect(Script {
             rounds: vec![Round::new(
                 vec![("Verification code: ", false)],
@@ -763,9 +768,10 @@ mod tests {
     /// `SecondFactorFailed` (covered at the exchange level by
     /// `wrong_answer_in_second_factor_mode_is_second_factor_failed`, and the
     /// partial-success → second-factor routing by
-    /// `continuation_decisions`). The
-    /// in-process russh 0.61 server, however, always clears `partial_success`
-    /// on a password rejection, so here the client only sees "password refused,
+    /// `continuation_decisions`, and end to end against OpenSSH by
+    /// `core/tests/ssh_mfa.rs`, #3384). The in-process russh 0.61 server,
+    /// however, always clears `partial_success` on a password rejection, so
+    /// here the client only sees "password refused,
     /// keyboard-interactive offered" and nothing proves the saved password was
     /// accepted: the typed OTP rejection conservatively stays `AuthFailed`.
     #[tokio::test]

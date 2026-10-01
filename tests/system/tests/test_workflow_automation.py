@@ -180,10 +180,20 @@ class TestWorkflowRun(WorkflowUi, TerminalUi, SettingsUi, SidebarUi, SystemTest)
         self.driver.click("macro-new-btn")
         self.wait(lambda: self.driver.exists("macro-editor-dialog"), what="the macro editor")
         self.driver.type("macro-editor-name", name)
-        self.driver.click("macro-editor-add-step")
+        # A new macro opens pre-seeded with one empty step; only add one if the
+        # form ever starts empty, or a blank second step keeps Save disabled
+        # (the same harness bug test_history_restart hit, #4017).
+        self.wait(
+            lambda: self.driver.exists("macro-editor-step-data-0")
+            or self.driver.exists("macro-editor-no-steps"),
+            what="the macro editor's steps",
+        )
+        if not self.driver.exists("macro-editor-step-data-0"):
+            self.driver.click("macro-editor-add-step")
         self.wait(
             lambda: self.driver.exists("macro-editor-step-data-0"), what="the first macro step"
         )
+        assert not self.driver.exists("macro-editor-step-data-1"), "expected a single step"
         self.driver.type("macro-editor-step-data-0", step_text)
         self.wait(lambda: not self.is_disabled("macro-editor-save"), what="Save to enable")
         self.driver.click("macro-editor-save")

@@ -516,6 +516,10 @@ pub fn port_ssh_legacy() -> u16 {
 pub fn port_ssh_keys() -> u16 {
     resolve_port("TERMIHUB_TEST_SSH_KEYS_PORT", 2203)
 }
+/// ssh-mfa container (password/key + keyboard-interactive OTP, #3384).
+pub fn port_ssh_mfa() -> u16 {
+    resolve_port("TERMIHUB_TEST_SSH_MFA_PORT", 2216)
+}
 /// ssh-jumphost-bastion container (ProxyJump entry point).
 pub fn port_ssh_bastion() -> u16 {
     resolve_port("TERMIHUB_TEST_SSH_BASTION_PORT", 2204)

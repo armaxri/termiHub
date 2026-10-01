@@ -310,6 +310,62 @@ class AppInstance:
         return self._binary
 
     @property
+    def spawn_endpoint(self) -> str:
+        """This instance's private ``termiHub spawn`` IPC rendezvous (#4010).
+
+        The app's spawn rendezvous is per *user* by default, so a test instance
+        would otherwise share it with the developer's own running termiHub (and
+        with any sibling test instance). The harness pins it per instance via
+        ``TERMIHUB_SPAWN_ENDPOINT`` — a socket inside the private config dir on
+        Unix, a pipe named after that dir on Windows — and hands the same value to
+        :meth:`run_cli`, so a test's ``termiHub spawn`` reaches exactly this app.
+        Stable across :meth:`restart` (same config dir).
+        """
+        if platform.system() == "Windows":
+            return rf"\\.\pipe\termihub-spawn-test-{self._config_dir.name}"
+        return str(self._config_dir / "spawn.sock")
+
+    def cli_env(self) -> dict[str, str]:
+        """Environment for a one-shot CLI invocation of this instance's binary.
+
+        Shares the instance's config dir and spawn rendezvous, and deliberately
+        omits ``TERMIHUB_TEST_BRIDGE_PORT``: a CLI process that *does* fall through
+        to a full launch must never dial the bridge and impersonate the app.
+        """
+        env = dict(os.environ)
+        env.pop("TERMIHUB_TEST_BRIDGE_PORT", None)
+        env["TERMIHUB_CONFIG_DIR"] = str(self._config_dir)
+        env["TERMIHUB_SPAWN_ENDPOINT"] = self.spawn_endpoint
+        return env
+
+    def run_cli(
+        self, args: Sequence[str], *, timeout: float = 30.0
+    ) -> subprocess.CompletedProcess:
+        """Run ``<app binary> <args>`` as a short-lived CLI process and wait.
+
+        Used for the pre-init subcommands — ``spawn …`` (forwarded over the IPC
+        rendezvous to the running instance, then exits 0) and
+        ``install-/uninstall-shell-integration``. A ``spawn`` that finds no
+        running instance launches a whole app instead of exiting, so the
+        ``timeout`` is the "forward failed" signal: the process tree is killed
+        and :class:`subprocess.TimeoutExpired` propagates to fail the test.
+        """
+        process = subprocess.Popen(
+            [str(self._binary), *args],
+            env=self.cli_env(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _terminate_tree(process)
+            process.communicate()
+            raise
+        return subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
+
+    @property
     def log_path(self) -> Path:
         """Path of the file the app's stdout/stderr is captured to."""
         return self._log_path
@@ -363,6 +419,8 @@ class AppInstance:
         env = dict(os.environ)
         env["TERMIHUB_TEST_BRIDGE_PORT"] = str(bridge_port)
         env["TERMIHUB_CONFIG_DIR"] = str(self._config_dir)
+        # A private spawn rendezvous per instance (#4010), see `spawn_endpoint`.
+        env["TERMIHUB_SPAWN_ENDPOINT"] = self.spawn_endpoint
         # Pin WebView2 to a per-instance user-data folder so teardown can reap
         # only this instance's msedgewebview2.exe hosts (issue #1022). The app
         # (Tauri) sets no data_directory, so WebView2 honours this env var.

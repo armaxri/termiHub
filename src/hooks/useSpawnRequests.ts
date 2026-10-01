@@ -120,10 +120,13 @@ async function handleSpawnRequest(
       open.openSpawnedContainer(spawn);
       toast.success(`Spawned container at ${location || "."}`, {
         duration: SPAWN_TOAST_DURATION_MS,
+        testId: "spawn-toast-success",
       });
     } catch (err) {
       frontendLog("spawn", `Failed to resolve container spawn: ${err}`);
-      toast.error(`Failed to open spawned container: ${err}`);
+      toast.error(`Failed to open spawned container: ${err}`, {
+        testId: "spawn-toast-error",
+      });
     }
     return;
   }
@@ -141,15 +144,19 @@ async function handleSpawnRequest(
     if (spawn.missing) {
       toast.info(`Path not found — opened a shell in your home directory instead`, {
         duration: SPAWN_TOAST_DURATION_MS,
+        testId: "spawn-toast-missing",
       });
     } else {
       toast.success(`Opened a shell at ${req.location || "."}`, {
         duration: SPAWN_TOAST_DURATION_MS,
+        testId: "spawn-toast-success",
       });
     }
   } catch (err) {
     frontendLog("spawn", `Failed to resolve shell spawn: ${err}`);
-    toast.error(`Failed to open spawned shell: ${err}`);
+    toast.error(`Failed to open spawned shell: ${err}`, {
+      testId: "spawn-toast-error",
+    });
   }
 }
 

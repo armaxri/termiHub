@@ -48,6 +48,15 @@ describe("Modal", () => {
     expect(content!.textContent).toContain("Are you sure?");
   });
 
+  it("derives a `<testid>-overlay` testid for the scrim (#4010)", () => {
+    render(
+      <Modal data-testid="modal" open onOpenChange={() => {}} title="Pick">
+        <p>Body</p>
+      </Modal>
+    );
+    expect(document.querySelector('[data-testid="modal-overlay"]')).not.toBeNull();
+  });
+
   it("renders a footer when provided", () => {
     render(
       <Modal
