@@ -2,12 +2,12 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 
 use super::config::{EmbeddedServerConfig, EmbeddedServerStore};
 use super::secrets::strip_store;
 use crate::connection::recovery::{RecoveryResult, RecoveryWarning};
-use crate::utils::config_paths::resolve_config_dir;
+use crate::utils::config_paths::resolve_app_config_dir;
 use crate::utils::fs::write_atomic;
 use crate::utils::migrate::{
     guard_not_newer, load_versioned, salvage_list_store, LoadOutcome, Salvage, VersionedStore,
@@ -38,8 +38,8 @@ impl EmbeddedServerStorage {
     /// Create a new storage instance, resolving the config directory.
     ///
     /// If `TERMIHUB_CONFIG_DIR` is set it overrides the default Tauri config directory.
-    pub fn new(app_handle: &AppHandle) -> Result<Self> {
-        let config_dir = resolve_config_dir(Some(app_handle))?;
+    pub fn new<R: Runtime>(app_handle: &AppHandle<R>) -> Result<Self> {
+        let config_dir = resolve_app_config_dir(app_handle)?;
         fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
         Ok(Self {
             file_path: config_dir.join(FILE_NAME),

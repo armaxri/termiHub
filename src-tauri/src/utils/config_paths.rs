@@ -27,7 +27,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 
 use super::portable::detect_app_mode;
 
@@ -50,7 +50,7 @@ pub struct ConfigDirOverride(pub PathBuf);
 /// This is what installed mode uses, and what [`resolve_config_dir`]'s handle
 /// branch falls back to. Split out so startup can resolve it explicitly without
 /// going through the managed-override / external-env precedence.
-pub fn app_config_dir(handle: &AppHandle) -> Result<PathBuf> {
+pub fn app_config_dir<R: Runtime>(handle: &AppHandle<R>) -> Result<PathBuf> {
     handle
         .path()
         .app_config_dir()
@@ -75,26 +75,8 @@ const APP_IDENTIFIER: &str = "com.termihub.app";
 /// This does not create the directory — callers that need it materialized
 /// should `fs::create_dir_all` the returned path.
 pub fn resolve_config_dir(app_handle: Option<&AppHandle>) -> Result<PathBuf> {
-    // 1. The running app resolves the effective config directory once at startup
-    //    — folding in the external override, portable mode, and any temp-dir
-    //    fallback — and publishes it as managed `ConfigDirOverride` state. When
-    //    present it is authoritative: this is the explicit channel that replaced
-    //    the app self-mutating `TERMIHUB_CONFIG_DIR` (WA-RS-011).
     if let Some(handle) = app_handle {
-        if let Some(override_dir) = handle.try_state::<ConfigDirOverride>() {
-            return Ok(override_dir.0.clone());
-        }
-
-        // 2. External `TERMIHUB_CONFIG_DIR` override (public: system-test
-        //    harness, README, power users). Reached only before the managed
-        //    override exists — i.e. during startup's own resolution.
-        if let Ok(dir) = std::env::var("TERMIHUB_CONFIG_DIR") {
-            return Ok(PathBuf::from(dir));
-        }
-
-        // 3. Tauri's resolver already knows the OS config dir joined with the
-        //    bundle identifier from `tauri.conf.json`.
-        return app_config_dir(handle);
+        return resolve_app_config_dir(handle);
     }
 
     // 4. Pre-init: no handle (CLI subcommands run before the Tauri app exists).
@@ -105,6 +87,31 @@ pub fn resolve_config_dir(app_handle: Option<&AppHandle>) -> Result<PathBuf> {
         .ok()
         .and_then(|mode| mode.data_dir().map(Path::to_path_buf));
     standalone_config_dir(external_override, portable_data_dir, dirs::config_dir())
+}
+
+/// [`resolve_config_dir`] for a running app, generic over the Tauri runtime so
+/// a manager built on `tauri::test::mock_app()` resolves its directory the same
+/// way (a managed [`ConfigDirOverride`] pointing at a temp dir) (#4053).
+pub fn resolve_app_config_dir<R: Runtime>(handle: &AppHandle<R>) -> Result<PathBuf> {
+    // 1. The running app resolves the effective config directory once at startup
+    //    — folding in the external override, portable mode, and any temp-dir
+    //    fallback — and publishes it as managed `ConfigDirOverride` state. When
+    //    present it is authoritative: this is the explicit channel that replaced
+    //    the app self-mutating `TERMIHUB_CONFIG_DIR` (WA-RS-011).
+    if let Some(override_dir) = handle.try_state::<ConfigDirOverride>() {
+        return Ok(override_dir.0.clone());
+    }
+
+    // 2. External `TERMIHUB_CONFIG_DIR` override (public: system-test harness,
+    //    README, power users). Reached only before the managed override exists
+    //    — i.e. during startup's own resolution.
+    if let Ok(dir) = std::env::var("TERMIHUB_CONFIG_DIR") {
+        return Ok(PathBuf::from(dir));
+    }
+
+    // 3. Tauri's resolver already knows the OS config dir joined with the
+    //    bundle identifier from `tauri.conf.json`.
+    app_config_dir(handle)
 }
 
 /// Pure resolver for the no-`AppHandle` (pre-init) path, split out for testing.

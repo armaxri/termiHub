@@ -8,6 +8,7 @@ import { getActiveTab, getComposedLayout, useAppStore } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
 import { dispatchCommand, type BridgeDeps } from "./dispatcher";
 import { ProjectionRecorder } from "./projectionRecorder";
+import { inspectTerminal } from "./terminalInspection";
 import { isTestBridgeEnabled, getTestBridgePort } from "./testMode";
 import { runBridgeWebSocketClient, type BridgeWebSocketClient } from "./wsClient";
 import { bridgeRunnerUrl } from "./wsProtocol";
@@ -87,6 +88,7 @@ export function TestBridge() {
       readTerminal: (tabId, joinFullWidthRows) => getTerminalContent(tabId, joinFullWidthRows),
       scrollTerminal: (tabId, lines, toBottom) => scrollTerminal(tabId, lines, toBottom),
       getTerminalViewport: (tabId) => getTerminalViewport(tabId),
+      inspectTerminal,
       getActiveTabId: () => getActiveTab(useAppStore.getState())?.id ?? undefined,
       // Augment the raw store state with the composed layout (#2562): the layout
       // is no longer stored as `rootPanel` / `tabGroups` / `activePanelId` /

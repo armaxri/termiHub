@@ -131,6 +131,20 @@ class WorkflowUi(HarnessMixin):
         """Set the script textarea of a run-script step at ``index``."""
         self.driver.type(f"workflow-editor-step-script-{index}", script)
 
+    def pick_macro(self, index: int, macro_id: str, macro_name: str) -> None:
+        """Choose a macro in the Macro select of the run-macro step at ``index``.
+
+        The select's listbox portals into the editor dialog (#1868); this opens it
+        and clicks the option like a user, then waits for the trigger to show
+        ``macro_name`` — a listbox that renders but swallows the click fails here.
+        """
+        test_id = f"workflow-editor-step-macro-{index}"
+        self.driver.select(test_id, macro_id)
+        self.wait(
+            lambda: macro_name in self.driver.get_text(test_id),
+            what=f"the run-macro step {index} to show {macro_name!r}",
+        )
+
     def move_step_down(self, index: int) -> None:
         """Reorder the step at ``index`` one slot down via the arrow button."""
         self.driver.click(f"workflow-editor-step-down-{index}")
