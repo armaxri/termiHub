@@ -220,7 +220,8 @@ export async function networkHttpMonitorStart(
   method?: string,
   expectedStatus?: number,
   timeoutMs?: number,
-  runLocation?: RunLocation
+  runLocation?: RunLocation,
+  allowPrivateNetwork?: boolean
 ): Promise<string> {
   return await invoke<string>("network_http_monitor_start", {
     url,
@@ -229,6 +230,7 @@ export async function networkHttpMonitorStart(
     expectedStatus: expectedStatus ?? null,
     timeoutMs: timeoutMs ?? null,
     runLocation: runLocation ?? null,
+    allowPrivateNetwork: allowPrivateNetwork ?? null,
   });
 }
 

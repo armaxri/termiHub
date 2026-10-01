@@ -16,7 +16,7 @@ verb: a synthetic arrow keydown only moves the caret when Monaco's
 guarantee, so that path no-opped deterministically on ubuntu/macOS (#2694).
 
 The binary/non-UTF-8 graceful-error path (EDITOR-01) is covered too: a non-UTF-8
-file authored from the terminal is opened through the browser, and the editor is
+file written into the home directory is opened through the browser, and the editor is
 asserted to surface ``FileEditor``'s ``file-editor__error`` panel rather than
 crash (#881) — the last editor case that had remained a manual test.
 """
@@ -47,6 +47,12 @@ class TestEditor(TerminalUi, TabsUi, SidebarUi, FilesUi, EditorUi, ShellFsUi, Sy
         prompt hook installs, racing the assertion). Multi-line content is needed
         wherever a test dirties the buffer by toggling the EOL: the dirty signal
         is ``content != savedContent``, unchanged by an LF↔CRLF flip on empty text.
+
+        The file is written **on the host disk**, not typed into the fresh shell:
+        on a loaded Windows runner the just-started PowerShell could still be
+        blank when the command was sent, so it never ran and the row never
+        appeared (#4025). ``open_file_in_editor`` then waits for the row with a
+        bounded, refreshing poll.
         """
         # A pristine app per editor test: opening/closing many Monaco editors in
         # one long-lived app churns the WebKit renderer (and closing to zero tabs
@@ -74,8 +80,8 @@ class TestEditor(TerminalUi, TabsUi, SidebarUi, FilesUi, EditorUi, ShellFsUi, Sy
         ``localReadFile`` decodes the file as UTF-8, so an undecodable byte
         sequence makes the load fail. ``FileEditor`` must catch that and render
         its ``file-editor__error`` panel — the app stays alive and no editor
-        status mounts. The file is authored from the terminal via the
-        cross-platform shell helper (``\\xff`` is never valid in UTF-8), exactly
+        status mounts. The file is written straight into the home directory by
+        the ``ShellFsUi`` fixture helper (``\\xff`` is never valid in UTF-8) —
         the path the original ``editor.test.js`` could not drive.
         """
         self.restart_app()

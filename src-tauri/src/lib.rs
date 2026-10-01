@@ -1088,16 +1088,9 @@ pub fn run() -> anyhow::Result<()> {
                     info!("Reopen with no windows; recreating a window (#1903)");
                     if let Some(wm) = app_handle.try_state::<window::WindowManager>() {
                         let label = wm.next_label();
-                        if let Err(e) = tauri::WebviewWindowBuilder::new(
-                            app_handle,
-                            &label,
-                            tauri::WebviewUrl::App("index.html".into()),
-                        )
-                        .title("termiHub")
-                        .inner_size(1280.0, 800.0)
-                        .min_inner_size(800.0, 600.0)
-                        .build()
-                        {
+                        // macOS-only, so the Windows WebView2 sync-creation
+                        // deadlock (#4024) cannot apply to this event handler.
+                        if let Err(e) = commands::window::build_app_window(app_handle, &label) {
                             tracing::error!("Failed to recreate window on reopen: {e}");
                         }
                     }
