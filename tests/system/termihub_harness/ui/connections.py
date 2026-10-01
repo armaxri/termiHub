@@ -414,6 +414,7 @@ class ConnectionsUi(HarnessMixin):
         host: str = "ftp.example.com",
         port: int = 21,
         tls_mode: str = "none",
+        anonymous: bool = False,
         connect: bool = False,
     ) -> None:
         """Fill the editor for an FTP connection and save (or Save & Connect).
@@ -425,6 +426,10 @@ class ConnectionsUi(HarnessMixin):
         the pre-connect insecure-FTP warning flow (#1338). That warning modal is
         raised on the sidebar connect path (double-click) for plain FTP, so tests
         save here (``connect=False``) and connect via :meth:`connect_connection`.
+
+        ``anonymous`` ticks **Use anonymous login** (``field-anonymous``, default
+        off), so the saved connection can actually log in to a server that allows
+        anonymous browsing — the ``ftp-server`` fixture does (#4006).
         """
         self.open_new_connection_editor()
         self.driver.type("connection-editor-name-input", name)
@@ -437,6 +442,17 @@ class ConnectionsUi(HarnessMixin):
         if tls_mode:
             self._select_when_available(
                 "field-tlsMode", tls_mode, what=f"the {tls_mode!r} TLS-mode option"
+            )
+        if anonymous:
+            self.wait(
+                lambda: self.driver.exists("field-anonymous"),
+                what="the FTP anonymous-login toggle",
+            )
+            self.driver.click("field-anonymous")
+            # The username/password fields hide while anonymous is on.
+            self.wait(
+                lambda: not self.driver.exists("field-username"),
+                what="the FTP credential fields to hide for anonymous login",
             )
         self._click_editor_save(connect)
         self.require_connection(name)
