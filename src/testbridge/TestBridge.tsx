@@ -9,6 +9,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { dispatchCommand, type BridgeDeps } from "./dispatcher";
 import { ProjectionRecorder } from "./projectionRecorder";
 import { inspectTerminal } from "./terminalInspection";
+import { loseTerminalWebglContext, measureTerminal } from "./terminalRender";
 import { isTestBridgeEnabled, getTestBridgePort } from "./testMode";
 import { runBridgeWebSocketClient, type BridgeWebSocketClient } from "./wsClient";
 import { bridgeRunnerUrl } from "./wsProtocol";
@@ -77,8 +78,13 @@ function getProjectionRecorder(): ProjectionRecorder {
  * every platform — including macOS, where no WKWebView WebDriver exists (ADR-5).
  */
 export function TestBridge() {
-  const { getTerminalContent, scrollTerminal, getTerminalViewport, sendInputToTerminal } =
-    useTerminalRegistry();
+  const {
+    getTerminalContent,
+    scrollTerminal,
+    getTerminalViewport,
+    sendInputToTerminal,
+    getTerminalHandles,
+  } = useTerminalRegistry();
 
   useEffect(() => {
     if (!isTestBridgeEnabled()) return;
@@ -89,6 +95,20 @@ export function TestBridge() {
       scrollTerminal: (tabId, lines, toBottom) => scrollTerminal(tabId, lines, toBottom),
       getTerminalViewport: (tabId) => getTerminalViewport(tabId),
       inspectTerminal,
+      // Real render-path measurements (#2988): FitAddon proposal, measured cell
+      // size, live renderer, painted DOM rows, gutter thumb geometry.
+      measureTerminal: (tabId) => {
+        const handles = getTerminalHandles(tabId);
+        return handles ? measureTerminal(handles) : undefined;
+      },
+      // Force a real WebGL context loss so the DOM fallback runs (#2988). It
+      // mutates renderer state, so re-check test mode at the call site like the
+      // other verbs that act past a plain DOM read.
+      loseTerminalWebglContext: (tabId) => {
+        if (!isTestBridgeEnabled()) throw new Error("test bridge is not enabled");
+        const handles = getTerminalHandles(tabId);
+        return handles ? loseTerminalWebglContext(handles) : undefined;
+      },
       getActiveTabId: () => getActiveTab(useAppStore.getState())?.id ?? undefined,
       // Augment the raw store state with the composed layout (#2562): the layout
       // is no longer stored as `rootPanel` / `tabGroups` / `activePanelId` /
@@ -224,7 +244,13 @@ export function TestBridge() {
       delete window.__termihubTestBridge;
       frontendLog("test_bridge", "removed");
     };
-  }, [getTerminalContent, scrollTerminal, getTerminalViewport, sendInputToTerminal]);
+  }, [
+    getTerminalContent,
+    scrollTerminal,
+    getTerminalViewport,
+    sendInputToTerminal,
+    getTerminalHandles,
+  ]);
 
   return null;
 }

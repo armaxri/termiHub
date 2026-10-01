@@ -112,6 +112,8 @@ def dispatcher_like(
     values: dict | None = None,
     viewport: dict | None = None,
     inspection: dict | None = None,
+    measurement: dict | None = None,
+    webgl_lost: bool = True,
     screenshot: str | None = None,
     coverage: str | None = None,
     coverage_chunk: int = 4 * 1024 * 1024,
@@ -124,6 +126,9 @@ def dispatcher_like(
     ``viewport`` is the ``{viewportY, baseY}`` returned by ``getTerminalViewport``.
     ``inspection`` is the value ``inspectTerminal`` returns (no marks, no images
     by default); the inspected tab ids are recorded under ``inspections``.
+    ``measurement`` is the value ``measureTerminal`` returns and ``webgl_lost``
+    what ``loseTerminalWebglContext`` answers; their tab ids are recorded under
+    ``measurements`` / ``contextLosses``.
     ``screenshot`` is the data URL returned by the ``screenshot`` command.
     ``coverage`` is the serialized ``window.__coverage__`` that ``readCoverage``
     pages through in ``coverage_chunk``-character chunks (``None`` = an
@@ -134,6 +139,7 @@ def dispatcher_like(
     values = values or {}
     viewport = viewport or {"viewportY": 0, "baseY": 0}
     inspection = inspection or {"commandMarks": None, "inlineImages": None}
+    measurement = measurement or {"grid": {"cols": 80, "rows": 24}, "proposed": None}
     recorded: dict[str, list] = {
         "clicks": [],
         "doubleClicks": [],
@@ -146,6 +152,8 @@ def dispatcher_like(
         "dragTos": [],
         "scrolls": [],
         "inspections": [],
+        "measurements": [],
+        "contextLosses": [],
         "events": [],
         "exits": [],
     }
@@ -206,6 +214,12 @@ def dispatcher_like(
         if action == "inspectTerminal":
             recorded["inspections"].append(command.get("tabId"))
             return {"ok": True, "action": "inspectTerminal", "value": inspection}
+        if action == "measureTerminal":
+            recorded["measurements"].append(command.get("tabId"))
+            return {"ok": True, "action": "measureTerminal", "value": measurement}
+        if action == "loseTerminalWebglContext":
+            recorded["contextLosses"].append(command.get("tabId"))
+            return {"ok": True, "action": "loseTerminalWebglContext", "value": webgl_lost}
         if action == "readTerminal":
             return {"ok": True, "action": "readTerminal", "value": terminal_text}
         if action == "getState":
