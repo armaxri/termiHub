@@ -1,0 +1,164 @@
+name: Windows SSH Host
+
+# Runs the live Windows agent deploy/connect tests
+# (src-tauri/src/terminal/agent_manager/windows_ssh_host_tests.rs, #3684)
+# against the runner's OWN OpenSSH server: the runner is both the desktop side
+# and the Windows SSH host it deploys to. Covers MT-AGENT-18/19 (deploy +
+# install through a cmd.exe / PowerShell DefaultShell), MT-AGENT-20 (connect
+# over SSH exec `--stdio`) and MT-AGENT-24 (a named-pipe daemon session
+# survives a disconnect and is re-attached), which used to be manual because
+# there was no Windows SSH-host fixture.
+#
+# One matrix leg per OpenSSH `DefaultShell`. Each leg enables sshd, creates a
+# throwaway local user with a random password (password auth, so no
+# administrators_authorized_keys ACL dance), sets
+# HKLM\SOFTWARE\OpenSSH\DefaultShell, and runs exactly that shell's test.
+#
+# `TERMIHUB_REQUIRE_WINDOWS_SSH=1` turns a missing fixture into a failure, and
+# the run step additionally fails on any `SKIPPED:` line or when the named test
+# did not run — so a broken fixture reds this lane instead of skipping green.
+#
+# Not on every PR (a Windows build of the desktop crate costs several minutes):
+# nightly + manual + PRs that touch the deploy/connect paths under test.
+
+on:
+  schedule:
+    # 04:17 UTC daily (off the top of the hour to dodge scheduler congestion).
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src-tauri/src/terminal/agent_deploy.rs"
+      - "src-tauri/src/terminal/agent_install.rs"
+      - "src-tauri/src/terminal/agent_manager/reconnect.rs"
+      - "src-tauri/src/terminal/agent_manager/live_channel_support.rs"
+      - "src-tauri/src/terminal/agent_manager/windows_ssh_host_tests.rs"
+      - "src-tauri/src/utils/remote_exec.rs"
+      - "agent/src/daemon/**"
+      - ".github/workflows/windows-ssh-host.yml"
+
+concurrency:
+  group: windows-ssh-host-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege token (CI-010): checkout + build + test only.
+permissions:
+  contents: read
+
+jobs:
+  windows-ssh-host:
+    name: Agent deploy to Windows SSH host (${{ matrix.default_shell }})
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - default_shell: cmd
+            test: cmd_default_shell_deploy_install_connect_reattach
+          - default_shell: powershell
+            test: powershell_default_shell_deploy_install_connect_reattach
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          # The nightly grades develop: a scheduled run fires from the default
+          # branch (main), so without this it would only re-test main's code.
+          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
+
+      - name: Enable the OpenSSH server
+        # windows-2025 images ship sshd installed but disabled; older images need
+        # the capability added first. Bounded: a stuck capability install must
+        # not eat the job timeout.
+        timeout-minutes: 15
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-Service sshd -ErrorAction SilentlyContinue)) {
+            Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 | Out-Null
+          }
+          Set-Service -Name sshd -StartupType Manual
+          Start-Service sshd
+          $deadline = (Get-Date).AddSeconds(60)
+          while ($true) {
+            try {
+              (New-Object System.Net.Sockets.TcpClient('127.0.0.1', 22)).Close()
+              break
+            } catch {
+              if ((Get-Date) -gt $deadline) { throw 'sshd is not listening on 127.0.0.1:22' }
+              Start-Sleep -Seconds 1
+            }
+          }
+          Get-Service sshd | Format-List Name, Status, StartType
+
+      - name: Set the OpenSSH DefaultShell (${{ matrix.default_shell }})
+        shell: pwsh
+        env:
+          DEFAULT_SHELL: ${{ matrix.default_shell }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $key = 'HKLM:\SOFTWARE\OpenSSH'
+          New-Item -Path $key -Force | Out-Null
+          if ($env:DEFAULT_SHELL -eq 'powershell') {
+            $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+            New-ItemProperty -Path $key -Name DefaultShell -Value $ps -PropertyType String -Force | Out-Null
+          } else {
+            # No DefaultShell value = OpenSSH's default, cmd.exe.
+            Remove-ItemProperty -Path $key -Name DefaultShell -ErrorAction SilentlyContinue
+          }
+          Get-ItemProperty -Path $key | Format-List DefaultShell
+
+      - name: Create the SSH test user
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $user = 'thsshtest'
+          # Random per run; the suffix satisfies the local complexity policy.
+          $password = [guid]::NewGuid().ToString('N') + 'Aa1!'
+          Write-Output "::add-mask::$password"
+          $secure = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name $user -Password $secure -PasswordNeverExpires -AccountNeverExpires | Out-Null
+          "TERMIHUB_WINDOWS_SSH_USER=$user" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TERMIHUB_WINDOWS_SSH_PASSWORD=$password" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Its own key: this lane builds the desktop lib tests + the agent.
+          shared-key: windows-ssh-host
+          # Reader/writer split (#3328): PRs restore, only develop/main save.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
+
+      - name: Build the agent to deploy
+        run: cargo build -p termihub-agent
+
+      - name: Run the live Windows SSH-host test
+        shell: bash
+        env:
+          TERMIHUB_REQUIRE_WINDOWS_SSH: "1"
+          TERMIHUB_WINDOWS_SSH_HOST: "127.0.0.1"
+          TERMIHUB_WINDOWS_SSH_PORT: "22"
+          TERMIHUB_WINDOWS_SSH_DEFAULT_SHELL: ${{ matrix.default_shell }}
+          TERMIHUB_TEST_AGENT_BIN: ${{ github.workspace }}\target\debug\termihub-agent.exe
+          TEST_NAME: terminal::agent_manager::windows_ssh_host_tests::${{ matrix.test }}
+          RUST_BACKTRACE: "1"
+        run: |
+          set -euo pipefail
+          # --show-output (not --nocapture): the test's own lines are printed after
+          # it finishes, so libtest's "test <name> ... ok" line stays contiguous.
+          cargo test -p termihub --lib "$TEST_NAME" -- --exact --show-output \
+            2>&1 | tee test.log
+          # Guard against a false green: the named test must have run and passed,
+          # and must not have skipped.
+          if ! grep -q "test $TEST_NAME ... ok" test.log; then
+            echo "::error::$TEST_NAME did not run and pass"
+            exit 1
+          fi
+          if grep -q 'SKIPPED:' test.log; then
+            echo "::error::$TEST_NAME skipped in the fixture lane"
+            exit 1
+          fi
