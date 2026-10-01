@@ -44,10 +44,13 @@ export interface UpdateAgentDialogProps {
 /**
  * Update Prompt dialog (concept `remote-agent-update-strategy`, dialogs mockup
  * state 1). Shows installed vs. available versions and — when other hosts are
- * connected to the agent — an amber warning listing them. With other hosts the
- * primary action is "Notify Others & Update" ({@link updateAgentForce}); with
- * none it is a plain "Update" ({@link updateAgent}). Both actions use the async
- * Button lifecycle and surface success/failure feedback.
+ * connected to the agent — an amber warning listing them. Updating does not cut
+ * those hosts off: each runs its own agent worker, which keeps running until
+ * that host reconnects, and their sessions survive either way (#4037). With
+ * other hosts the update is forced ({@link updateAgentForce}), and the action
+ * reads "Notify Others & Update" when the coordinated strategy will send them a
+ * notice; with none it is a plain "Update" ({@link updateAgent}). Both actions
+ * use the async Button lifecycle and surface success/failure feedback.
  */
 export function UpdateAgentDialog({
   open,
@@ -62,6 +65,9 @@ export function UpdateAgentDialog({
   onUpdated,
 }: UpdateAgentDialogProps): React.ReactElement {
   const hasOtherHosts = otherHosts.length > 0;
+  // Only the coordinated strategy sends other hosts a notice (#1616); the
+  // immediate path updates without one (#4037).
+  const notifiesOthers = hasOtherHosts && config.updateStrategy === "coordinated";
 
   const handleConfirm = async (): Promise<void> => {
     frontendLog(
@@ -119,7 +125,7 @@ export function UpdateAgentDialog({
       testIdBase="update-agent"
       confirmVariant="primary"
       confirmIcon={<ArrowUp size={13} aria-hidden="true" />}
-      confirmLabel={hasOtherHosts ? "Notify Others & Update" : "Update"}
+      confirmLabel={notifiesOthers ? "Notify Others & Update" : "Update"}
       onConfirm={handleConfirm}
       onCancel={() => onOpenChange(false)}
     >
@@ -152,7 +158,7 @@ export function UpdateAgentDialog({
               ))}
             </ul>
             <div className="update-agent-dialog__warning-hint">
-              They will receive a disconnect notice and reconnect automatically.
+              Their sessions keep running. They switch to the new version when they reconnect.
             </div>
           </div>
         </div>

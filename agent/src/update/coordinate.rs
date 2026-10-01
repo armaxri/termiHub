@@ -46,7 +46,7 @@
 //!
 //! Every failure here resolves to *proceed*, never to *block*. A registry that
 //! cannot answer yields [`CoordinationOutcome::NoHostView`] and the update goes
-//! ahead: the pre-registry behaviour was a hard cut with no notice at all, so a
+//! ahead: the pre-registry behaviour was an update with no notice at all, so a
 //! missing registry must not be worse than not having had one. The outcome type
 //! keeps these cases distinct so the RPC result can tell the caller *why* it
 //! proceeded — coordinated, timed out, or unable to see the host — rather than
@@ -138,8 +138,9 @@ pub enum CoordinationOutcome {
         /// How many peers were notified.
         notified: u32,
     },
-    /// [`ACK_TIMEOUT`] elapsed with peers still attached. They get the hard cut
-    /// the pre-#1351 behaviour always gave them.
+    /// [`ACK_TIMEOUT`] elapsed with peers still attached. The update proceeds
+    /// without them: their own workers keep running the old binary until they
+    /// reconnect (#4037).
     TimedOut {
         /// How many peers were notified.
         notified: u32,
@@ -421,7 +422,7 @@ mod tests {
         );
     }
 
-    /// A missing registry must degrade to the pre-#1351 hard cut, not to a
+    /// A missing registry must degrade to the pre-#1351 un-notified update, not to a
     /// blocked update — and must not claim it notified anyone.
     #[tokio::test(start_paused = true)]
     async fn no_host_view_proceeds_without_waiting() {

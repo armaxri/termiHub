@@ -2484,8 +2484,9 @@ export async function updateAgent(
 
 /**
  * Force an agent update, bypassing the connected-host guard. Call after the
- * user confirms in the Update dialog that other connected hosts may be
- * hard-cut (#1349).
+ * user confirms in the Update dialog that other hosts are connected (#1349).
+ * Those hosts are not cut off: their workers keep running and move to the new
+ * version when they reconnect (#4037).
  */
 export async function updateAgentForce(
   agentId: string,

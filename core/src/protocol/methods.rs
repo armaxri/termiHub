@@ -1364,7 +1364,8 @@ pub struct AgentRequestUpdateParams {
 /// Reports the coordination outcome as well as the apply outcome, so the
 /// initiating desktop can say *"3 hosts were notified, 1 was still connected"*
 /// rather than only "done". `allAcked: false` is not an error — the update
-/// proceeded — it means someone got the hard cut.
+/// proceeded — it means someone was still attached when it did. That host is
+/// not cut off: its worker keeps running until it reconnects (#4037).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRequestUpdateResult {
