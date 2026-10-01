@@ -329,6 +329,28 @@ services:
       timeout: 3s
       retries: 5
 
+  # The same TigerVNC image serving VeNCrypt with the X509Plain sub-type only:
+  # the TLS handshake, then a username/password stage (`testuser`/`testpass`,
+  # checked through PAM). Drives the `vnc` backend's VeNCrypt Plain sub-auth
+  # (#1714, #4004), which the X509Vnc fixture above never negotiates.
+  vnc-vencrypt-plain-server:
+    build: ./vnc-vencrypt-server
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-vnc-vencrypt-plain
+    environment:
+      VNC_SECURITY_TYPES: "VeNCrypt,X509Plain"
+    ports:
+      - "127.0.0.1:${TERMIHUB_TEST_VNC_VENCRYPT_PLAIN_PORT:-2503}:5900"
+    networks:
+      - test-net
+    profiles:
+      - vnc
+      - all
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/5900"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   # ============================================================
   # RDP Server (profile: rdp)
   # ============================================================
