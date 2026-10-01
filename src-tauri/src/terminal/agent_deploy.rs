@@ -23,7 +23,7 @@ use crate::terminal::backend::RemoteAgentConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::remote_exec::{
     detect_binary_arch, detect_remote_info, expected_arch_for_uname, remove_via_sftp,
-    run_remote_command, upload_bytes_via_sftp,
+    run_remote_command, upload_bytes_via_sftp_cancellable,
 };
 use crate::utils::ssh_auth::connect_and_authenticate;
 use crate::utils::version;
@@ -428,7 +428,7 @@ pub fn install_agent_bytes(
     // Upload via SFTP.
     bail_if_cancelled(cancel)?;
     progress("uploading", "Uploading agent binary…", 0.4);
-    upload_bytes_via_sftp(session, binary_bytes, &plan.upload_path)?;
+    upload_binary_or_rollback(session, binary_bytes, &plan.upload_path, cancel)?;
     info!(
         "Uploaded {} bytes to {}",
         binary_bytes.len(),
@@ -729,7 +729,7 @@ pub fn stage_agent_binary(
     )
     .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
     let signature = agent_binary::read_signature_sidecar(&binary_path);
-    upload_bytes_via_sftp(&session, &binary_bytes, &plan.upload_path)?;
+    upload_binary_or_rollback(&session, &binary_bytes, &plan.upload_path, cancel)?;
     if let Err(e) = bail_if_cancelled(cancel) {
         rollback_partial_upload(&session, &plan.upload_path);
         return Err(e);
@@ -757,6 +757,25 @@ pub fn stage_agent_binary(
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
+
+/// Upload the agent binary, aborting promptly when `cancel` fires mid-transfer
+/// (#4060). A cancelled upload rolls back the partial temp file before
+/// returning [`TerminalError::Cancelled`], so the dialog reports "cancelled"
+/// rather than a generic failure and nothing lingers on the host.
+fn upload_binary_or_rollback(
+    session: &termihub_core::backends::ssh::handler::SshSession,
+    binary_bytes: &[u8],
+    upload_path: &str,
+    cancel: Option<&CancellationToken>,
+) -> Result<u64, TerminalError> {
+    match upload_bytes_via_sftp_cancellable(session, binary_bytes, upload_path, cancel) {
+        Err(TerminalError::Cancelled) => {
+            rollback_partial_upload(session, upload_path);
+            Err(TerminalError::Cancelled)
+        }
+        other => other,
+    }
+}
 
 /// Best-effort removal of a partially uploaded binary after a cancel (G10, #1242).
 ///
