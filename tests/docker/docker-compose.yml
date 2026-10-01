@@ -282,6 +282,32 @@ services:
       timeout: 3s
       retries: 5
 
+  # Deployed agent behind a keyboard-interactive-only sshd (#4005 / #3377): the
+  # same image built with KBDINT_ONLY, so PAM asks the password as a
+  # keyboard-interactive prompt. The live driver for a remote agent whose auth
+  # method is "Keyboard-Interactive": its connect must raise the desktop's in-app
+  # SSH Authentication dialog and connect once it is answered.
+  remote-agent-kbdint:
+    build:
+      context: ./remote-agent
+      additional_contexts:
+        keys: ../fixtures/ssh-keys
+      args:
+        KBDINT_ONLY: "1"
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-remote-agent-kbdint
+    ports:
+      - "127.0.0.1:${TERMIHUB_TEST_REMOTE_AGENT_KBDINT_PORT:-2217}:22"
+    networks:
+      - test-net
+    profiles:
+      - agent
+      - all
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   # ============================================================
   # Telnet
   # ============================================================

@@ -395,25 +395,23 @@ python scripts/test-manual.py --inventory
 <!-- Generated from tests/manual/*.yaml by scripts/manual-inventory.py; do not edit by hand.
      On a merge conflict here, take either side and run: python3 scripts/manual-inventory.py --write -->
 
-| Category (`--category`)   | Display name          | Platforms      | Release-gating | Pending automation |  Total |
-| ------------------------- | --------------------- | -------------- | -------------: | -----------------: | -----: |
-| `app`                     | App                   | all            |              4 |                  0 |      4 |
-| `connection-management`   | Connection Management | all            |              0 |                  1 |      1 |
-| `credential-store`        | Credential Store      | all            |              8 |                  0 |      8 |
-| `editor`                  | Editor                | all            |              1 |                  0 |      1 |
-| `file-browser`            | File Browser          | all            |              2 |                  0 |      2 |
-| `local-shell`             | Local Shell           | macos, windows |              4 |                  0 |      4 |
-| `multi-window`            | Multi-Window          | macos          |              2 |                  0 |      2 |
-| `native-input`            | Native Input          | all            |             21 |                  0 |     21 |
-| `network-tools`           | network-tools         | all            |              2 |                  0 |      2 |
-| `portable-mode`           | Portable Mode         | all            |              0 |                  2 |      2 |
-| `remote-agent`            | Remote Agent          | all            |              0 |                  7 |      7 |
-| `remote-desktop`          | Remote Desktop        | all            |              9 |                  0 |      9 |
-| `serial`                  | Serial                | windows        |              1 |                  0 |      1 |
-| `shell-integration`       | Shell Integration     | all            |              6 |                  0 |      6 |
-| `ssh`                     | SSH                   | all            |              4 |                  0 |      4 |
-| `ui-layout`               | UI / Layout           | all            |              8 |                  0 |      8 |
-| **Total (16 categories)** |                       |                |         **72** |             **10** | **82** |
+| Category (`--category`)   | Display name      | Platforms      | Release-gating | Pending automation |  Total |
+| ------------------------- | ----------------- | -------------- | -------------: | -----------------: | -----: |
+| `app`                     | App               | all            |              4 |                  0 |      4 |
+| `credential-store`        | Credential Store  | all            |              8 |                  0 |      8 |
+| `editor`                  | Editor            | all            |              1 |                  0 |      1 |
+| `file-browser`            | File Browser      | all            |              2 |                  0 |      2 |
+| `local-shell`             | Local Shell       | macos, windows |              4 |                  0 |      4 |
+| `multi-window`            | Multi-Window      | macos          |              2 |                  0 |      2 |
+| `native-input`            | Native Input      | all            |             21 |                  0 |     21 |
+| `network-tools`           | network-tools     | all            |              2 |                  0 |      2 |
+| `remote-agent`            | Remote Agent      | all            |              0 |                  7 |      7 |
+| `remote-desktop`          | Remote Desktop    | all            |              9 |                  0 |      9 |
+| `serial`                  | Serial            | windows        |              1 |                  0 |      1 |
+| `shell-integration`       | Shell Integration | all            |              6 |                  0 |      6 |
+| `ssh`                     | SSH               | all            |              4 |                  0 |      4 |
+| `ui-layout`               | UI / Layout       | all            |              8 |                  0 |      8 |
+| **Total (14 categories)** |                   |                |         **72** |              **7** | **79** |
 
 <!-- manual-inventory:end -->
 

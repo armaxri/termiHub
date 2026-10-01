@@ -1,7 +1,13 @@
 import type { IntentAck } from "@/services/transport";
 
 import type { ProjectionDispatchRequest, ProjectionRecordingState } from "./projectionRecorder";
-import type { BridgeCommand, BridgeResponse, CoverageChunk, TerminalInspection } from "./protocol";
+import type {
+  BridgeCommand,
+  BridgeResponse,
+  CoverageChunk,
+  TerminalInspection,
+  TerminalMeasurement,
+} from "./protocol";
 import { errorMessage } from "@/utils/errorMessage";
 
 /**
@@ -51,6 +57,18 @@ export interface BridgeDeps {
    * the `inspectTerminal` verb fails with a clear "not available" error.
    */
   inspectTerminal?: (tabId: string) => TerminalInspection | undefined;
+  /**
+   * Read a terminal's real render-path measurements (#2988), or `undefined`
+   * when no terminal is registered for `tabId`. Optional — absent, the
+   * `measureTerminal` verb fails with a clear "not available" error.
+   */
+  measureTerminal?: (tabId: string) => TerminalMeasurement | undefined;
+  /**
+   * Force a WebGL context loss on a terminal's renderer (#2988): `true` when a
+   * live context was lost, `false` when it has none, `undefined` when no
+   * terminal is registered for `tabId`. Optional like `measureTerminal`.
+   */
+  loseTerminalWebglContext?: (tabId: string) => boolean | undefined;
   /** The currently active terminal tab id, or `undefined` when none is focused. */
   getActiveTabId: () => string | undefined;
   /** A snapshot of the app store state for introspection. */
@@ -881,6 +899,32 @@ export async function dispatchCommand(
         return fail("inspectTerminal", `no terminal registered for tab "${tabId}"`);
       }
       return ok("inspectTerminal", inspection);
+    }
+
+    case "measureTerminal": {
+      if (!deps.measureTerminal) {
+        return fail("measureTerminal", "terminal measurement is not available");
+      }
+      const tabId = command.tabId ?? deps.getActiveTabId();
+      if (!tabId) return fail("measureTerminal", "no active terminal to measure");
+      const measurement = deps.measureTerminal(tabId);
+      if (measurement === undefined) {
+        return fail("measureTerminal", `no terminal registered for tab "${tabId}"`);
+      }
+      return ok("measureTerminal", measurement);
+    }
+
+    case "loseTerminalWebglContext": {
+      if (!deps.loseTerminalWebglContext) {
+        return fail("loseTerminalWebglContext", "webgl context loss is not available");
+      }
+      const tabId = command.tabId ?? deps.getActiveTabId();
+      if (!tabId) return fail("loseTerminalWebglContext", "no active terminal");
+      const lost = deps.loseTerminalWebglContext(tabId);
+      if (lost === undefined) {
+        return fail("loseTerminalWebglContext", `no terminal registered for tab "${tabId}"`);
+      }
+      return ok("loseTerminalWebglContext", lost);
     }
 
     case "getState": {

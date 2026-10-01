@@ -7,7 +7,11 @@ name: Release Linux Smoke
 # the installed binary headlessly under xvfb-run (the same WebKitGTK headless
 # knobs as system-integration.yml). tauri-driver is retired, so smoke-test.sh
 # uses its process-based fallback: launch the app, confirm it stays alive, and
-# shut it down cleanly.
+# shut it down cleanly. A second step per artifact then runs
+# scripts/internal/release-smoke-app-lifecycle.sh (#4011): the durable app log's
+# banner (version + pid), no ANSI, "termiHub exited cleanly" after a real window
+# close, append across relaunch, single-instance forwarding of --workspace /
+# --workspace-file, and no clean-exit line after kill -9.
 #
 # This is a SEPARATE workflow (not a job inside release.yml) on purpose: it is
 # fully decoupled from the release-build matrix and cannot collide with concurrent
@@ -107,6 +111,7 @@ jobs:
           esac
           echo "Resolved release tag: $TAG"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout code
         # smoke-test.sh cd's to the git top-level, so a checkout must be present.
@@ -128,6 +133,7 @@ jobs:
             librsvg2-2 \
             libgl1-mesa-dri \
             dbus-x11 \
+            python3-xlib \
             xvfb
 
       - name: Relax AppArmor unprivileged-userns restriction (#2646)
@@ -229,6 +235,36 @@ jobs:
           echo "== .deb smoke-test.sh =="
           xvfb-run -a dbus-run-session -- ./scripts/smoke-test.sh "$BIN" 2>&1 | tee deb-smoke.log
 
+      - name: App log + single-instance smoke, AppImage (headless)
+        id: lifecycle_appimage
+        # Same continue-on-error + enforce pattern as the smoke steps above.
+        continue-on-error: true
+        env:
+          BIN: ${{ steps.appimage.outputs.bin }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Both launches of the single-instance check must share one session bus
+          # (the plugin's lock lives on D-Bus), so the whole script runs inside one
+          # dbus-run-session. The log path is file_log.rs's Linux location.
+          xvfb-run -a dbus-run-session -- ./scripts/internal/release-smoke-app-lifecycle.sh \
+            --exe "$BIN" --log "$HOME/.local/share/com.termihub.app/logs/termihub.log" \
+            --version "$VERSION" --close x11 --clear-log --out lifecycle-appimage \
+            2>&1 | tee appimage-lifecycle.log
+
+      - name: App log + single-instance smoke, .deb (headless)
+        id: lifecycle_deb
+        continue-on-error: true
+        env:
+          BIN: ${{ steps.deb.outputs.bin }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          xvfb-run -a dbus-run-session -- ./scripts/internal/release-smoke-app-lifecycle.sh \
+            --exe "$BIN" --log "$HOME/.local/share/com.termihub.app/logs/termihub.log" \
+            --version "$VERSION" --close x11 --clear-log --out lifecycle-deb \
+            2>&1 | tee deb-lifecycle.log
+
       - name: Enforce smoke results
         # The two headless GUI-launch smoke steps are load-bearing (#2646 fixed,
         # enforced since #2669): the app is launched under xvfb, its --version and
@@ -239,20 +275,28 @@ jobs:
         env:
           APPIMAGE_OUTCOME: ${{ steps.smoke_appimage.outcome }}
           DEB_OUTCOME: ${{ steps.smoke_deb.outcome }}
+          APPIMAGE_LIFECYCLE: ${{ steps.lifecycle_appimage.outcome }}
+          DEB_LIFECYCLE: ${{ steps.lifecycle_deb.outcome }}
         run: |
           set -euo pipefail
-          echo "AppImage smoke outcome: $APPIMAGE_OUTCOME"
-          echo ".deb smoke outcome:     $DEB_OUTCOME"
+          echo "AppImage smoke outcome:     $APPIMAGE_OUTCOME"
+          echo ".deb smoke outcome:         $DEB_OUTCOME"
+          echo "AppImage lifecycle outcome: $APPIMAGE_LIFECYCLE"
+          echo ".deb lifecycle outcome:     $DEB_LIFECYCLE"
           {
             echo "### Linux x64 install-smoke"
             echo ""
             echo "- AppImage smoke: \`$APPIMAGE_OUTCOME\`"
             echo "- .deb smoke: \`$DEB_OUTCOME\`"
+            echo "- AppImage app log + single instance: \`$APPIMAGE_LIFECYCLE\`"
+            echo "- .deb app log + single instance: \`$DEB_LIFECYCLE\`"
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$APPIMAGE_OUTCOME" != "success" ] || [ "$DEB_OUTCOME" != "success" ]; then
-            echo "::error::Linux x64 install-smoke failed"
-            exit 1
-          fi
+          for outcome in "$APPIMAGE_OUTCOME" "$DEB_OUTCOME" "$APPIMAGE_LIFECYCLE" "$DEB_LIFECYCLE"; do
+            if [ "$outcome" != "success" ]; then
+              echo "::error::Linux x64 install-smoke failed"
+              exit 1
+            fi
+          done
 
       - name: Upload smoke logs
         if: always()
@@ -264,5 +308,9 @@ jobs:
             appimage-smoke.log
             deb-version.log
             deb-smoke.log
+            appimage-lifecycle.log
+            deb-lifecycle.log
+            lifecycle-appimage/
+            lifecycle-deb/
           if-no-files-found: ignore
           retention-days: 14

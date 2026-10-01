@@ -137,6 +137,25 @@ def test_terminal_scroll_round_trip(bridge):
         assert driver.terminal_viewport() == {"viewportY": 5, "baseY": 42}
 
 
+def test_measure_terminal_round_trip(bridge):
+    measurement = {
+        "grid": {"cols": 120, "rows": 40},
+        "proposed": {"cols": 120, "rows": 40},
+        "cell": {"width": 7.83, "height": 17.0},
+        "renderer": "dom",
+        "domRows": ["$ echo hi", "hi"],
+    }
+    handler = dispatcher_like(measurement=measurement, webgl_lost=False)
+    with FakeApp(bridge.port, handler):
+        driver = bridge.wait_for_app(timeout=5)
+
+        assert driver.measure_terminal() == measurement
+        assert driver.measure_terminal(tab_id="tab-2") == measurement
+        assert driver.lose_terminal_webgl_context(tab_id="tab-2") is False
+        assert handler.recorded["measurements"] == [None, "tab-2"]
+        assert handler.recorded["contextLosses"] == ["tab-2"]
+
+
 def test_inspect_terminal_round_trip(bridge):
     inspection = {
         "commandMarks": {

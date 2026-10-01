@@ -325,6 +325,9 @@ temp-env = "0.3"
 # fixture file so they no longer clobber each other under parallel `cargo test`
 # (#2238). Same `#[serial(group)]` convention already used in `core/tests`.
 serial_test = "3"
+# Split the scripted `sudo`/`rm` command lines the in-process SSH test server
+# receives (log-secrecy test, #4007) — the same crate core quotes them with.
+shlex = "1"
 # Bind-without-listen sockets: a loopback port that deterministically cannot be
 # connected to for a whole test (the closed-port probe test, #3532). Same major
 # version `termihub-core` already builds.

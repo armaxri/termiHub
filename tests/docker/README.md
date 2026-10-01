@@ -70,13 +70,16 @@ podman compose -f tests/docker/docker-compose.yml up -d
 
 ### Profile Containers
 
-| Container             | Port        | Profile  | Purpose                                       |
-| --------------------- | ----------- | -------- | --------------------------------------------- |
-| `network-fault-proxy` | 2209        | `fault`  | tc/netem network fault injection              |
-| `sftp-stress`         | 2210        | `stress` | Pre-populated SFTP stress test data           |
-| `ftp-server`          | 2401 / 2402 | `ftp`    | External FTP/FTPS server + seeded `/pub` tree |
-| `vnc-server`          | 2501        | `vnc`    | x11vnc + Xvfb, static four-quadrant pattern   |
-| `rdp-server`          | 2601 / 2602 | `rdp`    | xrdp (TLS) + FreeRDP shadow server (NLA)      |
+| Container                     | Port        | Profile  | Purpose                                                    |
+| ----------------------------- | ----------- | -------- | ---------------------------------------------------------- |
+| `network-fault-proxy`         | 2209        | `fault`  | tc/netem network fault injection                           |
+| `sftp-stress`                 | 2210        | `stress` | Pre-populated SFTP stress test data                        |
+| `ftp-server`                  | 2401 / 2402 | `ftp`    | External FTP/FTPS server + seeded `/pub` tree              |
+| `vnc-server`                  | 2501        | `vnc`    | x11vnc + Xvfb, static four-quadrant pattern                |
+| `rdp-server`                  | 2601 / 2602 | `rdp`    | xrdp (TLS) + FreeRDP shadow server (NLA)                   |
+| `remote-agent`                | 2211        | `agent`  | Deployed `termihub-agent` (password/key)                   |
+| `remote-agent-pending-update` | 2214        | `agent`  | Same agent, armed with a pending update (#1520)            |
+| `remote-agent-kbdint`         | 2217        | `agent`  | Same agent behind a keyboard-interactive-only sshd (#4005) |
 
 ## Networks
 

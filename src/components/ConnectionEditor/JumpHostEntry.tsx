@@ -137,7 +137,7 @@ export function JumpHostEntry({
             onClick={selectSaved}
             disabled={noSavedAvailable && mode !== "saved"}
             title={noSavedAvailable ? "No saved SSH connections to reference" : undefined}
-            data-testid={tid("source-saved")}
+            data-testid={`jump-host-source-saved-${index}`}
           >
             Saved connection
           </button>
@@ -147,7 +147,7 @@ export function JumpHostEntry({
             aria-checked={mode === "inline"}
             className={`jump-host__source-opt${mode === "inline" ? " jump-host__source-opt--active" : ""}`}
             onClick={selectInline}
-            data-testid={tid("source-inline")}
+            data-testid={`jump-host-source-inline-${index}`}
           >
             Inline configuration
           </button>
@@ -170,7 +170,7 @@ export function JumpHostEntry({
             value={hop.connectionId ?? ""}
             onChange={(v) => onChange({ connectionId: v })}
             aria-label="Connection"
-            data-testid={tid("connection")}
+            data-testid={`jump-host-connection-${index}`}
           >
             {refMissing && (
               <SelectItem value={hop.connectionId ?? ""}>{hop.connectionId} (not found)</SelectItem>

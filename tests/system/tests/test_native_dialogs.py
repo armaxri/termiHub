@@ -15,12 +15,17 @@ the SSH key **Browse** button (MT-CONN-17), and Save terminal to file
 
 Covered (#1004, the deferred follow-ups): Encrypted export+import round-trip
 (MT-CONN-12..16), Open-in-Editor → Save As + the unsaved-changes warning
-(MT-TAB-17/18/19), portable config export/import (MT-PORT-04), and adding an
-external connection file (MT-CONN-23). In each, the harness automates every
-bridge-drivable half — building the credential/connection/editor/external-file
+(MT-TAB-17/18/19), portable config export (MT-PORT-04), and adding an
+external connection file (MT-CONN-23). The import half of MT-PORT-04 (#3691)
+picks a source directory and asserts the imported connection after a restart.
+In each, the harness automates every bridge-drivable half — building the credential/connection/editor/external-file
 state, typing the export/import password, asserting the imported credential, the
 saved-file content, the registered external file, the cleared unsaved state —
 and the operator performs **only** the native file pick / save.
+
+Covered (#4011): the encrypted credential-vault export + import round-trip
+(PROD-063, #3432) and Export Diagnostics (OBS-010, #3571) with the zip's
+contents verified automatically. Again the operator only saves / picks the file.
 
 Marked ``manual`` + ``integration``, so they **skip** on CI / normal runs and
 run only under ``./pytest.sh --manual -k native_dialog -s`` with an operator.
@@ -30,6 +35,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -92,6 +98,40 @@ class TestNativeDialogs(
             what=f"the {item_testid!r} menu item",
         )
         self.driver.click(item_testid)
+
+    def _store_one_ssh_password(self, prefix: str) -> str:
+        """Set up a master-password store holding one saved SSH password.
+
+        An unlocked master-password store is what makes credentials savable. The
+        password is saved through the SSH prompt's "Save password" box, which
+        persists it the moment the prompt is answered — before the (server-less,
+        port-1) connect runs and fails. Returns the connection name.
+        """
+        self.setup_master_password_store(_MASTER_PASSWORD)
+        name = unique_name(prefix)
+        self.create_ssh_connection(
+            name,
+            host="127.0.0.1",
+            port=1,  # unroutable: the connect fails, but the credential is saved first
+            username="harness",
+            auth_method="password",
+        )
+        self.switch_to_connections_sidebar()
+        self.connect_connection(name)
+        self.wait(
+            lambda: self.driver.exists("password-prompt-input"),
+            what="the SSH password prompt",
+        )
+        self.driver.type("password-prompt-input", _STORED_SSH_PASSWORD)
+        self.wait(
+            lambda: self.driver.exists("password-prompt-save-checkbox"),
+            what="the password-prompt Save checkbox",
+        )
+        self.driver.click("password-prompt-save-checkbox")
+        self.driver.click("password-prompt-connect")
+        # The connect to port 1 fails; close any error tab it produced.
+        self.close_all_tabs()
+        return name
 
     def _import_connections_doc(self, name: str) -> dict:
         """A minimal valid export-format document with one local connection.
@@ -246,39 +286,8 @@ class TestNativeDialogs(
         round-trip rather than re-implementing the crypto in a fixture.
         """
         self.close_all_tabs()
-        # 1) An unlocked master-password store is what makes credentials savable
-        #    (and what makes the export's encrypted section non-empty).
-        self.setup_master_password_store(_MASTER_PASSWORD)
-
-        # 2) A password-auth SSH connection whose password we store via the
-        #    prompt's "Save password" box — the credential is persisted the
-        #    moment the prompt is answered, before the (server-less) connect.
-        name = unique_name("enc-import")
-        self.create_ssh_connection(
-            name,
-            host="127.0.0.1",
-            port=1,  # unroutable: the connect fails, but the credential is saved first
-            username="harness",
-            auth_method="password",
-        )
-        self.switch_to_connections_sidebar()
-        self.connect_connection(name)
-        # Enter the password, tick "Save password" so storeCredential persists it,
-        # then Connect — the credential is saved the moment the prompt is answered,
-        # before the (doomed, port-1) connect runs.
-        self.wait(
-            lambda: self.driver.exists("password-prompt-input"),
-            what="the SSH password prompt",
-        )
-        self.driver.type("password-prompt-input", _STORED_SSH_PASSWORD)
-        self.wait(
-            lambda: self.driver.exists("password-prompt-save-checkbox"),
-            what="the password-prompt Save checkbox",
-        )
-        self.driver.click("password-prompt-save-checkbox")
-        self.driver.click("password-prompt-connect")
-        # The connect to port 1 fails; close any error tab it produced.
-        self.close_all_tabs()
+        # 1) + 2) An unlocked master-password store holding one saved SSH password.
+        self._store_one_ssh_password("enc-import")
 
         # 3) Export WITH credentials (encrypted) → native Save dialog.
         export_target = self._scratch("enc-export", "encrypted-export.json")
@@ -482,6 +491,60 @@ class TestNativeDialogs(
             "exported connections.json does not contain the created connection"
         )
 
+    # ── Portable config import from a directory (MT-PORT-04, #3691) ───────────
+    def test_portable_import_from_directory(self):
+        """Import config from a chosen directory and assert it survives a restart.
+
+        Bridge-automatable (#3691): write a portable-style source directory
+        holding a ``connections.json`` with one connection, open Settings →
+        Portable Mode, click **Import from Directory**, then (after the operator
+        picks that directory in the native picker) confirm the migration dialog
+        (**Copy**) and assert the success message. The file is copied into this
+        app's config dir, and the app only reads it at startup, so the harness
+        restarts the app and asserts the imported connection is listed. The
+        operator performs only the native directory pick.
+        """
+        self.close_all_tabs()
+        name = unique_name("portable-import")
+        source = Path(tempfile.mkdtemp(prefix="thub-portable-import-"))
+        (source / "connections.json").write_text(
+            json.dumps(self._import_connections_doc(name)), encoding="utf-8"
+        )
+
+        self.open_settings_category("portable")
+        self.wait(
+            lambda: self.driver.exists("import-config-btn"),
+            what="the portable-mode import button",
+        )
+        self.driver.click("import-config-btn")
+        self.manual_step(
+            f"A native directory picker is open. Choose this directory:\n      {source}",
+            "The migration dialog appears listing connections.json as present.",
+        )
+        self.wait(
+            lambda: self.driver.exists("migration-confirm"),
+            what="the migration (Copy) dialog",
+        )
+        self.driver.click("migration-confirm")
+        result = self.wait(
+            lambda: self.driver.exists("migration-result")
+            and self.driver.get_text("migration-result"),
+            what="the migration result message",
+        )
+        assert "Copied" in result, f"unexpected migration result: {result!r}"
+        imported = self.config_dir / "connections.json"
+        assert name in imported.read_text(encoding="utf-8"), (
+            "connections.json was not copied into the app's config dir"
+        )
+
+        # The store is read at startup: restart and assert the connection loads.
+        self.restart_app()
+        self.switch_to_connections_sidebar()
+        self.wait(
+            lambda: self.find_connection(name),
+            what=f"the imported connection {name!r} after restart",
+        )
+
     # ── Add external connection file (MT-CONN-23) ─────────────────────────────
     def test_add_external_connection_file(self):
         """Register an external connection file via the native picker.
@@ -539,3 +602,135 @@ class TestNativeDialogs(
             lambda: self.find_connection(conn_name),
             what=f"the external connection {conn_name!r}",
         )
+
+    # ── Credential vault export + import (PROD-063, #3432) ────────────────────
+    def test_credential_vault_export_import_round_trip(self):
+        """The encrypted vault survives a native-dialog export and import.
+
+        The harness sets up a master-password store with one saved SSH password,
+        opens Settings → Security → Export vault, re-authenticates with the master
+        password and types the export passphrase twice; the operator only saves
+        the file. The harness checks the file is sealed (neither the saved
+        password nor the passphrase appears in it), then opens Import vault; the
+        operator only picks the file. The harness proves a wrong passphrase is
+        refused, previews with the right one (the saved credential is in the file
+        and matches the store) and applies the import.
+        """
+        self.close_all_tabs()
+        self._store_one_ssh_password("vault")
+
+        # Export: everything up to the native Save dialog.
+        target = self._scratch("vault-export", "credential-vault.json")
+        self.open_settings_category("security")
+        self.wait(
+            lambda: self.driver.exists("credential-vault-export-btn"),
+            what="the Export vault button",
+        )
+        self.driver.click("credential-vault-export-btn")
+        self.wait(
+            lambda: self.driver.exists("vault-export-passphrase"), what="the vault export dialog"
+        )
+        self.driver.type("vault-export-master-password", _MASTER_PASSWORD)
+        self.driver.type("vault-export-passphrase", _EXPORT_PASSWORD)
+        self.driver.type("vault-export-confirm", _EXPORT_PASSWORD)
+        self.driver.click("vault-export-submit")
+        self.manual_step(
+            f"A native Save dialog is open. Save the vault export as exactly:\n      {target}",
+            f"The file {target.name} is written to that location.",
+        )
+        blob = self.wait(
+            lambda: target.exists() and target.read_text(encoding="utf-8"),
+            what="the vault export file to be written",
+        )
+        json.loads(blob)  # a well-formed JSON envelope
+        for secret in (_STORED_SSH_PASSWORD, _EXPORT_PASSWORD, _MASTER_PASSWORD):
+            assert secret not in blob, "a secret reached the vault export file in plaintext"
+        self.wait(
+            lambda: not self.driver.exists("vault-export-passphrase"),
+            what="the vault export dialog to close after saving",
+        )
+
+        # Import: everything except the native Open pick.
+        self.driver.click("credential-vault-import-btn")
+        self.wait(
+            lambda: self.driver.exists("vault-import-choose-file"),
+            what="the vault import dialog",
+        )
+        self.driver.click("vault-import-choose-file")
+        self.manual_step(
+            f"A native Open dialog is open. Select this file:\n      {target}",
+            f"The Import dialog shows {target.name} as the chosen file.",
+        )
+        self.wait(
+            lambda: self.driver.get_text("vault-import-file-name") == target.name,
+            what="the picked vault file to be loaded",
+        )
+
+        # A wrong passphrase is refused with an error, and no preview opens.
+        self.driver.type("vault-import-passphrase", "not-the-export-passphrase")
+        self.driver.click("vault-import-preview")
+        self.wait(lambda: self.driver.exists("vault-import-error"), what="the wrong-passphrase error")
+        assert not self.driver.exists("vault-import-preview-panel")
+
+        # The right passphrase decrypts it: one credential, identical to the store.
+        self.driver.type("vault-import-passphrase", _EXPORT_PASSWORD)
+        self.driver.click("vault-import-preview")
+        self.wait(
+            lambda: self.driver.exists("vault-import-preview-panel"), what="the import preview"
+        )
+        total = self.driver.get_text("vault-import-count-total")
+        assert total.startswith("1 "), f"expected one credential in the file, preview: {total!r}"
+        assert self.driver.get_text("vault-import-count-new").startswith("0 ")
+        assert self.driver.get_text("vault-import-count-conflicts").startswith("0 ")
+
+        self.driver.click("vault-import-submit")
+        self.wait(
+            lambda: not self.driver.exists("vault-import-title"),
+            what="the import to apply and the dialog to close",
+        )
+        assert not self.driver.exists("vault-import-error")
+
+    # ── Export Diagnostics (OBS-010, #3571) ───────────────────────────────────
+    def test_export_diagnostics_writes_the_previewed_redacted_zip(self):
+        """The diagnostics zip holds exactly the previewed files, redacted.
+
+        The harness opens Export Diagnostics from the gear menu and reads the
+        preview list; the operator only saves the zip. The harness then opens it
+        and checks: it is a valid zip, it holds the README, the system summary
+        and the app log, every entry was in the preview, and no entry contains
+        this machine's home directory path (home paths are redacted — the app
+        log's own startup banner names its full path, so this bites).
+        """
+        self.close_all_tabs()
+        target = self._scratch("diagnostics", "termihub-diagnostics.zip")
+        self._open_activity_menu_item("settings-menu-export-diagnostics")
+        self.wait(
+            lambda: self.driver.exists("diagnostics-export-files"),
+            what="the diagnostics file preview",
+        )
+        preview = self.driver.get_text("diagnostics-export-files")
+        self.driver.click("diagnostics-export-save")
+        self.manual_step(
+            f"A native Save dialog is open. Save the diagnostics zip as exactly:\n"
+            f"      {target}",
+            f"The file {target.name} is written and the dialog closes.",
+        )
+        self.wait(
+            lambda: not self.driver.exists("diagnostics-export-files"),
+            what="the diagnostics export to finish and its dialog to close",
+        )
+        assert not self.driver.exists("diagnostics-export-error")
+        assert target.exists(), f"no diagnostics zip written at {target}"
+
+        with zipfile.ZipFile(target) as bundle:
+            assert bundle.testzip() is None, "the diagnostics zip is corrupt"
+            names = [n for n in bundle.namelist() if not n.endswith("/")]
+            texts = {n: bundle.read(n).decode("utf-8", errors="replace") for n in names}
+
+        for required in ("README.txt", "system-info.txt", "logs/termihub.log"):
+            assert required in names, f"{required} missing from the bundle: {names}"
+        for name in names:
+            assert name in preview, f"{name} is in the zip but was not previewed"
+        home = str(Path.home())
+        for name, text in texts.items():
+            assert home not in text, f"{name} leaks the unredacted home path {home!r}"
