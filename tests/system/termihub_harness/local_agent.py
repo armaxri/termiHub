@@ -47,6 +47,24 @@ def _find_sshd() -> Optional[str]:
     return found
 
 
+def _resolve_agent_binary(require_agent: bool) -> Optional[Path]:
+    """The built agent binary; ``None`` when absent and not ``require_agent``."""
+    try:
+        return agent_binary_path()
+    except FileNotFoundError as exc:
+        if require_agent:
+            raise LocalAgentUnavailable(str(exc)) from exc
+        return None
+
+
+def _agent_binary_or_raise(binary: Optional[Path]) -> str:
+    if binary is None:
+        raise LocalAgentUnavailable(
+            "no agent binary: this endpoint was opened with require_agent=False"
+        )
+    return str(binary)
+
+
 class LocalAgentSshd:
     """A killable/restartable loopback ``sshd`` with the agent binary reachable.
 
@@ -60,14 +78,11 @@ class LocalAgentSshd:
         agent.cleanup()
     """
 
-    def __init__(self, port: Optional[int] = None) -> None:
+    def __init__(self, port: Optional[int] = None, *, require_agent: bool = True) -> None:
         self._sshd = _find_sshd()
         if not self._sshd:
             raise LocalAgentUnavailable("no sshd binary found (looked in /usr/sbin, /sbin, PATH)")
-        try:
-            self._agent_binary = agent_binary_path()
-        except FileNotFoundError as exc:
-            raise LocalAgentUnavailable(str(exc)) from exc
+        self._agent_binary = _resolve_agent_binary(require_agent)
 
         self._username = getpass.getuser()
         self._port = port or free_port()
@@ -98,7 +113,7 @@ class LocalAgentSshd:
 
     @property
     def agent_binary_path(self) -> str:
-        return str(self._agent_binary)
+        return _agent_binary_or_raise(self._agent_binary)
 
     # ── lifecycle ────────────────────────────────────────────────────────────────
     def start(self, ready_timeout: float = 15.0) -> "LocalAgentSshd":
@@ -275,7 +290,7 @@ class NativeSshdFixture:
     ``known_hosts`` entry this object added.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, require_agent: bool = True) -> None:
         env = os.environ
         try:
             self._port = int(env["TERMIHUB_NATIVE_SSHD_PORT"])
@@ -290,12 +305,9 @@ class NativeSshdFixture:
             ) from exc
         agent = env.get("TERMIHUB_NATIVE_SSHD_AGENT_BIN")
         if agent:
-            self._agent_binary = Path(agent)
+            self._agent_binary: Optional[Path] = Path(agent)
         else:
-            try:
-                self._agent_binary = agent_binary_path()
-            except FileNotFoundError as exc:
-                raise LocalAgentUnavailable(str(exc)) from exc
+            self._agent_binary = _resolve_agent_binary(require_agent)
         self._known_hosts = Path.home() / ".ssh" / "known_hosts"
         self._known_hosts_added = False
         self._register_known_host()
@@ -320,7 +332,7 @@ class NativeSshdFixture:
 
     @property
     def agent_binary_path(self) -> str:
-        return str(self._agent_binary)
+        return _agent_binary_or_raise(self._agent_binary)
 
     def start(self, ready_timeout: float = 30.0) -> "NativeSshdFixture":
         self._fixture("start")
@@ -401,18 +413,22 @@ class NativeSshdFixture:
         self._known_hosts_added = False
 
 
-def local_agent_endpoint():
+def local_agent_endpoint(*, require_agent: bool = True):
     """The SSH endpoint an agent test should use on this runner.
 
     The provisioned native sshd fixture when one is present (always on Windows,
     where there is no other way), else a throwaway :class:`LocalAgentSshd`.
     Raises :class:`LocalAgentUnavailable` when neither can be had.
+
+    ``require_agent=False`` is for a suite that only needs the loopback sshd
+    itself (e.g. the macOS live tunnels, #4005): a missing agent build is then
+    not a reason to skip, and only ``agent_binary_path`` raises.
     """
     if NativeSshdFixture.present():
-        return NativeSshdFixture()
+        return NativeSshdFixture(require_agent=require_agent)
     if _IS_WINDOWS:
         raise LocalAgentUnavailable(
             "Windows needs the provisioned native sshd fixture "
             "(scripts/internal/native-sshd-fixture.sh up); TERMIHUB_NATIVE_SSHD_PORT is unset"
         )
-    return LocalAgentSshd()
+    return LocalAgentSshd(require_agent=require_agent)

@@ -1,7 +1,13 @@
 import type { IntentAck } from "@/services/transport";
 
 import type { ProjectionDispatchRequest, ProjectionRecordingState } from "./projectionRecorder";
-import type { BridgeCommand, BridgeResponse, CoverageChunk, TerminalInspection } from "./protocol";
+import type {
+  BridgeCommand,
+  BridgeResponse,
+  CoverageChunk,
+  TerminalInspection,
+  TerminalMeasurement,
+} from "./protocol";
 import { errorMessage } from "@/utils/errorMessage";
 
 /**
@@ -51,6 +57,18 @@ export interface BridgeDeps {
    * the `inspectTerminal` verb fails with a clear "not available" error.
    */
   inspectTerminal?: (tabId: string) => TerminalInspection | undefined;
+  /**
+   * Read a terminal's real render-path measurements (#2988), or `undefined`
+   * when no terminal is registered for `tabId`. Optional — absent, the
+   * `measureTerminal` verb fails with a clear "not available" error.
+   */
+  measureTerminal?: (tabId: string) => TerminalMeasurement | undefined;
+  /**
+   * Force a WebGL context loss on a terminal's renderer (#2988): `true` when a
+   * live context was lost, `false` when it has none, `undefined` when no
+   * terminal is registered for `tabId`. Optional like `measureTerminal`.
+   */
+  loseTerminalWebglContext?: (tabId: string) => boolean | undefined;
   /** The currently active terminal tab id, or `undefined` when none is focused. */
   getActiveTabId: () => string | undefined;
   /** A snapshot of the app store state for introspection. */
@@ -148,9 +166,22 @@ function ownerDocument(root: ParentNode): Document {
 }
 
 /** Dispatch a bubbling, cancelable mouse event carrying viewport coordinates. */
-function dispatchMouse(target: EventTarget, type: string, clientX: number, clientY: number): void {
+function dispatchMouse(
+  target: EventTarget,
+  type: string,
+  clientX: number,
+  clientY: number,
+  buttons?: number
+): void {
   target.dispatchEvent(
-    new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX, clientY })
+    new MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      ...(buttons !== undefined ? { buttons } : {}),
+      clientX,
+      clientY,
+    })
   );
 }
 
@@ -192,10 +223,14 @@ function dispatchPointer(
  * Shared by the `click` and `doubleClick` verbs.
  */
 function clickSequence(el: Element, x: number, y: number): void {
-  dispatchPointer(el, "pointerdown", x, y);
-  dispatchMouse(el, "mousedown", x, y);
-  dispatchPointer(el, "pointerup", x, y);
-  dispatchMouse(el, "mouseup", x, y);
+  // `buttons` mirrors a real left click: held (1) on the press, released (0) on
+  // the release. Handlers that read the pressed-button mask rather than `button`
+  // (the remote-desktop canvas forwards `e.buttons` as the remote button state)
+  // otherwise see a press with nothing held — a bare pointer move (#4004).
+  dispatchPointer(el, "pointerdown", x, y, 1);
+  dispatchMouse(el, "mousedown", x, y, 1);
+  dispatchPointer(el, "pointerup", x, y, 0);
+  dispatchMouse(el, "mouseup", x, y, 0);
   (el as HTMLElement).click();
 }
 
@@ -864,6 +899,32 @@ export async function dispatchCommand(
         return fail("inspectTerminal", `no terminal registered for tab "${tabId}"`);
       }
       return ok("inspectTerminal", inspection);
+    }
+
+    case "measureTerminal": {
+      if (!deps.measureTerminal) {
+        return fail("measureTerminal", "terminal measurement is not available");
+      }
+      const tabId = command.tabId ?? deps.getActiveTabId();
+      if (!tabId) return fail("measureTerminal", "no active terminal to measure");
+      const measurement = deps.measureTerminal(tabId);
+      if (measurement === undefined) {
+        return fail("measureTerminal", `no terminal registered for tab "${tabId}"`);
+      }
+      return ok("measureTerminal", measurement);
+    }
+
+    case "loseTerminalWebglContext": {
+      if (!deps.loseTerminalWebglContext) {
+        return fail("loseTerminalWebglContext", "webgl context loss is not available");
+      }
+      const tabId = command.tabId ?? deps.getActiveTabId();
+      if (!tabId) return fail("loseTerminalWebglContext", "no active terminal");
+      const lost = deps.loseTerminalWebglContext(tabId);
+      if (lost === undefined) {
+        return fail("loseTerminalWebglContext", `no terminal registered for tab "${tabId}"`);
+      }
+      return ok("loseTerminalWebglContext", lost);
     }
 
     case "getState": {

@@ -39,6 +39,24 @@ describe("toast API", () => {
     expect(error).toHaveBeenCalledWith("Boom", expect.objectContaining({ duration: Infinity }));
   });
 
+  it("passes a testId through so system tests can target a toast (#4010)", () => {
+    toast.success("Ok", { testId: "spawn-toast-success" });
+    toast.error("Bad", { testId: "spawn-toast-error" });
+    toast.info("Fyi", { testId: "spawn-toast-missing" });
+    expect(success).toHaveBeenCalledWith(
+      "Ok",
+      expect.objectContaining({ testId: "spawn-toast-success" })
+    );
+    expect(error).toHaveBeenCalledWith(
+      "Bad",
+      expect.objectContaining({ testId: "spawn-toast-error" })
+    );
+    expect(info).toHaveBeenCalledWith(
+      "Fyi",
+      expect.objectContaining({ testId: "spawn-toast-missing" })
+    );
+  });
+
   it("info passes through description", () => {
     toast.info("Heads up", { description: "details" });
     expect(info).toHaveBeenCalledWith(

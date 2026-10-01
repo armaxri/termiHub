@@ -15,9 +15,14 @@ name: Release Windows Smoke
 #   5. launches the app, waits for the frontend's first IPC call to reach the
 #      backend (logged to the durable app log), asserts it stays alive, then
 #      stops it,
-#   6. downloads the standalone agent binary, checks its .sha256 sidecar and
+#   6. runs scripts/internal/release-smoke-app-lifecycle.ps1 (#4011): the app
+#      log's banner (version + pid), no ANSI, "termiHub exited cleanly" after
+#      closing the main window, append across relaunch, single-instance
+#      forwarding of --workspace / --workspace-file, no clean-exit line after a
+#      forced kill,
+#   7. downloads the standalone agent binary, checks its .sha256 sidecar and
 #      attestation, and runs `termihub-agent --version`,
-#   7. uninstalls silently and asserts the uninstall entry and binaries are gone.
+#   8. uninstalls silently and asserts the uninstall entry and binaries are gone.
 #
 # The msiexec install/uninstall logs and app logs are uploaded as an artifact on
 # every run, so a failed install is diagnosable without a re-run.
@@ -97,6 +102,12 @@ jobs:
           echo "Resolved release tag: $TAG"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout code
+        # Only for scripts/internal/release-smoke-app-lifecycle.* (#4011).
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: scripts/internal
 
       - name: Download MSI and agent binary
         id: download
@@ -310,6 +321,27 @@ jobs:
             Stop-Process -Force -ErrorAction SilentlyContinue
           Write-Output "app stopped"
           Copy-Item -LiteralPath $appLog -Destination (Join-Path $env:LOG_DIR 'app.log')
+
+      - name: App log + single-instance lifecycle
+        shell: pwsh
+        env:
+          EXE: ${{ steps.install.outputs.exe }}
+          DIR: ${{ steps.install.outputs.dir }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $appLog = Join-Path $env:LOCALAPPDATA 'com.termihub.app\logs\termihub.log'
+          try {
+            ./scripts/internal/release-smoke-app-lifecycle.ps1 -Exe $env:EXE -Log $appLog `
+              -Version $env:VERSION -Close window -ClearLog `
+              -OutDir (Join-Path $env:LOG_DIR 'lifecycle')
+            $code = $LASTEXITCODE
+          } finally {
+            # Anything still running out of the install dir would block uninstall.
+            Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($env:DIR, 'OrdinalIgnoreCase') } |
+              Stop-Process -Force -ErrorAction SilentlyContinue
+          }
+          exit $code
 
       - name: Run termihub-agent --version
         shell: pwsh

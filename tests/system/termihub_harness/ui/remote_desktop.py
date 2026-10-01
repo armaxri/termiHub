@@ -7,7 +7,8 @@ reads the live remote resolution the tab surfaces to the store, and — through 
 
 The remote-desktop tab is protocol-blind (one canvas/overlay/toolbar set for
 every graphical backend), so everything except :meth:`create_vnc_connection` is
-reusable by a future RDP suite.
+shared by the VNC and RDP suites; :meth:`create_rdp_connection` adds the RDP
+editor fields (username, security, certificate handling, fixed size, depth).
 
 Graphical connection types ship **experimental** (hidden unless the user enables
 experimental features), so a suite enables them first via
@@ -89,6 +90,17 @@ def quadrant_probe_points(fb_w: int, fb_h: int) -> dict[str, list[tuple[float, f
     return points
 
 
+def solid_probe_points(fb_w: int, fb_h: int) -> list[tuple[float, float]]:
+    """A 4x4 grid of framebuffer points spread over a ``fb_w`` x ``fb_h`` desktop.
+
+    For servers that paint one solid colour (the RDP fixture). The grid sits at
+    10/30/70/90 % of each axis, so it covers the whole desktop while keeping off
+    the centre, where the session's pointer — and so the drawn cursor — starts.
+    """
+    fractions = (0.1, 0.3, 0.7, 0.9)
+    return [(fb_w * fx, fb_h * fy) for fx in fractions for fy in fractions]
+
+
 class RemoteDesktopUi(HarnessMixin):
     """Drive + introspect a graphical remote-desktop tab (canvas, overlays, size)."""
 
@@ -113,6 +125,12 @@ class RemoteDesktopUi(HarnessMixin):
     OVERLAY_RECONNECTING = "remote-desktop-overlay-reconnecting"
     OVERLAY_ERROR = "remote-desktop-overlay-error"
     RECONNECT = "remote-desktop-reconnect"
+    CERT_PROMPT = "remote-desktop-cert-prompt"
+    CERT_ACCEPT_ONCE = "cert-accept-once"
+    CERT_REJECT = "cert-reject"
+    CLIPBOARD_BUTTON = "remote-desktop-clipboard-btn"
+    CLIPBOARD_TEXT = "remote-desktop-clipboard-text"
+    CLIPBOARD_SEND = "remote-desktop-clipboard-send"
 
     # -- connection editor ---------------------------------------------------
     def create_vnc_connection(
@@ -159,6 +177,76 @@ class RemoteDesktopUi(HarnessMixin):
             self._select_when_available(
                 "field-tlsVerify", tls_verify, what=f"the {tls_verify!r} TLS verification"
             )
+        if not auto_reconnect:
+            self.wait(
+                lambda: self.driver.exists("field-autoReconnect"),
+                what="the Auto-Reconnect toggle",
+            )
+            self.driver.click("field-autoReconnect")
+        self._click_editor_save(connect)
+
+    def create_rdp_connection(
+        self,
+        name: str,
+        *,
+        host: str,
+        port: int,
+        username: str,
+        security_mode: Optional[str] = None,
+        ignore_cert_errors: bool = True,
+        scale_mode: Optional[str] = None,
+        resolution_mode: Optional[str] = None,
+        fixed_size: Optional[tuple[int, int]] = None,
+        color_depth: Optional[str] = None,
+        auto_reconnect: bool = True,
+        connect: bool = True,
+    ) -> None:
+        """Fill the editor for an RDP connection and save (or Save & Connect).
+
+        Like :meth:`create_vnc_connection` the password stays empty, so Save &
+        Connect raises the password prompt. ``ignore_cert_errors`` (default on,
+        since the fixtures serve self-signed certificates) ticks the editor's
+        *Ignore Certificate Errors* box; leave it off to get the untrusted-
+        certificate prompt. ``security_mode`` (``auto``/``nla``/``tls``/``rdp``),
+        ``resolution_mode`` (``dynamic``/``fixed``, with ``fixed_size`` as
+        ``(width, height)``) and ``color_depth`` (``"32"``/``"24"``/``"16"``) pick
+        the matching editor fields.
+        """
+        self.open_new_connection_editor()
+        self.driver.type("connection-editor-name-input", name)
+        self.select_connection_type("rdp")
+        self.wait(lambda: self.driver.exists("field-host"), what="the RDP connection fields")
+        self.driver.type("field-host", str(host))
+        self.driver.type("field-port", str(port))
+        self.driver.type("field-username", username)
+        if scale_mode is not None:
+            self._select_when_available(
+                "field-scaleMode", scale_mode, what=f"the {scale_mode!r} scale mode"
+            )
+        if resolution_mode is not None:
+            self._select_when_available(
+                "field-resolutionMode",
+                resolution_mode,
+                what=f"the {resolution_mode!r} resolution mode",
+            )
+        if fixed_size is not None:
+            self.wait(lambda: self.driver.exists("field-width"), what="the fixed-size fields")
+            self.driver.type("field-width", str(fixed_size[0]))
+            self.driver.type("field-height", str(fixed_size[1]))
+        if color_depth is not None:
+            self._select_when_available(
+                "field-colorDepth", color_depth, what=f"the {color_depth}-bit color depth"
+            )
+        if security_mode is not None:
+            self._select_when_available(
+                "field-securityMode", security_mode, what=f"the {security_mode!r} security"
+            )
+        if ignore_cert_errors:
+            self.wait(
+                lambda: self.driver.exists("field-ignoreCertErrors"),
+                what="the Ignore Certificate Errors toggle",
+            )
+            self.driver.click("field-ignoreCertErrors")
         if not auto_reconnect:
             self.wait(
                 lambda: self.driver.exists("field-autoReconnect"),
@@ -250,6 +338,54 @@ class RemoteDesktopUi(HarnessMixin):
             all(color_matches(rgba, expected[name]) for rgba in pixels)
             for name, pixels in sampled.items()
         )
+
+    def sample_framebuffer(
+        self,
+        fb_points: Iterable[tuple[float, float]],
+        fb_size: tuple[int, int],
+        scale_mode: str,
+    ) -> list[list[int]]:
+        """Sample the canvas pixels that show the given framebuffer points."""
+        canvas = self.canvas_size()
+        points = [framebuffer_to_canvas(p, fb_size, canvas, scale_mode) for p in fb_points]
+        return [list(rgba) for rgba in self.driver.sample_canvas(self.CANVAS, points)["pixels"]]
+
+    def wait_for_solid_desktop(
+        self,
+        color: tuple[int, int, int],
+        scale_mode: str,
+        *,
+        fb_size: Optional[tuple[int, int]] = None,
+        timeout: float = 30.0,
+        what: str = "the canvas to show the remote desktop",
+    ) -> tuple[int, int]:
+        """Poll until every :func:`solid_probe_points` probe shows ``color``.
+
+        ``fb_size`` pins the expected remote size; by default whatever size the
+        session reports is used. Returns that size. On timeout the assertion
+        names the size and the pixels the canvas actually showed.
+        """
+
+        def painted() -> Optional[tuple[int, int]]:
+            size = self.remote_resolution()
+            if size is None or (fb_size is not None and size != fb_size):
+                return None
+            pixels = self.sample_framebuffer(solid_probe_points(*size), size, scale_mode)
+            return size if all(color_matches(rgba, color) for rgba in pixels) else None
+
+        try:
+            return self.wait(painted, timeout=timeout, what=what)
+        except AssertionError as exc:
+            try:
+                size = self.remote_resolution()
+                seen: object = (
+                    self.sample_framebuffer(solid_probe_points(*size), size, scale_mode)
+                    if size
+                    else "<no remote size>"
+                )
+            except Exception as sample_exc:  # noqa: BLE001 — diagnostics only
+                size, seen = None, repr(sample_exc)
+            raise AssertionError(f"{exc}; remote size {size}, canvas showed {seen}") from exc
 
     def wait_for_quadrants(
         self,

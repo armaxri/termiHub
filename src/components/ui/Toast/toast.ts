@@ -28,6 +28,11 @@ export interface ToastOptions {
   duration?: number;
   /** Optional inline action button (e.g. a retry affordance). */
   action?: ToastAction;
+  /**
+   * `data-testid` rendered on the toast element, so a system test can assert a
+   * specific toast appeared (e.g. the external-spawn outcome toasts, #4010).
+   */
+  testId?: string;
 }
 
 /** The success/error messages a loading toast resolves into. */
@@ -89,6 +94,7 @@ export const toast: ToastApi = {
       description: opts?.description,
       duration: opts?.duration,
       action: opts?.action,
+      testId: opts?.testId,
     });
   },
 
@@ -98,6 +104,7 @@ export const toast: ToastApi = {
       description: opts?.description,
       duration: opts?.duration ?? PERSIST_DURATION,
       action: opts?.action,
+      testId: opts?.testId,
     });
   },
 
@@ -107,6 +114,7 @@ export const toast: ToastApi = {
       description: opts?.description,
       duration: opts?.duration,
       action: opts?.action,
+      testId: opts?.testId,
     });
   },
 
@@ -115,6 +123,7 @@ export const toast: ToastApi = {
       id: opts?.id,
       description: opts?.description,
       duration: opts?.duration ?? PERSIST_DURATION,
+      testId: opts?.testId,
     });
   },
 

@@ -90,6 +90,13 @@ function buildSearchDecorations(): ISearchDecorationOptions {
  */
 export const PASTE_DEBOUNCE_MS = 300;
 
+/** A registered terminal's live objects, see `getTerminalHandles`. */
+export interface TerminalHandles {
+  element: HTMLDivElement;
+  xterm: XTerm;
+  fitAddon: FitAddon;
+}
+
 interface TerminalRegistryContextType {
   /** Register a terminal's xterm container element, xterm instance, and fit addon. */
   register: (tabId: string, element: HTMLDivElement, xterm: XTerm, fitAddon: FitAddon) => void;
@@ -97,6 +104,13 @@ interface TerminalRegistryContextType {
   unregister: (tabId: string) => void;
   /** Get the registered element for a tab. */
   getElement: (tabId: string) => HTMLDivElement | undefined;
+  /**
+   * The registered container element, xterm instance and fit addon for a tab,
+   * or `undefined` when no terminal is registered. Only the test bridge's
+   * render-path verbs (`measureTerminal` / `loseTerminalWebglContext`, #2988)
+   * read through it; app code goes through the narrower accessors here.
+   */
+  getTerminalHandles: (tabId: string) => TerminalHandles | undefined;
   /** Focus the xterm instance for a tab so it receives keyboard input. */
   focusTerminal: (tabId: string) => void;
   /** Clear the terminal scrollback and screen for a tab. */
@@ -241,6 +255,14 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
 
   const getElement = useCallback((tabId: string) => {
     return registryRef.current.get(tabId);
+  }, []);
+
+  const getTerminalHandles = useCallback((tabId: string): TerminalHandles | undefined => {
+    const element = registryRef.current.get(tabId);
+    const xterm = xtermRegistryRef.current.get(tabId);
+    const fitAddon = fitAddonRegistryRef.current.get(tabId);
+    if (!element || !xterm || !fitAddon) return undefined;
+    return { element, xterm, fitAddon };
   }, []);
 
   const focusTerminal = useCallback((tabId: string) => {
@@ -614,6 +636,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       register,
       unregister,
       getElement,
+      getTerminalHandles,
       focusTerminal,
       fitTerminal,
       clearTerminal,
@@ -644,6 +667,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       register,
       unregister,
       getElement,
+      getTerminalHandles,
       focusTerminal,
       fitTerminal,
       clearTerminal,

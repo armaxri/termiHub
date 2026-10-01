@@ -49,7 +49,9 @@ Serialized `lowercase` on the wire, except the two `#[serde(rename)]` cases note
 `SessionLifecycle` additionally carries: `reconnect` (the composed
 `ReconnectState`), `end_reason`, `error`, `reconnect_error` (the "why we are
 reconnecting" note, #2442), `sessionId` (the live backend session id, #2457),
-and `exit` (the classified exit cause + code, #2615).
+`exit` (the classified exit cause + code, #2615) and `filesOnly` (the host refused
+the shell but SFTP works, so the session stays `Connected` for the Files sidebar
+and editor, #4078).
 
 `EndReason` (`store.rs:87-103`): `User` (graceful user teardown), `Unexpected`
 (a drop, a candidate for reconnect), `Error` (a connect/reconnect attempt
@@ -279,6 +281,7 @@ transitions that **converge** with the client's same-event dispatch.
 | `fold_agent_reconnect_failed`       | `Failed`                                  | The agent's own in-task reconnect loop exhausted its budget (#2612/#2564).                                                                                        |
 | `fold_agent_session_evicted`        | `Evicted` (loop idle, `sessionId` kept)   | The agent reported `connection.evicted`: another desktop took the session over (SM-003).                                                                          |
 | `fold_agent_session_reclaimed`      | `Evicted` → `Connected`                   | The user's explicit Reclaim (`reclaim_session`) takeover attach succeeded (SM-003).                                                                               |
+| `fold_files_only`                   | status unchanged, `filesOnly` set         | The SSH backend saw the host refuse the shell while SFTP works (#4078). Pure metadata: no reconnect loop starts; the tab shows the "no shell" panel.              |
 
 Because the transient-break fold leaves the engine **idle**, the timer reconcile
 cancels rather than arms — the agent I/O task is the single owner of that reconnect,

@@ -1,28 +1,21 @@
 #!/usr/bin/env python3
-"""Generate the manual-test inventory blocks in the docs (#3721).
+"""Print the manual-test inventory; no counts are committed to the docs (#4070).
 
 The per-category counts of the legacy manual corpus (``tests/manual/*.yaml``)
-used to be hand-maintained in ``docs/testing.md`` and
-``docs/release-plan-0.1.0.md``. Every PR that automated (and so deleted) a
-manual item edited the same totals, so any two such PRs conflicted. Now each
-doc carries one generated block between these markers::
-
-    <!-- manual-inventory:start -->
-    ...generated table...
-    <!-- manual-inventory:end -->
-
-and this script is the only thing that writes it. The block is a pure,
-deterministic function of the corpus (categories sorted by name, fixed column
-layout already in Prettier's table format), so when two PRs conflict on it the
-resolution is always the same: take either side and re-run::
-
-    python3 scripts/manual-inventory.py --write
+used to live in ``docs/testing.md`` and ``docs/release-plan-0.1.0.md`` -- first
+hand-maintained, then (#3721) as a generated block. Either way every PR that
+automated (and so deleted) a manual item rewrote the same Total row, so any two
+such PRs conflicted textually even when they touched different YAML files. Now
+no counts are committed anywhere: the YAMLs are the only source of truth, and
+this script renders the inventory on demand.
 
 Modes:
 
-- (no flag)  print the block to stdout
-- ``--write``  rewrite the block in every target doc in place
-- ``--check``  exit 1 if any target doc's block is missing or stale (CI)
+- (no flag)  print the inventory as a Markdown table to stdout
+- ``--check``  CI: fail if the corpus is empty/unparseable or if a doc
+  reintroduces a committed inventory block; on success print the table and,
+  under GitHub Actions, append it to the job summary (``$GITHUB_STEP_SUMMARY``)
+- ``--write``  retired (#4070); kept only to tell stale instructions what to do
 
 Stdlib-only (no PyYAML): it reads the corpus with the same fixed line layout
 that ``tests/system/tests/test_manual_corpus.py`` relies on (``  - id:`` items
@@ -33,6 +26,7 @@ runs in any CI job without a Python venv.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -40,19 +34,16 @@ from typing import NamedTuple
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MANUAL_DIR = REPO_ROOT / "tests" / "manual"
-DOCS = (
-    REPO_ROOT / "docs" / "testing.md",
-    REPO_ROOT / "docs" / "release-plan-0.1.0.md",
-)
+DOCS_DIR = REPO_ROOT / "docs"
 
-START = "<!-- manual-inventory:start -->"
-END = "<!-- manual-inventory:end -->"
-REGEN_CMD = "python3 scripts/manual-inventory.py --write"
+# The retired #3721 marker. A doc that carries it again would bring back the
+# committed counts that made every test-automation PR conflict (#4070).
+LEGACY_MARKER = "<!-- manual-inventory:start -->"
+SHOW_CMD = "python3 scripts/manual-inventory.py"
 
 _ID = re.compile(r"^  - id: *\"?([A-Za-z0-9-]+)\"?\s*$")
 _KEY = re.compile(r"^    ([a-z_]+): *(.*)$")
 _TOP = re.compile(r"^(category|display_name): *(.*)$")
-_BLOCK = re.compile(re.escape(START) + r".*?" + re.escape(END), re.DOTALL)
 
 
 class Item(NamedTuple):
@@ -153,7 +144,7 @@ def _table(header: list[str], align: list[str], body: list[list[str]]) -> list[s
 
 
 def render(rows: list[Row]) -> str:
-    """Render the full marker-delimited block (no trailing newline)."""
+    """Render the inventory as a Prettier-formatted Markdown table."""
     body = [
         [f"`{r.category}`", r.display_name, r.platforms, str(r.release_gate), str(r.pending), str(r.total)]
         for r in rows
@@ -175,66 +166,73 @@ def render(rows: list[Row]) -> str:
         ["l", "l", "l", "r", "r", "r"],
         body,
     )
-    lines = [
-        START,
-        "",
-        "<!-- Generated from tests/manual/*.yaml by scripts/manual-inventory.py; do not edit by hand.",
-        f"     On a merge conflict here, take either side and run: {REGEN_CMD} -->",
-        "",
-        *table,
-        "",
-        END,
+    return "\n".join(table)
+
+
+def docs_with_committed_block(docs_dir: Path | None = None) -> list[Path]:
+    """Return every Markdown doc that carries the retired inventory marker."""
+    docs_dir = DOCS_DIR if docs_dir is None else docs_dir
+    return [
+        doc
+        for doc in sorted(docs_dir.rglob("*.md"))
+        if LEGACY_MARKER in doc.read_text(encoding="utf-8")
     ]
-    return "\n".join(lines)
-
-
-def apply(text: str, block: str) -> str | None:
-    """Return ``text`` with its block replaced, or None if it has no markers."""
-    if not _BLOCK.search(text):
-        return None
-    return _BLOCK.sub(lambda _m: block, text, count=1)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0],
+        epilog=(
+            "The inventory is deliberately not committed to the docs (#4070): run this "
+            "script, or read the 'Manual-test inventory' job summary of the "
+            "Frontend Code Quality CI job."
+        ),
+    )
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--write", action="store_true", help="rewrite the block in every target doc")
-    mode.add_argument("--check", action="store_true", help="fail if any target doc's block is stale")
+    mode.add_argument(
+        "--check",
+        action="store_true",
+        help="CI: validate the corpus and the docs, print the table, append it to the job summary",
+    )
+    mode.add_argument("--write", action="store_true", help="retired (#4070): no doc carries counts any more")
     args = parser.parse_args(argv)
+
+    if args.write:
+        print(
+            "manual-inventory.py --write is retired (#4070): the docs no longer carry a "
+            "generated count block, so there is nothing to regenerate. Just edit "
+            f"tests/manual/*.yaml; view the counts with: {SHOW_CMD}",
+            file=sys.stderr,
+        )
+        return 0
 
     items = load_items()
     if not items:
         print(f"error: no manual items found under {MANUAL_DIR}", file=sys.stderr)
         return 1
-    block = render(inventory(items))
+    table = render(inventory(items))
 
-    if not (args.write or args.check):
-        print(block)
+    if not args.check:
+        print(table)
         return 0
 
-    stale = []
-    for doc in DOCS:
-        rel = doc.relative_to(REPO_ROOT).as_posix()
-        text = doc.read_text(encoding="utf-8")
-        updated = apply(text, block)
-        if updated is None:
-            print(f"error: {rel} has no {START} ... {END} block", file=sys.stderr)
-            return 1
-        if updated != text:
-            if args.write:
-                doc.write_text(updated, encoding="utf-8")
-                print(f"updated {rel}")
-            else:
-                stale.append(rel)
-    if stale:
+    reintroduced = docs_with_committed_block()
+    if reintroduced:
+        names = ", ".join(d.relative_to(REPO_ROOT).as_posix() for d in reintroduced)
         print(
-            f"error: manual-inventory block is stale in {', '.join(stale)}.\n"
-            f"Regenerate it (never hand-edit it) with: {REGEN_CMD}",
+            f"error: {names} carries a committed manual-inventory block ({LEGACY_MARKER}).\n"
+            "Committed counts make every test-automation PR conflict (#4070); remove the "
+            f"block and point readers at: {SHOW_CMD}",
             file=sys.stderr,
         )
         return 1
-    if args.check:
-        print("manual-inventory blocks are up to date")
+
+    print(table)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as fh:
+            fh.write(f"### Manual-test inventory\n\nGenerated from `tests/manual/*.yaml` by `{SHOW_CMD}`.\n\n")
+            fh.write(table + "\n")
     return 0
 
 

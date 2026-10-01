@@ -343,6 +343,32 @@ export interface InspectTerminalCommand {
 }
 
 /**
+ * Read a terminal's real render-path measurements (#2988): the xterm grid, what
+ * `FitAddon.proposeDimensions()` proposes for the laid-out container, the
+ * renderer's measured cell size, which renderer is live, the text the DOM
+ * renderer painted, and the gutter scrollbar's laid-out thumb geometry. Returns
+ * a {@link TerminalMeasurement}. jsdom cannot produce any of these (no layout,
+ * no canvas), so this is how the E2E harness asserts them against a real
+ * WebView. Read-only. When `tabId` is omitted the active tab is used.
+ */
+export interface MeasureTerminalCommand {
+  action: "measureTerminal";
+  tabId?: string;
+}
+
+/**
+ * Force a real GPU context loss on a terminal's WebGL renderer (#2988) via the
+ * `WEBGL_lose_context` extension, so the harness can prove the renderer
+ * degrades to the DOM renderer. Answers `true` when a live WebGL2 context was
+ * found and lost, `false` when the terminal has none (already on the DOM
+ * renderer). Test-mode only. When `tabId` is omitted the active tab is used.
+ */
+export interface LoseTerminalWebglContextCommand {
+  action: "loseTerminalWebglContext";
+  tabId?: string;
+}
+
+/**
  * Read a slice of the app store. `path` is an optional dot-path into the state
  * (e.g. `"activePanelId"` or `"rootPanel.activeTabId"`). When omitted, a curated
  * snapshot of serializable state is returned.
@@ -596,6 +622,47 @@ export interface TerminalInspection {
   } | null;
 }
 
+/** A `{ cols, rows }` terminal grid size. */
+export interface TerminalGrid {
+  cols: number;
+  rows: number;
+}
+
+/** The gutter scrollbar's live geometry, as laid out by the WebView. */
+export interface TerminalScrollbarMeasurement {
+  /** Laid-out height of the scrollbar gutter (the track), in CSS px. */
+  trackHeight: number;
+  /** Whether the thumb is displayed (the buffer has scrollback). */
+  thumbVisible: boolean;
+  /** Laid-out thumb height in CSS px (`0` when hidden). */
+  thumbHeight: number;
+  /** Laid-out thumb top relative to the gutter's top, in CSS px. */
+  thumbTop: number;
+}
+
+/** A terminal's real render-path state, returned by `measureTerminal`. */
+export interface TerminalMeasurement {
+  /** The xterm grid the terminal (and its PTY) is sized to. */
+  grid: TerminalGrid;
+  /** What `FitAddon.proposeDimensions()` proposes now; `null` when it cannot measure. */
+  proposed: TerminalGrid | null;
+  /** The renderer's measured CSS cell size; `null` when the private path is gone. */
+  cell: { width: number | null; height: number | null };
+  /** Laid-out size of the terminal container, in CSS px. */
+  container: { width: number; height: number };
+  /** The live renderer as advertised on the container (`webgl` / `dom`). */
+  renderer: string | null;
+  /** Backing-store size of the WebGL canvas; `null` when no WebGL canvas is mounted. */
+  webglCanvas: { width: number; height: number } | null;
+  /** Text of each row the DOM renderer painted; `null` when it is not mounted. */
+  domRows: string[] | null;
+  /** The gutter scrollbar; `null` when the gutter is not mounted. */
+  scrollbar: TerminalScrollbarMeasurement | null;
+  /** Scroll position, as `getTerminalViewport` reports it. */
+  viewportY: number;
+  baseY: number;
+}
+
 /** The full set of commands the bridge understands. */
 export type BridgeCommand =
   | ClickCommand
@@ -619,6 +686,8 @@ export type BridgeCommand =
   | ScrollTerminalCommand
   | GetTerminalViewportCommand
   | InspectTerminalCommand
+  | MeasureTerminalCommand
+  | LoseTerminalWebglContextCommand
   | GetStateCommand
   | ScreenshotCommand
   | EmitEventCommand

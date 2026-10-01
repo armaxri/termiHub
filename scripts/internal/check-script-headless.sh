@@ -37,6 +37,13 @@
 # gate counts a missing sidecar. The Windows .cmd twin is covered by the
 # `Windows cmd Script Smoke` job (#4032).
 #
+# A fourth section runs release-smoke-app-lifecycle.sh (the release install-smoke's
+# app-log + single-instance checks, #4011) end to end against a STUB app: a small
+# bash script that writes the real app's log lines, holds a single-instance lock
+# and logs a clean exit on SIGTERM. The smoke must pass on the faithful stub and
+# FAIL on stubs that skip the clean-exit line or let a second instance keep
+# running, so the gate is proven to bite before a release ever depends on it.
+#
 # Wired into the `Shell Script Quality` CI job. Run it from anywhere:
 #   scripts/internal/check-script-headless.sh
 
@@ -57,6 +64,7 @@ SCRIPTS=(
   "scripts/internal/ci-rust-tests.sh"
   "scripts/internal/harness-coverage.sh"
   "scripts/internal/native-sshd-fixture.sh"
+  "scripts/internal/release-smoke-app-lifecycle.sh"
   "scripts/internal/run-native-sshd-suites.sh"
   "scripts/internal/setup-agent-signing-key.sh"
   "scripts/internal/shell-integration-cli-smoke.sh"
@@ -273,12 +281,106 @@ else
   fi
 fi
 
+sidecar_and_earlier_failures="$failures"
+
+# --- release-smoke-app-lifecycle.sh against a stub app (#4011) ---
+LS="$LC/lifecycle"
+mkdir -p "$LS"
+# The stub mimics the installed app's observable contract: the startup banner,
+# the frontend IPC marker, the single-instance lock (a second launch hands its
+# --workspace / --workspace-file over and exits) and the shutdown breadcrumb on
+# SIGTERM. STUB_NO_CLEAN_EXIT / STUB_NO_SINGLE break one promise each.
+cat >"$LS/stub-app" <<'STUB'
+#!/usr/bin/env bash
+set -u
+log() { printf '2026-01-01T00:00:00Z  INFO termihub_lib: %s\n' "$1" >>"$STUB_LOG"; }
+log "termiHub starting version=\"$STUB_VERSION\" pid=$$ log_file=$STUB_LOG"
+primary=true
+if [ -z "${STUB_NO_SINGLE:-}" ] && ! mkdir "$STUB_LOCK" 2>/dev/null; then
+  primary=false
+fi
+if [ "$primary" != true ]; then
+  printf '%s\n' "$@" >"$STUB_LOCK/req.$$.tmp"
+  mv "$STUB_LOCK/req.$$.tmp" "$STUB_LOCK/req.$$"
+  exit 0
+fi
+on_term() {
+  log "Exit requested, shutting down"
+  [ -n "${STUB_NO_CLEAN_EXIT:-}" ] || log "termiHub exited cleanly"
+  rm -rf "$STUB_LOCK"
+  exit 0
+}
+trap on_term TERM
+log "Loading connections and folders"
+while :; do
+  for req in "$STUB_LOCK"/req.*; do
+    case "$req" in *.tmp | *'*') continue ;; esac
+    { read -r flag; read -r value; } <"$req"
+    name="$value"
+    if [ "$flag" = "--workspace-file" ]; then
+      # The definition's own name is the first "name" key (tab groups follow).
+      name="$(grep -o '"name":"[^"]*"' "$value" | head -n1 | cut -d'"' -f4)"
+    fi
+    rm -f "$req"
+    log "single-instance: opening forwarded workspace workspace=$name"
+  done
+  sleep 0.2
+done
+STUB
+chmod +x "$LS/stub-app"
+
+# The bash smoke and its PowerShell twin (the Windows release smoke), the latter
+# only where pwsh is installed (GitHub's ubuntu runners have it).
+lifecycle_cmd() { # <sh|ps1>: the smoke command line for the stub
+  if [ "$1" = sh ]; then
+    echo bash scripts/internal/release-smoke-app-lifecycle.sh --exe "$LS/stub-app" \
+      --log "$LS/termihub.log" --version 9.8.7 --close sigterm --out "$LS/out"
+  else
+    echo pwsh -NoProfile -File scripts/internal/release-smoke-app-lifecycle.ps1 -Exe "$LS/stub-app" \
+      -Log "$LS/termihub.log" -Version 9.8.7 -Close signal -OutDir "$LS/out"
+  fi
+}
+# lifecycle_run <sh|ps1> <label> <expect: pass|fail> [VAR=value...]: run the smoke on the stub.
+lifecycle_run() {
+  local kind="$1" label="$2" expect="$3" out rc=0
+  local -a cmd
+  shift 3
+  read -r -a cmd <<<"$(lifecycle_cmd "$kind")"
+  label="(${kind}) ${label}"
+  rm -rf "$LS/lock" "$LS/termihub.log"
+  out="$(env STUB_LOG="$LS/termihub.log" STUB_LOCK="$LS/lock" STUB_VERSION=9.8.7 \
+    SMOKE_IPC_TIMEOUT=20 SMOKE_EXIT_TIMEOUT=5 SMOKE_LOG_TIMEOUT=5 "$@" "${cmd[@]}" 2>&1)" || rc=$?
+  if { [ "$expect" = pass ] && [ "$rc" -eq 0 ]; } || { [ "$expect" = fail ] && [ "$rc" -eq 1 ]; }; then
+    echo "ok    app lifecycle smoke: ${label} (exit ${rc})"
+  else
+    echo "::error file=scripts/internal/release-smoke-app-lifecycle.sh::app lifecycle smoke:" \
+      "${label}: expected ${expect}, got exit ${rc}"
+    printf '%s\n' "$out" | sed 's/^/    | /'
+    failures=$((failures + 1))
+  fi
+}
+lifecycle_kinds=(sh)
+if command -v pwsh >/dev/null 2>&1; then
+  lifecycle_kinds+=(ps1)
+else
+  echo "skip  app lifecycle smoke: PowerShell twin (pwsh not installed)"
+fi
+for kind in "${lifecycle_kinds[@]}"; do
+  lifecycle_run "$kind" "passes on a faithful stub app" pass
+  lifecycle_run "$kind" "fails when the clean-exit line is missing" fail STUB_NO_CLEAN_EXIT=1
+  lifecycle_run "$kind" "fails when a second instance keeps running" fail STUB_NO_SINGLE=1
+done
+rm -rf "$LS/lock"
+
 echo ""
 if [ "$failures" -gt 0 ]; then
   echo "Headless script smoke FAILED: ${help_failures} --help path(s) errored," \
     "${lifecycle_failures} signing-lifecycle check(s) failed," \
-    "$((failures - help_failures - lifecycle_failures)) checksum-sidecar check(s) failed."
+    "$((sidecar_and_earlier_failures - help_failures - lifecycle_failures)) checksum-sidecar" \
+    "check(s) failed, $((failures - sidecar_and_earlier_failures)) app-lifecycle-smoke check(s)" \
+    "failed."
   exit 1
 fi
 echo "Headless script smoke OK: ${#SCRIPTS[@]} script(s) executed their --help path cleanly;" \
-  "the signing-key dry-run lifecycle and the checksum sidecar writer passed."
+  "the signing-key dry-run lifecycle, the checksum sidecar writer and the app lifecycle" \
+  "smoke (on a stub app) passed."

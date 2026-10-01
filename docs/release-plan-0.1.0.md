@@ -382,43 +382,20 @@ The manual gate is the **Release-gating manual checklist** in
 guided-manual harness suites plus the `tests/manual/*.yaml` corpus. Each
 corpus item is either genuinely manual (`release_gate: true`) or pending
 automation (`automation_issue`, walked manually until its issue lands). The
-counts below are generated from the YAMLs — never hand-edit the block; run
-`python3 scripts/manual-inventory.py --write` after changing the corpus (and to
-resolve a merge conflict in it). For a plain terminal listing:
+per-category counts are not committed here (#4070) — every test-automation PR
+would otherwise rewrite the same total row and conflict with the next. Print the
+current inventory as a Markdown table, or as a plain terminal listing:
 
 ```bash
+python3 scripts/manual-inventory.py
 python scripts/test-manual.py --inventory
 ```
 
-<!-- manual-inventory:start -->
-
-<!-- Generated from tests/manual/*.yaml by scripts/manual-inventory.py; do not edit by hand.
-     On a merge conflict here, take either side and run: python3 scripts/manual-inventory.py --write -->
-
-| Category (`--category`)   | Display name          | Platforms      | Release-gating | Pending automation |  Total |
-| ------------------------- | --------------------- | -------------- | -------------: | -----------------: | -----: |
-| `app`                     | App                   | all            |              4 |                  0 |      4 |
-| `connection-management`   | Connection Management | all            |              0 |                  1 |      1 |
-| `credential-store`        | Credential Store      | all            |              8 |                  0 |      8 |
-| `editor`                  | Editor                | all            |              1 |                  0 |      1 |
-| `file-browser`            | File Browser          | all            |              2 |                  0 |      2 |
-| `local-shell`             | Local Shell           | macos, windows |              4 |                  0 |      4 |
-| `multi-window`            | Multi-Window          | macos          |              2 |                  0 |      2 |
-| `native-input`            | Native Input          | all            |             21 |                  0 |     21 |
-| `network-tools`           | network-tools         | all            |              2 |                  0 |      2 |
-| `portable-mode`           | Portable Mode         | all            |              0 |                  2 |      2 |
-| `remote-agent`            | Remote Agent          | all            |              0 |                  3 |      3 |
-| `remote-desktop`          | Remote Desktop        | all            |              9 |                  0 |      9 |
-| `serial`                  | Serial                | windows        |              1 |                  0 |      1 |
-| `shell-integration`       | Shell Integration     | all            |              6 |                  0 |      6 |
-| `ssh`                     | SSH                   | all            |              4 |                  1 |      5 |
-| `ui-layout`               | UI / Layout           | all            |              8 |                  0 |      8 |
-| **Total (16 categories)** |                       |                |         **72** |              **7** | **79** |
-
-<!-- manual-inventory:end -->
+CI also renders the table into the **Manual-test inventory** job summary of the
+_Frontend Code Quality_ job.
 
 Note: `--category` filtering also honours each test's `platforms:` field, so a
-per-platform run (e.g. Windows) sees fewer than the corpus totals above. The
+per-platform run (e.g. Windows) sees fewer than the corpus totals. The
 sessions below split the corpus across machines (they were planned against the
 pre-triage 166 tests; categories that are now empty simply finish early) so each category is covered
 once, with a final Windows pass re-running the platform-sensitive subset.

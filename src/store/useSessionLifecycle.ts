@@ -40,6 +40,7 @@ import {
   effectiveEvictedMap,
   effectiveExitedMap,
   effectiveExitInfo,
+  effectiveFilesOnly,
   effectiveReconnecting,
   effectiveReconnectingMap,
   effectiveReconnectTriggerError,
@@ -152,6 +153,9 @@ export interface ProjectedSessionLifecycleSlice {
    * gate, derived purely from the region's terminal statuses / `exit` metadata
    * ({@link effectiveExited}, #2625). */
   exited: boolean;
+  /** True when the host refused the shell but SFTP works (#4078): the tab shows
+   * the "no shell" info panel ({@link effectiveFilesOnly}). */
+  filesOnly: boolean;
 }
 
 /**
@@ -215,6 +219,7 @@ export function useProjectedSessionLifecycle(tabId: string): ProjectedSessionLif
       evictedMessage: effectiveEvicted(p) ? p?.error : undefined,
       exitInfo: effectiveExitInfo(p),
       exited: effectiveExited(p),
+      filesOnly: effectiveFilesOnly(p),
     };
   }, [projected]);
 }

@@ -125,15 +125,44 @@ impl Target {
     }
 }
 
+/// Where a paste fetches a promised file's bytes from.
+#[derive(Clone)]
+enum Fetcher {
+    /// The live graphical session: the manager (Arc-backed) reaches the session's
+    /// backend, which streams the file over CLIPRDR on demand.
+    Session {
+        manager: GraphicalSessionManager,
+        session_id: String,
+    },
+    /// A test-only stand-in that stages files locally, so the X11 owner's
+    /// selection/paste path is testable under Xvfb without an RDP session (#4087).
+    #[cfg(test)]
+    Fake(std::sync::Arc<dyn Fn(u32) -> anyhow::Result<std::path::PathBuf> + Send + Sync>),
+}
+
+impl Fetcher {
+    /// Fetch the promised file `index` now, returning the staged local path.
+    fn fetch(&self, index: u32) -> anyhow::Result<std::path::PathBuf> {
+        match self {
+            Fetcher::Session {
+                manager,
+                session_id,
+            } => tauri::async_runtime::block_on(
+                manager.fetch_remote_clipboard_file(session_id, index),
+            )
+            .map_err(|e| anyhow::anyhow!(e.to_string())),
+            #[cfg(test)]
+            Fetcher::Fake(fetch) => fetch(index),
+        }
+    }
+}
+
 /// The shared fetch context: how to reach the remote for the promised files.
 /// Cloned into each owner (X11 and/or Wayland) so both can serve independently.
 #[derive(Clone)]
 struct FetchContext {
-    /// Clone of the graphical manager (Arc-backed) used to reach the session's
-    /// backend for on-demand byte fetches.
-    manager: GraphicalSessionManager,
-    /// The session whose remote clipboard these files belong to.
-    session_id: String,
+    /// How a paste reaches the promised files' bytes.
+    fetcher: Fetcher,
     /// Advertised indices to fetch, in paste order.
     indices: Vec<u32>,
 }
@@ -150,10 +179,7 @@ impl FetchContext {
     fn render(&self, target: Target) -> Option<Vec<u8>> {
         let mut uris: Vec<String> = Vec::new();
         for &index in &self.indices {
-            match tauri::async_runtime::block_on(
-                self.manager
-                    .fetch_remote_clipboard_file(&self.session_id, index),
-            ) {
+            match self.fetcher.fetch(index) {
                 Ok(path) => uris.push(path_to_file_uri(&path)),
                 Err(e) => {
                     tracing::warn!("failed to fetch remote clipboard file {index} for paste: {e}")
@@ -222,8 +248,10 @@ pub fn bind_remote_clipboard_files(
         return Ok(());
     }
     let ctx = FetchContext {
-        manager,
-        session_id,
+        fetcher: Fetcher::Session {
+            manager,
+            session_id,
+        },
         indices,
     };
 

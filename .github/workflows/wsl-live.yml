@@ -1,0 +1,129 @@
+name: WSL Live (Windows)
+
+# Runs the live WSL tests (core/src/backends/wsl_live_tests.rs, #4008) against
+# a REAL distribution on a GitHub-hosted Windows runner. The regular Windows
+# "Run Tests" leg has no distro installed, so every WSL test there self-skips:
+# the real wsl.exe spawn, the ConPTY session, the `\\wsl$` share, the distro-side
+# 0600 init script (#2837), symlink listing (#1523) and Windows <-> WSL queued
+# copies (#3567) would otherwise never run anywhere in CI.
+#
+# Distro setup: Vampire/setup-wsl, the de-facto standard action for WSL on
+# hosted runners (used per-PR by e.g. uutils/coreutils on windows-latest). It
+# installs the WSL platform when the image lacks it (windows-2025 ships without
+# WSL), imports the distro, and caches the downloaded rootfs in the Actions
+# cache, so a warm run spends well under a minute on setup. WSL 2 (the action's
+# default and what users run) — the hosted Windows runners support the nested
+# virtualization it needs. Debian is the smallest mainstream distro, keeping the
+# cache footprint low; nothing under test is distro-specific.
+#
+# Not on every PR (installing WSL plus a Windows build of the core crate costs
+# several minutes): nightly + manual + PRs that touch the WSL code paths.
+# `TERMIHUB_REQUIRE_WSL=1` turns a missing distro from a skip into a failure, so
+# a broken setup reds this lane instead of skipping to a false green.
+
+on:
+  schedule:
+    # 03:41 UTC daily (off the top of the hour to dodge scheduler congestion).
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "core/src/backends/wsl.rs"
+      - "core/src/backends/wsl_*.rs"
+      - "core/src/backends/conpty_cursor.rs"
+      - "core/src/session/shell.rs"
+      - "core/src/files/copy.rs"
+      - "core/src/files/local.rs"
+      - "core/src/files/transfer/attempt.rs"
+      - "core/src/files/transfer/local.rs"
+      - "core/src/files/transfer/local_folder.rs"
+      - ".github/workflows/wsl-live.yml"
+
+concurrency:
+  group: wsl-live-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege token (CI-010): checkout + build + test only.
+permissions:
+  contents: read
+
+jobs:
+  wsl-live:
+    name: Live WSL tests (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          # The nightly grades develop: a scheduled run fires from the default
+          # branch (main), so without this it would only re-test main's code.
+          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
+
+      - name: Install WSL and a Debian distribution
+        uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7.0.0
+        # Bounded: a stuck WSL install must not eat the whole job timeout.
+        timeout-minutes: 20
+        with:
+          distribution: Debian-12
+          wsl-version: 2
+          use-cache: "true"
+
+      - name: Skip the distribution's first-launch user setup
+        # Modern `.wsl` distributions run an OOBE ("Enter new UNIX username:") on
+        # the first INTERACTIVE launch. setup-wsl only ever runs commands, so the
+        # flag is still set and the tests' ConPTY session would land in that
+        # prompt instead of a shell. Clear WSL's per-distro `RunOOBE` registry
+        # value (read by the service at instance start; see microsoft/WSL
+        # DistributionRegistration.h) and restart the distro, so an interactive
+        # `wsl.exe -d` opens a root bash like a set-up user distro does.
+        shell: pwsh
+        run: |
+          $name = 'Debian-12'
+          $lxss = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss'
+          $key = Get-ChildItem $lxss |
+            Where-Object { (Get-ItemProperty $_.PSPath).DistributionName -eq $name }
+          if (-not $key) { throw "no Lxss registration for $name" }
+          Set-ItemProperty -Path $key.PSPath -Name RunOOBE -Value 0 -Type DWord
+          wsl.exe --terminate $name
+          (Get-ItemProperty $key.PSPath) | Select-Object DistributionName, RunOOBE, DefaultUid
+
+      - name: Show the installed distributions
+        shell: pwsh
+        env:
+          # Plain UTF-8 instead of wsl.exe's default UTF-16 output.
+          WSL_UTF8: "1"
+        run: |
+          wsl.exe --version
+          wsl.exe --list --verbose
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Its own key: this lane builds only core with `wsl,local-transfer`.
+          shared-key: wsl-live
+          # Reader/writer split (#3328): PRs restore, only develop/main save.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
+
+      - name: Run the live WSL tests
+        shell: bash
+        env:
+          TERMIHUB_REQUIRE_WSL: "1"
+          RUST_BACKTRACE: "1"
+        run: |
+          set -euo pipefail
+          filter=backends::wsl::live_tests::
+          args=(-p termihub-core --no-default-features --features "wsl,local-transfer" --lib "$filter")
+          # Guard against a filter that silently matches nothing (a false green).
+          count=$(cargo test "${args[@]}" -- --list --format terse | grep -c ': test$' || true)
+          echo "live WSL tests found: $count"
+          if [ "$count" -lt 4 ]; then
+            echo "::error::expected at least 4 live WSL tests under $filter, found $count"
+            exit 1
+          fi
+          # Serial: the session test and the init-script test share the distro's /tmp.
+          cargo test "${args[@]}" -- --test-threads=1 --nocapture

@@ -378,6 +378,11 @@ pub struct SidecarClipboardBackend {
     /// `None` when the feature is disabled. Enabling it flips the advertised
     /// capabilities to include stream-file-clip + long format names (#1765).
     download_dir: Option<PathBuf>,
+    /// Whether the server agreed to CLIPRDR file streams
+    /// (`CB_STREAM_FILECLIP_ENABLED`). Assumed until capabilities are
+    /// negotiated; when the server declines, a remote file copy is not offered
+    /// at all — its bytes could never be fetched (#4004).
+    file_streams: bool,
     /// Files from the current remote copy still awaiting download.
     download_queue: VecDeque<PlannedDownload>,
     /// The single download currently in flight (one at a time keeps the memory
@@ -500,6 +505,7 @@ impl SidecarClipboardBackend {
                 pending_image_format: None,
                 queued_image_format: None,
                 download_dir,
+                file_streams: true,
                 download_queue: VecDeque::new(),
                 active_download: None,
                 next_stream_id: 0,
@@ -646,6 +652,22 @@ impl SidecarClipboardBackend {
                 request_id,
                 message,
             });
+        }
+    }
+
+    /// Abandon the in-flight file transfer after its `FileContentsRequest`
+    /// could not be sent (#4004): a host fetch is told it failed, an eager
+    /// download is dropped along with the rest of its queue. The session itself
+    /// carries on — one unfetchable file must not end it.
+    pub fn abort_active_download(&mut self, message: &str) {
+        self.download_queue.clear();
+        match self.active_download.take() {
+            Some(ActiveDownload {
+                dest: TransferDest::Host { request_id },
+                ..
+            }) => self.finish_host_fetch(request_id, Err(message.to_string())),
+            Some(_) => warn!(%message, "abandoned a clipboard file download"),
+            None => {}
         }
     }
 
@@ -1363,6 +1385,11 @@ impl CliprdrBackend for SidecarClipboardBackend {
         capabilities: ClipboardGeneralCapabilityFlags,
     ) {
         trace!(?capabilities, "cliprdr negotiated capabilities");
+        self.file_streams =
+            capabilities.contains(ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED);
+        if self.uses_file_clipboard() && !self.file_streams {
+            warn!("server declined CLIPRDR file streams; clipboard files are unavailable");
+        }
     }
 
     fn on_remote_copy(&mut self, available_formats: &[ClipboardFormat]) {
@@ -1372,7 +1399,7 @@ impl CliprdrBackend for SidecarClipboardBackend {
         // A remote file copy takes precedence over text when file receiving is
         // enabled: initiate a paste for the file list, which the channel routes
         // to `on_remote_file_list` (not `on_format_data_response`).
-        if self.download_dir.is_some() {
+        if self.download_dir.is_some() && self.file_streams {
             if let Some(format) = file_list_format(available_formats) {
                 // Reset any leftover download state from a previous copy.
                 self.download_queue.clear();
@@ -1824,6 +1851,60 @@ mod tests {
         );
         // A file copy must not be mistaken for a text paste.
         assert!(backend.pending_paste_format.is_none());
+    }
+
+    #[test]
+    fn remote_file_copy_is_not_offered_when_the_server_declines_file_streams() {
+        // xrdp drops CB_STREAM_FILECLIP_ENABLED for a session once any client
+        // without it attached; its file list could never be fetched (#4004).
+        let (mut backend, rx, _dir) = backend_with_download();
+        backend.on_process_negotiated_capabilities(
+            ClipboardGeneralCapabilityFlags::USE_LONG_FORMAT_NAMES,
+        );
+        backend.on_remote_copy(&[file_format(0xC0FE), text(ClipboardFormatId::CF_UNICODETEXT)]);
+        // The copy is treated as the text it also offers, not as files.
+        assert_eq!(
+            rx.try_recv(),
+            Ok(ClipboardEvent::InitiatePaste(
+                ClipboardFormatId::CF_UNICODETEXT
+            ))
+        );
+        // With file streams negotiated, the same copy is a file paste again.
+        backend.on_process_negotiated_capabilities(
+            ClipboardGeneralCapabilityFlags::USE_LONG_FORMAT_NAMES
+                | ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED,
+        );
+        backend.on_remote_copy(&[file_format(0xC0FE)]);
+        assert_eq!(
+            rx.try_recv(),
+            Ok(ClipboardEvent::InitiatePaste(ClipboardFormatId::new(
+                0xC0FE
+            )))
+        );
+    }
+
+    #[test]
+    fn aborting_a_host_fetch_reports_it_failed_and_frees_the_slot() {
+        let (mut backend, rx, _dir) = backend_delayed();
+        backend.on_remote_file_list(&[FileDescriptor::new("a.txt").with_file_size(3)], None);
+        let _surfaced = next_event(&rx);
+        backend.fetch_remote_file(7, 0);
+        let _request = next_request(&rx);
+
+        backend.abort_active_download("request failed");
+        match next_event(&rx) {
+            ClipboardEvent::RemoteFileError {
+                request_id,
+                message,
+            } => {
+                assert_eq!(request_id, 7);
+                assert_eq!(message, "request failed");
+            }
+            other => panic!("expected RemoteFileError, got {other:?}"),
+        }
+        // The slot is free: the next fetch is accepted, not refused as busy.
+        backend.fetch_remote_file(8, 0);
+        let _request = next_request(&rx);
     }
 
     #[test]

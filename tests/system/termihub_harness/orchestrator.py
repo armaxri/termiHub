@@ -29,6 +29,7 @@ from typing import Callable, IO, Optional, Sequence
 import psutil
 
 from . import coverage
+from . import portable as portable_staging
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -281,24 +282,82 @@ class AppInstance:
     """
 
     def __init__(
-        self, config_dir: Optional[Path] = None, *, echo_logs: bool = True
+        self,
+        config_dir: Optional[Path] = None,
+        *,
+        echo_logs: bool = True,
+        portable: Optional[str] = None,
     ) -> None:
-        self._binary = app_binary_path()
-        self._owns_config_dir = config_dir is None
-        self._config_dir = config_dir or Path(tempfile.mkdtemp(prefix="termihub-app-config-"))
+        """Create an unstarted instance.
+
+        ``portable`` selects the **portable launch mode** (#3691): ``"marker"``
+        or ``"data"`` (see :mod:`termihub_harness.portable`). The built app is
+        copied into a fresh portable root with that trigger, and it is launched
+        *without* ``TERMIHUB_CONFIG_DIR``, so the app itself must resolve its
+        config to ``<root>/data/``. :attr:`config_dir` is then that ``data/``
+        dir. The captured log and the WebView2 folder live in a separate
+        scratch dir, so they never pollute the portable data.
+        """
+        binary = app_binary_path()
+        self._portable = portable
+        self._portable_root: Optional[Path] = None
+        self._profile_home: Optional[Path] = None
+        if portable is not None:
+            if config_dir is not None:
+                raise ValueError("a portable launch owns its config dir; omit config_dir")
+            self._portable_root = Path(tempfile.mkdtemp(prefix="termihub-portable-"))
+            self._binary = portable_staging.stage_portable_app(
+                binary, self._portable_root, portable
+            )
+            self._config_dir = portable_staging.data_dir(self._portable_root)
+            self._scratch_dir = Path(tempfile.mkdtemp(prefix="termihub-portable-harness-"))
+            self._profile_home = self._scratch_dir / "profile-home"
+            self._owns_config_dir = True
+        else:
+            self._binary = binary
+            self._owns_config_dir = config_dir is None
+            self._config_dir = config_dir or Path(
+                tempfile.mkdtemp(prefix="termihub-app-config-")
+            )
+            self._scratch_dir = self._config_dir
         #: Per-instance WebView2 user-data folder (Windows), pinned via env so
         #: teardown can reap only this instance's msedgewebview2.exe children.
-        self._webview2_data_dir = self._config_dir / "webview2-user-data"
+        self._webview2_data_dir = self._scratch_dir / "webview2-user-data"
         self._process: Optional[subprocess.Popen] = None
         self._bridge_port: Optional[int] = None
         #: Captured app stdout/stderr — copied into the failure-artifact bundle.
-        self._log_path = self._config_dir / "app.log"
+        self._log_path = self._scratch_dir / "app.log"
         self._log_file: Optional[IO[str]] = None
         self._pump: Optional[threading.Thread] = None
         #: Echo the app's merged output to the console (helpful under ``-s``).
         #: Disabled for guided-manual runs so the operator prompts stay readable —
         #: the log is always in :attr:`log_path` regardless (#957).
         self._echo_logs = echo_logs
+
+    @property
+    def portable_root(self) -> Optional[Path]:
+        """The portable root (staged app + trigger), or ``None`` if not portable."""
+        return self._portable_root
+
+    def launch_env(self) -> dict[str, str]:
+        """The environment the app is launched with (minus the bridge port).
+
+        A normal launch pins ``TERMIHUB_CONFIG_DIR``. A portable launch removes
+        it and redirects the installed-mode profile where the OS allows (see
+        :func:`termihub_harness.portable.profile_env`).
+        """
+        env = dict(os.environ)
+        if self._portable is None:
+            env["TERMIHUB_CONFIG_DIR"] = str(self._config_dir)
+        else:
+            env.pop("TERMIHUB_CONFIG_DIR", None)
+            if self._profile_home is not None:
+                env.update(portable_staging.profile_env(self._profile_home))
+        return env
+
+    def profile_config_dir(self) -> Optional[Path]:
+        """The installed-mode config dir this launch would use if not portable."""
+        return portable_staging.profile_config_dir(self.launch_env())
 
     @property
     def config_dir(self) -> Path:
@@ -308,6 +367,62 @@ class AppInstance:
     def binary(self) -> Path:
         """Path of the app binary this instance launches."""
         return self._binary
+
+    @property
+    def spawn_endpoint(self) -> str:
+        """This instance's private ``termiHub spawn`` IPC rendezvous (#4010).
+
+        The app's spawn rendezvous is per *user* by default, so a test instance
+        would otherwise share it with the developer's own running termiHub (and
+        with any sibling test instance). The harness pins it per instance via
+        ``TERMIHUB_SPAWN_ENDPOINT`` — a socket inside the private config dir on
+        Unix, a pipe named after that dir on Windows — and hands the same value to
+        :meth:`run_cli`, so a test's ``termiHub spawn`` reaches exactly this app.
+        Stable across :meth:`restart` (same config dir).
+        """
+        if platform.system() == "Windows":
+            return rf"\\.\pipe\termihub-spawn-test-{self._config_dir.name}"
+        return str(self._config_dir / "spawn.sock")
+
+    def cli_env(self) -> dict[str, str]:
+        """Environment for a one-shot CLI invocation of this instance's binary.
+
+        Shares the instance's config dir and spawn rendezvous, and deliberately
+        omits ``TERMIHUB_TEST_BRIDGE_PORT``: a CLI process that *does* fall through
+        to a full launch must never dial the bridge and impersonate the app.
+        """
+        env = dict(os.environ)
+        env.pop("TERMIHUB_TEST_BRIDGE_PORT", None)
+        env["TERMIHUB_CONFIG_DIR"] = str(self._config_dir)
+        env["TERMIHUB_SPAWN_ENDPOINT"] = self.spawn_endpoint
+        return env
+
+    def run_cli(
+        self, args: Sequence[str], *, timeout: float = 30.0
+    ) -> subprocess.CompletedProcess:
+        """Run ``<app binary> <args>`` as a short-lived CLI process and wait.
+
+        Used for the pre-init subcommands — ``spawn …`` (forwarded over the IPC
+        rendezvous to the running instance, then exits 0) and
+        ``install-/uninstall-shell-integration``. A ``spawn`` that finds no
+        running instance launches a whole app instead of exiting, so the
+        ``timeout`` is the "forward failed" signal: the process tree is killed
+        and :class:`subprocess.TimeoutExpired` propagates to fail the test.
+        """
+        process = subprocess.Popen(
+            [str(self._binary), *args],
+            env=self.cli_env(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _terminate_tree(process)
+            process.communicate()
+            raise
+        return subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
 
     @property
     def log_path(self) -> Path:
@@ -360,9 +475,10 @@ class AppInstance:
         if self._process is not None and self._process.poll() is None:
             raise RuntimeError("app is already running")
         self._bridge_port = bridge_port
-        env = dict(os.environ)
+        env = self.launch_env()
         env["TERMIHUB_TEST_BRIDGE_PORT"] = str(bridge_port)
-        env["TERMIHUB_CONFIG_DIR"] = str(self._config_dir)
+        # A private spawn rendezvous per instance (#4010), see `spawn_endpoint`.
+        env["TERMIHUB_SPAWN_ENDPOINT"] = self.spawn_endpoint
         # Pin WebView2 to a per-instance user-data folder so teardown can reap
         # only this instance's msedgewebview2.exe hosts (issue #1022). The app
         # (Tauri) sets no data_directory, so WebView2 honours this env var.
@@ -482,15 +598,40 @@ class AppInstance:
     def pid(self) -> Optional[int]:
         return self._process.pid if self._process is not None else None
 
+    def kill_hard(self) -> None:
+        """SIGKILL the app tree without a graceful terminate, then tidy up.
+
+        Simulates a crash (``kill -9``): the app gets no chance to run its exit
+        path, so files such as the portable ``data/.termihub.lock`` stay on disk.
+        """
+        process = self._process
+        if process is not None and process.poll() is None:
+            try:
+                parent = psutil.Process(process.pid)
+                victims = parent.children(recursive=True) + [parent]
+            except psutil.NoSuchProcess:
+                victims = []
+            for proc in victims:
+                try:
+                    proc.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            psutil.wait_procs(victims, timeout=5.0)
+        self.stop()
+
     def cleanup(self) -> None:
         """Stop the app and remove its config dir (if this instance created it).
 
         The explicit counterpart to the context manager, for callers that manage
-        the instance by hand (e.g. a class-scoped pytest fixture).
+        the instance by hand (e.g. a class-scoped pytest fixture). A portable
+        instance also removes its portable root and scratch dir.
         """
         self.stop()
         if self._owns_config_dir:
             shutil.rmtree(self._config_dir, ignore_errors=True)
+        if self._portable_root is not None:
+            shutil.rmtree(self._portable_root, ignore_errors=True)
+            shutil.rmtree(self._scratch_dir, ignore_errors=True)
 
     def __enter__(self) -> "AppInstance":
         return self

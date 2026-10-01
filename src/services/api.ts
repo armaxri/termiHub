@@ -16,6 +16,7 @@ import type {
   ClipboardImageStatus,
   MonitorRect,
   RemoteClipboardFile,
+  RemoteDesktopCertPromptPayload,
   RemoteDesktopInput,
 } from "@/types/remoteDesktop";
 import type { RunLocation } from "@/types/tunnel";
@@ -869,6 +870,23 @@ export async function remoteDesktopRemoteClipboardFiles(
  */
 export async function remoteDesktopBindClipboardFiles(sessionId: SessionId): Promise<number> {
   return await invoke<number>("remote_desktop_bind_clipboard_files", { sessionId });
+}
+
+/**
+ * The certificate-trust prompt a session is waiting on, or `null` (#4004).
+ *
+ * The `remote-desktop-cert-prompt` event can fire before a freshly connected
+ * tab subscribes to it, so the tab fetches any still-pending prompt once it
+ * listens — otherwise the session would wait on a verdict nobody is asked for.
+ */
+export async function remoteDesktopPendingCertPrompt(
+  sessionId: SessionId
+): Promise<RemoteDesktopCertPromptPayload | null> {
+  return (
+    (await invoke<RemoteDesktopCertPromptPayload | null>("remote_desktop_pending_cert_prompt", {
+      sessionId,
+    })) ?? null
+  );
 }
 
 /**

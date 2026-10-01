@@ -91,7 +91,17 @@ pub struct Ssh {
     /// hands out an owned clone that keeps the cached exec session alive across
     /// process-table refreshes.
     process_manager: Option<Arc<ExecProcessManager>>,
+    /// Files-only state (#4078): flipped to `true` when the host refused the
+    /// shell but SFTP works, so the session stays up for the file browser and
+    /// editor. Observed through [`files_only_watch`](ConnectionType::files_only_watch).
+    files_only: Arc<tokio::sync::watch::Sender<bool>>,
 }
+
+/// Message for terminal input on a files-only session (#4078).
+const SHELL_UNAVAILABLE: &str = "This host doesn't allow a shell";
+
+/// Upper bound on the SFTP probe that decides files-only after a refused shell.
+const FILES_ONLY_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 type WriteFn = Arc<dyn Fn(&[u8]) -> Result<(), SessionError> + Send + Sync>;
 type ResizeFn = Arc<dyn Fn(u16, u16) -> Result<(), SessionError> + Send + Sync>;
@@ -153,7 +163,13 @@ impl Ssh {
             monitoring_provider: None,
             file_browser_provider: None,
             process_manager: None,
+            files_only: Arc::new(tokio::sync::watch::channel(false).0),
         }
+    }
+
+    /// Whether the session is files-only (#4078): no shell, SFTP still works.
+    fn is_files_only(&self) -> bool {
+        *self.files_only.borrow()
     }
 }
 
@@ -732,11 +748,16 @@ impl ConnectionType for Ssh {
             "Connecting SSH session"
         );
 
+        self.files_only.send_replace(false);
         let alive = Arc::new(AtomicBool::new(true));
         let handle = self
             .connector
             .open_shell(&config, alive.clone(), cancel.as_ref())
             .await?;
+
+        // Created before the reader thread so a refused shell can probe SFTP
+        // through the same provider the file browser then uses (#4078).
+        let file_browser = Arc::new(SftpFileBrowser::new(config.clone()));
 
         // Inject OSC 7 PROMPT_COMMAND hook for CWD tracking when enabled.
         if shell_integration {
@@ -763,6 +784,10 @@ impl ConnectionType for Ssh {
         let mut reader = handle.reader;
         let alive_clone = alive.clone();
         let output_tx_clone = self.output_tx.clone();
+        let shell_refused = handle.shell_refused.clone();
+        let files_only = self.files_only.clone();
+        let probe_browser = file_browser.clone();
+        let runtime = tokio::runtime::Handle::try_current().ok();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             loop {
@@ -792,19 +817,26 @@ impl ConnectionType for Ssh {
                 }
             }
             alive_clone.store(false, Ordering::SeqCst);
-            // Drop the sender so run_output_reader sees EOF and emits terminal-exit.
-            // Without this the session manager's output receiver would wait forever,
-            // because the Arc<Mutex<Option<Sender>>> in output_tx keeps the sender alive
-            // even after the reader thread exits.  (Mirrors the local_shell.rs pattern.)
-            if let Ok(mut guard) = output_tx_clone.lock() {
-                *guard = None;
+            // A refused shell (#4078): keep the output sender (so the session is
+            // not ended) while SFTP is probed; files-only on success, the normal
+            // end otherwise.
+            if shell_refused.load(Ordering::SeqCst) {
+                if let Some(runtime) = runtime {
+                    runtime.spawn(settle_refused_shell(
+                        probe_browser,
+                        files_only,
+                        output_tx_clone,
+                    ));
+                    return;
+                }
             }
+            end_output(&output_tx_clone);
         });
 
         // Create monitoring, file browser, and process-manager providers.
         self.monitoring_provider = Some(Arc::new(SshMonitoringProvider::new(config.clone())));
         self.process_manager = Some(Arc::new(process::ssh_process_manager(config.clone())));
-        self.file_browser_provider = Some(Arc::new(SftpFileBrowser::new(config)));
+        self.file_browser_provider = Some(file_browser);
 
         self.state = Some(ConnectedState {
             write: handle.write,
@@ -827,6 +859,7 @@ impl ConnectionType for Ssh {
         self.monitoring_provider = None;
         self.file_browser_provider = None;
         self.process_manager = None;
+        self.files_only.send_replace(false);
 
         if let Some(mut state) = self.state.take() {
             // Mark the graceful path so the `Drop` guard on `state` (which runs
@@ -846,7 +879,7 @@ impl ConnectionType for Ssh {
     fn is_connected(&self) -> bool {
         self.state
             .as_ref()
-            .is_some_and(|s| s.alive.load(Ordering::SeqCst))
+            .is_some_and(|s| s.alive.load(Ordering::SeqCst) || self.is_files_only())
     }
 
     fn write(&self, data: &[u8]) -> Result<(), SessionError> {
@@ -854,6 +887,13 @@ impl ConnectionType for Ssh {
             .state
             .as_ref()
             .ok_or_else(|| SessionError::NotRunning("Not connected".to_string()))?;
+        if self.is_files_only() {
+            // No shell to type into. The tab shows the "no shell" panel, so the
+            // keystrokes that still reach the hidden terminal are dropped rather
+            // than failing every one of them (#4078).
+            debug!("{SHELL_UNAVAILABLE}; dropping {} input bytes", data.len());
+            return Ok(());
+        }
         (state.write)(data)
     }
 
@@ -862,6 +902,10 @@ impl ConnectionType for Ssh {
             .state
             .as_ref()
             .ok_or_else(|| SessionError::NotRunning("Not connected".to_string()))?;
+        if self.is_files_only() {
+            // No PTY to resize; the terminal view is hidden behind the panel.
+            return Ok(());
+        }
         (state.resize)(cols, rows)
     }
 
@@ -902,6 +946,56 @@ impl ConnectionType for Ssh {
             .as_ref()
             .map(|p| p.clone() as Arc<dyn ProcessManager + Send + Sync>)
     }
+
+    fn files_only_watch(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+        Some(self.files_only.subscribe())
+    }
+}
+
+/// Drop the output sender so the session manager's pump sees EOF and ends the
+/// session. Without this its receiver would wait forever, because the
+/// `Arc<Mutex<Option<Sender>>>` keeps the sender alive after the reader thread
+/// exits (mirrors the `local_shell.rs` pattern).
+fn end_output(output_tx: &Mutex<Option<OutputSender>>) {
+    if let Ok(mut guard) = output_tx.lock() {
+        *guard = None;
+    }
+}
+
+/// Settle a session whose shell the host refused (#4078): probe SFTP and, when
+/// it works, mark the session files-only and keep it up (the output sender stays
+/// in place, so the session is not ended); otherwise end it as before.
+async fn settle_refused_shell<B: SftpProbe>(
+    browser: Arc<B>,
+    files_only: Arc<tokio::sync::watch::Sender<bool>>,
+    output_tx: Arc<Mutex<Option<OutputSender>>>,
+) {
+    match tokio::time::timeout(FILES_ONLY_PROBE_TIMEOUT, browser.probe()).await {
+        Ok(Ok(())) => {
+            info!("SSH shell refused but SFTP works; keeping the session files-only");
+            files_only.send_replace(true);
+        }
+        Ok(Err(e)) => {
+            info!("SSH shell refused and SFTP is unavailable ({e}); ending the session");
+            end_output(&output_tx);
+        }
+        Err(_) => {
+            info!("SSH shell refused and the SFTP probe timed out; ending the session");
+            end_output(&output_tx);
+        }
+    }
+}
+
+/// The SFTP reachability check behind files-only detection (#4078). A trait so
+/// the settle logic is unit-testable without a server.
+trait SftpProbe: Send + Sync + 'static {
+    fn probe(&self) -> impl std::future::Future<Output = Result<(), String>> + Send;
+}
+
+impl SftpProbe for SftpFileBrowser {
+    async fn probe(&self) -> Result<(), String> {
+        self.connect().await.map_err(|e| e.to_string())
+    }
 }
 
 #[cfg(test)]
@@ -920,6 +1014,9 @@ mod tests {
         /// the output channel fills and the reader parks in `blocking_send` —
         /// used by the CONC-010 lock-release regression test.
         flood: bool,
+        /// When set, the shell ends at once flagged as refused by the host
+        /// (#4078), as an SFTP-only host's shell does.
+        refuse: bool,
         write_log: Arc<Mutex<Vec<Vec<u8>>>>,
         resize_log: Arc<Mutex<Vec<(u16, u16)>>>,
     }
@@ -929,6 +1026,7 @@ mod tests {
             Self {
                 should_fail: false,
                 flood: false,
+                refuse: false,
                 write_log: Arc::new(Mutex::new(Vec::new())),
                 resize_log: Arc::new(Mutex::new(Vec::new())),
             }
@@ -938,6 +1036,7 @@ mod tests {
             Self {
                 should_fail: true,
                 flood: false,
+                refuse: false,
                 write_log: Arc::new(Mutex::new(Vec::new())),
                 resize_log: Arc::new(Mutex::new(Vec::new())),
             }
@@ -948,8 +1047,18 @@ mod tests {
             Self {
                 should_fail: false,
                 flood: true,
+                refuse: false,
                 write_log: Arc::new(Mutex::new(Vec::new())),
                 resize_log: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        /// The host refuses the shell (#4078): the reader returns EOF at once
+        /// with the refusal flag already set.
+        fn refusing() -> Self {
+            Self {
+                refuse: true,
+                ..Self::new()
             }
         }
     }
@@ -978,6 +1087,10 @@ mod tests {
             let resize_log = self.resize_log.clone();
             let alive_for_reader = alive.clone();
             let alive_for_close = alive.clone();
+            let shell_refused = Arc::new(AtomicBool::new(self.refuse));
+            if self.refuse {
+                alive.store(false, Ordering::SeqCst);
+            }
             let reader: Box<dyn Read + Send> = if self.flood {
                 Box::new(FloodingReader {
                     alive: alive_for_reader,
@@ -1004,6 +1117,7 @@ mod tests {
                     Ok(())
                 }),
                 extensions: Vec::new(),
+                shell_refused,
             })
         }
     }
@@ -1862,6 +1976,161 @@ mod tests {
         ssh.connect(mock_settings()).await.unwrap();
         assert!(ssh.is_connected());
         ssh.disconnect().await.unwrap();
+    }
+
+    // ── Files-only on a refused shell (#4078) ────────────────────────
+
+    /// A probe double for [`settle_refused_shell`].
+    struct FakeProbe(Result<(), String>, Duration);
+
+    impl SftpProbe for FakeProbe {
+        async fn probe(&self) -> Result<(), String> {
+            tokio::time::sleep(self.1).await;
+            self.0.clone()
+        }
+    }
+
+    fn live_output_tx() -> (Arc<Mutex<Option<OutputSender>>>, OutputReceiver) {
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        (Arc::new(Mutex::new(Some(tx))), rx)
+    }
+
+    #[tokio::test]
+    async fn refused_shell_with_working_sftp_becomes_files_only_and_stays_up() {
+        let files_only = Arc::new(tokio::sync::watch::channel(false).0);
+        let watch = files_only.subscribe();
+        let (output_tx, _rx) = live_output_tx();
+        settle_refused_shell(
+            Arc::new(FakeProbe(Ok(()), Duration::ZERO)),
+            files_only.clone(),
+            output_tx.clone(),
+        )
+        .await;
+        assert!(
+            *watch.borrow(),
+            "a working SFTP probe must mark the session files-only"
+        );
+        assert!(
+            output_tx.lock().unwrap().is_some(),
+            "the output sender must stay so the session is not ended"
+        );
+    }
+
+    #[tokio::test]
+    async fn refused_shell_without_sftp_ends_the_session() {
+        let files_only = Arc::new(tokio::sync::watch::channel(false).0);
+        let (output_tx, mut rx) = live_output_tx();
+        settle_refused_shell(
+            Arc::new(FakeProbe(
+                Err("subsystem request failed".into()),
+                Duration::ZERO,
+            )),
+            files_only.clone(),
+            output_tx.clone(),
+        )
+        .await;
+        assert!(!*files_only.borrow(), "no SFTP means not files-only");
+        assert!(output_tx.lock().unwrap().is_none(), "the output must end");
+        assert!(rx.recv().await.is_none(), "the session pump must see EOF");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn refused_shell_with_a_hung_sftp_probe_ends_the_session() {
+        let files_only = Arc::new(tokio::sync::watch::channel(false).0);
+        let (output_tx, _rx) = live_output_tx();
+        settle_refused_shell(
+            Arc::new(FakeProbe(Ok(()), FILES_ONLY_PROBE_TIMEOUT * 2)),
+            files_only.clone(),
+            output_tx.clone(),
+        )
+        .await;
+        assert!(
+            !*files_only.borrow(),
+            "a hung probe must not leave a files-only session"
+        );
+        assert!(output_tx.lock().unwrap().is_none(), "the output must end");
+    }
+
+    /// A refused shell whose SFTP probe cannot reach the host ends the session
+    /// like any other exit; the watch never reports files-only.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn refused_shell_on_unreachable_sftp_ends_output() {
+        let mut ssh = Ssh::with_connector(Box::new(MockSshConnector::refusing()));
+        let settings = serde_json::json!({
+            "host": "127.0.0.1",
+            "port": 1,
+            "username": "admin",
+            "authMethod": "password",
+            "shellIntegration": false,
+            "connectTimeoutSecs": 2,
+        });
+        let watch = ssh
+            .files_only_watch()
+            .expect("ssh exposes a files-only watch");
+        ssh.connect(settings).await.unwrap();
+        let mut rx = ssh.subscribe_output();
+        let ended =
+            tokio::time::timeout(FILES_ONLY_PROBE_TIMEOUT + Duration::from_secs(5), async {
+                while rx.recv().await.is_some() {}
+            })
+            .await;
+        assert!(
+            ended.is_ok(),
+            "the output must end when SFTP is unreachable"
+        );
+        assert!(!*watch.borrow());
+        assert!(!ssh.is_connected());
+        ssh.disconnect().await.unwrap();
+    }
+
+    /// A shell that runs and is exited (no refusal flag) ends the session as
+    /// before and never reports files-only.
+    #[tokio::test]
+    async fn normal_shell_exit_is_not_files_only() {
+        let mut ssh = Ssh::with_connector(Box::new(MockSshConnector::new()));
+        let watch = ssh.files_only_watch().unwrap();
+        ssh.connect(mock_settings()).await.unwrap();
+        let mut rx = ssh.subscribe_output();
+        // The user's `exit`: the channel closes, the reader sees EOF.
+        ssh.state
+            .as_ref()
+            .unwrap()
+            .alive
+            .store(false, Ordering::SeqCst);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while rx.recv().await.is_some() {}
+        })
+        .await
+        .expect("the output must end on a normal exit");
+        assert!(!*watch.borrow());
+        ssh.disconnect().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn files_only_session_drops_input_and_ignores_resize() {
+        let connector = MockSshConnector::new();
+        let connector_writes = connector.write_log.clone();
+        let mut ssh = Ssh::with_connector(Box::new(connector));
+        ssh.connect(mock_settings()).await.unwrap();
+        ssh.files_only.send_replace(true);
+        assert!(
+            ssh.is_connected(),
+            "a files-only session is still connected"
+        );
+        ssh.write(b"ls\n")
+            .expect("input to a files-only session is dropped, not an error");
+        assert!(
+            connector_writes
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|w| w != b"ls\n"),
+            "no input reaches the refused shell channel"
+        );
+        ssh.resize(80, 24)
+            .expect("resize is a no-op on a files-only session");
+        ssh.disconnect().await.unwrap();
+        assert!(!*ssh.files_only.borrow(), "disconnect clears files-only");
     }
 
     /// Regression for CONC-010. The reader thread must NOT hold the `output_tx`

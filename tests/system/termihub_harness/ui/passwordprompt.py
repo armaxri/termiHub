@@ -113,3 +113,70 @@ class PasswordPromptUi(HarnessMixin):
     def cancel_password_prompt(self) -> None:
         """Dismiss the password prompt without connecting."""
         self.driver.click("password-prompt-cancel")
+
+    # ── SSH keyboard-interactive (OTP / 2FA) dialog (#3371, #4005) ──────────────
+    #: The global "SSH Authentication" dialog's controls
+    #: (``SshKeyboardInteractivePrompt``). One ``kbd-interactive-input-<i>`` per
+    #: server prompt, labelled (``aria-label``) by the prompt text.
+    KBD_INTERACTIVE_TARGET = "kbd-interactive-target"
+    KBD_INTERACTIVE_VIA = "kbd-interactive-via"
+    KBD_INTERACTIVE_SUBMIT = "kbd-interactive-submit"
+    KBD_INTERACTIVE_CANCEL = "kbd-interactive-cancel"
+    KBD_INTERACTIVE_INPUT_PREFIX = "kbd-interactive-input-"
+
+    def kbd_interactive_prompt_open(self) -> bool:
+        """Whether the keyboard-interactive dialog is showing a prompt."""
+        return self.driver.exists(f"{self.KBD_INTERACTIVE_INPUT_PREFIX}0")
+
+    def wait_kbd_interactive_prompt(
+        self, *, accept_host_keys: bool = True, timeout: float = 30.0
+    ) -> dict:
+        """Wait for the keyboard-interactive dialog; return what it shows.
+
+        Every SSH connect path (terminal, Test Connection, a jump-host hop, a
+        remote-agent transport) can raise it mid-handshake. A fresh test app also
+        raises the host-key trust prompt (#1959) *before* auth on a host it has
+        not seen, so with ``accept_host_keys`` any such prompt met while waiting is
+        accepted ("Accept for host") — the KI round only starts after it.
+
+        Returns ``{"target": <user@host:port line>, "labels": [<prompt labels>]}``.
+        """
+
+        def shown():
+            if accept_host_keys and self.driver.exists("ssh-hostkey-prompt"):
+                self.driver.click("ssh-hostkey-accept-remember")
+                return None
+            if not self.kbd_interactive_prompt_open():
+                return None
+            labels = []
+            index = 0
+            while self.driver.exists(f"{self.KBD_INTERACTIVE_INPUT_PREFIX}{index}"):
+                labels.append(
+                    self.driver.get_attribute(
+                        f"{self.KBD_INTERACTIVE_INPUT_PREFIX}{index}", "aria-label"
+                    )
+                    or ""
+                )
+                index += 1
+            return {"target": self.driver.get_text(self.KBD_INTERACTIVE_TARGET), "labels": labels}
+
+        return self.wait(shown, timeout=timeout, what="the SSH keyboard-interactive dialog")
+
+    def answer_kbd_interactive_prompt(self, *answers: str) -> None:
+        """Type one answer per prompt field and click Continue.
+
+        Waits for the dialog to close — or to move on to the next queued round,
+        whose fields start empty — so a caller never re-answers the same round.
+        """
+        for index, answer in enumerate(answers):
+            self.driver.type(f"{self.KBD_INTERACTIVE_INPUT_PREFIX}{index}", answer)
+        self.driver.click(self.KBD_INTERACTIVE_SUBMIT)
+        self.wait(
+            lambda: not self.driver.exists(self.KBD_INTERACTIVE_SUBMIT)
+            or not self.driver.get_value(f"{self.KBD_INTERACTIVE_INPUT_PREFIX}0"),
+            what="the keyboard-interactive answer to be accepted",
+        )
+
+    def cancel_kbd_interactive_prompt(self) -> None:
+        """Dismiss the keyboard-interactive dialog (answers the round with null)."""
+        self.driver.click(self.KBD_INTERACTIVE_CANCEL)

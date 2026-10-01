@@ -76,6 +76,9 @@ ALLOWLIST=(
   # Shell-integration CLI smoke (#4010): the Linux half; Windows registration
   # (HKCU Explorer keys) needs PowerShell, so its twin is a .ps1, not a .cmd.
   "scripts/internal/shell-integration-cli-smoke.sh" # Linux CI smoke (-> .ps1 on Windows)
+  # Release app-lifecycle smoke (#4011): the Linux/macOS half; the Windows leg
+  # drives the installed app via PowerShell, so its twin is a .ps1, not a .cmd.
+  "scripts/internal/release-smoke-app-lifecycle.sh" # release CI smoke (-> .ps1 on Windows)
 )
 
 in_allowlist() {

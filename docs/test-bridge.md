@@ -212,37 +212,39 @@ unmount.
 
 ## Command vocabulary
 
-| Action                | Purpose                                                        |
-| --------------------- | -------------------------------------------------------------- |
-| `click`               | Press the element (full pointer sequence, so Radix menus open) |
-| `doubleClick`         | Double-click to "activate" (open connection / dir / file)      |
-| `type`                | Set an input/textarea value (native setter + `input` event)    |
-| `select`              | Choose a native `<select>` option (native setter + `change`)   |
-| `contextMenu`         | Open an element's right-click menu (`contextmenu` event)       |
-| `resizeWindow`        | Resize the app window (Tauri `setSize` → xterm fit → PTY size) |
-| `pressKey`            | Dispatch a key + optional modifiers (`Ctrl+S`, `ArrowDown`)    |
-| `editorCursor`        | Move the file editor's caret via Monaco's cursor command API   |
-| `terminalInput`       | Send a command into a terminal **session** (see below)         |
-| `scrollTerminal`      | Scroll a terminal's viewport by lines / to the bottom          |
-| `drag`                | Drag an element by a pixel delta (resize handles)              |
-| `dragTo`              | Drag one element onto another (pointer-based, e.g. @dnd-kit)   |
-| `exists`              | Whether an element is present                                  |
-| `getText`             | Read an element's visible text                                 |
-| `getAttribute`        | Read an element's markup attribute                             |
-| `getValue`            | Read the live `value` of an `<input>`/`<textarea>`/`<select>`  |
-| `getComputedStyle`    | Read a _computed_ CSS property — incl. theme custom properties |
-| `readTerminal`        | Read a terminal's reconstructed logical-line text              |
-| `getTerminalViewport` | Read a terminal's `{ viewportY, baseY }` scroll position       |
-| `inspectTerminal`     | Read a terminal's OSC 133 marks and inline-image store         |
-| `sampleCanvas`        | Read RGBA pixels of a `<canvas>` (remote-desktop frames)       |
-| `getState`            | Read app store state, optionally by dot-path                   |
-| `screenshot`          | Capture a PNG of the rendered app as a data URL (see below)    |
-| `emitEvent`           | Inject a Tauri event to drive event-only UI (see below)        |
-| `severAgentTransport` | Test-only: sever a connected agent's transport (see below)     |
-| `closeWindow`         | Close this window through the OS close path (see below)        |
-| `listWindows`         | Read the backend window registry (`[{ label, tabCount? }]`)    |
-| `readCoverage`        | Read a chunk of `window.__coverage__` (coverage builds only)   |
-| `exitApp`             | Test-only: quit the app normally (coverage profiles, below)    |
+| Action                     | Purpose                                                        |
+| -------------------------- | -------------------------------------------------------------- |
+| `click`                    | Press the element (full pointer sequence, so Radix menus open) |
+| `doubleClick`              | Double-click to "activate" (open connection / dir / file)      |
+| `type`                     | Set an input/textarea value (native setter + `input` event)    |
+| `select`                   | Choose a native `<select>` option (native setter + `change`)   |
+| `contextMenu`              | Open an element's right-click menu (`contextmenu` event)       |
+| `resizeWindow`             | Resize the app window (Tauri `setSize` → xterm fit → PTY size) |
+| `pressKey`                 | Dispatch a key + optional modifiers (`Ctrl+S`, `ArrowDown`)    |
+| `editorCursor`             | Move the file editor's caret via Monaco's cursor command API   |
+| `terminalInput`            | Send a command into a terminal **session** (see below)         |
+| `scrollTerminal`           | Scroll a terminal's viewport by lines / to the bottom          |
+| `drag`                     | Drag an element by a pixel delta (resize handles)              |
+| `dragTo`                   | Drag one element onto another (pointer-based, e.g. @dnd-kit)   |
+| `exists`                   | Whether an element is present                                  |
+| `getText`                  | Read an element's visible text                                 |
+| `getAttribute`             | Read an element's markup attribute                             |
+| `getValue`                 | Read the live `value` of an `<input>`/`<textarea>`/`<select>`  |
+| `getComputedStyle`         | Read a _computed_ CSS property — incl. theme custom properties |
+| `readTerminal`             | Read a terminal's reconstructed logical-line text              |
+| `getTerminalViewport`      | Read a terminal's `{ viewportY, baseY }` scroll position       |
+| `inspectTerminal`          | Read a terminal's OSC 133 marks and inline-image store         |
+| `measureTerminal`          | Read a terminal's real fit, cell size, renderer and thumb      |
+| `loseTerminalWebglContext` | Test-only: force a WebGL context loss (see below)              |
+| `sampleCanvas`             | Read RGBA pixels of a `<canvas>` (remote-desktop frames)       |
+| `getState`                 | Read app store state, optionally by dot-path                   |
+| `screenshot`               | Capture a PNG of the rendered app as a data URL (see below)    |
+| `emitEvent`                | Inject a Tauri event to drive event-only UI (see below)        |
+| `severAgentTransport`      | Test-only: sever a connected agent's transport (see below)     |
+| `closeWindow`              | Close this window through the OS close path (see below)        |
+| `listWindows`              | Read the backend window registry (`[{ label, tabCount? }]`)    |
+| `readCoverage`             | Read a chunk of `window.__coverage__` (coverage builds only)   |
+| `exitApp`                  | Test-only: quit the app normally (coverage profiles, below)    |
 
 Every command returns a structured `BridgeResponse` (`{ ok, action, value?,
 error? }`). Nothing throws across the bridge — failures are `ok: false` with an
@@ -347,6 +349,39 @@ Inline Images setting off, and `storageUsage` is above `0` once an image was
 stored. Either part is `null` when the tab has no tracker / image controller.
 It defaults to the active terminal tab and fails when no terminal is registered
 for the tab. Python: `driver.inspect_terminal(tab_id=None)`.
+
+### Render-path measurements (`measureTerminal`, `loseTerminalWebglContext`)
+
+jsdom has no layout engine and no canvas, so the measured and painted half of
+xterm — what `FitAddon.proposeDimensions()` proposes, the renderer's sub-pixel
+cell width, the WebGL canvas, the rows the DOM renderer paints, and the gutter
+scrollbar's thumb against a laid-out track — only exists in a real WebView.
+`{ action: "measureTerminal", tabId? }` reads all of it (#2988, read-only):
+
+```jsonc
+{
+  "grid": { "cols": 120, "rows": 40 }, // xterm (and PTY) size
+  "proposed": { "cols": 120, "rows": 40 }, // null when FitAddon cannot measure
+  "cell": { "width": 7.83, "height": 17 }, // renderer's CSS cell px
+  "container": { "width": 960, "height": 690 },
+  "renderer": "webgl", // or "dom"
+  "webglCanvas": { "width": 1880, "height": 1360 }, // null on the DOM renderer
+  "domRows": null, // painted row text on the DOM renderer
+  "scrollbar": { "trackHeight": 690, "thumbVisible": true, "thumbHeight": 98, "thumbTop": 592 },
+  "viewportY": 260,
+  "baseY": 260,
+}
+```
+
+`{ action: "loseTerminalWebglContext", tabId? }` loses the WebGL renderer's
+context through `WEBGL_lose_context` — the same `webglcontextlost` path a GPU
+driver reset takes — so the production fallback to the DOM renderer runs about
+three seconds later (xterm waits for a restore first). It answers `false` when
+the terminal has no live WebGL context. Both default to the active terminal tab
+and fail when no terminal is registered for it. Python:
+`driver.measure_terminal(tab_id=None)` and
+`driver.lose_terminal_webgl_context(tab_id=None)`; the suite is
+`tests/system/tests/test_xterm_render_paths.py`.
 
 ### Canvas pixels (`sampleCanvas`)
 
