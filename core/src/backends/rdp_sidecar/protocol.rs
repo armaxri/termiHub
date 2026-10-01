@@ -267,7 +267,11 @@ where
     }
     let mut body = vec![0u8; len as usize];
     reader.read_exact(&mut body).await?;
-    rmp_serde::from_slice(&body).map_err(|e| {
+    decode_body(&body)
+}
+
+fn decode_body<T: DeserializeOwned>(body: &[u8]) -> std::io::Result<T> {
+    rmp_serde::from_slice(body).map_err(|e| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!("decode failed: {e}"),
@@ -275,10 +279,73 @@ where
     })
 }
 
+/// Bytes pulled from the pipe per read by [`MessageReader`].
+const READ_CHUNK: usize = 16 * 1024;
+
+/// A cancel-safe framed reader for one direction of the IPC pipe.
+///
+/// [`read_message`] is **not** cancel-safe: it is two `read_exact` calls, so if
+/// its future is dropped mid-message (another `tokio::select!` branch won), the
+/// bytes it already consumed are lost and every later frame is misaligned — the
+/// next "length prefix" is message body, read as an absurd length (#4042).
+///
+/// `MessageReader` keeps partially-received frames in its own buffer, and only
+/// awaits [`AsyncReadExt::read`], which is cancel-safe. So
+/// [`next`](Self::next) can be a `select!` branch: dropping it loses nothing,
+/// and the next call resumes where the last one stopped.
+pub struct MessageReader<R> {
+    reader: R,
+    buf: Vec<u8>,
+    chunk: Box<[u8]>,
+}
+
+impl<R: AsyncRead + Unpin> MessageReader<R> {
+    /// Wrap `reader`. Nothing may read from `reader` directly afterwards: bytes
+    /// buffered here would be skipped.
+    pub fn new(reader: R) -> Self {
+        Self {
+            reader,
+            buf: Vec::new(),
+            chunk: vec![0u8; READ_CHUNK].into_boxed_slice(),
+        }
+    }
+
+    /// Read the next length-prefixed MessagePack frame, like [`read_message`]
+    /// (same errors), but cancel-safe.
+    pub async fn next<T: DeserializeOwned>(&mut self) -> std::io::Result<T> {
+        loop {
+            if let Some(len_bytes) = self.buf.get(..4) {
+                let len =
+                    u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]]);
+                if len > MAX_MESSAGE_BYTES {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("framed message length {len} exceeds MAX_MESSAGE_BYTES"),
+                    ));
+                }
+                let end = 4 + len as usize;
+                if self.buf.len() >= end {
+                    let msg = decode_body(&self.buf[4..end]);
+                    self.buf.drain(..end);
+                    return msg;
+                }
+            }
+            // The only await point. `read` is cancel-safe, and the received bytes
+            // are appended synchronously after it completes.
+            let n = self.reader.read(&mut self.chunk).await?;
+            if n == 0 {
+                return Err(std::io::ErrorKind::UnexpectedEof.into());
+            }
+            self.buf.extend_from_slice(&self.chunk[..n]);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::connection::{CursorShape, DirtyRect};
+    use std::time::Duration;
 
     /// Round-trip any message pair through the framed reader/writer over an
     /// in-memory duplex pipe — the loopback that stands in for the real stdio
@@ -562,6 +629,76 @@ mod tests {
         let err = read_message::<_, SidecarMessage>(&mut cursor)
             .await
             .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    /// Encode `msg` as one length-prefixed wire frame.
+    async fn frame(msg: &HostMessage) -> Vec<u8> {
+        let mut out = Vec::new();
+        write_message(&mut out, msg).await.unwrap();
+        out
+    }
+
+    #[tokio::test]
+    async fn message_reader_reads_back_to_back_and_split_frames() {
+        let a = HostMessage::Resize {
+            width: 800,
+            height: 600,
+        };
+        let b = HostMessage::SetMonitorLayout(vec![MonitorRect {
+            x: 0,
+            y: 0,
+            width: 1024,
+            height: 768,
+            primary: true,
+            scale: 100,
+        }]);
+        let mut bytes = frame(&a).await;
+        bytes.extend(frame(&b).await);
+        let (mut tx, rx) = tokio::io::duplex(1024);
+        let mut reader = MessageReader::new(rx);
+        // One byte at a time: every frame boundary and prefix split is hit.
+        let writer = tokio::spawn(async move {
+            for byte in bytes {
+                tx.write_all(&[byte]).await.unwrap();
+            }
+        });
+        assert_eq!(reader.next::<HostMessage>().await.unwrap(), a);
+        assert_eq!(reader.next::<HostMessage>().await.unwrap(), b);
+        writer.await.unwrap();
+        let err = reader.next::<HostMessage>().await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    /// #4042: the sidecar `select!`s the host read against server traffic. A
+    /// read dropped mid-frame must not lose the bytes it already took, or the
+    /// stream desyncs and the session ends ("framed message length ... exceeds").
+    #[tokio::test]
+    async fn message_reader_survives_being_cancelled_mid_frame() {
+        let msg = HostMessage::Resize {
+            width: 1920,
+            height: 1080,
+        };
+        let bytes = frame(&msg).await;
+        let (first, rest) = bytes.split_at(6); // the prefix plus part of the body
+        let (mut tx, rx) = tokio::io::duplex(1024);
+        let mut reader = MessageReader::new(rx);
+
+        tx.write_all(first).await.unwrap();
+        // Cancel a read that has consumed the partial frame (it cannot finish).
+        let cancelled =
+            tokio::time::timeout(Duration::from_millis(50), reader.next::<HostMessage>()).await;
+        assert!(cancelled.is_err(), "a partial frame must not complete");
+
+        tx.write_all(rest).await.unwrap();
+        assert_eq!(reader.next::<HostMessage>().await.unwrap(), msg);
+    }
+
+    #[tokio::test]
+    async fn message_reader_rejects_an_oversized_length_prefix() {
+        let bytes = (MAX_MESSAGE_BYTES + 1).to_le_bytes().to_vec();
+        let mut reader = MessageReader::new(std::io::Cursor::new(bytes));
+        let err = reader.next::<SidecarMessage>().await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 }
