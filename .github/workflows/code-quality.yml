@@ -972,7 +972,9 @@ jobs:
             wget \
             libgtk-3-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev
+            librsvg2-dev \
+            xvfb \
+            xclip
 
       # Split Rust test run (CI-013, #3350). A plain `cargo test --workspace`
       # ran the contention-sensitive suites (PTY shells, embedded russh server,
@@ -994,6 +996,10 @@ jobs:
         env:
           TERMIHUB_AGENT_TEST_MAX_CONCURRENT: ${{ matrix.os == 'windows-latest' && '2' || '' }}
           CI_RUST_TESTS_SPLIT_SERIAL: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
+          # The Linux X11 delayed-render paste test (#4087) starts its own Xvfb and
+          # drives it with xclip (both installed above); on ubuntu a missing tool
+          # fails the test instead of skipping it.
+          TERMIHUB_REQUIRE_X11_CLIPBOARD_TEST: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
         run: ./scripts/internal/ci-rust-tests.sh bulk --workspace
 
       - name: Run Rust tests (contention-sensitive suites, capped threads)
