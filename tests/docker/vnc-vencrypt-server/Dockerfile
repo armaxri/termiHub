@@ -13,7 +13,9 @@
 # Auth:     VeNCrypt, X509Vnc sub-type (260-262 family) — a rustls TLS handshake
 #           against the fixture's self-signed leaf, then the classic VNC-password
 #           DES challenge. Password `testpass` (VNC caps passwords at 8 chars;
-#           `testpass` is exactly 8), matching the plain fixture.
+#           `testpass` is exactly 8), matching the plain fixture. With
+#           VNC_SECURITY_TYPES=VeNCrypt,X509Plain the second stage is instead a
+#           username/password (`testuser`/`testpass`) checked through PAM.
 # TLS:      server.crt / server.key from ./certs (leaf for IP 127.0.0.1, signed
 #           by ca.crt). The `insecure` test accepts any cert; the `ca` test
 #           trusts ca.crt. See ./certs/gen-certs.sh to regenerate.
@@ -51,6 +53,11 @@ RUN convert -size 1024x768 xc:black \
 RUN mkdir -p /root/.vnc \
     && x11vnc -storepasswd testpass /root/.vnc/passwd \
     && chmod 600 /root/.vnc/passwd
+
+# The account the X509Plain variant (`vnc-vencrypt-plain-server`, #4004)
+# authenticates through PAM: `-PlainUsers testuser`, password `testpass`. Unused
+# by the default X509Vnc variant, which only checks the -rfbauth password.
+RUN useradd -m testuser && echo 'testuser:testpass' | chpasswd
 
 # The committed test TLS material (leaf + key the server presents).
 COPY certs/server.crt /root/.vnc/server.crt
