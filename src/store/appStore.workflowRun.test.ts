@@ -134,13 +134,18 @@ import {
   stopWorkflowSubscription,
 } from "./workflowRunBridge";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
-import { installSessionLifecycleHarness } from "@/test/sessionLifecycleRegionTestHarness";
+import {
+  connected,
+  disconnected,
+  installSessionLifecycleHarness,
+} from "@/test/sessionLifecycleRegionTestHarness";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import { serializeWorkflows } from "@/services/workflowIo";
 import { resetOnConnectDispatchState } from "@/services/workflowTriggers";
 import { toast } from "@/components/ui";
 import { WORKFLOW_FANOUT_CONCURRENCY } from "./slices/workflowFanout";
 import { executeScheduledRun } from "./scheduledRuns";
+import { ensureSessionSubscribed } from "./sessionBridge";
 import { activeWorkflowRunCount } from "./slices/workflowRunOnTarget";
 import type { ScheduleFire } from "@/types/schedule";
 
@@ -1639,7 +1644,7 @@ describe("appStore — on-connect trigger dispatch (#1855)", () => {
 describe("appStore — scheduled runs (PROD-043)", () => {
   let injected: { tabId: string; data: string }[];
   let transport: WorkflowStoreTransport;
-  installSessionLifecycleHarness();
+  const sessionHarness = installSessionLifecycleHarness();
 
   const store = { getState: useAppStore.getState, setState: useAppStore.setState };
   const fire = (overrides: Partial<ScheduleFire> = {}): ScheduleFire => ({
@@ -1857,5 +1862,55 @@ describe("appStore — scheduled runs (PROD-043)", () => {
     );
     const recorded = recordedMacroRuns.find((r) => r.id === report.macroRunIds?.[0]);
     expect(recorded).toMatchObject({ origin: "scheduled", targetLabels: ["tab-a"] });
+  });
+
+  describe("a target whose session disconnected (#4012)", () => {
+    beforeEach(async () => {
+      await ensureSessionSubscribed();
+      // The target's tab stays open, but its session has ended.
+      sessionHarness.transport.setSession("tab-a", disconnected("unexpected"));
+    });
+
+    it("skips a scheduled workflow and types into no other tab", async () => {
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("uptime")])] });
+
+      const report = await executeScheduledRun(fire(), store);
+
+      expect(report).toEqual({
+        outcome: "skipped",
+        message: "None of the target connections is connected",
+        targetsRun: 0,
+      });
+      expect(injected).toEqual([]);
+      expect(apiRecordWorkflowRun).not.toHaveBeenCalled();
+    });
+
+    it("skips a scheduled macro and types into no other tab", async () => {
+      useAppStore.setState({
+        macros: [
+          { id: "m1", name: "Ping", tags: [], steps: [{ data: "x\n", delayMs: 0 }] } as Macro,
+        ],
+      });
+
+      const report = await executeScheduledRun(
+        fire({ action: { kind: "macro", macroId: "m1" } }),
+        store
+      );
+
+      expect(report.outcome).toBe("skipped");
+      expect(report.message).toMatch(/connected/);
+      expect(injected).toEqual([]);
+    });
+
+    it("runs again on the next fire once the session is back", async () => {
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("uptime")])] });
+      expect((await executeScheduledRun(fire(), store)).outcome).toBe("skipped");
+
+      sessionHarness.transport.setSession("tab-a", connected());
+      const report = await executeScheduledRun(fire({ token: "tok-2" }), store);
+
+      expect(report).toMatchObject({ outcome: "completed", targetsRun: 1 });
+      expect(injected).toEqual([{ tabId: "tab-a", data: "uptime\n" }]);
+    });
   });
 });
