@@ -15,7 +15,7 @@ import { findRegisteredPluginTheme, isPluginThemeSetting } from "./pluginThemes"
  * Maps camelCase ThemeColors keys to their corresponding CSS custom
  * property names (kebab-case with `--` prefix).
  */
-const COLOR_TO_CSS_VAR: Record<keyof ThemeColors, string> = {
+export const COLOR_TO_CSS_VAR: Record<keyof ThemeColors, string> = {
   bgPrimary: "--bg-primary",
   bgSecondary: "--bg-secondary",
   bgTertiary: "--bg-tertiary",

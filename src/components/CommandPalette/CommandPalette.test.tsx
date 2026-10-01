@@ -19,6 +19,7 @@ import { layoutState } from "@/test/layoutState";
 import { installBroadcastHarness } from "@/test/broadcastHarness";
 import { ensureBroadcastSubscribed } from "@/store/broadcastBridge";
 import type { Workflow } from "@/types/workflow";
+import { getActionAccelerator } from "@/services/keybindings";
 
 const { connectSpy } = vi.hoisted(() => ({
   connectSpy: vi.fn((_connection: unknown) => Promise.resolve()),
@@ -127,6 +128,28 @@ describe("CommandPalette", () => {
   it("matches a connection by host", () => {
     typeInto("staging.example");
     expect(activeLabel()).toBe("Staging Box");
+  });
+
+  it("shows the command's effective accelerator on its row (#4013)", () => {
+    typeInto("new term");
+    const expected = getActionAccelerator("new-terminal");
+    // The default binding exists, so the row must render it — not a blank slot.
+    expect(expected).toBeTruthy();
+    const row = document.querySelector('[data-testid="command-palette-item-command:new-terminal"]');
+    expect(row).not.toBeNull();
+    expect(row?.querySelector(".command-palette__accelerator")?.textContent).toBe(expected);
+    // A command row carries an accelerator, never a connection-type badge.
+    expect(row?.querySelector(".command-palette__type")).toBeNull();
+  });
+
+  it("shows the connection-type badge on a saved connection's row (#4013)", () => {
+    typeInto("production");
+    const row = document.querySelector('[data-testid="command-palette-item-connection:c1"]');
+    expect(row).not.toBeNull();
+    expect(row?.querySelector(".command-palette__label")?.textContent).toBe("Production Server");
+    expect(row?.querySelector(".command-palette__type")?.textContent).toBe("ssh");
+    // A connection row has no accelerator.
+    expect(row?.querySelector(".command-palette__accelerator")).toBeNull();
   });
 
   it("runs the highlighted command on Enter and closes", () => {
