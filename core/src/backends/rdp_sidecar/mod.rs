@@ -601,8 +601,10 @@ async fn supervise(mut child: tokio::process::Child, cancel: CancellationToken) 
 impl SidecarRdp {
     /// Map a settings JSON value to a validated [`RdpConfig`].
     fn parse_config(settings: serde_json::Value) -> Result<RdpConfig, SessionError> {
-        let mut cfg: RdpConfig = serde_json::from_value(settings)
-            .map_err(|e| SessionError::InvalidConfig(format!("Invalid RDP settings: {e}")))?;
+        // An editor-cleared field arrives as `null` (#4017); treat it as unset.
+        let mut cfg: RdpConfig =
+            serde_json::from_value(crate::backends::without_null_fields(settings))
+                .map_err(|e| SessionError::InvalidConfig(format!("Invalid RDP settings: {e}")))?;
         if cfg.host.is_empty() {
             return Err(SessionError::InvalidConfig(
                 "RDP host is required".to_string(),
@@ -1206,6 +1208,27 @@ mod tests {
         assert!(caps.supports_clipboard);
         assert!(caps.supports_clipboard_image);
         assert_eq!(caps.multi_monitor, MultiMonitorCapability::supported());
+    }
+
+    /// Regression (#4017): editor-cleared fields arrive as `null`; a plain
+    /// `String` field (domain, username, shared folder) must treat that as unset
+    /// rather than failing the whole parse.
+    #[test]
+    fn parse_config_treats_null_fields_as_unset() {
+        let cfg = SidecarRdp::parse_config(serde_json::json!({
+            "host": "example.com",
+            "username": null,
+            "domain": null,
+            "securityMode": null,
+            "sharedFolderPath": null,
+            "width": null,
+        }))
+        .expect("null fields must not fail the parse");
+        assert_eq!(cfg.host, "example.com");
+        assert_eq!(cfg.username, "");
+        assert_eq!(cfg.domain, "");
+        assert_eq!(cfg.security_mode, RdpConfig::default().security_mode);
+        assert_eq!(cfg.width, None);
     }
 
     #[test]

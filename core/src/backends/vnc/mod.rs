@@ -733,7 +733,7 @@ impl ConnectionType for Vnc {
         if self.runtime.is_some() {
             return Err(SessionError::AlreadyExists("Already connected".to_string()));
         }
-        let cfg: VncConfig = serde_json::from_value(settings)
+        let cfg = VncConfig::from_settings(settings)
             .map_err(|e| SessionError::InvalidConfig(format!("Invalid VNC settings: {e}")))?;
         if cfg.host.is_empty() {
             return Err(SessionError::InvalidConfig(
