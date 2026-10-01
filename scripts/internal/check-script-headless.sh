@@ -50,6 +50,7 @@ SCRIPTS=(
   "scripts/internal/native-sshd-fixture.sh"
   "scripts/internal/run-native-sshd-suites.sh"
   "scripts/internal/setup-agent-signing-key.sh"
+  "scripts/internal/shell-integration-cli-smoke.sh"
   "scripts/build-rdp-sidecar.sh"
   "scripts/ci-local.sh"
   "scripts/package-plugin.sh"

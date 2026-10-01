@@ -70,6 +70,9 @@ ALLOWLIST=(
   # since Win32-OpenSSH provisioning needs PowerShell, not a .cmd.
   "scripts/internal/native-sshd-fixture.sh"   # fixture up/stop/start/down (-> .ps1 on Windows)
   "scripts/internal/run-native-sshd-suites.sh" # CI suite runner (bash on every runner)
+  # Shell-integration CLI smoke (#4010): the Linux half; Windows registration
+  # (HKCU Explorer keys) needs PowerShell, so its twin is a .ps1, not a .cmd.
+  "scripts/internal/shell-integration-cli-smoke.sh" # Linux CI smoke (-> .ps1 on Windows)
 )
 
 in_allowlist() {
