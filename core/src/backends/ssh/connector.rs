@@ -53,6 +53,59 @@ pub struct SshShellHandle {
     pub close: IoFn,
     /// Opaque resources kept alive for the session lifetime (e.g. X11Forwarder).
     pub extensions: Vec<Box<dyn std::any::Any + Send>>,
+    /// Set (before the reader sees EOF) when the host **refused the shell**
+    /// (#4078): the shell request was answered with a failure, or the channel
+    /// closed right after open carrying OpenSSH's `ForceCommand internal-sftp`
+    /// refusal. The backend then probes SFTP and, if it works, keeps the session
+    /// up as files-only instead of tearing it down. Never set for a shell that
+    /// ran and later exited (e.g. the user typed `exit`).
+    pub shell_refused: Arc<AtomicBool>,
+}
+
+// ── Shell-refusal detection (#4078) ───────────────────────────────
+
+/// OpenSSH's message for a non-SFTP session on a `ForceCommand internal-sftp`
+/// host (`session.c`: "This service allows sftp connections only.").
+pub(crate) const SFTP_ONLY_REFUSAL_MARKER: &str = "allows sftp connections only";
+
+/// How soon after the shell request the channel must end for its output to
+/// count as a refusal rather than a shell that ran and exited. A ForceCommand
+/// refusal ends within milliseconds; the window only has to absorb network
+/// latency and a slow server.
+pub(crate) const SHELL_REFUSAL_WINDOW: Duration = Duration::from_secs(10);
+
+/// Bytes of early channel output kept for refusal detection. The refusal is a
+/// single short line; anything longer is a real shell's output.
+pub(crate) const EARLY_OUTPUT_CAP: usize = 4096;
+
+/// Decide whether a shell channel that just ended was **refused** by the host
+/// rather than run and exited (#4078).
+///
+/// Refused when the server answered the shell request with a failure, or when
+/// the channel ended within [`SHELL_REFUSAL_WINDOW`] of the request and its
+/// early output carries the `ForceCommand internal-sftp` refusal message. A
+/// normal shell that the user exits (any time, any output without the marker)
+/// is never a refusal, so it closes the session exactly as before.
+pub(crate) fn is_shell_refusal(
+    request_failed: bool,
+    early_output: &[u8],
+    elapsed: Duration,
+) -> bool {
+    if request_failed {
+        return true;
+    }
+    if elapsed > SHELL_REFUSAL_WINDOW {
+        return false;
+    }
+    String::from_utf8_lossy(early_output)
+        .to_ascii_lowercase()
+        .contains(SFTP_ONLY_REFUSAL_MARKER)
+}
+
+/// Append `data` to the early-output capture, up to [`EARLY_OUTPUT_CAP`].
+fn capture_early_output(early: &mut Vec<u8>, data: &[u8]) {
+    let room = EARLY_OUTPUT_CAP.saturating_sub(early.len());
+    early.extend_from_slice(&data[..data.len().min(room)]);
 }
 
 // ── SshConnector trait ─────────────────────────────────────────────
@@ -306,10 +359,15 @@ impl SshConnector for RusshSshConnector {
             .await
             .map_err(|e| SessionError::SpawnFailed(format!("PTY request failed: {e}")))?;
 
+        // Ask for a reply so a host that refuses the shell answers with a
+        // failure the channel task can see (#4078). Nothing waits on the reply
+        // here, so a server that never answers cannot stall the connect.
         channel
-            .request_shell(false)
+            .request_shell(true)
             .await
             .map_err(|e| SessionError::SpawnFailed(format!("Shell request failed: {e}")))?;
+        let shell_requested_at = std::time::Instant::now();
+        let shell_refused = Arc::new(AtomicBool::new(false));
 
         // Inject an `export` line for the user-specified environment variables.
         // This guarantees they take effect in the interactive shell even when
@@ -360,7 +418,14 @@ impl SshConnector for RusshSshConnector {
         let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<ChannelCmd>();
 
         let alive_task = alive.clone();
+        let refused_task = shell_refused.clone();
         tokio::spawn(async move {
+            // Early output + the shell-request reply, for refusal detection.
+            let mut early_output: Vec<u8> = Vec::new();
+            let mut request_failed = false;
+            // Only the shell request on this channel wants a reply, so the first
+            // Success / Failure answers it.
+            let mut awaiting_shell_reply = true;
             loop {
                 tokio::select! {
                     biased;
@@ -392,21 +457,38 @@ impl SshConnector for RusshSshConnector {
                     // Incoming data from the server.
                     msg = channel.wait() => {
                         match msg {
-                            Some(ChannelMsg::Data { ref data })
-                                if data_tx.send(data.to_vec()).is_err() =>
-                            {
+                            Some(ChannelMsg::Data { ref data }) => {
+                                capture_early_output(&mut early_output, data);
+                                if data_tx.send(data.to_vec()).is_err() {
+                                    break;
+                                }
+                            }
+                            Some(ChannelMsg::ExtendedData { ref data, .. }) => {
+                                // Without a PTY the refusal arrives on stderr.
+                                capture_early_output(&mut early_output, data);
+                            }
+                            Some(ChannelMsg::Success) => awaiting_shell_reply = false,
+                            Some(ChannelMsg::Failure) if awaiting_shell_reply => {
+                                // The host refused the shell request outright.
+                                request_failed = true;
                                 break;
                             }
-                            Some(ChannelMsg::Eof) | None => {
-                                // Signal EOF to the reader.
-                                let _ = data_tx.send(Vec::new());
-                                break;
-                            }
+                            Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
                             _ => {}
                         }
                     }
                 }
             }
+            // Flag a refusal *before* signalling EOF or clearing `alive`, so the
+            // reader thread (which exits on either signal) always sees the verdict.
+            if is_shell_refusal(request_failed, &early_output, shell_requested_at.elapsed()) {
+                tracing::info!("SSH host refused the interactive shell");
+                refused_task.store(true, Ordering::SeqCst);
+            }
+            // Signal EOF to the reader (an empty chunk is the sentinel). Never
+            // block here: if the queue is full the reader still exits once it
+            // drains and sees `alive` cleared below.
+            let _ = data_tx.try_send(Vec::new());
             alive_task.store(false, Ordering::SeqCst);
         });
 
@@ -444,6 +526,7 @@ impl SshConnector for RusshSshConnector {
                 Ok(())
             }),
             extensions,
+            shell_refused,
         })
     }
 }
@@ -451,6 +534,62 @@ impl SshConnector for RusshSshConnector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Shell-refusal detection (#4078) ──────────────────────────────
+
+    const OPENSSH_REFUSAL: &[u8] = b"This service allows sftp connections only.\r\n";
+
+    #[test]
+    fn failed_shell_request_is_a_refusal() {
+        assert!(is_shell_refusal(true, b"", Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn immediate_forcecommand_exit_is_a_refusal() {
+        assert!(is_shell_refusal(
+            false,
+            OPENSSH_REFUSAL,
+            Duration::from_millis(40)
+        ));
+        // Case and surrounding bytes (a banner, CR/LF) do not matter.
+        assert!(is_shell_refusal(
+            false,
+            b"welcome\r\nTHIS SERVICE ALLOWS SFTP CONNECTIONS ONLY.",
+            Duration::from_secs(2)
+        ));
+    }
+
+    #[test]
+    fn a_user_exit_is_not_a_refusal() {
+        // A shell that ran and was exited: prompt output, no marker.
+        assert!(!is_shell_refusal(
+            false,
+            b"user@host:~$ exit\r\nlogout\r\n",
+            Duration::from_millis(500)
+        ));
+        assert!(!is_shell_refusal(false, b"", Duration::from_millis(10)));
+    }
+
+    #[test]
+    fn the_marker_long_after_open_is_not_a_refusal() {
+        // e.g. the user `cat`s a file mentioning the message, then exits.
+        assert!(!is_shell_refusal(
+            false,
+            OPENSSH_REFUSAL,
+            SHELL_REFUSAL_WINDOW + Duration::from_secs(1)
+        ));
+    }
+
+    #[test]
+    fn early_output_capture_is_capped() {
+        let mut early = Vec::new();
+        capture_early_output(&mut early, &[b'a'; EARLY_OUTPUT_CAP - 2]);
+        capture_early_output(&mut early, b"bcdef");
+        assert_eq!(early.len(), EARLY_OUTPUT_CAP);
+        assert!(early.ends_with(b"bc"));
+        capture_early_output(&mut early, b"more");
+        assert_eq!(early.len(), EARLY_OUTPUT_CAP);
+    }
 
     /// A successful `channel.data` / `window_change` result keeps the channel
     /// task looping.
