@@ -10,7 +10,8 @@ vi.mock("./Toast", () => ({
   },
 }));
 
-import { Button } from "./Button";
+import { Button, DEFAULT_REDUCED_MOTION_PENDING_LABEL } from "./Button";
+import { mockReducedMotion, type ReducedMotionMock } from "@/test/reducedMotion";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -71,9 +72,9 @@ describe("Button async lifecycle", () => {
     expect(btn.classList.contains("ui-btn--pending")).toBe(true);
     const spinner = btn.querySelector(".ui-btn__spinner");
     expect(spinner).toBeTruthy();
-    // #2603: the pending spinner is an essential progress cue — the
-    // `motion-essential-spinner` marker keeps it pulsing under reduced motion
-    // instead of freezing into a static ring.
+    // #2603/#4039: the pending spinner is an essential progress cue — the
+    // `motion-essential-spinner` marker renders it static under reduced motion
+    // (never a frozen mid-frame or a blinking pulse) beside a steady label.
     expect(spinner?.className).toContain("motion-essential-spinner");
 
     await act(async () => {
@@ -149,6 +150,79 @@ describe("Button async lifecycle", () => {
     await act(async () => {
       resolve();
       await Promise.resolve();
+    });
+  });
+
+  describe("pending state under prefers-reduced-motion (#4039)", () => {
+    let motion: ReducedMotionMock;
+
+    afterEach(() => motion.restore());
+
+    async function clickPending(ui: React.ReactElement) {
+      let resolve!: () => void;
+      const onClick = vi.fn(() => new Promise<void>((r) => (resolve = r)));
+      render(React.cloneElement(ui, { onClick }));
+      const btn = document.querySelector('[data-testid="btn"]') as HTMLButtonElement;
+      act(() => btn.click());
+      return {
+        btn,
+        settle: () =>
+          act(async () => {
+            resolve();
+            await Promise.resolve();
+          }),
+      };
+    }
+
+    it("full motion: keeps the normal label beside the spinning indicator", async () => {
+      motion = mockReducedMotion(false);
+      const { btn, settle } = await clickPending(<Button data-testid="btn">Save</Button>);
+      expect(btn.querySelector(".ui-btn__spinner.motion-essential-spinner")).toBeTruthy();
+      expect(btn.textContent).toBe("Save");
+      await settle();
+    });
+
+    it("reduced motion: shows a static spinner plus a steady 'Working…' label", async () => {
+      motion = mockReducedMotion(true);
+      const { btn, settle } = await clickPending(<Button data-testid="btn">Save</Button>);
+      const spinner = btn.querySelector(".ui-btn__spinner");
+      expect(spinner?.className).toContain("motion-essential-spinner");
+      expect(spinner?.getAttribute("aria-hidden")).not.toBeNull();
+      expect(btn.textContent).toBe(DEFAULT_REDUCED_MOTION_PENDING_LABEL);
+      expect(btn.getAttribute("aria-busy")).toBe("true");
+      await settle();
+      // Back to the normal label once the action settles.
+      expect(btn.textContent).toBe("Save");
+    });
+
+    it("reduced motion: an explicit pendingLabel still wins", async () => {
+      motion = mockReducedMotion(true);
+      const { btn, settle } = await clickPending(
+        <Button data-testid="btn" pendingLabel="Saving…">
+          Save
+        </Button>
+      );
+      expect(btn.textContent).toBe("Saving…");
+      await settle();
+    });
+
+    it("reduced motion: an icon-only button gets no text (it keeps aria-busy)", async () => {
+      motion = mockReducedMotion(true);
+      const { btn, settle } = await clickPending(
+        <Button data-testid="btn" iconOnly aria-label="Refresh" />
+      );
+      expect(btn.textContent).toBe("");
+      expect(btn.getAttribute("aria-busy")).toBe("true");
+      await settle();
+    });
+
+    it("flips the label live when the OS preference changes while pending", async () => {
+      motion = mockReducedMotion(false);
+      const { btn, settle } = await clickPending(<Button data-testid="btn">Save</Button>);
+      expect(btn.textContent).toBe("Save");
+      act(() => motion.set(true));
+      expect(btn.textContent).toBe(DEFAULT_REDUCED_MOTION_PENDING_LABEL);
+      await settle();
     });
   });
 });

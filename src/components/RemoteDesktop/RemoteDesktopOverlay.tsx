@@ -41,6 +41,7 @@ export function RemoteDesktopOverlay({
       <div className="rd-overlay" data-testid="remote-desktop-overlay-connecting">
         <ContentOverlay
           icon={<Spinner size="lg" label={null} className="rd-overlay__icon" />}
+          busy
           heading={`Connecting to ${host}…`}
           subheading={state === "authenticating" ? "Authenticating" : "Establishing connection"}
         />
@@ -58,6 +59,7 @@ export function RemoteDesktopOverlay({
               className="rd-overlay__icon rd-overlay__spin motion-essential-spinner"
             />
           }
+          busy
           heading={RECONNECTING_HEADING}
           subheading={reconnectAttemptLabel(reconnectAttempt, MAX_RECONNECT_ATTEMPTS)}
           actions={
