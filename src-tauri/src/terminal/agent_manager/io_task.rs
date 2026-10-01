@@ -34,9 +34,9 @@ use super::{
     dispatch_agent_notification, emit_agent_state, emit_agent_state_with_error, evicted_remote_ids,
     evicted_session_ids, fold_agent_hosted_reconnect_failed, fold_agent_hosted_reconnecting,
     fold_evicted_hosted_sessions, handle_agent_forward_notification, hosted_sessions_for_agent,
-    list_recovered_session_ids_bounded, reconcile_output_senders, reconnect_agent,
-    resolve_hosted_sessions_after_reconnect, route_tool_run_notification, AgentIoCommand,
-    AgentRpcFailure, MonitoringRoute, ToolRunSender, WeakAgentMap,
+    list_recovered_session_ids_bounded, reattach_after_reconnect, reconcile_output_senders,
+    reconnect_agent, resolve_hosted_sessions_after_reconnect, route_tool_run_notification,
+    AgentIoCommand, AgentRpcFailure, MonitoringRoute, ToolRunSender, WeakAgentMap,
 };
 use super::{reap_agent, serialize_ki_respond, serialize_request};
 use crate::connection::config::AgentSettings;
@@ -629,10 +629,22 @@ pub(super) async fn agent_io_task<R: Runtime>(
                     // attempt-timed retry both recovers a transient first failure and
                     // guarantees this returns (a hung agent can no longer strand the
                     // task — and every hosted tab — in a no-exit reconnecting state).
-                    let live_ids = list_recovered_session_ids_bounded(
+                    let recovered = list_recovered_session_ids_bounded(
                         &mut channel,
                         &agent_id,
                         &mut request_id,
+                    )
+                    .await;
+                    // #4017: re-attach the hosted sessions the fresh worker left
+                    // unattached (#3369), or their output never flows again.
+                    let (live_ids, reattach_notifications) = reattach_after_reconnect(
+                        &app_handle,
+                        &mut channel,
+                        &agent_id,
+                        &mut request_id,
+                        &mut line_buf,
+                        &hosted,
+                        recovered,
                     )
                     .await;
                     if let Some(ref live_ids) = live_ids {
@@ -645,6 +657,19 @@ pub(super) async fn agent_io_task<R: Runtime>(
                             &mut session_outputs,
                             &mut monitoring_outputs,
                             &keep,
+                        );
+                    }
+                    // Route the output read while waiting for the attach replies
+                    // (the re-attached sessions' buffered output) to their tabs.
+                    for (method, params) in &reattach_notifications {
+                        dispatch_agent_notification(
+                            &app_handle,
+                            &agent_id,
+                            method,
+                            params,
+                            &session_outputs,
+                            &monitoring_outputs,
+                            &b64,
                         );
                     }
                     // Always resolve: `Some` → recovered/lost per the listed ids;

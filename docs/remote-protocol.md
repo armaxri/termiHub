@@ -887,6 +887,12 @@ the message): on its implicit re-attach paths it keeps the tab's session binding
 `Evicted` instead of reporting an error or retrying (#3404). Unattached orphans still count as active sessions for the deferred
 self-update idle check.
 
+A transport reconnect launches a fresh worker, so this desktop's own sessions come back
+unattached too. After the post-reconnect `connection.list`, the desktop therefore sends a plain
+`connection.attach` for every session one of its tabs hosts that is listed with
+`attached: false`. A session that fails to re-attach settles its tab to "session lost"; one that
+another desktop took in the meantime (`-32023`) folds the tab `Evicted` (#4017).
+
 **Compatibility:** the field is append-only. An agent that predates it ignores it, so a Reclaim
 of a session that agent does not hold fails with `-32001` (the desktop keeps the tab in its
 evicted state and reports the error). A pre-SM-003 daemon never sends `MSG_EVICTED`; the worker
