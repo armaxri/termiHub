@@ -820,7 +820,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 See the [Manual Testing section in testing.md](testing.md#manual-testing) for the full checklist.
 
-After adding or deleting an item in `tests/manual/*.yaml` — or on a merge conflict in a `manual-inventory` block — run `python3 scripts/manual-inventory.py --write`; never hand-edit the generated counts in `docs/testing.md` / `docs/release-plan-0.1.0.md` (CI checks them with `--check`).
+Adding or deleting an item in `tests/manual/*.yaml` needs no doc update: the per-category counts are deliberately not committed anywhere (#4070), so test-automation PRs never conflict on them. View them with `python3 scripts/manual-inventory.py`; CI (`--check`) validates the corpus, publishes the table as a job summary, and fails if a doc reintroduces a committed count block.
 
 For UI changes, test at minimum:
 

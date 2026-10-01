@@ -128,8 +128,8 @@ def category_inventory(
     """Aggregate the loaded tests into ``(category, display_name, count)`` rows.
 
     Rows preserve first-seen (file/alphabetical) order. Backs the terminal
-    ``--inventory`` listing; the counts in the docs are the generated blocks
-    written by ``scripts/manual-inventory.py`` (#3721).
+    ``--inventory`` listing; ``scripts/manual-inventory.py`` renders the same
+    corpus as a Markdown table (no counts are committed to the docs, #4070).
     """
     order: list[str] = []
     counts: dict[str, int] = {}
