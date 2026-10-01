@@ -526,6 +526,22 @@ class Driver:
         """
         return self._call({"action": "getTerminalViewport", "tabId": tab_id})
 
+    def inspect_terminal(self, tab_id: Optional[str] = None) -> dict[str, Any]:
+        """Read a terminal's OSC 133 marks and inline-image store (#4013).
+
+        Both are invisible in the reconstructed text. Returns::
+
+            {"commandMarks": {"commands": [{"state", "exitCode"}, ...],
+                              "lastCommandOutput": str | None} | None,
+             "inlineImages": {"active": bool, "storageUsage": float} | None}
+
+        ``commands`` lists the tracked prompts oldest first (empty when the shell
+        emits no OSC 133); ``lastCommandOutput`` is exactly what "Copy Last
+        Command Output" copies; ``storageUsage`` is above 0 once the image addon
+        stored an image. Active tab unless ``tab_id`` is given.
+        """
+        return self._call({"action": "inspectTerminal", "tabId": tab_id})
+
     def get_state(self, path: Optional[str] = None, *, timeout: Optional[float] = None) -> Any:
         return self._call({"action": "getState", "path": path}, timeout=timeout)
 
