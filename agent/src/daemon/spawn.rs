@@ -34,11 +34,19 @@ pub fn configure_detached_stderr(command: &mut std::process::Command, log: Optio
     command.stderr(stderr);
 }
 
+/// Creation flags that detach a Windows daemon: a new process group with no
+/// console window. [`spawn_detached`] adds job breakaway on top.
+#[cfg(windows)]
+const WINDOWS_DETACH_FLAGS: u32 = windows_sys::Win32::System::Threading::DETACHED_PROCESS
+    | windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP
+    | windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+
 /// Detach a to-be-spawned daemon so it outlives the agent that spawns it — the
 /// whole point of a *persistent* session, and of a registry that survives an
 /// agent binary swap.
 ///
-/// On Windows: a new process group with no console window. On unix: a fresh
+/// On Windows: a new process group with no console window (spawn it with
+/// [`spawn_detached`] to also leave the SSH session's job object). On unix: a fresh
 /// session via `setsid`. Being merely orphaned (the agent never waits on the
 /// child) is **not** enough on unix, because the agent is typically launched
 /// over an SSH exec channel (`termihub-agent --stdio`); when that channel closes
@@ -51,10 +59,7 @@ pub fn configure_detachment(command: &mut std::process::Command) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        use windows_sys::Win32::System::Threading::{
-            CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, DETACHED_PROCESS,
-        };
-        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+        command.creation_flags(WINDOWS_DETACH_FLAGS);
     }
     #[cfg(unix)]
     {
@@ -69,6 +74,42 @@ pub fn configure_detachment(command: &mut std::process::Command) {
                 Ok(())
             });
         }
+    }
+}
+
+/// Spawn a daemon configured by [`configure_detachment`], breaking it out of
+/// the spawner's Windows **job object** where the job allows it.
+///
+/// Win32-OpenSSH runs each SSH session's processes in a job object that it
+/// closes when the session ends, killing every process still in it. A new
+/// process group (what [`configure_detachment`] sets) does not leave a job, so
+/// without `CREATE_BREAKAWAY_FROM_JOB` the session daemon dies with the
+/// `--stdio` worker's SSH connection and a reconnect finds nothing to
+/// re-attach (MT-AGENT-24, #3684). A job that forbids breakaway rejects the
+/// flag with `ERROR_ACCESS_DENIED`; the spawn is then retried inside the job
+/// (the previous behaviour) rather than failed. On unix this is a plain spawn.
+pub fn spawn_detached(command: &mut std::process::Command) -> std::io::Result<std::process::Child> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
+        use windows_sys::Win32::System::Threading::CREATE_BREAKAWAY_FROM_JOB;
+        command.creation_flags(WINDOWS_DETACH_FLAGS | CREATE_BREAKAWAY_FROM_JOB);
+        match command.spawn() {
+            Err(e) if e.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) => {
+                tracing::warn!(
+                    "the spawning job object forbids breakaway; the daemon stays in it and \
+                     will not outlive this SSH session"
+                );
+                command.creation_flags(WINDOWS_DETACH_FLAGS);
+                command.spawn()
+            }
+            other => other,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        command.spawn()
     }
 }
 

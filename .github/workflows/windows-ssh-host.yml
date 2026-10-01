@@ -1,0 +1,84 @@
+name: Windows SSH Host
+
+# Runs the live Windows agent deploy/connect tests
+# (src-tauri/src/terminal/agent_manager/windows_ssh_host_tests.rs, #3684)
+# against the runner's OWN OpenSSH server: the runner is both the desktop side
+# and the Windows SSH host it deploys to. Covers MT-AGENT-18/19 (deploy +
+# install through a cmd.exe / PowerShell DefaultShell), MT-AGENT-20 (connect
+# over SSH exec `--stdio`) and MT-AGENT-24 (a named-pipe daemon session
+# survives a disconnect and is re-attached), which used to be manual because
+# there was no Windows SSH-host fixture.
+#
+# The host is the native sshd fixture (scripts/internal/native-sshd-fixture.sh:
+# Win32-OpenSSH on a loopback port, key-auth test user), as in the native-sshd
+# job of integration-fixtures.yml. One matrix leg per OpenSSH `DefaultShell`;
+# each runs scripts/internal/run-windows-ssh-host-suite.sh <shell>, which sets
+# HKLM\SOFTWARE\OpenSSH\DefaultShell, brings the fixture up, runs exactly that
+# shell's test under TERMIHUB_REQUIRE_WINDOWS_SSH=1, fails on a skip or a test
+# that did not run, and tears everything down. The recipe lives in the script,
+# so a scheduled run (main's copy of this file) runs develop's recipe.
+#
+# Not on every PR (a Windows build of the desktop crate costs several minutes):
+# nightly + manual + PRs that touch the deploy/connect paths under test.
+
+on:
+  schedule:
+    # 04:17 UTC daily (off the top of the hour to dodge scheduler congestion).
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src-tauri/src/terminal/agent_deploy.rs"
+      - "src-tauri/src/terminal/agent_install.rs"
+      - "src-tauri/src/terminal/agent_manager/reconnect.rs"
+      - "src-tauri/src/terminal/agent_manager/live_channel_support.rs"
+      - "src-tauri/src/terminal/agent_manager/windows_ssh_host_tests.rs"
+      - "src-tauri/src/utils/remote_exec.rs"
+      - "agent/src/daemon/**"
+      - "scripts/internal/run-windows-ssh-host-suite.sh"
+      - "scripts/internal/native-sshd-fixture.*"
+      - ".github/workflows/windows-ssh-host.yml"
+
+concurrency:
+  group: windows-ssh-host-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege token (CI-010): checkout + build + test only.
+permissions:
+  contents: read
+
+jobs:
+  windows-ssh-host:
+    name: Agent deploy to Windows SSH host (${{ matrix.default_shell }})
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        default_shell: [cmd, powershell]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          # The nightly grades develop: a scheduled run fires from the default
+          # branch (main), so without this it would only re-test main's code.
+          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Its own key: this lane builds the desktop lib tests + the agent.
+          shared-key: windows-ssh-host
+          # Reader/writer split (#3328): PRs restore, only develop/main save.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
+
+      - name: Run the live Windows SSH-host test (${{ matrix.default_shell }})
+        # bash = Git Bash; the runner shell is elevated, as the fixture needs.
+        shell: bash
+        env:
+          RUST_BACKTRACE: "1"
+        run: scripts/internal/run-windows-ssh-host-suite.sh ${{ matrix.default_shell }}

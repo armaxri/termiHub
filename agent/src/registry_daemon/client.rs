@@ -354,7 +354,7 @@ fn spawn_registry_daemon() -> std::io::Result<()> {
     // terminates while this worker is still alive it is `wait()`ed rather than
     // left a zombie (AGT-018 / #2580). Once the worker exits, init inherits and
     // reaps the surviving daemon as before.
-    let child = command.spawn()?;
+    let child = crate::daemon::spawn::spawn_detached(&mut command)?;
     let _ = crate::daemon::spawn::reap_detached_child(child);
     info!("Spawned registry daemon");
     Ok(())

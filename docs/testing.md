@@ -686,6 +686,40 @@ The portable parts of those (key auth for every key type, exec/stdin, SFTP
 round trips, local forwarding) are exactly what `ssh_native.rs` re-covers on
 all three OSes.
 
+### Windows SSH host: agent deploy, connect and reattach (#3684)
+
+The same Windows native sshd fixture doubles as a **Windows remote-agent
+host**. [`windows_ssh_host_tests.rs`](../src-tauri/src/terminal/agent_manager/windows_ssh_host_tests.rs)
+runs one walkthrough per OpenSSH `DefaultShell` (`cmd.exe` and PowerShell):
+
+1. **Deploy + install (MT-AGENT-18/19).** It detects the Windows host and its
+   `DefaultShell`, then runs the production `install_agent_bytes`: SFTP upload,
+   the shell-specific install command, the `--version` check and resolving the
+   `%LOCALAPPDATA%` path. It then asserts that the upload temp file was moved.
+2. **Connect (MT-AGENT-20).** It starts the installed agent over SSH exec
+   `--stdio` with `reconnect_agent` and round-trips I/O through a session.
+3. **Reattach (MT-AGENT-24).** It disconnects with a counter running in a
+   daemon-backed session. After the reconnect it expects the same session id,
+   a counter past its pre-drop value, and a counter that keeps advancing.
+
+Binary resolution (cache, bundle or download, plus the release-signature
+check) needs a Tauri `AppHandle`. The test therefore uploads a locally built
+`termihub-agent.exe`, and everything from the upload on is the production path.
+
+[`scripts/internal/run-windows-ssh-host-suite.sh`](../scripts/internal/run-windows-ssh-host-suite.sh)
+`<cmd|powershell>` builds the agent and sets
+`HKLM\SOFTWARE\OpenSSH\DefaultShell`. It then brings the fixture up
+(`--agent-binary`) and runs that shell's test with
+`TERMIHUB_REQUIRE_WINDOWS_SSH=1`. It fails when the test skipped or did not
+run. On exit it tears the fixture down and restores the previous `DefaultShell`.
+The script needs an elevated Git Bash on Windows.
+
+The [`windows-ssh-host.yml`](../.github/workflows/windows-ssh-host.yml) lane
+runs it once per shell: nightly, on manual dispatch, and on PRs that touch the
+deploy/connect paths. Like the other nightly lanes, its schedule only starts
+once the workflow is on `main`. Off Windows, or without
+`TERMIHUB_WINDOWS_SSH_DEFAULT_SHELL`, the tests print `SKIPPED:` and pass.
+
 ### Linux polkit D-Bus path (#3553)
 
 The Linux OS re-auth verifier's result mapping is unit-tested against a fake
@@ -1851,13 +1885,13 @@ whose `--check` step also fails if a doc reintroduces a committed count block.
 | MT-AGENT-15     | Build the Windows agent binary natively (MSVC)                                          | Automated (#3685)     | `agent.yml` build-windows runs `build-agents.cmd --native`, asserts exe/sidecar/summary                                             |
 | MT-AGENT-16     | Reconnecting a destroyed persistent session restarts it (no endless loop)               | Automated (already)   | Terminal.reconnect-fresh.test.tsx + appStore.terminalReconnect.test.ts                                                              |
 | MT-AGENT-17     | Reconnecting after the agent connection is destroyed re-establishes the agent           | Tracked issue         | #3686                                                                                                                               |
-| MT-AGENT-18     | Deploy + install agent to a Windows host (cmd.exe default shell)                        | Tracked issue         | #3684                                                                                                                               |
-| MT-AGENT-19     | Deploy + install agent to a Windows host (PowerShell default shell)                     | Tracked issue         | #3684                                                                                                                               |
-| MT-AGENT-20     | Connect (--stdio) to a freshly installed Windows agent                                  | Tracked issue         | #3684                                                                                                                               |
+| MT-AGENT-18     | Deploy + install agent to a Windows host (cmd.exe default shell)                        | Automated (#3684)     | `windows-ssh-host.yml` → windows_ssh_host_tests `cmd_default_shell_deploy_install_connect_reattach`                                 |
+| MT-AGENT-19     | Deploy + install agent to a Windows host (PowerShell default shell)                     | Automated (#3684)     | `windows-ssh-host.yml` → windows_ssh_host_tests `powershell_default_shell_deploy_install_connect_reattach`                          |
+| MT-AGENT-20     | Connect (--stdio) to a freshly installed Windows agent                                  | Automated (#3684)     | windows_ssh_host_tests `*_deploy_install_connect_reattach` (connect leg, both shells)                                               |
 | MT-AGENT-21     | Windows agent binary ships with releases                                                | Automated (already)   | .github/workflows/release-windows-smoke.yml (downloads + verifies the Windows agent)                                                |
 | MT-AGENT-22     | PowerShell session through the Windows agent (ConPTY spawn / resize / teardown)         | Automated (#3685)     | agent `live_agent_tcp_windows_powershell_session_echo_resize_close_reaps_shell`                                                     |
 | MT-AGENT-23     | cmd.exe session through the Windows agent (ConPTY spawn / resize / teardown)            | Automated (already)   | core local_shell.rs::windows_cmd_spawn_echo_resize_teardown (Windows CI)                                                            |
-| MT-AGENT-24     | Persistent session on a Windows agent survives disconnect/reconnect (named-pipe daemon) | Tracked issue         | #3684                                                                                                                               |
+| MT-AGENT-24     | Persistent session on a Windows agent survives disconnect/reconnect (named-pipe daemon) | Automated (#3684)     | windows_ssh_host_tests `*_deploy_install_connect_reattach` (reattach leg, both shells)                                              |
 | MT-AGENT-25     | File browser through a Windows agent (local filesystem, forward-slash paths)            | Automated (#3685)     | core `files/local.rs` tilde list/stat tests + read/write round-trip (Windows CI)                                                    |
 | MT-AGENT-26     | SSH / Docker jump session originating from a Windows agent                              | Tracked issue         | #3684                                                                                                                               |
 | MT-AGENT-27     | SSH jump-host backend from a Windows-hosted agent (default key / agent auth)            | Tracked issue         | #3684                                                                                                                               |

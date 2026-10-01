@@ -605,8 +605,7 @@ impl DaemonLauncher for SystemDaemonLauncher {
         crate::daemon::spawn::configure_detached_stderr(&mut command, daemon_log(session_id));
         crate::daemon::spawn::configure_detachment(&mut command);
 
-        let mut child = command
-            .spawn()
+        let mut child = crate::daemon::spawn::spawn_detached(&mut command)
             .map_err(|e| anyhow::anyhow!("Failed to spawn daemon: {e}"))?;
 
         // Hand the connection settings to the daemon over its private stdin pipe
