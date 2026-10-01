@@ -61,7 +61,8 @@ use crate::connection::config::AgentSettings;
 use crate::terminal::agent_binary::is_windows_os;
 use crate::terminal::agent_deploy::{install_agent_bytes, AgentDeployResult};
 use crate::terminal::agent_install::{
-    detect_windows_shell, WindowsShell, WINDOWS_AGENT_EXE, WINDOWS_UPLOAD_NAME,
+    detect_windows_shell, windows_install_plan, WindowsShell, WINDOWS_AGENT_EXE,
+    WINDOWS_UPLOAD_NAME,
 };
 use crate::terminal::backend::{RemoteAgentConfig, SshConfig};
 use crate::terminal::jsonrpc;
@@ -245,6 +246,104 @@ struct DeployOutcome {
     result: AgentDeployResult,
     progress_steps: Vec<String>,
     upload_leftover: String,
+    /// Probe results gathered when the verify step printed no version (empty
+    /// otherwise), so a failure names its cause instead of just "no version".
+    diagnostics: String,
+}
+
+/// Run `command` through the host's `DefaultShell` and report its stdout,
+/// stderr and exit status — unlike [`run_remote_command`], which keeps only
+/// UTF-8 stdout. Diagnostics only.
+fn exec_detailed(
+    session: &termihub_core::backends::ssh::handler::SshSession,
+    command: &str,
+) -> String {
+    use russh::ChannelMsg;
+    let run = async {
+        let mut channel = session
+            .channel_open_session()
+            .await
+            .map_err(|e| format!("channel open failed: {e}"))?;
+        channel
+            .exec(false, command)
+            .await
+            .map_err(|e| format!("exec failed: {e}"))?;
+        let (mut out, mut err, mut status) = (Vec::new(), Vec::new(), None);
+        while let Some(msg) = channel.wait().await {
+            match msg {
+                ChannelMsg::Data { ref data } => out.extend_from_slice(data),
+                ChannelMsg::ExtendedData { ref data, .. } => err.extend_from_slice(data),
+                ChannelMsg::ExitStatus { exit_status } => status = Some(exit_status),
+                ChannelMsg::Eof => break,
+                _ => {}
+            }
+        }
+        Ok::<_, String>(format!(
+            "exit={status:?} stdout={:?} stdout_bytes={:02x?} stderr={:?}",
+            String::from_utf8_lossy(&out),
+            &out[..out.len().min(48)],
+            String::from_utf8_lossy(&err),
+        ))
+    };
+    let probe = tokio::time::timeout(Duration::from_secs(30), run);
+    match tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(probe)) {
+        Ok(Ok(report)) => report,
+        Ok(Err(e)) => e,
+        Err(_) => "timed out after 30s".to_string(),
+    }
+}
+
+/// Probe why the verify step printed no version: is the exe in place, what
+/// does the verify command really print (stdout, stderr, exit status), and how
+/// did sshd launch the shell.
+fn verify_diagnostics(
+    session: &termihub_core::backends::ssh::handler::SshSession,
+    shell: WindowsShell,
+) -> String {
+    let plan = windows_install_plan(shell);
+    let mut probes: Vec<(&str, String)> = vec![("verify command", plan.verify_command.clone())];
+    match shell {
+        WindowsShell::Cmd => probes.extend([
+            (
+                "installed exe present",
+                format!(r#"if exist "{}" (echo PRESENT) else (echo ABSENT)"#, plan.install_path),
+            ),
+            ("shell command line", "echo %CMDCMDLINE%".to_string()),
+        ]),
+        WindowsShell::PowerShell => probes.extend([
+            (
+                "installed exe present",
+                format!(r#"Test-Path "{}""#, plan.install_path),
+            ),
+            (
+                "shell command line",
+                "[Environment]::CommandLine; $PSVersionTable.PSVersion.ToString()".to_string(),
+            ),
+            (
+                "verify, merged streams",
+                format!(
+                    r#"& "{}" --version 2>&1 | Out-String; "exit=$LASTEXITCODE""#,
+                    plan.install_path
+                ),
+            ),
+            (
+                "verify via Start-Process",
+                format!(
+                    r#"$p = Start-Process -FilePath "{}" -ArgumentList '--version' -NoNewWindow -Wait -PassThru; "exit=$($p.ExitCode)""#,
+                    plan.install_path
+                ),
+            ),
+        ]),
+    }
+    probes
+        .into_iter()
+        .map(|(label, command)| {
+            format!(
+                "\n  [{label}] {command}\n    => {}",
+                exec_detailed(session, &command)
+            )
+        })
+        .collect()
 }
 
 /// SSH in, detect the host + shell, and run the production install
@@ -272,6 +371,13 @@ fn deploy(fixture: &Fixture) -> Result<DeployOutcome, TerminalError> {
         None,
     )?;
     let upload_leftover = run_remote_command(&session, &upload_leftover_probe(detected_shell))?;
+    let diagnostics = match &result {
+        AgentDeployResult::Deployed {
+            installed_version: None,
+            ..
+        } => verify_diagnostics(&session, detected_shell),
+        _ => String::new(),
+    };
     Ok(DeployOutcome {
         remote_os,
         detected_shell,
@@ -280,6 +386,7 @@ fn deploy(fixture: &Fixture) -> Result<DeployOutcome, TerminalError> {
             .into_inner()
             .unwrap_or_else(std::sync::PoisonError::into_inner),
         upload_leftover,
+        diagnostics,
     })
 }
 
@@ -310,9 +417,12 @@ fn assert_deployed(outcome: &DeployOutcome, want: WindowsShell) -> String {
     else {
         panic!("unexpected deploy result: {:?}", outcome.result);
     };
-    let version = installed_version
-        .as_deref()
-        .unwrap_or_else(|| panic!("verify step printed no version: {:?}", outcome.result));
+    let version = installed_version.as_deref().unwrap_or_else(|| {
+        panic!(
+            "verify step printed no version: {:?}\ndiagnostics:{}",
+            outcome.result, outcome.diagnostics
+        )
+    });
     assert!(*success, "deploy reported failure: {:?}", outcome.result);
     assert!(
         version.starts_with(env!("CARGO_PKG_VERSION")),
