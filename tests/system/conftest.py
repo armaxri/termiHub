@@ -30,6 +30,10 @@ from termihub_harness import (
     SSH_KEYS_SERVICE,
     SSH_PASSWORD_PORT,
     SSH_PASSWORD_SERVICE,
+    SSH_NOSUDO_PORT,
+    SSH_NOSUDO_SERVICE,
+    SSH_SUDO_PORT,
+    SSH_SUDO_SERVICE,
     SSH_TUNNEL_PORT,
     SSH_TUNNEL_SERVICE,
     SSH_X11_PORT,
@@ -300,6 +304,20 @@ def ssh_banner_fixtures():
 def ssh_tunnel_fixtures():
     """Tunnel-target SSH container with internal HTTP (port 2207)."""
     return _ensure_ssh_services([(SSH_TUNNEL_SERVICE, SSH_TUNNEL_PORT)])
+
+
+@pytest.fixture(scope="session")
+def ssh_permission_fixtures():
+    """The editor-permission SSH containers: ``ssh-sudo`` (2212, a
+    password-required sudoer) and ``ssh-nosudo`` (2213, a shell but no
+    ``sudo``). Both ship the root-owned ``/etc/termihub-elevated-target.txt``.
+    """
+    return _ensure_ssh_services(
+        [
+            (SSH_SUDO_SERVICE, SSH_SUDO_PORT),
+            (SSH_NOSUDO_SERVICE, SSH_NOSUDO_PORT),
+        ]
+    )
 
 
 @pytest.fixture(scope="session")
