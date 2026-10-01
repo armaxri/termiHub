@@ -42,7 +42,8 @@ pub(crate) fn decode_bytes(raw: &[u8]) -> String {
 /// The line is `fact=value;fact=value;…; name` — a semicolon-separated set of
 /// facts, then a single space, then the entry name. Returns `None` for `.` /
 /// `..` (including the `type=cdir` / `type=pdir` self/parent entries), empty
-/// names, and any entry without a `type` of `dir` / `file` / `link`.
+/// names, and any entry whose `type` is not a directory, file or symlink (see
+/// [`mlsd_kind`]).
 ///
 /// This is parsed directly (not via [`suppaftp::list::ListParser::parse_mlsd`])
 /// because that parser rejects real-world server output: it errors on
@@ -77,7 +78,7 @@ pub(crate) fn parse_mlsd_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
             continue;
         };
         match key.trim().to_ascii_lowercase().as_str() {
-            "type" => type_val = Some(value.to_ascii_lowercase()),
+            "type" => type_val = Some(value.to_string()),
             "size" => size = value.parse().unwrap_or(0),
             "modify" => modified = parse_mlsx_time(value),
             "unix.mode" => {
@@ -92,14 +93,11 @@ pub(crate) fn parse_mlsd_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
 
     // Only real entries: `cdir` / `pdir` (self/parent) and unknown/missing
     // types are skipped.
-    let is_directory = match type_val.as_deref() {
-        Some("dir") => true,
-        Some("file") | Some("link") => false,
-        _ => return None,
+    let (is_directory, is_symlink, symlink_target) = match mlsd_kind(type_val.as_deref()?)? {
+        MlsdKind::Dir => (true, false, None),
+        MlsdKind::File => (false, false, None),
+        MlsdKind::Link(target) => (false, true, target),
     };
-    // MLSD reports symlinks as `type=link` but carries no target fact, so the
-    // target stays `None`.
-    let is_symlink = type_val.as_deref() == Some("link");
 
     // Prefer the `perm` fact (the connecting user's actual rights); fall back to
     // the coarse any-class hint from `UNIX.mode`; otherwise unknown.
@@ -116,8 +114,40 @@ pub(crate) fn parse_mlsd_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
         permissions,
         writable,
         is_symlink,
-        symlink_target: None,
+        symlink_target,
     })
+}
+
+/// The entry kinds an MLSD `type` fact can name that become listing rows.
+#[derive(Debug, PartialEq, Eq)]
+enum MlsdKind {
+    Dir,
+    File,
+    /// A symbolic link, with its target when the server reports one.
+    Link(Option<String>),
+}
+
+/// Classify an MLSD `type` fact value (case-insensitive). `None` for the
+/// `cdir` / `pdir` markers and for unknown types.
+///
+/// Symlinks come in several spellings: the generic `link`, and the IANA
+/// `OS.unix=symlink` / `OS.unix=slink` forms. ProFTPD reports
+/// `type=OS.unix=symlink`, so matching only `link` dropped every symlink from
+/// a ProFTPD listing (found by the live fixture test, #4006). `OS.unix=slink:<target>`
+/// also carries the link target, which is kept with its original case.
+fn mlsd_kind(value: &str) -> Option<MlsdKind> {
+    const SLINK_WITH_TARGET: &str = "os.unix=slink:";
+    let lower = value.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "dir" => Some(MlsdKind::Dir),
+        "file" => Some(MlsdKind::File),
+        "link" | "os.unix=symlink" | "os.unix=slink" => Some(MlsdKind::Link(None)),
+        _ if lower.starts_with(SLINK_WITH_TARGET) => {
+            let target = value.trim()[SLINK_WITH_TARGET.len()..].to_string();
+            Some(MlsdKind::Link((!target.is_empty()).then_some(target)))
+        }
+        _ => None,
+    }
 }
 
 /// Derive writability from an RFC 3659 §7.5.5 `perm` fact value.
@@ -717,6 +747,41 @@ mod tests {
         assert!(entry.is_symlink, "is_symlink");
         assert_eq!(entry.symlink_target, None);
         assert!(!entry.is_directory);
+    }
+
+    #[test]
+    fn parses_proftpd_os_unix_symlink_type() {
+        // ProFTPD's MLSD spelling (seen live against the fixture, #4006). It
+        // used to fall through to "unknown type" and drop the row entirely.
+        let entry = parse_mlsd_line(
+            b"modify=20261001072850;perm=adfr;size=17;type=OS.unix=symlink;UNIX.mode=0777; readme-link.txt",
+            DIR,
+        )
+        .expect("OS.unix=symlink should parse");
+        assert_eq!(entry.name, "readme-link.txt");
+        assert!(entry.is_symlink, "is_symlink");
+        assert!(!entry.is_directory);
+        assert_eq!(entry.symlink_target, None);
+    }
+
+    #[test]
+    fn parses_slink_type_with_and_without_target() {
+        let with_target = parse_mlsd_line(
+            b"type=OS.unix=slink:/Srv/Target;modify=20181105163248; l1",
+            DIR,
+        )
+        .expect("slink with target should parse");
+        assert!(with_target.is_symlink);
+        assert_eq!(
+            with_target.symlink_target.as_deref(),
+            Some("/Srv/Target"),
+            "the target keeps its original case"
+        );
+
+        let bare = parse_mlsd_line(b"type=OS.unix=slink;modify=20181105163248; l2", DIR)
+            .expect("bare slink should parse");
+        assert!(bare.is_symlink);
+        assert_eq!(bare.symlink_target, None);
     }
 
     #[test]

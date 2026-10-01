@@ -406,6 +406,11 @@ ftp = [
     # Local-file streaming for FTP transfers (RETR → local, local → STOR).
     "tokio/fs",
 ]
+# Test-only FTPS trust anchors (`backends::ftp::test_support`, #4006): lets the
+# FTPS fixture test trust the fixture's test CA. Only adds roots, never skips
+# verification. Enabled by `--all-features` test runs and dev-dependencies —
+# never in a shipping build.
+ftp-test-support = ["ftp"]
 # Mock graphical remote-desktop backend: a protocol-less moving test pattern so
 # the shared remote-desktop layer (#1680) merges and is E2E-testable with no
 # real VNC/RDP server. Pulls no extra deps (tokio + tokio-util are core deps).

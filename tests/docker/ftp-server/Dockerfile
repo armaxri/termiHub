@@ -22,14 +22,20 @@ RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https:
 RUN apt-get update && apt-get install -y --no-install-recommends \
     proftpd-core \
     proftpd-mod-crypto \
-    openssl \
     ca-certificates \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Local FTP account (nologin shell — this account only exists for FTP). Its home
 # is the shared /srv/ftp tree, so DefaultRoot chroots it onto the seeded data.
 RUN useradd -M -d /srv/ftp -s /usr/sbin/nologin ftpuser \
     && echo "ftpuser:ftppass" | chpasswd
+
+# Throttled account for the transfer-queue fault tests (#4006): same tree and
+# rights as ftpuser, but proftpd.conf.tmpl caps its RETR/STOR rate so a test can
+# reliably act *mid-transfer* (kill its session, stop the container, cancel).
+RUN useradd -M -d /srv/ftp -s /usr/sbin/nologin ftpslow \
+    && echo "ftpslow:ftppass" | chpasswd
 
 # Ensure the anonymous FTP account exists (home = the seeded tree).
 RUN id ftp >/dev/null 2>&1 || useradd -M -d /srv/ftp -s /usr/sbin/nologin ftp
@@ -39,12 +45,13 @@ COPY proftpd.conf.tmpl /etc/proftpd/proftpd.conf.tmpl
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# Self-signed TLS material (key + cert in one PEM).
-RUN openssl req -x509 -newkey rsa:2048 -days 3650 -nodes \
-    -subj "/C=US/ST=Test/L=Test/O=termiHub/CN=termihub-ftp" \
-    -keyout /etc/ssl/private/proftpd.pem -out /tmp/ftp-cert.pem \
-    && cat /tmp/ftp-cert.pem >> /etc/ssl/private/proftpd.pem \
-    && rm /tmp/ftp-cert.pem \
+# Test-only TLS material: a leaf for 127.0.0.1/localhost signed by the committed
+# fixture CA (certs/gen-certs.sh), key + cert in one PEM. The FTPS integration
+# test trusts certs/ca.crt through the test-only `ftp-test-support` hook, so the
+# handshake is verified for real instead of skipped (#4006).
+COPY certs/server.key certs/server.crt /tmp/ftp-certs/
+RUN cat /tmp/ftp-certs/server.key /tmp/ftp-certs/server.crt > /etc/ssl/private/proftpd.pem \
+    && rm -rf /tmp/ftp-certs \
     && chmod 600 /etc/ssl/private/proftpd.pem
 
 # Seed the deterministic /srv/ftp tree at build time.
