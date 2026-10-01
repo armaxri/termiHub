@@ -1,7 +1,9 @@
 # termiHub vendored fork of ironrdp-rdpsnd 0.9.0.
 #
 # WHAT WAS CHANGED vs upstream (see `src/client.rs` and README.md; README also
-# lists the upstream post-0.9.0 fixes ported under #3499):
+# lists the upstream post-0.9.0 fixes ported under #3499 and #3510 — the latter,
+# pre-v8 WaveInfo + bare Wave playback, also splits `WavePdu` / `WaveDataPdu` in
+# `src/pdu/mod.rs` and adapts `src/server.rs`'s pre-v8 send):
 # the client `wave` callback now receives the *concrete negotiated* `AudioFormat`
 # instead of a bare `format_no` index. Upstream 0.9.0 built the Client Audio
 # Formats list in `Rdpsnd::client_formats()` from a `HashSet` intersection (so its
@@ -20,8 +22,8 @@
 # UPSTREAM CHANGE THIS REPRESENTS: pass the selected `AudioFormat` to
 # `RdpsndClientHandler::wave` instead of an index into the discarded, non-
 # deterministically-ordered client-format list. Filed to be offered back to
-# Devolutions/IronRDP. Everything else (pdu.rs, server.rs, lib.rs) is byte-for-byte
-# upstream 0.9.0. The sibling `ironrdp-*` deps stay registry versions so nothing
+# Devolutions/IronRDP. Apart from the #3510 Wave split, `pdu/mod.rs`, `server.rs`
+# and `lib.rs` are byte-for-byte upstream 0.9.0. The sibling `ironrdp-*` deps stay registry versions so nothing
 # else in the graph forks.
 #
 # Wired into the workspace-EXCLUDED sidecar graph via `[patch.crates-io]` in

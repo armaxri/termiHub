@@ -10,7 +10,7 @@ use ironrdp::core::{decode, encode_vec};
 use ironrdp::rdpsnd::client::{Rdpsnd, RdpsndClientHandler};
 use ironrdp::rdpsnd::pdu::{
     self, AudioFormat, ClientAudioOutputPdu, PitchPdu, ServerAudioFormatPdu, ServerAudioOutputPdu,
-    TrainingPdu, VolumePdu, Wave2Pdu, WaveFormat,
+    TrainingPdu, VolumePdu, Wave2Pdu, WaveDataPdu, WaveFormat, WavePdu,
 };
 use ironrdp::svc::{SvcMessage, SvcProcessor};
 
@@ -255,12 +255,10 @@ fn short_wave_payload_is_confirmed_without_playback() {
     let (mut client, waves) = ready_client(vec![format.clone()], vec![format.clone()]);
     let audio: Vec<u8> = (0..16).collect();
 
-    assert!(
-        client
-            .process(&wave_info(0, 2, 99, &audio))
-            .unwrap()
-            .is_empty()
-    );
+    assert!(client
+        .process(&wave_info(0, 2, 99, &audio))
+        .unwrap()
+        .is_empty());
     let short = &bare_wave(&audio)[..6];
     assert_wave_confirm(&client.process(short).unwrap(), 99, 2);
     assert!(waves.lock().unwrap().is_empty());
@@ -277,12 +275,10 @@ fn wave_info_with_out_of_range_format_no_is_confirmed_not_played() {
     let (mut client, waves) = ready_client(vec![format.clone()], vec![format]);
     let audio = [3u8; 8];
 
-    assert!(
-        client
-            .process(&wave_info(5, 6, 11, &audio))
-            .unwrap()
-            .is_empty()
-    );
+    assert!(client
+        .process(&wave_info(5, 6, 11, &audio))
+        .unwrap()
+        .is_empty());
     assert_wave_confirm(&client.process(&bare_wave(&audio)).unwrap(), 11, 6);
     assert!(waves.lock().unwrap().is_empty());
 }
@@ -315,4 +311,42 @@ fn wave_info_shorter_than_its_prefix_is_ignored() {
     assert!(client.process(&bad).unwrap().is_empty());
     assert!(!client.process(&wave2(0, 2, &[1; 4])).unwrap().is_empty());
     assert_eq!(waves.lock().unwrap().len(), 1);
+}
+
+/// The re-typed `WavePdu` (WaveInfo only, `BodySize = 8 + n`) and the bare
+/// `WaveDataPdu` encode exactly what a pre-v8 server puts on the wire, and the
+/// client plays the two messages as one sample.
+#[test]
+fn encoded_wave_info_and_wave_data_round_trip_through_the_client() {
+    let format = pcm(2, 44_100);
+    let (mut client, waves) = ready_client(vec![format.clone()], vec![format.clone()]);
+    let audio: Vec<u8> = (0..10).collect();
+
+    let info = server_pdu(&ServerAudioOutputPdu::Wave(WavePdu {
+        timestamp: 3,
+        format_no: 0,
+        block_no: 8,
+        data_prefix: [0, 1, 2, 3],
+        audio_length: 10,
+    }));
+    assert_eq!(info, wave_info(0, 8, 3, &audio));
+    let data = encode_vec(&WaveDataPdu {
+        data: audio[4..].to_vec(),
+    })
+    .unwrap();
+    assert_eq!(data, bare_wave(&audio));
+
+    assert!(client.process(&info).unwrap().is_empty());
+    assert_wave_confirm(&client.process(&data).unwrap(), 3, 8);
+    assert_eq!(*waves.lock().unwrap(), vec![(format, audio)]);
+
+    // Encoding rejects an audio length that cannot hold the Data prefix.
+    let too_short = ServerAudioOutputPdu::Wave(WavePdu {
+        timestamp: 0,
+        format_no: 0,
+        block_no: 0,
+        data_prefix: [0; 4],
+        audio_length: 3,
+    });
+    assert!(encode_vec(&too_short).is_err());
 }
