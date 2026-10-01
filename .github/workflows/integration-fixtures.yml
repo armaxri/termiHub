@@ -246,9 +246,11 @@ jobs:
         # feature-gated `require_docker!` test compiles AND runs — each must have
         # its fixture up or (under TERMIHUB_REQUIRE_DOCKER=1) it hard-fails:
         #   * stress   -> sftp-stress (sftp_stress.rs, `ssh`)
-        #   * fault    -> network-fault-proxy (network_resilience.rs, `ssh`)
+        #   * fault    -> network-fault-proxy (network_resilience.rs and
+        #                 monitoring_fault.rs, `ssh`)
         #   * network  -> network-target / ssh-tunnel-target ports
-        #   * ftp      -> ftp-server:21 (ftp_file_browser/reconnect/transfer.rs, `ftp`)
+        #   * ftp      -> ftp-server:21 + :990 (ftp_file_browser/reconnect/transfer/
+        #                 transfer_faults.rs, `ftp`; ftps_handshake.rs, `ftp-test-support`)
         #   * vnc      -> vnc-server:5900 + vnc-vencrypt-server:5900 (vnc.rs, `vnc`)
         #   * rdp      -> rdp-server:3389 (xrdp) + :3390 (FreeRDP shadow, NLA)
         #                 (rdp.rs, `rdp-sidecar`)
