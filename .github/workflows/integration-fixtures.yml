@@ -379,12 +379,12 @@ jobs:
         # so the desktop lib test binary built above runs in a fresh
         # ubuntu:24.04 container (the runner's release, so glibc matches) with
         # only its runtime libraries installed. The test skips unless
-        # TERMIHUB_HEADLESS_X_PROBE is set, and the grep turns a skipped or
+        # TERMIHUB_HEADLESS_X_PROBE is set, and the greps turn a skipped or
         # renamed test into a failure instead of a false green.
         if: ${{ !cancelled() }}
         run: |
           bin="$(cargo test -p termihub --lib --no-run --message-format=json \
-            | jq -r 'select(.profile.test == true and .target.kind == ["lib"]) | .executable // empty' \
+            | jq -r 'select(.profile.test == true and .executable != null) | .executable' \
             | tail -n 1)"
           test -x "$bin"
           docker run --rm -e TERMIHUB_HEADLESS_X_PROBE=1 -v "$bin:/probe:ro" ubuntu:24.04 bash -c '
@@ -392,9 +392,11 @@ jobs:
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends \
               libwebkit2gtk-4.1-0 libgtk-3-0t64 libayatana-appindicator3-1 librsvg2-2 >/dev/null
-            /probe --exact terminal::xserver::linux_gap::tests::detect_in_a_headless_container
-          ' | tee headless-x.log
+            /probe --exact --nocapture \
+              terminal::xserver::linux_gap::tests::detect_in_a_headless_container
+          ' 2>&1 | tee headless-x.log
           grep -q "test result: ok. 1 passed" headless-x.log
+          ! grep -q "SKIPPED" headless-x.log
 
       - name: Export integration coverage (lcov)
         # advisory: a coverage hiccup must never red the fixture lane, whose
