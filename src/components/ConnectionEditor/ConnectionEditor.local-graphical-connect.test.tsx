@@ -123,9 +123,9 @@ async function renderFor(connectionId: string) {
   await flushAsync();
 }
 
-let addTab: ReturnType<typeof vi.fn>;
+let addTab: ReturnType<typeof vi.fn<(...args: unknown[]) => string>>;
 
-async function saveAndConnect(): Promise<ReturnType<typeof vi.fn>> {
+async function saveAndConnect(): Promise<typeof addTab> {
   const btn = container.querySelector(
     '[data-testid="connection-editor-save-connect"]'
   ) as HTMLButtonElement | null;
@@ -153,7 +153,7 @@ describe("ConnectionEditor — local Save & Connect opens the type's tab (#4017)
       connectionTypes: [VNC_TYPE, FTP_TYPE, TELNET_TYPE],
     });
     // Installed before render: the editor reads `addTab` from the store.
-    addTab = vi.fn(() => "tab-new");
+    addTab = vi.fn((..._args: unknown[]) => "tab-new");
     useAppStore.setState({ addTab });
     seedConnectionsRegion({ connections: CONNS });
   });
