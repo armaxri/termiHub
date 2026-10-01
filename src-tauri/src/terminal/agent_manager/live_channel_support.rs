@@ -51,6 +51,11 @@ pub(super) async fn channel_rpc(
 /// Read `connection.output` notifications off the channel until one decodes to
 /// text containing `needle`, or the deadline passes. Proves the session is
 /// genuinely usable (input → PTY echo → notification), not merely created.
+///
+/// Only the Unix local-sshd reconnect tests (`russh_reconnect_tests`, itself
+/// `cfg(all(test, unix))`) use it, so it is Unix-only to keep the Windows
+/// build free of dead code.
+#[cfg(unix)]
 pub(super) async fn wait_for_output(
     channel: &mut russh::Channel<russh::client::Msg>,
     needle: &str,
