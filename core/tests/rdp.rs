@@ -1,5 +1,5 @@
 #![cfg(feature = "rdp-sidecar")]
-//! RDP Integration Tests (RDP-01 through RDP-12, #3609 / TIN-005).
+//! RDP Integration Tests (RDP-01 through RDP-13, #3609 / TIN-005).
 //!
 //! Exercises termiHub's `rdp` graphical backend — the IronRDP sidecar
 //! (`termihub-rdp-helper`) spawned and bridged by [`SidecarRdp`] — against a
@@ -31,7 +31,8 @@ use std::time::Duration;
 use common::{port_rdp, port_rdp_nla, require_docker};
 use termihub_core::backends::rdp_sidecar::{SidecarRdp, HELPER_PATH_ENV};
 use termihub_core::connection::{
-    ConnectionType, FrameReceiver, FrameUpdate, GraphicalBackend, InputEvent, MonitorLayout,
+    ClipboardImage, ConnectionType, FrameReceiver, FrameUpdate, GraphicalBackend, InputEvent,
+    MonitorLayout,
 };
 use termihub_core::errors::SessionError;
 
@@ -1110,4 +1111,167 @@ async fn rdp_12_pointer_and_keyboard_input_reach_the_server() {
     rdp.disconnect().await.expect("disconnect should succeed");
     drain.abort();
     assert_helper_gone(pid, "RDP-12").await;
+}
+
+// ── RDP-13: clipboard images (CLIPRDR CF_DIB) both ways (PROD-021) ──
+
+/// A 4x2 test image, one distinct colour per pixel, as RGBA rows top-down.
+const DIB_PIXELS: [[u8; 3]; 8] = [
+    [255, 0, 0],
+    [0, 255, 0],
+    [0, 0, 255],
+    [255, 255, 255],
+    [0, 0, 0],
+    [255, 255, 0],
+    [0, 255, 255],
+    [255, 0, 255],
+];
+const DIB_WIDTH: u32 = 4;
+const DIB_HEIGHT: u32 = 2;
+
+fn dib_rgba() -> Vec<u8> {
+    DIB_PIXELS
+        .iter()
+        .flat_map(|[r, g, b]| [*r, *g, *b, 255])
+        .collect()
+}
+
+/// The test image as a 24-bit bottom-up BMP file (what X clients exchange as
+/// `image/bmp`, and what xrdp's chansrv maps to and from CF_DIB).
+fn dib_bmp() -> Vec<u8> {
+    let row = (DIB_WIDTH * 3).div_ceil(4) * 4;
+    let data_len = row * DIB_HEIGHT;
+    let mut bmp = Vec::new();
+    bmp.extend_from_slice(b"BM");
+    bmp.extend_from_slice(&(54 + data_len).to_le_bytes());
+    bmp.extend_from_slice(&[0; 4]);
+    bmp.extend_from_slice(&54u32.to_le_bytes());
+    bmp.extend_from_slice(&40u32.to_le_bytes());
+    bmp.extend_from_slice(&(DIB_WIDTH as i32).to_le_bytes());
+    bmp.extend_from_slice(&(DIB_HEIGHT as i32).to_le_bytes());
+    bmp.extend_from_slice(&1u16.to_le_bytes());
+    bmp.extend_from_slice(&24u16.to_le_bytes());
+    bmp.extend_from_slice(&[0; 24]);
+    for y in (0..DIB_HEIGHT).rev() {
+        let start = bmp.len();
+        for x in 0..DIB_WIDTH {
+            let [r, g, b] = DIB_PIXELS[(y * DIB_WIDTH + x) as usize];
+            bmp.extend_from_slice(&[b, g, r]);
+        }
+        bmp.resize(start + row as usize, 0);
+    }
+    bmp
+}
+
+/// Decode a 24/32-bit uncompressed BMP (or a headerless DIB) to top-down RGB
+/// pixels, returning `(width, height, pixels)`.
+fn decode_bmp(bytes: &[u8]) -> Option<(u32, u32, Vec<[u8; 3]>)> {
+    let le32 = |at: usize| Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
+    let le16 = |at: usize| Some(u16::from_le_bytes(bytes.get(at..at + 2)?.try_into().ok()?));
+    let (header, data_at) = if bytes.starts_with(b"BM") {
+        (14, le32(10)? as usize)
+    } else {
+        (0, le32(0)? as usize)
+    };
+    let width = le32(header + 4)? as i32;
+    let height = le32(header + 8)? as i32;
+    let bpp = u32::from(le16(header + 14)?) / 8;
+    if width <= 0 || height == 0 || !(3..=4).contains(&bpp) {
+        return None;
+    }
+    let (w, h) = (width as u32, height.unsigned_abs());
+    let row = (w * bpp).div_ceil(4) * 4;
+    let mut pixels = Vec::new();
+    for y in 0..h {
+        let src_y = if height > 0 { h - 1 - y } else { y };
+        for x in 0..w {
+            let at = data_at + (src_y * row + x * bpp) as usize;
+            let px = bytes.get(at..at + 3)?;
+            pixels.push([px[2], px[1], px[0]]);
+        }
+    }
+    Some((w, h, pixels))
+}
+
+/// Run `script` (bash) as root in this checkout's rdp fixture container.
+fn fixture_bash(script: &str, label: &str) -> String {
+    common::docker_cli(&[
+        "exec",
+        &common::fixture_container("rdp"),
+        "bash",
+        "-c",
+        script,
+    ])
+    .unwrap_or_else(|e| panic!("{label}: {e}"))
+}
+
+/// A local image copied in the session arrives at the server as an X
+/// `image/bmp` selection with the same pixels (client -> server), and an image
+/// an X client copies on the server arrives at the client as the same RGBA
+/// (server -> client) — both through xrdp's chansrv CF_DIB mapping.
+#[tokio::test]
+async fn rdp_13_clipboard_image_round_trips_both_ways() {
+    let _serial = SERIAL.lock().await;
+    require_rdp!();
+    assert_no_helpers("RDP-13");
+
+    let mut rdp = SidecarRdp::new();
+    rdp.connect(rdp_settings(port_rdp(), RDP_PASSWORD))
+        .await
+        .expect("RDP-13: connect");
+    let pid = spawned_helper_pid("RDP-13");
+    let graphical = rdp.graphical().expect("RDP-13: graphical backend present");
+    let mut frames = graphical.subscribe_frames();
+    wait_for_xrdp_session(&mut frames, "RDP-13").await;
+    let drain = tokio::spawn(async move { while frames.recv().await.is_some() {} });
+
+    // Client -> server: offer the image, then paste it on the server side.
+    let image = ClipboardImage::new(DIB_WIDTH, DIB_HEIGHT, dib_rgba()).expect("valid image");
+    let read_server = "xclip -selection clipboard -t image/bmp -o 2>/dev/null | od -An -v -tx1";
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
+    let mut pasted = None;
+    while tokio::time::Instant::now() < deadline && pasted.is_none() {
+        graphical
+            .set_clipboard_image(image.clone())
+            .await
+            .expect("RDP-13: set_clipboard_image");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let hex = xrdp_session_exec(read_server, "RDP-13 paste");
+        let bytes: Vec<u8> = hex
+            .split_whitespace()
+            .filter_map(|b| u8::from_str_radix(b, 16).ok())
+            .collect();
+        pasted = decode_bmp(&bytes);
+    }
+    let (w, h, pixels) = pasted.expect("RDP-13: the server never received the image as image/bmp");
+    assert_eq!((w, h), (DIB_WIDTH, DIB_HEIGHT), "RDP-13: pasted image size");
+    assert_eq!(pixels, DIB_PIXELS.to_vec(), "RDP-13: pasted image pixels");
+
+    // Server -> client: an X client copies an image/bmp selection.
+    let encoded: String = dib_bmp().iter().map(|b| format!("\\x{b:02x}")).collect();
+    fixture_bash(
+        &format!("printf '{encoded}' > /tmp/termihub-dib.bmp && chmod 644 /tmp/termihub-dib.bmp"),
+        "RDP-13 stage",
+    );
+    let copy = "xclip -selection clipboard -t image/bmp -i /tmp/termihub-dib.bmp";
+    xrdp_session_exec(&format!("{copy} >/dev/null 2>&1 &"), "RDP-13 copy");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
+    let mut received = None;
+    while tokio::time::Instant::now() < deadline {
+        received = graphical
+            .get_clipboard_image()
+            .await
+            .filter(|img| img.rgba == dib_rgba());
+        if received.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let received =
+        received.unwrap_or_else(|| panic!("RDP-13: the client never received the server's image"));
+    assert_eq!((received.width, received.height), (DIB_WIDTH, DIB_HEIGHT));
+
+    rdp.disconnect().await.expect("disconnect should succeed");
+    drain.abort();
+    assert_helper_gone(pid, "RDP-13").await;
 }
