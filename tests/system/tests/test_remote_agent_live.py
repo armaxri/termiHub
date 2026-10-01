@@ -16,6 +16,9 @@ never implemented:
 * **create a shell session under a connected agent** (a working terminal tab),
 * **reconnect and re-attach persistent sessions** (a persistent session survives
   the SSH connection dropping and reappears on reconnect),
+* **double-click a stopped persistent shell** (MT-AGENT-13, #3686): the session
+  starts through the persistent-session machinery, the sidebar dot turns green,
+  and closing the tab leaves the background session running,
 * the **connect / disconnect / new-session / edit / delete context menu** against
   a *connected* agent.
 
@@ -24,6 +27,8 @@ cross-build toolchain is missing (see ``remote_agent_fixtures``).
 """
 
 from __future__ import annotations
+
+import time
 
 import pytest
 
@@ -134,6 +139,54 @@ class TestRemoteAgentLive(
             what="the persistent session to be re-listed after reconnect",
         )
         assert session["definitionId"] == definition["id"]
+
+    # ── double-click a stopped persistent shell (MT-AGENT-13, #3686) ─────────────
+    def test_double_click_stopped_persistent_shell_runs_and_survives_tab_close(self):
+        agent = self._create_and_connect("agent-live-dblclick")
+        definition = self.create_agent_definition(
+            agent["name"], unique_name("persist-dbl"), persistent=True
+        )
+        agent_id, def_id = agent["id"], definition["id"]
+
+        # Stopped: no live session yet, a grey dot and the inline Start action.
+        assert self.persistent_session_state(agent_id, def_id) in (None, "stopped")
+        self.wait(
+            lambda: self.driver.exists(f"persistent-start-{def_id}"),
+            what="the stopped definition's Start action",
+        )
+        assert not self.persistent_dot_is_green(def_id)
+
+        # Double-click routes through the persistent-session machinery (not a
+        # plain unmanaged tab): a terminal tab opens and the dot turns green.
+        before = self.tab_count()
+        self.open_persistent_definition(def_id)
+        self.wait(lambda: self.tab_count() > before, what="the persistent shell tab")
+        self.wait(self.has_terminal, what="the persistent shell terminal session")
+        self.wait_persistent_running(agent_id, def_id)
+        self.wait(
+            lambda: self.persistent_dot_is_green(def_id),
+            what="the persistent state dot to turn green",
+        )
+        # Registered with the persistent machinery: ∞ badge + Attach/Stop actions.
+        assert self.driver.exists(f"persistent-badge-{def_id}")
+        self.wait(
+            lambda: self.driver.exists(f"persistent-stop-{def_id}")
+            and self.driver.exists(f"persistent-attach-{def_id}"),
+            what="the running definition's Attach / Stop actions",
+        )
+
+        # Closing the tab detaches; the background session keeps running. The
+        # live states are ``running`` / ``attached`` (backend-confirmed, see
+        # ``wait_persistent_running``); what must never happen is ``stopped``.
+        self.close_all_tabs()
+        self.wait(lambda: self.tab_count() == 0, what="the persistent tab to close")
+        # Give a wrongly-stopping session time to transition before asserting.
+        time.sleep(2.0)
+        self.wait_persistent_running(agent_id, def_id)
+        assert self.persistent_dot_is_green(def_id)
+        assert any(
+            s.get("definitionId") == def_id for s in self.agent_sessions(agent_id)
+        ), "the agent no longer lists the persistent session after the tab closed"
 
     # ── connected-agent context menu ─────────────────────────────────────────────
     def test_connected_agent_context_menu(self):

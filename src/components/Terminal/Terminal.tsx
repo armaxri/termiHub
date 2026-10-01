@@ -34,7 +34,6 @@ import {
   isBackendDrivenAgentReconnectTabId,
 } from "@/store/appStore";
 import { currentBroadcastView } from "@/store/broadcastBridge";
-import { currentAgentsView } from "@/store/agentsBridge";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { currentEffectiveSettings, useEffectiveSettings } from "@/services/workspaceSettings";
 import { getXtermTheme } from "@/themes";
@@ -45,7 +44,7 @@ import {
   isShellReservedKey,
 } from "@/services/keybindings";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
-import { backendErrorMessage, isAuthFailure, parseBackendError } from "@/utils/backendErrorCode";
+import { parseBackendError } from "@/utils/backendErrorCode";
 import { connectionErrorKindFromCode } from "@/utils/connectionErrorHints";
 import {
   sandboxHasParsers,
@@ -60,6 +59,7 @@ import { safeOpenExternal } from "@/utils/safeOpenExternal";
 import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
 import { toast } from "@/components/ui";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
+import { applyAgentSpawnFailure } from "./agentStateHandlers";
 import { isFitReady, isProposedFitSafe, MIN_FIT_PX } from "./safeFit";
 import { getRenderedCellWidth } from "./xtermDimensions";
 import {
@@ -79,7 +79,6 @@ import {
 } from "@/store/sessionBridge";
 import {
   resolveEstablishmentPlan,
-  resolveAgentSpawnAction,
   resolveBackendRedriveOutcome,
   classifyExitReason,
 } from "./terminalConnectionPlan";
@@ -786,75 +785,18 @@ export function Terminal({
                 // engine (connectRemoteAgent + park + bounded MAX_AGENT_SPAWN_ATTEMPTS)
                 // is the correct driver, with no double-drive risk (#2205 PR-B).
                 //
-                // Check whether the agent transport itself is still connecting.
-                const agentState = currentAgentsView().remoteAgents.find(
-                  (a) => a.id === agentId
-                )?.connectionState;
-
-                // The *decision* — which action this failure warrants — is a pure
-                // function of the agent transport state and the bounded attempt
-                // counter (FEC-016). The concrete effects for the chosen action
-                // run inline below, unchanged.
-                const action = resolveAgentSpawnAction({
-                  agentState,
+                // The decision (FEC-016) and the effects of every terminal outcome
+                // — auth failure, park waiting for the agent, re-establish a gone
+                // agent then park, give up — live in `applyAgentSpawnFailure`.
+                const action = applyAgentSpawnFailure({
+                  tabId,
+                  agentId,
+                  err,
                   attempt,
                   maxAttempts: MAX_AGENT_SPAWN_ATTEMPTS,
-                  authFailed: isAuthFailure(err),
+                  setClassifiedSpawnError,
                 });
-
-                if (action.kind === "authFailed") {
-                  // The agent-hosted server rejected the credentials (#3089):
-                  // stop here with the typed auth error, so the overlay offers
-                  // credential re-entry instead of retrying a doomed login.
-                  useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
-                  setClassifiedSpawnError(tabId, err);
-                  return;
-                }
-
-                if (action.kind === "waitForAgent") {
-                  // Park tab; TerminalView wakes it via retryTerminalSpawn
-                  // once the agent emits "connected".
-                  useAppStore.getState().setTerminalWaitingForAgent(tabId, agentId);
-                  return;
-                }
-
-                if (action.kind === "reconnectAgentThenWait") {
-                  // The agent transport itself is gone — retrying createTerminal
-                  // would fail with "Agent not connected" forever. Re-establish
-                  // the agent connection and park the tab; TerminalView wakes it
-                  // (retryTerminalSpawn) once the agent emits "connected", at
-                  // which point a fresh session is created. This is what makes
-                  // reconnect actually restart the connection instead of looping.
-                  useAppStore.getState().setTerminalWaitingForAgent(tabId, agentId);
-                  void useAppStore
-                    .getState()
-                    .connectRemoteAgent(agentId)
-                    .catch((e) => {
-                      const s = useAppStore.getState();
-                      // Only surface the failure if this tab is still parked on
-                      // this agent (avoid clobbering a state another path set).
-                      if (s.terminalWaitingForAgent[tabId] === agentId) {
-                        s.setTerminalWaitingForAgent(tabId, null);
-                        s.setTerminalDisconnectWithError(
-                          tabId,
-                          `Could not reconnect to agent: ${backendErrorMessage(e)}`
-                        );
-                      }
-                    });
-                  return;
-                }
-
-                if (action.kind === "giveUp") {
-                  // Agent is up but the session creation kept failing and the
-                  // bounded retries are exhausted — surface an error instead of
-                  // spinning forever.
-                  useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
-                  useAppStore.getState().setTerminalSpawnError(tabId, null);
-                  useAppStore
-                    .getState()
-                    .setTerminalDisconnectWithError(tabId, backendErrorMessage(err));
-                  return;
-                }
+                if (action.kind !== "retryAfterDelay") return;
 
                 // action.kind === "retryAfterDelay": the agent is up but the
                 // session creation failed transiently; advance the attempt

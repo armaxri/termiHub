@@ -31,7 +31,11 @@ import { Button, Tooltip } from "@/components/ui";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { TerminalCommandBridge } from "./TerminalCommandBridge";
 import { Terminal } from "./Terminal";
-import { applyAgentReconnecting } from "./agentStateHandlers";
+import {
+  applyAgentReconnecting,
+  restartAgentRetryTabs,
+  wakeWaitingAgentTabs,
+} from "./agentStateHandlers";
 import { TabGroupChips } from "./TabGroupChips";
 import { MacroRecordSaveDialog } from "./MacroRecordSaveDialog";
 import { MacroPlaybackDialog } from "./MacroPlaybackDialog";
@@ -210,42 +214,13 @@ export function TerminalView() {
             `agent connected: ${markedResumed} sessions resumed, ${markedExited} tabs transitioned to exited`
           );
 
-          // Wake any tabs that were parked waiting for this agent to connect.
-          // retryTerminalSpawn increments the retry counter, causing the Terminal
-          // component's useEffect to re-run and call setupTerminal fresh.
-          let wokeCount = 0;
-          for (const tab of agentTerminalTabs) {
-            if (store.terminalWaitingForAgent[tab.id] === session_id) {
-              frontendLog("disconnect", `agent connected: waking waiting tab=${tab.id}`);
-              store.setTerminalWaitingForAgent(tab.id, null);
-              store.retryTerminalSpawn(tab.id);
-              wokeCount++;
-            }
-          }
-          frontendLog("disconnect", `agent connected: woke ${wokeCount} waiting tabs`);
-
-          // Restart tabs that are in the connection-overlay state (auto-retry
-          // delay or "Connection failed") for this agent.  These tabs cannot
-          // be reached via the reconnecting/waiting paths above because
-          // reconnectTerminal cleared terminalReconnectingTabs, and
-          // terminalWaitingForAgent is only set when createTerminal fails while
-          // the agent is transitioning.  Calling reconnectTerminal cancels the
-          // stale retry loop and kicks off a fresh attempt immediately — using
-          // the original store snapshot for condition checks to avoid double-
-          // waking tabs already handled in the loops above.
-          let restartedRetryCount = 0;
-          for (const tab of agentTerminalTabs) {
-            const hasSpawnError = !!store.terminalSpawnErrors[tab.id];
-            const isAutoRetrying = (store.terminalAutoRetryCount[tab.id] ?? 0) > 0;
-            const wasWaiting = !!store.terminalWaitingForAgent[tab.id];
-            const isConnecting = currentSessionView()[tab.id]?.status === "connecting";
-            if ((hasSpawnError || isAutoRetrying) && !wasWaiting && !isConnecting) {
-              frontendLog("disconnect", `agent connected: restarting retry tab=${tab.id}`);
-              store.reconnectTerminal(tab.id);
-              restartedRetryCount++;
-            }
-          }
-          frontendLog("disconnect", `agent connected: restarted ${restartedRetryCount} retry tabs`);
+          // Wake any tabs that were parked waiting for this agent to connect
+          // (retryTerminalSpawn re-runs the Terminal's setup effect), then restart
+          // tabs in the connection-overlay state (auto-retry delay or "Connection
+          // failed"). Both gate on the original `store` snapshot so a tab woken by
+          // the first loop is not double-woken by the second.
+          wakeWaitingAgentTabs(session_id, agentTerminalTabs, store);
+          restartAgentRetryTabs(agentTerminalTabs, store);
 
           // The sessions/definitions refresh is owned by `setAgentConnectionState`
           // (called above for the "connected" transition), so it runs exactly

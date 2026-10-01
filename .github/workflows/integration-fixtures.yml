@@ -260,7 +260,9 @@ jobs:
         #                 vnc-vencrypt-plain-server:5900 (vnc.rs, `vnc`)
         #   * rdp      -> rdp-server:3389 (xrdp) + :3390 (FreeRDP shadow, NLA)
         #                 (rdp.rs, `rdp-sidecar`)
-        # The default-profile services (ssh-*, telnet, ssh-x11) come up regardless.
+        # The default-profile services (ssh-*, telnet, ssh-x11) come up regardless —
+        # including ssh-mfa, the two-factor OpenSSH that ssh_mfa.rs needs for the
+        # live partial-success → keyboard-interactive second factor (#3384).
         # The `agent` profile is omitted (no core/tests target it — the agent
         # suite lives in the `agent` crate, not this `-p termihub-core` lane).
         run: |

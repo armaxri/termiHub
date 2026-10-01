@@ -102,6 +102,7 @@ from .local_agent import (
     NativeSshdFixture,
     local_agent_endpoint,
 )
+from .dns_stub import STUB_EXPECTED_VALUES, StubDnsServer
 from .local_http import LocalThreadingHTTPServer
 from .projection import ProjectionHarness
 from .serial_echo import SerialEchoPair, SerialEchoUnavailable
@@ -160,6 +161,8 @@ __all__ = [
     "SerialEchoPair",
     "SerialEchoUnavailable",
     "LocalThreadingHTTPServer",
+    "STUB_EXPECTED_VALUES",
+    "StubDnsServer",
     "app_binary_path",
     "agent_binary_path",
     "SystemTest",

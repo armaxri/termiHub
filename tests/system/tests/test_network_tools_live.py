@@ -15,9 +15,13 @@ Targets are kept local and deterministic, with no dependency on the Docker
 * **HTTP monitor** runs against a stdlib ``http.server`` this module starts on a
   free port (returns 200).
 
+* **DNS record types** (MX/CNAME/NS/TXT) run against an in-process stub resolver
+  (:class:`~termihub_harness.StubDnsServer`) on a free loopback UDP port, entered
+  as ``ip:port`` in the panel's Server field (#3692).
+
 Covers MT-NET-10 (ping stats + chart), MT-NET-12 (port-scan results + footer),
-MT-NET-14 (DNS A-record), MT-NET-17 (HTTP-monitor check + chart), MT-NET-18
-(sidebar Monitors row).
+MT-NET-14 (DNS A-record), MT-NET-15 (DNS MX/CNAME/NS/TXT), MT-NET-17
+(HTTP-monitor check + chart), MT-NET-18 (sidebar Monitors row).
 
 **MT-NET-13 (large-range warning) is intentionally not ported**: that warning is
 a native ``window.confirm()`` (``PortScannerPanel.tsx``), which carries no
@@ -36,10 +40,12 @@ from typing import Iterator
 import pytest
 
 from termihub_harness import (
+    STUB_EXPECTED_VALUES,
     LocalThreadingHTTPServer,
     NetworkToolsUi,
     SettingsUi,
     SidebarUi,
+    StubDnsServer,
     SystemTest,
     TabsUi,
 )
@@ -62,6 +68,13 @@ def open_tcp_port() -> Iterator[int]:
         yield sock.getsockname()[1]
     finally:
         sock.close()
+
+
+@pytest.fixture(scope="module")
+def stub_dns() -> Iterator[StubDnsServer]:
+    """A loopback stub resolver serving fixed MX/CNAME/NS/TXT records (#3692)."""
+    with StubDnsServer() as server:
+        yield server
 
 
 @pytest.fixture
@@ -144,6 +157,23 @@ class TestNetworkToolsLive(NetworkToolsUi, SidebarUi, SettingsUi, TabsUi, System
 
         self.wait(lambda: self.driver.exists("dns-result-0"), what="a DNS result row")
         assert "127.0.0.1" in (self.driver.get_text("dns-lookup-panel") or "")
+
+    # ── MT-NET-15: DNS Lookup — MX / CNAME / NS / TXT via a stub resolver ──────
+    @pytest.mark.parametrize("record_type", sorted(STUB_EXPECTED_VALUES))
+    def test_dns_record_types_against_stub(self, stub_dns: StubDnsServer, record_type: str):
+        hostname, expected = STUB_EXPECTED_VALUES[record_type]
+        self.run_dns_lookup(hostname, record_type=record_type, server=stub_dns.address)
+
+        # One row per stub record, each typed and valued as the stub serves it.
+        self.wait(
+            lambda: self.driver.exists(f"dns-result-{len(expected) - 1}"),
+            what=f"{len(expected)} {record_type} result row(s)",
+        )
+        assert not self.driver.exists(f"dns-result-{len(expected)}")
+        rows = [self.driver.get_text(f"dns-result-{i}") or "" for i in range(len(expected))]
+        for value in expected:
+            assert any(value in row for row in rows), f"{value!r} missing from {rows!r}"
+        assert all(record_type in row for row in rows), rows
 
     # ── MT-NET-17: HTTP Monitor — periodic check + response-time chart ──────────
     def test_http_monitor_check_and_chart(self, http_target: int):

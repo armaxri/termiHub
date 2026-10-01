@@ -26,7 +26,7 @@ import {
   reconnecting,
   sessionLost,
 } from "@/test/sessionLifecycleRegionTestHarness";
-import { applyAgentReconnecting } from "./agentStateHandlers";
+import { applyAgentReconnecting, restartAgentRetryTabs } from "./agentStateHandlers";
 
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
@@ -557,7 +557,7 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
     vi.clearAllMocks();
   });
 
-  /** Simulate the new loop added for auto-retry tab restart. */
+  /** Run the real auto-retry restart loop (#3686: no longer a copy). */
   function simulateRetryRestartLoop(agentId: string) {
     const store = layoutState();
     const allTabs = store.tabGroups.flatMap((g) =>
@@ -569,15 +569,7 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
       return cfg.agentId === agentId;
     });
 
-    for (const tab of agentTerminalTabs) {
-      const hasSpawnError = !!store.terminalSpawnErrors[tab.id];
-      const isAutoRetrying = (store.terminalAutoRetryCount[tab.id] ?? 0) > 0;
-      const wasWaiting = !!store.terminalWaitingForAgent[tab.id];
-      const isConnecting = currentSessionView()[tab.id]?.status === "connecting";
-      if ((hasSpawnError || isAutoRetrying) && !wasWaiting && !isConnecting) {
-        store.reconnectTerminal(tab.id);
-      }
-    }
+    restartAgentRetryTabs(agentTerminalTabs, useAppStore.getState());
   }
 
   it("restarts a tab in auto-retry delay when agent reconnects", () => {
