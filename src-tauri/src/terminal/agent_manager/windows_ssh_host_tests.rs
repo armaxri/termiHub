@@ -25,24 +25,27 @@
 //!
 //! # Fixture and gate
 //!
-//! The `Windows SSH Host` workflow (`.github/workflows/windows-ssh-host.yml`)
-//! enables the runner's OpenSSH server, creates one throwaway local user per
-//! `DefaultShell`, switches `HKLM\SOFTWARE\OpenSSH\DefaultShell` between the
-//! steps and exports:
+//! The host is the **native sshd fixture** (`scripts/internal/native-sshd-fixture.sh`
+//! → `native-sshd-fixture.ps1` on Windows: Win32-OpenSSH on a loopback port,
+//! the key-auth local user `termihubssh`). The recipe
+//! `scripts/internal/run-windows-ssh-host-suite.sh <cmd|powershell>` sets
+//! `HKLM\SOFTWARE\OpenSSH\DefaultShell`, brings the fixture up and runs the
+//! matching test; the `Windows SSH Host` workflow
+//! (`.github/workflows/windows-ssh-host.yml`) runs it once per shell. Inputs:
 //!
 //! | Variable | Meaning |
 //! | --- | --- |
-//! | `TERMIHUB_WINDOWS_SSH_HOST` / `_PORT` | sshd address (default `127.0.0.1:22`) |
-//! | `TERMIHUB_WINDOWS_SSH_USER` / `_PASSWORD` | password-auth account |
+//! | `TERMIHUB_NATIVE_SSHD_PORT` / `_USER` / `_KEY` | the fixture's port, login user, client key |
+//! | `TERMIHUB_NATIVE_SSHD_AGENT_BIN` (or `TERMIHUB_TEST_AGENT_BIN`) | the `termihub-agent.exe` to deploy |
 //! | `TERMIHUB_WINDOWS_SSH_DEFAULT_SHELL` | `cmd` or `powershell` — the configured `DefaultShell` |
-//! | `TERMIHUB_TEST_AGENT_BIN` | the `termihub-agent.exe` to deploy |
 //! | `TERMIHUB_REQUIRE_WINDOWS_SSH` | truthy → a missing fixture fails instead of skipping |
 //!
-//! Without the fixture (every local and per-PR run) each test prints a visible
-//! `SKIPPED:` line naming the missing variable and passes. A test whose shell
-//! differs from the configured `DefaultShell` skips with that reason too — the
-//! lane runs each shell's test in its own step and fails on any `SKIPPED:` line,
-//! so a skip there can never pass for a green.
+//! Without them (every local and per-PR run, and the macOS/Linux native-sshd
+//! lanes, which never set the Windows `DefaultShell` variable) each test prints
+//! a visible `SKIPPED:` line naming the missing variable and passes. A test
+//! whose shell differs from the configured `DefaultShell` skips with that reason
+//! too — the recipe runs exactly one shell's test and fails on any `SKIPPED:`
+//! line, so a skip there can never pass for a green.
 
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -66,12 +69,12 @@ use crate::utils::errors::TerminalError;
 use crate::utils::remote_exec::{detect_remote_info, run_remote_command};
 use crate::utils::ssh_auth::connect_and_authenticate;
 
-const HOST_ENV: &str = "TERMIHUB_WINDOWS_SSH_HOST";
-const PORT_ENV: &str = "TERMIHUB_WINDOWS_SSH_PORT";
-const USER_ENV: &str = "TERMIHUB_WINDOWS_SSH_USER";
-const PASSWORD_ENV: &str = "TERMIHUB_WINDOWS_SSH_PASSWORD";
-const DEFAULT_SHELL_ENV: &str = "TERMIHUB_WINDOWS_SSH_DEFAULT_SHELL";
+const PORT_ENV: &str = "TERMIHUB_NATIVE_SSHD_PORT";
+const USER_ENV: &str = "TERMIHUB_NATIVE_SSHD_USER";
+const KEY_ENV: &str = "TERMIHUB_NATIVE_SSHD_KEY";
+const FIXTURE_AGENT_BIN_ENV: &str = "TERMIHUB_NATIVE_SSHD_AGENT_BIN";
 const AGENT_BIN_ENV: &str = "TERMIHUB_TEST_AGENT_BIN";
+const DEFAULT_SHELL_ENV: &str = "TERMIHUB_WINDOWS_SSH_DEFAULT_SHELL";
 const REQUIRE_ENV: &str = "TERMIHUB_REQUIRE_WINDOWS_SSH";
 
 /// Ceiling for each live wait (agent establishment, a shell's first output).
@@ -83,13 +86,15 @@ const LIVE_CEILING: Duration = Duration::from_secs(90);
 /// would sit through the full 10-attempt backoff (minutes) before failing.
 const ESTABLISH_CEILING: Duration = Duration::from_secs(120);
 
+/// The fixture sshd listens on loopback only.
+const FIXTURE_HOST: &str = "127.0.0.1";
+
 /// The live Windows SSH host the tests deploy to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Fixture {
-    host: String,
     port: u16,
     user: String,
-    password: String,
+    key: String,
     default_shell: WindowsShell,
     agent_bin: PathBuf,
 }
@@ -97,22 +102,22 @@ struct Fixture {
 impl Fixture {
     fn ssh_config(&self) -> SshConfig {
         SshConfig {
-            host: self.host.clone(),
+            host: FIXTURE_HOST.to_string(),
             port: self.port,
             username: self.user.clone(),
-            auth_method: "password".to_string(),
-            password: Some(self.password.clone()),
+            auth_method: "key".to_string(),
+            key_path: Some(self.key.clone()),
             ..Default::default()
         }
     }
 
     fn agent_config(&self, agent_path: &str) -> RemoteAgentConfig {
         RemoteAgentConfig {
-            host: self.host.clone(),
+            host: FIXTURE_HOST.to_string(),
             port: self.port,
             username: self.user.clone(),
-            auth_method: "password".to_string(),
-            password: Some(self.password.clone()),
+            auth_method: "key".to_string(),
+            key_path: Some(self.key.clone()),
             agent_path: Some(agent_path.to_string()),
             ..Default::default()
         }
@@ -144,34 +149,32 @@ fn resolve_fixture(
     is_file: impl Fn(&std::path::Path) -> bool,
 ) -> Result<Fixture, String> {
     let get = |name: &str| var(name).filter(|v| !v.trim().is_empty());
-    let user = get(USER_ENV).ok_or_else(|| format!("{USER_ENV} is unset"))?;
-    let password = get(PASSWORD_ENV).ok_or_else(|| format!("{PASSWORD_ENV} is unset"))?;
-    let shell_raw =
-        get(DEFAULT_SHELL_ENV).ok_or_else(|| format!("{DEFAULT_SHELL_ENV} is unset"))?;
+    let need = |name: &str| get(name).ok_or_else(|| format!("{name} is unset"));
+    let port_raw = need(PORT_ENV)?;
+    let port = port_raw
+        .trim()
+        .parse()
+        .map_err(|_| format!("{PORT_ENV}={port_raw:?} is not a port number"))?;
+    let user = need(USER_ENV)?;
+    let key = need(KEY_ENV)?;
+    let shell_raw = need(DEFAULT_SHELL_ENV)?;
     let default_shell = parse_default_shell(&shell_raw).ok_or_else(|| {
         format!("{DEFAULT_SHELL_ENV}={shell_raw:?} is neither `cmd` nor `powershell`")
     })?;
-    let port = match get(PORT_ENV) {
-        None => 22,
-        Some(p) => p
-            .trim()
-            .parse()
-            .map_err(|_| format!("{PORT_ENV}={p:?} is not a port number"))?,
-    };
-    let agent_bin = get(AGENT_BIN_ENV)
+    let agent_bin = get(FIXTURE_AGENT_BIN_ENV)
+        .or_else(|| get(AGENT_BIN_ENV))
         .map(PathBuf::from)
-        .ok_or_else(|| format!("{AGENT_BIN_ENV} is unset"))?;
+        .ok_or_else(|| format!("neither {FIXTURE_AGENT_BIN_ENV} nor {AGENT_BIN_ENV} is set"))?;
     if !is_file(&agent_bin) {
         return Err(format!(
-            "{AGENT_BIN_ENV}={} is not a file (run `cargo build -p termihub-agent`)",
+            "agent binary {} is not a file (run `cargo build -p termihub-agent`)",
             agent_bin.display()
         ));
     }
     Ok(Fixture {
-        host: get(HOST_ENV).unwrap_or_else(|| "127.0.0.1".to_string()),
         port,
         user,
-        password,
+        key,
         default_shell,
         agent_bin,
     })
@@ -188,8 +191,9 @@ fn gate(resolved: Result<Fixture, String>, required: bool) -> Option<Fixture> {
         ),
         Err(reason) => {
             eprintln!(
-                "SKIPPED: no Windows SSH-host fixture ({reason}); this test runs in the \
-                 `Windows SSH Host` nightly lane (.github/workflows/windows-ssh-host.yml)"
+                "SKIPPED: no Windows SSH-host fixture ({reason}); run it with \
+                 scripts/internal/run-windows-ssh-host-suite.sh on Windows (the \
+                 `Windows SSH Host` nightly lane does)"
             );
             None
         }
@@ -204,8 +208,8 @@ fn live_fixture() -> Option<Fixture> {
     )
 }
 
-/// Trust the runner's own sshd host key (process-wide, set-once): it is a
-/// loopback fixture regenerated per runner, never in `known_hosts`.
+/// Trust the fixture's sshd host key (process-wide, set-once): it is a
+/// loopback fixture with a key generated per `up`, never in `known_hosts`.
 fn trust_all_host_keys() {
     use termihub_core::backends::ssh::host_key::{
         set_host_key_verifier, HostKeyInfo, HostKeyVerifier,
@@ -644,37 +648,84 @@ fn env_of(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
 }
 
 const FULL_ENV: &[(&str, &str)] = &[
-    (USER_ENV, "thssh"),
-    (PASSWORD_ENV, "secret"),
+    (PORT_ENV, "22400"),
+    (USER_ENV, "termihubssh"),
+    (
+        KEY_ENV,
+        r"C:\ProgramData\termihub-native-sshd\client_ed25519_key",
+    ),
     (DEFAULT_SHELL_ENV, "PowerShell"),
-    (AGENT_BIN_ENV, "C:/agent/termihub-agent.exe"),
+    (
+        FIXTURE_AGENT_BIN_ENV,
+        r"C:\ProgramData\termihub-native-sshd\agent\termihub-agent.exe",
+    ),
 ];
 
+/// `FULL_ENV` with `name` replaced by `value` (or dropped when `None`).
+fn env_with(name: &str, value: Option<&'static str>) -> Vec<(&'static str, &'static str)> {
+    let mut env: Vec<_> = FULL_ENV
+        .iter()
+        .copied()
+        .filter(|(k, _)| *k != name)
+        .collect();
+    if let Some(value) = value {
+        let key = FULL_ENV
+            .iter()
+            .map(|(k, _)| *k)
+            .chain([AGENT_BIN_ENV])
+            .find(|k| *k == name)
+            .expect("known variable");
+        env.push((key, value));
+    }
+    env
+}
+
 #[test]
-fn resolve_fixture_reads_the_full_environment_with_defaults() {
+fn resolve_fixture_reads_the_native_sshd_environment() {
     let fixture = resolve_fixture(env_of(FULL_ENV), |_| true).expect("fixture");
-    assert_eq!(fixture.host, "127.0.0.1");
-    assert_eq!(fixture.port, 22);
-    assert_eq!(fixture.user, "thssh");
+    assert_eq!(fixture.port, 22400);
+    assert_eq!(fixture.user, "termihubssh");
+    assert!(fixture.key.ends_with("client_ed25519_key"));
     assert_eq!(fixture.default_shell, WindowsShell::PowerShell);
-    let mut env = FULL_ENV.to_vec();
-    env.extend([(HOST_ENV, "winhost"), (PORT_ENV, "2222")]);
-    env.retain(|(k, _)| *k != DEFAULT_SHELL_ENV);
-    env.push((DEFAULT_SHELL_ENV, "cmd"));
+    assert!(fixture
+        .agent_bin
+        .to_string_lossy()
+        .ends_with(r"agent\termihub-agent.exe"));
+    let config = fixture.ssh_config();
+    assert_eq!((config.host.as_str(), config.port), (FIXTURE_HOST, 22400));
+    assert_eq!(config.auth_method, "key");
+
+    let cmd = resolve_fixture(env_of(&env_with(DEFAULT_SHELL_ENV, Some("cmd"))), |_| true);
+    assert_eq!(cmd.expect("fixture").default_shell, WindowsShell::Cmd);
+}
+
+#[test]
+fn resolve_fixture_falls_back_to_the_test_agent_binary() {
+    let mut env = env_with(FIXTURE_AGENT_BIN_ENV, None);
+    env.push((AGENT_BIN_ENV, "target/debug/termihub-agent.exe"));
     let fixture = resolve_fixture(env_of(&env), |_| true).expect("fixture");
-    assert_eq!((fixture.host.as_str(), fixture.port), ("winhost", 2222));
-    assert_eq!(fixture.default_shell, WindowsShell::Cmd);
+    assert_eq!(
+        fixture.agent_bin,
+        PathBuf::from("target/debug/termihub-agent.exe")
+    );
 }
 
 #[test]
 fn resolve_fixture_names_the_missing_piece() {
     let err = resolve_fixture(env_of(&[]), |_| true).unwrap_err();
-    assert!(err.contains(USER_ENV), "{err}");
-    let mut env = FULL_ENV.to_vec();
-    env.retain(|(k, _)| *k != DEFAULT_SHELL_ENV);
-    env.push((DEFAULT_SHELL_ENV, "bash"));
-    let err = resolve_fixture(env_of(&env), |_| true).unwrap_err();
+    assert!(err.contains(PORT_ENV), "{err}");
+    // The macOS/Linux native-sshd lanes export the fixture but never the
+    // Windows DefaultShell, so the tests skip there by name.
+    let err = resolve_fixture(env_of(&env_with(DEFAULT_SHELL_ENV, None)), |_| true).unwrap_err();
+    assert!(err.contains(DEFAULT_SHELL_ENV), "{err}");
+    let err =
+        resolve_fixture(env_of(&env_with(DEFAULT_SHELL_ENV, Some("bash"))), |_| true).unwrap_err();
     assert!(err.contains("neither"), "{err}");
+    let err = resolve_fixture(env_of(&env_with(PORT_ENV, Some("ssh"))), |_| true).unwrap_err();
+    assert!(err.contains("not a port number"), "{err}");
+    let err =
+        resolve_fixture(env_of(&env_with(FIXTURE_AGENT_BIN_ENV, None)), |_| true).unwrap_err();
+    assert!(err.contains(AGENT_BIN_ENV), "{err}");
     let err = resolve_fixture(env_of(FULL_ENV), |_| false).unwrap_err();
     assert!(err.contains("not a file"), "{err}");
 }
