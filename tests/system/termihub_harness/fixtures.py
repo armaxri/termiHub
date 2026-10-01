@@ -58,6 +58,32 @@ SSH_TUNNEL_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_TUNNEL_PORT", 2207)
 #: auto-assert that the server allocates a forwarded ``$DISPLAY`` (#957).
 SSH_X11_SERVICE = "ssh-x11"
 SSH_X11_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_X11_PORT", 2208)
+#: Service + host port for the password-required-sudoer SSH container: the
+#: account password is also the sudo password, and it ships a root-owned
+#: :data:`ELEVATED_TARGET_PATH` (see ``tests/docker/ssh-sudo/Dockerfile``).
+SSH_SUDO_SERVICE = "ssh-sudo"
+SSH_SUDO_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_SUDO_PORT", 2212)
+#: Service + host port for the shell-but-no-``sudo`` SSH container, with the
+#: same root-owned :data:`ELEVATED_TARGET_PATH`.
+SSH_NOSUDO_SERVICE = "ssh-nosudo"
+SSH_NOSUDO_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_NOSUDO_PORT", 2213)
+#: Root-owned (``root:root``, 0644) file on ``ssh-sudo`` / ``ssh-nosudo`` that the
+#: test user can read but not write — the editor's read-only / sudo target.
+ELEVATED_TARGET_DIR = "/etc"
+ELEVATED_TARGET_NAME = "termihub-elevated-target.txt"
+ELEVATED_TARGET_PATH = f"{ELEVATED_TARGET_DIR}/{ELEVATED_TARGET_NAME}"
+#: Service + host port for the jump-host bastion (key auth, TCP forwarding on).
+#: It bridges the host to :data:`SSH_JUMP_TARGET_SERVICE` on the isolated
+#: ``jumphost-net`` (see ``tests/docker/ssh-jumphost-bastion/Dockerfile``).
+SSH_BASTION_SERVICE = "ssh-jumphost-bastion"
+SSH_BASTION_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_BASTION_PORT", 2204)
+#: ``container_name`` suffix of :data:`SSH_BASTION_SERVICE` (``<project>-ssh-bastion``).
+SSH_BASTION_CONTAINER_SUFFIX = "ssh-bastion"
+#: The jump-host target: no host port, reachable only through the bastion, at
+#: this docker-network name and port. Its home holds ``marker.txt``.
+SSH_JUMP_TARGET_SERVICE = "ssh-jumphost-target"
+SSH_JUMP_TARGET_HOST = "ssh-jumphost-target"
+SSH_JUMP_TARGET_PORT = 22
 #: Credentials shared by the test SSH containers.
 SSH_USERNAME = "testuser"
 SSH_PASSWORD = "testpass"
@@ -632,13 +658,23 @@ class SshServerControl:
         # listening for other/future sessions (only these PIDs die).
         self._exec(["kill", "-9", *targets])
 
+    def read_file(self, path: str) -> str:
+        """The contents of ``path`` inside the container (read as root).
+
+        Newlines are kept exactly (no ``text=True`` translation), so a test can
+        tell an LF file from a CRLF one.
+        """
+        return self._exec(["cat", path], text=False).decode("utf-8")
+
     def path_exists(self, path: str) -> bool:
         """Whether ``path`` exists inside the container (e.g. a leftover upload)."""
         out = self._exec(["sh", "-c", 'if [ -e "$1" ]; then echo yes; else echo no; fi', "sh", path])
         return out.strip() == "yes"
 
-    def _exec(self, argv: Sequence[str], *, timeout: float = 30.0) -> str:
+    def _exec(self, argv: Sequence[str], *, timeout: float = 30.0, text: bool = True):
         """Run ``argv`` inside the container via the detected runtime.
+
+        Returns stdout as ``str`` (``text=True``, the default) or raw ``bytes``.
 
         Raises :class:`ContainerRuntimeUnavailable` (→ a clean ``pytest.skip`` at
         the call site) when no runtime is reachable or the exec fails.
@@ -651,17 +687,23 @@ class SshServerControl:
         cmd = [self._runtime, "exec", self._container, *argv]
         try:
             result = subprocess.run(
-                cmd, check=True, timeout=timeout, capture_output=True, text=True
+                cmd, check=True, timeout=timeout, capture_output=True, text=text
             )
         except subprocess.CalledProcessError as exc:
+            output = exc.stderr or exc.stdout
+            if isinstance(output, bytes):
+                output = output.decode("utf-8", "replace")
             raise ContainerRuntimeUnavailable(
                 f"`exec` into {self._container} failed (exit {exc.returncode}):\n"
-                f"{_tail(exc.stderr or exc.stdout)}"
+                f"{_tail(output)}"
             ) from exc
         except subprocess.TimeoutExpired as exc:
+            output = exc.stderr
+            if isinstance(output, bytes):
+                output = output.decode("utf-8", "replace")
             raise ContainerRuntimeUnavailable(
                 f"`exec` into {self._container} timed out after {timeout}s:\n"
-                f"{_tail(exc.stderr)}"
+                f"{_tail(output)}"
             ) from exc
         return result.stdout
 
@@ -719,3 +761,62 @@ class ContainerControl:
                 f"`{args[0]}` of {self.container} timed out after {timeout}s:\n"
                 f"{_tail(exc.stderr)}"
             ) from exc
+
+
+#: POSIX-shell one-liner counting the bastion's authenticated SSH connections.
+#: OpenSSH 9.6 runs one ``sshd: <user> [priv]`` monitor per authenticated
+#: connection; a target session rides a ``direct-tcpip`` channel on its gateway
+#: connection and adds none, so the count is the number of gateway sessions. The
+#: scanning shell itself is skipped (``$$``) because its cmdline embeds the match.
+_SSHD_GATEWAY_COUNT = (
+    "n=0; for p in /proc/[0-9]*; do "
+    'pid=${p#/proc/}; '
+    '[ "$pid" = "$$" ] && continue; '
+    'c=$(tr "\\0" " " < "$p/cmdline" 2>/dev/null) || continue; '
+    f'case "$c" in "sshd: {SSH_USERNAME} [priv]"*) n=$((n+1));; esac; '
+    'done; echo "$n"'
+)
+
+
+class BastionControl(ContainerControl):
+    """Stop / restart the jump-host bastion and count its gateway sessions.
+
+    The jump-host reconnect test (MT-SSH-44, #3688) drops every session that
+    rides the bastion by stopping its container, brings it back, and then needs
+    to know how many gateway sessions the reconnected tabs opened through it —
+    one shared gateway, not one per tab. :meth:`gateway_sessions` reads that
+    from the bastion's own process table.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(SSH_BASTION_CONTAINER_SUFFIX)
+
+    @property
+    def available(self) -> bool:
+        """Whether a container runtime is reachable to control the bastion."""
+        return self._runtime is not None
+
+    def restore(self, *, timeout: float = 90.0) -> None:
+        """Start the bastion (a no-op when running) and wait for its SSH port."""
+        self.start()
+        wait_for_port(SSH_HOST, SSH_BASTION_PORT, timeout=timeout)
+
+    def gateway_sessions(self) -> int:
+        """Authenticated SSH connections the bastion is serving right now."""
+        if self._runtime is None:
+            raise ContainerRuntimeUnavailable(
+                f"no container runtime available to exec into {self.container}"
+            )
+        try:
+            result = subprocess.run(
+                [self._runtime, "exec", self.container, "sh", "-c", _SSHD_GATEWAY_COUNT],
+                check=True,
+                timeout=30.0,
+                capture_output=True,
+                text=True,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            raise ContainerRuntimeUnavailable(
+                f"`exec` into {self.container} failed: {exc}"
+            ) from exc
+        return int(result.stdout.strip() or "0")

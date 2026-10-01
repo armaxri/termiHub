@@ -22,25 +22,6 @@ tests:
     verification: manual
     tags: [visual]
 
-  - id: MT-SSH-44
-    automation_issue: 3688
-    name: "Jump-host reconnection re-establishes the chain through the shared gateway"
-    pr: 958
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "Open two SSH terminals that both reach their target through the same bastion"
-      - "Drop the bastion (e.g. stop the bastion container or kill its sshd)"
-      - "Use the reconnect banner on each terminal to reconnect (trigger both close together)"
-    expected:
-      - "Each terminal shows a reconnect banner when its session drops"
-      - "Reconnecting re-establishes the full jump-host chain and the terminal becomes usable again"
-      - "Both terminals reconnecting at once create only one new gateway session (verify in the Open Connections panel)"
-    verification: manual
-    tags: [jump-host]
-
   # --- Folded in from the per-feature walkthroughs in docs/testing.md (#3695) ---
 
   - id: MT-SSH-50

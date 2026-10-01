@@ -12,6 +12,7 @@ import pytest
 
 from termihub_harness import (
     ConnectionsUi,
+    JumpHostUi,
     LayoutUi,
     MonitoringUi,
     PasswordPromptUi,
@@ -32,6 +33,7 @@ ALL_MIXINS = [
     ConnectionsUi,
     PasswordPromptUi,
     SshUi,
+    JumpHostUi,
     MonitoringUi,
     SftpUi,
     SettingsUi,
@@ -46,6 +48,7 @@ class _Maximal(
     ConnectionsUi,
     PasswordPromptUi,
     SshUi,
+    JumpHostUi,
     MonitoringUi,
     SftpUi,
     SettingsUi,
@@ -86,6 +89,9 @@ def test_base_members_are_not_shadowed_by_a_mixin():
         "create_ssh_connection",
         "handle_password_prompt",
         "connect_ssh_password",
+        "create_jump_host_connection",
+        "fill_jump_host",
+        "accept_jump_host_key_prompts",
         "wait_for_monitoring_stats",
         "connect_sftp_browser",
         "open_settings_category",
@@ -102,3 +108,48 @@ def test_base_keeps_only_lifecycle_and_polling():
     # …but it must still own the lifecycle + polling primitives.
     for kept in ("wait", "delay4user", "restart_app"):
         assert callable(getattr(SystemTest, kept))
+
+
+class _RecordingDriver:
+    """Records the bridge calls a helper makes; every element exists."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, ...]] = []
+
+    def exists(self, test_id: str) -> bool:
+        return True
+
+    def click(self, test_id: str) -> None:
+        self.calls.append(("click", test_id))
+
+    def type(self, test_id: str, text: str) -> None:
+        self.calls.append(("type", test_id, text))
+
+
+class _JumpHostOnly(JumpHostUi):
+    """``JumpHostUi`` with a recording driver and an immediate ``wait``."""
+
+    def __init__(self) -> None:
+        self.driver = _RecordingDriver()  # type: ignore[assignment]
+
+    def wait(self, predicate, **_kwargs):  # noqa: ANN001 - test double
+        return predicate()
+
+
+def test_fill_jump_host_enables_the_section_and_fills_the_inline_hop():
+    ui = _JumpHostOnly()
+    ui.fill_jump_host(host="127.0.0.1", port=2204, username="testuser", key_path="/k/ed25519")
+    assert ui.driver.calls == [
+        ("click", "jump-host-enabled"),
+        ("type", "jump-host-host-0", "127.0.0.1"),
+        ("type", "jump-host-port-0", "2204"),
+        ("type", "jump-host-username-0", "testuser"),
+        ("type", "jump-host-key-path-0-key-path-input", "/k/ed25519"),
+    ]
+
+
+def test_fill_jump_host_does_not_retoggle_the_section_for_a_later_hop():
+    ui = _JumpHostOnly()
+    ui.fill_jump_host(host="10.0.0.2", port=22, key_path="/k", index=1)
+    assert ("click", "jump-host-enabled") not in ui.driver.calls
+    assert ui.driver.calls[0] == ("type", "jump-host-host-1", "10.0.0.2")

@@ -25,11 +25,18 @@ from termihub_harness import (
     REMOTE_AGENT_SERVICE,
     SSH_BANNER_PORT,
     SSH_BANNER_SERVICE,
+    SSH_BASTION_PORT,
+    SSH_BASTION_SERVICE,
     SSH_HOST,
+    SSH_JUMP_TARGET_SERVICE,
     SSH_KEYS_PORT,
     SSH_KEYS_SERVICE,
     SSH_PASSWORD_PORT,
     SSH_PASSWORD_SERVICE,
+    SSH_NOSUDO_PORT,
+    SSH_NOSUDO_SERVICE,
+    SSH_SUDO_PORT,
+    SSH_SUDO_SERVICE,
     SSH_TUNNEL_PORT,
     SSH_TUNNEL_SERVICE,
     SSH_X11_PORT,
@@ -297,9 +304,43 @@ def ssh_banner_fixtures():
 
 
 @pytest.fixture(scope="session")
+def ssh_bastion_fixtures():
+    """Jump-host bastion (port 2204) plus its internal target (no host port).
+
+    The target lives only on the isolated ``jumphost-net``, so readiness is
+    probed on the bastion's port alone; a connect through the bastion proves the
+    target is up (MT-SSH-44, #3688).
+    """
+    fixture = ComposeFixture()
+    try:
+        fixture.ensure(
+            SSH_BASTION_SERVICE,
+            SSH_JUMP_TARGET_SERVICE,
+            ports=[(SSH_HOST, SSH_BASTION_PORT)],
+        )
+    except ContainerRuntimeUnavailable as exc:
+        pytest.skip(f"SSH jump-host container fixtures unavailable: {exc}")
+    return fixture
+
+
+@pytest.fixture(scope="session")
 def ssh_tunnel_fixtures():
     """Tunnel-target SSH container with internal HTTP (port 2207)."""
     return _ensure_ssh_services([(SSH_TUNNEL_SERVICE, SSH_TUNNEL_PORT)])
+
+
+@pytest.fixture(scope="session")
+def ssh_permission_fixtures():
+    """The editor-permission SSH containers: ``ssh-sudo`` (2212, a
+    password-required sudoer) and ``ssh-nosudo`` (2213, a shell but no
+    ``sudo``). Both ship the root-owned ``/etc/termihub-elevated-target.txt``.
+    """
+    return _ensure_ssh_services(
+        [
+            (SSH_SUDO_SERVICE, SSH_SUDO_PORT),
+            (SSH_NOSUDO_SERVICE, SSH_NOSUDO_PORT),
+        ]
+    )
 
 
 @pytest.fixture(scope="session")

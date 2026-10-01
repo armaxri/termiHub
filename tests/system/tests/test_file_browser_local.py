@@ -26,12 +26,19 @@ so a test never depends on OSC 7 cwd-following timing for its fixtures. The
 dedicated CWD-aware tests below *do* exercise cwd-following (against ``/tmp`` /
 ``/etc``) and wait for the displayed path to settle.
 
+**Journeys (#4007).** A multi-selection delete that hits an undeletable folder
+keeps going and removes the rest (#1348 / #1394), and a pointer drag of a file
+onto a folder row moves it there (PROD-006, #3454) — both asserted on the real
+filesystem, not just the listing.
+
 Not ported (kept as manual tests in docs/testing.md): three-dots row-menu vs
 context-menu styling parity and other pure-visual checks; the rename inline-input
 flow (covered indirectly — delete exercises the same context-menu refresh path).
 """
 
+import os
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -45,6 +52,7 @@ from termihub_harness import (
     SystemTest,
     TabsUi,
     TerminalUi,
+    file_row_testid,
     unique_name,
 )
 from termihub_harness.shell import is_absolute_path
@@ -296,4 +304,103 @@ class TestFileBrowserLocal(
         assert self.file_row_exists(name)
         self.delete_entry(name)
         assert not self.file_row_exists(name)
+        self.switch_to_connections_sidebar()
+
+    # ── Multi-delete partial failure (#1348 / #1394) ────────────────────────
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="relies on POSIX directory permissions"
+    )
+    def test_multi_delete_continues_past_an_entry_that_cannot_be_deleted(self):
+        """Ctrl/Cmd+A → Delete (3 items) with one folder the user may not empty.
+
+        The folder is ``0500`` with a file inside, so removing it fails; the two
+        plain files must still be deleted (every delete settles independently)
+        and the failed folder must stay, contents intact.
+        """
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            pytest.skip("root ignores directory permissions")
+        self._fresh_temp_browser()
+        prefix = f"e2e_fb_{unique_name('md')}_"
+        workspace = Path(self._workspace)
+        file_a = workspace / f"{prefix}a.txt"
+        file_b = workspace / f"{prefix}b.txt"
+        locked = workspace / f"{prefix}locked"
+        file_a.write_text("a\n")
+        file_b.write_text("b\n")
+        locked.mkdir()
+        (locked / "keep.txt").write_text("keep\n")
+        locked.chmod(0o500)
+        try:
+            self.wait_for_file_row(locked.name)  # refreshes until the new entries list
+            self.filter_entries(prefix)  # exactly the three entries under test
+            self.wait(
+                lambda: all(self.file_row_exists(p.name) for p in (file_a, file_b, locked)),
+                what="the three entries under test",
+            )
+            # Select all (the filtered listing), then delete from the row menu.
+            self.driver.press_key("a", file_row_testid(file_a.name), ctrl=True)
+            self.driver.context_menu(file_row_testid(file_a.name))
+            self.wait(
+                lambda: self.driver.exists("multi-select-delete"),
+                what="the multi-selection menu",
+            )
+            assert "3 items" in self.driver.get_text("multi-select-delete")
+            self.driver.click("multi-select-delete")
+            self.wait(
+                lambda: self.driver.exists("confirm-delete-confirm"),
+                what="the delete-confirm dialog",
+            )
+            self.driver.click("confirm-delete-confirm")
+
+            self.wait(
+                lambda: not file_a.exists() and not file_b.exists(),
+                what="the deletable files to be removed despite the failure",
+            )
+            assert locked.is_dir() and (locked / "keep.txt").is_file()
+            self.refresh_file_browser()
+            self.wait(
+                lambda: self.file_row_exists(locked.name)
+                and not self.file_row_exists(file_a.name)
+                and not self.file_row_exists(file_b.name),
+                what="the listing to show only the folder that failed",
+            )
+        finally:
+            locked.chmod(0o700)  # so the workspace teardown can remove it
+        self.switch_to_connections_sidebar()
+
+    # ── Drag-to-move (PROD-006, #3454) ──────────────────────────────────────
+    def test_dragging_a_file_onto_a_folder_moves_it(self):
+        """A pointer drag of a file row released on a folder row moves the file.
+
+        ``drag_to`` drives dnd-kit's PointerSensor past its 8px activation
+        distance and releases over the folder row; a plain drag (no Alt) is a
+        move, so the file leaves the workspace and lands in the folder intact.
+        """
+        self._fresh_temp_browser()
+        prefix = f"e2e_fb_{unique_name('dm')}_"
+        workspace = Path(self._workspace)
+        dest = workspace / f"{prefix}dest"
+        source = workspace / f"{prefix}file.txt"
+        dest.mkdir()
+        source.write_text("drag me\n")
+        self.wait_for_file_row(source.name)
+        self.filter_entries(prefix)  # both rows mounted, side by side
+        self.wait(
+            lambda: self.file_row_exists(source.name) and self.file_row_exists(dest.name),
+            what="the file and folder rows",
+        )
+
+        self.driver.drag_to(file_row_testid(source.name), file_row_testid(dest.name))
+
+        moved = dest / source.name
+        self.wait(
+            lambda: moved.is_file() and not source.exists(),
+            what="the file to move into the folder",
+        )
+        assert moved.read_text() == "drag me\n"
+        self.refresh_file_browser()
+        self.wait(
+            lambda: not self.file_row_exists(source.name),
+            what="the moved file to leave the listing",
+        )
         self.switch_to_connections_sidebar()
