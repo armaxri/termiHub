@@ -1160,15 +1160,27 @@ mod tests {
         assert!(!file.exists());
     }
 
-    // The two tilde tests read the real process `HOME` (as production does), so
-    // no test in this binary may mutate it — inject a lookup instead (see
-    // `home_directory_from`, `RedactionContext::from_lookup`). A temporary `HOME`
-    // override elsewhere made these fail intermittently under parallel runs
-    // (#2805).
-    #[cfg(unix)]
+    // The two tilde tests read the real process home variable (as production
+    // does), so no test in this binary may mutate it — inject a lookup instead
+    // (see `home_directory_from`, `RedactionContext::from_lookup`). A temporary
+    // `HOME` override elsewhere made these fail intermittently under parallel
+    // runs (#2805).
+    //
+    // They run on Windows too (MT-AGENT-25, #3685): there `~` resolves to
+    // `USERPROFILE`, and the browser reports paths with forward slashes, so the
+    // expected home is normalized the same way.
+    fn expected_home_dir() -> String {
+        #[cfg(windows)]
+        let var = "USERPROFILE";
+        #[cfg(not(windows))]
+        let var = "HOME";
+        let home = std::env::var(var).unwrap_or_else(|_| panic!("{var} must be set"));
+        normalize_path_separators(&home)
+    }
+
     #[tokio::test]
     async fn browser_list_tilde_expands_to_home_dir() {
-        let home = std::env::var("HOME").expect("HOME must be set");
+        let home = expected_home_dir();
         let browser = LocalFileBrowser::new();
         let entries = browser
             .list_dir("~")
@@ -1177,17 +1189,16 @@ mod tests {
         for entry in entries {
             assert!(
                 entry.path.starts_with(&home),
-                "entry path '{}' does not start with HOME '{}'",
+                "entry path '{}' does not start with the home dir '{}'",
                 entry.path,
                 home
             );
         }
     }
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn browser_stat_tilde_expands_to_home_dir() {
-        let home = std::env::var("HOME").expect("HOME must be set");
+        let home = expected_home_dir();
         let browser = LocalFileBrowser::new();
         let entry = browser.stat("~").await.expect("stat of '~' should work");
         assert_eq!(

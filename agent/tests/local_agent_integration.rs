@@ -1955,6 +1955,334 @@ fn live_agent_tcp_fresh_agent_after_reconnect_creates_session_over_surviving_reg
     client.close(&sid);
 }
 
+// ── Windows ConPTY shell sessions through the agent (MT-AGENT-22/23, #3685) ────
+//
+// A PowerShell and a cmd.exe session driven through a live agent over TCP:
+// spawn, a command round-trip, `connection.resize`, a second round-trip (the
+// shell survived the resize), `connection.close`, and then the orphan check —
+// the shell process the session spawned must be gone. The core suite covers
+// the same ConPTY flow in-process (`local_shell.rs`, `windows_*_spawn_echo_*`);
+// these cover it end-to-end through the agent, including the teardown that
+// the core tests cannot see (no orphaned `powershell.exe` / `cmd.exe`).
+//
+// Flake discipline (#2495, #2498): every wait is event-driven and bounded.
+// PowerShell's cold start on a fresh runner is slow and highly variable, so it
+// gets the separate, longer [`shell_startup_timeout`]; command output uses
+// [`ready_timeout`]. There are no fixed sleeps.
+
+/// Windows-only helpers for the ConPTY shell-session tests below.
+#[cfg(windows)]
+impl AgentClient {
+    /// `connection.create` a shell session with an explicit shell `config`.
+    fn create_shell_session_with(&mut self, title: &str, config: Value) -> String {
+        let resp = self.rpc(
+            "connection.create",
+            json!({"type": "shell", "title": title, "config": config}),
+        );
+        assert!(
+            resp["result"].is_object(),
+            "connection.create failed: {resp}"
+        );
+        resp["result"]["session_id"]
+            .as_str()
+            .expect("missing session_id")
+            .to_string()
+    }
+
+    fn resize(&mut self, session_id: &str, cols: u16, rows: u16) -> Value {
+        self.rpc(
+            "connection.resize",
+            json!({"session_id": session_id, "cols": cols, "rows": rows}),
+        )
+    }
+
+    /// Accumulate every `connection.output` until `done` accepts the text seen
+    /// so far, or `timeout` elapses. Returns whether `done` was satisfied, plus
+    /// the accumulated text for the failure message.
+    ///
+    /// Unlike [`AgentClient::wait_for_output`], this matches across
+    /// notification boundaries: ConPTY chunks its output freely, so a marker
+    /// can arrive split over two notifications.
+    fn read_output_until(
+        &mut self,
+        timeout: Duration,
+        done: impl Fn(&str) -> bool,
+    ) -> (bool, String) {
+        let deadline = Instant::now() + timeout;
+        self.set_read_timeout(Some(Duration::from_millis(100)));
+        let mut acc = String::new();
+        let mut satisfied = false;
+        while Instant::now() < deadline {
+            let mut line = String::new();
+            match self.reader.read_line(&mut line) {
+                Ok(0) => break, // EOF
+                Ok(_) => {
+                    let Ok(msg) = serde_json::from_str::<Value>(line.trim()) else {
+                        continue;
+                    };
+                    if msg["method"] == "connection.output" {
+                        let b64 = msg["params"]["data"].as_str().unwrap_or("");
+                        let bytes = base64::engine::general_purpose::STANDARD
+                            .decode(b64)
+                            .unwrap_or_default();
+                        acc.push_str(&String::from_utf8_lossy(&bytes));
+                        if done(&acc) {
+                            satisfied = true;
+                            break;
+                        }
+                    }
+                }
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut =>
+                {
+                    // per-read timeout — loop and re-check the overall deadline
+                }
+                Err(_) => break,
+            }
+        }
+        self.set_read_timeout(Some(RPC_READ_TIMEOUT));
+        (satisfied, acc)
+    }
+}
+
+/// Budget for a real shell's startup (spawn to first prompt), separate from
+/// [`ready_timeout`] for a command's output. Windows PowerShell 5.1's cold start
+/// on a fresh CI runner is slow and highly variable (#2498); the wait returns as
+/// soon as the prompt appears, so the ceiling only bounds a genuine hang. Same
+/// env override as the core suite's `shell_startup_timeout`.
+#[cfg(windows)]
+fn shell_startup_timeout() -> Duration {
+    std::env::var("TERMIHUB_TEST_SHELL_STARTUP_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(300))
+}
+
+/// Whether PowerShell has printed its first prompt: the OSC 133 `A` prompt-start
+/// mark from termiHub's shell integration, or the default `PS <path>>` prompt
+/// text as ConPTY renders it (same check as the core suite).
+#[cfg(windows)]
+fn powershell_prompt_shown(text: &str) -> bool {
+    text.contains("\x1b]133;A")
+        || text
+            .rfind("PS ")
+            .is_some_and(|start| text[start..].contains('>'))
+}
+
+/// PIDs of every live process named `image` (case-insensitive, e.g.
+/// `powershell.exe`) that descends from `root_pid`.
+///
+/// The agent spawns a session's shell itself or through a `--daemon` child, so
+/// the shell is a child or grandchild of the agent process this test owns.
+/// Walking down from that exact PID never matches a shell of a parallel test or
+/// checkout (no name-only matching). ConPTY's own `conhost.exe` is filtered out
+/// by the name.
+#[cfg(windows)]
+fn descendant_pids_named(root_pid: u32, image: &str) -> Vec<u32> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+
+    // (pid, parent pid, exe name) for every process in one snapshot.
+    let mut procs: Vec<(u32, u32, String)> = Vec::new();
+    // Safety: a process snapshot is read with a correctly sized entry struct and
+    // the handle is closed before returning.
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            panic!(
+                "CreateToolhelp32Snapshot failed: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut more = Process32FirstW(snapshot, &mut entry) != 0;
+        while more {
+            let len = entry
+                .szExeFile
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(entry.szExeFile.len());
+            let name = String::from_utf16_lossy(&entry.szExeFile[..len]);
+            procs.push((entry.th32ProcessID, entry.th32ParentProcessID, name));
+            more = Process32NextW(snapshot, &mut entry) != 0;
+        }
+        CloseHandle(snapshot);
+    }
+
+    let mut tree = vec![root_pid];
+    let mut i = 0;
+    while i < tree.len() {
+        let parent = tree[i];
+        for (pid, ppid, _) in &procs {
+            // `pid != parent` guards the System Idle Process (pid 0 is its own
+            // parent) against an endless walk.
+            if *ppid == parent && *pid != parent && !tree.contains(pid) {
+                tree.push(*pid);
+            }
+        }
+        i += 1;
+    }
+    procs
+        .iter()
+        .filter(|(pid, _, name)| {
+            *pid != root_pid && tree.contains(pid) && name.eq_ignore_ascii_case(image)
+        })
+        .map(|(pid, _, _)| *pid)
+        .collect()
+}
+
+/// One Windows ConPTY shell session through a live agent, end to end:
+/// spawn → command output → resize → command output → close → the shell
+/// process is gone.
+///
+/// * `shell` — the `config.shell` value (`powershell` / `cmd`).
+/// * `image` — the shell's process image name, for the orphan check.
+/// * `first_cmd` / `second_cmd` — commands whose *output* (not the echo of the
+///   typed line) contains the matching marker; both are typed with CR, the byte
+///   a terminal sends for Enter.
+/// * `wait_for_prompt` — wait for PowerShell's first prompt before typing, so
+///   its slow cold start is bounded by [`shell_startup_timeout`] rather than the
+///   command-output budget.
+#[cfg(windows)]
+fn windows_shell_session_lifecycle(
+    shell: &str,
+    image: &str,
+    first_cmd: &str,
+    first_marker: &str,
+    second_cmd: &str,
+    second_marker: &str,
+    wait_for_prompt: bool,
+) {
+    let agent = LocalAgent::spawn();
+    let agent_pid = agent.process.id();
+    let mut client = agent.client();
+    client.initialize();
+
+    let session_id =
+        client.create_shell_session_with(&format!("{shell}-3685"), json!({"shell": shell}));
+    let attach = client.attach(&session_id);
+    assert!(attach["result"].is_object(), "attach failed: {attach}");
+
+    if wait_for_prompt {
+        let (ready, seen) =
+            client.read_output_until(shell_startup_timeout(), powershell_prompt_shown);
+        assert!(
+            ready,
+            "{shell} printed no prompt within {:?}; output: {seen:?}",
+            shell_startup_timeout()
+        );
+    }
+
+    let write = client.write_input(&session_id, first_cmd);
+    assert!(
+        write["result"].is_object(),
+        "connection.write failed: {write}"
+    );
+    let (ran, seen) = client.read_output_until(ready_timeout(), |t| t.contains(first_marker));
+    assert!(ran, "{shell}: no {first_marker} in output: {seen:?}");
+
+    // The shell is running now; find its process(es) under this agent. Every
+    // match must be gone after the close, so a stray extra one only widens the
+    // check instead of failing it.
+    let mut shell_pids = Vec::new();
+    assert!(
+        wait_until(
+            || {
+                shell_pids = descendant_pids_named(agent_pid, image);
+                !shell_pids.is_empty()
+            },
+            ready_timeout()
+        ),
+        "no {image} process found under agent pid {agent_pid}"
+    );
+
+    // ConPTY resize (ResizePseudoConsole): the RPC must succeed and the shell
+    // must keep answering afterwards.
+    let resize = client.resize(&session_id, 132, 43);
+    assert!(
+        resize["result"].is_object(),
+        "connection.resize failed: {resize}"
+    );
+    let write = client.write_input(&session_id, second_cmd);
+    assert!(
+        write["result"].is_object(),
+        "connection.write failed: {write}"
+    );
+    let (ran, seen) = client.read_output_until(ready_timeout(), |t| t.contains(second_marker));
+    assert!(
+        ran,
+        "{shell}: no {second_marker} after resize, output: {seen:?}"
+    );
+
+    let close = client.close(&session_id);
+    assert!(
+        close["result"].is_object(),
+        "connection.close failed: {close}"
+    );
+    assert!(
+        wait_until(
+            || !shell_pids
+                .iter()
+                .any(|&pid| common::daemon_reaper::pid_alive(pid)),
+            ready_timeout()
+        ),
+        "{image} still running {:?} after connection.close — orphaned shell; \
+         live: {:?}",
+        ready_timeout(),
+        shell_pids
+            .iter()
+            .filter(|&&pid| common::daemon_reaper::pid_alive(pid))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !client
+            .list_sessions()
+            .iter()
+            .any(|s| s["session_id"].as_str() == Some(session_id.as_str())),
+        "closed session {session_id} still listed"
+    );
+}
+
+/// MT-AGENT-22: a PowerShell session through the Windows agent — spawn, echo,
+/// resize, close, and no orphaned `powershell.exe`. The markers are assembled
+/// at run time, so the echo of the typed line cannot satisfy the waits.
+#[cfg(windows)]
+#[test]
+fn live_agent_tcp_windows_powershell_session_echo_resize_close_reaps_shell() {
+    windows_shell_session_lifecycle(
+        "powershell",
+        "powershell.exe",
+        "Write-Output ('TH3685_' + 'PS_ALIVE')\r",
+        "TH3685_PS_ALIVE",
+        "Write-Output ('TH3685_' + 'PS_RESIZED')\r",
+        "TH3685_PS_RESIZED",
+        true,
+    );
+}
+
+/// MT-AGENT-23: the same flow for `cmd.exe`, which adds the orphan check the
+/// core ConPTY test cannot make. `%OS%` expands to `Windows_NT` only when cmd
+/// runs the line, so the echo of the typed line cannot satisfy the waits.
+#[cfg(windows)]
+#[test]
+fn live_agent_tcp_windows_cmd_session_echo_resize_close_reaps_shell() {
+    windows_shell_session_lifecycle(
+        "cmd",
+        "cmd.exe",
+        "echo TH3685_CMD_ALIVE_%OS%\r",
+        "TH3685_CMD_ALIVE_Windows_NT",
+        "echo TH3685_CMD_RESIZED_%OS%\r",
+        "TH3685_CMD_RESIZED_Windows_NT",
+        false,
+    );
+}
+
 // ── Persistent-shell (daemon-backed) tests ────────────────────────────────────
 //
 // These tests verify the ring-buffer replay feature for daemon-backed sessions.

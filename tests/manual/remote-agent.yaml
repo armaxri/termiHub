@@ -39,26 +39,6 @@ tests:
       - "Closing the tab leaves the background session running and the dot stays green"
     verification: manual
 
-  # --- Windows agent binary build (#761) ---
-
-  - id: MT-AGENT-15
-    automation_issue: 3685
-    name: "Build the Windows agent binary natively (MSVC)"
-    pr: 761
-    platforms: [windows]
-    prerequisites:
-      - app: false
-    instructions:
-      - "On a Windows host with the Rust toolchain and the MSVC build tools (Visual Studio Build Tools) installed"
-      - "Run `scripts\\build-agents.cmd --native` (or `bash scripts/build-agents.sh --native --targets x86_64-pc-windows-msvc` from Git Bash)"
-      - "Optionally also build ARM64: `bash scripts/build-agents.sh --native --targets aarch64-pc-windows-msvc` (requires the ARM64 MSVC build tools)"
-    expected:
-      - "`target/x86_64-pc-windows-msvc/release/termihub-agent.exe` is produced and the summary reports `Built: 1`"
-      - "The script never invokes cross-rs / Docker for the Windows target (native cargo only)"
-      - "Requesting a Windows target without `--native`, or on a non-Windows host, fails fast with a clear error message"
-      - "ARM64 is best effort — if the ARM64 MSVC tools are missing, `.cmd --native` prints a WARNING and skips it without failing the run"
-    verification: manual
-
   - id: MT-AGENT-17
     automation_issue: 3686
     name: "Reconnecting after the agent connection is destroyed re-establishes the agent"
@@ -129,28 +109,6 @@ tests:
       - "A shell session can be opened through the agent and echoes input/output normally"
     verification: manual
 
-  # --- Windows ConPTY shell sessions through the agent (#765) ---
-
-  - id: MT-AGENT-22
-    automation_issue: 3685
-    name: "PowerShell session through the Windows agent (ConPTY spawn / resize / teardown)"
-    pr: 765
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Connect to a Windows host that already has the agent installed (see MT-AGENT-18 / MT-AGENT-20)"
-      - "Open a new Local Shell session through the agent and leave the shell as the detected default (PowerShell)"
-      - "Run `Write-Output 'HELLO_AGENT_PS'` and confirm the line appears in the output"
-      - "Resize the terminal pane several times (drag the split divider or toggle full-screen) — the prompt must keep re-rendering at the new size"
-      - "Close the tab and verify the agent's session list no longer contains the session"
-    expected:
-      - "PowerShell launches via the agent without error"
-      - "Echoed input and command output both appear normally"
-      - "Resize does not crash the session or scramble the prompt"
-      - "Closing the tab terminates the ConPTY child on the Windows host (no orphaned `powershell.exe` in Task Manager)"
-    verification: manual
-
   # --- Windows agent persistent session reconnect (named-pipe daemon) (#770) ---
 
   - id: MT-AGENT-24
@@ -173,27 +131,7 @@ tests:
       - "No second shell is spawned; the agent's session list shows a single session"
     verification: manual
 
-  # --- File browsing + jump connections from a Windows agent (#770, #768) ---
-
-  - id: MT-AGENT-25
-    automation_issue: 3685
-    name: "File browser through a Windows agent (local filesystem, forward-slash paths)"
-    pr: 768
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Connect to a Windows host that already has the agent installed"
-      - "Open the file browser scoped to the Windows agent's local filesystem"
-      - "Navigate to `%USERPROFILE%` and into a subfolder, then open a small text file in the editor"
-      - "Type `~` (or a path beginning with `~/`) into the path field and navigate"
-    expected:
-      - "Directory listings render without errors or panics (the Permissions column is blank on Windows — this is expected)"
-      - "Path breadcrumbs and navigation use forward slashes (e.g. `C:/Users/<user>`); no backslashes leak into the UI"
-      - "`~` resolves to the Windows user profile (`%USERPROFILE%`) and lists its contents"
-      - "Entering and leaving folders works; file sizes and names render correctly"
-      - "A text file opens in the Monaco editor tab with its contents intact; files rename, delete, and folder creation all work"
-    verification: manual
+  # --- Jump connections from a Windows agent (#770) ---
 
   - id: MT-AGENT-26
     automation_issue: 3684

@@ -74,19 +74,21 @@ SERIAL_FILTERS=(
   "live_agent_tcp_"
 )
 # How many tests the serial set holds today: 17 on unix (16 in
-# local_agent_integration.rs + 1 in tcp_listener_readiness.rs), 11 on Windows
-# (six of them are `#[cfg(unix)]` daemon-recovery tests). Raise the count when
+# local_agent_integration.rs + 1 in tcp_listener_readiness.rs), 13 on Windows
+# (six of those are `#[cfg(unix)]` daemon-recovery tests; two `#[cfg(windows)]`
+# ConPTY shell-session tests, #3685, run only there). Raise the count when
 # adding one; a rename that drops a test out of the prefix then fails the serial
 # phase instead of going unseen.
 if [ "${OS:-}" = "Windows_NT" ]; then
-  SERIAL_MIN_TESTS_DEFAULT=11
+  SERIAL_MIN_TESTS_DEFAULT=13
 else
   SERIAL_MIN_TESTS_DEFAULT=17
 fi
 SERIAL_MIN_TESTS="${CI_SERIAL_MIN_TESTS:-$SERIAL_MIN_TESTS_DEFAULT}"
 # Hard ceiling for the whole serial phase (incremental build + the tests). The
-# 10 Windows tests take ~20s; on a timeout the phase is killed and the last
-# started test is named, instead of the job silently eating its own timeout.
+# Windows tests take ~20s plus the two shell cold starts (#3685); on a timeout
+# the phase is killed and the last started test is named, instead of the job
+# silently eating its own timeout.
 SERIAL_TIMEOUT_SECS="${CI_SERIAL_TIMEOUT_SECS:-1200}"
 SPLIT_SERIAL="${CI_RUST_TESTS_SPLIT_SERIAL:-0}"
 
