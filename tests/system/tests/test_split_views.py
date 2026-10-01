@@ -121,7 +121,13 @@ class TestSplitViews(TerminalUi, TabsUi, LayoutUi, SystemTest):
         self.wait(
             lambda: self._first_size() < size_before - 5, what="the first panel to shrink"
         )
-        assert self._panel_px(first, prop) < px_before, f"panel {prop} did not shrink"
+        # The stored `sizes` can land before the panel re-renders: on the Windows
+        # nightly the store already held the new split while the DOM still had
+        # the old width (#4017), so wait for the rendered size too.
+        self.wait(
+            lambda: self._panel_px(first, prop) < px_before,
+            what=f"the first panel's rendered {prop} to shrink",
+        )
         self.delay4user(2, reason="divider dragged towards the first panel")
 
         size_shrunk = self._first_size()
@@ -129,7 +135,10 @@ class TestSplitViews(TerminalUi, TabsUi, LayoutUi, SystemTest):
         self.wait(
             lambda: self._first_size() > size_shrunk + 5, what="the first panel to grow"
         )
-        assert self._panel_px(first, prop) > px_before, f"panel {prop} did not grow"
+        self.wait(
+            lambda: self._panel_px(first, prop) > px_before,
+            what=f"the first panel's rendered {prop} to grow",
+        )
         self.close_all_tabs()
 
     def test_dragging_the_vertical_divider_resizes_left_right_panels(self):

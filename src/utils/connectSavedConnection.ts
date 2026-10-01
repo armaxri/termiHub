@@ -57,6 +57,7 @@ import {
   parseBackendError,
 } from "@/utils/backendErrorCode";
 import { readConfigBoolean, readConfigString } from "@/utils/connectionConfigFields";
+import { connectionTabContentType } from "@/utils/connectionTabContentType";
 import {
   credentialStoreNeedsUnlock,
   ensureCredentialStoreUnlocked,
@@ -199,21 +200,17 @@ export async function connectSavedConnection(
     config.type === "remote-session"
       ? (readConfigString(connection.config, "sessionType") ?? config.type)
       : config.type;
-  const caps = useAppStore
-    .getState()
-    .connectionTypes.find((ct) => ct.typeId === effectiveTypeId)?.capabilities;
   // A graphical remote-desktop type (Capabilities.graphical === true, e.g.
   // VNC/RDP) opens into a canvas tab routed through the
   // GraphicalSessionManager. A terminal-less type (terminal === false, e.g.
   // FTP) opens into a browser-only tab. Both are decided from the registry
   // capabilities, never a per-type hardcode (#1680 / #1335).
-  const isGraphical = caps?.graphical === true;
-  const isTerminalLess = caps?.terminal === false;
-  const contentType = isGraphical
-    ? ("remote-desktop" as const)
-    : isTerminalLess
-      ? ("file-browser" as const)
-      : undefined;
+  const contentType = connectionTabContentType(
+    useAppStore.getState().connectionTypes,
+    effectiveTypeId
+  );
+  const isGraphical = contentType === "remote-desktop";
+  const isTerminalLess = contentType === "file-browser";
 
   // A scheduled run types into terminals: nothing else is a target (#3527).
   if (unattended && (isGraphical || isTerminalLess)) {
