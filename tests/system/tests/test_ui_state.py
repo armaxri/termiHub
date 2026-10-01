@@ -11,12 +11,16 @@ a dev-server favicon link — neither is observable through the bridge contract.
 
 import pytest
 
-from termihub_harness import ProjectionHarness, SETTINGS_REGION, SystemTest, TabsUi
+from termihub_harness import ProjectionHarness, SETTINGS_REGION, SettingsUi, SystemTest, TabsUi
 
 pytestmark = pytest.mark.integration
 
+RIGHT_CLICK_SELECT = "settings-right-click-behavior"
+#: The select's "Platform Default" option, which clears the stored value.
+RIGHT_CLICK_PLATFORM_DEFAULT = "__platform_default__"
 
-class TestUiState(ProjectionHarness, TabsUi, SystemTest):
+
+class TestUiState(ProjectionHarness, TabsUi, SettingsUi, SystemTest):
     def test_new_terminal_is_tracked_as_an_active_tab(self):
         # MT-UI-06: a new terminal is a live, active tab in the panel state.
         self.close_all_tabs()
@@ -35,21 +39,26 @@ class TestUiState(ProjectionHarness, TabsUi, SystemTest):
 
     def test_right_click_behavior_persists_across_an_app_restart(self):
         # Legacy manual MT-UI-29 (#3681): the Right-Click Behavior setting survives
-        # a kill/relaunch. Set via the authoritative settings region, then restore.
+        # a kill/relaunch. Set it through the Settings editor — the user's path,
+        # which persists to settings.json; a bare `settings.patch` intent only
+        # edits the in-memory region and never reaches disk (#4017).
         def behavior():
             return self.projection_region_cache(SETTINGS_REGION).get("rightClickBehavior")
 
-        self.projection_dispatch_intent(
-            "settings.patch", {"patch": {"rightClickBehavior": "quickAction"}}
+        self.select_setting(
+            "terminal", RIGHT_CLICK_SELECT, "quickAction",
+            key="rightClickBehavior", expected="quickAction",
         )
-        self.wait(lambda: behavior() == "quickAction", what="quickAction to apply")
+        self.close_all_tabs()
         try:
             self.restart_app()
             self.wait(lambda: behavior() == "quickAction", what="quickAction after restart")
         finally:
-            self.projection_dispatch_intent(
-                "settings.patch", {"patch": {"rightClickBehavior": "contextMenu"}}
+            self.select_setting(
+                "terminal", RIGHT_CLICK_SELECT, RIGHT_CLICK_PLATFORM_DEFAULT,
+                key="rightClickBehavior", expected=None,
             )
+            self.close_all_tabs()
 
     def test_root_uses_theme_css_variables(self):
         # MT-UI-08: the theme drives CSS custom properties on :root.

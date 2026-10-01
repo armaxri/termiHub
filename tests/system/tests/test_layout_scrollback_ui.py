@@ -299,7 +299,9 @@ class TestLayoutScrollbackUi(TerminalUi, TabsUi, LayoutUi, SystemTest):
             lambda: self.driver.get_state("activeTabGroupId") != origin_group,
             what="the new tab group to become active",
         )
-        target_group = self.driver.get_state("activeTabGroupId")
+        # Read the new group's id only once it settles: it churns optimistic ->
+        # authoritative, and a stale id names a chip that is gone (#4017).
+        target_group = self.settled_active_group_id()
         self.driver.click(f"tab-group-chip-{origin_group}")
         self.wait(
             lambda: self.driver.get_state("activeTabGroupId") == origin_group,

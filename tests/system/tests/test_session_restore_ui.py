@@ -27,6 +27,7 @@ from termihub_harness import (
     LayoutUi,
     ProjectionHarness,
     SETTINGS_REGION,
+    SettingsUi,
     SystemTest,
     TabsUi,
     TerminalUi,
@@ -55,7 +56,9 @@ def _terminals(root: Any) -> list[dict[str, Any]]:
     return [t for t in iter_tabs(root) if t.get("contentType") == "terminal"]
 
 
-class TestSessionRestoreUi(ProjectionHarness, TerminalUi, TabsUi, LayoutUi, SystemTest):
+class TestSessionRestoreUi(
+    ProjectionHarness, TerminalUi, TabsUi, LayoutUi, SettingsUi, SystemTest
+):
     def _restore_mode(self) -> Any:
         return self.projection_region_cache(SETTINGS_REGION).get("restoreLastSessionMode")
 
@@ -118,7 +121,13 @@ class TestSessionRestoreUi(ProjectionHarness, TerminalUi, TabsUi, LayoutUi, Syst
             # every tab so the ungraceful kill below cannot race the save.
             self.wait(lambda: self._saved_tab_count() == 3, what="the session to be saved")
 
-            self.restart_app()
+            # The `settings.patch` above only switches the live region; startup
+            # reads settings.json, so persist the mode in the down-window too —
+            # otherwise the relaunch falls back to its default and restores
+            # nothing (#4017).
+            self.restart_app(
+                between=lambda: self.write_settings_file(restoreLastSessionMode="always")
+            )
 
             self.wait(lambda: len(self._groups()) == 2, what="both tab groups restored")
             self.wait(lambda: self._active_group_index() == 0,
