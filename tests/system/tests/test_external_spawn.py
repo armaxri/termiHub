@@ -372,7 +372,8 @@ class TestSpawnPicker(SpawnUi, ConnectionsUi, SystemTest):
             lambda: running.search(self.driver.read_terminal(tab["id"])),
             what=f"the picked {choice!r} shell to be running",
         )
-        self.run_in_tab(tab["id"], 'echo "PWD:$(pwd)"', f"PWD:{spawn_dir}")
+        # Basename only: a long absolute temp path can wrap in the xterm buffer.
+        self.run_in_tab(tab["id"], 'echo "PWD:$(basename "$(pwd)")"', f"PWD:{spawn_dir.name}")
 
 
 def _requires_containers() -> str:
