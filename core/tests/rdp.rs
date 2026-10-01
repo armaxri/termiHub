@@ -1343,11 +1343,14 @@ async fn rdp_14_remote_clipboard_files_are_listed_and_fetched_on_paste() {
     // any client without file streams (every other test here) it stops
     // offering CB_STREAM_FILECLIP_ENABLED to later clients of that session.
     end_xrdp_session("RDP-14").await;
-    for receive in [true, false] {
-        let label = if receive {
-            "RDP-14 opted in"
-        } else {
-            "RDP-14 default"
+    // The last pass opts in again on the session the default pass has now
+    // poisoned: the server declines file streams, so no list may be offered
+    // (its bytes could never be fetched) and the session must survive.
+    for (receive, declined) in [(true, false), (false, false), (true, true)] {
+        let label = match (receive, declined) {
+            (true, false) => "RDP-14 opted in",
+            (false, _) => "RDP-14 default",
+            (true, true) => "RDP-14 streams declined",
         };
         let shared = tempfile::tempdir().expect("temp shared folder");
         let mut settings = rdp_settings(port_rdp(), RDP_PASSWORD);
@@ -1362,11 +1365,17 @@ async fn rdp_14_remote_clipboard_files_are_listed_and_fetched_on_paste() {
         wait_for_xrdp_session(&mut frames, label).await;
         let drain = tokio::spawn(async move { while frames.recv().await.is_some() {} });
 
-        if !receive {
+        if !receive || declined {
             let files = wait_for_remote_files(graphical, &nonce, 1, 8, label).await;
             assert!(
                 files.is_empty(),
-                "{label}: nothing is surfaced without the opt-in: {files:?}"
+                "{label}: no unfetchable file list may be surfaced: {files:?}"
+            );
+            assert!(rdp.fatal_error().is_none(), "{label}: the session survives");
+            assert_eq!(
+                own_helper_pids(),
+                pid.into_iter().collect::<Vec<_>>(),
+                "{label}: the sidecar is still running"
             );
         } else {
             let files = wait_for_remote_files(graphical, &nonce, 3, 45, label).await;
@@ -1405,4 +1414,7 @@ async fn rdp_14_remote_clipboard_files_are_listed_and_fetched_on_paste() {
         drain.abort();
         assert_helper_gone(pid, label).await;
     }
+    // Hand later tests a fresh session: this one's chansrv has had its file
+    // capabilities cut and its clipboard owned by a file list.
+    end_xrdp_session("RDP-14").await;
 }
