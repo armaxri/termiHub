@@ -633,6 +633,8 @@ mod registry_import;
 pub mod transfer;
 
 #[cfg(test)]
+mod restart_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod transfer_tests;
