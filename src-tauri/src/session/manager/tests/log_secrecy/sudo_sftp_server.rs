@@ -162,35 +162,9 @@ impl ConnectionHandler {
     }
 }
 
-/// Split a POSIX command line into words (enough for the quoting `shlex`
-/// produces: single quotes and backslash-free bare words).
+/// Split a POSIX command line into words, as the remote shell would.
 fn shell_words(line: &str) -> Vec<String> {
-    let mut words = Vec::new();
-    let mut current = String::new();
-    let mut in_word = false;
-    let mut quoted = false;
-    for ch in line.chars() {
-        match ch {
-            '\'' => {
-                quoted = !quoted;
-                in_word = true;
-            }
-            c if c.is_whitespace() && !quoted => {
-                if in_word {
-                    words.push(std::mem::take(&mut current));
-                    in_word = false;
-                }
-            }
-            c => {
-                current.push(c);
-                in_word = true;
-            }
-        }
-    }
-    if in_word {
-        words.push(current);
-    }
-    words
+    shlex::split(line).unwrap_or_default()
 }
 
 impl russh::server::Handler for ConnectionHandler {
