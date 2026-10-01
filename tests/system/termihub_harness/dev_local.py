@@ -137,7 +137,9 @@ def _check_consistency(data: dict[str, Any], repo_root: Path) -> None:
             )
 
 #: Base host port of every test container/service, keyed by its canonical env
-#: var. The effective port is ``base + offset`` unless the env var overrides it.
+#: var — including both ends of each published port *range* (``*_PASV_MIN`` /
+#: ``*_PASV_MAX``). The effective port is ``base + offset`` unless the env var
+#: overrides it.
 #: Mirrors ``tests/docker/docker-compose.yml`` and ``dev-local-env.sh``.
 BASE_PORTS: dict[str, int] = {
     "TERMIHUB_TEST_SSH_PASSWORD_PORT": 2201,
@@ -163,6 +165,13 @@ BASE_PORTS: dict[str, int] = {
     "TERMIHUB_TEST_VNC_VENCRYPT_PLAIN_PORT": 2503,
     "TERMIHUB_TEST_FTP_PORT": 2401,
     "TERMIHUB_TEST_FTPS_IMPLICIT_PORT": 2402,
+    # ftp-server passive-port ranges (#4094). Advertised 1:1 by ProFTPD, so both
+    # ends of each range shift with the offset, in lockstep with the control
+    # ports; a range is 20 ports wide, well inside the 1000-per-slot step.
+    "TERMIHUB_TEST_FTP_PASV_MIN": 30000,
+    "TERMIHUB_TEST_FTP_PASV_MAX": 30009,
+    "TERMIHUB_TEST_FTPS_IMPLICIT_PASV_MIN": 30010,
+    "TERMIHUB_TEST_FTPS_IMPLICIT_PASV_MAX": 30019,
     "TERMIHUB_TEST_RDP_PORT": 2601,
     "TERMIHUB_TEST_RDP_NLA_PORT": 2602,
     "TERMIHUB_TEST_NETWORK_TARGET_PORT": 8080,
@@ -234,8 +243,8 @@ def compose_env(repo_root: Path = REPO_ROOT) -> dict[str, str]:
     """Env overlay for invoking ``compose``: project name + every service port.
 
     Merge this into the subprocess environment so the compose file's
-    ``${TERMIHUB_TEST_*_PORT:-<base>}`` / ``${COMPOSE_PROJECT_NAME:-termihub}``
-    interpolations publish this checkout's offset ports under its own project.
+    ``${TERMIHUB_TEST_*_PORT:-<base>}`` / ``${TERMIHUB_TEST_*_PASV_MIN|MAX:-<base>}``
+    / ``${COMPOSE_PROJECT_NAME:-termihub}`` interpolations publish this checkout's offset ports under its own project.
     """
     project = compose_project(repo_root)
     env = {
