@@ -28,6 +28,7 @@ use serial_test::serial;
 use termihub_core::backends::ssh::{SftpAdvancedOps, SftpFileBrowser, Ssh};
 use termihub_core::config::SshConfig;
 use termihub_core::connection::ConnectionType;
+use termihub_core::files::FileBrowser;
 
 /// Connect to the SFTP stress container and return an Ssh instance
 /// with file browser enabled.
@@ -546,4 +547,77 @@ async fn sftp_stress_17_session_path_advanced_ops_parity() {
         session_exec,
         "the sftp-stress container is a normal SSH host, so exec must be available"
     );
+}
+
+// ── SFTP-STRESS-18: list_dir reports symlink flags and targets (#1523) ──
+//
+// `readdir` returns lstat-style attributes, so the link rows themselves carry
+// `is_symlink`, and `list_dir` resolves each link's target with `readlink`
+// (#4006). A dangling or circular link is still listed and still reports its
+// target; regular entries carry no symlink metadata.
+
+#[tokio::test]
+#[serial(sftp_stress)]
+async fn sftp_stress_18_list_dir_reports_symlink_metadata() {
+    require_docker!(port_sftp_stress());
+
+    let ssh = connect_sftp().await;
+    let browser = ssh
+        .file_browser()
+        .expect("File browser should be available");
+
+    let dir = "/home/testuser/sftp-test/symlinks";
+    let entries: std::collections::HashMap<String, termihub_core::files::FileEntry> = browser
+        .list_dir(dir)
+        .await
+        .expect("SFTP-STRESS-18: listing the symlinks dir should succeed")
+        .into_iter()
+        .map(|e| (e.name.clone(), e))
+        .collect();
+
+    let links = [
+        ("link-to-file", format!("{dir}/target-file.txt")),
+        ("link-to-dir", format!("{dir}/target-dir")),
+        ("valid-file-link", format!("{dir}/target-file.txt")),
+        ("valid-dir-link", format!("{dir}/target-dir")),
+        ("broken-link", "/nonexistent/path".to_string()),
+        ("circular-a", format!("{dir}/circular-b")),
+        ("circular-b", format!("{dir}/circular-a")),
+    ];
+    for (name, target) in &links {
+        let entry = entries
+            .get(*name)
+            .unwrap_or_else(|| panic!("SFTP-STRESS-18: {name} missing: {entries:?}"));
+        assert!(entry.is_symlink, "SFTP-STRESS-18: {name} is a symlink");
+        assert_eq!(
+            entry.symlink_target.as_deref(),
+            Some(target.as_str()),
+            "SFTP-STRESS-18: {name} target"
+        );
+        assert_eq!(entry.path, format!("{dir}/{name}"), "{name} path");
+    }
+
+    for name in ["target-file.txt", "target-dir"] {
+        let entry = entries
+            .get(name)
+            .unwrap_or_else(|| panic!("SFTP-STRESS-18: {name} missing: {entries:?}"));
+        assert!(!entry.is_symlink, "SFTP-STRESS-18: {name} is not a symlink");
+        assert_eq!(entry.symlink_target, None, "{name} has no target");
+    }
+    assert!(entries["target-dir"].is_directory, "target-dir is a dir");
+
+    // The standalone SFTP browser (the desktop's own path) agrees.
+    let standalone = standalone_browser();
+    let listed = standalone
+        .list_dir(dir)
+        .await
+        .expect("SFTP-STRESS-18: standalone listing should succeed");
+    for (name, target) in &links {
+        let entry = listed
+            .iter()
+            .find(|e| e.name == *name)
+            .unwrap_or_else(|| panic!("standalone listing lacks {name}"));
+        assert!(entry.is_symlink, "standalone: {name} is a symlink");
+        assert_eq!(entry.symlink_target.as_deref(), Some(target.as_str()));
+    }
 }

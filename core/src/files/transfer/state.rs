@@ -94,8 +94,12 @@ pub enum TransferEvent {
     Complete,
     /// The copy errored. `attempt` is the 1-based attempt number that failed.
     Fail { attempt: u32 },
-    /// Re-queue a failed transfer (auto after backoff, or manual).
+    /// Auto-retry: re-queue a failed transfer after backoff. Legal only while
+    /// attempts remain (`retryable`).
     Retry,
+    /// The user re-queued a failed transfer — also one whose auto-retry budget
+    /// is spent, which is exactly when a manual retry is offered (#4006).
+    ManualRetry,
     /// User requested cancellation.
     Cancel,
 }
@@ -165,6 +169,7 @@ impl TransferState {
                 },
                 E::Retry,
             ) => S::Queued,
+            (S::Failed { .. }, E::ManualRetry) => S::Queued,
             // Cancellation is legal from any non-terminal state.
             (S::Queued | S::Active | S::Paused | S::Failed { .. }, E::Cancel) => S::Cancelled,
             (from, event) => return Err(InvalidTransition { from, event }),
@@ -237,6 +242,30 @@ mod tests {
     }
 
     #[test]
+    fn manual_retry_requeues_even_a_permanent_failure() {
+        // The auto-retry budget is spent, but the user's Retry must still
+        // re-queue it; otherwise the retried transfer runs with its state stuck
+        // at Failed and completes as a "failed" row (#4006).
+        for attempt in [1, MAX_RETRIES] {
+            let failed = TransferState::Active
+                .apply(TransferEvent::Fail { attempt })
+                .unwrap();
+            assert_eq!(
+                failed.apply(TransferEvent::ManualRetry),
+                Ok(TransferState::Queued)
+            );
+        }
+        // Only a failed transfer can be manually retried.
+        for state in [
+            TransferState::Queued,
+            TransferState::Active,
+            TransferState::Paused,
+        ] {
+            assert!(state.apply(TransferEvent::ManualRetry).is_err());
+        }
+    }
+
+    #[test]
     fn cancel_is_legal_from_every_nonterminal_state() {
         for from in [
             TransferState::Queued,
@@ -265,6 +294,7 @@ mod tests {
                 TransferEvent::Complete,
                 TransferEvent::Fail { attempt: 1 },
                 TransferEvent::Retry,
+                TransferEvent::ManualRetry,
                 TransferEvent::Cancel,
             ] {
                 assert!(

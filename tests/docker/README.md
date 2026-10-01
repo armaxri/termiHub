@@ -163,6 +163,18 @@ tree:
   whole tree. Writes are denied.
 - **`ftpuser` / `ftppass`** — a local account chrooted to the same tree; may
   **read everything and upload into `/uploads`**.
+- **`ftpslow` / `ftppass`** — same rights as `ftpuser`, but `RETR`/`STOR` are
+  throttled to 256 KiB/s (`TransferRate`), so the transfer-queue fault tests can
+  act mid-transfer (#4006).
+
+### TLS certificate
+
+FTPS presents a leaf for `127.0.0.1` / `localhost` signed by a committed,
+test-only CA in [`ftp-server/certs/`](ftp-server/certs/) (regenerate with
+`certs/gen-certs.sh`). The shipping client trusts only the Mozilla roots; the
+FTPS integration test trusts `certs/ca.crt` through the test-only
+`ftp-test-support` feature of `termihub-core`, which adds a root and never
+skips verification.
 
 ### Seeded tree (`/srv/ftp`)
 
@@ -186,7 +198,14 @@ Generated deterministically at build time by `ftp-server/generate-test-data.sh`
 /pub/data/empty.bin            0 bytes
 /pub/data/single-byte.bin      1 byte
 /uploads/                  (writable landing zone for STOR tests)
+/links/readme-link.txt  -> ../pub/readme.txt   (file symlink)
+/links/docs-link        -> ../pub/docs         (directory symlink)
+/links/broken-link      -> ../pub/missing.txt  (dangling symlink)
 ```
+
+The symlinks sit outside `/pub` so its counts stay fixed, and use relative
+targets so they resolve inside the chroot. ProFTPD's MLSD reports them as
+`type=OS.unix=symlink` and omits the dangling one.
 
 ### Passive ports
 
@@ -209,26 +228,37 @@ docker compose -f tests/docker/docker-compose.yml --profile ftp up -d --wait ftp
 # FTPS and checks a known-size download. Honours the same port env vars.
 bash tests/docker/ftp-server/smoke-test.sh
 
-# Or by hand with curl (-k trusts the self-signed cert):
-curl ftp://anonymous:test@127.0.0.1:2401/pub/                 # plain, anonymous
-curl -k --ssl-reqd ftp://ftpuser:ftppass@127.0.0.1:2401/pub/  # explicit FTPS
-curl -k ftps://ftpuser:ftppass@127.0.0.1:2402/pub/            # implicit FTPS
+# Or by hand with curl (--cacert trusts the test CA):
+CA=tests/docker/ftp-server/certs/ca.crt
+curl ftp://anonymous:test@127.0.0.1:2401/pub/                          # plain, anonymous
+curl --cacert $CA --ssl-reqd ftp://ftpuser:ftppass@127.0.0.1:2401/pub/ # explicit FTPS
+curl --cacert $CA ftps://ftpuser:ftppass@127.0.0.1:2402/pub/           # implicit FTPS
 ```
 
-The app-level Rust integration tests for the FTP backend live at
-[`core/tests/ftp_file_browser.rs`](../../core/tests/ftp_file_browser.rs) (listing
+The app-level Rust integration tests for the FTP backend live in `core/tests/`,
+gated behind the `ftp` feature and skipping cleanly when the fixture is not up:
 
-- CRUD) and [`core/tests/ftp_transfer.rs`](../../core/tests/ftp_transfer.rs)
-  (byte-exact up/download + `REST` kill/resume + concurrent transfers) — both gated
-  behind the `ftp` feature and skipping cleanly when the fixture is not up. The
-  `REST`-based upload-resume path relies on `AllowStoreRestart on` in
-  [`ftp-server/proftpd.conf.tmpl`](ftp-server/proftpd.conf.tmpl). Run them directly
-  against the fixture with:
+- [`ftp_file_browser.rs`](../../core/tests/ftp_file_browser.rs) — listing, CRUD,
+  and symlink list/follow under `/links`.
+- [`ftp_transfer.rs`](../../core/tests/ftp_transfer.rs) — byte-exact
+  up/download, `REST` kill/resume and concurrent transfers. The upload-resume
+  path relies on `AllowStoreRestart on` in
+  [`ftp-server/proftpd.conf.tmpl`](ftp-server/proftpd.conf.tmpl).
+- [`ftp_transfer_faults.rs`](../../core/tests/ftp_transfer_faults.rs) — the
+  transfer queue under faults: a killed session retries and resumes, a stopped
+  container exhausts the retries, cancel removes the partial. It kills sessions
+  and stops/starts the container, restoring it on exit.
+- [`ftps_handshake.rs`](../../core/tests/ftps_handshake.rs) — explicit and
+  implicit FTPS against the test CA (`ftp-test-support` feature).
+
+Run them directly against the fixture with:
 
 ```bash
 docker compose -f tests/docker/docker-compose.yml --profile ftp up -d --wait ftp-server
 cargo test -p termihub-core --features ftp --test ftp_file_browser -- --nocapture
 cargo test -p termihub-core --features ftp --test ftp_transfer -- --nocapture
+cargo test -p termihub-core --features ftp --test ftp_transfer_faults -- --nocapture
+cargo test -p termihub-core --features ftp-test-support --test ftps_handshake
 ```
 
 Or via the orchestration scripts, which start the `ftp` profile and run the

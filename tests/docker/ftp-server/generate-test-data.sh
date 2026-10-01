@@ -16,6 +16,7 @@ set -e
 FTP_ROOT="/srv/ftp"
 PUB="$FTP_ROOT/pub"
 UPLOADS="$FTP_ROOT/uploads"
+LINKS="$FTP_ROOT/links"
 
 echo "=== Generating FTP test data ==="
 
@@ -49,18 +50,30 @@ zeros "$PUB/data/dataset-1m.bin" 1048576
 : >"$PUB/data/empty.bin"
 printf 'X' >"$PUB/data/single-byte.bin"
 
+# --- links/ (symlinks for the FTP list/follow tests, #1513 / #4006) ---
+# Kept OUT of /pub so the /pub counts above stay fixed. Targets are RELATIVE so
+# they resolve inside the chroot every login lands in (an absolute
+# /srv/ftp/... target would dangle once chrooted).
+mkdir -p "$LINKS"
+ln -s ../pub/readme.txt "$LINKS/readme-link.txt"
+ln -s ../pub/docs "$LINKS/docs-link"
+ln -s ../pub/missing.txt "$LINKS/broken-link"
+
 # --- Ownership / permissions ---
 # The read-only tree is world-readable; the anonymous FTP user (`ftp`) and the
 # local `ftpuser` both only need read access. `uploads/` is writable so
 # STOR/upload tests have a landing zone.
 chmod -R a+rX "$FTP_ROOT"
-chown -R root:root "$PUB"
+chown -R root:root "$PUB" "$LINKS"
 chmod 0777 "$UPLOADS"
 
 # --- Emit a manifest so the expected tree is self-documenting in build logs ---
 echo "--- FTP test tree manifest (path : bytes) ---"
 find "$PUB" -type f | sort | while read -r f; do
     printf '%s : %s\n' "${f#"$FTP_ROOT"}" "$(wc -c <"$f")"
+done
+find "$LINKS" -type l | sort | while read -r l; do
+    printf '%s -> %s\n' "${l#"$FTP_ROOT"}" "$(readlink "$l")"
 done
 echo "=== FTP test data generation complete ==="
 echo "Total pub/ size: $(du -sh "$PUB" | cut -f1)"

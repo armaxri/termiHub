@@ -35,6 +35,11 @@ AllowRetrieveRestart  on
 AllowStoreRestart     on
 AllowOverwrite        on
 
+# Throttle the dedicated `ftpslow` account (#4006) so the transfer-queue fault
+# tests can act mid-transfer: a 1 MiB file takes ~4 s at 256 KiB/s. Every other
+# login keeps full speed.
+TransferRate          RETR,STOR 256 user ftpslow
+
 # Chroot every login to its landing directory; the fixture never needs a shell.
 DefaultRoot           ~
 RequireValidShell     off
@@ -50,7 +55,7 @@ MasqueradeAddress     __PASV_ADDRESS__
   TLSProtocol              TLSv1.2 TLSv1.3
   TLSRSACertificateFile    /etc/ssl/private/proftpd.pem
   TLSRSACertificateKeyFile /etc/ssl/private/proftpd.pem
-  # Self-signed fixture cert; don't ask clients for one, and don't force TLS
+  # Test-CA-signed fixture cert (certs/); don't ask clients for one, and don't force TLS
   # session reuse on the data channel (curl/lftp don't reuse by default).
   TLSVerifyClient          off
   TLSOptions               NoSessionReuseRequired

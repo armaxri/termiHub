@@ -42,11 +42,14 @@
 //!   covered by the unit tests in `core/src/backends/ftp/listing_parser.rs`;
 //!   the fixture offers no clean way to disable `MLSD` per-connection to force
 //!   the fallback at runtime.
-//! * **FTPS** (explicit/implicit) is intentionally not covered here: the
-//!   fixture presents a self-signed certificate, and the backend validates
-//!   against the Mozilla root store with no insecure/skip-verify option, so an
-//!   FTPS handshake against the fixture cert cannot succeed. Tracked as a
-//!   follow-up (needs a trusted fixture cert or a backend trust-override).
+//! * **FTPS** (explicit/implicit) lives in `ftps_handshake.rs`: the fixture
+//!   certificate is signed by a committed test CA that only the test-only
+//!   `ftp-test-support` trust hook accepts (#4006).
+//! * **Symlinks** live under `/links` (outside `/pub`, so the `/pub` counts
+//!   stay fixed): `readme-link.txt -> ../pub/readme.txt`,
+//!   `docs-link -> ../pub/docs` and a dangling `broken-link`. ProFTPD's MLSD
+//!   reports links as `type=OS.unix=symlink` with no target fact, and omits a
+//!   dangling link entirely (it cannot stat it).
 
 mod common;
 
@@ -364,6 +367,83 @@ async fn ftp_05_anonymous_read_only() {
     // Anonymous writes are denied by the server.
     let denied = browser.mkdir("/uploads/anon_should_fail").await;
     assert!(denied.is_err(), "anonymous mkdir must be denied");
+
+    ftp.disconnect().await.expect("disconnect should succeed");
+}
+
+// ── FTP-06: MLSD flags the seeded symlinks (#1513, #4006) ────────────────────
+//
+// ProFTPD reports a symlink as `type=OS.unix=symlink`. Before #4006 the MLSD
+// parser only knew `type=link` and dropped these rows, so FTP symlinks were
+// invisible in the browser.
+
+#[tokio::test]
+async fn ftp_06_list_flags_symlinks() {
+    require_docker!(port_ftp());
+
+    let mut ftp = connect(ftpuser_settings()).await;
+    let browser = ftp.file_browser().expect("FTP exposes a file browser");
+
+    let links = list_by_name(browser, "/links").await;
+    for name in ["readme-link.txt", "docs-link"] {
+        let entry = links
+            .get(name)
+            .unwrap_or_else(|| panic!("{name} missing from /links: {links:?}"));
+        assert!(entry.is_symlink, "{name} is flagged as a symlink");
+        assert!(
+            !entry.is_directory,
+            "MLSD lists {name} as a link, not a dir"
+        );
+        assert_eq!(entry.path, format!("/links/{name}"), "path for {name}");
+        // MLSD carries no target fact; the UI resolves it on follow.
+        assert_eq!(entry.symlink_target, None, "no MLSD target for {name}");
+    }
+    // ProFTPD cannot stat a dangling link, so MLSD leaves it out.
+    assert!(
+        !links.contains_key("broken-link"),
+        "a dangling link is omitted from MLSD: {links:?}"
+    );
+
+    // Regular entries never carry symlink metadata.
+    let top = list_by_name(browser, "/pub").await;
+    assert!(top
+        .values()
+        .all(|e| !e.is_symlink && e.symlink_target.is_none()));
+
+    ftp.disconnect().await.expect("disconnect should succeed");
+}
+
+// ── FTP-07: following a symlink reaches its target (#1513, #4006) ────────────
+
+#[tokio::test]
+async fn ftp_07_follow_symlinks() {
+    require_docker!(port_ftp());
+
+    let mut ftp = connect(ftpuser_settings()).await;
+    let browser = ftp.file_browser().expect("FTP exposes a file browser");
+
+    // A file link reads the target's bytes (RETR follows the link).
+    let via_link = browser
+        .read_file("/links/readme-link.txt")
+        .await
+        .expect("read through the file symlink");
+    assert_eq!(
+        via_link, b"termiHub FTP test server. See pub/docs for more information.\n",
+        "the file link resolves to /pub/readme.txt"
+    );
+
+    // A directory link lists the target directory's entries.
+    let docs = list_by_name(browser, "/links/docs-link").await;
+    assert_eq!(docs.len(), PUB_DOCS.len(), "docs-link lists /pub/docs");
+    for &(name, size) in PUB_DOCS {
+        assert_entry(&docs, "/links/docs-link", name, false, size);
+    }
+
+    // A dangling link cannot be read.
+    assert!(
+        browser.read_file("/links/broken-link").await.is_err(),
+        "reading a dangling link fails"
+    );
 
     ftp.disconnect().await.expect("disconnect should succeed");
 }

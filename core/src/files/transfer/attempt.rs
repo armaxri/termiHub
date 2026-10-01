@@ -722,7 +722,7 @@ pub(super) async fn drive_transfer<S, SFut, C, CFut>(
                     return;
                 }
                 handle.set_attempt(0);
-                handle.transition(TransferEvent::Retry); // Failed → Queued
+                handle.transition(TransferEvent::ManualRetry); // Failed → Queued
             }
         }
     }

@@ -15,6 +15,10 @@ mod listing_parser;
 #[cfg(test)]
 pub(crate) mod mock_server;
 pub(crate) mod reconnect;
+// Test-only extra FTPS trust anchors (#4006). Never in a shipping build: only
+// the `ftp-test-support` feature compiles it, and only tests enable that.
+#[cfg(feature = "ftp-test-support")]
+pub mod test_support;
 mod transfer;
 
 pub use transfer::{
@@ -203,6 +207,9 @@ fn map_ftp_err(err: FtpError) -> SessionError {
 fn build_tls_connector() -> Result<AsyncRustlsConnector, SessionError> {
     let mut root_store = RootCertStore::empty();
     root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    // Test builds only: roots a test registered (e.g. the FTP fixture's CA).
+    #[cfg(feature = "ftp-test-support")]
+    test_support::add_test_roots(&mut root_store);
 
     let provider = Arc::new(aws_lc_rs::default_provider());
     let config = ClientConfig::builder_with_provider(provider)

@@ -49,7 +49,8 @@ check_listing "plain/anonymous" \
 check_listing "plain/ftpuser" \
     curl -s --ftp-method nocwd "ftp://${USER_PW}@${HOST}:${FTP_PORT}/pub/"
 
-# 3. Explicit FTPS (AUTH TLS). -k: self-signed cert.
+# 3. Explicit FTPS (AUTH TLS). -k: the fixture cert is signed by a test-only CA
+#    (certs/ca.crt); this smoke checks the endpoints, not the trust chain.
 check_listing "explicit-ftps/ftpuser" \
     curl -s -k --ssl-reqd --ftp-method nocwd "ftp://${USER_PW}@${HOST}:${FTP_PORT}/pub/"
 

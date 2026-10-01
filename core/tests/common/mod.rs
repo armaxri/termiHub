@@ -573,3 +573,30 @@ pub fn port_rdp_nla() -> u16 {
 pub fn port_ftp() -> u16 {
     resolve_port("TERMIHUB_TEST_FTP_PORT", 2401)
 }
+/// ftp-server container implicit-FTPS port (TLS from the first byte on :990).
+pub fn port_ftps_implicit() -> u16 {
+    resolve_port("TERMIHUB_TEST_FTPS_IMPLICIT_PORT", 2402)
+}
+
+/// Name of a Compose fixture container for the active checkout:
+/// `<project>-<service>` (`TERMIHUB_TEST_PROJECT`, default `termihub`), so a
+/// `docker` command targets this checkout's instance, never another's.
+pub fn fixture_container(service: &str) -> String {
+    let project = std::env::var("TERMIHUB_TEST_PROJECT").unwrap_or_else(|_| "termihub".into());
+    format!("{project}-{service}")
+}
+
+/// Run `docker <args>` and return its stdout, or the failure as an error.
+pub fn docker_cli(args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("docker")
+        .args(args)
+        .output()
+        .map_err(|e| format!("failed to run docker {args:?}: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "docker {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
