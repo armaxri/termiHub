@@ -372,6 +372,12 @@ impl FileBrowser for SftpFileBrowser {
         file.write_all(data)
             .await
             .map_err(|e| FileError::OperationFailed(format!("write failed: {e}")))?;
+        // `write_all` only queues the SFTP writes. Wait for every ack and close
+        // the handle, so a save reports success only once the server has the
+        // bytes, and a rejected write surfaces as an error.
+        file.shutdown()
+            .await
+            .map_err(|e| FileError::OperationFailed(format!("write failed: {e}")))?;
 
         Ok(())
     }

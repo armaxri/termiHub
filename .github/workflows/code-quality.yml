@@ -430,11 +430,12 @@ jobs:
       - name: Lint Markdown
         run: pnpm run markdownlint
 
-      # The manual-test counts in docs/testing.md and docs/release-plan-0.1.0.md
-      # are a generated block (#3721), so PRs that automate different manual
-      # items never conflict on hand-edited totals. Stdlib-only Python, no venv.
-      # Fix a failure with: python3 scripts/manual-inventory.py --write
-      - name: Check generated manual-inventory doc blocks
+      # Manual-test counts are NOT committed to the docs (#4070, after #3721):
+      # any committed total row made every pair of test-automation PRs conflict.
+      # This validates the tests/manual/*.yaml corpus, fails if a doc
+      # reintroduces a committed count block, and publishes the per-category
+      # table as the job summary. Stdlib-only Python, no venv.
+      - name: Manual-test inventory (job summary)
         run: python3 scripts/manual-inventory.py --check
 
       # Version drift (CI-009, #3901): the five version sources (package.json,

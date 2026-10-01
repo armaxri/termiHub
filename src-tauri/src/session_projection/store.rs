@@ -169,6 +169,15 @@ pub struct SessionLifecycle {
     /// reconnect engine or the backend timer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit: Option<TerminalExit>,
+    /// The host refused the interactive shell but SFTP works (#4078): the
+    /// session stays up for the Files sidebar and editor, and the terminal tab
+    /// shows an info panel instead of a terminal. Set by
+    /// [`SessionLifecycleStore::files_only`] from the backend's own detection —
+    /// never guessed from output text by the frontend. Pure metadata alongside a
+    /// live (`Connected`) status: it starts no reconnect loop. Cleared by any
+    /// fresh connect and by every path that ends or restarts the session.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub files_only: bool,
 }
 
 impl SessionLifecycle {
@@ -182,6 +191,7 @@ impl SessionLifecycle {
             reconnect_error: None,
             backend_session_id: None,
             exit: None,
+            files_only: false,
         }
     }
 }
@@ -445,6 +455,7 @@ impl SessionLifecycleStore {
             // The session is torn down; drop the re-attach id so the region never
             // advertises a dead backend session (#2457).
             entry.backend_session_id = None;
+            entry.files_only = false;
         }
     }
 
@@ -472,6 +483,7 @@ impl SessionLifecycleStore {
             // The backend session is gone on a genuine drop; drop the re-attach id
             // (#2457). A backend-driven redrive sets the new id once it reconnects.
             entry.backend_session_id = None;
+            entry.files_only = false;
         }
     }
 
@@ -505,6 +517,7 @@ impl SessionLifecycleStore {
             // A restart supersedes any prior exit cause (#2615): the tab is coming
             // back, not exited.
             entry.exit = None;
+            entry.files_only = false;
         }
     }
 
@@ -725,7 +738,26 @@ impl SessionLifecycleStore {
             // matching every sibling `Disconnected` fold.
             entry.backend_session_id = None;
         }
+        if exit.is_some() {
+            // The session ended; it is no longer a live files-only session.
+            entry.files_only = false;
+        }
         entry.exit = exit;
+    }
+
+    /// `files-only` (#4078) — the backend detected that the host refused the
+    /// interactive shell while SFTP works, and kept the session up for files.
+    /// Pure metadata: the status stays as it is (the session is live) and the
+    /// reconnect engine is untouched, so nothing reconnects or loops. A no-op for
+    /// an unknown/removed session (SM-006) — a late fold for a tab the user
+    /// already closed must not resurrect it.
+    pub fn files_only(&self, session_id: &str) {
+        let mut inner = self.lock();
+        let Some(entry) = inner.sessions.get_mut(session_id) else {
+            return;
+        };
+        entry.files_only = true;
+        inner.dirty.insert(session_id.to_string());
     }
 
     /// `session.sessionLost` (#2512) — a resilient **agent** tab re-established

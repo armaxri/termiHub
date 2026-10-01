@@ -129,6 +129,11 @@ export interface ProjectedSessionLifecycle {
    * re-attach to without calling `create_connection`. `undefined` when there is
    * no live backend session for the tab. */
   sessionId?: string;
+  /** The host refused the interactive shell but SFTP works (#4078): the session
+   * stays up for the Files sidebar and editor, and the tab shows the "no shell"
+   * info panel. Twin of the Rust `SessionLifecycle.files_only`, folded from the
+   * backend's own detection. Omitted (`undefined`) when false. */
+  filesOnly?: boolean;
 }
 
 /** The `session-lifecycle` region view model: `{ sessions: { <id>: … } }`. */
@@ -1022,6 +1027,20 @@ export function effectiveReconnectTriggerError(
   projected: ProjectedSessionLifecycle | undefined
 ): string | undefined {
   return projected?.reconnectError;
+}
+
+/**
+ * Whether a projected session is **files-only** (#4078): the host refused the
+ * shell but SFTP works, so the tab shows the "no shell" info panel instead of a
+ * terminal. Only a live session counts — once it ended (any non-`connected`
+ * status or a recorded exit) the normal disconnect treatment takes over.
+ */
+export function effectiveFilesOnly(projected: ProjectedSessionLifecycle | undefined): boolean {
+  return (
+    projected?.filesOnly === true &&
+    projected.status === "connected" &&
+    projected.exit === undefined
+  );
 }
 
 /**
