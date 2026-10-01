@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { onRemoteDesktopFrame, onRemoteDesktopCursor } from "@/services/events";
+import { remoteDesktopRequestFullFrame } from "@/services/api";
+import { frontendLog } from "@/utils/frontendLog";
 import type { CursorShape, RemoteDesktopInput, ScaleMode } from "@/types/remoteDesktop";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { isCursorShapeValid, isDirtyRectValid, isFramebufferSizeValid } from "./frameBounds";
@@ -120,9 +122,13 @@ export function RemoteDesktopCanvas({
   // Whether this canvas has painted a frame yet (per session), so the first
   // repaint can clear the cross-window "reconnecting view…" placeholder (#1904).
   const firstFramePaintedRef = useRef(false);
-  // Latest onFirstFrame, held in a ref so it never re-subscribes the frame feed.
+  // Latest onFirstFrame / onDimensions, held in refs so a parent re-render (the
+  // tab passes inline callbacks) never re-subscribes the frame feed: frames sent
+  // while it re-subscribed were lost, leaving a static desktop half painted (#4017).
   const onFirstFrameRef = useRef(onFirstFrame);
   onFirstFrameRef.current = onFirstFrame;
+  const onDimensionsRef = useRef(onDimensions);
+  onDimensionsRef.current = onDimensions;
   // Pressed pointer-button bitmask (DOM MouseEvent.buttons convention).
   const buttonsRef = useRef(0);
   // Held modifier keys, released on focus loss to avoid stuck keys.
@@ -223,6 +229,8 @@ export function RemoteDesktopCanvas({
       ctx.stroke();
     }
   }, [scaleMode, viewport]);
+  const repaintRef = useRef(repaint);
+  repaintRef.current = repaint;
 
   // Subscribe to frame + cursor events for this session.
   useEffect(() => {
@@ -238,7 +246,7 @@ export function RemoteDesktopCanvas({
       const prev = fbRef.current;
       const changed = !prev || prev.width !== payload.width || prev.height !== payload.height;
       const fb = ensureFramebuffer(payload.width, payload.height);
-      if (changed) onDimensions?.(payload.width, payload.height);
+      if (changed) onDimensionsRef.current?.(payload.width, payload.height);
       const ctx = fb.getContext("2d");
       if (!ctx) return;
       for (const rect of payload.rects) {
@@ -246,13 +254,25 @@ export function RemoteDesktopCanvas({
         const img = new ImageData(new Uint8ClampedArray(rect.data), rect.width, rect.height);
         ctx.putImageData(img, rect.x, rect.y);
       }
-      repaint();
+      repaintRef.current();
       // First frame painted: clear the cross-window reconnecting placeholder.
       if (!firstFramePaintedRef.current) {
         firstFramePaintedRef.current = true;
         onFirstFrameRef.current?.();
       }
-    }).then((un) => (disposed ? un() : unlisteners.push(un)));
+    }).then((un) => {
+      if (disposed) {
+        un();
+        return;
+      }
+      unlisteners.push(un);
+      // The backend streams frames from the moment the connect returns, before
+      // this listener existed, and a static desktop never resends them: ask for
+      // a full frame now that nothing can be missed (#4017).
+      void remoteDesktopRequestFullFrame(sessionId).catch((err) =>
+        frontendLog("remote_desktop", `request_full_frame on subscribe failed: ${err}`)
+      );
+    });
 
     void onRemoteDesktopCursor((payload) => {
       if (disposed || payload.session_id !== sessionId) return;
@@ -270,7 +290,7 @@ export function RemoteDesktopCanvas({
       disposed = true;
       unlisteners.forEach((un) => un());
     };
-  }, [sessionId, ensureFramebuffer, repaint, onDimensions]);
+  }, [sessionId, ensureFramebuffer]);
 
   // Repaint + (for Match Window) request a resolution change on container resize.
   useEffect(() => {

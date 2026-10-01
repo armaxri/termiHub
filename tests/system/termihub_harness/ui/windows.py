@@ -61,6 +61,38 @@ def last_session_windows(config_dir: Path) -> list[str]:
     return [w["id"] for w in windows if isinstance(w, dict) and isinstance(w.get("id"), str)]
 
 
+def _count_saved_tabs(node: Any) -> int:
+    """How many saved tab definitions sit anywhere under ``node``."""
+    if isinstance(node, list):
+        return sum(_count_saved_tabs(value) for value in node)
+    if not isinstance(node, dict):
+        return 0
+    tabs = node.get("tabs")
+    own = sum(1 for tab in tabs if isinstance(tab, dict)) if isinstance(tabs, list) else 0
+    return own + sum(_count_saved_tabs(v) for k, v in node.items() if k != "tabs")
+
+
+def last_session_window_tab_count(config_dir: Path, label: str) -> int:
+    """Tabs ``last-session.json`` records in window ``label``'s tab groups (#1925).
+
+    Unlike :func:`last_session_windows` this tells a save written after a tab
+    moved into the window apart from an older one that only listed the window
+    (empty) — the window is recorded from the moment it opens (#4017).
+    """
+    try:
+        data = json.loads((config_dir / "last-session.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    groups = data.get("tabGroups") if isinstance(data, dict) else None
+    if not isinstance(groups, list):
+        return 0
+    return sum(
+        _count_saved_tabs(group.get("layout"))
+        for group in groups
+        if isinstance(group, dict) and group.get("windowId") == label
+    )
+
+
 class WindowsUi(HarnessMixin):
     """Open, populate, and close native windows via the multi-window bridge."""
 
