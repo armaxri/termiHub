@@ -726,6 +726,39 @@ file) — not in the per-PR lane, since it needs a system bus. The real desktop
 agents' dialogs (GNOME Shell, KDE) remain a manual check — MT-CRED-14 on the
 [release-gating checklist](#release-gating-manual-checklist).
 
+### Live WSL distro lane (Windows, #4008)
+
+The WSL backend's pure logic is unit-tested on every platform, but the regular
+Windows test leg has no distribution installed, so every live WSL test there
+self-skips. [`wsl_live_tests.rs`](../core/src/backends/wsl_live_tests.rs) drives
+the **real** `wsl.exe`, ConPTY session and `\\wsl$` share instead:
+
+| Test                                                                          | Proves                                                                                                           |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `live_wsl_list_dir_reports_symlinks_and_targets`                              | file, directory and dangling links are flagged over the UNC share, with their targets (#1523)                    |
+| `live_wsl_init_script_is_created_0600_with_exact_content_and_never_clobbered` | the distro-side init script is mode `0600` with the exact content, and a second create is refused (#2837)        |
+| `live_wsl_session_sources_init_script_silently_self_cleans_and_tracks_cwd`    | a real session shows only the `source` line, installs the hook, deletes the script and emits OSC 7 on `cd`       |
+| `queued_copy::live_wsl_queued_folder_copy_round_trips_windows_and_wsl`        | a folder with a queued (above-threshold) file copies Windows → `//wsl$/<distro>/…` → Windows, byte-exact (#3567) |
+
+Without a distribution the tests print `SKIPPED:`; with
+**`TERMIHUB_REQUIRE_WSL=1`** a missing one is a hard failure (the WSL twin of
+`TERMIHUB_REQUIRE_DOCKER`). `TERMIHUB_WSL_DISTRO` pins the distribution,
+otherwise the first installed one is used. Run them on a Windows machine with
+WSL:
+
+```bash
+cargo test -p termihub-core --no-default-features --features "wsl,local-transfer" \
+  --lib backends::wsl::live_tests:: -- --test-threads=1
+```
+
+The [`wsl-live.yml`](../.github/workflows/wsl-live.yml) lane installs WSL 2 +
+Debian 12 on `windows-latest` with
+[`Vampire/setup-wsl`](https://github.com/Vampire/setup-wsl) (cached rootfs) and
+runs them under `TERMIHUB_REQUIRE_WSL=1` — nightly, on manual dispatch, and on
+PRs that touch the WSL backend, the shell-integration commands or the local
+transfer executor. It is not part of the per-PR lane: installing WSL plus a
+Windows build of the core crate costs several minutes.
+
 ### Per-PR app-shell smoke (#2065)
 
 To give the merge gate _some_ app-boot coverage without the nightly lane's build
@@ -2047,10 +2080,10 @@ part of the release gate. Each was triaged with the #3681 rules and removed:
 - **Connect-triggered X server consent + live progress (Windows, #1116)** — Automated. src-tauri/src/terminal/xserver/consent.rs::windows_undecided_prompts_only_when_no_server_present / enable_reply_resolves_to_proceed / not_now_reply_resolves_to_skip / cancelled_token_mid_prompt_aborts_promptly / non_windows_platforms_never_prompt / windows_already_decided_never_prompts; src/components/OpenConnections/XServerConnectConsent.test.tsx 'opens on the event, replies enable, provisions, and closes on ready', 'replies notNow and closes when the user declines', 'shows a recoverable error screen (not toast+close) on a failed step', 'retries provisioning via x_server_ensure from the error screen', 'offers Install on a dependencyMissing ensure failure after retry'; …
 - **FTP client against the FTP fixture (#1333)** — Automated + Tracked. core/tests/ftp_file_browser.rs::ftp_01_list_seeded_tree / ftp_02_read_seeded_files / ftp_04_crud_round_trip / ftp_05_anonymous_read_only; core/tests/ftp_transfer.rs::ftp_transfer_01_download_byte_exact / ftp_transfer_02_upload_byte_exact; core/tests/ftps_handshake.rs::ftps_01_explicit_handshake_list_and_read / ftps_02_implicit_handshake_list_and_read / ftps_03_untrusted_fixture_cert_is_refused (fixture test CA via the test-only `ftp-test-support` feature); … · gaps: #4006 (bridge UI listing of /pub)
 - **FTP symlink icon, navigation, and target in properties (#1513)** — Automated. core/tests/ftp_file_browser.rs::ftp_06_list_flags_symlinks / ftp_07_follow_symlinks (live ProFTPD `/links`); core/src/backends/ftp/listing_parser.rs::parses_symlink_target_from_posix_line / parses_symlink_flag_from_mlsd_line / parses_proftpd_os_unix_symlink_type / parses_slink_type_with_and_without_target / non_symlink_entries_carry_no_symlink_metadata; src/components/Sidebar/FileBrowser.test.tsx 'renders a distinct symlink icon only on the link row', 'shows the link target in the row', 'follows the symlink to its resolved target on double-click'
-- **Docker, WSL, and SFTP symlink icon and target (#1523)** — Automated + Tracked. core/src/backends/docker/file_browser.rs::parse_find_output_symlink_with_target / parse_find_output_symlink_to_directory_lists_as_dir / parse_stat_output_symlink; core/src/backends/ssh/sftp.rs::attrs_to_file_entry_symlink_keeps_target; core/tests/sftp_stress.rs::sftp_stress_18_list_dir_reports_symlink_metadata (live SFTP); core/tests/docker_symlinks.rs::docker_list_dir_reports_symlink_metadata (live container); … · gaps: #4008
-- **WSL init script created inside the distro with mode 0600 (#2837)** — Automated + Tracked. core/src/backends/wsl_init_script.rs::creates_file_with_mode_0600_and_exact_content / rejects_pre_existing_file_without_touching_it / rejects_symlink_to_existing_file_without_following_it / contents_end_with_self_cleanup_and_source_line_matches / distro_args_use_exec_and_positional_path · gaps: #4008
+- **Docker, WSL, and SFTP symlink icon and target (#1523)** — Automated. core/src/backends/docker/file_browser.rs::parse_find_output_symlink_with_target / parse_find_output_symlink_to_directory_lists_as_dir / parse_stat_output_symlink; core/src/backends/ssh/sftp.rs::attrs_to_file_entry_symlink_keeps_target; core/tests/sftp_stress.rs::sftp_stress_18_list_dir_reports_symlink_metadata (live SFTP); core/tests/docker_symlinks.rs::docker_list_dir_reports_symlink_metadata (live container); core/src/backends/wsl_live_tests.rs::live_wsl_list_dir_reports_symlinks_and_targets (live WSL distro, wsl-live workflow); …
+- **WSL init script created inside the distro with mode 0600 (#2837)** — Automated. core/src/backends/wsl_init_script.rs::creates_file_with_mode_0600_and_exact_content / rejects_pre_existing_file_without_touching_it / rejects_symlink_to_existing_file_without_following_it / contents_end_with_self_cleanup_and_source_line_matches / distro_args_use_exec_and_positional_path; core/src/backends/wsl_live_tests.rs::live_wsl_init_script_is_created_0600_with_exact_content_and_never_clobbered / live_wsl_session_sources_init_script_silently_self_cleans_and_tracks_cwd (live WSL distro, wsl-live workflow)
 - **FTP transfer queue: concurrency, pause/resume, retry, resume (#1336)** — Automated. core/tests/ftp_transfer.rs::ftp_transfer_03_download_rest_resume / ftp_transfer_04_upload_rest_resume / ftp_transfer_05_concurrent_separate_connections / ftp_transfer_07_upload_relaunch_resumes_via_rest; core/tests/ftp_transfer_faults.rs::ftp_fault_01_session_drop_retries_and_resumes / ftp_fault_02_container_down_exhausts_retries_then_manual_retry_resumes / ftp_fault_03_cancel_removes_partial_download / ftp_fault_04_pause_then_resume_completes (live faults mid-transfer); core/tests/transfer_queue.rs::queue_promotes_next_transfer_when_one_completes / failure_then_backoff_retry_reruns_through_the_scheduler / resume_and_throughput_math_drive_a_partial_transfer; …
-- **Queued local and WSL copies (#3567, PARITY-004)** — Automated + Tracked. core/src/files/transfer/local.rs::threshold_keeps_small_files_direct / partial_path_is_a_hidden_tagged_sibling / executor_pause_then_resume_completes / executor_cancel_removes_the_partial_and_keeps_the_destination / executor_restarts_when_the_source_changed_since_the_checkpoint; src/components/Sidebar/FileBrowser.paste-feedback.test.tsx (local_copy_start + 'Pasted "x.txt" to /home' toast); … · gaps: #4008
+- **Queued local and WSL copies (#3567, PARITY-004)** — Automated. core/src/files/transfer/local.rs::threshold_keeps_small_files_direct / partial_path_is_a_hidden_tagged_sibling / executor_pause_then_resume_completes / executor_cancel_removes_the_partial_and_keeps_the_destination / executor_restarts_when_the_source_changed_since_the_checkpoint; core/src/backends/wsl_live_tests.rs::queued_copy::live_wsl_queued_folder_copy_round_trips_windows_and_wsl (live WSL distro, wsl-live workflow); src/components/Sidebar/FileBrowser.paste-feedback.test.tsx (local_copy_start + 'Pasted "x.txt" to /home' toast); …
 - **Queued local folder copies (#3605)** — Automated. core/src/files/transfer/local_folder_tests.rs::a_folder_copy_end_to_end_reproduces_the_tree / cancelling_one_file_cancels_the_rest_of_its_folder / layout_merges_into_an_existing_folder / plan_records_symlinks_without_following_them; src-tauri/src/files/local_copy.rs::plan_and_lay_out_copies_small_files_and_leaves_large_ones_queued / plan_and_lay_out_refuses_a_copy_into_itself_without_writing; …
 - **Transfer Queue: restart gaps (#3629, #3630, #3643, #3912, #3983)** — Automated. src-tauri/src/files/transfer/persist_manager.rs::prune_local_paths_under_drops_staging_records_only (#3629); src-tauri/src/files/transfer/persist.rs::folder_paste_link_round_trips_and_drops_only_recorded_pastes / folder_pastes_round_trip_dedupe_and_cap; …
 - **Transfer Queue panel: rows, controls, minimized state (#1337)** — Automated + Release gate. tests/system/tests/test_transfer_queue.py::test_active_row_shows_rising_percent_and_active_controls / test_paused_row_swaps_pause_for_resume / test_failed_row_offers_retry_and_remove / test_cancel_removes_the_row_when_the_backend_confirms / test_cancel_all_is_enabled_only_while_a_row_is_pending / test_clear_completed_keeps_unfinished_rows / test_minimize_collapses_to_the_indicator_and_restores / test_real_sftp_paste_populates_the_transfer_queue; src/components/TransferQueue/TransferQueue.test.tsx, TransferEntry.test.tsx, TransferControls.test.tsx; … · gate: MT-UI-40

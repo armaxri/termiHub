@@ -269,7 +269,7 @@ one to read (it covers all earlier merges). **Watch `develop`'s own runs after
 merging**: a failure there is a real regression (or a new advisory) and needs a follow-up fix, since the PR
 that caused it was not gated on it. The nightly system-integration and Docker
 fixture lanes are unchanged, and a release additionally requires them green on the exact
-release commit (see [Release integration gate](#release-integration-gate)). The weekly **Vendored Forks** upstream-drift job keeps one
+release commit (see [Release integration gate](#release-integration-gate)). The nightly **WSL Live (Windows)** lane ([`wsl-live.yml`](../.github/workflows/wsl-live.yml), #4008) runs the live WSL tests against a real distribution; PRs touching the WSL code paths run it too. The weekly **Vendored Forks** upstream-drift job keeps one
 `supply-chain` tracking issue current (see [Vendored forks](supply-chain.md#vendored-forks)).
 
 **Concurrency rule (#3588).** Every workflow sets a per-ref `concurrency` group,
