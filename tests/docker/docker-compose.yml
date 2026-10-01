@@ -119,6 +119,25 @@ services:
       timeout: 3s
       retries: 5
 
+  # Two-factor SSH (#3384): `AuthenticationMethods password,keyboard-interactive
+  # publickey,keyboard-interactive` — a correct password or key is a partial
+  # success, then keyboard-interactive asks for the fixed one-time code 424242.
+  ssh-mfa:
+    build:
+      context: ./ssh-mfa
+      additional_contexts:
+        keys: ../fixtures/ssh-keys
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-ssh-mfa
+    ports:
+      - "127.0.0.1:${TERMIHUB_TEST_SSH_MFA_PORT:-2216}:22"
+    networks:
+      - test-net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   # Jump host bastion (entry point for 2-hop chain)
   ssh-jumphost-bastion:
     build:
