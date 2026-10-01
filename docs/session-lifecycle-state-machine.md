@@ -51,7 +51,8 @@ Serialized `lowercase` on the wire, except the two `#[serde(rename)]` cases note
 reconnecting" note, #2442), `sessionId` (the live backend session id, #2457),
 `exit` (the classified exit cause + code, #2615) and `filesOnly` (the host refused
 the shell but SFTP works, so the session stays `Connected` for the Files sidebar
-and editor, #4078).
+and editor, #4078; for an agent-hosted session the agent reports it with
+`connection.filesOnly`, #4081).
 
 `EndReason` (`store.rs:87-103`): `User` (graceful user teardown), `Unexpected`
 (a drop, a candidate for reconnect), `Error` (a connect/reconnect attempt
@@ -270,18 +271,18 @@ Some transitions are folded server-side, at the source, rather than mirrored by 
 client `session.*` intent (`projection.rs:234-380`). They must only drive
 transitions that **converge** with the client's same-event dispatch.
 
-| Fold                                | Store method → status                     | Trigger                                                                                                                                                           |
-| ----------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `connect_auth_failed`               | `AuthFailed` (loop idle)                  | Initial connect rejected by auth (SM-005, `store.rs:366-378`).                                                                                                    |
-| `reconnect_auth_failed`             | `AuthFailed` (engine `Cancel` → `Gaveup`) | A reconnect attempt rejected by auth: stop the loop immediately (`store.rs:397-417`).                                                                             |
-| `fold_agent_transport_reconnecting` | `Reconnecting` (loop **stays idle**)      | An agent tab's transport hit a _transient_ break the agent I/O task is re-establishing in place (#2555/#2556). Keeps the `sessionId` (the live session survives). |
-| `fold_agent_session_recovered`      | `Connected`                               | The agent recovered its live session in place after the transient break.                                                                                          |
-| `fold_agent_session_lost`           | `SessionLost`                             | Transport back, but the hosted session is confirmed gone (#2564).                                                                                                 |
-| `fold_agent_session_unconfirmed`    | `SessionLost`                             | Transport back, but `connection.list` never answered (SM-001) — session cannot be confirmed.                                                                      |
-| `fold_agent_reconnect_failed`       | `Failed`                                  | The agent's own in-task reconnect loop exhausted its budget (#2612/#2564).                                                                                        |
-| `fold_agent_session_evicted`        | `Evicted` (loop idle, `sessionId` kept)   | The agent reported `connection.evicted`: another desktop took the session over (SM-003).                                                                          |
-| `fold_agent_session_reclaimed`      | `Evicted` → `Connected`                   | The user's explicit Reclaim (`reclaim_session`) takeover attach succeeded (SM-003).                                                                               |
-| `fold_files_only`                   | status unchanged, `filesOnly` set         | The SSH backend saw the host refuse the shell while SFTP works (#4078). Pure metadata: no reconnect loop starts; the tab shows the "no shell" panel.              |
+| Fold                                | Store method → status                     | Trigger                                                                                                                                                                                                                |
+| ----------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `connect_auth_failed`               | `AuthFailed` (loop idle)                  | Initial connect rejected by auth (SM-005, `store.rs:366-378`).                                                                                                                                                         |
+| `reconnect_auth_failed`             | `AuthFailed` (engine `Cancel` → `Gaveup`) | A reconnect attempt rejected by auth: stop the loop immediately (`store.rs:397-417`).                                                                                                                                  |
+| `fold_agent_transport_reconnecting` | `Reconnecting` (loop **stays idle**)      | An agent tab's transport hit a _transient_ break the agent I/O task is re-establishing in place (#2555/#2556). Keeps the `sessionId` (the live session survives).                                                      |
+| `fold_agent_session_recovered`      | `Connected`                               | The agent recovered its live session in place after the transient break.                                                                                                                                               |
+| `fold_agent_session_lost`           | `SessionLost`                             | Transport back, but the hosted session is confirmed gone (#2564).                                                                                                                                                      |
+| `fold_agent_session_unconfirmed`    | `SessionLost`                             | Transport back, but `connection.list` never answered (SM-001) — session cannot be confirmed.                                                                                                                           |
+| `fold_agent_reconnect_failed`       | `Failed`                                  | The agent's own in-task reconnect loop exhausted its budget (#2612/#2564).                                                                                                                                             |
+| `fold_agent_session_evicted`        | `Evicted` (loop idle, `sessionId` kept)   | The agent reported `connection.evicted`: another desktop took the session over (SM-003).                                                                                                                               |
+| `fold_agent_session_reclaimed`      | `Evicted` → `Connected`                   | The user's explicit Reclaim (`reclaim_session`) takeover attach succeeded (SM-003).                                                                                                                                    |
+| `fold_files_only`                   | status unchanged, `filesOnly` set         | The SSH backend (or, for an agent tab, the agent's `connection.filesOnly`, #4081) saw the host refuse the shell while SFTP works (#4078). Pure metadata: no reconnect loop starts; the tab shows the "no shell" panel. |
 
 Because the transient-break fold leaves the engine **idle**, the timer reconcile
 cancels rather than arms — the agent I/O task is the single owner of that reconnect,
