@@ -305,6 +305,15 @@ class AppInstance:
         return self._config_dir
 
     @property
+    def log_dir(self) -> Path:
+        """The app's log directory (``TERMIHUB_LOG_DIR``), inside the config dir.
+
+        Holds the rotating app log, session transcripts and ``crash-reports/``,
+        so a test can seed a crash report here before a launch.
+        """
+        return self._config_dir / "logs"
+
+    @property
     def binary(self) -> Path:
         """Path of the app binary this instance launches."""
         return self._binary
@@ -335,6 +344,7 @@ class AppInstance:
         env = dict(os.environ)
         env.pop("TERMIHUB_TEST_BRIDGE_PORT", None)
         env["TERMIHUB_CONFIG_DIR"] = str(self._config_dir)
+        env["TERMIHUB_LOG_DIR"] = str(self.log_dir)
         env["TERMIHUB_SPAWN_ENDPOINT"] = self.spawn_endpoint
         return env
 
@@ -419,6 +429,9 @@ class AppInstance:
         env = dict(os.environ)
         env["TERMIHUB_TEST_BRIDGE_PORT"] = str(bridge_port)
         env["TERMIHUB_CONFIG_DIR"] = str(self._config_dir)
+        # Keep the app's own log, session transcripts and crash reports in this
+        # instance too, out of the user's real log directory (#4009).
+        env["TERMIHUB_LOG_DIR"] = str(self.log_dir)
         # A private spawn rendezvous per instance (#4010), see `spawn_endpoint`.
         env["TERMIHUB_SPAWN_ENDPOINT"] = self.spawn_endpoint
         # Pin WebView2 to a per-instance user-data folder so teardown can reap

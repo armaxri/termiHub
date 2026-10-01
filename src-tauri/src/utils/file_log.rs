@@ -184,19 +184,42 @@ const PORTABLE_LOG_SUBDIR: &str = "logs";
 /// Otherwise it follows each platform's own convention — see
 /// [`platform_log_dir`].
 ///
+/// An explicit [`LOG_DIR_ENV`] override wins over both: it lets an isolated
+/// instance (the system-test harness, which already isolates the config with
+/// `TERMIHUB_CONFIG_DIR`) keep its log, transcripts and crash reports out of the
+/// user's real log directory.
+///
 /// Returns `None` when no directory can be resolved, in which case file logging
 /// is skipped rather than guessed at.
 pub fn log_dir() -> Option<PathBuf> {
+    let override_dir = std::env::var_os(LOG_DIR_ENV)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from);
     let portable_data_dir = detect_app_mode()
         .ok()
         .and_then(|mode| mode.data_dir().map(Path::to_path_buf));
-    resolve_log_dir(portable_data_dir.as_deref(), platform_log_dir())
+    resolve_log_dir(
+        override_dir,
+        portable_data_dir.as_deref(),
+        platform_log_dir(),
+    )
 }
 
-/// Pick the log directory from explicit inputs: the portable `data/` directory
-/// wins when present, otherwise the platform directory. Split out from
-/// [`log_dir`] so the precedence is testable without a real portable install.
-fn resolve_log_dir(portable_data_dir: Option<&Path>, platform: Option<PathBuf>) -> Option<PathBuf> {
+/// Environment variable that overrides the log directory (see [`log_dir`]).
+pub const LOG_DIR_ENV: &str = "TERMIHUB_LOG_DIR";
+
+/// Pick the log directory from explicit inputs: an explicit override wins, then
+/// the portable `data/` directory, otherwise the platform directory. Split out
+/// from [`log_dir`] so the precedence is testable without a real portable
+/// install or a process-wide environment variable.
+fn resolve_log_dir(
+    override_dir: Option<PathBuf>,
+    portable_data_dir: Option<&Path>,
+    platform: Option<PathBuf>,
+) -> Option<PathBuf> {
+    if override_dir.is_some() {
+        return override_dir;
+    }
     match portable_data_dir {
         Some(data_dir) => Some(data_dir.join(PORTABLE_LOG_SUBDIR)),
         None => platform,
@@ -588,7 +611,7 @@ mod tests {
             "/home/user/.local/share/com.termihub.app/logs",
         ));
 
-        let dir = resolve_log_dir(Some(data_dir), platform.clone())
+        let dir = resolve_log_dir(None, Some(data_dir), platform.clone())
             .expect("a portable data dir always resolves a log dir");
 
         assert_eq!(dir, data_dir.join("logs"));
@@ -609,7 +632,7 @@ mod tests {
         // portable mode: the portable folder is all it needs.
         let data_dir = Path::new("/media/usb/termiHub/data");
         assert_eq!(
-            resolve_log_dir(Some(data_dir), None),
+            resolve_log_dir(None, Some(data_dir), None),
             Some(data_dir.join("logs"))
         );
     }
@@ -619,17 +642,42 @@ mod tests {
         let platform = Some(PathBuf::from(
             "/home/user/.local/share/com.termihub.app/logs",
         ));
-        assert_eq!(resolve_log_dir(None, platform.clone()), platform);
-        assert_eq!(resolve_log_dir(None, None), None);
+        assert_eq!(resolve_log_dir(None, None, platform.clone()), platform);
+        assert_eq!(resolve_log_dir(None, None, None), None);
+    }
+
+    #[test]
+    fn an_explicit_override_wins_over_portable_and_platform() {
+        let isolated = PathBuf::from("/tmp/termihub-app-config-x/logs");
+        let platform = Some(PathBuf::from(
+            "/home/user/.local/share/com.termihub.app/logs",
+        ));
+        assert_eq!(
+            resolve_log_dir(
+                Some(isolated.clone()),
+                Some(Path::new("/media/usb/termiHub/data")),
+                platform.clone()
+            ),
+            Some(isolated.clone())
+        );
+        assert_eq!(
+            resolve_log_dir(Some(isolated.clone()), None, None),
+            Some(isolated)
+        );
     }
 
     #[test]
     fn log_dir_follows_the_detected_app_mode() {
-        // `log_dir()` is the composition of detection + resolution; whatever
-        // mode the test binary detects, the two must agree.
-        let expected = match detect_app_mode().expect("app mode resolves on test hosts") {
-            crate::utils::portable::AppMode::Portable { data_dir } => Some(data_dir.join("logs")),
-            crate::utils::portable::AppMode::Installed => platform_log_dir(),
+        // `log_dir()` is the composition of override + detection + resolution;
+        // whatever the test process sees, the two must agree.
+        let expected = match std::env::var_os(LOG_DIR_ENV).filter(|v| !v.is_empty()) {
+            Some(dir) => Some(PathBuf::from(dir)),
+            None => match detect_app_mode().expect("app mode resolves on test hosts") {
+                crate::utils::portable::AppMode::Portable { data_dir } => {
+                    Some(data_dir.join("logs"))
+                }
+                crate::utils::portable::AppMode::Installed => platform_log_dir(),
+            },
         };
         assert_eq!(log_dir(), expected);
     }
