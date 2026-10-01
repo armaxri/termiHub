@@ -1155,6 +1155,11 @@ export function FileBrowser() {
     // whose timer its own cleanup cancels on unmount (virtual-core >= 3.17.8,
     // #3056) — so no global `onscrollend` shim is needed for teardown safety.
     useScrollendEvent: true,
+    // `useFlushSync` stays at react-virtual's default (true) on purpose (#3897):
+    // flushing scroll updates synchronously keeps rows painted during fast scrolls.
+    // Batching them (`false`) would silence a jsdom-only flushSync warning but risks
+    // blank/flickering rows that no automated check here can rule out. The warning
+    // is filtered in the FileBrowser tests instead (src/test/consoleGuard.ts).
   });
 
   // Roving-tabindex keyboard navigation over the displayed rows. The hook owns
