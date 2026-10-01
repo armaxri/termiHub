@@ -169,16 +169,49 @@ impl Default for RemoteAgentConfig {
     }
 }
 
-/// Build a Windows agent invocation: `<path> <args>`.
+/// Build a Windows agent invocation that runs under either OpenSSH `DefaultShell`.
 ///
-/// A path containing a space is double-quoted (required by `cmd.exe`). A
-/// space-free path is left unquoted so it runs as a command in both `cmd.exe`
-/// and PowerShell (a quoted leading token in PowerShell is a string literal,
-/// not a command). The default `%LOCALAPPDATA%` install path and resolved
-/// space-free absolute paths therefore work regardless of the remote shell.
+/// The command is handed verbatim to the host's `DefaultShell` (`cmd.exe /c …`
+/// or `powershell -c …`), and the client cannot know which one it is without an
+/// extra round-trip (the probe/launch commands are built from config alone), so
+/// the emitted form must parse identically in both shells:
+///
+/// - **Space-free path** → `<path> <args>`, unquoted. A bare leading token is a
+///   command in both `cmd.exe` and PowerShell. (This covers the
+///   `%LOCALAPPDATA%\…` default and every space-free absolute path; unchanged
+///   from before #4067.)
+/// - **Path with a space** → `cmd /c "<path>" <args>`. Neither shell's native
+///   form works in the other: `"<path>" <args>` makes PowerShell treat the
+///   quoted leading token as a string literal ("Unexpected token '--stdio'"),
+///   and PowerShell's `& "<path>" <args>` is a syntax error in `cmd.exe`
+///   (`&` is its command separator). Leading with the bare word `cmd` (always
+///   on the system `PATH`) sidesteps the leading-quote problem:
+///   - Under PowerShell, `cmd` is a native command; `/c`, the quoted path and
+///     each arg are passed as separate arguments, and PowerShell re-quotes the
+///     spaced one, producing the command line `cmd /c "<path>" <args>` for
+///     `cmd.exe`.
+///   - Under `cmd.exe`, the outer shell sees no leading quote and runs the line
+///     as-is, i.e. the same `cmd /c "<path>" <args>`.
+///   - The inner `cmd /c` then applies its documented quote rule (`cmd /?`):
+///     the line holds exactly two quote characters, with whitespace between
+///     them, no special characters (`&<>()@^|`) between them, and the quoted
+///     string names an existing executable — so the quotes are preserved and it
+///     runs `"<path>" <args>`, inheriting stdin/stdout (so `--stdio` streams
+///     pass straight through) and returning the agent's exit code.
+///
+///   The args never contain a quote, so the two-quote condition always holds.
+///   Limitation: a spaced path that also contains one of `&<>()@^|` (e.g.
+///   `C:\Program Files (x86)\…`) falls into `cmd`'s other rule (strip the outer
+///   quotes) and is not supported; the installer always writes to
+///   `%LOCALAPPDATA%\termiHub\agent\`, which contains none of them. When the
+///   binary is missing, `cmd` likewise strips the quotes and the command fails
+///   with "not recognized", which the probe reports as "not installed".
+///
+/// The deploy's verify step (`agent_install::windows_install_plan`) does know
+/// the shell and keeps the shell-specific `"…"` / `& "…"` forms.
 fn windows_agent_command(path: &str, args: &str) -> String {
     if path.contains(' ') {
-        format!("\"{path}\" {args}")
+        format!("cmd /c \"{path}\" {args}")
     } else {
         format!("{path} {args}")
     }
@@ -843,13 +876,145 @@ mod tests {
         assert!(!config.agent_exec_command().contains("$HOME"));
     }
 
+    /// Profile path with a space (#4067) — the resolved install path of every
+    /// Windows account named like "John Smith".
+    const SPACED_AGENT_PATH: &str =
+        r"C:\Users\John Smith\AppData\Local\termiHub\agent\termihub-agent.exe";
+    const PLAIN_AGENT_PATH: &str = r"C:\Users\john\AppData\Local\termiHub\agent\termihub-agent.exe";
+
     #[test]
-    fn agent_exec_command_windows_absolute_path_with_space_is_quoted() {
+    fn agent_exec_command_windows_absolute_path_with_space_goes_through_cmd() {
         let config = config_with_path(Some(r"C:\Program Files\termiHub\termihub-agent.exe"));
         assert_eq!(
             config.agent_exec_command(),
-            r#""C:\Program Files\termiHub\termihub-agent.exe" --stdio"#
+            r#"cmd /c "C:\Program Files\termiHub\termihub-agent.exe" --stdio"#
         );
+    }
+
+    #[test]
+    fn agent_exec_command_windows_spaced_path_with_self_update_args() {
+        let mut config = config_with_path(Some(SPACED_AGENT_PATH));
+        config.allow_self_update = true;
+        let cmd = config.agent_exec_command();
+        assert!(cmd.starts_with(&format!(r#"cmd /c "{SPACED_AGENT_PATH}" --stdio "#)));
+        assert!(cmd.contains("--allow-self-update --update-strategy "));
+        // cmd's quote-preserving rule needs exactly two quote characters.
+        assert_eq!(cmd.matches('"').count(), 2);
+    }
+
+    #[test]
+    fn windows_agent_command_spaced_path_parses_in_cmd_and_powershell() {
+        for args in ["--stdio", "--version"] {
+            let cmd = windows_agent_command(SPACED_AGENT_PATH, args);
+            assert_eq!(cmd, format!(r#"cmd /c "{SPACED_AGENT_PATH}" {args}"#));
+
+            // PowerShell: the leading token is a bare command name, never a
+            // quoted string literal (the #4067 failure mode).
+            assert!(!cmd.starts_with('"') && !cmd.starts_with('&'));
+            let first = cmd.split_whitespace().next().unwrap();
+            assert_eq!(first, "cmd");
+            assert_eq!(
+                powershell_argv(&cmd),
+                vec!["cmd", "/c", SPACED_AGENT_PATH, args],
+                "PowerShell must hand cmd.exe the path as one argument"
+            );
+
+            // cmd.exe: no `&` (command separator) at the start, and the inner
+            // `cmd /c` sees exactly two quotes around a special-char-free path,
+            // so it preserves them and runs `"<path>" <args>`.
+            let inner = cmd.strip_prefix("cmd /c ").unwrap();
+            assert_eq!(
+                cmd_c_effective_command(inner),
+                format!(r#""{SPACED_AGENT_PATH}" {args}"#)
+            );
+        }
+    }
+
+    #[test]
+    fn windows_agent_command_plain_path_is_unquoted_in_both_shells() {
+        for args in ["--stdio", "--version"] {
+            let cmd = windows_agent_command(PLAIN_AGENT_PATH, args);
+            assert_eq!(cmd, format!("{PLAIN_AGENT_PATH} {args}"));
+            // A bare leading token is a command in both shells.
+            assert!(!cmd.contains('"'));
+            assert_eq!(powershell_argv(&cmd), vec![PLAIN_AGENT_PATH, args]);
+            assert_eq!(cmd_c_effective_command(&cmd), cmd);
+        }
+    }
+
+    #[test]
+    fn agent_version_command_windows_spaced_path_goes_through_cmd() {
+        let config = config_with_path(Some(SPACED_AGENT_PATH));
+        assert_eq!(
+            config.agent_version_command(),
+            format!(r#"cmd /c "{SPACED_AGENT_PATH}" --version"#)
+        );
+    }
+
+    #[test]
+    fn agent_version_command_windows_plain_path_is_unquoted() {
+        let config = config_with_path(Some(PLAIN_AGENT_PATH));
+        assert_eq!(
+            config.agent_version_command(),
+            format!("{PLAIN_AGENT_PATH} --version")
+        );
+    }
+
+    /// Minimal model of PowerShell's argument-mode tokenizer for the subset the
+    /// agent command uses: whitespace-separated barewords and `"…"` strings
+    /// (no escapes, variables or operators — the command contains none).
+    fn powershell_argv(cmd: &str) -> Vec<String> {
+        let mut argv = Vec::new();
+        let mut cur = String::new();
+        let mut in_quotes = false;
+        let mut has_token = false;
+        for c in cmd.chars() {
+            match c {
+                '"' => {
+                    in_quotes = !in_quotes;
+                    has_token = true;
+                }
+                c if c.is_whitespace() && !in_quotes => {
+                    if has_token {
+                        argv.push(std::mem::take(&mut cur));
+                        has_token = false;
+                    }
+                }
+                c => {
+                    cur.push(c);
+                    has_token = true;
+                }
+            }
+        }
+        assert!(!in_quotes, "unterminated string in {cmd:?}");
+        if has_token {
+            argv.push(cur);
+        }
+        argv
+    }
+
+    /// Model of `cmd /c <line>` quote handling as documented by `cmd /?`:
+    /// with exactly two quotes, whitespace and no special characters between
+    /// them, the quotes are preserved (rule 1; the "existing executable" part
+    /// is assumed); otherwise a leading quote and the last quote are stripped
+    /// (rule 2).
+    fn cmd_c_effective_command(line: &str) -> String {
+        let quotes: Vec<usize> = line.match_indices('"').map(|(i, _)| i).collect();
+        if quotes.len() == 2 {
+            let between = &line[quotes[0] + 1..quotes[1]];
+            let special = between.chars().any(|c| "&<>()@^|".contains(c));
+            if !special && between.contains(' ') {
+                return line.to_string();
+            }
+        }
+        if line.starts_with('"') {
+            let last = *quotes.last().unwrap();
+            let mut s = line.to_string();
+            s.remove(last);
+            s.remove(0);
+            return s;
+        }
+        line.to_string()
     }
 
     #[test]

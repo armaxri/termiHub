@@ -7,7 +7,8 @@ name: Windows SSH Host
 # install through a cmd.exe / PowerShell DefaultShell), MT-AGENT-20 (connect
 # over SSH exec `--stdio`) and MT-AGENT-24 (a named-pipe daemon session
 # survives a disconnect and is re-attached), which used to be manual because
-# there was no Windows SSH-host fixture.
+# there was no Windows SSH-host fixture, plus the `--version` probe and `--stdio`
+# launch from an install path containing a space (#4067; backend.rs builds them).
 #
 # The host is the native sshd fixture (scripts/internal/native-sshd-fixture.sh:
 # Win32-OpenSSH on a loopback port, key-auth test user), as in the native-sshd
@@ -30,6 +31,7 @@ on:
     paths:
       - "src-tauri/src/terminal/agent_deploy.rs"
       - "src-tauri/src/terminal/agent_install.rs"
+      - "src-tauri/src/terminal/backend.rs"
       - "src-tauri/src/terminal/agent_manager/reconnect.rs"
       - "src-tauri/src/terminal/agent_manager/live_channel_support.rs"
       - "src-tauri/src/terminal/agent_manager/windows_ssh_host_tests.rs"
