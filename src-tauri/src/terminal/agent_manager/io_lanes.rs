@@ -118,6 +118,7 @@ pub(crate) fn lane_of(cmd: &AgentIoCommand) -> Lane {
         AgentIoCommand::Request { .. }
         | AgentIoCommand::RegisterSession { .. }
         | AgentIoCommand::UnregisterSession { .. }
+        | AgentIoCommand::RegisterFilesOnly { .. }
         | AgentIoCommand::RegisterMonitoring { .. }
         | AgentIoCommand::RegisterMonitoringStatus { .. }
         | AgentIoCommand::UnregisterMonitoring { .. }

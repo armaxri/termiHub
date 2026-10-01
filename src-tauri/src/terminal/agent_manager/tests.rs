@@ -2551,6 +2551,7 @@ fn dispatch_agent_notification_preserves_connection_output_order() {
             params,
             &session_outputs,
             &monitoring_outputs,
+            &mut files_only::FilesOnlyRoutes::default(),
             &b64,
         );
     }

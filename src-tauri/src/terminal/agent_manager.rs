@@ -93,6 +93,7 @@ use notifications::{
 /// Carved verbatim into sibling modules; the manager below spawns
 /// [`agent_io_task`] and emits through [`emit_agent_state`].
 mod agent_stderr;
+pub(crate) mod files_only;
 mod io_lanes;
 mod io_task;
 mod reattach;
@@ -261,8 +262,14 @@ pub(crate) enum AgentIoCommand {
         session_id: String,
         output_tx: OutputSender,
     },
-    /// Unregister a session's output sender.
+    /// Unregister a session's output sender (and its files-only route, #4081).
     UnregisterSession { session_id: String },
+    /// Register the watch a session's proxy reads its files-only verdict from
+    /// (#4081), flipped by the agent's `connection.filesOnly` notification.
+    RegisterFilesOnly {
+        session_id: String,
+        files_only_tx: tokio::sync::watch::Sender<bool>,
+    },
     /// Register a monitoring sender for a session.
     RegisterMonitoring {
         session_id: String,
@@ -691,6 +698,19 @@ pub trait AgentRpcClient: Send + Sync + 'static {
         agent_id: &str,
         remote_session_id: &str,
     ) -> Result<(), TerminalError>;
+
+    /// Register the watch a remote session's files-only verdict is delivered
+    /// on (#4081): flipped to `true` when the agent reports that the session's
+    /// host refused the shell but serves files. Dropped with the session's
+    /// output route. The default does nothing, so the watch never flips.
+    fn register_files_only(
+        &self,
+        _agent_id: &str,
+        _remote_session_id: &str,
+        _files_only_tx: tokio::sync::watch::Sender<bool>,
+    ) -> Result<(), TerminalError> {
+        Ok(())
+    }
 
     /// Register a monitoring channel for a remote session.
     fn register_monitoring_output(
@@ -2154,6 +2174,31 @@ impl<R: Runtime> AgentConnectionManager<R> {
             .map_err(|_| TerminalError::RemoteError("Agent I/O task gone".to_string()))
     }
 
+    /// Register a remote session's files-only watch on the agent's I/O task
+    /// (#4081).
+    pub fn register_files_only(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+        files_only_tx: tokio::sync::watch::Sender<bool>,
+    ) -> Result<(), TerminalError> {
+        let agents = self
+            .agents
+            .lock()
+            .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
+
+        let conn = agents.get(agent_id).ok_or_else(|| {
+            TerminalError::RemoteError(format!("Agent {} not connected", agent_id))
+        })?;
+
+        conn.command_tx
+            .send(AgentIoCommand::RegisterFilesOnly {
+                session_id: remote_session_id.to_string(),
+                files_only_tx,
+            })
+            .map_err(|_| TerminalError::RemoteError("Agent I/O task gone".to_string()))
+    }
+
     /// Unregister a session's output sender from the agent's I/O task.
     pub fn unregister_session_output(
         &self,
@@ -2730,6 +2775,20 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
         remote_session_id: &str,
     ) -> Result<(), TerminalError> {
         AgentConnectionManager::unregister_session_output(self, agent_id, remote_session_id)
+    }
+
+    fn register_files_only(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+        files_only_tx: tokio::sync::watch::Sender<bool>,
+    ) -> Result<(), TerminalError> {
+        AgentConnectionManager::register_files_only(
+            self,
+            agent_id,
+            remote_session_id,
+            files_only_tx,
+        )
     }
 
     fn register_monitoring_output(

@@ -3,7 +3,8 @@
 //!
 //! Routes every JSON-RPC notification the remote agent pushes to its consumer:
 //! `connection.output` and `connection.monitoring.*` to the per-session/per-host
-//! channels, `connection.evicted` to the SM-003 eviction fold, `agent.forward.*`
+//! channels, `connection.evicted` to the SM-003 eviction fold,
+//! `connection.filesOnly` to the session's files-only watch (#4081), `agent.forward.*`
 //! to the desktop ssh-agent relay, `tool.event`/`tool.done` to their tool run,
 //! and the `agent.update_available`/`agent.update_pending` notices to the
 //! frontend as Tauri events.
@@ -25,6 +26,7 @@ use termihub_core::protocol::methods::{
     MonitoringStatusNotification, UpdateAvailableNotification, UpdatePendingNotification,
 };
 
+use super::files_only::{route_files_only_notification, FilesOnlyRoutes};
 use super::{
     fold_evicted_hosted_sessions, hosted_sessions_for_agent, AgentIoSender, MonitoringRoute,
     ToolRunMessage, ToolRunSender,
@@ -173,8 +175,13 @@ pub(super) fn dispatch_agent_notification<R: Runtime>(
     params: &Value,
     session_outputs: &HashMap<String, OutputSender>,
     monitoring_outputs: &HashMap<String, MonitoringRoute>,
+    files_only: &mut FilesOnlyRoutes,
     b64: &base64::engine::GeneralPurpose,
 ) {
+    // #4081: a hosted session became files-only — flip its proxy's watch.
+    if route_files_only_notification(files_only, agent_id, method, params) {
+        return;
+    }
     if method == termihub_core::protocol::methods::AGENT_UPDATE_AVAILABLE {
         emit_agent_update_available(app_handle, agent_id, params);
     }

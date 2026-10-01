@@ -1937,6 +1937,8 @@ impl SessionManager {
         }
 
         let output_rx = proxy.subscribe_output();
+        // A files-only session (#4081) reports it again on this attach.
+        let files_only_watch = proxy.files_only_watch();
 
         // Deterministic-teardown handle for the re-attached session's output
         // reader (CONC-011), mirroring the create path.
@@ -1977,6 +1979,18 @@ impl SessionManager {
                     resilient: true,
                 },
             );
+
+        // Forward a files-only verdict (#4081) to the tab, as on create.
+        if let Some(watch) = files_only_watch {
+            // Not app-owned (#3105): session-scoped, stopped by `reader_cancel`.
+            tokio::spawn(Self::run_files_only_watch(
+                watch,
+                session_id.clone(),
+                tab_id.to_string(),
+                emitter.clone(),
+                reader_cancel.clone(),
+            ));
+        }
 
         // Stream output for the re-attached session (buffer replay is already
         // in-flight from `attach_session`).
