@@ -1346,6 +1346,11 @@ impl ConnectionType for Wsl {
     }
 }
 
+// Live tests against a real distribution, gated by `TERMIHUB_REQUIRE_WSL` (#4008).
+#[cfg(test)]
+#[path = "wsl_live_tests.rs"]
+mod live_tests;
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
