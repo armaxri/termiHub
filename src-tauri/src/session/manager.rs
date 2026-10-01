@@ -201,6 +201,12 @@ pub trait EventEmitter: Clone + Send + Sync + 'static {
     /// `reconnect_auth_failed` fold stops the loop and scrubs its secrets — is
     /// never pre-empted. Lands the tab back on the terminal `authFailed` state.
     fn fold_retry_auth_failed(&self, _tab_id: &str, _error: &str) {}
+
+    /// Fold a **files-only** session (#4078), keyed by the tab id: the host
+    /// refused the shell but SFTP works, so the session stays up and the tab
+    /// shows the "no shell" info panel. Default no-op for test emitters; the
+    /// production `AppHandle` folds it into the `session-lifecycle` store.
+    fn fold_files_only(&self, _tab_id: &str) {}
 }
 
 impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
@@ -280,6 +286,11 @@ impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
         fold_session_transition(self, |store| {
             store.retry_auth_failed(tab_id, Some(error.to_string()))
         });
+    }
+
+    fn fold_files_only(&self, tab_id: &str) {
+        use crate::session_projection::projection::fold_session_transition;
+        fold_session_transition(self, |store| store.files_only(tab_id));
     }
 }
 
@@ -1163,8 +1174,9 @@ impl SessionManager {
         // Build a human-readable title.
         let title = Self::build_title(type_id, &settings, agent_id);
 
-        // Subscribe to output.
+        // Subscribe to output, and to the backend's files-only verdict (#4078).
         let output_rx = connection.subscribe_output();
+        let files_only_watch = connection.files_only_watch();
 
         let info = SessionInfo {
             id: session_id.clone(),
@@ -1283,6 +1295,21 @@ impl SessionManager {
             .get("initialCommand")
             .and_then(|v| v.as_str())
             .is_some_and(|s| !s.is_empty());
+
+        // Forward a files-only verdict (#4078) to the tab's lifecycle entry.
+        if let (Some(watch), Some(tab_id)) = (
+            files_only_watch,
+            connect_id.and_then(tab_id_from_connect_id),
+        ) {
+            // Not app-owned (#3105): session-scoped, stopped by `reader_cancel`.
+            tokio::spawn(Self::run_files_only_watch(
+                watch,
+                session_id.clone(),
+                tab_id,
+                emitter.clone(),
+                reader_cancel.clone(),
+            ));
+        }
 
         // Spawn output streaming task.
         let sessions_clone = self.sessions.clone();
@@ -2325,6 +2352,9 @@ mod monitoring;
 
 /// Session → saved-connection bindings for relaunched transfers (#3876).
 mod saved_connections;
+
+/// Files-only sessions on hosts that refuse the shell (#4078).
+mod files_only;
 
 #[cfg(test)]
 mod tests;
