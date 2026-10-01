@@ -76,7 +76,7 @@ services:
     build: ./ssh-sftp-only
     container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-ssh-sftp-only
     ports:
-      - "127.0.0.1:${TERMIHUB_TEST_SSH_SFTP_ONLY_PORT:-2211}:22"
+      - "127.0.0.1:${TERMIHUB_TEST_SSH_SFTP_ONLY_PORT:-2215}:22"
     networks:
       - test-net
     healthcheck:
