@@ -264,9 +264,7 @@ async fn restored_host_key_and_plugins_after_restart_connect_without_a_prompt() 
     assert!(!verifier.verify_unattended(&host_key("SHA256:other")).await);
 
     // The plugin manager lists the restored plugin with its restored state.
-    let listed = PluginManager::new(&plugins_root(dst.path()))
-        .list()
-        .unwrap();
+    let listed = PluginManager::new(plugins_root(dst.path())).list().unwrap();
     let states: Vec<_> = listed
         .iter()
         .map(|p| (p.manifest.id.as_str(), p.manifest.version.as_str(), p.state))
