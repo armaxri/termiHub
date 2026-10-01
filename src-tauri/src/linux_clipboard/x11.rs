@@ -80,11 +80,19 @@ fn owner_slot() -> &'static Mutex<Option<Owner>> {
 /// Bind `ctx`'s files onto the X11 `CLIPBOARD` selection with delayed rendering.
 /// The bytes are fetched only on the actual paste.
 pub(super) fn bind(ctx: FetchContext) -> anyhow::Result<()> {
+    bind_on(None, ctx)
+}
+
+/// [`bind`] against an explicit X `display` (e.g. `":99"`), or the `DISPLAY`
+/// environment variable when `None`. The display only matters for the first bind,
+/// which creates the process-wide owner; split out so the Xvfb test can target its
+/// own server without mutating the process environment (#4087).
+fn bind_on(display: Option<&str>, ctx: FetchContext) -> anyhow::Result<()> {
     let mut slot = owner_slot()
         .lock()
         .map_err(|_| anyhow::anyhow!("clipboard owner lock poisoned"))?;
     if slot.is_none() {
-        *slot = Some(Owner::start()?);
+        *slot = Some(Owner::start(display)?);
     }
     let owner = slot
         .as_ref()
@@ -112,8 +120,8 @@ impl Owner {
     /// and spawn the event-loop thread. Fails (rather than panicking) when no X
     /// server is reachable, so the caller can surface it and the round degrades to
     /// no host paste.
-    fn start() -> anyhow::Result<Self> {
-        let (conn, screen_num) = RustConnection::connect(None)
+    fn start(display: Option<&str>) -> anyhow::Result<Self> {
+        let (conn, screen_num) = RustConnection::connect(display)
             .map_err(|e| anyhow::anyhow!("failed to connect to the X server: {e}"))?;
         let conn = Arc::new(conn);
         let screen = &conn.setup().roots[screen_num];
@@ -299,4 +307,256 @@ fn send_notify(
     conn.send_event(false, req.requestor, EventMask::NO_EVENT, event)?;
     conn.flush()?;
     Ok(())
+}
+
+/// Live X11 delayed-render paste under a private Xvfb server (#4087).
+///
+/// Owns `CLIPBOARD` with a fake fetcher and reads it back with `xclip`, proving
+/// end to end that: nothing is fetched on copy (or on a `TARGETS` probe), a paste
+/// of `text/uri-list` / `x-special/gnome-copied-files` runs the fetch and returns
+/// the staged files' `file://` URIs (a non-ASCII name percent-encoded as UTF-8),
+/// and an unadvertised target is refused without fetching.
+///
+/// Needs the `Xvfb` and `xclip` binaries; the test starts its own server via
+/// `-displayfd` (never touching the developer's real clipboard) and skips with a
+/// stated reason when either is missing. CI's ubuntu leg installs both and sets
+/// `TERMIHUB_REQUIRE_X11_CLIPBOARD_TEST=1`, which turns that skip into a failure
+/// so the test can never silently stop running.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::path::{Path, PathBuf};
+    use std::process::{Child, Command, Output, Stdio};
+    use std::time::{Duration, Instant};
+
+    /// A private Xvfb server, killed on drop.
+    struct Xvfb {
+        child: Child,
+        display: String,
+    }
+
+    impl Drop for Xvfb {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    /// Whether `bin` resolves on `PATH`.
+    fn on_path(bin: &str) -> bool {
+        std::env::var_os("PATH")
+            .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(bin).is_file()))
+    }
+
+    /// Start Xvfb on a free display chosen by the server itself (`-displayfd`
+    /// writes the display number to the given fd — here its stdout).
+    fn start_xvfb() -> Xvfb {
+        let mut child = Command::new("Xvfb")
+            .args([
+                "-displayfd",
+                "1",
+                "-nolisten",
+                "tcp",
+                "-screen",
+                "0",
+                "64x64x24",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn Xvfb");
+        let stdout = child.stdout.take().expect("Xvfb stdout");
+        let mut line = String::new();
+        BufReader::new(stdout)
+            .read_line(&mut line)
+            .expect("read the display number from Xvfb");
+        let number = line.trim();
+        assert!(
+            !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()),
+            "Xvfb reported no display number (got {line:?})"
+        );
+        Xvfb {
+            display: format!(":{number}"),
+            child,
+        }
+    }
+
+    /// Run `xclip -o` for `target` on the `CLIPBOARD` selection of `display`,
+    /// bounded so a broken owner fails the test instead of hanging it.
+    fn xclip_out(display: &str, target: &str) -> Output {
+        let mut child = Command::new("xclip")
+            .args([
+                "-display",
+                display,
+                "-selection",
+                "clipboard",
+                "-t",
+                target,
+                "-o",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn xclip");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while child.try_wait().expect("poll xclip").is_none() {
+            if Instant::now() > deadline {
+                let _ = child.kill();
+                panic!("xclip -t {target} -o did not finish within 20s");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        child.wait_with_output().expect("collect xclip output")
+    }
+
+    /// A fake fetcher that "stages" index `i` as `files[i]` and records each call.
+    fn fake_context(
+        files: Vec<PathBuf>,
+        indices: Vec<u32>,
+        calls: Arc<Mutex<Vec<u32>>>,
+    ) -> FetchContext {
+        FetchContext {
+            fetcher: super::super::Fetcher::Fake(Arc::new(move |index| {
+                calls.lock().unwrap().push(index);
+                files
+                    .get(index as usize)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("no fake file at index {index}"))
+            })),
+            indices,
+        }
+    }
+
+    fn calls_of(calls: &Arc<Mutex<Vec<u32>>>) -> Vec<u32> {
+        calls.lock().unwrap().clone()
+    }
+
+    #[test]
+    fn xvfb_paste_fetches_on_demand_and_serves_file_uris() {
+        let missing: Vec<&str> = ["Xvfb", "xclip"]
+            .into_iter()
+            .filter(|bin| !on_path(bin))
+            .collect();
+        if !missing.is_empty() {
+            let reason = format!(
+                "skipping the X11 delayed-render paste test: {} not on PATH \
+                 (install xvfb + xclip to run it)",
+                missing.join(" and ")
+            );
+            assert!(
+                std::env::var_os("TERMIHUB_REQUIRE_X11_CLIPBOARD_TEST").is_none(),
+                "{reason}, but TERMIHUB_REQUIRE_X11_CLIPBOARD_TEST is set"
+            );
+            eprintln!("{reason}");
+            return;
+        }
+
+        let xvfb = start_xvfb();
+
+        // Staged "remote" files: index 1 is a directory the bind drops (only
+        // regular files are pasteable), index 2 has a non-ASCII name with a space.
+        let tmp = tempfile::tempdir().expect("create staging dir");
+        let dir = tmp.path();
+        let plain = dir.join("plain.txt");
+        let unicode = dir.join("café ü.txt");
+        std::fs::write(&plain, b"plain").expect("stage plain");
+        std::fs::write(&unicode, b"unicode").expect("stage unicode");
+        let remote = vec![
+            termihub_core::connection::RemoteClipboardFile {
+                name: "plain.txt".into(),
+                relative_path: None,
+                size: Some(5),
+                is_dir: false,
+                index: 0,
+            },
+            termihub_core::connection::RemoteClipboardFile {
+                name: "folder".into(),
+                relative_path: None,
+                size: None,
+                is_dir: true,
+                index: 1,
+            },
+            termihub_core::connection::RemoteClipboardFile {
+                name: "café ü.txt".into(),
+                relative_path: None,
+                size: Some(7),
+                is_dir: false,
+                index: 2,
+            },
+        ];
+        let indices = super::super::pasteable_indices(&remote);
+        assert_eq!(indices, vec![0, 2]);
+        let staged = vec![plain.clone(), dir.join("folder"), unicode.clone()];
+
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        bind_on(
+            Some(&xvfb.display),
+            fake_context(staged, indices, Arc::clone(&calls)),
+        )
+        .expect("own CLIPBOARD on the Xvfb display");
+
+        // Copy moves no bytes.
+        assert!(
+            calls_of(&calls).is_empty(),
+            "the bind itself must not fetch"
+        );
+
+        // A TARGETS probe advertises the file targets — still without fetching.
+        let targets = xclip_out(&xvfb.display, "TARGETS");
+        assert!(
+            targets.status.success(),
+            "TARGETS probe failed: {targets:?}"
+        );
+        let targets = String::from_utf8_lossy(&targets.stdout);
+        for t in [
+            "text/uri-list",
+            "x-special/gnome-copied-files",
+            "x-special/mate-copied-files",
+        ] {
+            assert!(
+                targets.lines().any(|l| l == t),
+                "{t} missing from TARGETS: {targets}"
+            );
+        }
+        assert!(
+            calls_of(&calls).is_empty(),
+            "a TARGETS probe must not fetch"
+        );
+
+        let uri = |p: &Path| crate::utils::file_uri::path_to_file_uri(p);
+        let encoded_name = "caf%C3%A9%20%C3%BC.txt";
+        assert!(uri(&unicode).ends_with(encoded_name), "{}", uri(&unicode));
+
+        // Paste text/uri-list: the fetch runs now, once per pasteable file.
+        let out = xclip_out(&xvfb.display, "text/uri-list");
+        assert!(out.status.success(), "uri-list paste failed: {out:?}");
+        assert_eq!(
+            String::from_utf8(out.stdout).expect("uri-list is UTF-8"),
+            format!("{}\r\n{}\r\n", uri(&plain), uri(&unicode))
+        );
+        assert_eq!(calls_of(&calls), vec![0, 2], "paste fetches each file once");
+
+        // Each paste is a fresh delayed render (gnome + mate variants).
+        let gnome_payload = format!("copy\n{}\n{}", uri(&plain), uri(&unicode));
+        for (target, expected_calls) in [
+            ("x-special/gnome-copied-files", vec![0, 2, 0, 2]),
+            ("x-special/mate-copied-files", vec![0, 2, 0, 2, 0, 2]),
+        ] {
+            let out = xclip_out(&xvfb.display, target);
+            assert!(out.status.success(), "{target} paste failed: {out:?}");
+            assert_eq!(String::from_utf8(out.stdout).unwrap(), gnome_payload);
+            assert_eq!(calls_of(&calls), expected_calls);
+        }
+
+        // An unadvertised target is refused without fetching.
+        let refused = xclip_out(&xvfb.display, "text/plain");
+        assert!(
+            !refused.status.success(),
+            "text/plain must be refused: {refused:?}"
+        );
+        assert_eq!(calls_of(&calls).len(), 6, "a refused target must not fetch");
+    }
 }
