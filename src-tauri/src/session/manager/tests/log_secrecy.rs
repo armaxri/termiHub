@@ -1,0 +1,240 @@
+//! Application log secrecy (#1570, #4011).
+//!
+//! The durable application log is a file users attach to bug reports, so it
+//! must never contain an SSH password, the credential-store passphrase or
+//! anything typed into / printed by a terminal. These tests drive the real code
+//! paths with marker secrets while the real file sink is installed (the
+//! [`RotatingLogFile`] writer, the `fmt` layer without ANSI, and the file
+//! filter built by [`env_filter_for_level`]) and then grep the log file.
+//!
+//! The file filter is set to `trace`, the most verbose level the Settings
+//! control offers, and the global `default_env_filter` envelope is left out, so
+//! the file sees strictly more than any shipped configuration lets through.
+//! Only an explicit `TERMIHUB_FILE_LOG=russh=trace` override (a deliberate
+//! support-case escape hatch) can unclamp russh's packet logs; that is out of
+//! scope here.
+//!
+//! The subscriber is installed as the thread default on the test thread and on
+//! every thread of the test's own Tokio runtime (workers and the blocking pool,
+//! via `on_thread_start`), so every task the connect spawns logs into it. Each
+//! test also asserts a known line DID reach the file, so an empty log can never
+//! pass for a clean one.
+
+use super::{MockEventEmitter, NullAgent};
+
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::Layer;
+
+use crate::commands::credential::guarded_unlock;
+use crate::credential::{
+    AutoLockTimer, CredentialKey, CredentialManager, CredentialStore, CredentialType, StorageMode,
+};
+use crate::session::manager::SessionManager;
+use crate::session::registry::build_desktop_registry;
+use crate::utils::file_log::{env_filter_for_level, RotatingLogFile};
+use termihub_core::backends::ssh::host_key::{set_host_key_verifier, HostKeyInfo, HostKeyVerifier};
+use termihub_core::backends::ssh::ki_test_server::{serve_tcp, PasswordPolicy, Script};
+
+const SSH_PASSWORD: &str = "Log-Secrecy-SSH-Pw-7f3a91";
+const WRONG_PASSPHRASE: &str = "Log-Secrecy-Wrong-Passphrase-0c55e2";
+const STORE_PASSPHRASE: &str = "Log-Secrecy-Store-Passphrase-b24d18";
+const STORED_SECRET: &str = "Log-Secrecy-Stored-Secret-91aa4c";
+/// Typed into the terminal; the test server's shell echoes it back, so it is
+/// both terminal input and terminal output.
+const TERMINAL_INPUT: &str = "log-secrecy-terminal-line-3e8d07";
+
+/// The shipped file sink at `trace`, writing into `dir`.
+fn file_log_dispatch(dir: &Path) -> tracing::Dispatch {
+    let writer = RotatingLogFile::new(dir, 10 * 1024 * 1024, 2).expect("open the log file");
+    let filter = env_filter_for_level("trace").expect("trace is a selectable level");
+    let layer = tracing_subscriber::fmt::layer()
+        .with_ansi(false)
+        .with_writer(writer)
+        .with_filter(filter);
+    tracing::Dispatch::new(tracing_subscriber::registry().with(layer))
+}
+
+/// A multi-thread runtime (the session manager needs `block_in_place`) whose
+/// every thread logs into `dispatch`.
+fn runtime_logging_to(dispatch: &tracing::Dispatch) -> tokio::runtime::Runtime {
+    let dispatch = dispatch.clone();
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .on_thread_start(move || {
+            // The runtime's threads live exactly as long as the runtime, so the
+            // guard is intentionally kept for the thread's whole life.
+            std::mem::forget(tracing::dispatcher::set_default(&dispatch));
+        })
+        .build()
+        .expect("build the test runtime")
+}
+
+/// Everything the sink wrote, across rotated generations.
+fn read_log(dir: &Path) -> String {
+    let mut out = String::new();
+    for entry in std::fs::read_dir(dir).expect("read the log dir") {
+        let path = entry.expect("log dir entry").path();
+        out.push_str(&std::fs::read_to_string(&path).expect("read a log file"));
+    }
+    out
+}
+
+fn assert_absent(log: &str, secret: &str, what: &str) {
+    assert!(
+        !log.contains(secret),
+        "the application log contains the {what} ({secret:?}):\n{log}"
+    );
+}
+
+/// The throwaway test server's host key is unknown; trust it (process-wide,
+/// first registration wins, same as the other src-tauri SSH tests).
+fn trust_all_host_keys() {
+    struct TrustAll;
+    #[async_trait::async_trait]
+    impl HostKeyVerifier for TrustAll {
+        async fn verify(&self, _info: &HostKeyInfo) -> bool {
+            true
+        }
+    }
+    let _ = set_host_key_verifier(Arc::new(TrustAll));
+}
+
+#[test]
+fn ssh_password_login_and_terminal_content_stay_out_of_the_app_log() {
+    let log_dir = tempfile::tempdir().expect("temp log dir");
+    let dispatch = file_log_dispatch(log_dir.path());
+    let _guard = tracing::dispatcher::set_default(&dispatch);
+    trust_all_host_keys();
+    let runtime = runtime_logging_to(&dispatch);
+    runtime.block_on(ssh_password_login());
+    // Dropping the runtime joins its threads, so every line is written.
+    drop(runtime);
+
+    let log = read_log(log_dir.path());
+    // Positive control: the connect did log into this file.
+    assert!(
+        log.contains("Connecting SSH session"),
+        "expected the SSH connect line in the log:\n{log}"
+    );
+    assert_absent(&log, SSH_PASSWORD, "SSH password");
+    assert_absent(&log, TERMINAL_INPUT, "terminal input / echoed output");
+}
+
+/// Log in with a password through the session manager, type a line, see it
+/// echoed, close the session.
+async fn ssh_password_login() {
+    let server = serve_tcp(Script {
+        rounds: Vec::new(),
+        password: PasswordPolicy::Sole(SSH_PASSWORD),
+    })
+    .await
+    .expect("start the in-process SSH server");
+
+    let manager = SessionManager::new(build_desktop_registry(), Arc::new(NullAgent));
+    let emitter = MockEventEmitter::new();
+    let settings = serde_json::json!({
+        "host": "127.0.0.1",
+        "port": server.addr.port(),
+        "username": "log-secrecy-user",
+        "authMethod": "password",
+        "password": SSH_PASSWORD,
+        "shellIntegration": false,
+    });
+    let session_id = manager
+        .create_connection(
+            "ssh",
+            settings,
+            None,
+            Some("log-secrecy-tab:0"),
+            false,
+            false,
+            emitter.clone(),
+        )
+        .await
+        .expect("SSH password login through the session manager");
+    assert_eq!(server.observed.lock().unwrap().authenticated, 1);
+
+    manager
+        .send_input(&session_id, format!("{TERMINAL_INPUT}\r").as_bytes())
+        .await
+        .expect("type into the terminal");
+    let seen = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let text: String = emitter
+                .outputs
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|e| String::from_utf8_lossy(&e.data).into_owned())
+                .collect();
+            if text.contains(TERMINAL_INPUT) {
+                return text;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the terminal echoes the typed line");
+    assert!(seen.contains(TERMINAL_INPUT));
+
+    manager
+        .close_session(&session_id)
+        .await
+        .expect("close the session");
+}
+
+#[test]
+fn credential_store_unlock_keeps_the_passphrase_and_secrets_out_of_the_app_log() {
+    let log_dir = tempfile::tempdir().expect("temp log dir");
+    let _guard = tracing::dispatcher::set_default(&file_log_dispatch(log_dir.path()));
+
+    let config_dir = tempfile::tempdir().expect("temp config dir");
+    let manager = CredentialManager::new(StorageMode::MasterPassword, config_dir.path().into());
+    // The unlock command refuses without an auto-lock timer (WA-RS-004).
+    let timer = AutoLockTimer::spawn_with(Arc::new(TestClock), Some(60), || {})
+        .expect("spawn the auto-lock timer");
+    manager.set_auto_lock_timer(timer);
+
+    manager
+        .with_master_password_store(|s| s.setup(STORE_PASSPHRASE))
+        .expect("master-password mode")
+        .expect("set up the store");
+    let key = CredentialKey::new("log-secrecy-conn", CredentialType::Password);
+    manager.set(&key, STORED_SECRET).expect("save a credential");
+    manager
+        .with_master_password_store(|s| s.lock())
+        .expect("master-password mode");
+
+    // A wrong passphrase first (the failure path logs too), then the real one,
+    // both through the unlock command's own gate.
+    assert!(guarded_unlock(&manager, WRONG_PASSPHRASE).is_err());
+    guarded_unlock(&manager, STORE_PASSPHRASE).expect("unlock with the passphrase");
+    assert_eq!(
+        manager.get(&key).expect("read the credential").as_deref(),
+        Some(STORED_SECRET)
+    );
+    tracing::info!("log-secrecy positive control");
+
+    let log = read_log(log_dir.path());
+    assert!(
+        log.contains("log-secrecy positive control"),
+        "expected the control line in the log:\n{log}"
+    );
+    assert_absent(&log, STORE_PASSPHRASE, "credential-store passphrase");
+    assert_absent(&log, WRONG_PASSPHRASE, "mistyped passphrase");
+    assert_absent(&log, STORED_SECRET, "stored credential");
+}
+
+/// The real monotonic clock (the timer never fires within the test: 60 min).
+struct TestClock;
+
+impl crate::credential::auto_lock::Clock for TestClock {
+    fn now(&self) -> std::time::Instant {
+        std::time::Instant::now()
+    }
+}
