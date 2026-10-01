@@ -350,6 +350,8 @@ pub fn network_wol_device_delete(
 /// [`RunLocation::ThisComputer`]); an agent choice hosts the poll loop on that
 /// agent, which probes the target from its own vantage and streams the checks
 /// back (#2592).
+// Tauri maps each IPC argument to a parameter; the flat list is the wire shape.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub fn network_http_monitor_start(
     url: String,
@@ -358,16 +360,40 @@ pub fn network_http_monitor_start(
     expected_status: Option<u16>,
     timeout_ms: Option<u64>,
     run_location: Option<RunLocation>,
+    allow_private_network: Option<bool>,
     manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<String, TerminalError> {
-    let config = HttpMonitorConfig::new(
+    let config = http_monitor_start_config(
+        url,
+        interval_ms,
+        method,
+        expected_status,
+        timeout_ms,
+        allow_private_network,
+    );
+    manager.start_http_monitor(config, run_location.unwrap_or_default())
+}
+
+/// Build the config for a new monitor from the start command's arguments,
+/// applying the defaults. `allow_private_network` is the SEC-008 opt-in the
+/// panel's "Private network" checkbox sends (#4017); absent means blocked.
+fn http_monitor_start_config(
+    url: String,
+    interval_ms: Option<u64>,
+    method: Option<String>,
+    expected_status: Option<u16>,
+    timeout_ms: Option<u64>,
+    allow_private_network: Option<bool>,
+) -> HttpMonitorConfig {
+    let mut config = HttpMonitorConfig::new(
         url,
         interval_ms.unwrap_or(30_000),
         method.unwrap_or_else(|| "GET".into()),
         expected_status.unwrap_or(200),
         timeout_ms.unwrap_or(5_000),
     );
-    manager.start_http_monitor(config, run_location.unwrap_or_default())
+    config.allow_private_network = allow_private_network.unwrap_or(false);
+    config
 }
 
 /// Set (or clear) a monitor's run-location preference (#2592).
@@ -507,6 +533,38 @@ pub fn clear_http_monitor_history(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression (#4017): the start command dropped the SEC-008 opt-in, so a
+    /// monitor could never target loopback/private hosts from the UI.
+    #[test]
+    fn http_monitor_start_config_forwards_the_private_network_opt_in() {
+        let blocked = http_monitor_start_config(
+            "http://127.0.0.1:8080/".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(
+            !blocked.allow_private_network,
+            "absent opt-in stays blocked"
+        );
+        assert_eq!(blocked.interval_ms, 30_000);
+        assert_eq!(blocked.method, "GET");
+        assert_eq!(blocked.expected_status, 200);
+
+        let allowed = http_monitor_start_config(
+            "http://127.0.0.1:8080/".into(),
+            Some(10_000),
+            Some("HEAD".into()),
+            Some(204),
+            Some(1_000),
+            Some(true),
+        );
+        assert!(allowed.allow_private_network);
+        assert_eq!(allowed.method, "HEAD");
+    }
 
     #[tokio::test]
     async fn probe_reports_open_listener_reachable() {

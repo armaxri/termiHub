@@ -126,6 +126,15 @@ pub struct VncConfig {
     pub monitor_layout: Vec<MonitorRect>,
 }
 
+impl VncConfig {
+    /// Parse connection settings, treating an explicit `null` member like a
+    /// missing one (#4017): the editor sends `null` for every field the user left
+    /// empty, which a plain `String` field would otherwise reject.
+    pub fn from_settings(settings: serde_json::Value) -> Result<Self, serde_json::Error> {
+        serde_json::from_value(crate::backends::without_null_fields(settings))
+    }
+}
+
 impl Default for VncConfig {
     fn default() -> Self {
         Self {
@@ -580,6 +589,40 @@ pub fn vnc_settings_schema() -> SettingsSchema {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression (#4017): a VNC connection created in the editor carries `null`
+    /// for every field left empty (the type-switch reset, #1820). The whole parse
+    /// failed with "invalid type: null, expected a string", so no editor-created
+    /// VNC connection could open. Nulls must fall back to the field defaults.
+    #[test]
+    fn from_settings_treats_null_fields_as_unset() {
+        let cfg = VncConfig::from_settings(serde_json::json!({
+            "host": "127.0.0.1",
+            "port": 2501,
+            "display": null,
+            "password": "testpass",
+            "username": null,
+            "tlsVerify": null,
+            "tlsCaPath": null,
+            "sshHost": null,
+            "sshUsername": null,
+            "sshPassword": null,
+            "sshKeyPath": null,
+            "sshPort": null,
+            "monitorCount": null,
+            "useSshTunnel": false,
+        }))
+        .expect("null fields must not fail the parse");
+        assert_eq!(cfg.host, "127.0.0.1");
+        assert_eq!(cfg.port, 2501);
+        assert_eq!(cfg.password, "testpass");
+        assert_eq!(cfg.username, "");
+        assert_eq!(cfg.display, None);
+        assert_eq!(cfg.tls_verify, VncConfig::default().tls_verify);
+        assert_eq!(cfg.ssh_host, "");
+        assert_eq!(cfg.ssh_port, VncConfig::default().ssh_port);
+        assert_eq!(cfg.monitor_count, None);
+    }
 
     #[test]
     fn defaults_target_display_zero() {

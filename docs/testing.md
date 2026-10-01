@@ -1385,7 +1385,9 @@ locally — it needs no Docker:
 
 #### Python system-test harness — cross-platform shells (#886)
 
-The local UI system suites author and clean up files **through the terminal**, and on Windows the local-shell backend defaults to **PowerShell** (no `printf`/`rm -f`/`touch`). File authoring/cleanup therefore goes through `ShellCommands` / `ShellFsUi` (`tests/system/termihub_harness/shell.py`), which emits the POSIX **or** PowerShell command for the host's default shell — so `test_editor.py` and the file-authoring half of `test_file_browser_local.py` run on every platform.
+Fixture files the local UI suites need in the home directory are written **directly on the host disk** by `ShellFsUi` (`tests/system/termihub_harness/ui/shell_fs.py`): the app runs on the same host and inherits the runner's home, so `Path.home()` is the directory a fresh shell and file browser show. The suite then waits for the entry with `FilesUi.wait_for_file_row`, which refreshes the browser on a bounded poll. Fixture setup must not type commands into a just-started shell: on a loaded Windows runner a fresh PowerShell can still be blank when the command is sent, so it never runs (#4025).
+
+When the shell itself is the behaviour under test, the command still has to be valid in the host's default shell, which on Windows is **PowerShell** (no `printf`/`rm -f`/`touch`). `ShellCommands` (`tests/system/termihub_harness/shell.py`, exposed as `ShellFsUi.shell`) emits the POSIX **or** PowerShell form for the host.
 
 The cwd/`pwd`/path checks are cross-platform too (#902): `ShellCommands` builds the `pwd`-equality markers (POSIX `[ "$(pwd)" = … ]` vs PowerShell `if ((Get-Location).Path -eq …)`), supplies per-platform scratch directories for the cwd-following tests (`/tmp`,`/etc` vs `$env:TEMP`,`$env:WINDIR`) and starting-directory values, and `is_absolute_path()` accepts a POSIX root, a Windows drive, or a UNC path — so `test_local_shell.py` and the cwd-aware `test_file_browser_local.py` tests run on every platform with no `@skip_on_windows` gate.
 

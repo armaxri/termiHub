@@ -52,6 +52,27 @@ pub mod vnc;
 #[cfg(feature = "rdp-sidecar")]
 pub mod rdp_sidecar;
 
+/// Drop the top-level `null` members of a connection-settings object (#4017).
+///
+/// The connection editor clears every schema field to `null` when the type
+/// changes (so a shared-name field of the previous type cannot leak, #1820), so
+/// an unfilled optional text field (a VNC username, the unused SSH-tunnel rows)
+/// reaches the backend as an explicit `null`. `#[serde(default)]` only covers a
+/// **missing** key — a `null` against a plain `String`/`u16`/`bool` field fails
+/// the whole parse ("invalid type: null, expected a string"). Removing the nulls
+/// lets each field fall back to its `Default`, and an `Option` field becomes
+/// `None` exactly as before. Non-object values are returned unchanged.
+#[cfg(any(feature = "vnc", feature = "rdp-sidecar"))]
+pub(crate) fn without_null_fields(settings: serde_json::Value) -> serde_json::Value {
+    match settings {
+        serde_json::Value::Object(mut map) => {
+            map.retain(|_, value| !value.is_null());
+            serde_json::Value::Object(map)
+        }
+        other => other,
+    }
+}
+
 // Paths below are fully qualified rather than imported: both helpers are
 // feature-gated, and an ungated `use` would be unused in an `ssh`-only build.
 

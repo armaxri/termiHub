@@ -42,12 +42,24 @@ pub struct WindowInfo {
 ///
 /// If a hand-off record is supplied it is queued for the new window, which
 /// drains it on boot via [`take_pending_handoffs`]. Returns the new window's
-/// unique label so the caller can address it.
+/// unique label so the caller can address it, once the window exists.
 ///
-/// Window creation is dispatched onto the main thread because some platforms
-/// (notably Linux/GTK) require it there.
+/// # Why this command is `async` (#4024)
+///
+/// Tauri runs a **synchronous** command on the main thread, inside the
+/// WebView2 IPC callback on Windows. Building a `WebviewWindow` there deadlocks
+/// WebView2 (documented on `WebviewWindowBuilder::new`): the new webview never
+/// finishes initialising and the calling window stops answering. Wrapping the
+/// build in `run_on_main_thread` does not help — from the main thread Tauri runs
+/// the closure inline. An `async` command runs on the async runtime instead, and
+/// `build()` from a non-main thread hands the creation to the event loop and
+/// waits for it, which is Windows-safe and still creates the window on the main
+/// thread that Linux/GTK and macOS require.
+///
+/// The guard test `window_creation_is_only_reachable_from_async_commands` (in
+/// this module) fails the build if any command that builds a window is sync.
 #[tauri::command]
-pub fn open_window(
+pub async fn open_window(
     app: AppHandle,
     window_manager: State<'_, WindowManager>,
     handoff: Option<HandoffRecord>,
@@ -63,34 +75,36 @@ pub fn open_window(
         window_manager.queue_restore(&label, groups);
     }
 
-    let app_for_build = app.clone();
-    let label_for_build = label.clone();
-    app.run_on_main_thread(move || {
-        match WebviewWindowBuilder::new(
-            &app_for_build,
-            &label_for_build,
-            WebviewUrl::App("index.html".into()),
-        )
+    if let Err(e) = build_app_window(&app, &label) {
+        tracing::error!("Failed to create window {label}: {e}");
+        // Nothing will ever drain the queues of a window that does not exist.
+        let _ = window_manager.take_handoffs(&label);
+        let _ = window_manager.take_restore(&label);
+        return Err(format!("Failed to create window {label}: {e}"));
+    }
+
+    // Notify every open window that the window set changed so the status-bar
+    // affordance (#1902) can refresh its count. The matching close-side emit
+    // lives in the `Destroyed` RunEvent handler in `lib.rs`.
+    if let Err(e) = app.emit("windows-changed", ()) {
+        tracing::warn!("Failed to emit windows-changed for {label}: {e}");
+    }
+
+    Ok(label)
+}
+
+/// Build a standard termiHub window (same bundle, title and sizes everywhere).
+///
+/// **Windows:** must not be called from a synchronous command or an event-loop
+/// handler — WebView2 deadlocks (#4024). Call it from an `async` command (or a
+/// spawned thread/task). The guard test in this module enforces this for every
+/// `#[tauri::command]` in the crate.
+pub(crate) fn build_app_window(app: &AppHandle, label: &str) -> tauri::Result<WebviewWindow> {
+    WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
         .title("termiHub")
         .inner_size(1280.0, 800.0)
         .min_inner_size(800.0, 600.0)
         .build()
-        {
-            Ok(_) => {
-                // Notify every open window that the window set changed so the
-                // status-bar affordance (#1902) can refresh its count. The
-                // matching close-side emit lives in the `Destroyed` RunEvent
-                // handler in `lib.rs`.
-                if let Err(e) = app_for_build.emit("windows-changed", ()) {
-                    tracing::warn!("Failed to emit windows-changed for {label_for_build}: {e}");
-                }
-            }
-            Err(e) => tracing::error!("Failed to create window {label_for_build}: {e}"),
-        }
-    })
-    .map_err(|e| e.to_string())?;
-
-    Ok(label)
 }
 
 /// Claim `session_id` for the **calling** window (the grant side of the

@@ -244,6 +244,33 @@ pub(super) fn reconcile_output_senders(
     monitoring_outputs.retain(|id, _| live_ids.contains(id));
 }
 
+/// The sessions a freshly reconnected agent reports via `connection.list`.
+///
+/// `live` is every listed session id. `unattached` is the subset the new agent
+/// worker does **not** hold (`attached: false`): since #3369 a re-launched agent
+/// no longer adopts orphaned sessions at start-up — they keep running with no
+/// holder until a desktop attaches. A hosted session in that set is alive but
+/// streams nothing until this desktop re-attaches it (#4017).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct RecoveredSessions {
+    pub(crate) live: std::collections::HashSet<String>,
+    pub(crate) unattached: std::collections::HashSet<String>,
+}
+
+impl RecoveredSessions {
+    /// Split a `connection.list` result into all ids and the unattached ones.
+    pub(crate) fn from_list(list: SessionListResult) -> Self {
+        let mut recovered = Self::default();
+        for entry in list.sessions {
+            if !entry.attached {
+                recovered.unattached.insert(entry.session_id.clone());
+            }
+            recovered.live.insert(entry.session_id);
+        }
+        recovered
+    }
+}
+
 /// Number of `connection.list` attempts after an in-task transport reconnect before
 /// giving up and settling the hosted tabs (SM-001). The transport is already back, so a
 /// first failure is usually transient; a small bounded retry recovers it while still
@@ -271,7 +298,7 @@ pub(super) async fn list_recovered_session_ids_bounded(
     channel: &mut russh::Channel<russh::client::Msg>,
     agent_id: &str,
     request_id: &mut u64,
-) -> Option<std::collections::HashSet<String>> {
+) -> Option<RecoveredSessions> {
     for attempt in 1..=RECOVERY_LIST_ATTEMPTS {
         match tokio::time::timeout(
             RECOVERY_LIST_ATTEMPT_TIMEOUT,
@@ -311,7 +338,7 @@ async fn list_recovered_session_ids(
     channel: &mut russh::Channel<russh::client::Msg>,
     agent_id: &str,
     request_id: &mut u64,
-) -> Option<std::collections::HashSet<String>> {
+) -> Option<RecoveredSessions> {
     *request_id += 1;
     let req_id = *request_id;
     let line = serialize_request(
@@ -334,10 +361,10 @@ async fn list_recovered_session_ids(
             Ok(jsonrpc::JsonRpcMessage::Response { id, result }) if id == req_id => {
                 // Parse the reply into the shared `SessionListResult` DTO (DUP-001);
                 // a malformed reply degrades to an empty id set.
-                let ids = serde_json::from_value::<SessionListResult>(result)
-                    .map(|r| r.sessions.into_iter().map(|e| e.session_id).collect())
+                let recovered = serde_json::from_value::<SessionListResult>(result)
+                    .map(RecoveredSessions::from_list)
                     .unwrap_or_default();
-                return Some(ids);
+                return Some(recovered);
             }
             Ok(jsonrpc::JsonRpcMessage::Error { id, .. }) if id == req_id => return None,
             _ => {

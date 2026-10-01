@@ -44,6 +44,9 @@ pub mod transfer;
 pub mod tunnel;
 pub mod update;
 pub mod window;
+// Static guard: no synchronous command may reach window creation (#4024).
+#[cfg(test)]
+mod window_creation_guard;
 pub mod workflows;
 pub mod workspace;
 pub mod xserver;

@@ -2107,6 +2107,8 @@ struct SeverObservations {
     agents_reconnected: bool,
     tab_resolved_connected: bool,
     sshd_listening_after_sever: bool,
+    hosted_reattached: bool,
+    cont_unattached_before_reattach: bool,
 }
 
 /// #2576: the real `AgentConnectionManager::test_sever_transport` →
@@ -2328,6 +2330,31 @@ async fn manager_test_sever_drives_reconnect_and_region_folds_headlessly() {
                 && agents_store.get(&agent_id).map(|a| a.connection_state)
                     == Some(AgentConnectionState::Connected);
 
+            // #4017: the fresh agent worker leaves orphaned sessions unattached
+            // (#3369), so the task itself must re-attach the tab-hosted session —
+            // otherwise its output never flows again. Read the holder state the
+            // agent reports; the continuity session (hosted by no tab) is the
+            // control and must stay unattached until re-attached below.
+            let hosted_reattached = poll_blocking(deadline, || {
+                let sessions = manager.list_sessions(&agent_id).ok()?;
+                let hosted = sessions
+                    .iter()
+                    .find(|s| s.session_id != cont_sid)
+                    .map(|s| s.attached)?;
+                hosted.then_some(())
+            })
+            .is_some();
+            let cont_unattached_before_reattach = manager
+                .list_sessions(&agent_id)
+                .ok()
+                .and_then(|sessions| {
+                    sessions
+                        .iter()
+                        .find(|s| s.session_id == cont_sid)
+                        .map(|s| !s.attached)
+                })
+                .unwrap_or(false);
+
             // Re-attach the continuity session and prove the process CONTINUED —
             // a counter value strictly beyond the pre-drop one (neither reset to 0
             // nor stalled).
@@ -2361,6 +2388,8 @@ async fn manager_test_sever_drives_reconnect_and_region_folds_headlessly() {
                 agents_reconnected,
                 tab_resolved_connected,
                 sshd_listening_after_sever,
+                hosted_reattached,
+                cont_unattached_before_reattach,
             }
         })
         .await
@@ -2394,6 +2423,15 @@ async fn manager_test_sever_drives_reconnect_and_region_folds_headlessly() {
     assert!(
         obs.tab_resolved_connected,
         "the recovered hosted session must resolve back to Connected through the real task"
+    );
+    assert!(
+        obs.hosted_reattached,
+        "the real I/O task must re-attach the tab-hosted session the fresh agent worker left \
+         unattached (#4017) — otherwise the tab shows Connected with frozen output"
+    );
+    assert!(
+        obs.cont_unattached_before_reattach,
+        "a session no tab hosts must not be adopted by the reconnect (#3369)"
     );
     assert!(
         obs.after > obs.before,

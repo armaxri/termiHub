@@ -95,6 +95,7 @@ use notifications::{
 mod agent_stderr;
 mod io_lanes;
 mod io_task;
+mod reattach;
 mod reconnect;
 mod recovery;
 mod state_events;
@@ -108,6 +109,7 @@ use io_task::{
     filter_reconnect_backlog, log_agent_connection_lost, log_agent_reconnect_failed,
     log_agent_reconnected,
 };
+use reattach::reattach_after_reconnect;
 use reconnect::reconnect_agent;
 #[cfg(test)]
 use reconnect::AGENT_RECONNECT_POLICY;
