@@ -35,7 +35,9 @@ use termihub_core::connection::{InputEvent, RemoteClipboardFile};
 
 use std::sync::Arc;
 
-use crate::session::graphical_manager::{GraphicalEventSink, GraphicalSessionManager};
+use crate::session::graphical_manager::{
+    GraphicalEventSink, GraphicalSessionManager, RemoteDesktopCertPromptEvent,
+};
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 use crate::window::WindowManager;
@@ -261,6 +263,19 @@ pub async fn remote_desktop_resize(
 /// Invoked when a graphical tab is moved into another window (#1904): the
 /// destination canvas is blank until the next full frame, so this forces a
 /// prompt repaint. The frame flows out on `remote-desktop-frame` as usual.
+/// The certificate prompt a session is waiting on, if any (#4004).
+///
+/// The `remote-desktop-cert-prompt` event can fire before a freshly connected
+/// tab has subscribed to it; the tab calls this once it listens so it never
+/// misses the prompt (the session would otherwise wait on a verdict forever).
+#[tauri::command]
+pub async fn remote_desktop_pending_cert_prompt(
+    session_id: String,
+    manager: State<'_, GraphicalSessionManager>,
+) -> Result<Option<RemoteDesktopCertPromptEvent>, TerminalError> {
+    manager.pending_cert_prompt(&session_id).await
+}
+
 #[tauri::command]
 pub async fn remote_desktop_request_full_frame(
     session_id: String,

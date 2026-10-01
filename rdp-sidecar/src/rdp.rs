@@ -838,7 +838,7 @@ where
                                 backend.fetch_remote_file(request_id, index);
                             }
                         }
-                        if drain_clipboard_events(
+                        if let Err(e) = drain_clipboard_events(
                             &clipboard_rx,
                             &mut stage,
                             &mut writer,
@@ -846,8 +846,8 @@ where
                             &local_clipboard,
                         )
                         .await
-                        .is_err()
                         {
+                            warn!(error = format!("{e:#}"), "clipboard event failed; ending the session");
                             break;
                         }
                     }
@@ -884,7 +884,7 @@ where
                 // Processing the PDU may have run CLIPRDR backend callbacks, which
                 // queue clipboard actions. Now that the active stage is ours again,
                 // drain them (#1756) before handling the graphics outputs.
-                if drain_clipboard_events(
+                if let Err(e) = drain_clipboard_events(
                     &clipboard_rx,
                     &mut stage,
                     &mut writer,
@@ -892,8 +892,8 @@ where
                     &local_clipboard,
                 )
                 .await
-                .is_err()
                 {
+                    warn!(error = format!("{e:#}"), "clipboard event failed; ending the session");
                     break;
                 }
                 match handle_outputs(outputs, &image, &mut writer, ipc_out, &mut cursor).await {
@@ -1235,16 +1235,25 @@ where
                 // Ask the server for a size or byte range of a file the remote
                 // copied; the backend writes the bytes into the shared folder
                 // when the matching response arrives (#1765).
-                let messages = match stage.get_svc_processor_mut::<CliprdrClient>() {
-                    Some(cliprdr) => cliprdr
-                        .request_file_contents(request)
-                        .context("cliprdr request_file_contents failed")?,
-                    None => {
-                        warn!("cliprdr channel unavailable; cannot request file contents");
-                        continue;
-                    }
+                // A request the channel refuses (e.g. the server declined file
+                // streams) fails just that transfer, never the session (#4004).
+                let Some(cliprdr) = stage.get_svc_processor_mut::<CliprdrClient>() else {
+                    warn!("cliprdr channel unavailable; cannot request file contents");
+                    continue;
                 };
-                write_cliprdr_messages(stage, transport, messages).await?;
+                match cliprdr.request_file_contents(request) {
+                    Ok(messages) => write_cliprdr_messages(stage, transport, messages).await?,
+                    Err(e) => {
+                        warn!(error = %e, "cliprdr request_file_contents failed");
+                        if let Some(backend) =
+                            cliprdr.downcast_backend_mut::<SidecarClipboardBackend>()
+                        {
+                            backend.abort_active_download(&format!(
+                                "the server refused the file request: {e}"
+                            ));
+                        }
+                    }
+                }
             }
             ClipboardEvent::AdvertiseFiles(files) => {
                 // Offer the shared folder's files to the remote so it can paste

@@ -23,6 +23,14 @@
 #   --features mock-remote-desktop (DEAD-001): the mock graphical backend left
 #       the crate's default features. The integration lane uses it to test the
 #       remote-desktop layer without a real VNC/RDP server.
+#   The RDP sidecar (termihub-rdp-helper, Linux only): the RDP suite
+#       (tests/system/tests/test_rdp.py) drives a real xrdp fixture, and the app
+#       decodes RDP in this separately built, workspace-excluded binary. Only
+#       the Linux lane has the Docker fixtures, so only Linux builds it (debug);
+#       the suite's rdp_fixtures points the app at it via $TERMIHUB_RDP_HELPER.
+#       It links ALSA, so it is built only where libasound2-dev is installed,
+#       and a failed sidecar build only warns: the RDP suite then skips, while
+#       the rest of the lane still runs. TERMIHUB_SKIP_RDP_HELPER=1 skips it.
 set -euo pipefail
 
 PROFILE_FLAGS=()
@@ -48,5 +56,12 @@ done
 cd "$(git rev-parse --show-toplevel)"
 
 set -x
+if [ "$(uname -s)" = "Linux" ] && [ "${TERMIHUB_SKIP_RDP_HELPER:-}" != "1" ]; then
+    if ! pkg-config --exists alsa 2>/dev/null; then
+        echo "::warning::libasound2-dev missing: RDP sidecar not built, the RDP suite will skip"
+    elif ! ./scripts/build-rdp-sidecar.sh; then
+        echo "::warning::RDP sidecar build failed: the RDP suite will skip"
+    fi
+fi
 VITE_TEST_BRIDGE=1 pnpm tauri build ${PROFILE_FLAGS[@]+"${PROFILE_FLAGS[@]}"} \
     --features "mock-remote-desktop test-bridge"
