@@ -251,10 +251,14 @@ pub fn verify_helper_integrity(
         }
     };
 
+    // A missing helper lands here in a build with an embedded digest, so the
+    // message carries the same build/override hint as the spawn failure (#4004).
     let read_err = |e: std::io::Error| {
         format!(
-            "failed to read RDP helper '{}' for integrity verification: {e}",
-            path.display()
+            "failed to read RDP helper '{}' for integrity verification: {e}. Build it \
+             with scripts/build-rdp-sidecar.sh (or set {env}).",
+            path.display(),
+            env = super::HELPER_PATH_ENV,
         )
     };
     let file = open_helper(path).map_err(read_err)?;

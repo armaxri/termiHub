@@ -1653,6 +1653,8 @@ mod linux {
         DetectedFileManager, ShellEntry, ShellIntegrationSettings,
     };
     use anyhow::{Context, Result};
+    #[cfg(test)]
+    use std::ffi::OsString;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
@@ -1680,7 +1682,7 @@ mod linux {
     /// Run `<binary> --version` and return its version output, preferring
     /// stdout but falling back to stderr (some tools print their banner there).
     /// Best-effort: a missing or failing binary yields `None`.
-    fn query_version(binary: &str) -> Option<String> {
+    fn query_version(binary: &Path) -> Option<String> {
         let output = std::process::Command::new(binary)
             .arg("--version")
             .output()
@@ -1709,10 +1711,24 @@ mod linux {
     pub struct Registrar {
         data_local: PathBuf,
         config: PathBuf,
-        /// Whether detection may consult `$PATH` for file-manager binaries.
-        /// Disabled in tests so detection depends only on the injected dirs.
-        probe_path: bool,
+        /// Where detection looks for file-manager binaries.
+        binary_search: BinarySearch,
         on_desktop_db_update: DesktopDbHook,
+    }
+
+    /// Where [`Registrar`] detection looks for file-manager binaries (and runs
+    /// their `--version`).
+    enum BinarySearch {
+        /// Never consult binaries: detection depends only on the XDG dirs.
+        #[cfg(test)]
+        Disabled,
+        /// The process `$PATH` (the real app).
+        ProcessPath,
+        /// An explicit `PATH`-style search list, so a test can stand up fake
+        /// `nautilus` / `dolphin` / `thunar` binaries without touching the
+        /// process environment.
+        #[cfg(test)]
+        Custom(OsString),
     }
 
     impl Registrar {
@@ -1724,20 +1740,38 @@ mod linux {
             Ok(Self {
                 data_local,
                 config,
-                probe_path: true,
+                binary_search: BinarySearch::ProcessPath,
                 on_desktop_db_update: Arc::new(run_update_desktop_database),
             })
         }
 
         /// Registrar targeting throwaway directories so a test never touches the
         /// user's real file-manager configuration. Detection is limited to the
-        /// injected dirs (no `$PATH` probing) for determinism.
+        /// injected dirs (no binary probing) for determinism.
         #[cfg(test)]
         pub fn for_test(data_local: PathBuf, config: PathBuf, hook: DesktopDbHook) -> Self {
             Self {
                 data_local,
                 config,
-                probe_path: false,
+                binary_search: BinarySearch::Disabled,
+                on_desktop_db_update: hook,
+            }
+        }
+
+        /// Like [`Registrar::for_test`], but detection probes binaries on the
+        /// given `PATH`-style search list (and runs their `--version`) exactly
+        /// as the real app probes the process `$PATH` (#4010).
+        #[cfg(test)]
+        pub fn for_test_with_path(
+            data_local: PathBuf,
+            config: PathBuf,
+            search_path: OsString,
+            hook: DesktopDbHook,
+        ) -> Self {
+            Self {
+                data_local,
+                config,
+                binary_search: BinarySearch::Custom(search_path),
                 on_desktop_db_update: hook,
             }
         }
@@ -1765,8 +1799,20 @@ mod linux {
 
         // ── Detection ───────────────────────────────────────────────────
 
+        /// Resolve `name` to an executable on the configured search path.
+        fn find_binary(&self, name: &str) -> Option<PathBuf> {
+            match &self.binary_search {
+                #[cfg(test)]
+                BinarySearch::Disabled => None,
+                BinarySearch::ProcessPath => which::which(name).ok(),
+                #[cfg(test)]
+                BinarySearch::Custom(path) => {
+                    which::which_in(name, Some(path), Path::new("/")).ok()
+                }
+            }
+        }
         fn has_binary(&self, name: &str) -> bool {
-            self.probe_path && which::which(name).is_ok()
+            self.find_binary(name).is_some()
         }
         fn nautilus_detected(&self) -> bool {
             self.has_binary("nautilus")
@@ -1783,9 +1829,9 @@ mod linux {
         /// Report the file managers detected on this host for the status command.
         ///
         /// A detected manager is annotated with the version parsed from its
-        /// `--version` output. Version probing only runs when `$PATH` probing is
-        /// enabled (i.e. not in tests), so directory-only detection never shells
-        /// out.
+        /// `--version` output, run on the binary resolved from the search path.
+        /// A manager detected only by its directories (no binary found) never
+        /// shells out and reports no version.
         pub fn detect(&self) -> Vec<DetectedFileManager> {
             vec![
                 self.detected_manager(
@@ -1813,8 +1859,8 @@ mod linux {
         }
 
         /// Build a [`DetectedFileManager`], querying `binary --version` and
-        /// parsing it with `parse` when the manager is detected and `$PATH`
-        /// probing is enabled. Version detection is best-effort: a missing or
+        /// parsing it with `parse` when the manager is detected and its binary
+        /// resolves on the search path. Version detection is best-effort: a missing or
         /// unparseable version simply yields `None`.
         fn detected_manager(
             &self,
@@ -1824,8 +1870,11 @@ mod linux {
             detected: bool,
             parse: fn(&str) -> Option<String>,
         ) -> DetectedFileManager {
-            let version = if detected && self.probe_path {
-                query_version(binary).as_deref().and_then(parse)
+            let version = if detected {
+                self.find_binary(binary)
+                    .and_then(|path| query_version(&path))
+                    .as_deref()
+                    .and_then(parse)
             } else {
                 None
             };
@@ -2753,6 +2802,145 @@ mod linux {
             assert!(by_id("nautilus"));
             assert!(!by_id("kde"));
             assert!(by_id("thunar"));
+        }
+
+        // ── Live detection through binaries on a search path (#4010) ────
+        //
+        // These run the same `$PATH` probe + `--version` parse the real app runs,
+        // against fake `nautilus` / `dolphin` / `thunar` executables on a private
+        // search path — a fake environment, so the CI runner needs no file
+        // manager installed and the process `PATH` is never mutated.
+
+        /// Write an executable `#!/bin/sh` script `name` into `dir`, then run it
+        /// once (retrying a transient ETXTBSY from a concurrent fork in another
+        /// test thread) so it is guaranteed runnable before detection uses it.
+        fn fake_binary(dir: &Path, name: &str, body: &str) {
+            use std::os::unix::fs::PermissionsExt;
+            let path = dir.join(name);
+            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write fake binary");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod fake binary");
+            for _ in 0..50 {
+                if std::process::Command::new(&path).output().is_ok() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            panic!("fake binary {} never became runnable", path.display());
+        }
+
+        fn path_registrar(xdg: &TempXdg, bin_dir: &Path) -> Registrar {
+            let hook: DesktopDbHook = Arc::new(|_: &Path| {});
+            Registrar::for_test_with_path(
+                xdg.data_local.clone(),
+                xdg.config.clone(),
+                bin_dir.as_os_str().to_owned(),
+                hook,
+            )
+        }
+
+        fn by_id<'a>(detected: &'a [DetectedFileManager], id: &str) -> &'a DetectedFileManager {
+            detected
+                .iter()
+                .find(|m| m.id == id)
+                .unwrap_or_else(|| panic!("{id} missing from {detected:?}"))
+        }
+
+        #[test]
+        fn detect_finds_binaries_on_the_search_path_with_versions() {
+            let xdg = TempXdg::new("detect-path");
+            let bin = xdg.data_local.join("bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            fake_binary(
+                &bin,
+                "thunar",
+                "echo 'Thunar 4.18.4'; echo 'Copyright (c) 2004-2023'",
+            );
+            // Some managers print their banner on stderr only.
+            fake_binary(&bin, "nautilus", "echo 'GNOME nautilus 46.2' >&2");
+            let detected = path_registrar(&xdg, &bin).detect();
+
+            let thunar = by_id(&detected, "thunar");
+            assert!(thunar.detected);
+            assert_eq!(thunar.name, "Thunar");
+            assert_eq!(thunar.version.as_deref(), Some("4.18.4"));
+
+            let nautilus = by_id(&detected, "nautilus");
+            assert!(nautilus.detected);
+            assert_eq!(nautilus.version.as_deref(), Some("46.2"));
+
+            // No dolphin binary and no KDE service-menu dirs → not detected.
+            let kde = by_id(&detected, "kde");
+            assert!(!kde.detected);
+            assert_eq!(kde.name, "Dolphin");
+            assert_eq!(kde.version, None);
+        }
+
+        #[test]
+        fn detect_reports_every_manager_absent_on_an_empty_search_path() {
+            let xdg = TempXdg::new("detect-empty-path");
+            let bin = xdg.data_local.join("bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            let detected = path_registrar(&xdg, &bin).detect();
+
+            let ids: Vec<&str> = detected.iter().map(|m| m.id.as_str()).collect();
+            assert_eq!(ids, ["nautilus", "kde", "thunar"]);
+            for manager in &detected {
+                assert!(!manager.detected, "{} must not be detected", manager.id);
+                assert_eq!(manager.version, None);
+            }
+        }
+
+        #[test]
+        fn detect_without_a_parseable_version_still_reports_detected() {
+            let xdg = TempXdg::new("detect-noversion");
+            let bin = xdg.data_local.join("bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            fake_binary(&bin, "dolphin", "echo 'dolphin: unknown option'; exit 1");
+            let detected = path_registrar(&xdg, &bin).detect();
+
+            let kde = by_id(&detected, "kde");
+            assert!(kde.detected, "a dolphin binary on the path detects KDE");
+            assert_eq!(kde.version, None);
+        }
+
+        #[test]
+        fn directory_detected_manager_without_binary_has_no_version() {
+            let xdg = TempXdg::new("detect-dir-only");
+            std::fs::create_dir_all(xdg.config.join("Thunar")).unwrap();
+            let bin = xdg.data_local.join("bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            let detected = path_registrar(&xdg, &bin).detect();
+
+            let thunar = by_id(&detected, "thunar");
+            assert!(thunar.detected);
+            assert_eq!(thunar.version, None);
+        }
+
+        /// The real, un-faked entry point on this host (the ubuntu CI runner in
+        /// per-PR CI): it reports the three Linux managers in a fixed order, and
+        /// a manager only carries a version when it was detected.
+        #[test]
+        fn live_detect_file_managers_reports_the_linux_managers() {
+            let detected = super::super::detect_file_managers();
+            let ids: Vec<&str> = detected.iter().map(|m| m.id.as_str()).collect();
+            assert_eq!(ids, ["nautilus", "kde", "thunar"]);
+            for manager in &detected {
+                if manager.version.is_some() {
+                    assert!(
+                        manager.detected,
+                        "{manager:?} has a version but is undetected"
+                    );
+                }
+                let on_path = which::which(match manager.id.as_str() {
+                    "kde" => "dolphin",
+                    other => other,
+                })
+                .is_ok();
+                if on_path {
+                    assert!(manager.detected, "{manager:?} is on PATH but undetected");
+                }
+            }
         }
 
         // ── Uninstall ───────────────────────────────────────────────────

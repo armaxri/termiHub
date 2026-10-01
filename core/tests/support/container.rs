@@ -30,20 +30,55 @@ use termihub_core::config::ContainerRuntime;
 /// and prove it answers. `None` means the backend could not work here either,
 /// so the caller should skip.
 pub async fn runtime_client() -> Option<bollard::Docker> {
-    let client = connect_to_runtime(&ContainerRuntime::Auto).await.ok()?;
+    runtime_client_for(&ContainerRuntime::Auto).await
+}
+
+/// Connect to the daemon a session with the given `runtime` reaches (e.g. an
+/// explicit `podman` runtime, #4010), and prove it answers. `None` means the
+/// backend could not reach that runtime here either, so the caller should skip.
+pub async fn runtime_client_for(runtime: &ContainerRuntime) -> Option<bollard::Docker> {
+    let client = connect_to_runtime(runtime).await.ok()?;
     client.ping().await.ok()?;
     Some(client)
 }
 
+/// Whether the environment variable `name` is set to a truthy value (`1`,
+/// `true`, `yes`, `on`; case-insensitive). A lane that guarantees a runtime sets
+/// its variable (`TERMIHUB_REQUIRE_DOCKER`, `TERMIHUB_REQUIRE_PODMAN`) so an
+/// unreachable runtime hard-fails instead of skipping to a false green.
+pub fn runtime_required(name: &str) -> bool {
+    matches!(
+        std::env::var(name)
+            .ok()
+            .map(|v| v.trim().to_ascii_lowercase())
+            .as_deref(),
+        Some("1") | Some("true") | Some("yes") | Some("on")
+    )
+}
+
 /// Force-removes the registered containers and deletes the registered
 /// directories on drop, so a panicking test leaks neither.
+///
+/// The default guard removes containers through the `auto` runtime; use
+/// [`CleanupGuard::for_runtime`] when the test spawned into an explicit runtime
+/// (e.g. Podman), so removal reaches the daemon that owns the container.
 #[derive(Default)]
 pub struct CleanupGuard {
+    runtime: ContainerRuntime,
     containers: Vec<String>,
     dirs: Vec<PathBuf>,
 }
 
 impl CleanupGuard {
+    /// A guard that removes its containers through `runtime`'s daemon.
+    pub fn for_runtime(runtime: ContainerRuntime) -> Self {
+        Self {
+            runtime,
+            containers: Vec::new(),
+            dirs: Vec::new(),
+        }
+    }
+
     /// Remove the container with this id or name on drop.
     pub fn container(&mut self, id_or_name: impl Into<String>) {
         self.containers.push(id_or_name.into());
@@ -68,6 +103,7 @@ impl Drop for CleanupGuard {
         // thread and wait for it, with a fresh client resolved the same way the
         // backend resolves its daemon.
         let containers = std::mem::take(&mut self.containers);
+        let runtime = self.runtime.clone();
         let removal = std::thread::spawn(move || {
             let Ok(rt) = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -76,7 +112,7 @@ impl Drop for CleanupGuard {
                 return;
             };
             rt.block_on(async {
-                let Ok(client) = connect_to_runtime(&ContainerRuntime::Auto).await else {
+                let Ok(client) = connect_to_runtime(&runtime).await else {
                     return;
                 };
                 for container in &containers {

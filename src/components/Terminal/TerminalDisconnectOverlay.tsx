@@ -284,6 +284,7 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
               className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--spin motion-essential-spinner"
             />
           }
+          busy
           heading="Reconnecting…"
           subheading="Connection lost. Attempting to reconnect automatically."
           actions={

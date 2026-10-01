@@ -182,7 +182,9 @@ pub enum AgentDeployResult {
         installed_path: Option<String>,
     },
     /// The update was blocked by the connected-host guard: other hosts are
-    /// connected to the agent and would be hard-cut by the update.
+    /// connected to the agent. The update would not cut them off — each runs its
+    /// own worker, which keeps running until that host reconnects (#4037) — but
+    /// the user confirms before updating under them.
     #[serde(rename_all = "camelCase")]
     OtherHostsConnected { hosts: Vec<ConnectedHost> },
     /// A coordinated desktop-push update was dispatched to the agent (Unix
@@ -498,8 +500,8 @@ pub fn deploy_agent(
 /// Unless `force` is set, a connected-host guard runs first (#1349):
 /// `list_other_hosts_fn` reports the hosts — other than the initiating desktop
 /// — connected to the agent, and if any are present the update is refused with
-/// [`AgentDeployResult::OtherHostsConnected`] so the desktop can warn the user
-/// before hard-cutting those sessions. `force` (from `update_agent_force`)
+/// [`AgentDeployResult::OtherHostsConnected`] so the desktop can tell the user
+/// before updating under them. `force` (from `update_agent_force`)
 /// bypasses the guard after the user confirms.
 ///
 /// `shutdown_fn` is called to send `agent.shutdown` to the running agent
@@ -524,7 +526,7 @@ where
     F: FnOnce() -> Result<u32, TerminalError>,
 {
     // 0. Connected-host guard: refuse an unforced update while other hosts are
-    // connected to the agent (they would be hard-cut). Runs before shutdown so
+    // connected to the agent. Runs before shutdown so
     // the agent is still reachable for `agent.list_connections`.
     if !force {
         let other_hosts = list_other_hosts_fn()?;

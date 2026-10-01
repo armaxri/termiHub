@@ -298,7 +298,10 @@ export function ShellIntegrationSettings() {
                 />
                 <span>
                   {label}{" "}
-                  <span className="shell-integration__meta">
+                  <span
+                    className="shell-integration__meta"
+                    data-testid={`shell-integration-linux-${id}-detection`}
+                  >
                     {detected?.detected
                       ? `— detected: ${detected.name}${detected.version ? ` ${detected.version}` : ""}`
                       : "— not detected"}

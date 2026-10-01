@@ -190,6 +190,7 @@ export function TerminalConnectionOverlay({
               className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin motion-essential-spinner"
             />
           }
+          busy
           heading="Restoring session…"
           subheading="Loading cached scrollback from the persistent session."
         />
@@ -207,6 +208,7 @@ export function TerminalConnectionOverlay({
               className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin motion-essential-spinner"
             />
           }
+          busy
           heading="Waiting for agent…"
           subheading="Waiting for the agent to connect before starting the session."
           actions={
@@ -261,6 +263,7 @@ export function TerminalConnectionOverlay({
               className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin motion-essential-spinner"
             />
           }
+          busy
           heading={`Connecting… (attempt ${autoRetryCount + 1})`}
           subheading={tabTitle}
           actions={
@@ -320,6 +323,7 @@ export function TerminalConnectionOverlay({
               className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin motion-essential-spinner"
             />
           }
+          busy
           heading="Connecting…"
           subheading={tabTitle}
           actions={

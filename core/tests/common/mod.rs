@@ -561,6 +561,11 @@ pub fn port_vnc() -> u16 {
 pub fn port_vnc_vencrypt() -> u16 {
     resolve_port("TERMIHUB_TEST_VNC_VENCRYPT_PORT", 2502)
 }
+/// vnc-vencrypt-plain-server container (the same TigerVNC image, VeNCrypt
+/// X509Plain: TLS then `testuser`/`testpass` checked through PAM).
+pub fn port_vnc_vencrypt_plain() -> u16 {
+    resolve_port("TERMIHUB_TEST_VNC_VENCRYPT_PLAIN_PORT", 2503)
+}
 /// rdp-server container (xrdp + xorgxrdp, TLS, `testuser`/`testpass`).
 pub fn port_rdp() -> u16 {
     resolve_port("TERMIHUB_TEST_RDP_PORT", 2601)
