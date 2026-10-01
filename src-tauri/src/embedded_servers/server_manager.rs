@@ -1342,3 +1342,7 @@ mod tests {
         assert_eq!(params["config"]["name"], "Docs");
     }
 }
+
+#[cfg(test)]
+#[path = "server_manager_e2e_tests.rs"]
+mod e2e_tests;
