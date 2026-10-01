@@ -286,6 +286,36 @@ class ConnectionsUi(HarnessMixin):
         (PARITY-008), for a test that exercises the manual disconnect overlay
         rather than the automatic reconnect loop.
         """
+        self.fill_ssh_connection_form(
+            name,
+            host=host,
+            port=port,
+            username=username,
+            auth_method=auth_method,
+            key_path=key_path,
+            save_password=save_password,
+            auto_reconnect=auto_reconnect,
+        )
+        self._click_editor_save(connect)
+
+    def fill_ssh_connection_form(
+        self,
+        name: str,
+        *,
+        host: str,
+        port: int,
+        username: str,
+        auth_method: str = "password",
+        key_path: Optional[str] = None,
+        save_password: bool = False,
+        auto_reconnect: bool = True,
+    ) -> None:
+        """Open a new connection editor and fill an SSH connection, without saving.
+
+        The first half of :meth:`create_ssh_connection`, for a test that acts on
+        the unsaved form itself — **Test** (``connection-editor-test``) or the
+        Jump Host section — before (or instead of) saving (#4005).
+        """
         self.open_new_connection_editor()
         self.driver.type("connection-editor-name-input", name)
         self.select_connection_type("ssh")
@@ -320,7 +350,6 @@ class ConnectionsUi(HarnessMixin):
                 what="the Auto-Reconnect toggle",
             )
             self.driver.click("field-autoReconnect")
-        self._click_editor_save(connect)
 
     def _click_editor_save(self, connect: bool) -> None:
         """Click Save / Save & Connect once the form reports itself valid.
