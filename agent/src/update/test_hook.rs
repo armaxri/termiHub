@@ -50,6 +50,25 @@
 //! binary it started with. A test that genuinely wants a real swap must opt in
 //! by pointing `TERMIHUB_AGENT_TEST_PENDING_UPDATE_BINARY` at a real binary.
 //!
+//! # A real swap (#4083)
+//!
+//! The apply path runs every production gate — confinement (AGT-003), the
+//! SHA-256 digest (AGT-004) and the Ed25519 signature (AGT-005) — and this hook
+//! bypasses none of them. To let a release-built `test-hooks` agent really swap:
+//!
+//! - [`TEST_PENDING_UPDATE_SHA256_ENV`] carries the staged binary's expected
+//!   digest into the record (without it the apply fails closed at AGT-004);
+//! - the signature is read from the `<binary>.sig` sidecar next to the staged
+//!   binary, as a published release asset carries it. The armed
+//!   `remote-agent-update-swap` image signs with the committed TEST-ONLY key,
+//!   which only a `test-hooks` build trusts
+//!   ([`agent_policy`](super::signature::agent_policy));
+//! - once the swap happened, the re-execed agent (and every later worker
+//!   launched with the same environment) is running the staged bytes. The hook
+//!   then **stands down** ([`TestPendingUpdate::already_applied`]) instead of
+//!   re-staging an update that is already installed — the same binary evidence
+//!   the #1551 startup prune uses.
+//!
 //! # Interaction with the #1551 startup prune
 //!
 //! [`prune_applied_pending_update`](super::prune_applied_pending_update) drops a
@@ -74,11 +93,13 @@
 //!
 //! See `docs/testing.md` → "Agent deferred-update E2E hook (#1546)".
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tracing::info;
 
+use super::apply::files_identical;
 use super::notify_update_available;
+use super::signature::signature_sidecar_path;
 use crate::io::transport::NotificationSender;
 use crate::session::manager::SessionManager;
 use crate::state::persistence::AgentState;
@@ -90,6 +111,11 @@ pub const TEST_PENDING_UPDATE_ENV: &str = "TERMIHUB_AGENT_TEST_PENDING_UPDATE";
 /// Optional override for the staged binary path. Only set this when the test
 /// wants a real binary swap — see the module docs on safety.
 pub const TEST_PENDING_UPDATE_BINARY_ENV: &str = "TERMIHUB_AGENT_TEST_PENDING_UPDATE_BINARY";
+
+/// Optional expected SHA-256 (hex) of the staged binary, recorded as the
+/// pending update's `expected_sha256` so a real apply passes the AGT-004 digest
+/// gate (#4083). Unset, the record carries no digest and an apply fails closed.
+pub const TEST_PENDING_UPDATE_SHA256_ENV: &str = "TERMIHUB_AGENT_TEST_PENDING_UPDATE_SHA256";
 
 /// Version advertised when the gate is set to a plain truthy value. Chosen to be
 /// unmistakably newer than any real release, so the #1551 startup prune keeps
@@ -105,6 +131,9 @@ pub struct TestPendingUpdate {
     /// Path recorded as the staged binary. Does not exist unless the test
     /// pointed it at a real one.
     pub binary_path: String,
+    /// Expected SHA-256 of the staged binary (AGT-004), if the test supplied
+    /// one through [`TEST_PENDING_UPDATE_SHA256_ENV`].
+    pub expected_sha256: Option<String>,
 }
 
 impl TestPendingUpdate {
@@ -117,6 +146,36 @@ impl TestPendingUpdate {
             std::env::var(TEST_PENDING_UPDATE_ENV).ok(),
             std::env::var(TEST_PENDING_UPDATE_BINARY_ENV).ok(),
         )
+        .map(|hook| hook.with_sha256(std::env::var(TEST_PENDING_UPDATE_SHA256_ENV).ok()))
+    }
+
+    /// Record `sha256` (trimmed, lowercased) as the expected digest; a blank
+    /// value is ignored.
+    fn with_sha256(mut self, sha256: Option<String>) -> Self {
+        self.expected_sha256 = sha256
+            .map(|d| d.trim().to_ascii_lowercase())
+            .filter(|d| !d.is_empty());
+        self
+    }
+
+    /// Whether the staged binary is already the running one — the update was
+    /// applied and this process is its result (#4083). Binary evidence only,
+    /// exactly as the #1551 prune judges it: `current_exe` and the staged file
+    /// are byte-identical. A missing staged file (the default path) is never
+    /// "applied".
+    pub fn already_applied(&self, current_exe: Option<&Path>) -> bool {
+        current_exe.is_some_and(|exe| files_identical(Path::new(&self.binary_path), exe))
+    }
+
+    /// The detached signature published next to the staged binary
+    /// (`<binary>.sig`), if there is one. Missing → `None`, which a release
+    /// build's apply refuses (AGT-005).
+    fn sidecar_signature(&self) -> Option<String> {
+        let sidecar = signature_sidecar_path(Path::new(&self.binary_path));
+        std::fs::read_to_string(sidecar)
+            .ok()
+            .map(|sig| sig.trim().to_string())
+            .filter(|sig| !sig.is_empty())
     }
 
     /// Pure form of [`from_env`](Self::from_env), so the parsing rules can be
@@ -138,6 +197,7 @@ impl TestPendingUpdate {
         Some(Self {
             version,
             binary_path,
+            expected_sha256: None,
         })
     }
 
@@ -147,17 +207,27 @@ impl TestPendingUpdate {
     /// #1551 startup prune has already run against the on-disk state — see the
     /// module docs.
     pub async fn seed(&self, session_manager: &SessionManager) {
-        // No expected digest is carried for the test-hook seed (the default
-        // binary path does not exist, so a real apply already fails closed at
-        // confinement; the missing digest is simply an additional fail-closed
-        // gate). The hook exists only to surface the banner / deferred RPC.
+        // The digest and signature are carried only when the test supplied
+        // them (#4083). Without them — the default — the apply fails closed at
+        // AGT-004/AGT-005 (and, for the default path, already at confinement),
+        // so the hook only surfaces the banner / deferred RPC. With them, the
+        // apply still runs every production gate before it swaps.
+        let signature = self.sidecar_signature();
         session_manager
-            .stage_pending_update(self.binary_path.clone(), self.version.clone(), None, None)
+            .stage_pending_update(
+                self.binary_path.clone(),
+                self.version.clone(),
+                self.expected_sha256.clone(),
+                signature.clone(),
+            )
             .await;
         info!(
             "TEST HOOK ({TEST_PENDING_UPDATE_ENV}): staged a pending update for version {} from {} \
-             — test-only, never set this in production",
-            self.version, self.binary_path
+             (digest: {}, signature: {}) — test-only, never set this in production",
+            self.version,
+            self.binary_path,
+            if self.expected_sha256.is_some() { "set" } else { "none" },
+            if signature.is_some() { "sidecar" } else { "none" },
         );
     }
 
@@ -290,5 +360,66 @@ mod tests {
             "the seeded test update must not look already-applied to the #1551 prune"
         );
         assert!(state.update.pending_update.is_some());
+    }
+
+    // ── #4083: digest, sidecar signature, stand-down after a real swap ──
+
+    #[test]
+    fn default_hook_carries_no_digest() {
+        let hook = TestPendingUpdate::parse(Some("1".to_string()), None).unwrap();
+        assert_eq!(hook.expected_sha256, None);
+        assert_eq!(hook.sidecar_signature(), None);
+    }
+
+    #[test]
+    fn sha256_is_trimmed_and_lowercased_and_blank_is_ignored() {
+        let hook = TestPendingUpdate::parse(Some("1".to_string()), None).unwrap();
+        let set = hook.clone().with_sha256(Some("  ABCDEF01\n".to_string()));
+        assert_eq!(set.expected_sha256.as_deref(), Some("abcdef01"));
+        assert_eq!(
+            hook.clone()
+                .with_sha256(Some("  ".to_string()))
+                .expected_sha256,
+            None
+        );
+        assert_eq!(hook.with_sha256(None).expected_sha256, None);
+    }
+
+    #[test]
+    fn signature_is_read_from_the_sidecar_next_to_the_staged_binary() {
+        let dir = tempfile::tempdir().unwrap();
+        let staged = dir.path().join("termihub-agent-staged");
+        std::fs::write(&staged, b"BINARY").unwrap();
+        let hook = TestPendingUpdate::parse(
+            Some("9.9.9".to_string()),
+            Some(staged.to_string_lossy().into_owned()),
+        )
+        .unwrap();
+        assert_eq!(hook.sidecar_signature(), None, "no sidecar yet");
+        std::fs::write(signature_sidecar_path(&staged), "  c2lnbmF0dXJl\n").unwrap();
+        assert_eq!(hook.sidecar_signature().as_deref(), Some("c2lnbmF0dXJl"));
+    }
+
+    #[test]
+    fn hook_stands_down_only_when_the_staged_binary_is_the_running_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let staged = dir.path().join("staged");
+        let running = dir.path().join("running");
+        std::fs::write(&staged, b"NEW-AGENT").unwrap();
+        std::fs::write(&running, b"OLD-AGENT").unwrap();
+        let hook = TestPendingUpdate::parse(
+            Some("9.9.9".to_string()),
+            Some(staged.to_string_lossy().into_owned()),
+        )
+        .unwrap();
+        assert!(!hook.already_applied(Some(&running)), "not swapped yet");
+        assert!(!hook.already_applied(None), "unknown exe proves nothing");
+
+        std::fs::copy(&staged, &running).unwrap();
+        assert!(hook.already_applied(Some(&running)), "swapped: stand down");
+
+        // The default staged path never exists, so it is never "applied".
+        let default = TestPendingUpdate::parse(Some("1".to_string()), None).unwrap();
+        assert!(!default.already_applied(Some(&running)));
     }
 }
