@@ -745,6 +745,40 @@ boot under CSP (#2059,
 [`tests/system/tests/test_csp.py`](../tests/system/tests/test_csp.py)) remains a
 nightly integration check — the two are complementary, not a substitute.
 
+### Portable-mode launch lane (#3691)
+
+The system-test harness normally sets `TERMIHUB_CONFIG_DIR`, which overrides
+portable mode. So two lanes launch the real binary from a portable folder
+instead, with `TERMIHUB_CONFIG_DIR` unset:
+
+- **Per PR, headless:**
+  [`src-tauri/tests/portable_launch.rs`](../src-tauri/tests/portable_launch.rs)
+  runs with `cargo test --workspace` on all three OSes. It copies the built
+  `termihub` binary into a temp dir with `portable.marker` (MT-PORT-01) or
+  `data/` (MT-PORT-02). Then it runs the pre-init CLI, which needs no display.
+  `--list-workspaces` must read `data/workspaces.json`.
+  `uninstall-shell-integration` must write `settings.json` into `data/` and
+  nothing into the profile. `HOME`, `XDG_*`, `APPDATA` and `LOCALAPPDATA` point
+  at a throwaway dir, so a regression can never touch the real profile.
+  Installed-mode controls prove that this redirection works. The write-path
+  tests are skipped on Windows: the profile there comes from the Known Folder
+  API, and the command would edit the real HKCU registry.
+- **Nightly, full app:**
+  [`tests/system/tests/test_portable_mode.py`](../tests/system/tests/test_portable_mode.py)
+  uses the orchestrator's portable launch mode (`AppInstance(portable=…)`, see
+  [`tests/system/README.md`](../tests/system/README.md) → Orchestration). It
+  asserts the status-bar badge and its tooltip, and Settings → Portable Mode
+  _Active_ with the `data/` path. Config created in the UI must land in `data/`,
+  and the profile config dir must be unchanged. It also checks the portable
+  exemption from the shell-integration "reinstall" banner. Finally, two portable
+  folders must run at once, and a relaunch after `kill -9` must start despite
+  the stale `data/.termihub.lock`.
+
+The import half of MT-PORT-04 is the guided
+`test_native_dialogs.py::test_portable_import_from_directory`. The operator picks
+the source directory, and the harness confirms the copy, restarts the app and
+asserts the imported connection.
+
 ### Windows Agent CI Coverage
 
 The remote agent (`agent/`) is built and tested on Windows via dedicated CI jobs:
@@ -1734,18 +1768,17 @@ take either side and re-run the same command. CI (`--check`) fails if it is stal
 | `multi-window`            | Multi-Window          | macos          |              2 |                  0 |      2 |
 | `native-input`            | Native Input          | all            |             21 |                  0 |     21 |
 | `network-tools`           | network-tools         | all            |              2 |                  2 |      4 |
-| `portable-mode`           | Portable Mode         | all            |              0 |                  2 |      2 |
 | `remote-agent`            | Remote Agent          | all            |              0 |                 12 |     12 |
 | `remote-desktop`          | Remote Desktop        | all            |              9 |                  0 |      9 |
 | `serial`                  | Serial                | windows        |              1 |                  0 |      1 |
 | `shell-integration`       | Shell Integration     | all            |              6 |                  0 |      6 |
 | `ssh`                     | SSH                   | all            |              4 |                  1 |      5 |
 | `ui-layout`               | UI / Layout           | all            |              8 |                  0 |      8 |
-| **Total (16 categories)** |                       |                |         **72** |             **18** | **90** |
+| **Total (15 categories)** |                       |                |         **72** |             **16** | **88** |
 
 <!-- manual-inventory:end -->
 
-`tests/system/tests/test_manual_corpus.py` (normal, non-integration lane) enforces this: every remaining YAML item must carry exactly one of `release_gate: true` + `manual_reason`, or `automation_issue: <N>`, and ids must be unique. Follow-up issues: #3682 (serial socat echo fixture — #859 was closed by removing the unreachable container fixture, not by adding one), #3683 (serial prefixes), #3684 (Windows agent host fixture), #3685 (Windows agent CI), #3686 (agent wake/park UI), #3687 (SSH small items — done), #3688 (jump-host reconnect fixture), #3689 (connection management — done except MT-CONN-34, split to #4000), #3690 (credential auto-lock seam — landed: MT-CRED-04 is now covered by fake-clock unit tests in `src-tauri/src/credential/auto_lock.rs`), #3691 (portable launch), #3692 (network tools fixtures), #3693 (layout / restore — done: MT-TAB-11/12/16 and MT-UI-10/11/12/14/15/37 are covered by `App.openSavedFile.test.tsx`, `test_split_views.py`, `test_settings.py` and `test_session_restore_ui.py`, emptying the `tab-management` category), #3694 (file-browser CWD follow — done: MT-FB-08/09/10 are covered in `FileBrowser.test.tsx`, emptying the `file-browser` category; #3695 later refilled it with two OS-native drag items). The per-feature prose walkthroughs that used to follow were triaged the same way in #3695; see [Per-feature walkthrough triage](#per-feature-walkthrough-triage-3695). The other two follow-ups the audit named were already done: #1230 (monitoring auto-reconnect) is covered by fault-injection tests over a scripted `MonitoringTransport` in `core/src/backends/ssh/monitoring.rs` (`collect_loop_emits_stale_reconnecting_then_live_on_recovery`, `collect_loop_emits_offline_when_reconnect_exhausted`), and #1336 (FTP transfer queue) by the live `core/tests/ftp_transfer.rs` / `ftp_reconnect.rs` integration tests.
+`tests/system/tests/test_manual_corpus.py` (normal, non-integration lane) enforces this: every remaining YAML item must carry exactly one of `release_gate: true` + `manual_reason`, or `automation_issue: <N>`, and ids must be unique. Follow-up issues: #3682 (serial socat echo fixture — #859 was closed by removing the unreachable container fixture, not by adding one), #3683 (serial prefixes), #3684 (Windows agent host fixture), #3685 (Windows agent CI), #3686 (agent wake/park UI), #3687 (SSH small items — done), #3688 (jump-host reconnect fixture), #3689 (connection management — done except MT-CONN-34, split to #4000), #3690 (credential auto-lock seam — landed: MT-CRED-04 is now covered by fake-clock unit tests in `src-tauri/src/credential/auto_lock.rs`), #3691 (portable launch — done: MT-PORT-01/02 are covered by `src-tauri/tests/portable_launch.rs` (per PR, headless) and `test_portable_mode.py` (nightly), emptying the `portable-mode` category; the MT-PORT-04 import half is the guided `test_portable_import_from_directory`), #3692 (network tools fixtures), #3693 (layout / restore — done: MT-TAB-11/12/16 and MT-UI-10/11/12/14/15/37 are covered by `App.openSavedFile.test.tsx`, `test_split_views.py`, `test_settings.py` and `test_session_restore_ui.py`, emptying the `tab-management` category), #3694 (file-browser CWD follow — done: MT-FB-08/09/10 are covered in `FileBrowser.test.tsx`, emptying the `file-browser` category; #3695 later refilled it with two OS-native drag items). The per-feature prose walkthroughs that used to follow were triaged the same way in #3695; see [Per-feature walkthrough triage](#per-feature-walkthrough-triage-3695). The other two follow-ups the audit named were already done: #1230 (monitoring auto-reconnect) is covered by fault-injection tests over a scripted `MonitoringTransport` in `core/src/backends/ssh/monitoring.rs` (`collect_loop_emits_stale_reconnecting_then_live_on_recovery`, `collect_loop_emits_offline_when_reconnect_exhausted`), and #1336 (FTP transfer queue) by the live `core/tests/ftp_transfer.rs` / `ftp_reconnect.rs` integration tests.
 
 <details>
 <summary>Triage table: every former YAML item → decision → pointer or issue</summary>
@@ -1816,10 +1849,10 @@ take either side and re-run the same command. CI (`--check`) fails if it is stal
 | MT-NET-21       | Ping / HTTP Monitor — readable latency chart (uPlot)                                    | Release-gating manual | chart stroke/hover readability is visual; data in latencyChartData.test.ts                                                          |
 | MT-NET-22       | Traceroute / Port Scanner — error on unresolvable host (Stop works)                     | Automated (already)   | TraceroutePanel.error.test.tsx + PortScannerPanel.error.test.tsx + TraceroutePanel.footer.test.tsx                                  |
 | MT-NET-20       | Port Scanner — CIDR / multi-target scan                                                 | Automated (already)   | core/src/network/port_scan.rs (CIDR / comma-list parse + per-host results)                                                          |
-| MT-PORT-01      | Portable mode activates via portable.marker                                             | Tracked issue         | #3691                                                                                                                               |
-| MT-PORT-02      | Portable mode activates via data/ directory                                             | Tracked issue         | #3691                                                                                                                               |
+| MT-PORT-01      | Portable mode activates via portable.marker                                             | Automated (#3691)     | `portable_launch.rs` `marker_*` tests (per PR) + test_portable_mode.py::TestPortableMarker (nightly)                                |
+| MT-PORT-02      | Portable mode activates via data/ directory                                             | Automated (#3691)     | `portable_launch.rs` `data_dir_*` tests (per PR) + test_portable_mode.py::TestPortableDataDir (nightly)                             |
 | MT-PORT-03      | Installed mode shows no badge                                                           | Automated (already)   | PortableBadge.test.tsx + PortableModeSettings.test.tsx + portable.rs::detect_mode_at_installed_when_empty                           |
-| MT-PORT-04      | Config export and import via Settings                                                   | Guided-manual pytest  | test_native_dialogs.py::test_portable_export_to_directory (import half: #3691)                                                      |
+| MT-PORT-04      | Config export and import via Settings                                                   | Guided-manual pytest  | test_native_dialogs.py::test_portable_export_to_directory + test_portable_import_from_directory                                     |
 | MT-AGENT-04     | Setup commands injected into terminal                                                   | Automated (already)   | src-tauri/src/terminal/agent_install.rs::posix_plan_preserves_legacy_commands                                                       |
 | MT-AGENT-07     | Connect after setup                                                                     | Automated (already)   | tests/system/tests/test_remote_agent_live.py::test_connect_shows_available_shells                                                   |
 | MT-AGENT-08     | Agent reconnect: spinner overlay shown while auto-reconnecting                          | Automated (already)   | tests/system/tests/test_agent_reconnect_ui.py::test_agent_reconnect_ui_cycle                                                        |
@@ -2008,7 +2041,7 @@ part of the release gate. Each was triaged with the #3681 rules and removed:
 - **External local/WSL/SSH spawn opens a shell tab (frontend consumption, #1365)** — Automated + Tracked + Release gate. src-tauri/src/spawn/handler.rs::existing_directory_resolves_to_itself; src-tauri/src/spawn/handler.rs::existing_file_resolves_to_parent_directory; … · gaps: #4010 · gate: MT-SHI-02
 - **External WSL/SSH spawn opens its real backend (#1511)** — Automated + Tracked + Release gate. src-tauri/src/commands/spawn.rs::wsl_spawn_uses_default_distro_and_mount_path; src-tauri/src/commands/spawn.rs::wsl_spawn_prefers_saved_connection_distribution; … · gaps: #4010 · gate: MT-SHI-03
 - **Spawned container grouping survives tab close (#1466)** — Automated. src/components/OpenConnections/OpenConnectionsModal.spawned.test.tsx 'lists the spawned container in its own section'; src/components/OpenConnections/OpenConnectionsModal.spawned.test.tsx 'does not double-list the spawned session under Local Sessions'; …
-- **Shell-integration registration — per-OS file-manager entries (SI-5/6/7)** — Automated + Tracked + Release gate. src-tauri/src/spawn/registry.rs::install_writes_three_key_families_with_correct_command_lines (windows); src-tauri/src/spawn/registry.rs::extended_entry_carries_extended_value (windows); src-tauri/src/commands/shell_integration.rs::registered_at_a_moved_exe_is_stale / moved_portable_exe_is_stale_but_flagged_portable (staleness + portable exemption); scripts/internal/shell-integration-cli-smoke.sh (Linux, build.yml) and scripts/internal/shell-integration-cli-smoke.ps1 (Windows, code-quality.yml Run Tests) — CLI install/uninstall exit 0 with no elevation; … · gaps: #3691 · gate: MT-SHI-04, MT-SHI-05, MT-SHI-06
+- **Shell-integration registration — per-OS file-manager entries (SI-5/6/7)** — Automated + Tracked + Release gate. src-tauri/src/spawn/registry.rs::install_writes_three_key_families_with_correct_command_lines (windows); src-tauri/src/spawn/registry.rs::extended_entry_carries_extended_value (windows); src-tauri/src/commands/shell_integration.rs::registered_at_a_moved_exe_is_stale / moved_portable_exe_is_stale_but_flagged_portable (staleness + portable exemption); tests/system/tests/test_portable_mode.py::TestPortableMarker::test_moved_portable_binary_shows_no_stale_banner (portable exemption in the real UI); scripts/internal/shell-integration-cli-smoke.sh (Linux, build.yml) and scripts/internal/shell-integration-cli-smoke.ps1 (Windows, code-quality.yml Run Tests) — CLI install/uninstall exit 0 with no elevation; … · gaps: #3691 · gate: MT-SHI-04, MT-SHI-05, MT-SHI-06
 - **Native-dialog → Modal migration (#1348)** — Automated + Tracked + Release gate. src/components/Sidebar/FileBrowser.rename.test.tsx 'starts an inline edit on F2 with the base name pre-selected'; src/components/Sidebar/FileBrowser.rename.test.tsx 'commits the rename via the backend on Enter'; … · gaps: #4007 · gate: MT-FB-30
 - **File browser rename / new-file / new-folder / copy feedback (#1399)** — Automated. src/components/Sidebar/FileBrowser.actionfeedback.test.tsx 'shows a success toast when a new folder is created'; src/components/Sidebar/FileBrowser.actionfeedback.test.tsx 'shows an error toast when new folder creation fails'; …
 - **File browser drag-to-move (#3454, PROD-006)** — Automated + Tracked. src/components/Sidebar/FileBrowser.drag-move.test.tsx 'moves a file dropped on a folder with a single rename (no copy)'; src/components/Sidebar/FileBrowser.drag-move.test.tsx 'copies instead when Alt/Option is held'; … · gaps: #4007
@@ -2068,7 +2101,7 @@ part of the release gate. Each was triaged with the #3681 rules and removed:
 - **Macro run history (#3543)** — Automated. tests/system/tests/test_history_restart.py::TestHistoryRestart::test_macro_run_history_survives_restart (manual play, per-macro filter, restart, Clear history); src-tauri/src/macros/history.rs, history_manager.rs, history_storage.rs tests; src/store/appStore.macroRunHistory.test.ts, src/store/appStore.workflowRun.test.ts; …
 - **HTTP monitor check history (#3462)** — Automated. tests/system/tests/test_history_restart.py::TestHistoryRestart::test_http_monitor_check_history_survives_restart (local server, stop, restart, Show checks, Resume, Remove); src-tauri/src/network/monitor_history.rs, monitor_history_manager.rs, monitor_history_storage.rs tests; src/components/NetworkTools/httpMonitorHistory.test.ts, HttpMonitorPanel.history.test.tsx; …
 - **Run-location "Run on" selector — Network Tools & Servers (#2191)** — Automated + Tracked. src/components/RunLocationSelect/RunLocationSelect.test.tsx; src/components/NetworkTools/NetworkToolRunLocation.test.tsx; … · gaps: #3692
-- **Single-instance enforcement (findings PER-005, SM-025)** — Automated + Tracked + Release gate. src-tauri/src/utils/single_instance.rs::tests (enforces_for_installed_release, does_not_enforce_for_installed_debug, does_not_enforce_for_portable_release/debug — covers 'dev builds are not locked'); src-tauri/src/utils/single_instance_forward_tests.rs (long_workspace_flag_with_separate_value, relative_workspace_file_resolves_against_second_launch_cwd, unknown_flags_and_positionals_are_ignored_and_reported, forwarded_workspace_is_emitted_to_the_running_frontend); … · gaps: #4011, #3691 · gate: MT-APP-04
+- **Single-instance enforcement (findings PER-005, SM-025)** — Automated + Tracked + Release gate. src-tauri/src/utils/single_instance.rs::tests (enforces_for_installed_release, does_not_enforce_for_installed_debug, does_not_enforce_for_portable_release/debug — covers 'dev builds are not locked'); tests/system/tests/test_portable_mode.py::TestPortableDataDir (two portable folders run at once; a relaunch after kill -9 ignores the stale data/.termihub.lock — #3691); src-tauri/src/utils/single_instance_forward_tests.rs (long_workspace_flag_with_separate_value, relative_workspace_file_resolves_against_second_launch_cwd, unknown_flags_and_positionals_are_ignored_and_reported, forwarded_workspace_is_emitted_to_the_running_frontend); … · gaps: #4011 · gate: MT-APP-04
 
 </details>
 
@@ -2356,7 +2389,6 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 | UI / Layout           | [`ui-layout.yaml`](../tests/manual/ui-layout.yaml)                         | `MT-UI`    |
 | Remote Agent          | [`remote-agent.yaml`](../tests/manual/remote-agent.yaml)                   | `MT-AGENT` |
 | Credential Store      | [`credential-store.yaml`](../tests/manual/credential-store.yaml)           | `MT-CRED`  |
-| Portable Mode         | [`portable-mode.yaml`](../tests/manual/portable-mode.yaml)                 | `MT-PORT`  |
 | Network Tools         | [`network-tools.yaml`](../tests/manual/network-tools.yaml)                 | `MT-NET`   |
 | Multi-Window (macOS)  | [`multi-window.yaml`](../tests/manual/multi-window.yaml)                   | `MT-WIN`   |
 | Native Input          | [`native-input.yaml`](../tests/manual/native-input.yaml)                   | `MT-NIN`   |

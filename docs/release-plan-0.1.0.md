@@ -406,14 +406,13 @@ python scripts/test-manual.py --inventory
 | `multi-window`            | Multi-Window          | macos          |              2 |                  0 |      2 |
 | `native-input`            | Native Input          | all            |             21 |                  0 |     21 |
 | `network-tools`           | network-tools         | all            |              2 |                  2 |      4 |
-| `portable-mode`           | Portable Mode         | all            |              0 |                  2 |      2 |
 | `remote-agent`            | Remote Agent          | all            |              0 |                 12 |     12 |
 | `remote-desktop`          | Remote Desktop        | all            |              9 |                  0 |      9 |
 | `serial`                  | Serial                | windows        |              1 |                  0 |      1 |
 | `shell-integration`       | Shell Integration     | all            |              6 |                  0 |      6 |
 | `ssh`                     | SSH                   | all            |              4 |                  1 |      5 |
 | `ui-layout`               | UI / Layout           | all            |              8 |                  0 |      8 |
-| **Total (16 categories)** |                       |                |         **72** |             **18** | **90** |
+| **Total (15 categories)** |                       |                |         **72** |             **16** | **88** |
 
 <!-- manual-inventory:end -->
 
@@ -449,10 +448,10 @@ python scripts/test-manual.py --resume tests/reports/manual-<timestamp>.json
 ```bash
 python scripts/test-manual.py \
   --category connection-management \
-  --category credential-store \
-  --category portable-mode
-# Tests: MT-CONN-*, MT-CRED-*, MT-PORT-*
-# Count: 12 + 4 + 4 = 20 tests
+  --category credential-store
+# Tests: MT-CONN-*, MT-CRED-*
+# Portable mode (MT-PORT-*) is automated: src-tauri/tests/portable_launch.rs
+# (per PR) + tests/system/tests/test_portable_mode.py (nightly), #3691
 ```
 
 #### Session 3: WSL or Mac — SSH, Remote Agent & Serial (~4 h)
