@@ -45,7 +45,7 @@ use tracing::{debug, info, warn};
 
 use termihub_core::backends::rdp_sidecar::config::{RdpConfig, SecurityMode};
 use termihub_core::backends::rdp_sidecar::protocol::{
-    read_message, write_message, HostMessage, SidecarMessage,
+    read_message, write_message, HostMessage, MessageReader, SidecarMessage,
 };
 use termihub_core::connection::{
     CursorShape, CursorUpdate, DirtyRect, FrameUpdate, GraphicalState, InputEvent,
@@ -707,6 +707,10 @@ where
         return None;
     }
 
+    // The host read is one `select!` branch among several, so it must be
+    // cancel-safe: a plain `read_message` dropped mid-frame (a server PDU won the
+    // race) loses the bytes it consumed and desyncs every later frame (#4042).
+    let mut host_in = MessageReader::new(ipc_in);
     let mut terminated = None;
     let mut prev_buttons: u8 = 0;
     let mut cursor: (u32, u32) = (0, 0);
@@ -718,7 +722,7 @@ where
     loop {
         tokio::select! {
             biased;
-            host = read_message::<_, HostMessage>(ipc_in) => {
+            host = host_in.next::<HostMessage>() => {
                 let msg = match host {
                     Ok(m) => m,
                     Err(_) => break, // host closed stdin
