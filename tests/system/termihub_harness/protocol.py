@@ -50,6 +50,8 @@ BRIDGE_ACTIONS: frozenset[str] = frozenset(
         "getValue",
         "inspectTerminal",
         "listWindows",
+        "loseTerminalWebglContext",
+        "measureTerminal",
         "pressKey",
         "projectionDispatch",
         "projectionDropNext",

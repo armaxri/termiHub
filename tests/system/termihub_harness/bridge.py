@@ -542,6 +542,36 @@ class Driver:
         """
         return self._call({"action": "inspectTerminal", "tabId": tab_id})
 
+    def measure_terminal(self, tab_id: Optional[str] = None) -> dict[str, Any]:
+        """Read a terminal's real render-path measurements (#2988).
+
+        The measured/painted half of xterm that jsdom cannot produce. Returns::
+
+            {"grid": {"cols", "rows"},            # xterm (and PTY) size
+             "proposed": {"cols", "rows"} | None, # FitAddon.proposeDimensions()
+             "cell": {"width", "height"},          # renderer's CSS cell px
+             "container": {"width", "height"},    # laid-out container px
+             "renderer": "webgl" | "dom",
+             "webglCanvas": {"width", "height"} | None,
+             "domRows": [str, ...] | None,         # rows the DOM renderer painted
+             "scrollbar": {"trackHeight", "thumbVisible",
+                           "thumbHeight", "thumbTop"} | None,
+             "viewportY": int, "baseY": int}
+
+        Read-only. Active tab unless ``tab_id`` is given.
+        """
+        return self._call({"action": "measureTerminal", "tabId": tab_id})
+
+    def lose_terminal_webgl_context(self, tab_id: Optional[str] = None) -> bool:
+        """Force a real WebGL context loss on a terminal's renderer (#2988).
+
+        Uses ``WEBGL_lose_context`` so the production ``onContextLoss`` fallback
+        to the DOM renderer runs. Returns ``False`` when the terminal has no live
+        WebGL context (already on the DOM renderer). Test-mode only. Active tab
+        unless ``tab_id`` is given.
+        """
+        return self._call({"action": "loseTerminalWebglContext", "tabId": tab_id})
+
     def get_state(self, path: Optional[str] = None, *, timeout: Optional[float] = None) -> Any:
         return self._call({"action": "getState", "path": path}, timeout=timeout)
 
