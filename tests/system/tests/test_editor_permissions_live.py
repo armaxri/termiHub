@@ -19,10 +19,8 @@ browser follows. The buffer is dirtied by toggling the EOL (see
 original with its line endings flipped.
 
 Not covered here: the SFTP-only fallback (#1330) on ``ssh-sftp-only``. That host
-refuses the shell ("This service allows sftp connections only."), so the SSH
-session — the only source of the editor's SFTP probes — ends at once and the
-fallback is unreachable from the UI. Its probes are covered live in
-``src-tauri/src/files/sftp.rs``; the UI gap is tracked separately.
+refuses the shell, so its session is kept files-only (#4078); the fallback is
+driven from the UI in ``test_sftp_only_host_live.py``.
 
 The sudo-password secrecy checks (logs, persisted tab/workspace state) run per
 PR instead: ``log_secrecy.rs`` and ``FileEditor.test.tsx``.

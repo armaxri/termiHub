@@ -36,6 +36,9 @@ pub const SUDO_PASSWORD: &str = "Sudo-Server-Sudo-Pw-a9d031";
 /// sudo's stderr for a rejected password, as `sudo -S -p ''` prints it.
 const SUDO_REJECTED_STDERR: &str = "Sorry, try again.\nsudo: 1 incorrect password attempt\n";
 
+/// How long the SFTP subsystem takes to apply each write (see `MemorySftp::write`).
+const WRITE_LAG: std::time::Duration = std::time::Duration::from_millis(50);
+
 /// What the server saw, shared across every connection.
 #[derive(Default)]
 pub struct Observed {
@@ -366,6 +369,11 @@ impl russh_sftp::server::Handler for MemorySftp {
         offset: u64,
         data: Vec<u8>,
     ) -> Result<Status, Self::Error> {
+        // A real host's `sftp-server` is a separate process from the exec
+        // channel's shell, so a write lands on disk some time after the client
+        // queued it. Lag every write so a client that runs `sudo` before its
+        // upload is acknowledged reads an empty temp here too (#4082).
+        tokio::time::sleep(WRITE_LAG).await;
         let path = self.handles.get(&handle).ok_or(StatusCode::Failure)?;
         let mut obs = self.observed.lock().expect("observed");
         let file = obs.files.entry(path.clone()).or_default();

@@ -62,6 +62,7 @@ import { RenameDialog } from "@/components/Terminal/RenameDialog";
 import { TerminalSearchBar } from "@/components/Terminal/TerminalSearchBar";
 import { TerminalConnectionOverlay } from "@/components/Terminal/TerminalConnectionOverlay";
 import { TerminalDisconnectOverlay } from "@/components/Terminal/TerminalDisconnectOverlay";
+import { TerminalFilesOnlyPanel } from "@/components/Terminal/TerminalFilesOnlyPanel";
 import {
   TerminalEvictedOverlay,
   TerminalWindowEvictedOverlay,
@@ -1308,6 +1309,8 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
       {!isEvicted && (isReconnecting || isAutoReconnectWaiting || (isExited && !isViewMode)) && (
         <TerminalDisconnectOverlay tabId={tabId} />
       )}
+      {/* #4078: the host refused the shell but SFTP works — no terminal to show. */}
+      {!isEvicted && <TerminalFilesOnlyPanel tabId={tabId} />}
       {isExited && isViewMode && (
         <>
           <TerminalViewModeBanner tabId={tabId} />

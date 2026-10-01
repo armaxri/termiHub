@@ -317,6 +317,18 @@ pub trait ConnectionType: Send {
     fn graphical(&self) -> Option<&dyn GraphicalBackend> {
         None
     }
+
+    /// Watch whether this session has become **files-only** (#4078): the host
+    /// refused the interactive shell but the file channel works, so the session
+    /// stays up for the file browser and editor instead of ending.
+    ///
+    /// The value flips from `false` to `true` at most once per connect. A backend
+    /// that can never be files-only (everything but SSH) returns `None`, the
+    /// default. The sender lives in the backend, so a receiver's `changed()`
+    /// errors once the connection is dropped — a watcher never outlives it.
+    fn files_only_watch(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+        None
+    }
 }
 
 #[cfg(test)]

@@ -4306,6 +4306,9 @@ mod close_ownership;
 /// Session → saved-connection bindings for relaunched transfers (#3876).
 mod saved_connections;
 
+/// Files-only sessions on hosts that refuse the shell (#4078).
+mod files_only;
+
 /// Application log secrecy: SSH password, store passphrase, sudo password and
 /// terminal content (#1570, #4007).
 mod log_secrecy;

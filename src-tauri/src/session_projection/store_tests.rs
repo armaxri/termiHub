@@ -1194,3 +1194,60 @@ fn eviction_mid_reconnect_stops_the_loop() {
     assert_eq!(s.status, SessionStatus::Evicted);
     assert_eq!(s.reconnect.phase, ReconnectPhase::Idle);
 }
+
+// ── files-only (#4078) ────────────────────────────────────────────────
+
+#[test]
+fn files_only_marks_a_live_session_without_touching_status_or_the_loop() {
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connected("s1");
+    store.files_only("s1");
+    let entry = store.get("s1").unwrap();
+    assert!(entry.files_only);
+    assert_eq!(entry.status, SessionStatus::Connected);
+    assert_eq!(entry.reconnect, INITIAL_RECONNECT_STATE);
+    // A late `connected` (the command's own fold) keeps the verdict.
+    store.connected("s1");
+    assert!(store.get("s1").unwrap().files_only);
+}
+
+#[test]
+fn files_only_serializes_as_files_only_and_is_omitted_when_false() {
+    let store = deterministic_store();
+    store.connect("s1");
+    assert!(store.snapshot()["sessions"]["s1"]
+        .get("filesOnly")
+        .is_none());
+    store.files_only("s1");
+    assert_eq!(store.snapshot()["sessions"]["s1"]["filesOnly"], true);
+}
+
+#[test]
+fn files_only_on_an_unknown_session_is_a_noop() {
+    let store = deterministic_store();
+    store.files_only("ghost");
+    assert!(store.get("ghost").is_none());
+}
+
+#[test]
+fn ending_or_restarting_a_session_clears_files_only() {
+    let store = deterministic_store();
+    let fresh = |id: &str| {
+        store.connect(id);
+        store.connected(id);
+        store.files_only(id);
+    };
+    fresh("a");
+    store.disconnect("a");
+    assert!(!store.get("a").unwrap().files_only);
+    fresh("b");
+    store.dropped("b", None);
+    assert!(!store.get("b").unwrap().files_only);
+    fresh("c");
+    store.reconnect("c");
+    assert!(!store.get("c").unwrap().files_only);
+    fresh("d");
+    store.connect("d");
+    assert!(!store.get("d").unwrap().files_only);
+}
