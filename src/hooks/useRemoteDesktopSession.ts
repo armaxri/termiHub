@@ -20,6 +20,7 @@ import {
 } from "@/services/events";
 import type {
   GraphicalSessionState,
+  RemoteDesktopStatePayload,
   MonitorRect,
   RemoteClipboardFile,
   RemoteDesktopInput,
@@ -175,7 +176,21 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
   // normal fresh connect. Held in a ref so it survives StrictMode re-mounts.
   const adoptSessionIdRef = useRef<string | null | undefined>(undefined);
 
+  // Lifecycle events that arrived for sessions this tab did not know yet (#4017).
+  // The backend emits `active` *before* `remote_desktop_connect` returns the id,
+  // so the latest event per session is kept until the connect resolves.
+  const earlyStatesRef = useRef(new Map<string, RemoteDesktopStatePayload>());
+  // Whether a connect is in flight, i.e. whether unknown sessions' events are buffered.
+  const connectPendingRef = useRef(false);
+
   const setTabSessionId = useAppStore((s) => s.setTabSessionId);
+
+  /** Apply one lifecycle event to this tab's state. */
+  const applyState = useCallback((payload: RemoteDesktopStatePayload) => {
+    setState(payload.state);
+    setReconnectAttempt(payload.reconnect_attempt);
+    setMessage(payload.message ?? null);
+  }, []);
 
   // Config is read once per (re)connect; it is stable for the tab's lifetime.
   const readTab = useCallback(
@@ -222,6 +237,8 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
       setState("connecting");
       setMessage(null);
       setReconnectAttempt(0);
+      earlyStatesRef.current.clear();
+      connectPendingRef.current = true;
       try {
         // A multi-monitor connection carries the concrete layout of this
         // computer's displays (#3696); the backend normalizes it.
@@ -231,6 +248,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
           ? { ...tab.config.config, monitorLayout: layout }
           : tab.config.config;
         const id = await remoteDesktopConnect(tab.config.type, connectSettings);
+        connectPendingRef.current = false;
         if (canceled) {
           fireAndForget(
             remoteDesktopDisconnect(id),
@@ -241,8 +259,17 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
         sessionIdRef.current = id;
         setSessionId(id);
         setTabSessionId(tabId, id);
+        // The connect only resolves once the backend marked the session active;
+        // that event (and anything after it) fired before the id was known.
+        const early = earlyStatesRef.current.get(id);
+        earlyStatesRef.current.clear();
+        const superseded =
+          !early || early.state === "connecting" || early.state === "authenticating";
+        applyState(superseded ? { session_id: id, state: "active", reconnect_attempt: 0 } : early);
         frontendLog("remote_desktop", `session ${id} opened for tab ${tabId}`);
       } catch (err) {
+        connectPendingRef.current = false;
+        earlyStatesRef.current.clear();
         if (canceled) return;
         // A rejected credential (typed `auth_failed`, #3390) keeps the
         // "Authentication failed" overlay instead of the generic connect error.
@@ -303,20 +330,33 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
         });
       }
     };
-  }, [tabId, setTabSessionId, readTab, retryNonce]);
+  }, [tabId, setTabSessionId, readTab, retryNonce, applyState]);
 
-  // Subscribe to lifecycle state + clipboard events for this session.
+  // Subscribe to lifecycle state for the tab's whole life, not per session
+  // (#4017): a connect's own events fire before it returns the session id, so
+  // events for a not-yet-known session are buffered while a connect is pending.
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void onRemoteDesktopState((payload) => {
+      if (disposed) return;
+      if (payload.session_id === sessionIdRef.current) {
+        applyState(payload);
+      } else if (connectPendingRef.current) {
+        earlyStatesRef.current.set(payload.session_id, payload);
+      }
+    }).then((un) => (disposed ? un() : (unlisten = un)));
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [applyState]);
+
+  // Subscribe to clipboard + cert-prompt events for this session.
   useEffect(() => {
     if (!sessionId) return;
     let disposed = false;
     const unlisteners: Array<() => void> = [];
-
-    void onRemoteDesktopState((payload) => {
-      if (disposed || payload.session_id !== sessionId) return;
-      setState(payload.state);
-      setReconnectAttempt(payload.reconnect_attempt);
-      setMessage(payload.message ?? null);
-    }).then((un) => (disposed ? un() : unlisteners.push(un)));
 
     void onRemoteDesktopClipboard((payload) => {
       if (disposed || payload.session_id !== sessionId) return;
