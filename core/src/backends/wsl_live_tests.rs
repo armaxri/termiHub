@@ -33,6 +33,7 @@
 use std::process::{Child, Command, Output, Stdio};
 use std::time::Duration;
 
+use super::super::wsl_init_script::{echoed_init_uuid, EchoedUuid};
 use super::*;
 
 /// Env var that turns a missing distribution from a skip into a hard failure.
@@ -287,7 +288,11 @@ fn strip_csi(raw: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(raw.len());
     let mut i = 0;
     while i < raw.len() {
-        if raw[i] == 0x1b && raw.get(i + 1) == Some(&b'[') {
+        if raw[i] == 0x1b && i + 1 == raw.len() {
+            // A lone trailing ESC may start a CSI whose rest is still in
+            // flight; hold it back so offsets into the output stay stable.
+            break;
+        } else if raw[i] == 0x1b && raw.get(i + 1) == Some(&b'[') {
             i += 2;
             while i < raw.len() && !(0x40..=0x7e).contains(&raw[i]) {
                 i += 1;
@@ -336,23 +341,52 @@ impl<'a> Transcript<'a> {
                     return (i, from + pos);
                 }
             }
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            match tokio::time::timeout(remaining, self.rx.recv()).await {
-                Ok(Some(chunk)) => {
-                    self.raw.extend_from_slice(&chunk);
-                    self.plain = strip_csi(&self.raw);
-                }
-                _ => panic!(
-                    "none of {:?} appeared in the WSL session output:\n{:?}\n\n\
-                     non-interactive probe of {}: {}",
-                    needles
-                        .iter()
-                        .map(|n| String::from_utf8_lossy(n))
-                        .collect::<Vec<_>>(),
-                    self.text(),
-                    self.distro,
-                    probe_distro(&self.distro)
+            let what = format!(
+                "none of {:?}",
+                needles
+                    .iter()
+                    .map(|n| String::from_utf8_lossy(n))
+                    .collect::<Vec<_>>()
+            );
+            self.recv_more(deadline, &what).await;
+        }
+    }
+
+    /// Append the next output chunk, or panic with `what` (what was awaited),
+    /// the raw transcript and a non-interactive probe once `deadline` passes.
+    async fn recv_more(&mut self, deadline: tokio::time::Instant, what: &str) {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        match tokio::time::timeout(remaining, self.rx.recv()).await {
+            Ok(Some(chunk)) => {
+                self.raw.extend_from_slice(&chunk);
+                self.plain = strip_csi(&self.raw);
+            }
+            _ => panic!(
+                "{what} appeared in the WSL session output:\n{:?}\n\n\
+                 non-interactive probe of {}: {}",
+                self.text(),
+                self.distro,
+                probe_distro(&self.distro)
+            ),
+        }
+    }
+
+    /// Read the init-script UUID that starts at offset `from` (right after the
+    /// echoed path prefix). The echo can be split across PTY reads, so keep
+    /// reading until the id is terminated rather than taking a fragment.
+    async fn wait_for_init_uuid(&mut self, from: usize) -> String {
+        let deadline = tokio::time::Instant::now() + SESSION_TIMEOUT;
+        loop {
+            match echoed_init_uuid(&self.plain[from..]) {
+                EchoedUuid::Complete(uuid) => return uuid,
+                EchoedUuid::Malformed(id) => panic!(
+                    "init-script path not a UUID path: {id:?}\n{:?}",
+                    self.text()
                 ),
+                EchoedUuid::Incomplete => {
+                    self.recv_more(deadline, "no complete init-script UUID")
+                        .await;
+                }
             }
         }
     }
@@ -392,6 +426,8 @@ fn strip_csi_removes_csi_but_keeps_text_and_osc() {
         b"# source /tmp/.termihub_init-1 2>/dev/null\r\n\x1b]7;file:///root\x07".to_vec()
     );
     assert_eq!(strip_csi(b"tail\x1b[1;2"), b"tail".to_vec());
+    // A read split right after ESC must not leak the ESC into the text.
+    assert_eq!(strip_csi(b"init-9a70\x1b"), b"init-9a70".to_vec());
 }
 
 #[tokio::test]
@@ -422,12 +458,7 @@ async fn live_wsl_session_sources_init_script_silently_self_cleans_and_tracks_cw
          registry value:\n{:?}",
         out.text()
     );
-    let uuid: String = out.plain[at + prefix.len()..]
-        .iter()
-        .take_while(|b| b.is_ascii_hexdigit() || **b == b'-')
-        .map(|b| char::from(*b))
-        .collect();
-    assert_eq!(uuid.len(), 36, "init-script path not a UUID path: {uuid:?}");
+    let uuid = out.wait_for_init_uuid(at + prefix.len()).await;
     let init_path = format!("{INIT_SCRIPT_PREFIX}{uuid}");
     let notice = b"# [termiHub] Shell integration: setting up OSC 7 CWD tracking";
     let after_notice = out.wait_for(notice, at).await;
