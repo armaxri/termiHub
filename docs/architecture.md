@@ -2962,8 +2962,8 @@ terminal sessions for people who expect nothing to leave their machine.
 - **Crashes are diagnosable fully offline.** The desktop panic hook (`src-tauri/src/utils/panic_hook.rs`)
   and the agent panic hook (`agent/src/panic_hook.rs`) log the panic and write one small text report
   per crash into a `crash-reports/` folder next to the app's log (desktop: the platform log dir,
-  e.g. `~/Library/Logs/com.termihub.app/crash-reports/`; agent: `<config-dir>/logs/crash-reports/`
-  on the agent's own host). The folder is bounded by count (10) and age (30 days).
+  e.g. `~/Library/Logs/com.termihub.app/crash-reports/`, or `$TERMIHUB_LOG_DIR` when set, as the
+  system-test harness does; agent: `<config-dir>/logs/crash-reports/` on the agent's own host). The folder is bounded by count (10) and age (30 days).
 - **What a report captures:** app name, version, OS / family / architecture, UTC time, thread,
   source location, the panic message (capped at 4 KiB) and a backtrace (capped at 64 KiB).
 - **What it never captures:** terminal session content or transcripts, scrollback, connection or
