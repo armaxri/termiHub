@@ -10,7 +10,8 @@
 //!
 //! Each shell runs hermetically: `HOME` and `ZDOTDIR` point into a throwaway
 //! directory so a developer's own rc files (prompt frameworks, their own
-//! OSC 133 emitters) cannot change what is measured. A shell that is not
+//! OSC 133 emitters) cannot change what is measured; an empty `.zshrc` there
+//! keeps zsh's new-user menu away. A shell that is not
 //! installed is skipped with a note rather than failed.
 
 use super::*;
@@ -94,6 +95,9 @@ struct Session {
 impl Session {
     async fn start(shell_name: &str) -> Session {
         let home = tempfile::tempdir().expect("temp HOME");
+        // An empty `.zshrc` keeps zsh from starting its interactive
+        // `zsh-newuser-install` menu in a home without startup files (Linux).
+        std::fs::write(home.path().join(".zshrc"), "").expect("write .zshrc");
         let home_str = home.path().to_string_lossy().to_string();
         let mut shell = LocalShell::new();
         let settings = serde_json::json!({
