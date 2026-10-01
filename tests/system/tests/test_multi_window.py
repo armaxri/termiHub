@@ -42,6 +42,7 @@ from termihub_harness.ui.windows import (
     CLOSE_DIALOG_MOVE,
     CLOSE_DIALOG_TERMINATE_ROW,
     find_tab_by_session,
+    last_session_window_tab_count,
     last_session_windows,
     window_tabs,
 )
@@ -170,9 +171,13 @@ class TestMultiWindow(WindowsUi, TerminalUi, SystemTest):
         label = second.window_label
         # The main window aggregates every window's slice into last-session.json
         # (#1925); wait until the save spans both windows before killing the app.
+        # The window is listed (empty) from the moment it opened, so also wait for
+        # a save written after the tab moved in: a stale save restores the tab
+        # into the main window and the second window comes back empty (#4017).
         self.wait(
-            lambda: label in last_session_windows(self.config_dir),
-            what=f"last-session.json to record window {label!r}",
+            lambda: label in last_session_windows(self.config_dir)
+            and last_session_window_tab_count(self.config_dir, label) > 0,
+            what=f"last-session.json to record window {label!r} with its tab",
         )
 
         self.restart_app(between=lambda: self._write_restore_mode("always"))

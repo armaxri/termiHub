@@ -12,7 +12,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
-import { INLINE_IMAGE_ADDON_OPTIONS } from "./inlineImages";
+import { INLINE_IMAGE_ADDON_OPTIONS, getInlineImagesController } from "./inlineImages";
 import { useAppStore } from "@/store/appStore";
 import { mockXtermInstances as xtermInstances } from "@/test/mockXterm";
 
@@ -219,6 +219,17 @@ describe("Terminal — inline images (PROD-057)", () => {
     });
     expect(h.imageInstances).toHaveLength(2);
     expect(loadedImageAddons()).toEqual([first, h.imageInstances[1]]);
+  });
+
+  it("registers the tab's controller for the test bridge and unregisters it on teardown", async () => {
+    renderTerminal();
+    await settle();
+    const controller = getInlineImagesController("tab-1");
+    expect(controller?.isActive()).toBe(true);
+
+    unmountOnce();
+
+    expect(getInlineImagesController("tab-1")).toBeUndefined();
   });
 
   it("disposes the image addon on teardown", async () => {

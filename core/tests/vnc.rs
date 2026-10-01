@@ -1,5 +1,5 @@
 #![cfg(feature = "vnc")]
-//! VNC (RFB) Integration Tests (VNC-01 through VNC-16).
+//! VNC (RFB) Integration Tests (VNC-01 through VNC-17).
 //!
 //! Exercises termiHub's `vnc` graphical backend against a real VNC server — the
 //! live negotiate -> authenticate -> decode path (#1681/#1715) that only exists
@@ -11,8 +11,8 @@
 //!
 //! * `vnc-server` on port 2501 (x11vnc + Xvfb) — classic RFB VncAuth, password
 //!   `testpass`. Covers VNC-01..05, VNC-08 (16-bit color depth and Tight
-//!   quality levels, #3464) and VNC-10 (a server that does not let clients
-//!   resize the desktop, #3463).
+//!   quality levels, #3464), VNC-10 (a server that does not let clients
+//!   resize the desktop, #3463) and VNC-17 (a full frame on request, #4017).
 //! * `vnc-vencrypt-server` on port 2502 (TigerVNC Xvnc) — VeNCrypt (RFB security
 //!   type 19, X509Vnc sub-type): a TLS handshake then the VNC-password stage.
 //!   Covers VNC-06 (`tlsVerify=insecure`) and VNC-07 (`tlsVerify=ca`), the
@@ -192,7 +192,12 @@ async fn assert_pattern_decodes(vnc: &Vnc, label: &str) {
         .graphical()
         .unwrap_or_else(|| panic!("{label}: graphical backend present"));
     let mut frames = graphical.subscribe_frames();
+    assert_pattern_arrives(&mut frames, label).await;
+}
 
+/// Accumulate frames from `frames` into a fresh framebuffer until the whole
+/// four-quadrant pattern is painted, and assert every quadrant's colour.
+async fn assert_pattern_arrives(frames: &mut FrameReceiver, label: &str) {
     // Quadrant sample points and their expected colours (see the fixture).
     let quarter_w = FB_WIDTH / 4;
     let quarter_h = FB_HEIGHT / 4;
@@ -829,4 +834,42 @@ async fn vnc_16_vencrypt_x509plain_wrong_password_rejected() {
         !vnc.is_connected(),
         "VNC-16: a rejected login leaves the session disconnected"
     );
+}
+
+// ── VNC-17: a full frame on request for a late subscriber (#4017) ───
+
+/// The fixture's desktop is static: after the first full frame the server sends
+/// nothing more, so a canvas that started listening after that frame went out
+/// stayed partly blank forever. `request_full_frame` must make the server
+/// repaint the whole pattern again.
+#[tokio::test]
+async fn vnc_17_request_full_frame_repaints_a_static_desktop() {
+    require_docker!(port_vnc());
+
+    let mut vnc = Vnc::new();
+    vnc.connect(vnc_settings(port_vnc()))
+        .await
+        .expect("VNC-17: connect should succeed");
+    let graphical = vnc.graphical().expect("graphical backend");
+    let mut frames = graphical.subscribe_frames();
+    assert_pattern_arrives(&mut frames, "VNC-17 first frame").await;
+
+    // Drain until the static desktop goes quiet: nothing more would ever paint
+    // a canvas that missed the first frame.
+    loop {
+        match tokio::time::timeout(Duration::from_secs(2), frames.recv()).await {
+            Ok(Some(_)) => continue,
+            Ok(None) => panic!("VNC-17: frame stream closed"),
+            Err(_) => break,
+        }
+    }
+
+    graphical
+        .request_full_frame()
+        .await
+        .expect("VNC-17: request_full_frame should be sent");
+    // A fresh framebuffer: only the requested repaint can fill it.
+    assert_pattern_arrives(&mut frames, "VNC-17 requested frame").await;
+
+    vnc.disconnect().await.expect("disconnect should succeed");
 }

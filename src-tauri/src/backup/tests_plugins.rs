@@ -20,7 +20,7 @@ const PASSPHRASE: &str = "correct horse battery staple";
 const THEME_ID: &str = "nice-theme";
 const NATIVE_ID: &str = "native-shell";
 
-fn theme_manifest(id: &str, version: &str) -> String {
+pub(super) fn theme_manifest(id: &str, version: &str) -> String {
     json!({
         "id": id, "name": "Theme", "version": version, "author": "tester",
         "description": "a theme", "license": "MIT", "apiVersion": "1.0",
@@ -44,12 +44,12 @@ fn native_manifest(id: &str) -> String {
     .to_string()
 }
 
-fn plugins_root(dir: &Path) -> std::path::PathBuf {
+pub(super) fn plugins_root(dir: &Path) -> std::path::PathBuf {
     dir.join(plugins::PLUGINS_DIR)
 }
 
 /// Install a plugin directory by hand: manifest plus extra files.
-fn install(dir: &Path, id: &str, manifest: &str, files: &[(&str, &[u8])]) {
+pub(super) fn install(dir: &Path, id: &str, manifest: &str, files: &[(&str, &[u8])]) {
     let plugin = plugins_root(dir).join(id);
     std::fs::create_dir_all(&plugin).unwrap();
     std::fs::write(plugin.join("manifest.json"), manifest).unwrap();

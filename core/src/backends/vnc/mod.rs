@@ -953,6 +953,22 @@ impl GraphicalBackend for Vnc {
         }
     }
 
+    /// Ask the server for a non-incremental framebuffer update (#4017).
+    ///
+    /// A static desktop sends nothing after the first full frame, so a canvas
+    /// that subscribed after that frame went out (or a window that adopted the
+    /// session, #1904) would stay blank forever. The answer flows through the
+    /// driver's normal event loop like any other update.
+    async fn request_full_frame(&self) -> Result<(), SessionError> {
+        let Some(rt) = &self.runtime else {
+            return Err(SessionError::NotRunning("vnc not connected".to_string()));
+        };
+        rt.client
+            .input(X11Event::FullRefresh)
+            .await
+            .map_err(map_vnc_err)
+    }
+
     /// The server's own screen layout, when it reports more than one screen
     /// through RFB ExtendedDesktopSize (#3696) — whether requested by this
     /// client or configured on a multi-head server.

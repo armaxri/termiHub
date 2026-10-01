@@ -9,6 +9,7 @@ root and platform, so they need no build and run anywhere.
 from __future__ import annotations
 
 import io
+import threading
 from pathlib import Path
 
 import pytest
@@ -384,3 +385,36 @@ def test_bridge_check_is_cached_per_path(tmp_path: Path, monkeypatch: pytest.Mon
     orchestrator.require_test_bridge_build(path)
     orchestrator.require_test_bridge_build(path)
     assert len(calls) == 1
+
+
+# ── WebView2 data-folder lock (#4017) ────────────────────────────────────────
+def test_webview2_unlock_wait_is_a_noop_off_windows(tmp_path, monkeypatch):
+    monkeypatch.setattr(orchestrator.platform, "system", lambda: "Linux")
+    lock = tmp_path / orchestrator.WEBVIEW2_LOCKFILE
+    lock.parent.mkdir(parents=True)
+    lock.write_text("")
+    assert orchestrator._wait_webview2_unlocked(tmp_path, timeout=0.01) is True
+
+
+def test_webview2_unlock_wait_returns_once_the_lockfile_is_gone(tmp_path, monkeypatch):
+    monkeypatch.setattr(orchestrator.platform, "system", lambda: "Windows")
+    lock = tmp_path / orchestrator.WEBVIEW2_LOCKFILE
+    lock.parent.mkdir(parents=True)
+    lock.write_text("")
+    # The dying browser releases the folder a moment after the reap.
+    threading.Timer(0.2, lock.unlink).start()
+    assert orchestrator._wait_webview2_unlocked(tmp_path, timeout=5.0) is True
+    assert not lock.exists()
+
+
+def test_webview2_unlock_wait_gives_up_on_a_held_lock(tmp_path, monkeypatch):
+    monkeypatch.setattr(orchestrator.platform, "system", lambda: "Windows")
+    lock = tmp_path / orchestrator.WEBVIEW2_LOCKFILE
+    lock.parent.mkdir(parents=True)
+    lock.write_text("")
+    assert orchestrator._wait_webview2_unlocked(tmp_path, timeout=0.2) is False
+
+
+def test_webview2_unlock_wait_passes_a_folder_never_used(tmp_path, monkeypatch):
+    monkeypatch.setattr(orchestrator.platform, "system", lambda: "Windows")
+    assert orchestrator._wait_webview2_unlocked(tmp_path, timeout=0.01) is True

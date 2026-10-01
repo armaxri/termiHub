@@ -229,6 +229,50 @@ describe("useRemoteDesktopSession", () => {
     expect(h.get().message).toBe("Connection failed: refused");
   });
 
+  it("is active once connect resolves, though its active event fired before the id (#4017)", async () => {
+    let resolveConnect: (id: string) => void = () => {};
+    mockedConnect.mockReturnValueOnce(new Promise<string>((r) => (resolveConnect = r)));
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+
+    // The backend emits connecting → authenticating → active inside the connect.
+    dispatchState({ state: "connecting" });
+    dispatchState({ state: "authenticating" });
+    dispatchState({ state: "active" });
+    expect(h.get().state).toBe("connecting");
+
+    await act(async () => resolveConnect("rd-1"));
+    await flush();
+    expect(h.get().sessionId).toBe("rd-1");
+    expect(h.get().state).toBe("active");
+  });
+
+  it("falls back to active when no lifecycle event was seen before connect resolved (#4017)", async () => {
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+    expect(h.get().state).toBe("active");
+  });
+
+  it("keeps a state that followed active while the connect was resolving (#4017)", async () => {
+    let resolveConnect: (id: string) => void = () => {};
+    mockedConnect.mockReturnValueOnce(new Promise<string>((r) => (resolveConnect = r)));
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+
+    dispatchState({ state: "active" });
+    dispatchState({ state: "reconnecting", reconnect_attempt: 1 });
+    // Another tab's session is not this tab's state.
+    dispatchState({ session_id: "rd-other", state: "connectFailed" });
+
+    await act(async () => resolveConnect("rd-1"));
+    await flush();
+    expect(h.get().state).toBe("reconnecting");
+    expect(h.get().reconnectAttempt).toBe(1);
+  });
+
   it("reflects lifecycle state events: active → resizing → reconnecting", async () => {
     const tabId = addTab();
     const h = renderSession(tabId);
