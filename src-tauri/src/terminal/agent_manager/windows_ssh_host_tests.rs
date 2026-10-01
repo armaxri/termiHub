@@ -17,6 +17,12 @@
 //!    `--stdio` agent exits, the named-pipe session daemon lives on); after the
 //!    reconnect the SAME session id is listed, re-attached, and the counter is
 //!    beyond its pre-drop value and still advancing.
+//! 4. **Install path with a space (#4067)** — copy the installed agent into a
+//!    directory whose path contains a space (what every Windows account named
+//!    like "John Smith" gets), then run the production `--version` probe
+//!    ([`probe_remote_agent`]) and the `--stdio` launch ([`reconnect_agent`])
+//!    against that path, both built by `windows_agent_command`
+//!    (`cmd /c "<path>" <args>`), and round-trip shell I/O through it.
 //!
 //! Binary *resolution* (cache → bundled → download, plus the release-signature
 //! check) needs a Tauri `AppHandle` and a signed release asset, so the lane
@@ -59,7 +65,7 @@ use super::live_channel_support::{channel_rpc, read_counter_until};
 use super::{read_handshake_line, reconnect_agent, serialize_request};
 use crate::connection::config::AgentSettings;
 use crate::terminal::agent_binary::is_windows_os;
-use crate::terminal::agent_deploy::{install_agent_bytes, AgentDeployResult};
+use crate::terminal::agent_deploy::{install_agent_bytes, probe_remote_agent, AgentDeployResult};
 use crate::terminal::agent_install::{
     detect_windows_shell, windows_install_plan, WindowsShell, WINDOWS_AGENT_EXE,
     WINDOWS_UPLOAD_NAME,
@@ -603,6 +609,126 @@ async fn create_powershell_session(
     sid
 }
 
+/// The spaced install path for the #4067 check: the installed exe's directory
+/// gets a sibling whose name contains a space (no `&<>()@^|`, which
+/// `windows_agent_command` documents as unsupported).
+fn spaced_agent_path(installed: &str) -> String {
+    let (agent_dir, exe) = installed
+        .rsplit_once('\\')
+        .unwrap_or_else(|| panic!("install path has no directory: {installed:?}"));
+    let (parent, _) = agent_dir
+        .rsplit_once('\\')
+        .unwrap_or_else(|| panic!("install dir has no parent: {agent_dir:?}"));
+    format!(r"{parent}\agent with space\{exe}")
+}
+
+/// A command (in the host's `DefaultShell` syntax) copying the installed agent
+/// to `dest` (creating its directory) and printing whether `dest` now exists.
+fn copy_agent_probe(shell: WindowsShell, installed: &str, dest: &str) -> String {
+    let dir = dest.rsplit_once('\\').map_or(dest, |(dir, _)| dir);
+    match shell {
+        WindowsShell::Cmd => format!(
+            r#"(if not exist "{dir}" md "{dir}") & copy /y "{installed}" "{dest}" >nul & if exist "{dest}" (echo PRESENT) else (echo ABSENT)"#
+        ),
+        WindowsShell::PowerShell => format!(
+            r#"New-Item -ItemType Directory -Force -Path "{dir}" | Out-Null; Copy-Item -Force -LiteralPath "{installed}" -Destination "{dest}"; if (Test-Path -LiteralPath "{dest}") {{ 'PRESENT' }} else {{ 'ABSENT' }}"#
+        ),
+    }
+}
+
+/// Copy the agent to a spaced path over SSH and return what the presence check
+/// printed. Blocking, like [`deploy`].
+fn copy_agent_to(fixture: &Fixture, installed: &str, dest: &str) -> Result<String, TerminalError> {
+    let session = connect_and_authenticate(&fixture.ssh_config())?;
+    let command = copy_agent_probe(fixture.default_shell, installed, dest);
+    let out = run_remote_command(&session, &command)?;
+    if out.trim() == "PRESENT" {
+        Ok(out)
+    } else {
+        Ok(format!(
+            "{out}\ndiagnostics: {}",
+            exec_detailed(&session, &command)
+        ))
+    }
+}
+
+/// #4067: probe (`--version`) and launch (`--stdio`) the agent from an install
+/// path containing a space, through the configured `DefaultShell`, using the
+/// production command builders, and round-trip shell I/O through the session.
+async fn spaced_path_probe_and_launch(fixture: &Fixture, installed: &str) {
+    let spaced = spaced_agent_path(installed);
+    assert!(spaced.contains(' '), "spaced path has no space: {spaced:?}");
+
+    let (copy_fixture, from, to) = (fixture.clone(), installed.to_string(), spaced.clone());
+    let copied = tokio::task::spawn_blocking(move || copy_agent_to(&copy_fixture, &from, &to))
+        .await
+        .expect("copy thread panicked")
+        .unwrap_or_else(|e| panic!("copying the agent to {spaced:?} failed: {e}"));
+    assert_eq!(
+        copied.trim(),
+        "PRESENT",
+        "agent not copied to the spaced path {spaced:?}: {copied}"
+    );
+
+    let config = fixture.agent_config(&spaced);
+    let version_cmd = config.agent_version_command();
+    eprintln!("spaced-path probe command: {version_cmd}");
+    let probe_config = config.clone();
+    let probe = tokio::task::spawn_blocking(move || {
+        probe_remote_agent(&probe_config, env!("CARGO_PKG_VERSION"))
+    })
+    .await
+    .expect("probe thread panicked")
+    .unwrap_or_else(|e| panic!("--version probe of the spaced path failed: {e}"));
+    assert!(
+        probe.found,
+        "--version probe did not find the agent at the spaced path {spaced:?} \
+         (command {version_cmd:?}): {probe:?}"
+    );
+    assert!(
+        probe
+            .version
+            .as_deref()
+            .is_some_and(|v| v.starts_with(env!("CARGO_PKG_VERSION"))),
+        "spaced-path agent reports version {:?}, expected {}",
+        probe.version,
+        env!("CARGO_PKG_VERSION")
+    );
+    eprintln!("spaced-path --version probe OK: {:?}", probe.version);
+
+    eprintln!(
+        "spaced-path launch command: {}",
+        config.agent_exec_command()
+    );
+    let mut request_id = 0u64;
+    let (session, mut channel) = establish(&config, &mut request_id).await;
+    let sid = create_powershell_session(&mut channel, &mut request_id, "spaced-path").await;
+    write_input(
+        &mut channel,
+        &mut request_id,
+        &sid,
+        "'SPACED-' + 'OK-4067'\r",
+    )
+    .await;
+    wait_for_text(
+        &mut channel,
+        "SPACED-OK-4067",
+        Instant::now() + LIVE_CEILING,
+    )
+    .await
+    .unwrap_or_else(|e| panic!("session through the spaced-path agent is not usable: {e}"));
+    eprintln!("spaced-path --stdio launch OK: {spaced}");
+    let _ = channel_rpc(
+        &mut channel,
+        &mut request_id,
+        "connection.close",
+        serde_json::json!({ "session_id": sid }),
+    )
+    .await;
+    drop(channel);
+    drop(session);
+}
+
 /// The whole MT-AGENT-18/19 → 20 → 24 walkthrough for one `DefaultShell`.
 async fn deploy_install_connect_reattach(want: WindowsShell) {
     let Some(fixture) = live_fixture() else {
@@ -733,15 +859,20 @@ async fn deploy_install_connect_reattach(want: WindowsShell) {
     .await;
     drop(channel2);
     drop(session2);
+
+    // ── #4067: the same probe + launch from an install path with a space.
+    spaced_path_probe_and_launch(&fixture, &agent_path).await;
 }
 
-/// MT-AGENT-18 + 20 + 24 with the OpenSSH `DefaultShell` left at `cmd.exe`.
+/// MT-AGENT-18 + 20 + 24 (+ the #4067 spaced path) with the OpenSSH
+/// `DefaultShell` left at `cmd.exe`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cmd_default_shell_deploy_install_connect_reattach() {
     deploy_install_connect_reattach(WindowsShell::Cmd).await;
 }
 
-/// MT-AGENT-19 + 20 + 24 with the OpenSSH `DefaultShell` set to PowerShell.
+/// MT-AGENT-19 + 20 + 24 (+ the #4067 spaced path) with the OpenSSH
+/// `DefaultShell` set to PowerShell.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn powershell_default_shell_deploy_install_connect_reattach() {
     deploy_install_connect_reattach(WindowsShell::PowerShell).await;
@@ -873,4 +1004,27 @@ fn upload_leftover_probe_uses_each_shells_syntax() {
     assert!(cmd.starts_with("if exist \"%USERPROFILE%\\termihub-agent-upload.exe\""));
     let ps = upload_leftover_probe(WindowsShell::PowerShell);
     assert!(ps.starts_with("if (Test-Path \"$env:USERPROFILE\\termihub-agent-upload.exe\")"));
+}
+
+#[test]
+fn spaced_agent_path_is_a_sibling_dir_with_a_space() {
+    let installed = r"C:\Users\termihubssh\AppData\Local\termiHub\agent\termihub-agent.exe";
+    assert_eq!(
+        spaced_agent_path(installed),
+        r"C:\Users\termihubssh\AppData\Local\termiHub\agent with space\termihub-agent.exe"
+    );
+}
+
+#[test]
+fn copy_agent_probe_uses_each_shells_syntax() {
+    let (from, to) = (r"C:\a\agent\x.exe", r"C:\a\agent with space\x.exe");
+    let cmd = copy_agent_probe(WindowsShell::Cmd, from, to);
+    assert!(
+        cmd.starts_with(r#"(if not exist "C:\a\agent with space" md "#),
+        "{cmd}"
+    );
+    assert!(cmd.contains(r#"copy /y "C:\a\agent\x.exe" "C:\a\agent with space\x.exe""#));
+    let ps = copy_agent_probe(WindowsShell::PowerShell, from, to);
+    assert!(ps.starts_with(r#"New-Item -ItemType Directory -Force -Path "C:\a\agent with space""#));
+    assert!(ps.contains("Copy-Item -Force -LiteralPath"), "{ps}");
 }
