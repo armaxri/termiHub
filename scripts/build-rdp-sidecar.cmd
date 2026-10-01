@@ -22,8 +22,9 @@ REM                         locally-built desktop binary for manual testing).
 REM
 REM Mirrors scripts/build-rdp-sidecar.sh (flag parity is checked by
 REM scripts/internal/check-script-parity.sh). Relative --out paths resolve against
-REM the repo root, as in the .sh. Hashing uses Windows PowerShell's Get-FileHash,
-REM the same line build-agents.cmd uses (locale-independent, unlike certutil).
+REM the repo root, as in the .sh. Hashing uses .NET's SHA256 via Windows
+REM PowerShell with no cmdlets -- the same line build-agents.cmd uses (it works
+REM when launched from pwsh, #4029; locale-independent, unlike certutil).
 REM
 REM cmd pitfalls kept out of this file on purpose: no `if errorlevel` / %var%
 REM reads inside parenthesised blocks (they expand when the block is parsed), and
@@ -186,7 +187,7 @@ REM or the result is malformed.
 REM   %1 = file to hash
 :write_checksum
 if exist "%~1.sha256" del /q "%~1.sha256"
-powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'Stop'; $p = (Resolve-Path -LiteralPath '%~1').Path; $h = (Get-FileHash -Algorithm SHA256 -LiteralPath $p).Hash.ToLowerInvariant(); [IO.File]::WriteAllText($p + '.sha256', $h + '  ' + [IO.Path]::GetFileName($p) + [char]10)"
+powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'Stop'; try { $p = [IO.Path]::GetFullPath('%~1'); $s = [IO.File]::OpenRead($p); try { $d = [Security.Cryptography.SHA256]::Create().ComputeHash($s) } finally { $s.Dispose() }; $h = [BitConverter]::ToString($d).Replace('-', '').ToLowerInvariant(); [IO.File]::WriteAllText($p + '.sha256', $h + '  ' + [IO.Path]::GetFileName($p) + [char]10) } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }"
 if errorlevel 1 exit /b 1
 if not exist "%~1.sha256" exit /b 1
 set "CHECK_DIGEST="
