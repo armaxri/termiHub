@@ -61,10 +61,8 @@ async fn sftp_only_host_keeps_the_session_files_only() {
         .is_err(),
         "a files-only session must not end its output stream"
     );
-    assert!(
-        ssh.write(b"ls\n").is_err(),
-        "terminal input on a files-only session is refused"
-    );
+    ssh.write(b"ls\n")
+        .expect("terminal input on a files-only session is dropped, not an error");
 
     // The file browser works over SFTP on the same session.
     let browser = ssh

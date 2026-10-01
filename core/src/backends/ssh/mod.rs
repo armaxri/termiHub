@@ -888,7 +888,11 @@ impl ConnectionType for Ssh {
             .as_ref()
             .ok_or_else(|| SessionError::NotRunning("Not connected".to_string()))?;
         if self.is_files_only() {
-            return Err(SessionError::NotRunning(SHELL_UNAVAILABLE.to_string()));
+            // No shell to type into. The tab shows the "no shell" panel, so the
+            // keystrokes that still reach the hidden terminal are dropped rather
+            // than failing every one of them (#4078).
+            debug!("{SHELL_UNAVAILABLE}; dropping {} input bytes", data.len());
+            return Ok(());
         }
         (state.write)(data)
     }
@@ -2103,16 +2107,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn files_only_session_rejects_input_and_ignores_resize() {
-        let mut ssh = Ssh::with_connector(Box::new(MockSshConnector::new()));
+    async fn files_only_session_drops_input_and_ignores_resize() {
+        let connector = MockSshConnector::new();
+        let connector_writes = connector.write_log.clone();
+        let mut ssh = Ssh::with_connector(Box::new(connector));
         ssh.connect(mock_settings()).await.unwrap();
         ssh.files_only.send_replace(true);
         assert!(
             ssh.is_connected(),
             "a files-only session is still connected"
         );
-        let err = ssh.write(b"ls\n").unwrap_err();
-        assert!(err.to_string().contains(SHELL_UNAVAILABLE), "{err}");
+        ssh.write(b"ls\n")
+            .expect("input to a files-only session is dropped, not an error");
+        assert!(
+            connector_writes
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|w| w != b"ls\n"),
+            "no input reaches the refused shell channel"
+        );
         ssh.resize(80, 24)
             .expect("resize is a no-op on a files-only session");
         ssh.disconnect().await.unwrap();
