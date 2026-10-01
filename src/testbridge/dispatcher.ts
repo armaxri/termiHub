@@ -1,7 +1,7 @@
 import type { IntentAck } from "@/services/transport";
 
 import type { ProjectionDispatchRequest, ProjectionRecordingState } from "./projectionRecorder";
-import type { BridgeCommand, BridgeResponse, CoverageChunk } from "./protocol";
+import type { BridgeCommand, BridgeResponse, CoverageChunk, TerminalInspection } from "./protocol";
 import { errorMessage } from "@/utils/errorMessage";
 
 /**
@@ -45,6 +45,12 @@ export interface BridgeDeps {
    * when no terminal is registered for `tabId`.
    */
   getTerminalViewport: (tabId: string) => { viewportY: number; baseY: number } | undefined;
+  /**
+   * Read a terminal's OSC 133 marks and inline-image store (#4013), or
+   * `undefined` when no terminal is registered for `tabId`. Optional — absent,
+   * the `inspectTerminal` verb fails with a clear "not available" error.
+   */
+  inspectTerminal?: (tabId: string) => TerminalInspection | undefined;
   /** The currently active terminal tab id, or `undefined` when none is focused. */
   getActiveTabId: () => string | undefined;
   /** A snapshot of the app store state for introspection. */
@@ -845,6 +851,19 @@ export async function dispatchCommand(
         return fail("getTerminalViewport", `no terminal registered for tab "${tabId}"`);
       }
       return ok("getTerminalViewport", viewport);
+    }
+
+    case "inspectTerminal": {
+      if (!deps.inspectTerminal) {
+        return fail("inspectTerminal", "terminal inspection is not available");
+      }
+      const tabId = command.tabId ?? deps.getActiveTabId();
+      if (!tabId) return fail("inspectTerminal", "no active terminal to inspect");
+      const inspection = deps.inspectTerminal(tabId);
+      if (inspection === undefined) {
+        return fail("inspectTerminal", `no terminal registered for tab "${tabId}"`);
+      }
+      return ok("inspectTerminal", inspection);
     }
 
     case "getState": {

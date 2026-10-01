@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   createInlineImagesController,
+  getInlineImagesController,
+  registerInlineImagesController,
   INLINE_IMAGE_ADDON_OPTIONS,
   INLINE_IMAGE_LIMITS,
   type ImageAddonLoader,
@@ -14,6 +16,7 @@ interface FakeAddon {
   options: unknown;
   activate: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
+  storageUsage: number;
 }
 
 function setup(opts: { enabled: boolean; deferred?: boolean; fail?: boolean }) {
@@ -22,6 +25,7 @@ function setup(opts: { enabled: boolean; deferred?: boolean; fail?: boolean }) {
     options: unknown;
     activate = vi.fn();
     dispose = vi.fn();
+    storageUsage = 0;
     constructor(options?: unknown) {
       this.options = options;
       instances.push(this);
@@ -145,5 +149,38 @@ describe("createInlineImagesController", () => {
     await flush();
     expect(onError).toHaveBeenCalledTimes(1);
     expect(controller.isActive()).toBe(false);
+  });
+
+  it("reports the loaded addon's image storage, and 0 when not loaded (#4013)", async () => {
+    const { controller, instances } = setup({ enabled: true });
+    expect(controller.storageUsage()).toBe(0);
+    await flush();
+    instances[0].storageUsage = 0.25;
+    expect(controller.storageUsage()).toBe(0.25);
+    // The addon reports -1 when it has no store; that reads as "nothing stored".
+    instances[0].storageUsage = -1;
+    expect(controller.storageUsage()).toBe(0);
+    controller.setEnabled(false);
+    expect(controller.storageUsage()).toBe(0);
+  });
+});
+
+describe("inline-images controller registry (#4013)", () => {
+  it("registers, resolves and unregisters per tab", () => {
+    const { controller } = setup({ enabled: false });
+    const unregister = registerInlineImagesController("tab-img", controller);
+    expect(getInlineImagesController("tab-img")).toBe(controller);
+    unregister();
+    expect(getInlineImagesController("tab-img")).toBeUndefined();
+  });
+
+  it("a stale unregister does not remove a newer controller for the same tab", () => {
+    const first = setup({ enabled: false }).controller;
+    const second = setup({ enabled: false }).controller;
+    const unregisterFirst = registerInlineImagesController("tab-img", first);
+    const unregisterSecond = registerInlineImagesController("tab-img", second);
+    unregisterFirst();
+    expect(getInlineImagesController("tab-img")).toBe(second);
+    unregisterSecond();
   });
 });

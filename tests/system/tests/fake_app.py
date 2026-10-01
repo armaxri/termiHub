@@ -111,6 +111,7 @@ def dispatcher_like(
     computed_styles: dict | None = None,
     values: dict | None = None,
     viewport: dict | None = None,
+    inspection: dict | None = None,
     screenshot: str | None = None,
     coverage: str | None = None,
     coverage_chunk: int = 4 * 1024 * 1024,
@@ -121,6 +122,8 @@ def dispatcher_like(
     ``getComputedStyle`` (with or without a ``testId``) can be answered.
     ``values`` is keyed by ``testId`` → live control value for ``getValue``.
     ``viewport`` is the ``{viewportY, baseY}`` returned by ``getTerminalViewport``.
+    ``inspection`` is the value ``inspectTerminal`` returns (no marks, no images
+    by default); the inspected tab ids are recorded under ``inspections``.
     ``screenshot`` is the data URL returned by the ``screenshot`` command.
     ``coverage`` is the serialized ``window.__coverage__`` that ``readCoverage``
     pages through in ``coverage_chunk``-character chunks (``None`` = an
@@ -130,6 +133,7 @@ def dispatcher_like(
     computed_styles = computed_styles or {}
     values = values or {}
     viewport = viewport or {"viewportY": 0, "baseY": 0}
+    inspection = inspection or {"commandMarks": None, "inlineImages": None}
     recorded: dict[str, list] = {
         "clicks": [],
         "doubleClicks": [],
@@ -141,6 +145,7 @@ def dispatcher_like(
         "pressedKeys": [],
         "dragTos": [],
         "scrolls": [],
+        "inspections": [],
         "events": [],
         "exits": [],
     }
@@ -198,6 +203,9 @@ def dispatcher_like(
             return {"ok": True, "action": "scrollTerminal"}
         if action == "getTerminalViewport":
             return {"ok": True, "action": "getTerminalViewport", "value": viewport}
+        if action == "inspectTerminal":
+            recorded["inspections"].append(command.get("tabId"))
+            return {"ok": True, "action": "inspectTerminal", "value": inspection}
         if action == "readTerminal":
             return {"ok": True, "action": "readTerminal", "value": terminal_text}
         if action == "getState":

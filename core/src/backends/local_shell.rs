@@ -2280,3 +2280,7 @@ mod tests {
         assert!(cmd.args.is_empty());
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "local_shell_osc133_tests.rs"]
+mod osc133_tests;
