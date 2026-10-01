@@ -21,6 +21,7 @@ import {
   remoteDesktopRemoteClipboardFiles,
   remoteDesktopBindClipboardFiles,
   remoteDesktopCertDecision,
+  remoteDesktopPendingCertPrompt,
   remoteDesktopRequestFullFrame,
   remoteDesktopSetMonitorLayout,
 } from "@/services/api";
@@ -48,6 +49,7 @@ vi.mock("@/services/api", () => ({
   remoteDesktopRemoteClipboardFiles: vi.fn(() => Promise.resolve([])),
   remoteDesktopBindClipboardFiles: vi.fn(() => Promise.resolve(0)),
   remoteDesktopCertDecision: vi.fn(() => Promise.resolve()),
+  remoteDesktopPendingCertPrompt: vi.fn(() => Promise.resolve(null)),
   remoteDesktopRequestFullFrame: vi.fn(() => Promise.resolve()),
   remoteDesktopSetMonitorLayout: vi.fn(() => Promise.resolve()),
 }));
@@ -89,6 +91,7 @@ const mockedSendClipboard = vi.mocked(remoteDesktopSendClipboard);
 const mockedRemoteClipboardFiles = vi.mocked(remoteDesktopRemoteClipboardFiles);
 const mockedBindClipboardFiles = vi.mocked(remoteDesktopBindClipboardFiles);
 const mockedCertDecision = vi.mocked(remoteDesktopCertDecision);
+const mockedPendingCertPrompt = vi.mocked(remoteDesktopPendingCertPrompt);
 const mockedRequestFullFrame = vi.mocked(remoteDesktopRequestFullFrame);
 
 let container: HTMLDivElement;
@@ -100,6 +103,7 @@ beforeEach(() => {
   root = createRoot(container);
   vi.clearAllMocks();
   mockedConnect.mockResolvedValue("rd-1");
+  mockedPendingCertPrompt.mockResolvedValue(null);
   hoisted.stateCbs.length = 0;
   hoisted.clipCbs.length = 0;
   hoisted.certCbs.length = 0;
@@ -421,6 +425,36 @@ describe("useRemoteDesktopSession", () => {
     // Dialog clears optimistically and the verdict is routed to the backend.
     expect(h.get().certPrompt).toBeNull();
     expect(mockedCertDecision).toHaveBeenCalledWith("rd-1", true, true);
+  });
+
+  it("picks up a cert prompt raised before it subscribed (#4004)", async () => {
+    // The backend raises the prompt right after the connect returns — before
+    // the hook listens — so the missed event is fetched once it does.
+    const prompt: RemoteDesktopCertPromptPayload = {
+      session_id: "rd-1",
+      host: "mock.local:3389",
+      fingerprint: "sha256:AA:BB:CC",
+      changed: false,
+    };
+    mockedPendingCertPrompt.mockResolvedValue(prompt);
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+
+    expect(mockedPendingCertPrompt).toHaveBeenCalledWith("rd-1");
+    expect(h.get().certPrompt).toEqual(prompt);
+    act(() => h.get().respondCert(true, false));
+    expect(h.get().certPrompt).toBeNull();
+    expect(mockedCertDecision).toHaveBeenCalledWith("rd-1", true, false);
+  });
+
+  it("shows no cert prompt when none is pending", async () => {
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+
+    expect(mockedPendingCertPrompt).toHaveBeenCalledWith("rd-1");
+    expect(h.get().certPrompt).toBeNull();
   });
 
   it("ignores a cert prompt for a different session", async () => {

@@ -181,6 +181,19 @@ describe("dispatchCommand", () => {
       expect(seen).toContain("click");
     });
 
+    it("holds the left button on the press and releases it on the release (#4004)", async () => {
+      const { deps, container } = setup(`<button data-testid="go">Go</button>`);
+      const seen: string[] = [];
+      const btn = container.querySelector("button")!;
+      btn.addEventListener("mousedown", (e) => seen.push(`mousedown:${e.buttons}`));
+      btn.addEventListener("mouseup", (e) => seen.push(`mouseup:${e.buttons}`));
+
+      await dispatchCommand({ action: "click", testId: "go" }, deps);
+      // Like a real left click: a handler reading the pressed mask (the
+      // remote-desktop canvas) sees the button held, then released.
+      expect(seen).toEqual(["mousedown:1", "mouseup:0"]);
+    });
+
     it("fails when the target is absent", async () => {
       const { deps } = setup(`<div></div>`);
       const res = await dispatchCommand({ action: "click", testId: "go" }, deps);
