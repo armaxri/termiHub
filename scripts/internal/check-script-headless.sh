@@ -28,6 +28,15 @@
 # `agent-update-signing.sh select-key`, all with THROWAWAY keys in a mktemp dir.
 # It needs only OpenSSL 3, uploads nothing and never touches the repo key file.
 #
+# A third section runs build-agents.sh's REAL checksum sidecar writer
+# (`write_checksum`) and its post-build gate (`verify_checksum_sidecars`) on a
+# dummy binary (#1350, #4011): the function bodies are extracted from the script
+# verbatim, so the code under test is the shipped code. It asserts the sidecar is
+# the "<hex>  <name>" + LF format release.yml publishes, that `sha256sum -c`
+# accepts it (and rejects it once the binary is tampered with), and that the
+# gate counts a missing sidecar. The Windows .cmd twin is covered by the
+# `Windows cmd Script Smoke` job (#4032).
+#
 # Wired into the `Shell Script Quality` CI job. Run it from anywhere:
 #   scripts/internal/check-script-headless.sh
 
@@ -181,11 +190,94 @@ lc_refuse "select-key during the overlap without the old key" \
   bash "$SIGNING" --pub "$LC/overlap.pem" select-key \
   AGENT_UPDATE_SIGNING_KEY AGENT_UPDATE_SIGNING_KEY_NEXT
 
+lifecycle_failures=$((failures - help_failures))
+
+# --- build-agents.sh checksum sidecar writer, on a dummy binary (#1350) ---
+SC="$LC/sidecar"
+mkdir -p "$SC/bin"
+sc_ok() { echo "ok    checksum sidecar: $1"; }
+sc_fail() {
+  echo "::error file=scripts/build-agents.sh::checksum sidecar: $1"
+  failures=$((failures + 1))
+}
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256_check() { sha256sum -c "$@"; }
+  sha256_hex() { sha256sum | cut -c1-64; }
+else
+  sha256_check() { shasum -a 256 -c "$@"; }
+  sha256_hex() { shasum -a 256 | cut -c1-64; }
+fi
+# Pull the two functions out of build-agents.sh verbatim (top-level `name() {`
+# through the first column-0 `}`), so a change to them is what gets tested.
+sc_funcs="$(sed -n -e '/^write_checksum() {$/,/^}$/p' \
+  -e '/^verify_checksum_sidecars() {$/,/^}$/p' scripts/build-agents.sh)"
+if ! grep -q '^write_checksum() {$' <<<"$sc_funcs" ||
+  ! grep -q '^verify_checksum_sidecars() {$' <<<"$sc_funcs"; then
+  sc_fail "write_checksum/verify_checksum_sidecars not found in scripts/build-agents.sh"
+else
+  eval "$sc_funcs"
+  printf 'termihub agent checksum smoke\n' >"$SC/bin/termihub-agent"
+  # Called with a path from another directory, as the build loop does.
+  if write_checksum "$SC/bin/termihub-agent"; then
+    sc_ok "write_checksum exited 0"
+  else
+    sc_fail "write_checksum failed on a dummy binary"
+  fi
+  hex="$(sha256_hex <"$SC/bin/termihub-agent")"
+  printf '%s  %s\n' "$hex" termihub-agent >"$SC/expected.sha256"
+  if cmp -s "$SC/expected.sha256" "$SC/bin/termihub-agent.sha256"; then
+    sc_ok "sidecar is '<hex>  <name>' + LF (the release.yml format)"
+  else
+    sc_fail "sidecar bytes differ from '<hex>  termihub-agent' + LF"
+    od -c "$SC/bin/termihub-agent.sha256" 2>&1 | sed 's/^/    | /' || true
+  fi
+  if (cd "$SC/bin" && sha256_check termihub-agent.sha256 >/dev/null 2>&1); then
+    sc_ok "sha256sum -c accepts the sidecar"
+  else
+    sc_fail "sha256sum -c rejected the sidecar build-agents.sh wrote"
+  fi
+  if verify_checksum_sidecars "$SC/bin/termihub-agent" 2>/dev/null; then
+    sc_ok "verify_checksum_sidecars passes a binary with a sidecar"
+  else
+    sc_fail "verify_checksum_sidecars rejected a binary that has a sidecar"
+  fi
+  printf 'no sidecar\n' >"$SC/bin/other-agent"
+  rc=0
+  verify_checksum_sidecars "$SC/bin/termihub-agent" "$SC/bin/other-agent" 2>/dev/null || rc=$?
+  if [ "$rc" -eq 1 ]; then
+    sc_ok "verify_checksum_sidecars counts 1 missing sidecar"
+  else
+    sc_fail "verify_checksum_sidecars returned $rc for 1 missing sidecar (want 1)"
+  fi
+  printf 'tampered\n' >>"$SC/bin/termihub-agent"
+  if (cd "$SC/bin" && sha256_check termihub-agent.sha256 >/dev/null 2>&1); then
+    sc_fail "sha256sum -c accepted the sidecar for a tampered binary"
+  else
+    sc_ok "sha256sum -c rejects a tampered binary"
+  fi
+  # A sidecar that cannot be written must fail the target (WA-CI-036). Root
+  # ignores directory permissions, so this check only means something non-root.
+  if [ "$(id -u)" -ne 0 ]; then
+    mkdir -p "$SC/ro"
+    printf 'x\n' >"$SC/ro/termihub-agent"
+    chmod a-w "$SC/ro"
+    if write_checksum "$SC/ro/termihub-agent" 2>/dev/null; then
+      sc_fail "write_checksum returned 0 although the sidecar could not be written"
+    else
+      sc_ok "write_checksum fails when the sidecar cannot be written"
+    fi
+    chmod u+w "$SC/ro"
+  else
+    echo "skip  checksum sidecar: unwritable-directory check (running as root)"
+  fi
+fi
+
 echo ""
 if [ "$failures" -gt 0 ]; then
   echo "Headless script smoke FAILED: ${help_failures} --help path(s) errored," \
-    "$((failures - help_failures)) signing-lifecycle check(s) failed."
+    "${lifecycle_failures} signing-lifecycle check(s) failed," \
+    "$((failures - help_failures - lifecycle_failures)) checksum-sidecar check(s) failed."
   exit 1
 fi
 echo "Headless script smoke OK: ${#SCRIPTS[@]} script(s) executed their --help path cleanly;" \
-  "the signing-key dry-run lifecycle passed."
+  "the signing-key dry-run lifecycle and the checksum sidecar writer passed."
