@@ -18,6 +18,7 @@ Mixin → concern:
 - :class:`CredentialStoreUi` — switch/unlock the master-password credential store
 - :class:`PasswordPromptUi`  — the SSH password-prompt modal
 - :class:`SshUi`             — the one-call password-SSH connect flow
+- :class:`JumpHostUi`        — the editor's Jump Host section (inline ProxyJump hops)
 - :class:`MonitoringUi`      — remote system-monitoring status bar
 - :class:`SftpUi`            — the SFTP file browser
 - :class:`FilesUi`           — the local file browser (path, rows, create, navigate)
@@ -44,6 +45,7 @@ from .credential_store import CredentialStoreUi
 from .editor import EditorUi
 from .embedded_services import EmbeddedServicesUi
 from .files import FilesUi, file_row_testid
+from .jump_host import JumpHostUi
 from .layout import LayoutUi
 from .manual import ManualUi
 from .lookups import (
@@ -83,6 +85,7 @@ __all__ = [
     "SidebarUi",
     "PasswordPromptUi",
     "SshUi",
+    "JumpHostUi",
     "MonitoringUi",
     "SftpUi",
     "FilesUi",
