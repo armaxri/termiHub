@@ -40,7 +40,7 @@ pnet_packet = "0.35"
 rand = "0.8"
 serial2 = { workspace = true, optional = true }
 serial2-tokio = { workspace = true, optional = true }
-portable-pty = { version = "0.8", optional = true }
+portable-pty = { version = "0.9", optional = true }
 # Cross-platform local-host stats (CPU/mem/swap/disk/network) for the local
 # monitoring collector + provider (PROD-0022). Same crate/version the agent
 # used before the collector moved into core.

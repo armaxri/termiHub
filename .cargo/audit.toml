@@ -23,8 +23,6 @@ ignore = [
     # -- unmaintained (no fix available; crate abandoned upstream) --
     # proc-macro-error: unmaintained, via glib-macros 0.18 (Tauri GTK3 stack); no fix.
     "RUSTSEC-2024-0370",
-    # serial: unmaintained, via portable-pty 0.8 (0.9 moves to serial2).
-    "RUSTSEC-2017-0008",
     # unic-* (next 5 IDs): unmaintained, via urlpattern 0.3 <- tauri-utils; no fix.
     # unic-char-property.
     "RUSTSEC-2025-0081",
