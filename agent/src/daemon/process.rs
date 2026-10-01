@@ -408,6 +408,13 @@ async fn daemon_loop(
         .map(|browser| files_rpc::spawn_file_worker(browser, file_event_tx.clone()));
     let mut uploads = Uploads::default();
 
+    // Whether the backend reported the session files-only (#4081): its SSH host
+    // refused the shell but SFTP works. Told to the attached worker when it
+    // flips, and to every worker that attaches afterwards.
+    let mut files_only = false;
+    let files_only_settled = wait_files_only(connection.files_only_watch());
+    tokio::pin!(files_only_settled);
+
     let capability_flags = capability_flags(
         process_manager.is_some(),
         monitor_cmd_tx.is_some(),
@@ -498,6 +505,15 @@ async fn daemon_loop(
                         send_exited_async(&mut agent_writer, 0).await;
                         return Ok(());
                     }
+                }
+            }
+
+            // The backend kept the session up files-only (#4081).
+            () = &mut files_only_settled, if !files_only => {
+                info!(session_id, "Session is files-only: the host refused the shell");
+                files_only = true;
+                if let Some(ref sink) = agent_writer {
+                    sink.send(MSG_FILES_ONLY, &[]);
                 }
             }
 
@@ -791,6 +807,13 @@ async fn daemon_loop(
         // Send ready signal
         sink.send(MSG_READY, &[]);
 
+        // A files-only session tells every worker that attaches (#4081). After
+        // Ready, so it reaches the reader of a worker of any version — a
+        // pre-#4081 one logs and skips the unknown frame.
+        if files_only {
+            sink.send(MSG_FILES_ONLY, &[]);
+        }
+
         agent_writer = Some(sink);
 
         // Spawn reader task for agent commands
@@ -799,6 +822,17 @@ async fn daemon_loop(
             agent_reader_loop(read_half, tx, gen).await;
         }));
     }
+}
+
+/// Resolve once the backend reports the session files-only (#4081); never for
+/// a backend without the watch, or one whose watch closes first.
+async fn wait_files_only(watch: Option<tokio::sync::watch::Receiver<bool>>) {
+    if let Some(mut watch) = watch {
+        if watch.wait_for(|files_only| *files_only).await.is_ok() {
+            return;
+        }
+    }
+    std::future::pending::<()>().await;
 }
 
 /// The [`MSG_CAPABILITIES`] flags for a backend with / without a process
@@ -1632,6 +1666,9 @@ pub(crate) mod tests {
 
     /// Session file browsing through the daemon, end to end (#3242).
     mod files_rpc_e2e;
+
+    /// A files-only session reaches the desktop, end to end (#4081).
+    mod files_only_e2e;
 
     /// The daemon's half of the session heartbeat (#3140).
     mod heartbeat_tests;

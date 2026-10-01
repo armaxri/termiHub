@@ -157,7 +157,11 @@ use termihub_core::monitoring::{
 /// `protocolVersion`, `agentVersion`, `clientId`, `updateAuthTokenPath`. A client
 /// that negotiates an older version still gets the legacy snake_case keys, and
 /// the desktop reads both.
-const AGENT_PROTOCOL_VERSION: &str = "0.24.0";
+/// Bumped to 0.25.0 for the additive `connection.filesOnly` notification
+/// (#4081): an agent-hosted SSH session whose host refused the shell but serves
+/// SFTP stays up for files. An older desktop ignores it; an older agent never
+/// sends it, and its session ends as before.
+const AGENT_PROTOCOL_VERSION: &str = "0.25.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -3781,10 +3785,11 @@ mod tests {
     /// capability (#3242), and 0.23.0 the unattended `connection.create` with
     /// its `unattendedConnect` capability (#3877).
     ///
-    /// 0.24.0 made the `initialize` result envelope camelCase (#3051).
+    /// 0.24.0 made the `initialize` result envelope camelCase (#3051), and
+    /// 0.25.0 added the `connection.filesOnly` notification (#4081).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.24.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.25.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and

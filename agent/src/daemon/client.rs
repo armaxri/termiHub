@@ -26,8 +26,8 @@ use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
 use crate::protocol::methods::{
     ConnectionErrorNotification, ConnectionEvictedNotification, ConnectionExitNotification,
-    ConnectionOutputNotification, CONNECTION_ERROR, CONNECTION_EVICTED, CONNECTION_EXIT,
-    CONNECTION_OUTPUT,
+    ConnectionFilesOnlyNotification, ConnectionOutputNotification, CONNECTION_ERROR,
+    CONNECTION_EVICTED, CONNECTION_EXIT, CONNECTION_FILES_ONLY, CONNECTION_OUTPUT,
 };
 use crate::transport::to_params;
 
@@ -153,6 +153,17 @@ pub(crate) fn evicted_notification(session_id: &str, reason: &str) -> JsonRpcNot
         to_params(&ConnectionEvictedNotification {
             session_id: session_id.to_owned(),
             reason: reason.to_owned(),
+        }),
+    )
+}
+
+/// Build the `connection.filesOnly` notification (#4081): the session's SSH
+/// host refused the shell but SFTP works, so it stays up for files.
+pub(crate) fn files_only_notification(session_id: &str) -> JsonRpcNotification {
+    JsonRpcNotification::new(
+        CONNECTION_FILES_ONLY,
+        to_params(&ConnectionFilesOnlyNotification {
+            session_id: session_id.to_owned(),
         }),
     )
 }
@@ -1263,6 +1274,13 @@ async fn read_frames(
                     let _ = notification_tx
                         .send(evicted_notification(session_id, EVICTED_REASON_TAKEOVER));
                     return;
+                }
+                MSG_FILES_ONLY => {
+                    // #4081: the host refused the shell but SFTP works; the
+                    // session stays up for files. Tell the desktop so its tab
+                    // shows the "no shell" panel instead of an empty terminal.
+                    info!("Session {session_id} is files-only (shell refused, SFTP works)");
+                    let _ = notification_tx.send(files_only_notification(session_id));
                 }
                 MSG_PROCESS_RESPONSE => {
                     if let Some(features) = features {

@@ -179,6 +179,13 @@ pub const CONNECTION_EXIT: &str = "connection.exit";
 /// reconnect) and offers **Reclaim** (`connection.attach` with `takeover: true`).
 /// Append-only: an older desktop ignores the unknown notification.
 pub const CONNECTION_EVICTED: &str = "connection.evicted";
+/// A hosted session became **files-only** (#4081): its SSH host refused the
+/// interactive shell but SFTP works, so the session stays up for the file
+/// browser and editor instead of ending. Params:
+/// [`ConnectionFilesOnlyNotification`]. Sent at most once per attach — again on
+/// every later attach of a session that is still files-only. Additive (0.25.0):
+/// an older agent never sends it, an older desktop ignores it.
+pub const CONNECTION_FILES_ONLY: &str = "connection.filesOnly";
 pub const CONNECTION_MONITORING_DATA: &str = "connection.monitoring.data";
 /// A monitored host's collect-loop status changed (#3321). Optional: older
 /// agents never send it, older desktops ignore it.
@@ -777,6 +784,12 @@ pub struct ConnectionEvictedNotification {
     /// off `session_id`, so a missing reason still parses.
     #[serde(default)]
     pub reason: String,
+}
+
+/// Payload of a [`CONNECTION_FILES_ONLY`] notification (agent → desktop, #4081).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConnectionFilesOnlyNotification {
+    pub session_id: String,
 }
 
 // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────────
@@ -3775,6 +3788,7 @@ mod tests {
         assert_eq!(CONNECTION_OUTPUT, "connection.output");
         assert_eq!(CONNECTION_EXIT, "connection.exit");
         assert_eq!(CONNECTION_EVICTED, "connection.evicted");
+        assert_eq!(CONNECTION_FILES_ONLY, "connection.filesOnly");
         assert_eq!(CONNECTION_MONITORING_DATA, "connection.monitoring.data");
         assert_eq!(CONNECTION_MONITORING_STATUS, "connection.monitoring.status");
         assert_eq!(AGENT_UPDATE_PENDING, "agent.update_pending");
@@ -4385,6 +4399,12 @@ mod tests {
         let n: ConnectionEvictedNotification =
             serde_json::from_value(json!({ "session_id": "s-2" })).unwrap();
         assert_eq!(n.session_id, "s-2");
+
+        let files_only = json!({ "session_id": "s-1" });
+        let n: ConnectionFilesOnlyNotification =
+            serde_json::from_value(files_only.clone()).unwrap();
+        assert_eq!(n.session_id, "s-1");
+        assert_eq!(serde_json::to_value(&n).unwrap(), files_only);
 
         let open = json!({ "stream_id": "st-1" });
         let n: AgentForwardOpenParams = serde_json::from_value(open.clone()).unwrap();
