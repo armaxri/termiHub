@@ -122,3 +122,14 @@ jobs:
       # produces the actual installers on push to develop/main.
       - name: Build Tauri app (compile only, no installers)
         run: pnpm tauri build --no-bundle --target ${{ matrix.rust_target }}
+
+      # Shell-integration CLI smoke (#4010, SI-5/6/7): the release binary's
+      # pre-init `install-shell-integration` / `uninstall-shell-integration`
+      # must exit 0 as an unprivileged user, never reach for sudo/pkexec, and
+      # write then remove the per-user XDG launcher + Nautilus script. The script
+      # sandboxes HOME / XDG_* / TERMIHUB_CONFIG_DIR into a temp dir.
+      - name: Shell-integration CLI smoke (install/uninstall, no elevation)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: >-
+          ./scripts/internal/shell-integration-cli-smoke.sh
+          target/${{ matrix.rust_target }}/release/termihub

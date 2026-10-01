@@ -316,6 +316,34 @@ jobs:
             cargo test -p termihub-core --all-features -- --test-threads=1
           fi
 
+      - name: Run the Podman variant of the directory-mount spawn test
+        # core/tests/docker_spawn.rs::podman_spawn_mounts_directory_and_opens_cd_to_mount
+        # (#1372, #4010): the same /workspace bind-mount spawn as the Docker
+        # variant above, through an explicit `runtime: podman` session. Podman is
+        # preinstalled on the ubuntu runner; this starts its rootless API service
+        # on a private socket and points the backend at it via CONTAINER_HOST.
+        # TERMIHUB_REQUIRE_PODMAN=1 turns an unreachable socket into a hard
+        # failure, and the grep rejects a run where the test did not execute.
+        # Runs even when an earlier suite failed.
+        if: ${{ !cancelled() }}
+        env:
+          TERMIHUB_REQUIRE_PODMAN: "1"
+        run: |
+          sock="$RUNNER_TEMP/podman.sock"
+          podman system service --time=0 "unix://$sock" &
+          service_pid=$!
+          trap 'kill "$service_pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 30); do
+            [ -S "$sock" ] && break
+            sleep 1
+          done
+          test -S "$sock"
+          CONTAINER_HOST="unix://$sock" cargo test -p termihub-core --all-features \
+            --test docker_spawn -- --exact --nocapture \
+            podman_spawn_mounts_directory_and_opens_cd_to_mount 2>&1 | tee podman-spawn.log
+          grep -q "test result: ok. 1 passed" podman-spawn.log
+          ! grep -q "SKIPPED" podman-spawn.log
+
       - name: Run desktop SFTP suites against the fixtures
         # src-tauri/tests/sftp_transfer.rs + sftp_transfer_resume.rs (#3039) drive
         # the desktop transfer executor against the `sftp-stress` fixture (the

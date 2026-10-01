@@ -6,11 +6,11 @@ use tauri::{AppHandle, State};
 use crate::connection::manager::ConnectionManager;
 use crate::connection::settings::AppSettings;
 use crate::connection::shell_integration::{
-    self, PickedTarget, ShellIntegrationSettings, ShellIntegrationStatus,
+    self, DetectedFileManager, PickedTarget, ShellIntegrationSettings, ShellIntegrationStatus,
 };
 use crate::spawn::registry;
 use crate::utils::errors::TerminalError;
-use crate::utils::portable::detect_app_mode;
+use crate::utils::portable::{detect_app_mode, AppMode};
 
 /// Map an OS context-menu registration failure into a typed [`TerminalError`]
 /// (ARCH-006 / TAURI-008 / ERR-008 Phase 2), preserving the exact anyhow chain
@@ -33,21 +33,33 @@ fn persist_error(e: impl std::fmt::Display) -> TerminalError {
 /// facts (executable path, portable mode, detected file managers).
 fn current_status(manager: &ConnectionManager) -> ShellIntegrationStatus {
     let settings = manager.get_settings();
-    let current_exe = std::env::current_exe()
-        .ok()
-        .map(|p| p.to_string_lossy().into_owned());
-    // Portable mode is best-effort: if detection fails, assume installed.
-    let portable = detect_app_mode()
-        .map(|mode| mode.is_portable())
-        .unwrap_or(false);
-    let detected = registry::detect_file_managers();
-
-    shell_integration::build_status(
+    status_from_runtime(
         &settings.shell_integration,
-        current_exe.as_deref(),
-        portable,
-        detected,
+        std::env::current_exe().ok().as_deref(),
+        detect_app_mode(),
+        registry::detect_file_managers(),
     )
+}
+
+/// Fold the raw runtime facts into a [`ShellIntegrationStatus`]: the current
+/// executable (when resolvable) is compared against the recorded
+/// `registered_exe_path` for staleness, and portable mode is reported so the UI
+/// can exempt it — a portable binary travels with its `data/` directory, so a
+/// moved executable is expected there rather than an error.
+///
+/// Portable detection is best-effort: if it fails, assume an installed app (not
+/// portable), so a genuinely moved installed binary still surfaces as stale.
+/// Split from [`current_status`] so the staleness wiring is unit-testable
+/// without touching the real executable path.
+fn status_from_runtime(
+    settings: &ShellIntegrationSettings,
+    current_exe: Option<&std::path::Path>,
+    app_mode: anyhow::Result<AppMode>,
+    detected: Vec<DetectedFileManager>,
+) -> ShellIntegrationStatus {
+    let current_exe = current_exe.map(|p| p.to_string_lossy().into_owned());
+    let portable = app_mode.map(|mode| mode.is_portable()).unwrap_or(false);
+    shell_integration::build_status(settings, current_exe.as_deref(), portable, detected)
 }
 
 /// Reflect the just-persisted `AppSettings` document — including the updated
@@ -290,6 +302,138 @@ mod tests {
         ));
 
         assert_eq!(settings.shell_integration.entries, vec![entry("a")]);
+    }
+
+    // ── Staleness wiring (#4010) ─────────────────────────────────────────────
+    //
+    // `status_from_runtime` is what `get_shell_integration_status` and every
+    // mutating command return: it compares the recorded `registered_exe_path`
+    // with the current executable and carries the portable flag the UI uses to
+    // exempt a moved portable binary from the "reinstall" banner.
+
+    fn registered_at(path: &str) -> ShellIntegrationSettings {
+        ShellIntegrationSettings {
+            registered: true,
+            registered_exe_path: Some(path.to_string()),
+            ..ShellIntegrationSettings::default()
+        }
+    }
+
+    fn portable_mode() -> anyhow::Result<AppMode> {
+        Ok(AppMode::Portable {
+            data_dir: std::path::PathBuf::from("/media/usb/termiHub/data"),
+        })
+    }
+
+    #[test]
+    fn registered_at_the_current_exe_is_not_stale() {
+        let status = status_from_runtime(
+            &registered_at("/opt/termihub/termiHub"),
+            Some(std::path::Path::new("/opt/termihub/termiHub")),
+            Ok(AppMode::Installed),
+            Vec::new(),
+        );
+        assert!(status.registered);
+        assert!(status.exe_path_matches);
+        assert!(!status.stale);
+        assert!(!status.portable);
+        assert_eq!(
+            status.current_exe_path.as_deref(),
+            Some("/opt/termihub/termiHub")
+        );
+    }
+
+    #[test]
+    fn registered_at_a_moved_exe_is_stale() {
+        let status = status_from_runtime(
+            &registered_at("/opt/termihub/termiHub"),
+            Some(std::path::Path::new("/home/user/Apps/termiHub")),
+            Ok(AppMode::Installed),
+            Vec::new(),
+        );
+        assert!(!status.exe_path_matches);
+        assert!(
+            status.stale,
+            "an installed binary that moved needs re-registration"
+        );
+        assert!(!status.portable);
+        assert_eq!(
+            status.registered_exe_path.as_deref(),
+            Some("/opt/termihub/termiHub")
+        );
+        assert_eq!(
+            status.current_exe_path.as_deref(),
+            Some("/home/user/Apps/termiHub")
+        );
+    }
+
+    /// The portable exemption: a moved portable binary is still reported stale
+    /// (the registration really does point at the old path), but the status
+    /// carries `portable` so the settings UI presents it as expected instead of
+    /// raising the "Executable moved" banner.
+    #[test]
+    fn moved_portable_exe_is_stale_but_flagged_portable() {
+        let status = status_from_runtime(
+            &registered_at("/media/old-usb/termiHub/termiHub"),
+            Some(std::path::Path::new("/media/usb/termiHub/termiHub")),
+            portable_mode(),
+            Vec::new(),
+        );
+        assert!(status.stale);
+        assert!(status.portable);
+    }
+
+    #[test]
+    fn portable_detection_failure_assumes_installed() {
+        // A failed detection must not hide a genuinely moved installed binary.
+        let status = status_from_runtime(
+            &registered_at("/opt/termihub/termiHub"),
+            Some(std::path::Path::new("/somewhere/else/termiHub")),
+            Err(anyhow::anyhow!("cannot resolve executable directory")),
+            Vec::new(),
+        );
+        assert!(status.stale);
+        assert!(!status.portable);
+    }
+
+    #[test]
+    fn unresolvable_current_exe_is_stale_when_registered_only() {
+        // No current executable never matches the recorded path…
+        let registered = status_from_runtime(
+            &registered_at("/opt/termihub/termiHub"),
+            None,
+            Ok(AppMode::Installed),
+            Vec::new(),
+        );
+        assert!(registered.current_exe_path.is_none());
+        assert!(!registered.exe_path_matches);
+        assert!(registered.stale);
+
+        // …but an unregistered integration is never stale.
+        let unregistered = status_from_runtime(
+            &ShellIntegrationSettings::default(),
+            None,
+            Ok(AppMode::Installed),
+            Vec::new(),
+        );
+        assert!(!unregistered.stale);
+    }
+
+    #[test]
+    fn detected_file_managers_pass_through_unchanged() {
+        let managers = vec![DetectedFileManager {
+            id: "thunar".to_string(),
+            name: "Thunar".to_string(),
+            detected: true,
+            version: Some("4.18.4".to_string()),
+        }];
+        let status = status_from_runtime(
+            &ShellIntegrationSettings::default(),
+            None,
+            Ok(AppMode::Installed),
+            managers.clone(),
+        );
+        assert_eq!(status.detected_file_managers, managers);
     }
 
     // ── Typed error envelope (ARCH-006 / TAURI-008 / ERR-008 Phase 2) ─────────
