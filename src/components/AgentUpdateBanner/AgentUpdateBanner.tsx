@@ -33,8 +33,9 @@ export function AgentUpdateBanner({ agentId, agentName }: AgentUpdateBannerProps
   const dismissAgentUpdate = useAppStore((s) => s.dismissAgentUpdate);
   // A coordinated-strategy agent stages its self-update and waits for a
   // coordinated apply (#1351): "Apply Now" must go through `agent.request_update`
-  // so every *other* connected host is warned and given a clean disconnect
-  // window, rather than hard-cut by the plain deferred apply (#1602).
+  // so every *other* connected host is warned and given a clean reconnect
+  // window, rather than updated without notice by the plain deferred apply
+  // (#1602). Neither path cuts the other hosts off (#4037).
   const { remoteAgents } = useProjectedAgents();
   const isCoordinated =
     remoteAgents.find((a) => a.id === agentId)?.config.updateStrategy === "coordinated";

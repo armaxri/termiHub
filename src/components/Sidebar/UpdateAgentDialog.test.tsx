@@ -101,8 +101,33 @@ describe("UpdateAgentDialog", () => {
     expect(warning).not.toBeNull();
     expect(warning?.textContent).toContain("staging-pc");
     expect(warning?.textContent).toContain("macbook-anne");
+  });
+
+  it("says other hosts keep their sessions and are not cut off (#4037)", () => {
+    // Each host runs its own agent worker: an update swaps the installed binary
+    // and re-execs only this desktop's worker. The others keep running and move
+    // to the new version when they reconnect (agent/tests/self_update_integration.rs).
+    render(<UpdateAgentDialog {...baseProps()} otherHosts={HOSTS} />);
+    const warning = document.querySelector('[data-testid="update-agent-other-hosts"]');
+    expect(warning?.textContent).toContain(
+      "Their sessions keep running. They switch to the new version when they reconnect."
+    );
+    expect(warning?.textContent).not.toMatch(/cut|disconnect notice/i);
+  });
+
+  it("offers Notify Others & Update only when the coordinated strategy sends a notice", () => {
+    const coordinated = { ...CONFIG, updateStrategy: "coordinated" } as RemoteAgentConfig;
+    render(<UpdateAgentDialog {...baseProps()} config={coordinated} otherHosts={HOSTS} />);
     const confirm = document.querySelector('[data-testid="update-agent-confirm"]');
     expect(confirm?.textContent).toContain("Notify Others & Update");
+  });
+
+  it("offers a plain Update with other hosts when no notice is sent (immediate strategy)", () => {
+    const immediate = { ...CONFIG, updateStrategy: "immediate" } as RemoteAgentConfig;
+    render(<UpdateAgentDialog {...baseProps()} config={immediate} otherHosts={HOSTS} />);
+    const confirm = document.querySelector('[data-testid="update-agent-confirm"]');
+    expect(confirm?.textContent).toContain("Update");
+    expect(confirm?.textContent).not.toContain("Notify");
   });
 
   it("calls updateAgent (not force) when there are no other hosts", async () => {

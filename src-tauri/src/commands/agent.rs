@@ -972,8 +972,10 @@ pub async fn update_agent(
 
 /// Force an agent update, bypassing the connected-host guard.
 ///
-/// Called after the user confirms in the Update dialog that other connected
-/// hosts may be hard-cut (#1349). Otherwise identical to [`update_agent`].
+/// Called after the user confirms in the Update dialog that other hosts are
+/// connected (#1349). Those hosts are not cut off: `agent.shutdown` stops only
+/// this desktop's worker, and theirs keep running until they reconnect (#4037).
+/// Otherwise identical to [`update_agent`].
 #[tauri::command]
 pub async fn update_agent_force(
     agent_id: String,
@@ -1092,7 +1094,7 @@ async fn run_immediate_update(
 /// The coordinated desktop-push update (#1616): stage the binary, then hand it
 /// to `agent.request_update` so the agent broadcasts `agent.update_pending` to
 /// every *other* connected host, gives them a clean disconnect window, and
-/// self-applies (swap + re-exec) — never hard-cutting sessions.
+/// self-applies (swap + re-exec). Sessions survive in their daemons.
 ///
 /// The connected-host guard is intentionally skipped: the notice *is* the
 /// courtesy. On a **Windows** host the agent cannot self-swap a running binary
