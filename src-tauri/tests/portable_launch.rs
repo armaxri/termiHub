@@ -24,7 +24,7 @@
 //! these variables, and uninstalling also edits the real HKCU registry.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Output};
 
 use tempfile::TempDir;
@@ -128,7 +128,7 @@ impl PortableLaunch {
 
 /// Every path under `dir` whose file name mentions termiHub, relative to `dir`.
 #[cfg(not(windows))]
-fn termihub_entries_under(dir: &Path) -> Vec<PathBuf> {
+fn termihub_entries_under(dir: &std::path::Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(current) = stack.pop() {
