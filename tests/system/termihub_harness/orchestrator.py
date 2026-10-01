@@ -246,6 +246,32 @@ def _terminate_webview2_children(user_data_dir: Path, timeout: float = 5.0) -> N
     _terminate_procs(victims, timeout)
 
 
+#: WebView2's process-singleton lock inside a user-data folder. Chromium opens
+#: it delete-on-close without delete sharing, so it exists exactly while a
+#: browser process still holds the folder.
+WEBVIEW2_LOCKFILE = Path("EBWebView") / "lockfile"
+
+
+def _wait_webview2_unlocked(user_data_dir: Path, timeout: float = 10.0) -> bool:
+    """Windows-only: wait until no WebView2 browser process holds ``user_data_dir``.
+
+    Reaping the hosts does not release the folder instantly. A relaunch that
+    races the dying browser fails to create its webview with "The requested
+    resource is in use" (0x800700AA), leaving an app with no bridge (#4017).
+    Returns True once the lock is gone (or off Windows), False on timeout.
+    """
+    if platform.system() != "Windows":
+        return True
+    lockfile = user_data_dir / WEBVIEW2_LOCKFILE
+    deadline = time.monotonic() + timeout
+    while lockfile.exists():
+        if time.monotonic() >= deadline:
+            print(f"[app] WebView2 data folder still locked after {timeout}s: {lockfile}")
+            return False
+        time.sleep(0.1)
+    return True
+
+
 class AppInstance:
     """A launchable, killable, restartable desktop app process.
 
@@ -412,6 +438,7 @@ class AppInstance:
             # WebView2 hosts live outside the app's process tree; reap the ones
             # pinned to this instance so they don't pile up (issue #1022).
             _terminate_webview2_children(self._webview2_data_dir)
+            _wait_webview2_unlocked(self._webview2_data_dir)
             if self._process.stdout is not None:
                 try:
                     self._process.stdout.close()  # EOF so the pump thread exits

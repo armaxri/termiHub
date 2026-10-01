@@ -137,6 +137,23 @@ def test_terminal_scroll_round_trip(bridge):
         assert driver.terminal_viewport() == {"viewportY": 5, "baseY": 42}
 
 
+def test_inspect_terminal_round_trip(bridge):
+    inspection = {
+        "commandMarks": {
+            "commands": [{"state": "finished", "exitCode": 0}],
+            "lastCommandOutput": "1\n2\n3",
+        },
+        "inlineImages": {"active": True, "storageUsage": 0.01},
+    }
+    handler = dispatcher_like(inspection=inspection)
+    with FakeApp(bridge.port, handler):
+        driver = bridge.wait_for_app(timeout=5)
+
+        assert driver.inspect_terminal() == inspection
+        assert driver.inspect_terminal(tab_id="tab-3") == inspection
+        assert handler.recorded["inspections"] == [None, "tab-3"]
+
+
 def test_pointer_and_window_verbs_round_trip(bridge):
     handler = dispatcher_like()
     with FakeApp(bridge.port, handler):

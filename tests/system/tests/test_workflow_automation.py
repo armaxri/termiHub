@@ -9,7 +9,9 @@ local-shell session and assert the command actually reaches the terminal.
 The "Add step…" menu is the #1868 regression surface — a Radix menu that
 rendered in the DOM but was dead in the real app while jsdom unit tests passed.
 :meth:`WorkflowUi.add_step` asserts the step count actually changes, so a menu
-item that renders-but-does-nothing fails here.
+item that renders-but-does-nothing fails here. The run-macro step's Macro
+select is the same kind of portalled listbox inside the modal;
+:meth:`WorkflowUi.pick_macro` clicks an option in the real webview (#4012).
 
 The Workflows activity-bar item is experimental-gated (re-gated as experimental
 on develop), so every suite enables experimental features before opening it.
@@ -142,3 +144,57 @@ class TestWorkflowRun(WorkflowUi, TerminalUi, SettingsUi, SidebarUi, SystemTest)
 
         assert first in self.wait_for_output(first)
         assert second in self.wait_for_output(second)
+
+    def test_run_macro_step_picks_a_macro_and_plays_it(self):
+        # #1868 / #4012: the Macro select inside the editor modal must be
+        # clickable in the real webview — pick a macro, save, and run it.
+        macro_name = unique_name("wf-macro")
+        marker = unique_name("WF_MACRO").replace("-", "_")
+        self.ensure_terminal()
+        macro_id = self._create_macro(macro_name, f"echo {marker}\\r")
+
+        name = unique_name("wf-pick")
+        self.enable_experimental_features()
+        self.open_workflows_sidebar()
+        self.open_new_workflow()
+        self.add_step("run-macro")
+        self.pick_macro(0, macro_id, macro_name)
+        # Picking from the listbox must not dismiss the editor modal.
+        assert self.editor_open()
+        self.set_name(name)
+        self.wait(lambda: not self.save_disabled(), what="Save to enable")
+        self.save_workflow()
+
+        saved = self.wait(lambda: self.find_workflow(name), what=f"the saved workflow {name!r}")
+        assert len(saved["steps"]) == 1
+        assert saved["steps"][0]["kind"] == "run-macro"
+        assert saved["steps"][0]["macroId"] == macro_id
+
+        self.run_workflow(saved["id"])
+        assert marker in self.wait_for_output(marker)
+
+    def _create_macro(self, name: str, step_text: str) -> str:
+        """Author a one-step macro in the Macros sidebar; return its id."""
+        self._ensure_sidebar("macros", "activity-bar-macros")
+        self.wait(lambda: self.driver.exists("macro-sidebar"), what="the Macros sidebar")
+        self.driver.click("macro-new-btn")
+        self.wait(lambda: self.driver.exists("macro-editor-dialog"), what="the macro editor")
+        self.driver.type("macro-editor-name", name)
+        self.driver.click("macro-editor-add-step")
+        self.wait(
+            lambda: self.driver.exists("macro-editor-step-data-0"), what="the first macro step"
+        )
+        self.driver.type("macro-editor-step-data-0", step_text)
+        self.wait(lambda: not self.is_disabled("macro-editor-save"), what="Save to enable")
+        self.driver.click("macro-editor-save")
+        self.wait(
+            lambda: not self.driver.exists("macro-editor-dialog"), what="the macro editor to close"
+        )
+        macro = self.wait(
+            lambda: next(
+                (m for m in self.driver.get_state("macros") or [] if m.get("name") == name),
+                None,
+            ),
+            what=f"the saved macro {name!r}",
+        )
+        return macro["id"]

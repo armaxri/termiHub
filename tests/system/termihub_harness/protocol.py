@@ -48,6 +48,7 @@ BRIDGE_ACTIONS: frozenset[str] = frozenset(
         "getTerminalViewport",
         "getText",
         "getValue",
+        "inspectTerminal",
         "listWindows",
         "pressKey",
         "projectionDispatch",

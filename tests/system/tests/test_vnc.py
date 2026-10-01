@@ -118,6 +118,16 @@ class _VncSuite(
         )
         return name
 
+    @staticmethod
+    def resize_target(canvas: tuple[int, int]) -> tuple[int, int]:
+        """A window size that really changes the tab's canvas.
+
+        The default 1280x800 window leaves the tab a ~970px canvas next to the
+        sidebar, so "grow to 1280x800" was a no-op there (#4017): shrink a wide
+        canvas instead, and only grow a narrow one.
+        """
+        return (1000, 650) if canvas[0] > 800 else (1280, 800)
+
     def wait_for_pattern(self, *, scale_mode: str = "fit", what: str = "") -> None:
         """Wait for the four-quadrant pattern at the native 1024x768 size."""
         self.wait(
@@ -177,7 +187,7 @@ class TestVncResize(_VncSuite):
         self.wait_for_pattern(what="the pattern before the resize")
         before = self.canvas_size()
 
-        target = (900, 650) if before[0] > 1000 else (1280, 800)
+        target = self.resize_target(before)
         self.driver.resize_window(*target)
         after = self.wait(
             lambda: (lambda size: size if size != before else None)(self.canvas_size()),
@@ -231,7 +241,7 @@ class TestVncDynamicResolution(_VncSuite):
             )
 
             canvas = self.canvas_size()
-            target = (900, 650) if canvas[0] > 1000 else (1280, 800)
+            target = self.resize_target(canvas)
             self.driver.resize_window(*target)
             self.wait(
                 lambda: self.canvas_size() != canvas,

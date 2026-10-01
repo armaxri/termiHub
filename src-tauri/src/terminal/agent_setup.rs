@@ -18,7 +18,7 @@ use crate::terminal::backend::RemoteAgentConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::remote_exec::{
     detect_binary_arch, detect_remote_info, expected_arch_for_uname, remove_via_sftp,
-    upload_bytes_via_sftp, upload_via_sftp,
+    upload_bytes_via_sftp, upload_via_sftp_cancellable,
 };
 use crate::utils::ssh_auth::connect_and_authenticate;
 use termihub_core::backends::ssh::handler::SshSession;
@@ -236,7 +236,7 @@ where
 /// context.
 ///
 /// The background phase calls SSH/SFTP helpers (`connect_and_authenticate`,
-/// `upload_via_sftp`) that run async russh code via `block_in_place` plus
+/// `upload_via_sftp_cancellable`) that run async russh code via `block_in_place` plus
 /// `Handle::current().block_on(..)` internally. Both require a Tokio runtime
 /// context on the calling thread. A raw `std::thread` carries none, so invoking
 /// the helpers there aborts the whole process — the same crash fixed for the
@@ -343,7 +343,9 @@ fn run_setup_background(
         return;
     }
     emit_progress(app_handle, agent_id, "upload", "Uploading agent binary...");
-    match upload_via_sftp(&sftp_session, &binary_path, upload_path) {
+    // The token is raced against every chunk, so a Cancel mid-upload stops the
+    // transfer promptly instead of waiting for it to finish (#4060).
+    match upload_via_sftp_cancellable(&sftp_session, &binary_path, upload_path, cancel) {
         Ok(bytes) => {
             info!("Agent setup: uploaded {} bytes", bytes);
             emit_progress(
@@ -352,6 +354,11 @@ fn run_setup_background(
                 "upload",
                 &format!("Uploaded {} bytes", bytes),
             );
+        }
+        Err(TerminalError::Cancelled) => {
+            rollback_uploaded_binary(&sftp_session, upload_path);
+            report_setup_cancelled(agent_id, session_id, app_handle, session_manager, rt_handle);
+            return;
         }
         Err(e) => {
             error!("Agent setup: upload failed: {}", e);

@@ -1,0 +1,5 @@
+{
+  "cols": 80,
+  "shell": "zsh",
+  "transcript": "\u001b]133;A\u0007\r\u001b[0m\u001b[27m\u001b[24m\u001b[Juser@host user % \u001b]133;B\u0007\u001b[K\u001b[?2004hs\bseq 3\u001b[?2004l\r\r\n\u001b]133;C\u00071\r\n2\r\n3\r\n\u001b[1m\u001b[7m%\u001b[27m\u001b[1m\u001b[0m                                                                               \r \r\u001b]133;D;0\u0007\u001b]7;file:///Users/user\u0007\u001b]133;A\u0007\r\u001b[0m\u001b[27m\u001b[24m\u001b[Juser@host user % \u001b]133;B\u0007\u001b[K\u001b[?2004hf\bfalse\u001b[?2004l\r\r\n\u001b]133;C\u0007\u001b[1m\u001b[7m%\u001b[27m\u001b[1m\u001b[0m                                                                               \r \r\u001b]133;D;1\u0007\u001b]7;file:///Users/user\u0007\u001b]133;A\u0007"
+}

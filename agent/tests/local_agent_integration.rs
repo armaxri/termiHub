@@ -1193,6 +1193,47 @@ fn live_agent_tcp_agent_handles_multiple_sequential_connections() {
     }
 }
 
+/// MT-NET-19 (#3692): `tool.run` of the Open Ports tool on a **real agent**
+/// reports the agent host's listening sockets. The test opens its own TCP
+/// listener on the agent's host (this machine — the agent is a local process),
+/// then asks the agent over JSON-RPC: the listener must appear, attributed to
+/// this test process's PID (not the agent's), proving the list is the host's
+/// socket table read by the agent rather than anything agent-internal.
+#[test]
+fn live_agent_tcp_tool_run_open_ports_reports_agent_host_listener() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind probe listener");
+    let port = listener.local_addr().unwrap().port();
+    let suffix = format!(":{port}");
+
+    let agent = LocalAgent::spawn();
+    let mut client = agent.client();
+    client.initialize();
+
+    let resp = client.rpc("tool.run", json!({ "toolId": "open_ports", "params": {} }));
+    let ports = resp["result"]["result"]["ports"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected a ports array from tool.run: {resp}"));
+    let hit = ports
+        .iter()
+        .find(|p| {
+            p["protocol"] == "TCP"
+                && p["localAddr"]
+                    .as_str()
+                    .is_some_and(|a| a.ends_with(&suffix))
+        })
+        .unwrap_or_else(|| {
+            panic!("probe listener 127.0.0.1{suffix} missing from the agent's open ports: {resp}")
+        });
+    if let Some(pid) = hit["pid"].as_u64() {
+        assert_eq!(
+            pid,
+            u64::from(std::process::id()),
+            "listener must be attributed to the test process that owns it: {hit}"
+        );
+    }
+    drop(listener);
+}
+
 #[test]
 fn agent_version_flag_prints_version() {
     let output = Command::new(agent_binary())
