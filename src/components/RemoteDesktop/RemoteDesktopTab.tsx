@@ -284,8 +284,14 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
             value={clipboardDraft}
             onChange={(e) => setClipboardDraft(e.target.value)}
             placeholder="Text synced with the remote clipboard…"
+            data-testid="remote-desktop-clipboard-text"
           />
-          <Button variant="secondary" size="sm" onClick={handleSendClipboard}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleSendClipboard}
+            data-testid="remote-desktop-clipboard-send"
+          >
             Send to remote
           </Button>
           {session.sessionId && (

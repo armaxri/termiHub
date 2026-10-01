@@ -9,7 +9,16 @@
 #    bridges to the client over CLIPRDR) holds `ping:<x>`, replace it with
 #    `pong:<x>`. A client that copies `ping:<x>` therefore receives `pong:<x>`
 #    back — a text round trip through the real server in both directions.
+# 3. Input probe: `xev -root` logs every key and button event delivered to the
+#    root window (no window manager, so focus is PointerRoot and the root gets
+#    them) to ~/termihub-input.log, line-buffered and appended across sessions.
+#    The UI suite (tests/system/tests/test_rdp.py) types into the canvas and
+#    waits for the KeyPress / ButtonPress lines; `xdotool getmouselocation`
+#    reads where the client moved the pointer. xev -root maps no window, so the
+#    desktop stays solid red.
 xsetroot -solid '#ff0000'
+
+stdbuf -oL xev -root -event keyboard -event button >>"$HOME/termihub-input.log" 2>&1 &
 
 last=""
 while true; do
