@@ -405,14 +405,14 @@ python scripts/test-manual.py --inventory
 | `local-shell`             | Local Shell           | macos, windows |              4 |                  0 |      4 |
 | `multi-window`            | Multi-Window          | macos          |              2 |                  0 |      2 |
 | `native-input`            | Native Input          | all            |             21 |                  0 |     21 |
-| `network-tools`           | network-tools         | all            |              2 |                  2 |      4 |
+| `network-tools`           | network-tools         | all            |              2 |                  0 |      2 |
 | `remote-agent`            | Remote Agent          | all            |              0 |                 12 |     12 |
 | `remote-desktop`          | Remote Desktop        | all            |              9 |                  0 |      9 |
 | `serial`                  | Serial                | windows        |              1 |                  0 |      1 |
 | `shell-integration`       | Shell Integration     | all            |              6 |                  0 |      6 |
 | `ssh`                     | SSH                   | all            |              4 |                  1 |      5 |
 | `ui-layout`               | UI / Layout           | all            |              8 |                  0 |      8 |
-| **Total (15 categories)** |                       |                |         **72** |             **16** | **88** |
+| **Total (15 categories)** |                       |                |         **72** |             **14** | **86** |
 
 <!-- manual-inventory:end -->
 

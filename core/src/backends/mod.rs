@@ -34,6 +34,12 @@ pub(crate) mod wsl_init_script;
 #[cfg(any(all(feature = "wsl", windows), test))]
 pub(crate) mod wsl_exec;
 
+// Pure "is the shell ready for the shell-integration `source` line?" detector
+// for the WSL setup tap — keeps the line out of a fresh distro's first-launch
+// user-setup prompt (#4057). Compiled on every platform under `test`.
+#[cfg(any(all(feature = "wsl", windows), test))]
+pub(crate) mod wsl_shell_ready;
+
 // Answers ConPTY's opening cursor-position query (portable-pty 0.9 sets
 // PSUEDOCONSOLE_INHERIT_CURSOR; #3974). Wired into the Windows PTY readers;
 // compiled on every platform under `test` so the logic is exercised everywhere.
