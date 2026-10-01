@@ -16,7 +16,10 @@
 # Session:   `startwm.sh` paints the root window solid pure red (#ff0000), so a
 #            decoded frame can be told apart from xrdp's own login screen, and
 #            runs a tiny clipboard echo loop (see startwm.sh) for the CLIPRDR
-#            round-trip test.
+#            round-trip test, plus an input probe (`xev -root`, x11-utils) that
+#            logs the key/button events the client sends; `xdotool` reads the
+#            session's pointer position. Both let the UI suite assert that input
+#            typed into the canvas reached the server (tests/system test_rdp.py).
 FROM debian:trixie-slim
 
 # Harden apt against transient mirror failures in CI (#2768).
@@ -31,6 +34,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     freerdp3-shadow-x11 \
     winpr3-utils \
     xclip \
+    x11-utils \
+    xdotool \
     ssl-cert \
     && rm -rf /var/lib/apt/lists/*
 

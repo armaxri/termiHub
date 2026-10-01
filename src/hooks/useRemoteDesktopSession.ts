@@ -11,6 +11,7 @@ import {
   remoteDesktopRemoteClipboardFiles,
   remoteDesktopBindClipboardFiles,
   remoteDesktopCertDecision,
+  remoteDesktopPendingCertPrompt,
   remoteDesktopRequestFullFrame,
 } from "@/services/api";
 import {
@@ -367,7 +368,23 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
       if (disposed || payload.session_id !== sessionId) return;
       setCertPrompt(payload);
       frontendLog("remote_desktop", `cert prompt for ${payload.host} (changed=${payload.changed})`);
-    }).then((un) => (disposed ? un() : unlisteners.push(un)));
+    }).then((un) => {
+      if (disposed) {
+        un();
+        return;
+      }
+      unlisteners.push(un);
+      // The backend raises the prompt as soon as the connect returns — before
+      // this listener existed — and then waits for a verdict: fetch a prompt
+      // that is already pending so it is never missed (#4004).
+      void remoteDesktopPendingCertPrompt(sessionId)
+        .then((pending) => {
+          if (disposed || pending === null || pending.session_id !== sessionId) return;
+          setCertPrompt((current) => current ?? pending);
+          frontendLog("remote_desktop", `pending cert prompt for ${pending.host} picked up`);
+        })
+        .catch((err) => frontendLog("remote_desktop", `pending cert prompt fetch failed: ${err}`));
+    });
 
     return () => {
       disposed = true;

@@ -237,6 +237,8 @@ jobs:
         # Linux only: the Tauri webview build/runtime deps (mirrors dev-build.yml)
         # plus xvfb, so the app has a virtual X display to launch into. socat backs
         # the virtual serial-port suites; without it those integration tests skip.
+        # libasound2-dev lets the app build script build the RDP sidecar the RDP
+        # suite needs (#4004); without it that suite skips.
         # macOS ships WKWebView and Windows ships WebView2, so neither needs these.
         if: runner.os == 'Linux'
         run: |
@@ -253,7 +255,8 @@ jobs:
             libgl1-mesa-dri \
             dbus-x11 \
             xvfb \
-            socat
+            socat \
+            libasound2-dev
 
       - name: Relax AppArmor unprivileged-userns restriction (#2646)
         # ubuntu-24.04 ships an AppArmor policy that blocks unprivileged user

@@ -35,6 +35,7 @@ import {
   remoteDesktopConnect,
   remoteDesktopResize,
   remoteDesktopRequestFullFrame,
+  remoteDesktopPendingCertPrompt,
   remoteDesktopMonitorLayout,
   remoteDesktopSetMonitorLayout,
   remoteDesktopSendInput,
@@ -372,6 +373,23 @@ describe("api pass-through wrappers (#2975)", () => {
       expect(mockedInvoke).toHaveBeenCalledWith("remote_desktop_request_full_frame", {
         sessionId: "rd-1",
       });
+    });
+
+    it("remoteDesktopPendingCertPrompt returns the pending prompt, else null (#4004)", async () => {
+      const prompt = {
+        session_id: "rd-1",
+        host: "h:3389",
+        fingerprint: "sha256:AA",
+        changed: false,
+      };
+      mockedInvoke.mockResolvedValue(prompt);
+      expect(await remoteDesktopPendingCertPrompt("rd-1")).toEqual(prompt);
+      expect(mockedInvoke).toHaveBeenCalledWith("remote_desktop_pending_cert_prompt", {
+        sessionId: "rd-1",
+      });
+
+      mockedInvoke.mockResolvedValue(null);
+      expect(await remoteDesktopPendingCertPrompt("rd-1")).toBeNull();
     });
 
     it("remoteDesktopMonitorLayout forwards the session id and returns the monitors", async () => {
