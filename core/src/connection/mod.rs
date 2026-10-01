@@ -323,8 +323,7 @@ pub trait ConnectionType: Send {
     /// stays up for the file browser and editor instead of ending.
     ///
     /// The value flips from `false` to `true` at most once per connect. A backend
-    /// that can never be files-only (everything but SSH) returns `None`, the
-    /// default. The sender lives in the backend, so a receiver's `changed()`
+    /// that can never be files-only returns `None`, the default. The sender lives in the backend, so a receiver's `changed()`
     /// errors once the connection is dropped — a watcher never outlives it.
     fn files_only_watch(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
         None
