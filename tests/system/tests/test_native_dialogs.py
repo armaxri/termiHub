@@ -15,9 +15,10 @@ the SSH key **Browse** button (MT-CONN-17), and Save terminal to file
 
 Covered (#1004, the deferred follow-ups): Encrypted export+import round-trip
 (MT-CONN-12..16), Open-in-Editor → Save As + the unsaved-changes warning
-(MT-TAB-17/18/19), portable config export/import (MT-PORT-04), and adding an
-external connection file (MT-CONN-23). In each, the harness automates every
-bridge-drivable half — building the credential/connection/editor/external-file
+(MT-TAB-17/18/19), portable config export (MT-PORT-04), and adding an
+external connection file (MT-CONN-23). The import half of MT-PORT-04 (#3691)
+picks a source directory and asserts the imported connection after a restart.
+In each, the harness automates every bridge-drivable half — building the credential/connection/editor/external-file
 state, typing the export/import password, asserting the imported credential, the
 saved-file content, the registered external file, the cleared unsaved state —
 and the operator performs **only** the native file pick / save.
@@ -480,6 +481,60 @@ class TestNativeDialogs(
         )
         assert name in connections_file.read_text(encoding="utf-8"), (
             "exported connections.json does not contain the created connection"
+        )
+
+    # ── Portable config import from a directory (MT-PORT-04, #3691) ───────────
+    def test_portable_import_from_directory(self):
+        """Import config from a chosen directory and assert it survives a restart.
+
+        Bridge-automatable (#3691): write a portable-style source directory
+        holding a ``connections.json`` with one connection, open Settings →
+        Portable Mode, click **Import from Directory**, then (after the operator
+        picks that directory in the native picker) confirm the migration dialog
+        (**Copy**) and assert the success message. The file is copied into this
+        app's config dir, and the app only reads it at startup, so the harness
+        restarts the app and asserts the imported connection is listed. The
+        operator performs only the native directory pick.
+        """
+        self.close_all_tabs()
+        name = unique_name("portable-import")
+        source = Path(tempfile.mkdtemp(prefix="thub-portable-import-"))
+        (source / "connections.json").write_text(
+            json.dumps(self._import_connections_doc(name)), encoding="utf-8"
+        )
+
+        self.open_settings_category("portable")
+        self.wait(
+            lambda: self.driver.exists("import-config-btn"),
+            what="the portable-mode import button",
+        )
+        self.driver.click("import-config-btn")
+        self.manual_step(
+            f"A native directory picker is open. Choose this directory:\n      {source}",
+            "The migration dialog appears listing connections.json as present.",
+        )
+        self.wait(
+            lambda: self.driver.exists("migration-confirm"),
+            what="the migration (Copy) dialog",
+        )
+        self.driver.click("migration-confirm")
+        result = self.wait(
+            lambda: self.driver.exists("migration-result")
+            and self.driver.get_text("migration-result"),
+            what="the migration result message",
+        )
+        assert "Copied" in result, f"unexpected migration result: {result!r}"
+        imported = self.config_dir / "connections.json"
+        assert name in imported.read_text(encoding="utf-8"), (
+            "connections.json was not copied into the app's config dir"
+        )
+
+        # The store is read at startup: restart and assert the connection loads.
+        self.restart_app()
+        self.switch_to_connections_sidebar()
+        self.wait(
+            lambda: self.find_connection(name),
+            what=f"the imported connection {name!r} after restart",
         )
 
     # ── Add external connection file (MT-CONN-23) ─────────────────────────────
