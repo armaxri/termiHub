@@ -57,9 +57,7 @@ fn cfg_holds_on_windows(meta: &syn::Meta) -> bool {
                 }) => s.value(),
                 _ => return true,
             };
-            if nv.path.is_ident("target_os") {
-                value == "windows"
-            } else if nv.path.is_ident("target_family") {
+            if nv.path.is_ident("target_os") || nv.path.is_ident("target_family") {
                 value == "windows"
             } else {
                 true
