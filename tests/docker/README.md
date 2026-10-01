@@ -119,7 +119,9 @@ The `ssh-x11` container (host port `2208`) enables SSH X11 forwarding and ships
 `xeyes` / `xclock` / `xdpyinfo` plus two helper scripts for verifying the
 forwarded-GUI path. It backs the X-server provisioning epic (#1047); see
 [`docs/testing.md`](../../docs/testing.md) → _X11 / GUI forwarding_ for the full
-cross-platform manual matrix.
+cross-platform manual matrix. The integration-fixtures workflow runs
+`render-check.sh` over a termiHub SSH session
+(`core/tests/ssh_x11.rs::x11_fixture_render_check_maps_a_window`).
 
 ```bash
 # Headless render check — proves a GUI client renders to an X server with NO
