@@ -284,12 +284,25 @@ pub struct SpawnEndpoint {
     address: String,
 }
 
+/// Environment variable that overrides the per-user rendezvous address (#4010).
+///
+/// The address is otherwise per *user*, so every instance one user launches
+/// shares a single rendezvous — exactly right for real use, but it means a
+/// system-test app instance would squat on (or forward into) the developer's own
+/// running termiHub. The bridge harness sets this per app instance, and passes
+/// the same value to the `termiHub spawn` CLI it runs, so a test's spawn always
+/// reaches the instance under test and nothing else. Unset in normal use.
+pub const SPAWN_ENDPOINT_ENV: &str = "TERMIHUB_SPAWN_ENDPOINT";
+
 impl SpawnEndpoint {
-    /// Resolve the rendezvous address for the current user.
+    /// Resolve the rendezvous address for the current user, honouring a
+    /// non-blank [`SPAWN_ENDPOINT_ENV`] override.
     pub fn for_current_user() -> anyhow::Result<Self> {
-        Ok(Self {
-            address: default_address()?,
-        })
+        let address = match address_override(std::env::var(SPAWN_ENDPOINT_ENV).ok()) {
+            Some(address) => address,
+            None => default_address()?,
+        };
+        Ok(Self { address })
     }
 
     /// Platform address string (pipe name on Windows, socket path on Unix).
@@ -310,6 +323,12 @@ impl std::fmt::Display for SpawnEndpoint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.address)
     }
+}
+
+/// The explicit rendezvous address from a raw [`SPAWN_ENDPOINT_ENV`] value, or
+/// `None` when it is unset or blank (so the per-user default applies).
+fn address_override(raw: Option<String>) -> Option<String> {
+    raw.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
 }
 
 #[cfg(windows)]
