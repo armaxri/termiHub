@@ -1346,6 +1346,7 @@ same notification, over the same channel, as a real self-update detection:
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `TERMIHUB_AGENT_TEST_PENDING_UPDATE`        | The version to advertise (e.g. `1.2.3`), or `1`/`true`/`yes` for the default `99.99.99`. Unset, empty, `0`/`false`/`no` → hook disarmed. |
 | `TERMIHUB_AGENT_TEST_PENDING_UPDATE_BINARY` | Optional. Path recorded as the staged binary. **Only set this if you want a real binary swap** — see below.                              |
+| `TERMIHUB_AGENT_TEST_PENDING_UPDATE_SHA256` | Optional. Expected SHA-256 of the staged binary (AGT-004). Needed for a real swap; unset, the apply fails closed at the digest check.    |
 
 Notes worth knowing before you use it:
 
@@ -1364,6 +1365,15 @@ Notes worth knowing before you use it:
   a real deferred apply — so this matters: the apply fails, logs, and keeps the
   record (#1401), and the agent keeps running. Point
   `…_BINARY` at a real binary only if a swap + re-exec is what you are testing.
+- **A real swap passes every production gate (#4083).** The apply still runs
+  confinement (AGT-003), the digest check (AGT-004, from `…_SHA256`) and the
+  signature check (AGT-005, from the `<binary>.sig` sidecar). A release
+  `test-hooks` agent additionally trusts the committed **TEST-ONLY** key in
+  `agent/keys/test-only/` (see its README), so a test can sign its staged binary;
+  there is no skip-signature path. Shipped agents never embed that key:
+  `scripts/internal/assert-no-test-signing-key.sh` fails any `agent.yml` /
+  `release.yml` build that does. Once the staged binary is the running one, the
+  hook stands down instead of re-staging it.
 - **It survives an agent restart.** The #1551 startup sweep drops a
   `pending_update` the running agent has already applied. The default version is
   newer than any real release and the staged path cannot match the running
@@ -1390,6 +1400,17 @@ keyboard-interactive auth (PAM asks `Password:` as a keyboard-interactive prompt
 `tests/system/tests/test_ssh_kbd_interactive.py` connects a remote agent whose
 auth method is "Keyboard-Interactive" to it and answers the in-app SSH
 Authentication dialog (#3377, #4005).
+
+A fourth, `remote-agent-update-swap` (compose profile `agent`, host port 2218),
+builds the image's `update-swap` target on top of the armed one (#4083): it stages
+a copy of the deployed agent with a trailer appended (new bytes and SHA-256, same
+version), signs it with the TEST-ONLY key exactly as release CI signs, and arms the
+hook with its path and digest. `tests/system/tests/test_agent_update_real_swap_live.py`
+drives the full #1352 journey against it: Apply Now deferred while busy → the last
+tab closes → the agent really swaps its binary and re-execs → reconnect shows the
+version badge and re-attaches a persistent session that a second agent connection
+held across the swap. A run swaps the container's installed agent, so the fixture
+force-recreates it.
 
 #### Projection-assertion harness (#2164)
 
@@ -1585,7 +1606,7 @@ fresh clone, or CI — behaves exactly as it always did.
 | Resource                         | Base (offset 0)                                                  | Derivation                                                                    |
 | -------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | Docker container / network names | `termihub-*` / `termihub-*-net`                                  | Prefixed with `compose_project` (`COMPOSE_PROJECT_NAME`).                     |
-| SSH / telnet / HTTP host ports   | `2201–2213`, `2215–2217`, `2301`, `8080`                         | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
+| SSH / telnet / HTTP host ports   | `2201–2213`, `2215–2218`, `2301`, `8080`                         | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
 | VNC host ports                   | `2501` (VncAuth), `2502` (VeNCrypt), `2503` (VeNCrypt X509Plain) | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
 | RDP host ports                   | `2601` (xrdp), `2602` (NLA)                                      | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
 | FTP / FTPS host ports            | `2401`, `2402`, PASV `30000–30019`                               | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
@@ -2016,7 +2037,7 @@ part of the release gate. Each was triaged with the #3681 rules and removed:
 - **Delayed-render paste to the host OS clipboard (macOS, #1804)** — Automated + Release gate. src-tauri/src/macos_clipboard.rs (selection/index unit tests); src-tauri graphical_manager unit tests; src/components/RemoteDesktop/RemoteDesktopTab.clipboardFiles.test.tsx (Remote files panel + 'N file(s) ready' toast) · gate: MT-RD-07
 - **Delayed-render paste to the host OS clipboard (Windows, #1814)** — Automated + Release gate. src-tauri/src/windows_clipboard.rs (CF_HDROP builder round-trip, pasteable-index selection); src-tauri graphical_manager unit tests; src/components/RemoteDesktop/RemoteDesktopTab.clipboardFiles.test.tsx · gate: MT-RD-08
 - **Delayed-render paste to the host OS clipboard (Linux X11 + Wayland, #1815/#1847)** — Automated + Tracked + Release gate. src-tauri/src/linux_clipboard/mod.rs + x11.rs + wayland.rs (index selection, file:// URI encoding, uri-list/gnome/mate formatting, MIME mapping, session detection); src/components/RemoteDesktop/RemoteDesktopTab.clipboardFiles.test.tsx · gaps: #4004 · gate: MT-RD-09
-- **Deferred agent update (apply on last disconnect) (#1352)** — Automated + Tracked. agent/tests/self_update_integration.rs::active_shell_session_is_never_interrupted / active_docker_session_is_never_interrupted; agent/tests/self_update_integration.rs::deferred_strategy_auto_applies_on_idle_and_comes_back; … · gaps: #4009
+- **Deferred agent update (apply on last disconnect) (#1352)** — Automated. tests/system/tests/test_agent_update_real_swap_live.py::TestAgentUpdateRealSwapLive::test_apply_now_then_last_tab_close_really_swaps_and_reattaches (full app: Apply Now deferred while busy → last tab closed → real signed binary swap → reconnect shows the version badge and re-attaches the persistent session, #4083); agent/tests/self_update_integration.rs::active_shell_session_is_never_interrupted / active_docker_session_is_never_interrupted; agent/tests/self_update_integration.rs::deferred_strategy_auto_applies_on_idle_and_comes_back; …
 - **Backend-driven agent reconnect across a prolonged transport drop (#2476/#2512)** — Automated. tests/system/tests/test_agent_reconnect_ui.py::TestAgentReconnectUi::test_agent_reconnect_ui_cycle; src/components/Terminal/TerminalDisconnectOverlay.projection.test.tsx; …
 - **Layout GUI-smoke — live terminal scrollback survives a structural op (#2561)** — Automated. src/components/Terminal/TerminalView.layout-scrollback.test.tsx 'TerminalHost — a layout op preserves live terminal scrollback (#2561)'; src/store/appStore.layoutBridge.test.ts 'E2 — tab id preservation (no live-terminal remount)'; …
 - **Coordinated desktop-push Update deploy (#1616)** — Automated + Tracked. agent/src/update/coordinate.rs::peers_that_disconnect_release_the_update_early / a_peer_that_never_leaves_does_not_block_the_update / the_broadcast_carries_the_notification_verbatim / the_documented_window_is_the_issues_ten_seconds; agent/tests/self_update_integration.rs::coordinated_strategy_stages_without_applying; … · gaps: #4009, #3685
