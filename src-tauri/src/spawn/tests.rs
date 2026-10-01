@@ -388,3 +388,22 @@ fn a_remembered_wsl_entry_parses_back_as_a_wsl_spawn() {
 
     assert_eq!(parse_spawn_args(&args).kind, SpawnKind::Wsl);
 }
+
+#[test]
+fn endpoint_override_uses_a_non_blank_value() {
+    assert_eq!(
+        super::address_override(Some("/tmp/x/spawn.sock".to_string())).as_deref(),
+        Some("/tmp/x/spawn.sock")
+    );
+    assert_eq!(
+        super::address_override(Some("  /tmp/y.sock \n".to_string())).as_deref(),
+        Some("/tmp/y.sock")
+    );
+}
+
+#[test]
+fn endpoint_override_ignores_unset_or_blank() {
+    assert_eq!(super::address_override(None), None);
+    assert_eq!(super::address_override(Some(String::new())), None);
+    assert_eq!(super::address_override(Some("   ".to_string())), None);
+}

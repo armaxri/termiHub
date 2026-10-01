@@ -196,6 +196,10 @@ describe("useSpawnRequests — container spawn wiring (#1446)", () => {
 
     expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1);
     expect(String(vi.mocked(toast.success).mock.calls[0][0])).toContain("/home/user/app");
+    // The bridge system tests key on this testid (#4010).
+    expect(vi.mocked(toast.success).mock.calls[0][1]).toMatchObject({
+      testId: "spawn-toast-success",
+    });
     expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
   });
 
@@ -468,6 +472,9 @@ describe("useSpawnRequests — shell spawn wiring (#1365, SI-2)", () => {
 
     expect(allTabs().some((t) => t.spawned)).toBe(true);
     expect(vi.mocked(toast.info)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toast.info).mock.calls[0][1]).toMatchObject({
+      testId: "spawn-toast-missing",
+    });
     expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
   });
 
@@ -483,6 +490,9 @@ describe("useSpawnRequests — shell spawn wiring (#1365, SI-2)", () => {
 
     expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1);
     expect(String(vi.mocked(toast.error).mock.calls[0][0])).toContain("boom");
+    expect(vi.mocked(toast.error).mock.calls[0][1]).toMatchObject({
+      testId: "spawn-toast-error",
+    });
     expect(allTabs().some((t) => t.spawned)).toBe(false);
   });
 

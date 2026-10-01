@@ -4,6 +4,8 @@
 //! Tests termiHub's SSH backend for advanced scenarios:
 //! - SSH-JUMP-01: 2-hop ProxyJump via bastion (port 2204 → internal target)
 //! - SSH-JUMP-06: a hung intermediate hop times out within its per-hop budget
+//! - SSH-JUMP-07: two sessions reconnect through ONE new shared gateway after the
+//!   bastion container is stopped and restarted (MT-SSH-44, #3688)
 //! - SSH-SHELL-01/02: Restricted shell (rbash) on port 2205
 //! - SSH-TUNNEL-01/02: Port forwarding through SSH tunnel on port 2207
 //!
@@ -576,4 +578,247 @@ async fn ssh_jump_05_monitoring_through_jump_host() {
         !stats.hostname.is_empty() || stats.memory_total_kb > 0,
         "SSH-JUMP-05: expected a populated stats sample, got: {stats:?}"
     );
+}
+
+// ── SSH-JUMP-07: reconnect through a restarted bastion (MT-SSH-44, #3688) ──
+
+/// The pool key both SSH-JUMP-07 sessions share. A dedicated `connectionId`
+/// keeps this test's gateway entry apart from the other jump tests' entries.
+const JUMP_07_GATEWAY_ID: &str = "ssh-jump-07-reconnect-test";
+
+/// The bastion container of this checkout (`<project>-ssh-bastion`).
+fn bastion_container() -> String {
+    common::fixture_container("ssh-bastion")
+}
+
+/// Settings for a terminal session on the internal target through the bastion,
+/// with the hop pinned to [`JUMP_07_GATEWAY_ID`] and no side providers, so the
+/// only gateway references are the two terminals'.
+fn jump_07_settings() -> serde_json::Value {
+    let mut settings = jump_host_target_settings(false, false);
+    settings["proxyJump"][0]["connectionId"] = serde_json::json!(JUMP_07_GATEWAY_ID);
+    settings
+}
+
+/// Number of authenticated SSH sessions the bastion's sshd is serving right now.
+///
+/// OpenSSH 9.6 runs one `sshd: <user> [priv]` monitor per authenticated
+/// connection. A target session rides a `direct-tcpip` channel on the gateway,
+/// so it adds no process here: the count is the number of gateway sessions.
+/// The image has no `ps`, so read `/proc` directly.
+fn bastion_gateway_sessions() -> usize {
+    let out = common::docker_cli(&[
+        "exec",
+        &bastion_container(),
+        "sh",
+        "-c",
+        "for p in /proc/[0-9]*/cmdline; do tr '\\0' ' ' < \"$p\"; echo; done 2>/dev/null",
+    ])
+    .expect("SSH-JUMP-07: listing the bastion's processes should succeed");
+    out.lines()
+        .filter(|l| l.trim_start().starts_with("sshd: testuser [priv]"))
+        .count()
+}
+
+/// Poll until the bastion serves exactly `expected` gateway sessions.
+async fn wait_for_gateway_sessions(expected: usize, why: &str) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let now = bastion_gateway_sessions();
+        if now == expected {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "SSH-JUMP-07: {why}: expected {expected} gateway session(s) on the bastion, got {now}"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+/// Starts the bastion on drop and waits until it accepts connections again, so
+/// a stopped bastion never outlives this test — also when an assertion fails.
+struct RestartBastionOnDrop;
+
+impl Drop for RestartBastionOnDrop {
+    fn drop(&mut self) {
+        let _ = common::docker_cli(&["start", &bastion_container()]);
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while !common::is_port_reachable("127.0.0.1", port_ssh_bastion())
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+}
+
+/// Wait until the restarted bastion completes a key-authenticated login.
+async fn wait_for_bastion_login() {
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let config = ssh_key_config(port_ssh_bastion(), "ed25519");
+    loop {
+        if common::is_port_reachable("127.0.0.1", port_ssh_bastion())
+            && connect_and_authenticate(&config).await.is_ok()
+        {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "SSH-JUMP-07: the bastion did not accept logins again within 60s"
+        );
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+/// Wait until a terminal session reports it is no longer connected.
+async fn wait_for_disconnect(ssh: &Ssh, label: &str) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while ssh.is_connected() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "SSH-JUMP-07: session {label} must notice the bastion going down within 30s"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+/// Run `echo` in a connected terminal and wait for its output, proving the
+/// session is live end to end through the gateway.
+async fn assert_terminal_echoes(ssh: &Ssh, label: &str) {
+    let marker = format!("JUMP07_{label}_OK");
+    let mut rx = ssh.subscribe_output();
+    // Quote part of the word so the echoed command line never matches the
+    // marker; only the command's output does.
+    ssh.write(format!("echo JUMP07_{label}_'OK'\n").as_bytes())
+        .unwrap_or_else(|e| panic!("SSH-JUMP-07: write to session {label} failed: {e}"));
+    let mut seen = String::new();
+    let found = tokio::time::timeout(Duration::from_secs(15), async {
+        while let Some(chunk) = rx.recv().await {
+            seen.push_str(&String::from_utf8_lossy(&chunk));
+            if seen.contains(&marker) {
+                return true;
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false);
+    assert!(
+        found,
+        "SSH-JUMP-07: session {label} should echo through the gateway, got: {seen:?}"
+    );
+}
+
+/// MT-SSH-44: two terminals reach the target through one shared bastion
+/// gateway. The bastion is stopped and restarted; both terminals notice the
+/// drop, and reconnecting them re-establishes the chain through **one new**
+/// shared gateway session — not one per terminal, and not the dead old one.
+///
+/// The reconnects run concurrently while the dead sessions are still held (as
+/// two tabs auto-reconnecting at once would), so the pool must evict the dead
+/// gateway, dial a single replacement for both (single-flight), and ignore the
+/// stale references when the dead sessions are finally released (#1315).
+/// The bastion's own process table confirms the single gateway session.
+#[tokio::test]
+#[serial(ssh_bastion)]
+async fn ssh_jump_07_reconnect_through_restarted_bastion_shares_one_new_gateway() {
+    use termihub_core::backends::ssh::session_pool::shared_gateway_pool;
+
+    require_docker!(port_ssh_bastion());
+
+    let pool = shared_gateway_pool();
+    let pool_key = format!("gateway|id:{JUMP_07_GATEWAY_ID}");
+    assert_eq!(
+        pool.ref_count(&pool_key),
+        0,
+        "SSH-JUMP-07: pool must start empty"
+    );
+    wait_for_gateway_sessions(0, "before connecting").await;
+
+    // Two tabs through the bastion share one gateway.
+    let mut old_a = Ssh::new();
+    old_a
+        .connect(jump_07_settings())
+        .await
+        .expect("SSH-JUMP-07: first connection should succeed");
+    let mut old_b = Ssh::new();
+    old_b
+        .connect(jump_07_settings())
+        .await
+        .expect("SSH-JUMP-07: second connection should succeed");
+    assert_eq!(
+        pool.ref_count(&pool_key),
+        2,
+        "SSH-JUMP-07: both tabs must share one pooled gateway"
+    );
+    wait_for_gateway_sessions(1, "two tabs before the drop").await;
+    assert_terminal_echoes(&old_a, "A").await;
+    assert_terminal_echoes(&old_b, "B").await;
+
+    // Drop the bastion. Both tabs must notice.
+    let restore = RestartBastionOnDrop;
+    common::docker_cli(&["stop", "-t", "1", &bastion_container()])
+        .expect("SSH-JUMP-07: stopping the bastion should succeed");
+    wait_for_disconnect(&old_a, "A").await;
+    wait_for_disconnect(&old_b, "B").await;
+
+    // Reconnecting while the bastion is down fails, and leaves no pool entry
+    // behind that a later reconnect could adopt.
+    let mut early = Ssh::new();
+    assert!(
+        early.connect(jump_07_settings()).await.is_err(),
+        "SSH-JUMP-07: connecting through a stopped bastion must fail"
+    );
+
+    // Restore the bastion.
+    common::docker_cli(&["start", &bastion_container()])
+        .expect("SSH-JUMP-07: starting the bastion should succeed");
+    drop(restore);
+    wait_for_bastion_login().await;
+    wait_for_gateway_sessions(0, "after the readiness probe").await;
+
+    // Both tabs reconnect at once while the dead sessions are still held.
+    let mut new_a = Ssh::new();
+    let mut new_b = Ssh::new();
+    let (res_a, res_b) = tokio::join!(
+        new_a.connect(jump_07_settings()),
+        new_b.connect(jump_07_settings())
+    );
+    res_a.expect("SSH-JUMP-07: tab A should reconnect through the restarted bastion");
+    res_b.expect("SSH-JUMP-07: tab B should reconnect through the restarted bastion");
+    assert!(new_a.is_connected() && new_b.is_connected());
+    assert_eq!(
+        pool.ref_count(&pool_key),
+        2,
+        "SSH-JUMP-07: both reconnected tabs must share the one new gateway"
+    );
+    wait_for_gateway_sessions(1, "two reconnected tabs").await;
+    assert_terminal_echoes(&new_a, "A2").await;
+    assert_terminal_echoes(&new_b, "B2").await;
+
+    // Releasing the dead sessions must not touch the new gateway's refcount.
+    old_a.disconnect().await.expect("disconnect old A");
+    old_b.disconnect().await.expect("disconnect old B");
+    drop(old_a);
+    drop(old_b);
+    assert_eq!(
+        pool.ref_count(&pool_key),
+        2,
+        "SSH-JUMP-07: releasing the dead sessions must not release the new gateway"
+    );
+    assert_terminal_echoes(&new_a, "A3").await;
+
+    // The new gateway drains once both reconnected tabs close.
+    new_a.disconnect().await.expect("disconnect new A");
+    drop(new_a);
+    assert_eq!(pool.ref_count(&pool_key), 1);
+    assert_terminal_echoes(&new_b, "B3").await;
+    new_b.disconnect().await.expect("disconnect new B");
+    drop(new_b);
+    assert_eq!(
+        pool.ref_count(&pool_key),
+        0,
+        "SSH-JUMP-07: the gateway must drain once both tabs close"
+    );
+    wait_for_gateway_sessions(0, "after both tabs closed").await;
 }

@@ -177,19 +177,22 @@ class OpStats:
         self.sessions += 1
         self.n += int(record.get("n", 0))
         self.timeouts += int(record.get("timeouts", 0))
-        self.p50s.append(float(record.get("p50", record["max"])))
-        self.p95s.append(float(record.get("p95", record["max"])))
-        self.maxes.append(float(record["max"]))
         if record.get("deadline") is not None:
             self.deadlines.append(float(record["deadline"]))
+        if record.get("max") is None:
+            return  # every sample in this session timed out: no completed timing
+        p50, p95 = record.get("p50"), record.get("p95")
+        self.p50s.append(float(record["max"] if p50 is None else p50))
+        self.p95s.append(float(record["max"] if p95 is None else p95))
+        self.maxes.append(float(record["max"]))
 
     def row(self) -> dict:
         return {
             "sessions": self.sessions,
             "n": self.n,
-            "p50": statistics.median(self.p50s),
-            "p95": max(self.p95s),
-            "max": max(self.maxes),
+            "p50": statistics.median(self.p50s) if self.p50s else None,
+            "p95": max(self.p95s) if self.p95s else None,
+            "max": max(self.maxes) if self.maxes else None,
             "deadline": max(self.deadlines) if self.deadlines else None,
             "timeouts": self.timeouts,
         }
@@ -281,6 +284,31 @@ def _gh_json(args: list[str]):
     return json.loads(result.stdout)
 
 
+def _fetch_job_log(repo: str, job_id: int) -> subprocess.CompletedProcess:
+    """Download one job log with ``gh api``.
+
+    Job logs carry ANSI colour codes; gh >= 2.100 refuses to print a response with
+    terminal escape sequences unless ``--allow-escape-sequences`` is passed (and
+    exits non-zero, which used to read as "log expired"). Older gh lacks the flag,
+    so fall back to the plain call when it is rejected.
+    """
+    endpoint = f"repos/{repo}/actions/jobs/{job_id}/logs"
+
+    def run(extra: list[str]) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["gh", "api", *extra, endpoint],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+
+    result = run(["--allow-escape-sequences"])
+    if result.returncode != 0 and "unknown flag" in result.stderr:
+        result = run([])
+    return result
+
+
 def download_logs(
     repo: str,
     workflow: str,
@@ -318,13 +346,7 @@ def download_logs(
         for job in chosen:
             path = cache_dir / f"job_{job['id']}.log"
             if not path.exists() or path.stat().st_size == 0:
-                log = subprocess.run(
-                    ["gh", "api", f"repos/{repo}/actions/jobs/{job['id']}/logs"],
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                )
+                log = _fetch_job_log(repo, job["id"])
                 if log.returncode != 0:
                     print(f"warning: no log for job {job['id']} (expired?)", file=sys.stderr)
                     continue

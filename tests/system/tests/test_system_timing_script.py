@@ -155,3 +155,41 @@ def test_main_renders_markdown_from_a_log_dir(tmp_path, capsys):
     assert "| linux | `command:click` | 1 | 10 | 0.10 | 0.50 | 0.90 | 20.00 | 0 |" in out
     assert "| linux | setup | 1 | 28.28 | 28.28 | 28.28 |" in out
     assert "| linux | `app-connect` | 1 | 60.00 |" in out
+
+
+def test_aggregate_timings_survives_an_all_timeout_session():
+    # A session whose every sample expired prints p50/p95/max as null (#3663).
+    logs = [
+        ("macos", _log("macOS", _timing("wait:x", n=3, p50=None, p95=None, max=None, timeouts=3))),
+        ("macos", _log("macOS", _timing("wait:x", n=2, p50=0.0, p95=0.0, max=0.0))),
+    ]
+    row = mod.aggregate_timings(logs)[("macos", "wait:x")].row()
+    assert row["sessions"] == 2 and row["n"] == 5 and row["timeouts"] == 3
+    assert (row["p50"], row["p95"], row["max"]) == (0.0, 0.0, 0.0)  # 0.0 is not "missing"
+
+
+def test_aggregate_timings_row_with_no_completed_sample_renders_dashes():
+    logs = [("windows", _log("Microsoft Windows Server 2025", _timing("wait:y", p50=None, p95=None, max=None)))]
+    timings = mod.aggregate_timings(logs)
+    assert timings[("windows", "wait:y")].row()["max"] is None
+    assert "| windows | `wait:y` | 1 | 10 | — | — | — | 20.00 | 0 |" in mod.render_markdown(timings, {}, {}, 1)
+
+
+def test_fetch_job_log_allows_escape_sequences_and_falls_back(monkeypatch):
+    # gh >= 2.100 exits 1 on ANSI-coloured job logs without --allow-escape-sequences;
+    # older gh rejects the flag, so the plain call is the fallback (#3663).
+    calls = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(args)
+        if "--allow-escape-sequences" in args:
+            return mod.subprocess.CompletedProcess(args, 1, "", "unknown flag: --allow-escape-sequences")
+        return mod.subprocess.CompletedProcess(args, 0, "log body", "")
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    result = mod._fetch_job_log("o/r", 7)
+    assert result.stdout == "log body"
+    assert calls == [
+        ["gh", "api", "--allow-escape-sequences", "repos/o/r/actions/jobs/7/logs"],
+        ["gh", "api", "repos/o/r/actions/jobs/7/logs"],
+    ]
