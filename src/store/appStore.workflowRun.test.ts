@@ -1888,7 +1888,14 @@ describe("appStore — scheduled runs (PROD-043)", () => {
     it("skips a scheduled macro and types into no other tab", async () => {
       useAppStore.setState({
         macros: [
-          { id: "m1", name: "Ping", tags: [], steps: [{ data: "x\n", delayMs: 0 }] } as Macro,
+          {
+            id: "m1",
+            name: "Ping",
+            tags: [],
+            steps: [{ data: "x\n", delayMs: 0 }],
+            createdAt: "",
+            updatedAt: "",
+          },
         ],
       });
 
