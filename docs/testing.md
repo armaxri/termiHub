@@ -1732,7 +1732,7 @@ take either side and re-run the same command. CI (`--check`) fails if it is stal
 | `local-shell`             | Local Shell       | macos, windows |              4 |                  0 |      4 |
 | `multi-window`            | Multi-Window      | macos          |              2 |                  0 |      2 |
 | `native-input`            | Native Input      | all            |             21 |                  0 |     21 |
-| `network-tools`           | network-tools     | all            |              2 |                  2 |      4 |
+| `network-tools`           | network-tools     | all            |              2 |                  0 |      2 |
 | `portable-mode`           | Portable Mode     | all            |              0 |                  2 |      2 |
 | `remote-agent`            | Remote Agent      | all            |              0 |                 12 |     12 |
 | `remote-desktop`          | Remote Desktop    | all            |              9 |                  0 |      9 |
@@ -1740,7 +1740,7 @@ take either side and re-run the same command. CI (`--check`) fails if it is stal
 | `shell-integration`       | Shell Integration | all            |              6 |                  0 |      6 |
 | `ssh`                     | SSH               | all            |              4 |                  1 |      5 |
 | `ui-layout`               | UI / Layout       | all            |              8 |                  0 |      8 |
-| **Total (15 categories)** |                   |                |         **72** |             **17** | **89** |
+| **Total (15 categories)** |                   |                |         **72** |             **15** | **87** |
 
 <!-- manual-inventory:end -->
 
@@ -1807,11 +1807,11 @@ take either side and re-run the same command. CI (`--check`) fails if it is stal
 | MT-NET-12       | Port Scanner — results stream in                                                        | Automated (already)   | test_network_tools_live.py::test_port_scan_finds_open_port                                                                          |
 | MT-NET-13       | Port Scanner — large-range warning                                                      | Automated (already)   | src/components/NetworkTools/PortScannerPanel.large-scan.test.tsx (now a confirm modal)                                              |
 | MT-NET-14       | DNS Lookup — A record resolution                                                        | Automated (already)   | test_network_tools_live.py::test_dns_resolves_localhost                                                                             |
-| MT-NET-15       | DNS Lookup — multiple record types                                                      | Tracked issue         | #3692                                                                                                                               |
+| MT-NET-15       | DNS Lookup — multiple record types                                                      | Automated (this PR)   | `test_network_tools_live.py::test_dns_record_types_against_stub` + core `dns.rs` stub tests (#3692)                                 |
 | MT-NET-16       | Traceroute — hops stream in                                                             | Release-gating manual | traceroute needs raw ICMP (root); hop rendering is unit-tested                                                                      |
 | MT-NET-17       | HTTP Monitor — periodic checks and chart                                                | Automated (already)   | test_network_tools_live.py::test_http_monitor_check_and_chart                                                                       |
 | MT-NET-18       | HTTP Monitor — sidebar monitor row                                                      | Automated (already)   | test_network_tools_live.py::test_http_monitor_shows_in_sidebar                                                                      |
-| MT-NET-19       | Remote agent — network.open_ports via JSON-RPC                                          | Tracked issue         | #3692                                                                                                                               |
+| MT-NET-19       | Remote agent — network.open_ports via JSON-RPC                                          | Automated (this PR)   | `test_network_tools_agent_live.py` + agent `live_agent_tcp_tool_run_open_ports_*` (#3692)                                           |
 | MT-NET-21       | Ping / HTTP Monitor — readable latency chart (uPlot)                                    | Release-gating manual | chart stroke/hover readability is visual; data in latencyChartData.test.ts                                                          |
 | MT-NET-22       | Traceroute / Port Scanner — error on unresolvable host (Stop works)                     | Automated (already)   | TraceroutePanel.error.test.tsx + PortScannerPanel.error.test.tsx + TraceroutePanel.footer.test.tsx                                  |
 | MT-NET-20       | Port Scanner — CIDR / multi-target scan                                                 | Automated (already)   | core/src/network/port_scan.rs (CIDR / comma-list parse + per-host results)                                                          |
@@ -2066,7 +2066,7 @@ part of the release gate. Each was triaged with the #3681 rules and removed:
 - **Network tool run history (PROD-032, #3456)** — Automated. tests/system/tests/test_history_restart.py::TestHistoryRestart::test_network_tool_run_history_survives_restart (ping, restart, Re-run, Clear, recording off); src-tauri/src/network/tool_history.rs, tool_history_manager.rs, tool_history_storage.rs tests; src/components/NetworkTools/runHistory.test.tsx, NetworkToolHistory.test.tsx, NetworkTools.history.test.tsx; …
 - **Macro run history (#3543)** — Automated. tests/system/tests/test_history_restart.py::TestHistoryRestart::test_macro_run_history_survives_restart (manual play, per-macro filter, restart, Clear history); src-tauri/src/macros/history.rs, history_manager.rs, history_storage.rs tests; src/store/appStore.macroRunHistory.test.ts, src/store/appStore.workflowRun.test.ts; …
 - **HTTP monitor check history (#3462)** — Automated. tests/system/tests/test_history_restart.py::TestHistoryRestart::test_http_monitor_check_history_survives_restart (local server, stop, restart, Show checks, Resume, Remove); src-tauri/src/network/monitor_history.rs, monitor_history_manager.rs, monitor_history_storage.rs tests; src/components/NetworkTools/httpMonitorHistory.test.ts, HttpMonitorPanel.history.test.tsx; …
-- **Run-location "Run on" selector — Network Tools & Servers (#2191)** — Automated + Tracked. src/components/RunLocationSelect/RunLocationSelect.test.tsx; src/components/NetworkTools/NetworkToolRunLocation.test.tsx; … · gaps: #3692
+- **Run-location "Run on" selector — Network Tools & Servers (#2191)** — Automated. src/components/RunLocationSelect/RunLocationSelect.test.tsx; src/components/NetworkTools/NetworkToolRunLocation.test.tsx; tests/system/tests/test_network_tools_agent_live.py (Open ports run on the live agent container lists its ports, not the desktop's, #3692); …
 - **Single-instance enforcement (findings PER-005, SM-025)** — Automated + Tracked + Release gate. src-tauri/src/utils/single_instance.rs::tests (enforces_for_installed_release, does_not_enforce_for_installed_debug, does_not_enforce_for_portable_release/debug — covers 'dev builds are not locked'); src-tauri/src/utils/single_instance_forward_tests.rs (long_workspace_flag_with_separate_value, relative_workspace_file_resolves_against_second_launch_cwd, unknown_flags_and_positionals_are_ignored_and_reported, forwarded_workspace_is_emitted_to_the_running_frontend); … · gaps: #4011, #3691 · gate: MT-APP-04
 
 </details>

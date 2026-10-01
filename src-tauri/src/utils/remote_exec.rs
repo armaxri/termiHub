@@ -20,6 +20,7 @@ use std::time::Duration;
 
 use russh::ChannelMsg;
 use russh_sftp::client::SftpSession;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 use termihub_core::backends::ssh::handler::SshSession;
@@ -242,22 +243,37 @@ pub fn is_windows_arch(arch: &str) -> bool {
 
 // ── SFTP upload ──────────────────────────────────────────────────────
 
-/// Upload a local file to a remote path via SFTP.
+/// Upload a local file to a remote path via SFTP, aborting promptly when
+/// `cancel` fires (#4060).
 ///
 /// Opens a fresh SFTP subsystem on the session for the transfer. This avoids
 /// sharing a single SFTP session across threads. Every step is bounded by
 /// [`DEFAULT_SFTP_STALL_TIMEOUT`] (#3698).
-pub fn upload_via_sftp(
+///
+/// The token is checked before every step and raced against each in-flight
+/// step (including a [`SFTP_UPLOAD_CHUNK`] write), so a Cancel during a large or
+/// slow upload returns [`TerminalError::Cancelled`] without waiting for the
+/// transfer to finish. The partially written remote file is closed but **not**
+/// removed — the caller owns the rollback (it knows the upload path).
+pub fn upload_via_sftp_cancellable(
     session: &SshSession,
     local_path: &str,
     remote_path: &str,
+    cancel: Option<&CancellationToken>,
 ) -> Result<u64, TerminalError> {
     debug!(local_path, remote_path, "Uploading file via SFTP");
     block_on(async {
         let data = tokio::fs::read(local_path)
             .await
             .map_err(|e| TerminalError::SpawnFailed(format!("open local file failed: {e}")))?;
-        upload_bytes_async(session, &data, remote_path, DEFAULT_SFTP_STALL_TIMEOUT).await
+        upload_bytes_async(
+            session,
+            &data,
+            remote_path,
+            DEFAULT_SFTP_STALL_TIMEOUT,
+            cancel,
+        )
+        .await
     })
 }
 
@@ -269,43 +285,115 @@ pub fn upload_bytes_via_sftp(
     data: &[u8],
     remote_path: &str,
 ) -> Result<u64, TerminalError> {
+    upload_bytes_via_sftp_cancellable(session, data, remote_path, None)
+}
+
+/// [`upload_bytes_via_sftp`] that also aborts promptly when `cancel` fires
+/// (#4060). See [`upload_via_sftp_cancellable`] for the cancel semantics.
+pub fn upload_bytes_via_sftp_cancellable(
+    session: &SshSession,
+    data: &[u8],
+    remote_path: &str,
+    cancel: Option<&CancellationToken>,
+) -> Result<u64, TerminalError> {
     debug!(remote_path, size = data.len(), "Uploading bytes via SFTP");
     block_on(upload_bytes_async(
         session,
         data,
         remote_path,
         DEFAULT_SFTP_STALL_TIMEOUT,
+        cancel,
     ))
+}
+
+/// Run one upload step bounded by `stall`, and abort it as soon as `cancel`
+/// fires (#4060). A token that is already cancelled wins before the step
+/// starts, so no further bytes are sent after Cancel.
+async fn cancellable_step<T>(
+    cancel: Option<&CancellationToken>,
+    stall: Duration,
+    what: &str,
+    fut: impl Future<Output = Result<T, TerminalError>>,
+) -> Result<T, TerminalError> {
+    let step = bounded(stall, what, fut);
+    match cancel {
+        None => step.await,
+        Some(token) => {
+            tokio::select! {
+                biased;
+                () = token.cancelled() => Err(TerminalError::Cancelled),
+                result = step => result,
+            }
+        }
+    }
+}
+
+/// Write `data` to `writer` in [`SFTP_UPLOAD_CHUNK`] pieces. Each chunk is
+/// bounded by `stall` (#3698) and raced against `cancel` (#4060), so a transfer
+/// that keeps progressing is never cut off by the deadline while a Cancel stops
+/// it between — or in the middle of — chunks.
+async fn write_chunks<W>(
+    writer: &mut W,
+    data: &[u8],
+    stall: Duration,
+    cancel: Option<&CancellationToken>,
+) -> Result<(), TerminalError>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::AsyncWriteExt;
+
+    for chunk in data.chunks(SFTP_UPLOAD_CHUNK) {
+        cancellable_step(cancel, stall, "Uploading via SFTP", async {
+            writer
+                .write_all(chunk)
+                .await
+                .map_err(|e| TerminalError::SshError(format!("write failed: {e}")))
+        })
+        .await?;
+    }
+    Ok(())
 }
 
 /// Async core of the upload helpers. `stall` bounds each step — subsystem
 /// open, create, and every [`SFTP_UPLOAD_CHUNK`] write — so a transfer that
 /// keeps progressing is never cut off while one that stops is (#3698).
+/// `cancel` aborts any step promptly (#4060); on cancel the remote handle is
+/// closed (best-effort, bounded) so the caller can remove the partial file —
+/// some servers (Windows OpenSSH) refuse to delete a file that is still open.
 async fn upload_bytes_async(
     session: &SshSession,
     data: &[u8],
     remote_path: &str,
     stall: Duration,
+    cancel: Option<&CancellationToken>,
 ) -> Result<u64, TerminalError> {
     use tokio::io::AsyncWriteExt;
 
-    let sftp = bounded(stall, "Opening the SFTP session", open_sftp(session)).await?;
+    let sftp = cancellable_step(
+        cancel,
+        stall,
+        "Opening the SFTP session",
+        open_sftp(session),
+    )
+    .await?;
 
-    let mut remote = bounded(stall, "Creating the remote file", async {
+    let mut remote = cancellable_step(cancel, stall, "Creating the remote file", async {
         sftp.create(remote_path)
             .await
             .map_err(|e| TerminalError::SshError(format!("create remote file failed: {e}")))
     })
     .await?;
 
-    for chunk in data.chunks(SFTP_UPLOAD_CHUNK) {
-        bounded(stall, "Uploading via SFTP", async {
-            remote
-                .write_all(chunk)
-                .await
-                .map_err(|e| TerminalError::SshError(format!("write failed: {e}")))
-        })
-        .await?;
+    if let Err(e) = write_chunks(&mut remote, data, stall, cancel).await {
+        if matches!(e, TerminalError::Cancelled) {
+            debug!(
+                remote_path,
+                "SFTP upload cancelled; closing partial remote file"
+            );
+            let _ = tokio::time::timeout(CLOSE_GRACE, remote.shutdown()).await;
+        }
+        return Err(e);
     }
 
     Ok(data.len() as u64)
@@ -832,16 +920,121 @@ mod tests {
                 b"payload",
                 "/tmp/never",
                 TEST_DEADLINE,
+                None,
             ))
         })
         .await;
         assert_timed_out(result, elapsed);
     }
 
+    // ── Cancellation tests (#4060) ───────────────────────────────────────
+    //
+    // Cancel must stop an in-progress upload promptly, not wait for it to
+    // finish. The stall deadline is set far above the cancel bound in each test,
+    // so only the cancel path can make it return in time.
+
+    /// Stall deadline the cancel tests run under: long enough that a test
+    /// returning within [`CANCEL_BOUND`] proves the cancel, not the deadline,
+    /// stopped the step.
+    const LONG_STALL: Duration = Duration::from_secs(30);
+    /// How quickly a fired cancel must stop the upload.
+    const CANCEL_BOUND: Duration = Duration::from_secs(2);
+
+    /// Fire `token` after `delay` on a background task.
+    fn cancel_after(token: &CancellationToken, delay: Duration) {
+        let token = token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            token.cancel();
+        });
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn write_chunks_stops_mid_transfer_when_cancelled() {
+        // A throttled writer: a 4 KiB pipe nobody drains, so the very first
+        // chunk write blocks forever — a stand-in for a slow SFTP link.
+        let (mut writer, reader) = tokio::io::duplex(4 * 1024);
+        let data = vec![0u8; 8 * SFTP_UPLOAD_CHUNK];
+        let token = CancellationToken::new();
+        cancel_after(&token, Duration::from_millis(100));
+
+        let started = Instant::now();
+        let result = tokio::time::timeout(
+            WATCHDOG,
+            write_chunks(&mut writer, &data, LONG_STALL, Some(&token)),
+        )
+        .await
+        .expect("cancel must interrupt the stalled write (#4060)");
+        let elapsed = started.elapsed();
+        drop(reader);
+
+        assert!(
+            matches!(result, Err(TerminalError::Cancelled)),
+            "expected Cancelled, got {result:?}"
+        );
+        assert!(elapsed < CANCEL_BOUND, "cancel took too long: {elapsed:?}");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn write_chunks_sends_nothing_after_cancel() {
+        // A pre-fired token stops before the first chunk: no bytes go out.
+        let (mut writer, mut reader) = tokio::io::duplex(4 * SFTP_UPLOAD_CHUNK);
+        let token = CancellationToken::new();
+        token.cancel();
+        let result = write_chunks(&mut writer, &[1u8; 1024], LONG_STALL, Some(&token)).await;
+        assert!(matches!(result, Err(TerminalError::Cancelled)));
+        drop(writer);
+        let mut received = Vec::new();
+        tokio::io::AsyncReadExt::read_to_end(&mut reader, &mut received)
+            .await
+            .expect("read pipe");
+        assert!(received.is_empty(), "no bytes may be written after cancel");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn write_chunks_without_cancel_writes_everything() {
+        let (mut writer, mut reader) = tokio::io::duplex(64 * 1024);
+        let data: Vec<u8> = (0..(SFTP_UPLOAD_CHUNK * 2 + 17))
+            .map(|i| (i % 251) as u8)
+            .collect();
+        let expected = data.clone();
+        let drain = tokio::spawn(async move {
+            let mut got = Vec::new();
+            tokio::io::AsyncReadExt::read_to_end(&mut reader, &mut got)
+                .await
+                .expect("read pipe");
+            got
+        });
+        let token = CancellationToken::new();
+        write_chunks(&mut writer, &data, LONG_STALL, Some(&token))
+            .await
+            .expect("uncancelled write succeeds");
+        drop(writer);
+        assert_eq!(drain.await.expect("drain join"), expected);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sftp_upload_returns_cancelled_promptly_on_a_stalled_server() {
+        // The server never answers, so without the cancel race the upload would
+        // sit until the 30 s stall deadline. Cancel must win well before that.
+        let (session, _) = frozen_session(Freeze::AtChannelOpen).await;
+        let token = CancellationToken::new();
+        cancel_after(&token, Duration::from_millis(100));
+        let (result, elapsed) = run_guarded(move || {
+            upload_bytes_via_sftp_cancellable(&session, b"payload", "/tmp/never", Some(&token))
+        })
+        .await;
+        assert!(
+            matches!(result, Err(TerminalError::Cancelled)),
+            "expected Cancelled, got {result:?}"
+        );
+        assert!(elapsed < CANCEL_BOUND, "cancel took too long: {elapsed:?}");
+    }
+
     // ── Docker-backed integration test ───────────────────────────────────
     //
     // Exercises the real agent-deploy SFTP path (`connect_and_authenticate` +
-    // `upload_via_sftp` + `run_remote_command`) against a live SSH server. These
+    // `upload_via_sftp_cancellable` + `run_remote_command`) against a live SSH server. These
     // helpers are the exact #828/#837 crash surface: they bridge async russh to
     // sync callers via `block_in_place` + `Handle::current()`, which require a
     // multi-threaded Tokio runtime worker context. The test runs them from
@@ -967,10 +1160,11 @@ mod tests {
 
             let remote_path = format!("/tmp/termihub-agent-deploy-test-{}", uuid::Uuid::new_v4());
 
-            let uploaded = upload_via_sftp(
+            let uploaded = upload_via_sftp_cancellable(
                 &session,
                 local_path.to_str().expect("utf-8 temp path"),
                 &remote_path,
+                None,
             )?;
 
             let read_back = run_remote_command(&session, &format!("cat {remote_path}"));
@@ -993,5 +1187,68 @@ mod tests {
             "termihub-agent-deploy-integration-payload",
             "remote file contents should match the uploaded payload"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn agent_upload_cancel_stops_transfer_and_leaves_no_partial_file() {
+        // #4060: Cancel during a large binary upload over real SSH must stop the
+        // transfer promptly (not after it completes) and, after the caller's
+        // rollback, leave nothing at the upload path.
+        let port = ssh_password_port();
+        if !crate::utils::docker_fixture_gate::fixture_ready("ssh-password", port) {
+            return;
+        }
+        trust_fixture_host_keys();
+
+        let token = CancellationToken::new();
+        let fire = token.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            use crate::utils::ssh_auth::connect_and_authenticate;
+
+            let config = crate::terminal::backend::SshConfig {
+                host: "127.0.0.1".to_string(),
+                port,
+                username: "testuser".to_string(),
+                auth_method: "password".to_string(),
+                password: Some("testpass".to_string()),
+                ..Default::default()
+            };
+            let session = connect_and_authenticate(&config)?;
+            let remote_path = format!("/tmp/termihub-agent-upload-test-{}", uuid::Uuid::new_v4());
+
+            // 256 MiB: far too large to finish before the cancel fires.
+            let payload = vec![0x5au8; 256 * 1024 * 1024];
+            let handle = tokio::runtime::Handle::current();
+            handle.spawn(async move {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                fire.cancel();
+            });
+
+            let started = Instant::now();
+            let upload =
+                upload_bytes_via_sftp_cancellable(&session, &payload, &remote_path, Some(&token));
+            let elapsed = started.elapsed();
+
+            // The caller's rollback (agent setup / deploy) removes the partial file.
+            let _ = remove_via_sftp(&session, &remote_path);
+            let exists = run_remote_command(
+                &session,
+                &format!("test -e {remote_path} && echo present || echo absent"),
+            )?;
+            Ok::<_, TerminalError>((upload, elapsed, exists))
+        })
+        .await
+        .expect("spawn_blocking join");
+
+        let (upload, elapsed, exists) = result.expect("cancel round trip should run");
+        assert!(
+            matches!(upload, Err(TerminalError::Cancelled)),
+            "upload must report Cancelled, got {upload:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "cancel must stop the transfer promptly, took {elapsed:?}"
+        );
+        assert_eq!(exists.trim(), "absent", "no partial upload may remain");
     }
 }
