@@ -1610,3 +1610,148 @@ fn forced_update_notifies_the_other_desktop_which_reconnects_to_the_new_binary()
     close_and_reap(&mut desktop_b, &session_id);
     drop(worker_a);
 }
+
+/// Seconds a coordinated push waits for its peers to leave before it applies
+/// anyway: the documented ten-second window (see `agent/src/update/coordinate.rs`).
+const COORDINATED_WINDOW_SECS: u64 = 10;
+
+/// #1616: a coordinated desktop push with three desktops on one host.
+///
+/// 1. Desktop A pushes an update (`agent.request_update` with the ten-second
+///    window). Both peers, B and C, get `agent.update_pending`.
+/// 2. C acknowledges by leaving; B, which holds a persistent shell, ignores the
+///    notice. With a peer still connected nothing is applied early: the binary
+///    is untouched once both notices are in and after C has left.
+/// 3. When the window closes the update applies: A's worker swaps the installed
+///    binary and re-execs, and B's shell keeps running.
+/// 4. B and C reconnect through fresh workers on the swapped-in binary, both
+///    report the agent's version, and B re-attaches its shell.
+#[test]
+fn coordinated_push_notifies_every_peer_and_applies_after_the_window() {
+    let host = Host::new();
+    let mut reapers = DaemonReapers::default();
+
+    let worker_b = host.spawn_worker(&[], &[]);
+    reapers.watch(&host.registry_endpoint());
+    let mut desktop_b = worker_b.connect("desktop-b");
+    let session_id = open_persistent_shell(&mut desktop_b, &mut reapers, "1616");
+
+    let worker_c = host.spawn_worker(&[], &[]);
+    let mut desktop_c = worker_c.connect("desktop-c");
+
+    let worker_a = host.spawn_worker(&[], &[]);
+    let mut desktop_a = worker_a.connect("desktop-a");
+    assert!(
+        wait_until(Duration::from_secs(15), || {
+            let resp = desktop_a.rpc("agent.list_connections", json!({}));
+            resp["result"]["connections"]
+                .as_array()
+                .is_some_and(|c| c.len() == 3)
+        }),
+        "A must see all three desktops on the host"
+    );
+
+    // 1. A pushes a staged binary with the documented window.
+    let staging = host.agent_dir().join("updates");
+    std::fs::create_dir_all(&staging).expect("create staging dir");
+    let staged = staging.join("termihub-agent-pushed");
+    {
+        let _fork_guard = common::fork_guard();
+        std::fs::copy(agent_binary(), &staged).expect("stage pushed binary");
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod pushed binary");
+    }
+    let staged_sha = sha256_hex(&std::fs::read(&staged).expect("read pushed binary"));
+    let bin_inode_before = inode(&host.bin_path).expect("installed binary present");
+
+    // Keep the requester reading for as long as the pipeline may take; closing
+    // its connection early would end the request.
+    desktop_a
+        .reader
+        .get_ref()
+        .set_read_timeout(Some(UPDATE_PIPELINE_TIMEOUT))
+        .expect("set requester read timeout");
+    let params = json!({
+        "binaryPath": staged,
+        "version": NEWER_VERSION,
+        "expectedSha256": staged_sha,
+        "ackTimeoutSecs": COORDINATED_WINDOW_SECS,
+        "authToken": worker_a.token,
+    });
+    let requester = std::thread::spawn(move || desktop_a.rpc("agent.request_update", params));
+
+    for (name, desktop, worker) in [
+        ("desktop-b", &mut desktop_b, &worker_b),
+        ("desktop-c", &mut desktop_c, &worker_c),
+    ] {
+        let notice = desktop
+            .wait_for_notification("agent.update_pending", Duration::from_secs(15))
+            .unwrap_or_else(|| {
+                panic!(
+                    "{name} never got the update notice.\n--- its worker's stderr ---\n{}",
+                    worker.stderr()
+                )
+            });
+        assert_eq!(notice["params"]["requestedByVersion"], "0.1.0", "{notice}");
+    }
+
+    // 2. C acks by leaving; B stays, so the update must wait out the window.
+    drop(desktop_c);
+    drop(worker_c);
+    assert_eq!(
+        inode(&host.bin_path),
+        Some(bin_inode_before),
+        "the update must not apply while a peer is still connected inside the window"
+    );
+
+    // 3. The window closes and the update applies; B's shell keeps running.
+    assert!(
+        wait_until(UPDATE_PIPELINE_TIMEOUT, || {
+            inode(&host.bin_path).is_some_and(|i| i != bin_inode_before)
+        }),
+        "the coordinated push did not swap the installed binary.\n--- worker A stderr ---\n{}",
+        worker_a.stderr()
+    );
+    let response = requester.join().expect("requester thread");
+    assert!(
+        response.is_null() || response["result"]["applied"] == true,
+        "the coordinated push must apply: {response}"
+    );
+    assert_eq!(
+        sha256_hex(&std::fs::read(&host.bin_path).expect("read installed binary")),
+        staged_sha,
+        "the installed binary must now be the pushed one"
+    );
+    assert!(
+        desktop_b.run_marker(&session_id, "during", "1616"),
+        "B's shell stopped running across the coordinated apply"
+    );
+    // A re-execed onto the new binary. Wait for it to serve again before any
+    // other worker starts: the re-exec rewrites the shared token file, so a
+    // worker started meanwhile could read A's token instead of its own.
+    let mut desktop_a =
+        Client::connect(&worker_a.addr(1), host.home.path(), Duration::from_secs(30))
+            .unwrap_or_else(|| panic!("worker A did not come back.\n{}", worker_a.stderr()));
+    assert!(!desktop_a.agent_version().is_empty());
+    drop(desktop_a);
+
+    // 4. B and C come back through fresh workers on the new binary.
+    drop(desktop_b);
+    drop(worker_b);
+    let new_bin_inode = inode(&host.bin_path).expect("installed binary present");
+    let worker_c2 = host.spawn_worker(&[], &[]);
+    let mut desktop_c = worker_c2.connect("desktop-c");
+    assert!(!desktop_c.agent_version().is_empty());
+    drop(desktop_c);
+    drop(worker_c2);
+    let worker_b2 = host.spawn_worker(&[], &[]);
+    assert_eq!(
+        inode(&host.bin_path),
+        Some(new_bin_inode),
+        "the reconnecting workers must start from the swapped-in binary"
+    );
+    let mut desktop_b = reattach_and_prove_alive(&worker_b2, "desktop-b", &session_id, "1616");
+    assert!(!desktop_b.agent_version().is_empty());
+    close_and_reap(&mut desktop_b, &session_id);
+    drop(worker_a);
+}

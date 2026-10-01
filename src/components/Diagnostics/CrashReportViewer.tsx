@@ -56,7 +56,7 @@ export function CrashReportViewer() {
       data-testid="crash-report-viewer"
       footer={
         <>
-          <Button variant="secondary" onClick={close}>
+          <Button variant="secondary" onClick={close} data-testid="crash-report-viewer-close">
             Close
           </Button>
           <Button

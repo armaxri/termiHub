@@ -31,8 +31,10 @@ contract, kept in parity with the TypeScript dispatcher (`src/testbridge/`). See
 
 The runner hosts the WebSocket server; the app connects **out** to it (so no
 platform automation driver is needed). The app is launched with
-`TERMIHUB_TEST_BRIDGE_PORT=<port>`, an isolated `TERMIHUB_CONFIG_DIR` and a
-private `TERMIHUB_SPAWN_ENDPOINT` (so `AppInstance.run_cli(["spawn", …])` reaches
+`TERMIHUB_TEST_BRIDGE_PORT=<port>`, an isolated `TERMIHUB_CONFIG_DIR`, a
+`TERMIHUB_LOG_DIR` inside it (`<config dir>/logs`: the app log, session transcripts
+and `crash-reports/`, never your real log directory) and a private
+`TERMIHUB_SPAWN_ENDPOINT` (so `AppInstance.run_cli(["spawn", …])` reaches
 exactly that instance, never your own running termiHub), then a `Driver` drives
 it:
 

@@ -249,6 +249,19 @@ def test_start_omits_webview2_folder_off_windows(tmp_path, monkeypatch):
         instance.stop()
 
 
+def test_start_isolates_the_log_dir_inside_the_config_dir(tmp_path, monkeypatch):
+    # The app's log, transcripts and crash reports stay in this instance (#4009),
+    # so a test can seed `crash-reports/` and never touches the real log dir.
+    instance, captured = _make_app(monkeypatch, tmp_path, "Linux")
+    instance.start(9999)
+    try:
+        assert instance.log_dir == tmp_path / "logs"
+        assert captured["env"]["TERMIHUB_LOG_DIR"] == str(tmp_path / "logs")
+        assert instance.cli_env()["TERMIHUB_LOG_DIR"] == str(tmp_path / "logs")
+    finally:
+        instance.stop()
+
+
 def test_start_passes_extra_args_after_the_binary(tmp_path, monkeypatch):
     instance, captured = _make_app(monkeypatch, tmp_path, "Linux")
     instance.start(9999, ["--workspace", "Dev"])

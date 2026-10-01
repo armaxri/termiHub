@@ -342,15 +342,21 @@ class AppInstance:
     def launch_env(self) -> dict[str, str]:
         """The environment the app is launched with (minus the bridge port).
 
-        A normal launch pins ``TERMIHUB_CONFIG_DIR``. A portable launch removes
-        it and redirects the installed-mode profile where the OS allows (see
+        A normal launch pins ``TERMIHUB_CONFIG_DIR`` and ``TERMIHUB_LOG_DIR``. A
+        portable launch removes both and redirects the installed-mode profile where the OS allows (see
         :func:`termihub_harness.portable.profile_env`).
         """
         env = dict(os.environ)
         if self._portable is None:
             env["TERMIHUB_CONFIG_DIR"] = str(self._config_dir)
+            # Keep the app's own log, session transcripts and crash reports in
+            # this instance too, out of the user's real log directory (#4009).
+            env["TERMIHUB_LOG_DIR"] = str(self.log_dir)
         else:
             env.pop("TERMIHUB_CONFIG_DIR", None)
+            # Portable mode must resolve its own `<data>/logs` (#4066), which is
+            # also where :attr:`log_dir` points.
+            env.pop("TERMIHUB_LOG_DIR", None)
             if self._profile_home is not None:
                 env.update(portable_staging.profile_env(self._profile_home))
         return env
@@ -362,6 +368,15 @@ class AppInstance:
     @property
     def config_dir(self) -> Path:
         return self._config_dir
+
+    @property
+    def log_dir(self) -> Path:
+        """The app's log directory (``TERMIHUB_LOG_DIR``), inside the config dir.
+
+        Holds the rotating app log, session transcripts and ``crash-reports/``,
+        so a test can seed a crash report here before a launch.
+        """
+        return self._config_dir / "logs"
 
     @property
     def binary(self) -> Path:
@@ -394,6 +409,7 @@ class AppInstance:
         env = dict(os.environ)
         env.pop("TERMIHUB_TEST_BRIDGE_PORT", None)
         env["TERMIHUB_CONFIG_DIR"] = str(self._config_dir)
+        env["TERMIHUB_LOG_DIR"] = str(self.log_dir)
         env["TERMIHUB_SPAWN_ENDPOINT"] = self.spawn_endpoint
         return env
 
