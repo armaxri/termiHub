@@ -51,3 +51,43 @@ tests:
       - "Accent picker does NOT appear"
       - "No delay before repeat starts"
     verification: manual
+
+  # --- Folded in from the per-feature walkthroughs in docs/testing.md (#3695) ---
+
+  - id: MT-LOCAL-30
+    release_gate: true
+    manual_reason: "ConPTY/WebView2 stale-row paint"
+    name: "Windows CMD output paints in order"
+    pr: 1849
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a local CMD tab in a git repo with many untracked files."
+      - "Run git status, then press Enter twice. Repeat a few times."
+      - "Run dir /s."
+    expected:
+      - "The file list is one block and the prompts come after it."
+      - "No resize is needed and output does not slow down."
+    verification: manual
+    tags: [visual]
+
+  - id: MT-LOCAL-31
+    release_gate: true
+    manual_reason: "real installer + UAC on a Git-free Windows host"
+    name: "Guided Git for Windows install end to end"
+    pr: 1672
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "On Windows without Git Bash or WSL, pick 'Git Bash \u2014 set up\u2026' as default shell."
+      - "Click Open git-scm.com, then close the browser."
+      - "Click Install in terminal and finish the winget install (accept UAC)."
+      - "Reopen the shell picker without restarting."
+    expected:
+      - "The browser opens the Git download page."
+      - "A tab 'Install Git for Windows' runs winget."
+      - "Git Bash is now a normal row; the set-up entry is gone."
+    verification: manual
+    tags: [os-native, hardware]

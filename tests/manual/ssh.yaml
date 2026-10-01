@@ -40,3 +40,66 @@ tests:
       - "Both terminals reconnecting at once create only one new gateway session (verify in the Open Connections panel)"
     verification: manual
     tags: [jump-host]
+
+  # --- Folded in from the per-feature walkthroughs in docs/testing.md (#3695) ---
+
+  - id: MT-SSH-50
+    release_gate: true
+    manual_reason: "real X window on a real desktop session"
+    name: "X11 forwarding on a real Linux desktop"
+    pr: 1055
+    platforms: [linux]
+    prerequisites:
+      - app: true
+    instructions:
+      - "On a normal X or Wayland+XWayland desktop, open an SSH connection to the ssh-x11 fixture (port 2208) with X11 forwarding on."
+      - "Run xeyes in the remote shell."
+      - "On a Wayland-only session without XWayland, connect again with X11 forwarding on."
+    expected:
+      - "No prompt; the running X server is adopted."
+      - "The xeyes window appears on the desktop."
+      - "Wayland-only: the XWayland install hint shows, not a generic error."
+    verification: manual
+    tags: [os-native, visual]
+
+  - id: MT-SSH-51
+    release_gate: true
+    manual_reason: "brew admin prompt and XQuartz native window"
+    name: "XQuartz install and X11 window on macOS"
+    pr: 1054
+    platforms: [macos]
+    prerequisites:
+      - app: true
+    instructions:
+      - "On a Mac without XQuartz, open an SSH connection to the ssh-x11 fixture with X11 forwarding on."
+      - "Click Install (with Homebrew) or Install Homebrew, then Retry (without)."
+      - "Approve the admin prompt when asked."
+      - "Connect again and run xclock in the remote shell."
+    expected:
+      - "XQuartz-missing guidance shows; nothing installs until you click."
+      - "The Homebrew installer runs in a visible terminal tab."
+      - "XQuartz installs and starts."
+      - "The xclock window appears."
+    verification: manual
+    tags: [os-native, visual]
+
+  - id: MT-SSH-52
+    release_gate: true
+    manual_reason: "winget UAC prompt and native X window on real Windows"
+    name: "VcXsrv install, consent and X11 window on Windows"
+    pr: 1318
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "On a clean Windows box without VcXsrv, open an SSH connection to the ssh-x11 fixture with X11 forwarding on."
+      - "In the Set up X server dialog click Enable and accept the winget UAC prompt."
+      - "Run xeyes in the remote shell, then disconnect."
+      - "Connect with X11 again."
+    expected:
+      - "The connect pauses for consent; nothing downloads before Enable."
+      - "Progress shows and the xeyes window appears."
+      - "After disconnect no vcxsrv.exe is left in Task Manager."
+      - "The second connect does not prompt again."
+    verification: manual
+    tags: [os-native, visual]
