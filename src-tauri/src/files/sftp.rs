@@ -77,6 +77,9 @@ mod tests {
     /// Default host ports of the elevated-save fixtures (`tests/docker`).
     const DEFAULT_SSH_SUDO_PORT: u16 = 2212;
     const DEFAULT_SSH_NOSUDO_PORT: u16 = 2213;
+    const DEFAULT_SSH_SFTP_ONLY_PORT: u16 = 2215;
+    /// A file the fixtures' `testuser` owns (`useradd -m` copies `/etc/skel`).
+    const USER_OWNED_FILE: &str = "/home/testuser/.bashrc";
 
     fn env_port(var: &str, default: u16) -> u16 {
         std::env::var(var)
@@ -306,5 +309,145 @@ mod tests {
             "file must be unchanged when sudo is unavailable"
         );
         assert_eq!(leftover, 0, "temp upload must be cleaned up on failure");
+    }
+
+    // ── Read-only detection (#1325) and the SFTP-only fallback (#1330) ─────
+    //
+    // The editor's read-only badge/banner is driven by the `check_writable`
+    // write-open probe, and the SFTP-only fallback (no "Edit with sudo"; offer
+    // "Save a copy" instead) by `has_exec_capability`. These drive both against
+    // the real fixtures; the badge and banner rendering itself is UI.
+
+    /// The probe reports the fixture's root-owned file read-only and the
+    /// `testuser`-owned file writable, without modifying either.
+    async fn assert_root_owned_file_detected_read_only(service: &str, port: u16) {
+        trust_fixture_host_keys();
+        let config = testuser_config(port, "testpass");
+        let read_both = || {
+            with_verify(config.clone(), |v| {
+                let target = run_remote_command(v, &format!("cat {ELEVATED_TARGET}"))?;
+                let own = run_remote_command(v, &format!("md5sum {USER_OWNED_FILE}"))?;
+                Ok((target, own))
+            })
+        };
+        let before = read_both().await.expect("read before should succeed");
+
+        let browser = SftpFileBrowser::new(config.clone());
+        let root_owned = browser
+            .check_writable(ELEVATED_TARGET)
+            .await
+            .expect("probe the root-owned file");
+        let user_owned = browser
+            .check_writable(USER_OWNED_FILE)
+            .await
+            .expect("probe the user-owned file");
+
+        let after = read_both().await.expect("read after should succeed");
+        assert_eq!(
+            root_owned,
+            Writability::ReadOnly,
+            "{service}: a root-owned 644 file must be detected read-only"
+        );
+        assert_eq!(
+            user_owned,
+            Writability::Writable,
+            "{service}: the user's own file must be detected writable"
+        );
+        assert_eq!(after, before, "{service}: the probe must not modify files");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial(elevated_save)]
+    async fn root_owned_file_is_detected_read_only_on_the_sudo_host() {
+        let port = env_port("TERMIHUB_TEST_SSH_SUDO_PORT", DEFAULT_SSH_SUDO_PORT);
+        if !fixture_ready("ssh-sudo", port) {
+            return;
+        }
+        assert_root_owned_file_detected_read_only("ssh-sudo", port).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial(elevated_save)]
+    async fn root_owned_file_is_detected_read_only_on_the_nosudo_host() {
+        let port = env_port("TERMIHUB_TEST_SSH_NOSUDO_PORT", DEFAULT_SSH_NOSUDO_PORT);
+        if !fixture_ready("ssh-nosudo", port) {
+            return;
+        }
+        assert_root_owned_file_detected_read_only("ssh-nosudo", port).await;
+    }
+
+    /// The fixture's root-owned file is detected read-only and an exec-capable
+    /// host reports exec capability, which is what makes the editor offer
+    /// "Edit with sudo" rather than the SFTP-only fallback.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial(elevated_save)]
+    async fn sudo_host_reports_exec_capability_so_no_fallback_is_needed() {
+        let port = env_port("TERMIHUB_TEST_SSH_SUDO_PORT", DEFAULT_SSH_SUDO_PORT);
+        if !fixture_ready("ssh-sudo", port) {
+            return;
+        }
+        trust_fixture_host_keys();
+        let browser = SftpFileBrowser::new(testuser_config(port, "testpass"));
+        assert!(
+            browser
+                .has_exec_capability()
+                .await
+                .expect("probe exec capability"),
+            "a shell host must be exec-capable"
+        );
+    }
+
+    /// SFTP-only host (`ForceCommand internal-sftp`, #1330): no exec channel, so
+    /// the editor cannot elevate. A root-owned file is still detected
+    /// read-only, and the fallback's "Save a copy" to a writable path in the
+    /// user's home lands over SFTP alone.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sftp_only_host_takes_the_read_only_fallback_and_saves_a_copy() {
+        use termihub_core::files::FileBrowser;
+
+        let port = env_port(
+            "TERMIHUB_TEST_SSH_SFTP_ONLY_PORT",
+            DEFAULT_SSH_SFTP_ONLY_PORT,
+        );
+        if !fixture_ready("ssh-sftp-only", port) {
+            return;
+        }
+        trust_fixture_host_keys();
+        let browser = SftpFileBrowser::new(testuser_config(port, "testpass"));
+
+        assert!(
+            !browser
+                .has_exec_capability()
+                .await
+                .expect("probe exec capability"),
+            "an SFTP-only host must not be exec-capable (no Edit with sudo)"
+        );
+        assert_eq!(
+            browser
+                .check_writable("/etc/passwd")
+                .await
+                .expect("probe the root-owned file"),
+            Writability::ReadOnly,
+            "a root-owned file must be detected read-only over SFTP alone"
+        );
+
+        // "Save a copy" to the user's home, the editor's suggested destination.
+        let home = browser.realpath(".").await.expect("resolve the home dir");
+        let copy = format!("{home}/termihub-save-copy-{}.txt", uuid::Uuid::new_v4());
+        let buffer = b"edited buffer saved as a copy\n";
+        browser
+            .write_file(&copy, buffer)
+            .await
+            .expect("save a copy to a writable path");
+        let read_back = browser.read_file(&copy).await.expect("read the copy back");
+        let copy_writable = browser.check_writable(&copy).await;
+        browser.delete(&copy).await.expect("remove the copy");
+
+        assert_eq!(read_back, buffer, "the copy must hold the buffer");
+        assert_eq!(
+            copy_writable.expect("probe the copy"),
+            Writability::Writable,
+            "the saved copy must be writable"
+        );
     }
 }

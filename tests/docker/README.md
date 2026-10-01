@@ -51,7 +51,7 @@ podman compose -f tests/docker/docker-compose.yml up -d
 | `ssh-password`         | 2201     | `testuser`/`testpass`       | Standard password auth (OpenSSH latest)                   |
 | `ssh-sudo`             | 2212     | `testuser`/`testpass`       | Password-required sudoer + root-owned target (#1494)      |
 | `ssh-nosudo`           | 2213     | `testuser`/`testpass`       | No `sudo` installed + root-owned target (#1494)           |
-| `ssh-sftp-only`        | 2211     | `testuser`/`testpass`       | SFTP-only (`ForceCommand internal-sftp`, no exec)         |
+| `ssh-sftp-only`        | 2215     | `testuser`/`testpass`       | SFTP-only (`ForceCommand internal-sftp`, no exec)         |
 | `ssh-legacy`           | 2202     | password + keys             | Legacy OpenSSH 7.x compatibility                          |
 | `ssh-keys`             | 2203     | key only                    | All key types (RSA, Ed25519, ECDSA)                       |
 | `ssh-mfa`              | 2216     | password/key + OTP `424242` | Two-factor partial success → keyboard-interactive (#3384) |

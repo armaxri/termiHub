@@ -370,15 +370,17 @@ jobs:
           -- --test-threads=1
 
       - name: Run desktop in-crate Docker tests against the fixtures
-        # The elevated SFTP save tests (src-tauri/src/files/sftp.rs, against the
-        # default-profile `ssh-sudo` :2212 and `ssh-nosudo` :2213) and the agent
-        # deploy test (src-tauri/src/utils/remote_exec.rs, against `ssh-password`
-        # :2201). They drive private desktop-crate code, so they live in the lib
-        # test binary rather than src-tauri/tests. TERMIHUB_REQUIRE_DOCKER=1 turns
-        # an absent fixture into a hard failure via utils::docker_fixture_gate
-        # (#3978), the same gate as the suites above.
+        # The elevated SFTP save, read-only detection and SFTP-only fallback tests
+        # (src-tauri/src/files/sftp.rs, against the default-profile `ssh-sudo`
+        # :2212, `ssh-nosudo` :2213 and `ssh-sftp-only` :2215), the sudo-password
+        # log-secrecy test (session/manager/tests/log_secrecy.rs, `ssh-sudo`) and
+        # the agent deploy test (src-tauri/src/utils/remote_exec.rs, against
+        # `ssh-password` :2201). They drive private desktop-crate code, so they
+        # live in the lib test binary rather than src-tauri/tests.
+        # TERMIHUB_REQUIRE_DOCKER=1 turns an absent fixture into a hard failure
+        # via utils::docker_fixture_gate (#3978), the same gate as the suites above.
         #
-        # The name filters select exactly those four tests out of the lib binary.
+        # The name filters select exactly those tests out of the lib binary.
         # Runs even when an earlier suite failed; `--test-threads=1` because the
         # elevated-save tests share one root-owned file in `ssh-sudo`.
         if: ${{ !cancelled() }}
@@ -387,7 +389,8 @@ jobs:
         run: >-
           cargo test -p termihub --lib --no-fail-fast
           -- --test-threads=1
-          files::sftp::tests::elevated_save
+          files::sftp::tests::
+          session::manager::tests::log_secrecy::sudo_password
           utils::remote_exec::tests::agent_deploy
 
       - name: Run the agent ssh-agent relay suite against the fixtures
