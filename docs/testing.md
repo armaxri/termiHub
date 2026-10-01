@@ -1735,13 +1735,13 @@ take either side and re-run the same command. CI (`--check`) fails if it is stal
 | `native-input`            | Native Input          | all            |             21 |                  0 |     21 |
 | `network-tools`           | network-tools         | all            |              2 |                  2 |      4 |
 | `portable-mode`           | Portable Mode         | all            |              0 |                  2 |      2 |
-| `remote-agent`            | Remote Agent          | all            |              0 |                 12 |     12 |
+| `remote-agent`            | Remote Agent          | all            |              0 |                  7 |      7 |
 | `remote-desktop`          | Remote Desktop        | all            |              9 |                  0 |      9 |
 | `serial`                  | Serial                | windows        |              1 |                  0 |      1 |
 | `shell-integration`       | Shell Integration     | all            |              6 |                  0 |      6 |
 | `ssh`                     | SSH                   | all            |              4 |                  1 |      5 |
 | `ui-layout`               | UI / Layout           | all            |              8 |                  0 |      8 |
-| **Total (16 categories)** |                       |                |         **72** |             **18** | **90** |
+| **Total (16 categories)** |                       |                |         **72** |             **13** | **85** |
 
 <!-- manual-inventory:end -->
 
@@ -1825,13 +1825,13 @@ take either side and re-run the same command. CI (`--check`) fails if it is stal
 | MT-AGENT-08     | Agent reconnect: spinner overlay shown while auto-reconnecting                          | Automated (already)   | tests/system/tests/test_agent_reconnect_ui.py::test_agent_reconnect_ui_cycle                                                        |
 | MT-AGENT-09     | Agent reconnect failure: error message in overlay                                       | Automated (already)   | agent_manager/tests.rs::golden_vector_agent_backoff_sequence_then_give_up + TerminalDisconnectOverlay.test.tsx                      |
 | MT-AGENT-10     | Agent session auto-retries with spinner while agent is unavailable                      | Automated (already)   | terminalConnectionPlan.test.ts + TerminalConnectionOverlay(.timeout).test.tsx (stale: no longer retries indefinitely)               |
-| MT-AGENT-11     | Waiting-for-agent state: session auto-starts when agent connects                        | Tracked issue         | #3686                                                                                                                               |
+| MT-AGENT-11     | Waiting-for-agent auto-starts on connect (overlay has Retry now + a timeout)            | Automated (#3686)     | agentStateHandlers.wake-park.test.ts (MT-AGENT-11) + TerminalConnectionOverlay(.timeout).test.tsx                                   |
 | MT-AGENT-12     | Agent update dialog does not hang when SSH is unresponsive                              | Automated (already)   | core/src/backends/ssh/auth.rs::connect_times_out_on_silent_server                                                                   |
-| MT-AGENT-13     | Double-clicking a stopped persistent agent shell turns the state dot green              | Tracked issue         | #3686                                                                                                                               |
+| MT-AGENT-13     | Double-clicking a stopped persistent agent shell turns the state dot green              | Automated (#3686)     | test_remote_agent_live.py::test_double_click_stopped_persistent_shell_runs_and_survives_tab_close                                   |
 | MT-AGENT-14     | Reattaching via Active Sessions preserves scrollback buffer                             | Automated (already)   | agent local_agent_integration.rs buffer replay + Terminal.agent-reattach-scrollback.test.tsx                                        |
 | MT-AGENT-15     | Build the Windows agent binary natively (MSVC)                                          | Automated (#3685)     | `agent.yml` build-windows runs `build-agents.cmd --native`, asserts exe/sidecar/summary                                             |
 | MT-AGENT-16     | Reconnecting a destroyed persistent session restarts it (no endless loop)               | Automated (already)   | Terminal.reconnect-fresh.test.tsx + appStore.terminalReconnect.test.ts                                                              |
-| MT-AGENT-17     | Reconnecting after the agent connection is destroyed re-establishes the agent           | Tracked issue         | #3686                                                                                                                               |
+| MT-AGENT-17     | Reconnect after the agent connection is destroyed: one agent reconnect, then the error  | Automated (#3686)     | agentStateHandlers.wake-park.test.ts (MT-AGENT-17) + Terminal.agent-spawn-failure.test.tsx                                          |
 | MT-AGENT-18     | Deploy + install agent to a Windows host (cmd.exe default shell)                        | Tracked issue         | #3684                                                                                                                               |
 | MT-AGENT-19     | Deploy + install agent to a Windows host (PowerShell default shell)                     | Tracked issue         | #3684                                                                                                                               |
 | MT-AGENT-20     | Connect (--stdio) to a freshly installed Windows agent                                  | Tracked issue         | #3684                                                                                                                               |
@@ -1843,8 +1843,8 @@ take either side and re-run the same command. CI (`--check`) fails if it is stal
 | MT-AGENT-26     | SSH / Docker jump session originating from a Windows agent                              | Tracked issue         | #3684                                                                                                                               |
 | MT-AGENT-27     | SSH jump-host backend from a Windows-hosted agent (default key / agent auth)            | Tracked issue         | #3684                                                                                                                               |
 | MT-AGENT-28     | Docker backend via named pipe from a Windows-hosted agent                               | Tracked issue         | #3684                                                                                                                               |
-| MT-AGENT-29     | Cancel an in-progress agent setup aborts the upload and rolls back                      | Tracked issue         | #3686                                                                                                                               |
-| MT-AGENT-30     | Agent tab that drops while still spawning shows waiting/reconnecting feedback           | Tracked issue         | #3686                                                                                                                               |
+| MT-AGENT-29     | Cancel an in-progress agent setup rolls back the partial upload                         | Automated (#3686)     | AgentSetupDialog.cancel.test.tsx + test_remote_agent.py::test_cancel_setup_leaves_no_partial_upload                                 |
+| MT-AGENT-30     | Agent tab that drops while still spawning parks and resumes                             | Automated (#3686)     | agentStateHandlers.wake-park.test.ts (MT-AGENT-30)                                                                                  |
 | MT-SER-01       | Powerline glyphs render in SSH with agnoster                                            | Guided-manual pytest  | test_visual_rendering.py::test_powerline_glyphs_render                                                                              |
 | MT-SER-02       | Glyphs render on clean Windows without Nerd Font                                        | Release-gating manual | needs a clean Windows install without a Nerd Font                                                                                   |
 | MT-SER-03       | Serial port not found shows descriptive error overlay                                   | Automated (already)   | core session/serial.rs error classification + TerminalConnectionOverlay.test.tsx serial not-found hint                              |
