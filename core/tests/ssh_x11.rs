@@ -197,3 +197,30 @@ async fn x11_forwarding_degrades_gracefully_without_x_server() {
     alive.store(false, Ordering::SeqCst);
     let _ = (handle.close)();
 }
+
+/// The fixture's self-contained headless render check (#4005): over a real
+/// termiHub SSH session, `render-check.sh` starts an in-container Xvfb, launches
+/// `xeyes` against it and asserts the client mapped a window. This keeps the
+/// "a GUI app renders to an X server" half of the X11 pipeline exercised in
+/// CI, which the forwarding tests above (a fake local X server) cannot show.
+/// Display `:99` stays clear of sshd's forwarded displays (`:10` and up).
+#[tokio::test]
+async fn x11_fixture_render_check_maps_a_window() {
+    require_docker!(port_ssh_x11());
+
+    let config = ssh_password_config(port_ssh_x11());
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let (session, _registry, _hold) =
+        termihub_core::backends::ssh::jump_host::connect_target(&config, Some(&cancel))
+            .await
+            .expect("connect ssh-x11");
+
+    let output = ssh_exec(&session, "render-check.sh 99 2>&1; echo \"EXIT=$?\"")
+        .await
+        .expect("run render-check.sh");
+
+    assert!(
+        output.contains("RENDER_CHECK_OK") && output.contains("EXIT=0"),
+        "render-check.sh must map a window on the in-container Xvfb, got: {output:?}"
+    );
+}
