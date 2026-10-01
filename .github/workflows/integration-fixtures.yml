@@ -408,6 +408,20 @@ jobs:
           TERMIHUB_REQUIRE_DOCKER: "1"
         run: cargo test -p termihub-agent --test agent_forward_integration
 
+      - name: Run the agent files-only suite against the fixtures
+        # agent/tests/ssh_files_only_integration.rs (#4081): the real
+        # termihub-agent over --stdio opens an SSH session to the default-profile
+        # `ssh-sftp-only` (ForceCommand internal-sftp). The refused shell must
+        # keep the session up files-only, reach the test desktop as
+        # `connection.filesOnly` (on create and again on attach), and leave
+        # `connection.files.*` working. The per-PR gate has no fixture up, so
+        # there it self-skips; TERMIHUB_REQUIRE_DOCKER=1 makes a missing fixture
+        # a failure here. Runs even when an earlier suite failed.
+        if: ${{ !cancelled() }}
+        env:
+          TERMIHUB_REQUIRE_DOCKER: "1"
+        run: cargo test -p termihub-agent --test ssh_files_only_integration
+
       - name: Headless X detection in a clean container
         # LinuxXEnv::detect() (#1055, #4005) against a real headless Linux box:
         # no DISPLAY, no Wayland, no X socket, no X server binary. The runner
