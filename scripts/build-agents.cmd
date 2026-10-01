@@ -24,8 +24,9 @@ REM
 REM Prerequisites (default Linux mode): Rust, Docker/Podman (running), cross-rs.
 REM Run scripts\setup-agent-cross.cmd first to install required toolchains.
 REM Prerequisites (--native Windows mode): Rust + MSVC toolchain only.
-REM Hashing uses Windows PowerShell (Get-FileHash); --sign-key additionally needs
-REM Git Bash with OpenSSL 3 (Git for Windows ships both).
+REM Hashing uses Windows PowerShell (.NET SHA256 only, no cmdlets, #4029);
+REM --sign-key additionally needs Git Bash with OpenSSL 3 (Git for Windows
+REM ships both).
 
 setlocal enabledelayedexpansion
 cd /d "%~dp0\.."
@@ -421,16 +422,21 @@ REM Write "<binary>.sha256" next to a built binary: "<lowercase hex>  <file name
 REM plus LF, no BOM -- byte-identical to text-mode `sha256sum <name>` on Linux
 REM (the format release.yml publishes, #1350). Git for Windows' sha256sum
 REM defaults to binary mode ("<hex> *<name>"); both forms verify with
-REM `sha256sum -c`, and every consumer reads only the first token. Uses
-REM Windows PowerShell's Get-FileHash (built into every supported Windows; the
-REM output is locale-independent, unlike certutil's). Returns non-zero -- and the
+REM `sha256sum -c`, and every consumer reads only the first token. Hashes with
+REM .NET's SHA256 class via Windows PowerShell -- deliberately NO cmdlets: when
+REM the script runs from pwsh, powershell.exe inherits pwsh's PSModulePath, module
+REM autoload breaks and Get-FileHash/Resolve-Path are "not recognized" (#4029).
+REM .NET types need no module, and unlike certutil the output is
+REM locale-independent and the LF-only sidecar bytes are exact. The line must
+REM stay free of `!` (delayed expansion is on). The "Windows cmd Script Smoke"
+REM CI job runs this exact line from cmd AND pwsh. Returns non-zero -- and the
 REM caller FAILS the target -- if hashing or the write fails or the sidecar is
 REM empty: the sidecar feeds the update checksum and the .sig flow, so a
 REM silently missing one must never pass as a successful build.
 REM   %1 = binary path
 :write_checksum
 if exist "%~1.sha256" del /q "%~1.sha256"
-powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'Stop'; $p = (Resolve-Path -LiteralPath '%~1').Path; $h = (Get-FileHash -Algorithm SHA256 -LiteralPath $p).Hash.ToLowerInvariant(); [IO.File]::WriteAllText($p + '.sha256', $h + '  ' + [IO.Path]::GetFileName($p) + [char]10)"
+powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'Stop'; try { $p = [IO.Path]::GetFullPath('%~1'); $s = [IO.File]::OpenRead($p); try { $d = [Security.Cryptography.SHA256]::Create().ComputeHash($s) } finally { $s.Dispose() }; $h = [BitConverter]::ToString($d).Replace('-', '').ToLowerInvariant(); [IO.File]::WriteAllText($p + '.sha256', $h + '  ' + [IO.Path]::GetFileName($p) + [char]10) } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }"
 if errorlevel 1 (
     echo   ERROR: could not compute SHA-256 of %~1
     exit /b 1
