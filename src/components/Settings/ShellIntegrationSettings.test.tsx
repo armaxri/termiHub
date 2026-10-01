@@ -151,4 +151,79 @@ describe("ShellIntegrationSettings", () => {
     await render();
     expect(byTestId("shell-integration-linux")).not.toBeNull();
   });
+
+  it("hides the staleness banner for a portable build whose executable moved", async () => {
+    // Portable exemption: a portable binary travels with its data/ dir, so a
+    // moved executable is expected and must not prompt a reinstall.
+    mockedApi.getShellIntegrationStatus.mockResolvedValue(
+      status({
+        registered: true,
+        stale: true,
+        portable: true,
+        registeredExePath: "/media/old/th",
+        currentExePath: "/media/new/th",
+      })
+    );
+    await render();
+    expect(byTestId("shell-integration-status-text")?.textContent).toBe("Registered");
+    expect(byTestId("shell-integration-stale-banner")).toBeNull();
+    expect(byTestId("shell-integration-stale-badge")).toBeNull();
+  });
+
+  describe("Linux file-manager detection annotation (#1397)", () => {
+    it("shows the detected name and version for each detected manager", async () => {
+      mockedApi.getShellIntegrationStatus.mockResolvedValue(
+        status({
+          detectedFileManagers: [
+            { id: "nautilus", name: "Nautilus", detected: true, version: "46.2" },
+            { id: "kde", name: "Dolphin", detected: true, version: "24.08.1" },
+            { id: "thunar", name: "Thunar", detected: true, version: "4.18.4" },
+          ],
+        })
+      );
+      await render();
+      expect(byTestId("shell-integration-linux-nautilus-detection")?.textContent).toBe(
+        "— detected: Nautilus 46.2"
+      );
+      expect(byTestId("shell-integration-linux-kde-detection")?.textContent).toBe(
+        "— detected: Dolphin 24.08.1"
+      );
+      expect(byTestId("shell-integration-linux-thunar-detection")?.textContent).toBe(
+        "— detected: Thunar 4.18.4"
+      );
+    });
+
+    it("omits the version when a detected manager reports none", async () => {
+      mockedApi.getShellIntegrationStatus.mockResolvedValue(
+        status({
+          detectedFileManagers: [{ id: "thunar", name: "Thunar", detected: true }],
+        })
+      );
+      await render();
+      expect(byTestId("shell-integration-linux-thunar-detection")?.textContent).toBe(
+        "— detected: Thunar"
+      );
+    });
+
+    it("shows not detected for a manager reported absent or missing from the status", async () => {
+      mockedApi.getShellIntegrationStatus.mockResolvedValue(
+        status({
+          detectedFileManagers: [
+            { id: "nautilus", name: "Nautilus", detected: true, version: "46.2" },
+            { id: "kde", name: "Dolphin", detected: false },
+          ],
+        })
+      );
+      await render();
+      expect(byTestId("shell-integration-linux-nautilus-detection")?.textContent).toBe(
+        "— detected: Nautilus 46.2"
+      );
+      // Reported but not detected.
+      expect(byTestId("shell-integration-linux-kde-detection")?.textContent).toBe("— not detected");
+      // Not in the status at all.
+      expect(byTestId("shell-integration-linux-thunar-detection")?.textContent).toBe(
+        "— not detected"
+      );
+    });
+  });
 });

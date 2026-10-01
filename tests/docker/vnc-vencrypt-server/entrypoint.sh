@@ -11,15 +11,21 @@ export DISPLAY=:0
 # A stale lock from an earlier container start would make Xvnc refuse :0.
 rm -f /tmp/.X0-lock /tmp/.X11-unix/X0
 
-# Serve VeNCrypt with the X509Vnc sub-type: a TLS handshake against the fixture's
-# leaf certificate, then the classic VNC-password (DES) second stage. Xvnc listens
-# on 5900 (mapped to the host by compose). -localhost no so the mapped port is
-# reachable from outside the container.
+# Serve VeNCrypt with the X509Vnc sub-type by default: a TLS handshake against the
+# fixture's leaf certificate, then the classic VNC-password (DES) second stage.
+# The `vnc-vencrypt-plain-server` compose service reuses this image with
+# VNC_SECURITY_TYPES=VeNCrypt,X509Plain: the same TLS handshake, then a
+# username/password second stage that Xvnc checks through PAM against the
+# container's `testuser` account (#4004). Xvnc listens on 5900 (mapped to the
+# host by compose). -localhost no so the mapped port is reachable from outside
+# the container.
+SECURITY_TYPES="${VNC_SECURITY_TYPES:-VeNCrypt,X509Vnc}"
 Xvnc :0 \
     -rfbport 5900 \
     -geometry 1024x768 \
     -depth 24 \
-    -SecurityTypes VeNCrypt,X509Vnc \
+    -SecurityTypes "$SECURITY_TYPES" \
+    -PlainUsers testuser \
     -X509Cert /root/.vnc/server.crt \
     -X509Key /root/.vnc/server.key \
     -rfbauth /root/.vnc/passwd \

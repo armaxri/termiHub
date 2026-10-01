@@ -15,6 +15,13 @@ export interface ContentOverlayProps {
   icon: React.ReactNode;
   /** Primary heading line (e.g. "Connecting…", "Connection failed"). */
   heading: React.ReactNode;
+  /**
+   * Marks an in-progress screen (connecting, reconnecting, restoring). The
+   * heading becomes a polite live `status` region, so the steady text label —
+   * which carries the progress signal next to a static spinner under reduced
+   * motion (#4039) — is always announced to screen readers too.
+   */
+  busy?: boolean;
   /** Optional secondary line under the heading. */
   subheading?: React.ReactNode;
   /**
@@ -44,6 +51,7 @@ export interface ContentOverlayProps {
 export function ContentOverlay({
   icon,
   heading,
+  busy = false,
   subheading,
   children,
   actions,
@@ -52,9 +60,15 @@ export function ContentOverlay({
 }: ContentOverlayProps): React.ReactElement {
   const classes = ["ui-content-overlay", className ?? ""].filter(Boolean).join(" ");
   return (
-    <div className={classes} data-testid={dataTestId}>
+    <div className={classes} data-testid={dataTestId} aria-busy={busy || undefined}>
       {icon}
-      <p className="ui-content-overlay__heading">{heading}</p>
+      <p
+        className="ui-content-overlay__heading"
+        role={busy ? "status" : undefined}
+        aria-live={busy ? "polite" : undefined}
+      >
+        {heading}
+      </p>
       {subheading != null && <p className="ui-content-overlay__subheading">{subheading}</p>}
       {children}
       {actions != null && <div className="ui-content-overlay__actions">{actions}</div>}

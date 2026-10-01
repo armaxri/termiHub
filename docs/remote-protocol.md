@@ -444,7 +444,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 **0.5.0 (additive, minor)** — adds the ssh-agent relay: the [`agent.forward.data`](#agentforwarddata) / [`agent.forward.close`](#agentforwardclose) methods and the [`agent.forward.open`](#agentforwardopen) / [`agent.forward.data`](#agentforwarddata-notification) / [`agent.forward.close`](#agentforwardclose-notification) notifications (#1727). Backwards compatible in both directions: a 0.4.0 agent simply never opens a relay stream (SSH agent forwarding then falls back to the #1719 host-local model), and a 0.4.0 desktop ignores the notifications, so the forwarded channel is dropped as a graceful no-op — the same behaviour as no local agent.
 
-**0.4.0 (additive, minor)** — adds the [`agent.request_update`](#agentrequest_update) method and the [`agent.update_pending`](#agentupdate_pending) notification (#1351). Backwards compatible in both directions, but note what "compatible" means for a _coordinated_ update: a 0.3.0 desktop never receives `agent.update_pending`, so it gets the same hard cut it always did when another host updates the agent — it is not broken, it is merely not warned. That is the documented "older desktops remain hard-cut" behaviour, and it is why the agent proceeds on a timeout rather than waiting for an ack that such a desktop could never send.
+**0.4.0 (additive, minor)** — adds the [`agent.request_update`](#agentrequest_update) method and the [`agent.update_pending`](#agentupdate_pending) notification (#1351). Backwards compatible in both directions, but note what "compatible" means for a _coordinated_ update: a 0.3.0 desktop never receives `agent.update_pending`, so it is not warned when another host updates the agent. It is not cut off either: its own worker keeps running the old binary until it reconnects (see [`agent.update_pending`](#agentupdate_pending)). It is merely not warned, and it is why the agent proceeds on a timeout rather than waiting for an ack that such a desktop could never send.
 
 **0.3.0 (additive, minor)** — adds the read-only [`agent.list_connections`](#agentlist_connections) method and a `client_id` field in the `initialize` result (#1349). Both are backwards compatible: a 0.2.0 desktop ignores the extra field and never calls the new method; a 0.2.0 agent simply lacks them, so a 0.3.0 desktop falls back gracefully (an empty other-hosts list for the update guard).
 
@@ -1165,9 +1165,9 @@ Check agent health and connectivity. Can be used as a keepalive.
 
 ### `agent.list_connections`
 
-List the clients currently connected to this agent process — a snapshot of the per-process `ConnectionRegistry` (see [Connection Topology & Client Tracking](#connection-topology--client-tracking)). Read-only; added in protocol 0.3.0 (#1349).
+List the clients currently connected to this agent's host — a snapshot of the host-wide registry daemon, falling back to this process's own client when the registry is unavailable (see [Connection Topology & Client Tracking](#connection-topology--client-tracking)). Read-only; added in protocol 0.3.0 (#1349).
 
-Primary consumer is the **connected-host update guard**: before updating an agent the desktop calls this, drops its own entry (matched by the `client_id` from `initialize`), and — if any other clients remain — warns the user that updating will hard-cut them before proceeding.
+Primary consumer is the **connected-host update guard**: before updating an agent the desktop calls this, drops its own entry (matched by the `client_id` from `initialize`), and — if any other clients remain — lists them for the user before proceeding. The update does not cut them off: each runs its own worker, which keeps running until that client reconnects, and their sessions survive (#4037).
 
 **Request:**
 
@@ -1207,7 +1207,7 @@ Primary consumer is the **connected-host update guard**: before updating an agen
 | `connections[].client_version`  | `string`            | Client version reported in `initialize`           |
 | `connections[].connected_since` | `string`            | ISO 8601 timestamp of when the client initialized |
 
-> **Best-effort scope (topology limitation).** The registry is **per agent process**, and the SSH-tunnelled deployment runs **one `--stdio` process per desktop connection**, so in practice this snapshot holds exactly the requesting desktop — the guard then sees no other hosts and the update proceeds as before. Additional clients appear only when a single agent process is shared (a `--listen` TCP agent) or once a future daemon-level coordination layer aggregates clients across processes. Until then the connected-host warning is a genuine safeguard for the shared-process case and a no-op for the common single-desktop case, never a false alarm.
+> **Best-effort scope.** The SSH-tunnelled deployment runs **one worker process per desktop connection**, so the host-wide view comes from the registry daemon (ADR-11). When the registry is unavailable the snapshot holds only the requesting desktop — the guard then sees no other hosts and the update proceeds as before. The warning is never a false alarm.
 
 **Errors:**
 
@@ -1374,11 +1374,11 @@ Gracefully shut down the agent process. Active sessions are detached (left runni
 
 Request a **coordinated agent update** (#1351, SI-5). The agent broadcasts an [`agent.update_pending`](#agentupdate_pending) notification to every **other** client attached to the same host, gives them up to 10 seconds to disconnect cleanly, and then applies the update through exactly the same path as [`agent.request_deferred_update`](#agentrequest_deferred_update) — including its guarantee that active sessions are never interrupted.
 
-The difference between the two methods is the courtesy window, not the apply: `agent.request_deferred_update` cuts other hosts off without warning, `agent.request_update` tells them first.
+The difference between the two methods is the courtesy window, not the apply: `agent.request_deferred_update` updates without telling other hosts, `agent.request_update` tells them first. Neither cuts them off — see [`agent.update_pending`](#agentupdate_pending).
 
 **The ack is the disconnect.** There is no ack message. The agent watches the host-wide client registry (see [Connection Topology & Client Tracking](#connection-topology--client-tracking)) and proceeds as soon as the other clients are gone — a desktop acks by leaving. A desktop that ignores the notice, or that has already crashed, cannot hold the update hostage: when the window closes the agent proceeds anyway and reports who was still attached.
 
-Coordination is best-effort and never blocks the update. If the host-wide registry is unavailable, the agent proceeds immediately with `notifiedClients: 0` and `allAcked: false` — the same hard cut that predates this method — rather than failing.
+Coordination is best-effort and never blocks the update. If the host-wide registry is unavailable, the agent proceeds immediately with `notifiedClients: 0` and `allAcked: false` — the same un-notified update that predates this method — rather than failing.
 
 **Request:**
 
@@ -3425,7 +3425,7 @@ A round is no longer awaited: it timed out, or the connect that asked was abando
 
 Another host is updating this agent (#1351). Broadcast to every client **except** the one that called [`agent.request_update`](#agentrequest_update).
 
-The desktop should show the "being updated by another host" notice, suspend its sessions, and disconnect cleanly — then reconnect to the new version. **Disconnecting is the ack**: there is no reply to send. The agent waits up to 10 seconds for every notified client to go, then proceeds regardless, so a desktop that ignores this notice is simply cut off when the binary is swapped.
+The desktop should show the "being updated by another host" notice, suspend its sessions, and disconnect cleanly — then reconnect to the new version. **Disconnecting is the ack**: there is no reply to send. The agent waits up to 10 seconds for every notified client to go, then proceeds regardless. A desktop that ignores this notice is not cut off: the swap re-execs only the updating desktop's worker, so the ignoring desktop's worker keeps running the old binary until its connection ends. Its next connection starts a fresh worker on the new binary (#4037).
 
 Sessions themselves survive: they live in detached daemons and are recovered on the next connect (see [`agent.request_deferred_update`](#agentrequest_deferred_update)). The notice is about the _connection_ going away, not the work.
 

@@ -35,6 +35,7 @@ import { TerminalTab } from "@/types/terminal";
 import { TabStatus } from "@/utils/tabStatus";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { Tooltip } from "@/components/ui";
+import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import type { WindowInfo } from "@/types/window";
 import { buildWindowPickerEntries, hasOtherWindows, tabCountHint } from "@/utils/windowPicker";
 import { macroReceivingLabel, type MacroReceivingInfo } from "@/utils/macroTabMarker";
@@ -158,6 +159,9 @@ export function Tab({
   onMoveToWindow,
 }: TabProps) {
   const shownTitle = displayTitle ?? tab.title;
+  // Under reduced motion the connecting glyph is static (#4039), so a steady
+  // text label beside it carries the "still connecting" signal instead.
+  const reducedMotion = usePrefersReducedMotion();
   const pickerEntries = buildWindowPickerEntries(windows, currentWindowLabel);
   const showMoveToExisting = hasOtherWindows(windows, currentWindowLabel);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -242,6 +246,11 @@ export function Tab({
             </span>
           );
         })()}
+      {status === "connecting" && reducedMotion && (
+        <span className="tab__state-label" aria-hidden data-testid={`tab-state-label-${tab.id}`}>
+          Connecting…
+        </span>
+      )}
       <span className="tab__title">
         {isDirty && <span className="tab__dirty-dot" />}
         {shownTitle}

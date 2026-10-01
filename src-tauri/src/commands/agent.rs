@@ -14,7 +14,9 @@ use crate::connection::manager::ConnectionManager;
 use crate::credential::CredentialManager;
 use crate::session::manager::SessionManager;
 use crate::terminal::agent_cancel::AgentDeployCancellation;
-use crate::terminal::agent_deploy::{AgentDeployConfig, AgentDeployResult, AgentProbeResult};
+use crate::terminal::agent_deploy::{
+    AgentDeployConfig, AgentDeployResult, AgentProbeResult, ConnectedHost,
+};
 use crate::terminal::agent_graphical_secrets;
 use crate::terminal::agent_manager::{
     AgentCapabilities, AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo,
@@ -943,6 +945,23 @@ pub async fn deploy_agent(
     .unwrap_or_else(|e| Err(blocking_join_error(e)))
 }
 
+/// List the hosts connected to an agent **other than this desktop** (#4038).
+///
+/// Sends `agent.list_connections` and drops this desktop's own `client_id`, so
+/// the Update dialog can show who else is attached before the user confirms an
+/// update (#1349). Read-only: nothing on the remote changes.
+#[tauri::command]
+pub async fn list_agent_hosts(
+    agent_id: String,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+) -> Result<Vec<ConnectedHost>, TerminalError> {
+    debug!(agent_id, "Listing other hosts connected to agent");
+    let manager = agent_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.list_connections(&agent_id))
+        .await
+        .unwrap_or_else(|e| Err(blocking_join_error(e)))
+}
+
 /// Update the agent: shut down the running instance, then deploy a new binary.
 ///
 /// Runs the connected-host guard first: if other hosts are connected to the
@@ -972,8 +991,10 @@ pub async fn update_agent(
 
 /// Force an agent update, bypassing the connected-host guard.
 ///
-/// Called after the user confirms in the Update dialog that other connected
-/// hosts may be hard-cut (#1349). Otherwise identical to [`update_agent`].
+/// Called after the user confirms in the Update dialog that other hosts are
+/// connected (#1349). Those hosts are not cut off: `agent.shutdown` stops only
+/// this desktop's worker, and theirs keep running until they reconnect (#4037).
+/// Otherwise identical to [`update_agent`].
 #[tauri::command]
 pub async fn update_agent_force(
     agent_id: String,
@@ -1092,7 +1113,7 @@ async fn run_immediate_update(
 /// The coordinated desktop-push update (#1616): stage the binary, then hand it
 /// to `agent.request_update` so the agent broadcasts `agent.update_pending` to
 /// every *other* connected host, gives them a clean disconnect window, and
-/// self-applies (swap + re-exec) — never hard-cutting sessions.
+/// self-applies (swap + re-exec). Sessions survive in their daemons.
 ///
 /// The connected-host guard is intentionally skipped: the notice *is* the
 /// courtesy. On a **Windows** host the agent cannot self-swap a running binary

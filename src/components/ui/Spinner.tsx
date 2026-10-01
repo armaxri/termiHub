@@ -40,8 +40,9 @@ export interface SpinnerProps {
 /**
  * The single shared loading-spinner primitive: a token-driven, accessible skin
  * over lucide's `Loader2`. It owns the rotation (`th-spin`) and carries
- * `motion-essential-spinner`, so under `prefers-reduced-motion` it degrades to
- * a gentle opacity pulse instead of freezing into a "hung"-looking static icon.
+ * `motion-essential-spinner`, so under `prefers-reduced-motion` it renders as a
+ * still icon (no rotation, no pulse — #4039). Pair it with visible text (e.g.
+ * "Loading…") so the progress state stays readable when the icon does not move.
  *
  * Use this instead of hand-rolling a `<Loader2 className="…__spinner">` plus a
  * per-component spin class. Where the spinner lives inside a button, prefer the

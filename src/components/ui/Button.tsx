@@ -3,6 +3,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { toast } from "./Toast";
 import "./ui.css";
 import { errorMessage } from "@/utils/errorMessage";
+import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 
 /** Visual variant of the button. */
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
@@ -12,6 +13,13 @@ export type ButtonSize = "xs" | "sm" | "md";
 
 /** Internal lifecycle state for an async click. */
 type AsyncState = "idle" | "pending" | "success";
+
+/**
+ * Steady label a pending Button shows under reduced motion when the caller gave
+ * no `pendingLabel`: the spinner is static there (#4039), so text — not the
+ * rotation — has to say the click is still being worked on.
+ */
+export const DEFAULT_REDUCED_MOTION_PENDING_LABEL = "Working…";
 
 /** How long the success affordance lingers before returning to idle (ms). */
 const SUCCESS_MS = 1200;
@@ -68,7 +76,9 @@ export interface ButtonProps extends Omit<
   onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void | Promise<void>;
   /**
    * Label shown while an async click is pending. Defaults to the normal
-   * children (the label just gets a spinner beside it).
+   * children (the label just gets a spinner beside it) — except under
+   * `prefers-reduced-motion`, where the spinner is static and a text-labelled
+   * button shows {@link DEFAULT_REDUCED_MOTION_PENDING_LABEL} instead (#4039).
    */
   pendingLabel?: React.ReactNode;
   /**
@@ -229,6 +239,17 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 
   const pending = asyncState === "pending";
   const success = asyncState === "success";
+  const reducedMotion = usePrefersReducedMotion();
+  // With full motion the rotating spinner is the progress cue and the label
+  // stays put. Under reduced motion the spinner is static, so a text button
+  // swaps in a steady "Working…" label (icon-only buttons have no room for text
+  // and keep `aria-busy` as their signal).
+  const pendingText =
+    pendingLabel !== undefined
+      ? pendingLabel
+      : reducedMotion && !iconOnly
+        ? DEFAULT_REDUCED_MOTION_PENDING_LABEL
+        : children;
 
   const classes = [
     "ui-btn",
@@ -258,7 +279,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       ) : icon ? (
         <span className="ui-btn__icon">{icon}</span>
       ) : null}
-      {pending && pendingLabel !== undefined ? pendingLabel : children}
+      {pending ? pendingText : children}
     </button>
   );
 });

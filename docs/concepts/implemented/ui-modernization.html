@@ -1030,7 +1030,11 @@
           <li>
             <strong>One motion language.</strong> Dialogs and toasts share one enter (fade + 8px
             rise) and exit, using the <code>--transition-*</code> tokens; all motion wrapped in
-            <code>@media (prefers-reduced-motion: reduce)</code>.
+            <code>@media (prefers-reduced-motion: reduce)</code>. Essential progress spinners
+            (<code>.motion-essential-spinner</code>) spin with full motion; under reduced motion
+            they render as a <strong>static</strong> icon — no rotation, no pulse, nothing that
+            blinks — beside a steady text label (&ldquo;Connecting…&rdquo;, &ldquo;Working…&rdquo;)
+            that carries the progress signal and is announced as a live status (#4039).
           </li>
           <li>
             <strong>Tokens only.</strong> No raw hex, no <code>rgba(0,0,0,…)</code> overlays, no

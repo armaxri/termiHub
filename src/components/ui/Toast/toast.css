@@ -142,6 +142,6 @@
     transition: none;
   }
   /* The loading toast's spinner is an essential progress cue — it carries
-     `.motion-essential-spinner`, degrading to an opacity pulse rather than
-     freezing here (see animations.css, #2603). */
+     `.motion-essential-spinner`, so it renders static here beside the toast's
+     steady message text (see animations.css, #4039). */
 }

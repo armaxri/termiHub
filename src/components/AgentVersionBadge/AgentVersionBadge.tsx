@@ -1,5 +1,6 @@
 import { CheckCircle2, ArrowUpCircle, AlertTriangle, Loader2 } from "lucide-react";
 import type { AgentUpdateState } from "@/utils/agentVersion";
+import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import "./AgentVersionBadge.css";
 
 /** Per-state icon, short label, and accessible description (version interpolated). */
@@ -58,10 +59,15 @@ export function AgentVersionBadge({
   showLabel = false,
   "data-testid": testId,
 }: AgentVersionBadgeProps) {
+  // Called before the early return so the hook order stays stable.
+  const reducedMotion = usePrefersReducedMotion();
   if (state === "unknown" || !version) return null;
 
   const meta = STATE_META[state];
   const description = meta.describe(version);
+  // The updating spinner is static under reduced motion (#4039), so the steady
+  // "Updating…" word is shown beside it even where the label is normally hidden.
+  const labelVisible = showLabel || (state === "updating" && reducedMotion);
 
   return (
     <span className="agent-version-badge" data-testid={testId}>
@@ -82,7 +88,7 @@ export function AgentVersionBadge({
           }
           aria-hidden="true"
         />
-        {showLabel && <span className="agent-version-badge__label">{meta.label}</span>}
+        {labelVisible && <span className="agent-version-badge__label">{meta.label}</span>}
       </span>
     </span>
   );

@@ -100,6 +100,7 @@ import {
   updateAgentFolder,
   deleteAgentFolder,
   updateAgentForce,
+  listAgentHosts,
   saveRemoteAgent,
   deleteRemoteAgentFromBackend,
   reorderRemoteAgents,
@@ -1081,6 +1082,23 @@ describe("api pass-through wrappers (#2975)", () => {
         deployConfig,
       });
       expect(result).toEqual(outcome);
+    });
+
+    it("listAgentHosts forwards the agent id and returns the other hosts", async () => {
+      const hosts = [
+        {
+          clientId: "c-2",
+          client: "termihub-desktop",
+          clientVersion: "1.0.0",
+          connectedSince: "2026-10-01T10:00:00Z",
+        },
+      ];
+      mockedInvoke.mockResolvedValue(hosts);
+
+      const result = await listAgentHosts("agent-1");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("list_agent_hosts", { agentId: "agent-1" });
+      expect(result).toEqual(hosts);
     });
 
     it("saveRemoteAgent forwards the agent record", async () => {
