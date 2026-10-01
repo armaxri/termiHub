@@ -32,7 +32,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 
 use crate::app_tasks::AppTasks;
 use crate::terminal::agent_manager::AgentRpcClient;
@@ -44,7 +44,7 @@ use crate::terminal::agent_manager::AgentRpcClient;
 /// "agent unavailable" and no-op the tick. A free function so the periodic poller
 /// task can resolve the client fresh each tick — an agent may connect after the
 /// poller started — without holding a manager reference.
-pub fn agent_rpc_client(app: &AppHandle) -> Option<Arc<dyn AgentRpcClient>> {
+pub fn agent_rpc_client<R: Runtime>(app: &AppHandle<R>) -> Option<Arc<dyn AgentRpcClient>> {
     app.try_state::<Arc<dyn AgentRpcClient>>()
         .map(|state| (*state).clone())
 }
