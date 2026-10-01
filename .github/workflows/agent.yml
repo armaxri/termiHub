@@ -19,6 +19,7 @@ on:
       # edits to the musl build (e.g. the cross-image hardening in #2056) are
       # exercised on their own PR instead of shipping unvalidated.
       - '.github/workflows/agent.yml'
+      - 'scripts/internal/assert-no-test-signing-key.sh'
   push:
     branches: [ main, develop ]
     paths:
@@ -26,6 +27,7 @@ on:
       - 'core/**'
       - 'Cargo.toml'
       - '.github/workflows/agent.yml'
+      - 'scripts/internal/assert-no-test-signing-key.sh'
 
 # Cancel an in-flight agent build when a newer commit lands on the same PR.
 # Only PR runs cancel in-progress (#3588): a push to develop/main is a post-merge
@@ -134,6 +136,11 @@ jobs:
           TERMIHUB_BUILD_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: cross build --release --target ${{ matrix.target }} -p termihub-agent
 
+      # A shipped agent must never trust the committed TEST-ONLY update-signing
+      # key (#4083): it is compiled in only with the test-hooks feature.
+      - name: Assert no test-only signing key
+        run: scripts/internal/assert-no-test-signing-key.sh target/${{ matrix.target }}/release/termihub-agent
+
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -223,6 +230,10 @@ jobs:
           & $exe --version
           if ($LASTEXITCODE -ne 0) { Write-Error "$exe --version exited $LASTEXITCODE"; exit 1 }
 
+      - name: Assert no test-only signing key (#4083)
+        shell: bash
+        run: scripts/internal/assert-no-test-signing-key.sh target/${{ matrix.target }}/release/termihub-agent.exe
+
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -268,6 +279,9 @@ jobs:
         env:
           TERMIHUB_BUILD_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: cargo build --release --target ${{ matrix.target }} -p termihub-agent
+
+      - name: Assert no test-only signing key (#4083)
+        run: scripts/internal/assert-no-test-signing-key.sh target/${{ matrix.target }}/release/termihub-agent
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

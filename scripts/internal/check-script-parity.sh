@@ -70,12 +70,19 @@ ALLOWLIST=(
   # since Win32-OpenSSH provisioning needs PowerShell, not a .cmd.
   "scripts/internal/native-sshd-fixture.sh"   # fixture up/stop/start/down (-> .ps1 on Windows)
   "scripts/internal/run-native-sshd-suites.sh" # CI suite runner (bash on every runner)
+  # Windows SSH-host agent lane (#3684): run by the nightly Windows leg under
+  # Git Bash only (drives native-sshd-fixture.sh -> .ps1); a .cmd adds nothing.
+  "scripts/internal/run-windows-ssh-host-suite.sh" # Windows CI suite runner (Git Bash)
   # Shell-integration CLI smoke (#4010): the Linux half; Windows registration
   # (HKCU Explorer keys) needs PowerShell, so its twin is a .ps1, not a .cmd.
   "scripts/internal/shell-integration-cli-smoke.sh" # Linux CI smoke (-> .ps1 on Windows)
   # Release app-lifecycle smoke (#4011): the Linux/macOS half; the Windows leg
   # drives the installed app via PowerShell, so its twin is a .ps1, not a .cmd.
   "scripts/internal/release-smoke-app-lifecycle.sh" # release CI smoke (-> .ps1 on Windows)
+  # Test-only signing-key guard (#4083): CI-only gate run by agent.yml on every
+  # agent build (Windows leg via `shell: bash`, i.e. Git Bash) and by release.yml
+  # on Ubuntu; never run by hand, so a `.cmd` twin would be dead weight.
+  "scripts/internal/assert-no-test-signing-key.sh" # CI-only binary grep (bash on every runner)
 )
 
 in_allowlist() {

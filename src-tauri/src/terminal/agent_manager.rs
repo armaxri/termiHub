@@ -3084,3 +3084,16 @@ mod tests;
 // timeout, so nothing is leaked past that.
 #[cfg(all(test, unix))]
 mod russh_reconnect_tests;
+
+/// Raw agent-channel JSON-RPC helpers shared by the live agent tests.
+#[cfg(test)]
+mod live_channel_support;
+
+// ── Live agent deploy/connect against a real Windows OpenSSH host (#3684) ─────
+//
+// Deploy + install through the cmd.exe / PowerShell `DefaultShell`, connect over
+// SSH exec `--stdio`, and re-attach a named-pipe daemon session after a
+// disconnect. Compiled everywhere; skips (with a stated reason) unless the
+// `Windows SSH Host` nightly lane provides the fixture.
+#[cfg(test)]
+mod windows_ssh_host_tests;

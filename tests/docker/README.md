@@ -70,16 +70,17 @@ podman compose -f tests/docker/docker-compose.yml up -d
 
 ### Profile Containers
 
-| Container                     | Port        | Profile  | Purpose                                                    |
-| ----------------------------- | ----------- | -------- | ---------------------------------------------------------- |
-| `network-fault-proxy`         | 2209        | `fault`  | tc/netem network fault injection                           |
-| `sftp-stress`                 | 2210        | `stress` | Pre-populated SFTP stress test data                        |
-| `ftp-server`                  | 2401 / 2402 | `ftp`    | External FTP/FTPS server + seeded `/pub` tree              |
-| `vnc-server`                  | 2501        | `vnc`    | x11vnc + Xvfb, static four-quadrant pattern                |
-| `rdp-server`                  | 2601 / 2602 | `rdp`    | xrdp (TLS) + FreeRDP shadow server (NLA)                   |
-| `remote-agent`                | 2211        | `agent`  | Deployed `termihub-agent` (password/key)                   |
-| `remote-agent-pending-update` | 2214        | `agent`  | Same agent, armed with a pending update (#1520)            |
-| `remote-agent-kbdint`         | 2217        | `agent`  | Same agent behind a keyboard-interactive-only sshd (#4005) |
+| Container                     | Port        | Profile  | Purpose                                                     |
+| ----------------------------- | ----------- | -------- | ----------------------------------------------------------- |
+| `network-fault-proxy`         | 2209        | `fault`  | tc/netem network fault injection                            |
+| `sftp-stress`                 | 2210        | `stress` | Pre-populated SFTP stress test data                         |
+| `ftp-server`                  | 2401 / 2402 | `ftp`    | External FTP/FTPS server + seeded `/pub` tree               |
+| `vnc-server`                  | 2501        | `vnc`    | x11vnc + Xvfb, static four-quadrant pattern                 |
+| `rdp-server`                  | 2601 / 2602 | `rdp`    | xrdp (TLS) + FreeRDP shadow server (NLA)                    |
+| `remote-agent`                | 2211        | `agent`  | Deployed `termihub-agent` (password/key)                    |
+| `remote-agent-pending-update` | 2214        | `agent`  | Same agent, armed with a pending update (#1520)             |
+| `remote-agent-kbdint`         | 2217        | `agent`  | Same agent behind a keyboard-interactive-only sshd (#4005)  |
+| `remote-agent-update-swap`    | 2218        | `agent`  | Same agent, armed with a real signed update to swap (#4083) |
 
 ## Networks
 
@@ -218,8 +219,9 @@ targets so they resolve inside the chroot. ProFTPD's MLSD reports them as
 FTP passive data connections are advertised as the **same** port number the host
 publishes, so the whole passive range is mapped **1:1** (host port == container
 port). Two ranges are used — `30000-30009` (plain/explicit) and `30010-30019`
-(implicit) — and both the port and the range are offset per checkout via
-`scripts/internal/dev-local-env.sh` (`TERMIHUB_TEST_FTP_PORT`,
+(implicit) — and both the port and the range are offset per checkout, identically
+by `scripts/internal/dev-local-env.sh` and the Python harness's
+`dev_local.compose_env()` (`TERMIHUB_TEST_FTP_PORT`,
 `TERMIHUB_TEST_FTPS_IMPLICIT_PORT`, `TERMIHUB_TEST_FTP_PASV_MIN/MAX`,
 `TERMIHUB_TEST_FTPS_IMPLICIT_PASV_MIN/MAX`). The container templates ProFTPD's
 `PassivePorts` from those same values at start-up.
