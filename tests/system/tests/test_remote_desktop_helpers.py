@@ -16,6 +16,7 @@ from termihub_harness.ui.remote_desktop import (
     color_matches,
     framebuffer_to_canvas,
     quadrant_probe_points,
+    solid_probe_points,
 )
 
 FB = (VNC_FB_WIDTH, VNC_FB_HEIGHT)
@@ -76,3 +77,19 @@ def test_probe_points_stay_inside_their_quadrant():
 )
 def test_color_matches(rgba, expected, matches):
     assert color_matches(rgba, expected) is matches
+
+
+def test_solid_probe_points_cover_the_desktop_but_skip_the_centre():
+    # The RDP suite asserts a solid desktop with these points (test_rdp.py).
+    w, h = 1280, 800
+    points = solid_probe_points(w, h)
+    assert len(points) == 16
+    xs = sorted({x for x, _ in points})
+    ys = sorted({y for _, y in points})
+    # Every quarter of each axis is probed: the whole desktop must be painted.
+    assert xs[0] < w / 4 and xs[-1] > w * 3 / 4
+    assert ys[0] < h / 4 and ys[-1] > h * 3 / 4
+    # None sits near the centre, where the session's pointer (cursor) starts.
+    for x, y in points:
+        assert abs(x - w / 2) >= w * 0.15 or abs(y - h / 2) >= h * 0.15
+        assert 0 <= x < w and 0 <= y < h

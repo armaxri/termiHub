@@ -102,6 +102,32 @@ def test_compose_env_covers_project_and_every_service(tmp_path):
     assert all(isinstance(v, str) for v in env.values())
 
 
+def test_base_ports_cover_every_compose_published_port():
+    """Every ``${TERMIHUB_TEST_*_PORT:-<base>}`` the compose file publishes is in
+    :data:`BASE_PORTS` with the same base (#4004).
+
+    A var missing here is never put in :func:`compose_env`, so ``compose up``
+    publishes the service on its *base* port while the harness probes the
+    *offset* one — the RDP fixture came up on 2601 and the suite waited on 5601.
+    """
+    compose = (dev_local.REPO_ROOT / "tests" / "docker" / "docker-compose.yml").read_text(
+        encoding="utf-8"
+    )
+    published = {
+        var: int(base)
+        for var, base in re.findall(r"\$\{(TERMIHUB_TEST_\w+_PORT):-(\d+)\}", compose)
+    }
+    assert published, "no published test ports found in docker-compose.yml"
+    missing = {var: base for var, base in published.items() if var not in dev_local.BASE_PORTS}
+    assert not missing, f"add these to dev_local.BASE_PORTS: {missing}"
+    mismatched = {
+        var: (base, dev_local.BASE_PORTS[var])
+        for var, base in published.items()
+        if dev_local.BASE_PORTS[var] != base
+    }
+    assert not mismatched, f"compose base vs BASE_PORTS: {mismatched}"
+
+
 def test_dev_agent_port_does_not_collide_with_e2e_ssh_port():
     """Regression for #1536.
 

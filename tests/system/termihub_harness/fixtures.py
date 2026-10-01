@@ -122,6 +122,92 @@ VNC_QUADRANT_COLORS: dict[str, tuple[int, int, int]] = {
     "bottom-right": (255, 255, 255),
 }
 
+# ── RDP fixture coordinates (mirror tests/docker/docker-compose.yml) ─────────
+# One container (``rdp-server``, profile ``rdp``) runs two servers: xrdp with TLS
+# security on 3389 and a FreeRDP shadow server with NLA/CredSSP on 3390. Naming
+# the service in ``compose up -d <service>`` activates its profile, exactly as
+# for the VNC fixtures. See ``tests/docker/rdp-server/`` and ``core/tests/rdp.rs``.
+#: Host the published RDP ports are reachable on.
+RDP_HOST = "127.0.0.1"
+#: Service + host port of the xrdp server (TLS, PAM logon, xorgxrdp session).
+RDP_SERVICE = "rdp-server"
+RDP_PORT = dev_local.service_port("TERMIHUB_TEST_RDP_PORT", 2601)
+#: Host port of the same container's FreeRDP shadow server (NLA/CredSSP).
+RDP_NLA_PORT = dev_local.service_port("TERMIHUB_TEST_RDP_NLA_PORT", 2602)
+#: ``container_name`` suffix of :data:`RDP_SERVICE` (``<project>-rdp``).
+RDP_CONTAINER_SUFFIX = "rdp"
+#: The fixture's RDP account (both servers).
+RDP_USERNAME = "testuser"
+RDP_PASSWORD = "testpass"
+#: The xrdp session paints its whole root window this colour (``startwm.sh``);
+#: xrdp's own grey login screen never shows it.
+RDP_DESKTOP_COLOR = (255, 0, 0)
+#: The FreeRDP shadow server's Xvfb root colour and size (``entrypoint.sh``).
+RDP_NLA_DESKTOP_COLOR = (0, 0, 255)
+#: Env var the app's RDP backend reads the sidecar path from (mirrors
+#: ``rdp_sidecar::HELPER_PATH_ENV``).
+RDP_HELPER_ENV = "TERMIHUB_RDP_HELPER"
+#: The sidecar's binary name as ``scripts/build-rdp-sidecar.sh`` builds it.
+RDP_HELPER_NAME = (
+    "termihub-rdp-helper.exe" if platform.system() == "Windows" else "termihub-rdp-helper"
+)
+
+#: An X.224 Connection Request carrying an RDP Negotiation Request for TLS +
+#: CredSSP (MS-RDPBCGR 2.2.1.1): 4-byte TPKT header, 7-byte X.224 CR TPDU, 8-byte
+#: RDP_NEG_REQ. A live RDP server answers with a TPKT (``03 00``) Connection
+#: Confirm; Docker's port forwarder alone accepts and then just closes.
+_RDP_X224_CONNECTION_REQUEST = bytes.fromhex(
+    "03000013" "0ee00000000000" "0100080003000000"
+)
+
+
+def find_rdp_helper() -> Optional[Path]:
+    """The built ``termihub-rdp-helper`` sidecar the app should spawn, if any.
+
+    ``$TERMIHUB_RDP_HELPER`` wins (when it names a file), else the debug/release
+    output of ``scripts/build-rdp-sidecar.sh`` under ``rdp-sidecar/target/``. The
+    app resolves the helper next to its own executable otherwise, which a
+    harness-built app never has — so the RDP suites point it here explicitly.
+    """
+    override = os.environ.get(RDP_HELPER_ENV)
+    if override:
+        path = Path(override)
+        return path if path.is_file() else None
+    for profile in ("debug", "release"):
+        path = REPO_ROOT / "rdp-sidecar" / "target" / profile / RDP_HELPER_NAME
+        if path.is_file():
+            return path
+    return None
+
+
+def wait_for_rdp(host: str, port: int, *, timeout: float) -> None:
+    """Block until an RDP server on ``host:port`` answers an X.224 Connection Request.
+
+    RDP clients speak first, so :func:`wait_for_banner` cannot be used, and a bare
+    TCP connect only proves Docker's forwarder is up. Sending the first PDU of a
+    real connect and reading a TPKT reply proves the server itself is listening.
+    Raises :class:`ContainerRuntimeUnavailable` on timeout.
+    """
+    deadline = time.monotonic() + timeout
+    last: object = None
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=2.0) as sock:
+                sock.settimeout(2.0)
+                sock.sendall(_RDP_X224_CONNECTION_REQUEST)
+                reply = sock.recv(4)
+                if reply.startswith(b"\x03\x00"):
+                    return
+                last = reply
+        except OSError as exc:
+            last = exc
+        time.sleep(0.25)
+    raise ContainerRuntimeUnavailable(
+        f"{host}:{port} did not answer an RDP connection request within {timeout}s "
+        f"(last: {last!r})"
+    )
+
+
 # ── Remote-agent fixture coordinates (mirror tests/docker/docker-compose.yml) ──
 #: Service + host port for the deployed-agent SSH container (compose profile
 #: ``agent``). Unlike ``ssh-password``, this image ships the ``termihub-agent``
@@ -731,6 +817,89 @@ class ContainerControl:
                 f"`{args[0]}` of {self.container} timed out after {timeout}s:\n"
                 f"{_tail(exc.stderr)}"
             ) from exc
+
+
+#: Run ``$CMD`` as the fixture user on the xrdp session's X display (:10 and up;
+#: :1 is the FreeRDP shadow server's Xvfb). Empty output when no session runs.
+_XRDP_SESSION_EXEC = (
+    'for d in /tmp/.X11-unix/X1?; do [ -e "$d" ] || continue; '
+    'su testuser -c "DISPLAY=:${d##*X} $CMD"; done'
+)
+#: The xrdp session's input probe log (``tests/docker/rdp-server/startwm.sh``).
+_XRDP_INPUT_LOG = "/home/testuser/termihub-input.log"
+
+
+class RdpSessionProbe(ContainerControl):
+    """Stop / start the RDP fixture and read what its xrdp session received.
+
+    The fixture session logs every key and button event the client sends
+    (``xev -root``) and can report its pointer position (``xdotool``), so a UI
+    test can prove input typed into the canvas really reached the server — not
+    just that the canvas handled a DOM event.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(RDP_CONTAINER_SUFFIX)
+
+    def restore(self, *, timeout: float = 90.0) -> None:
+        """Start the container (a no-op when running) and wait for both servers."""
+        self.start()
+        wait_for_rdp(RDP_HOST, RDP_PORT, timeout=timeout)
+        wait_for_rdp(RDP_HOST, RDP_NLA_PORT, timeout=timeout)
+
+    def _exec(self, script: str, *, env: Optional[dict[str, str]] = None) -> str:
+        if self._runtime is None:
+            raise ContainerRuntimeUnavailable(
+                f"no container runtime available to exec into {self.container}"
+            )
+        args = [self._runtime, "exec"]
+        for key, value in (env or {}).items():
+            args += ["-e", f"{key}={value}"]
+        try:
+            result = subprocess.run(
+                [*args, self.container, "bash", "-c", script],
+                check=True,
+                timeout=30.0,
+                capture_output=True,
+                text=True,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            raise ContainerRuntimeUnavailable(
+                f"`exec` into {self.container} failed: {exc}"
+            ) from exc
+        return result.stdout
+
+    def session_exec(self, command: str) -> str:
+        """Run ``command`` as the fixture user on the live xrdp session's display."""
+        return self._exec(_XRDP_SESSION_EXEC, env={"CMD": command})
+
+    def pointer(self) -> Optional[tuple[int, int]]:
+        """The session's pointer position, or ``None`` while no session runs."""
+        fields = dict(
+            part.split(":", 1)
+            for part in self.session_exec("xdotool getmouselocation").split()
+            if ":" in part
+        )
+        try:
+            return int(fields["x"]), int(fields["y"])
+        except (KeyError, ValueError):
+            return None
+
+    def move_pointer(self, x: int, y: int) -> None:
+        """Move the session's pointer server-side (to make a later move observable)."""
+        self.session_exec(f"xdotool mousemove {int(x)} {int(y)}")
+
+    def input_events(self, event: str, detail: str) -> int:
+        """How many ``event`` lines (``KeyPress``, ``ButtonPress``…) the session's
+        input probe logged whose details contain ``detail`` (e.g. ``"button 1,"``,
+        ``"keysym 0x61, a)"``). xev prints the details on the lines after the
+        event name, so each event line is paired with the next three."""
+        lines = self._exec(f"cat {_XRDP_INPUT_LOG} 2>/dev/null || true").splitlines()
+        return sum(
+            1
+            for i, line in enumerate(lines)
+            if line.startswith(event) and any(detail in nxt for nxt in lines[i : i + 4])
+        )
 
 
 #: POSIX-shell one-liner counting the bastion's authenticated SSH connections.

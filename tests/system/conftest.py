@@ -1,6 +1,7 @@
 """Shared pytest fixtures and CLI options for the system-test harness."""
 
 import datetime
+import os
 import sys
 
 import pytest
@@ -19,6 +20,11 @@ from termihub_harness.manual import (
 )
 
 from termihub_harness import (
+    RDP_HELPER_ENV,
+    RDP_HOST,
+    RDP_NLA_PORT,
+    RDP_PORT,
+    RDP_SERVICE,
     REMOTE_AGENT_PENDING_PORT,
     REMOTE_AGENT_PENDING_SERVICE,
     REMOTE_AGENT_PORT,
@@ -53,8 +59,10 @@ from termihub_harness import (
     SerialEchoPair,
     SerialEchoUnavailable,
     require_test_bridge_build,
+    find_rdp_helper,
     stage_remote_agent_binary,
     wait_for_banner,
+    wait_for_rdp,
 )
 
 
@@ -365,6 +373,42 @@ def vnc_vencrypt_fixtures():
     dynamic-resolution session's remote desktop really follows the tab.
     """
     return _ensure_vnc_service(VNC_VENCRYPT_SERVICE, VNC_VENCRYPT_PORT)
+
+
+@pytest.fixture(scope="session")
+def rdp_fixtures():
+    """xrdp (TLS, port 2601) + FreeRDP shadow (NLA, port 2602), profile ``rdp``.
+
+    RDP decodes through the separately built ``termihub-rdp-helper`` sidecar,
+    which a harness-built app has no copy of next to its executable. So this
+    points the app at the sidecar via ``$TERMIHUB_RDP_HELPER`` (inherited by
+    every app the harness launches afterwards) and skips the suite when none is
+    built — build it with ``./scripts/build-rdp-sidecar.sh`` (the nightly Linux
+    lane does, via ``scripts/internal/build-system-test-app.sh``). Readiness is
+    an answered X.224 Connection Request on each port, not a bare TCP connect.
+    """
+    helper = find_rdp_helper()
+    if helper is None:
+        pytest.skip(
+            "RDP sidecar not built: run ./scripts/build-rdp-sidecar.sh "
+            f"or set {RDP_HELPER_ENV}"
+        )
+    os.environ[RDP_HELPER_ENV] = str(helper)
+    fixture = ComposeFixture()
+    try:
+        # build=True: the session's input probe lives in the image (startwm.sh),
+        # so a stale local image without it must be rebuilt (cached layers make
+        # this cheap when nothing changed).
+        fixture.ensure(
+            RDP_SERVICE,
+            ports=[(RDP_HOST, RDP_PORT), (RDP_HOST, RDP_NLA_PORT)],
+            build=True,
+        )
+        wait_for_rdp(RDP_HOST, RDP_PORT, timeout=90.0)
+        wait_for_rdp(RDP_HOST, RDP_NLA_PORT, timeout=90.0)
+    except ContainerRuntimeUnavailable as exc:
+        pytest.skip(f"RDP container fixture unavailable: {exc}")
+    return fixture
 
 
 @pytest.fixture
