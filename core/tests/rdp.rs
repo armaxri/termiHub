@@ -1,5 +1,5 @@
 #![cfg(feature = "rdp-sidecar")]
-//! RDP Integration Tests (RDP-01 through RDP-11, #3609 / TIN-005).
+//! RDP Integration Tests (RDP-01 through RDP-12, #3609 / TIN-005).
 //!
 //! Exercises termiHub's `rdp` graphical backend — the IronRDP sidecar
 //! (`termihub-rdp-helper`) spawned and bridged by [`SidecarRdp`] — against a
@@ -31,7 +31,7 @@ use std::time::Duration;
 use common::{port_rdp, port_rdp_nla, require_docker};
 use termihub_core::backends::rdp_sidecar::{SidecarRdp, HELPER_PATH_ENV};
 use termihub_core::connection::{
-    ConnectionType, FrameReceiver, FrameUpdate, GraphicalBackend, MonitorLayout,
+    ConnectionType, FrameReceiver, FrameUpdate, GraphicalBackend, InputEvent, MonitorLayout,
 };
 use termihub_core::errors::SessionError;
 
@@ -950,4 +950,164 @@ async fn rdp_11_audio_redirection_off_by_default() {
 
     rdp.disconnect().await.expect("disconnect should succeed");
     assert_helper_gone(pid, "RDP-11").await;
+}
+
+// ── RDP-12: pointer and keyboard input reach the server (#4004) ─────
+
+/// Run `cmd` as the fixture user on the xrdp session's X display (:10 and up —
+/// :1 is the FreeRDP shadow server's Xvfb) inside this checkout's container.
+fn xrdp_session_exec(cmd: &str, label: &str) -> String {
+    let script = format!(
+        "for d in /tmp/.X11-unix/X1?; do su testuser -c \"DISPLAY=:${{d##*X}} {cmd}\"; done"
+    );
+    common::docker_cli(&[
+        "exec",
+        &common::fixture_container("rdp"),
+        "bash",
+        "-c",
+        &script,
+    ])
+    .unwrap_or_else(|e| panic!("{label}: {e}"))
+}
+
+/// Where the session's X server has the pointer (`xdotool getmouselocation`).
+fn xrdp_pointer(label: &str) -> Option<(u32, u32)> {
+    let out = xrdp_session_exec("xdotool getmouselocation", label);
+    let field = |name: &str| {
+        out.split_whitespace()
+            .find_map(|part| part.strip_prefix(name)?.parse::<u32>().ok())
+    };
+    Some((field("x:")?, field("y:")?))
+}
+
+/// How many `event` lines (`KeyPress`, `ButtonPress`, …) the session's input
+/// probe has logged (`xev -root`, see `tests/docker/rdp-server/startwm.sh`).
+fn xrdp_input_events(event: &str, detail: &str, label: &str) -> usize {
+    let out = common::docker_cli(&[
+        "exec",
+        &common::fixture_container("rdp"),
+        "sh",
+        "-c",
+        "cat /home/testuser/termihub-input.log 2>/dev/null || true",
+    ])
+    .unwrap_or_else(|e| panic!("{label}: {e}"));
+    // xev prints the event name on one line and its details (the keysym) on the
+    // following ones, so pair each event line with the next few lines.
+    let lines: Vec<&str> = out.lines().collect();
+    lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.starts_with(event))
+        .filter(|(i, _)| {
+            lines[*i..(*i + 4).min(lines.len())]
+                .iter()
+                .any(|l| l.contains(detail))
+        })
+        .count()
+}
+
+/// Poll `probe` until it returns true or 20 s pass, re-sending `input` every
+/// couple of seconds — the session may still be settling right after logon.
+async fn input_until(
+    graphical: &dyn GraphicalBackend,
+    input: &[InputEvent],
+    mut probe: impl FnMut() -> bool,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    while tokio::time::Instant::now() < deadline {
+        for event in input {
+            graphical
+                .send_input(event.clone())
+                .await
+                .expect("input should be accepted");
+        }
+        let window = tokio::time::Instant::now() + Duration::from_secs(2);
+        while tokio::time::Instant::now() < window {
+            if probe() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+    false
+}
+
+/// Pointer moves, a left click and a key press sent through the sidecar arrive
+/// at the xrdp session's X server: the pointer lands where it was sent, and the
+/// input probe logs the button and the `a` key. This is the server-side ground
+/// truth the UI suite (`tests/system/tests/test_rdp.py`) asserts the same way.
+#[tokio::test]
+async fn rdp_12_pointer_and_keyboard_input_reach_the_server() {
+    let _serial = SERIAL.lock().await;
+    require_rdp!();
+    assert_no_helpers("RDP-12");
+
+    let mut rdp = SidecarRdp::new();
+    rdp.connect(rdp_settings(port_rdp(), RDP_PASSWORD))
+        .await
+        .expect("RDP-12: connect");
+    let pid = spawned_helper_pid("RDP-12");
+    let graphical = rdp.graphical().expect("RDP-12: graphical backend present");
+    let mut frames = graphical.subscribe_frames();
+    wait_for_xrdp_session(&mut frames, "RDP-12").await;
+    let drain = tokio::spawn(async move { while frames.recv().await.is_some() {} });
+
+    let target = (123, 77);
+    let moved = input_until(
+        graphical,
+        &[InputEvent::Pointer {
+            x: target.0,
+            y: target.1,
+            buttons: 0,
+        }],
+        || xrdp_pointer("RDP-12 pointer") == Some(target),
+    )
+    .await;
+    assert!(
+        moved,
+        "RDP-12: the session pointer never reached {target:?} (last {:?})",
+        xrdp_pointer("RDP-12 pointer")
+    );
+
+    let buttons_before = xrdp_input_events("ButtonPress", "button 1,", "RDP-12 click");
+    let clicked = input_until(
+        graphical,
+        &[
+            InputEvent::Pointer {
+                x: target.0,
+                y: target.1,
+                buttons: 1,
+            },
+            InputEvent::Pointer {
+                x: target.0,
+                y: target.1,
+                buttons: 0,
+            },
+        ],
+        || xrdp_input_events("ButtonPress", "button 1,", "RDP-12 click") > buttons_before,
+    )
+    .await;
+    assert!(clicked, "RDP-12: the left click never reached the session");
+
+    let keys_before = xrdp_input_events("KeyPress", "keysym 0x61, a)", "RDP-12 key");
+    let typed = input_until(
+        graphical,
+        &[
+            InputEvent::Key {
+                code: "KeyA".into(),
+                pressed: true,
+            },
+            InputEvent::Key {
+                code: "KeyA".into(),
+                pressed: false,
+            },
+        ],
+        || xrdp_input_events("KeyPress", "keysym 0x61, a)", "RDP-12 key") > keys_before,
+    )
+    .await;
+    assert!(typed, "RDP-12: the `a` key press never reached the session");
+
+    rdp.disconnect().await.expect("disconnect should succeed");
+    drain.abort();
+    assert_helper_gone(pid, "RDP-12").await;
 }
