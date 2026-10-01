@@ -1,5 +1,5 @@
 #![cfg(feature = "rdp-sidecar")]
-//! RDP Integration Tests (RDP-01 through RDP-09, #3609 / TIN-005).
+//! RDP Integration Tests (RDP-01 through RDP-11, #3609 / TIN-005).
 //!
 //! Exercises termiHub's `rdp` graphical backend — the IronRDP sidecar
 //! (`termihub-rdp-helper`) spawned and bridged by [`SidecarRdp`] — against a
@@ -797,4 +797,157 @@ async fn rdp_09_multi_monitor_layout() {
 
     rdp.disconnect().await.expect("disconnect should succeed");
     assert_helper_gone(pid, "RDP-09").await;
+}
+
+// ── RDP-10 / RDP-11: audio output redirection (rdpsnd, #1764) ─────
+
+/// The marker xrdp's chansrv logs (at INFO) for every audio format a client
+/// advertises over the `rdpsnd` channel.
+const CHANSRV_FORMAT_MARKER: &str = "sound_process_output_format";
+
+/// The fixture container's clock, as the `YYYY-MM-DDTHH:MM:SS.mmm` prefix xrdp
+/// stamps on each log line, so log lines can be scoped to one connection.
+fn fixture_now(label: &str) -> String {
+    let out = common::docker_cli(&[
+        "exec",
+        &common::fixture_container("rdp"),
+        "date",
+        "-u",
+        "+%Y-%m-%dT%H:%M:%S.%3N",
+    ])
+    .unwrap_or_else(|e| panic!("{label}: {e}"));
+    out.trim().to_string()
+}
+
+/// The line xrdp's chansrv logs (at INFO) whenever a client (re)attaches to
+/// it — the positive control that chansrv is alive and logging.
+const CHANSRV_ATTACH_MARKER: &str = "connection accepted from AF_UNIX";
+
+/// How many chansrv log lines containing `marker` were written since `since`
+/// (a [`fixture_now`] stamp), across the fixture session's chansrv logs.
+fn chansrv_lines_since(marker: &str, since: &str, label: &str) -> usize {
+    let out = common::docker_cli(&[
+        "exec",
+        &common::fixture_container("rdp"),
+        "sh",
+        "-c",
+        "cat /home/testuser/.local/share/xrdp/xrdp-chansrv.*.log 2>/dev/null || true",
+    ])
+    .unwrap_or_else(|e| panic!("{label}: {e}"));
+    out.lines()
+        .filter(|line| line.contains(marker))
+        .filter_map(|line| line.strip_prefix('[')?.get(..since.len()))
+        .filter(|stamp| *stamp >= since)
+        .count()
+}
+
+/// Poll [`chansrv_lines_since`] until at least one `marker` line appears or
+/// `secs` pass; returns the final count.
+async fn wait_for_chansrv_line(marker: &str, since: &str, secs: u64, label: &str) -> usize {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
+    loop {
+        let n = chansrv_lines_since(marker, since, label);
+        if n > 0 || tokio::time::Instant::now() >= deadline {
+            return n;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+/// End the fixture's xrdp session (every `testuser` process) and wait until it
+/// is gone, so the next test logs on to a fresh session. xrdp 0.10's chansrv
+/// exits when a client without rdpsnd disconnects from a session an audio
+/// client used before, which would silently break CLIPRDR (RDP-05) for every
+/// later test sharing that session.
+async fn end_xrdp_session(label: &str) {
+    let script = "su testuser -s /bin/sh -c 'kill -TERM -1' 2>/dev/null; \
+        for _ in $(seq 1 60); do \
+            n=0; for p in /proc/[0-9]*; do \
+                [ \"$(stat -c %u \"$p\" 2>/dev/null)\" = 1000 ] && n=$((n + 1)); \
+            done; \
+            [ \"$n\" = 0 ] && exit 0; sleep 0.25; \
+        done; exit 1";
+    common::docker_cli(&[
+        "exec",
+        &common::fixture_container("rdp"),
+        "sh",
+        "-c",
+        script,
+    ])
+    .unwrap_or_else(|e| panic!("{label}: the xrdp session did not end: {e}"));
+}
+
+/// Opting in to audio output redirection registers the real rdpsnd handler,
+/// which advertises its PCM formats, and lifts the NO_AUDIO_PLAYBACK flag. The
+/// session must still log on and paint where the host has no usable audio
+/// output device — the CI runner and the fixture are both headless — so a
+/// missing device degrades to silence instead of failing the connection.
+#[tokio::test]
+async fn rdp_10_audio_redirection_on_headless_host_still_connects() {
+    let _serial = SERIAL.lock().await;
+    require_rdp!();
+    assert_no_helpers("RDP-10");
+    let since = fixture_now("RDP-10");
+
+    let mut settings = rdp_settings(port_rdp(), RDP_PASSWORD);
+    settings["audioRedirection"] = serde_json::json!(true);
+    let mut rdp = SidecarRdp::new();
+    rdp.connect(settings)
+        .await
+        .expect("RDP-10: connect with audio redirection on");
+    let pid = spawned_helper_pid("RDP-10");
+    let graphical = rdp.graphical().expect("RDP-10: graphical backend present");
+    let mut frames = graphical.subscribe_frames();
+    wait_for_xrdp_session(&mut frames, "RDP-10").await;
+
+    // The rdpsnd negotiation runs alongside the first frames; wait for chansrv
+    // to log the client's formats, proving audio was really negotiated.
+    let formats = wait_for_chansrv_line(CHANSRV_FORMAT_MARKER, &since, 15, "RDP-10").await;
+    assert!(
+        formats > 0,
+        "RDP-10: the server never saw the client's audio formats"
+    );
+    assert!(
+        rdp.fatal_error().is_none(),
+        "RDP-10: an audio-enabled session reports no fatal error"
+    );
+
+    rdp.disconnect().await.expect("disconnect should succeed");
+    assert_helper_gone(pid, "RDP-10").await;
+    end_xrdp_session("RDP-10").await;
+}
+
+/// Audio redirection is off by default: a connection that does not opt in
+/// registers no rdpsnd channel, so the server is offered no audio formats.
+#[tokio::test]
+async fn rdp_11_audio_redirection_off_by_default() {
+    let _serial = SERIAL.lock().await;
+    require_rdp!();
+    assert_no_helpers("RDP-11");
+    let since = fixture_now("RDP-11");
+
+    let mut rdp = SidecarRdp::new();
+    rdp.connect(rdp_settings(port_rdp(), RDP_PASSWORD))
+        .await
+        .expect("RDP-11: connect with default settings");
+    let pid = spawned_helper_pid("RDP-11");
+    let graphical = rdp.graphical().expect("RDP-11: graphical backend present");
+    let mut frames = graphical.subscribe_frames();
+    wait_for_xrdp_session(&mut frames, "RDP-11").await;
+    // Positive control: chansrv is alive and logging for this connection, so
+    // "no formats" below is a real observation, not a dead log.
+    assert!(
+        wait_for_chansrv_line(CHANSRV_ATTACH_MARKER, &since, 15, "RDP-11").await > 0,
+        "RDP-11: chansrv never logged this connection"
+    );
+    // Give a (wrongly) negotiated audio channel time to be logged.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(
+        chansrv_lines_since(CHANSRV_FORMAT_MARKER, &since, "RDP-11"),
+        0,
+        "RDP-11: no audio formats may be advertised unless audio is opted in"
+    );
+
+    rdp.disconnect().await.expect("disconnect should succeed");
+    assert_helper_gone(pid, "RDP-11").await;
 }
