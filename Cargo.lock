@@ -7551,6 +7551,7 @@ dependencies = [
  "sha2 0.10.9",
  "socket2 0.5.10",
  "ssh2-config",
+ "syn 2.0.117",
  "tauri",
  "tauri-build",
  "tauri-codegen",
