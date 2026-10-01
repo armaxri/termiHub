@@ -1,5 +1,5 @@
 #![cfg(feature = "rdp-sidecar")]
-//! RDP Integration Tests (RDP-01 through RDP-13, #3609 / TIN-005).
+//! RDP Integration Tests (RDP-01 through RDP-14, #3609 / TIN-005).
 //!
 //! Exercises termiHub's `rdp` graphical backend — the IronRDP sidecar
 //! (`termihub-rdp-helper`) spawned and bridged by [`SidecarRdp`] — against a
@@ -1274,4 +1274,135 @@ async fn rdp_13_clipboard_image_round_trips_both_ways() {
     rdp.disconnect().await.expect("disconnect should succeed");
     drain.abort();
     assert_helper_gone(pid, "RDP-13").await;
+}
+
+// ── RDP-14: remote-copied files, listed then fetched on paste (#1765/#1793) ─
+
+/// Stage three files on the server — two sharing the name `report.txt` in
+/// different folders, one with a non-ASCII name — tagged with `nonce`, and have
+/// an X client copy them as a `text/uri-list` selection, which xrdp's chansrv
+/// offers to the client as a CLIPRDR file list.
+fn copy_files_on_server(nonce: &str, label: &str) {
+    fixture_bash(
+        &format!(
+            "rm -rf /tmp/tf && mkdir -p /tmp/tf/a /tmp/tf/b /tmp/tf/c \
+             && printf 'alpha {nonce}' > /tmp/tf/a/report.txt \
+             && printf 'bravo {nonce}' > /tmp/tf/b/report.txt \
+             && printf 'gruss {nonce}' > \"/tmp/tf/c/$(printf 'gr\\303\\274\\303\\237e.txt')\" \
+             && printf '%s\\r\\n' file:///tmp/tf/a/report.txt file:///tmp/tf/b/report.txt \
+                file:///tmp/tf/c/gr%C3%BC%C3%9Fe.txt > /tmp/tf/uris \
+             && chmod -R a+rX /tmp/tf"
+        ),
+        label,
+    );
+    let copy = "xclip -selection clipboard -t text/uri-list -i /tmp/tf/uris";
+    xrdp_session_exec(&format!("{copy} >/dev/null 2>&1 &"), label);
+}
+
+/// Poll the session's surfaced remote file list until it has `want` entries
+/// (re-copying on the server every few seconds while CLIPRDR initialises), or
+/// `secs` pass. Returns the last list seen.
+async fn wait_for_remote_files(
+    graphical: &dyn GraphicalBackend,
+    nonce: &str,
+    want: usize,
+    secs: u64,
+    label: &str,
+) -> Vec<termihub_core::connection::RemoteClipboardFile> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
+    let mut copied_at: Option<tokio::time::Instant> = None;
+    let mut files = Vec::new();
+    while tokio::time::Instant::now() < deadline {
+        if copied_at.is_none_or(|t| t.elapsed() > Duration::from_secs(5)) {
+            copy_files_on_server(nonce, label);
+            copied_at = Some(tokio::time::Instant::now());
+        }
+        files = graphical.remote_clipboard_files().await;
+        if files.len() >= want {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    files
+}
+
+/// Opted in ("Receive Clipboard Files" with a shared folder), files an X client
+/// copies on the server are surfaced as a sanitized list — same-named files and
+/// a non-ASCII name intact — and each one's bytes are fetched over CLIPRDR only
+/// when pasted (delayed rendering, the path every desktop OS uses). Off by
+/// default: the same copy surfaces nothing.
+#[tokio::test]
+async fn rdp_14_remote_clipboard_files_are_listed_and_fetched_on_paste() {
+    let _serial = SERIAL.lock().await;
+    require_rdp!();
+    assert_no_helpers("RDP-14");
+    let nonce = format!("{}", std::process::id());
+
+    // Opted in first, on a fresh xrdp session: chansrv keeps one set of CLIPRDR
+    // capability flags per session and ANDs every client's into it, so after
+    // any client without file streams (every other test here) it stops
+    // offering CB_STREAM_FILECLIP_ENABLED to later clients of that session.
+    end_xrdp_session("RDP-14").await;
+    for receive in [true, false] {
+        let label = if receive {
+            "RDP-14 opted in"
+        } else {
+            "RDP-14 default"
+        };
+        let shared = tempfile::tempdir().expect("temp shared folder");
+        let mut settings = rdp_settings(port_rdp(), RDP_PASSWORD);
+        settings["driveRedirection"] = serde_json::json!(true);
+        settings["sharedFolderPath"] = serde_json::json!(shared.path());
+        settings["clipboardFileTransfer"] = serde_json::json!(receive);
+        let mut rdp = SidecarRdp::new();
+        rdp.connect(settings).await.expect("RDP-14: connect");
+        let pid = spawned_helper_pid(label);
+        let graphical = rdp.graphical().expect("RDP-14: graphical backend present");
+        let mut frames = graphical.subscribe_frames();
+        wait_for_xrdp_session(&mut frames, label).await;
+        let drain = tokio::spawn(async move { while frames.recv().await.is_some() {} });
+
+        if !receive {
+            let files = wait_for_remote_files(graphical, &nonce, 1, 8, label).await;
+            assert!(
+                files.is_empty(),
+                "{label}: nothing is surfaced without the opt-in: {files:?}"
+            );
+        } else {
+            let files = wait_for_remote_files(graphical, &nonce, 3, 45, label).await;
+            let mut names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
+            names.sort_unstable();
+            assert_eq!(
+                names,
+                ["grüße.txt", "report.txt", "report.txt"],
+                "{label}: the surfaced list"
+            );
+            let mut contents = Vec::new();
+            for file in &files {
+                assert!(!file.is_dir, "{label}: {} is a file", file.name);
+                let path = tokio::time::timeout(
+                    Duration::from_secs(30),
+                    graphical.fetch_remote_clipboard_file(file.index),
+                )
+                .await
+                .unwrap_or_else(|_| panic!("{label}: fetching {} timed out", file.name))
+                .unwrap_or_else(|e| panic!("{label}: fetch {}: {e}", file.name));
+                contents.push(std::fs::read_to_string(&path).expect("fetched file readable"));
+            }
+            contents.sort();
+            assert_eq!(
+                contents,
+                [
+                    format!("alpha {nonce}"),
+                    format!("bravo {nonce}"),
+                    format!("gruss {nonce}")
+                ],
+                "{label}: each pasted file's bytes"
+            );
+        }
+
+        rdp.disconnect().await.expect("disconnect should succeed");
+        drain.abort();
+        assert_helper_gone(pid, label).await;
+    }
 }
