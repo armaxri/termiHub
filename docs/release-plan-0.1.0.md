@@ -411,9 +411,9 @@ python scripts/test-manual.py --inventory
 | `remote-desktop`          | Remote Desktop        | all            |              9 |                  0 |      9 |
 | `serial`                  | Serial                | windows        |              1 |                  0 |      1 |
 | `shell-integration`       | Shell Integration     | all            |              6 |                  0 |      6 |
-| `ssh`                     | SSH                   | all            |              4 |                  1 |      5 |
+| `ssh`                     | SSH                   | all            |              4 |                  0 |      4 |
 | `ui-layout`               | UI / Layout           | all            |              8 |                  0 |      8 |
-| **Total (16 categories)** |                       |                |         **72** |             **11** | **83** |
+| **Total (16 categories)** |                       |                |         **72** |             **10** | **82** |
 
 <!-- manual-inventory:end -->
 
