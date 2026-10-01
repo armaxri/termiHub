@@ -2,9 +2,9 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.24.0
+**Version**: 0.25.0
 **Status**: Draft
-**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089, #3210, #3871, #3242, #3051
+**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089, #3210, #3871, #3242, #3051, #4081
 
 ---
 
@@ -214,7 +214,7 @@ Persistent (reconnectable) sessions run in a detached session-daemon process. Th
 | Access control | `0o700` on the socket dir + socket       | Per-user DACL (`GENERIC_ALL` to the user SID + `LocalSystem`)      |
 | Daemon spawn   | Orphaned child (agent never waits on it) | `DETACHED_PROCESS \| CREATE_NEW_PROCESS_GROUP \| CREATE_NO_WINDOW` |
 
-Both restrict the endpoint to the current user, and neither exposes a TCP port. The frame protocol is append-only: since 0.20.0 (#3210) a daemon whose backend can manage processes sends a capabilities frame before its ready frame, and then answers process list / kill request frames from the worker that holds the session — replies go only to that connection. A worker ignores unknown frames and a daemon started by an older agent sends no capabilities frame, so mixed versions keep working (process management of such a session reports "not supported"). Since 0.21.0 (#3871) the capabilities frame also says whether the daemon's backend has a monitoring provider; the worker that holds the session then sends monitoring request frames (subscribe, unsubscribe, set interval, pause), and the daemon answers each one and streams the provider's samples and status transitions back in monitoring event frames — to that connection only. The daemon stops the provider as soon as that connection no longer holds the session (detach, drop, takeover) or the session ends. Since 0.22.0 (#3242) the capabilities frame also says whether the daemon's backend has a file browser; the worker that holds the session then sends file request frames (list, stat, read, write, delete, rename, mkdir, chmod, chown, symlink, copy) and the daemon answers each one — to that connection only — through the backend's own browser, one request after another and each under a timeout. File contents never ride in the JSON: a write's bytes follow its request, and a read's bytes precede its reply, in separate data frames of at most 64 KiB each, so terminal output and input interleave between the chunks of a large transfer instead of waiting behind it. The worker and its daemon also watch each other for a **fully silent wedge** (#3140): each side advertises heartbeat support (the daemon in its capabilities frame, the worker in a capabilities frame of its own right after its attach intent), and when both did, a side that has received nothing for 15 s sends a ping, which the other answers with an empty pong and nothing else. Any received byte counts as liveness — output, a pong, or part of a large frame still arriving — so an idle but healthy session is never torn down; a peer that stays silent through four pings (75 s in all) is dropped, and the worker then reports the session as lost exactly as for any other broken daemon connection. A daemon or worker from before the heartbeat advertises nothing and is never pinged or dropped. The heartbeat is internal to the agent host and does not change the desktop protocol version. The daemon also never lets a worker that has stopped **reading** stall it (#3890): its frames to the worker are queued and written by a separate task, a worker that accepts no byte for 30 s is dropped (the session keeps running and its output is replayed on the next attach), and while more than 1 MiB is queued the daemon pauses forwarding output rather than dropping any, so a slow worker that keeps reading is never dropped. The daemon's binary frame protocol (`[type: 1B][length: 4B BE][payload]`) and the 1 MiB output ring buffer are identical on both platforms, so reconnect-with-scrollback-replay behaves the same. The `daemon_socket` field persisted in the agent's `state.json` therefore holds a named-pipe name on Windows and a socket path on unix.
+Both restrict the endpoint to the current user, and neither exposes a TCP port. The frame protocol is append-only: since 0.20.0 (#3210) a daemon whose backend can manage processes sends a capabilities frame before its ready frame, and then answers process list / kill request frames from the worker that holds the session — replies go only to that connection. A worker ignores unknown frames and a daemon started by an older agent sends no capabilities frame, so mixed versions keep working (process management of such a session reports "not supported"). Since 0.21.0 (#3871) the capabilities frame also says whether the daemon's backend has a monitoring provider; the worker that holds the session then sends monitoring request frames (subscribe, unsubscribe, set interval, pause), and the daemon answers each one and streams the provider's samples and status transitions back in monitoring event frames — to that connection only. The daemon stops the provider as soon as that connection no longer holds the session (detach, drop, takeover) or the session ends. Since 0.22.0 (#3242) the capabilities frame also says whether the daemon's backend has a file browser; the worker that holds the session then sends file request frames (list, stat, read, write, delete, rename, mkdir, chmod, chown, symlink, copy) and the daemon answers each one — to that connection only — through the backend's own browser, one request after another and each under a timeout. File contents never ride in the JSON: a write's bytes follow its request, and a read's bytes precede its reply, in separate data frames of at most 64 KiB each, so terminal output and input interleave between the chunks of a large transfer instead of waiting behind it. The worker and its daemon also watch each other for a **fully silent wedge** (#3140): each side advertises heartbeat support (the daemon in its capabilities frame, the worker in a capabilities frame of its own right after its attach intent), and when both did, a side that has received nothing for 15 s sends a ping, which the other answers with an empty pong and nothing else. Any received byte counts as liveness — output, a pong, or part of a large frame still arriving — so an idle but healthy session is never torn down; a peer that stays silent through four pings (75 s in all) is dropped, and the worker then reports the session as lost exactly as for any other broken daemon connection. A daemon or worker from before the heartbeat advertises nothing and is never pinged or dropped. The heartbeat is internal to the agent host and does not change the desktop protocol version. Since 0.25.0 (#4081) a daemon whose SSH backend kept the session up **files-only** (the host refused the shell but SFTP works) tells the worker that holds the session with a files-only frame, and repeats it right after the ready frame to every worker that attaches later; the worker relays it as [`connection.filesOnly`](#connectionfilesonly). The daemon also never lets a worker that has stopped **reading** stall it (#3890): its frames to the worker are queued and written by a separate task, a worker that accepts no byte for 30 s is dropped (the session keeps running and its output is replayed on the next attach), and while more than 1 MiB is queued the daemon pauses forwarding output rather than dropping any, so a slow worker that keeps reading is never dropped. The daemon's binary frame protocol (`[type: 1B][length: 4B BE][payload]`) and the 1 MiB output ring buffer are identical on both platforms, so reconnect-with-scrollback-replay behaves the same. The `daemon_socket` field persisted in the agent's `state.json` therefore holds a named-pipe name on Windows and a socket path on unix.
 
 ### Default Shell and Local Shell Spawning
 
@@ -334,6 +334,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                          |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.24.0          | 0.25.0        | Yes (the desktop requests 0.24.0; `connection.filesOnly` is routed)                                                                  |
 | 0.24.0          | 0.24.0        | Yes                                                                                                                                  |
 | 0.24.0          | 0.9.0–0.23.0  | Yes (the older agent answers `initialize` in snake_case, which the desktop still reads)                                              |
 | 0.23.0          | 0.24.0        | Yes (the agent answers a pre-0.24.0 `protocolVersion` in the legacy snake_case)                                                      |
@@ -403,6 +404,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                           |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                 |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                  |
+
+**0.25.0 (additive, minor)** — adds the [`connection.filesOnly`](#connectionfilesonly) notification (#4081). An agent-hosted SSH session whose host **refused the interactive shell but serves SFTP** (OpenSSH `ForceCommand internal-sftp`) is no longer ended: the session backend in the session daemon probes SFTP after the refusal, keeps the session up for the file browser and editor, and the agent tells the desktop with this notification — when it happens, and again on every later attach of the session (a re-attach after a transport break, a takeover, a recovering worker). The desktop folds it onto the tab exactly like a direct SSH session (the "no shell" panel with **Open Files**). No capability flag: an older desktop ignores the unknown notification (its tab keeps the session but shows an empty terminal), and an older agent never sends it — its daemon ends such a session at once, as before. A session started by an older agent's session daemon keeps that behaviour until it is reopened. The desktop still requests `0.24.0`; nothing it sends changes.
 
 **0.24.0 (minor, `initialize` result casing)** — the [`initialize`](#initialize) result envelope is now **camelCase**, matching its params and the nested `capabilities` (#3051): `protocolVersion`, `agentVersion`, `clientId` and `updateAuthTokenPath` replace `protocol_version`, `agent_version`, `client_id` and `update_auth_token_path`. Negotiation is by **the requested version**, in both directions: the agent answers a client whose `protocolVersion` is `0.24.0` or later in camelCase and an older client in the legacy snake_case keys, so a pre-0.24.0 desktop keeps reading its agent's version and update token path. The desktop now requests `0.24.0` (instead of `0.3.0`) and reads **both** casings, so a pre-0.24.0 agent's snake_case result still yields its real version — the outdated-agent and update paths work instead of a parse failure. Nothing else changes: the rest of the protocol keeps its casing.
 
@@ -3172,6 +3175,37 @@ for the session ignores them.
 **Session-daemon frame:** the daemon signals the eviction to the incumbent worker with
 `MSG_EVICTED` (`0x86`, daemon → agent, empty payload), written immediately before it drops that
 connection. A pre-SM-003 worker logs the unknown frame type and then sees the same EOF as before.
+
+### `connection.filesOnly`
+
+The session's SSH host **refused the interactive shell, but SFTP works** (0.25.0, #4081) — e.g.
+an OpenSSH account with `ForceCommand internal-sftp`. The session stays up for the file browser
+and editor instead of ending: it produces no terminal output, input and resize are dropped, and
+[`connection.files.*`](#connectionfileslist) keep working on its session id. The desktop shows the
+tab's "no shell" panel with **Open Files**.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connection.filesOnly",
+  "params": {
+    "session_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+  }
+}
+```
+
+| Param        | Type     | Description           |
+| ------------ | -------- | --------------------- |
+| `session_id` | `string` | Affected session UUID |
+
+Sent when the verdict arrives, which can be just after [`connection.create`](#connectioncreate)
+answered — a desktop must not drop it for a session it is still registering. It is sent again on
+every later attach of a session that is still files-only. Additive: an older desktop ignores it,
+and an older agent never sends it.
+
+**Session-daemon frame:** the daemon signals it to the attached worker with `MSG_FILES_ONLY`
+(`0x8E`, daemon → agent, empty payload), and repeats it right after `MSG_READY` to every worker
+that attaches later. A pre-0.25.0 worker logs the unknown frame type and carries on.
 
 ### `connection.error`
 

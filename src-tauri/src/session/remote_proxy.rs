@@ -90,6 +90,11 @@ pub struct RemoteProxy {
     /// Process manager proxy (list / kill), set up on connect when the remote
     /// session can be inspected (PROD-0028).
     process_proxy: Option<Arc<RemoteProcessProxy>>,
+    /// The remote session's files-only verdict (#4081): flipped by the agent
+    /// manager when the agent reports `connection.filesOnly` — the session's
+    /// SSH host refused the shell but serves files. Read through
+    /// [`files_only_watch`](ConnectionType::files_only_watch).
+    files_only: tokio::sync::watch::Sender<bool>,
 }
 
 impl RemoteProxy {
@@ -120,6 +125,7 @@ impl RemoteProxy {
             file_browser_proxy: None,
             monitoring_proxy: None,
             process_proxy: None,
+            files_only: tokio::sync::watch::channel(false).0,
         }
     }
 
@@ -161,6 +167,10 @@ impl RemoteProxy {
             .register_session_output(&agent_id, &remote_session_id, std_tx)
             .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
 
+        // A files-only session (#4081) says so again on this attach.
+        let files_only = tokio::sync::watch::channel(false).0;
+        register_files_only(&*agent_manager, &agent_id, &remote_session_id, &files_only);
+
         let outcome = match agent_manager.attach_session(&agent_id, &remote_session_id) {
             Ok(()) => ReattachOutcome::Attached,
             Err(TerminalError::SessionHeldByPeer(_)) => ReattachOutcome::HeldByPeer,
@@ -193,6 +203,7 @@ impl RemoteProxy {
             file_browser_proxy: None,
             monitoring_proxy: None,
             process_proxy: None,
+            files_only,
         };
         Ok((proxy, outcome))
     }
@@ -420,6 +431,32 @@ impl ConnectionType for RemoteProxy {
             .as_ref()
             .map(|p| p.clone() as Arc<dyn ProcessManager + Send + Sync>)
     }
+
+    /// The agent's files-only verdict for the remote session (#4081), so the
+    /// session manager folds `filesOnly` onto an agent tab exactly as for a
+    /// direct SSH session. Stays `false` on an agent that never reports it.
+    fn files_only_watch(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+        Some(self.files_only.subscribe())
+    }
+}
+
+/// Register `files_only` as the route of the remote session's files-only
+/// verdict (#4081). Best-effort: without the route the session simply never
+/// shows as files-only, as with an agent that does not report it.
+fn register_files_only(
+    agent_manager: &dyn AgentRpcClient,
+    agent_id: &str,
+    remote_session_id: &str,
+    files_only: &tokio::sync::watch::Sender<bool>,
+) {
+    if let Err(e) =
+        agent_manager.register_files_only(agent_id, remote_session_id, files_only.clone())
+    {
+        warn!(
+            agent_id,
+            remote_session_id, "files-only route not registered: {e}"
+        );
+    }
 }
 
 /// The agent session a cancellable connect created, shared between the
@@ -609,6 +646,15 @@ impl RemoteProxy {
         self.agent_manager
             .register_session_output(self.agent_id(), &remote_sid, std_tx)
             .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
+        // Route the agent's files-only verdict for this session to us (#4081).
+        // The agent may decide before this lands; the route then gets it late.
+        self.files_only.send_replace(false);
+        register_files_only(
+            &*self.agent_manager,
+            self.agent_id(),
+            &remote_sid,
+            &self.files_only,
+        );
 
         // Attach to the session to start receiving output. Same reasoning as
         // `create_session` above: must run on the blocking thread pool.
@@ -1732,6 +1778,9 @@ mod tests {
         unattended_connect: Option<bool>,
         /// The `unattended` flag of every owned create, in order (#3877).
         created_unattended: Mutex<Vec<bool>>,
+        /// The agent manager's files-only routing (#4081), driven by the real
+        /// routes so a test can deliver `connection.filesOnly` notifications.
+        files_only_routes: Mutex<crate::terminal::agent_manager::files_only::FilesOnlyRoutes>,
     }
 
     impl MockAgentRpcClient {
@@ -1747,6 +1796,7 @@ mod tests {
                 session_files: None,
                 unattended_connect: None,
                 created_unattended: Mutex::new(Vec::new()),
+                files_only_routes: Mutex::default(),
             }
         }
 
@@ -1762,6 +1812,7 @@ mod tests {
                 session_files: None,
                 unattended_connect: None,
                 created_unattended: Mutex::new(Vec::new()),
+                files_only_routes: Mutex::default(),
             }
         }
     }
@@ -2012,8 +2063,25 @@ mod tests {
         fn unregister_session_output(
             &self,
             _agent_id: &str,
-            _remote_session_id: &str,
+            remote_session_id: &str,
         ) -> Result<(), TerminalError> {
+            self.files_only_routes
+                .lock()
+                .unwrap()
+                .remove(remote_session_id);
+            Ok(())
+        }
+
+        fn register_files_only(
+            &self,
+            _agent_id: &str,
+            remote_session_id: &str,
+            files_only_tx: tokio::sync::watch::Sender<bool>,
+        ) -> Result<(), TerminalError> {
+            self.files_only_routes
+                .lock()
+                .unwrap()
+                .register(remote_session_id.to_string(), files_only_tx);
             Ok(())
         }
 
@@ -2117,6 +2185,90 @@ mod tests {
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].0, "agent-1");
         assert_eq!(sessions[0].1, "local");
+    }
+
+    /// Deliver a `connection.filesOnly` notification for `remote_sid` through
+    /// the mock's real files-only routing (#4081).
+    fn notify_files_only(mock: &MockAgentRpcClient, remote_sid: &str) {
+        use crate::terminal::agent_manager::files_only::route_files_only_notification;
+        assert!(route_files_only_notification(
+            &mut mock.files_only_routes.lock().unwrap(),
+            "agent-1",
+            termihub_core::protocol::methods::CONNECTION_FILES_ONLY,
+            &json!({ "session_id": remote_sid }),
+        ));
+    }
+
+    /// #4081: the agent's `connection.filesOnly` for the proxy's remote session
+    /// drives `files_only_watch`, so the session manager folds `filesOnly`
+    /// onto an agent tab like a direct SSH one.
+    #[tokio::test]
+    async fn files_only_notification_drives_the_files_only_watch() {
+        let mock = Arc::new(MockAgentRpcClient::new());
+        let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
+        proxy
+            .connect(json!({ "type": "ssh", "config": {} }))
+            .await
+            .expect("connect should succeed");
+        let mut watch = proxy
+            .files_only_watch()
+            .expect("an agent session reports files-only");
+        assert!(!*watch.borrow(), "not files-only until the agent says so");
+
+        // A verdict for another session leaves this one alone.
+        notify_files_only(&mock, "someone-else");
+        assert!(!*watch.borrow());
+
+        notify_files_only(&mock, "mock-session-1");
+        tokio::time::timeout(Duration::from_secs(1), watch.wait_for(|f| *f))
+            .await
+            .expect("the watch flips promptly")
+            .expect("the sender is alive");
+    }
+
+    /// #4081: the agent decides right after `connection.create` answers, so its
+    /// verdict can arrive before the proxy registered its route — it must not
+    /// be lost.
+    #[tokio::test]
+    async fn files_only_verdict_before_the_route_is_not_lost() {
+        let mock = Arc::new(MockAgentRpcClient::new());
+        notify_files_only(&mock, "mock-session-1");
+        let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
+        proxy
+            .connect(json!({ "type": "ssh", "config": {} }))
+            .await
+            .expect("connect should succeed");
+        assert!(*proxy.files_only_watch().unwrap().borrow());
+    }
+
+    /// #4081: a re-attached proxy (after a transport break) hears the verdict
+    /// the agent repeats on attach.
+    #[test]
+    fn reattached_proxy_follows_the_files_only_verdict() {
+        let mock = Arc::new(MockAgentRpcClient::new());
+        let (proxy, _outcome) =
+            RemoteProxy::reconnect_existing("agent-1".into(), "remote-7".into(), mock.clone())
+                .expect("re-attach succeeds");
+        let watch = proxy.files_only_watch().unwrap();
+        assert!(!*watch.borrow());
+        notify_files_only(&mock, "remote-7");
+        assert!(*watch.borrow());
+    }
+
+    /// #4081: disconnecting drops the route, so a late verdict for the closed
+    /// session is not kept around.
+    #[tokio::test]
+    async fn disconnect_drops_the_files_only_route() {
+        let mock = Arc::new(MockAgentRpcClient::new());
+        let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
+        proxy
+            .connect(json!({ "type": "ssh", "config": {} }))
+            .await
+            .expect("connect should succeed");
+        let watch = proxy.files_only_watch().unwrap();
+        proxy.disconnect().await.unwrap();
+        notify_files_only(&mock, "mock-session-1");
+        assert!(!*watch.borrow(), "a closed session's route is gone");
     }
 
     /// `SessionManager::create_connection` wraps the frontend's settings under a

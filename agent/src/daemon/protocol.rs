@@ -152,6 +152,14 @@ pub const MSG_PONG: u8 = 0x8C;
 /// with [`MSG_AGENT_PONG`]. Sent only to a worker that advertised
 /// [`CAP_HEARTBEAT`] in [`MSG_AGENT_CAPABILITIES`].
 pub const MSG_DAEMON_PING: u8 = 0x8D;
+/// Daemon → Agent: the session became **files-only** (#4081) — its SSH host
+/// refused the shell but SFTP works, so the session stays up for files. Empty
+/// payload. Sent to the attached worker when the backend reports it, and again
+/// right after [`MSG_READY`] to every worker that attaches later, so a
+/// re-attached or recovering worker learns it too. Append-only and backward
+/// compatible: a pre-#4081 worker logs the unknown frame and carries on; a
+/// pre-#4081 daemon never sends it, and its session ends as it always did.
+pub const MSG_FILES_ONLY: u8 = 0x8E;
 
 /// [`MSG_CAPABILITIES`] flag: the daemon serves [`MSG_PROCESS_REQUEST`] through
 /// its session backend's process manager.

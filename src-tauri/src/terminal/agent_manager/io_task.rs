@@ -29,6 +29,7 @@ use termihub_core::protocol::methods::{
 };
 
 use super::agent_stderr::AgentStderr;
+use super::files_only::FilesOnlyRoutes;
 use super::io_lanes::{AgentIoSender, CloseBudgetOnDrop, IoBudget, IoLanes, Next};
 use super::{
     dispatch_agent_notification, emit_agent_state, emit_agent_state_with_error, evicted_remote_ids,
@@ -189,6 +190,8 @@ pub(super) async fn agent_io_task<R: Runtime>(
     let mut agent_stderr = AgentStderr::new(agent_id.clone());
     let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
     let mut monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
+    // Files-only agent sessions (#4081): remote session id → its proxy's watch.
+    let mut files_only_routes = FilesOnlyRoutes::default();
     // Streaming tool runs (#3353): run id → where its notifications go.
     let mut tool_runs: HashMap<String, ToolRunSender> = HashMap::new();
     let mut pending_responses: HashMap<u64, oneshot::Sender<Result<Value, AgentRpcFailure>>> =
@@ -227,6 +230,7 @@ pub(super) async fn agent_io_task<R: Runtime>(
             params,
             &session_outputs,
             &monitoring_outputs,
+            &mut files_only_routes,
             &b64,
         );
     }
@@ -362,6 +366,10 @@ pub(super) async fn agent_io_task<R: Runtime>(
                         }
                         AgentIoCommand::UnregisterSession { session_id } => {
                             session_outputs.remove(&session_id);
+                            files_only_routes.remove(&session_id);
+                        }
+                        AgentIoCommand::RegisterFilesOnly { session_id, files_only_tx } => {
+                            files_only_routes.register(session_id, files_only_tx);
                         }
                         AgentIoCommand::RegisterMonitoring { session_id, monitoring_tx } => {
                             monitoring_outputs.insert(session_id, monitoring_tx.into());
@@ -467,6 +475,7 @@ pub(super) async fn agent_io_task<R: Runtime>(
                                                 &params,
                                                 &session_outputs,
                                                 &monitoring_outputs,
+                                                &mut files_only_routes,
                                                 &b64,
                                             );
                                         }
@@ -594,6 +603,7 @@ pub(super) async fn agent_io_task<R: Runtime>(
                         params,
                         &session_outputs,
                         &monitoring_outputs,
+                        &mut files_only_routes,
                         &b64,
                     );
                 }
@@ -658,6 +668,7 @@ pub(super) async fn agent_io_task<R: Runtime>(
                             &mut monitoring_outputs,
                             &keep,
                         );
+                        files_only_routes.retain(&keep);
                     }
                     // Route the output read while waiting for the attach replies
                     // (the re-attached sessions' buffered output) to their tabs.
@@ -669,6 +680,7 @@ pub(super) async fn agent_io_task<R: Runtime>(
                             params,
                             &session_outputs,
                             &monitoring_outputs,
+                            &mut files_only_routes,
                             &b64,
                         );
                     }
