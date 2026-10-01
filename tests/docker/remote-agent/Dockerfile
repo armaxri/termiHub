@@ -23,7 +23,7 @@
 # --stdio`; see `src-tauri/src/terminal/backend.rs`), so a live connect finds it
 # without any setup wizard step.
 
-FROM ubuntu:24.04
+FROM ubuntu:24.04 AS agent
 
 # Harden apt against transient mirror failures in CI (#2768).
 RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \
@@ -102,3 +102,51 @@ RUN ssh-keygen -A && /usr/sbin/sshd -t
 EXPOSE 22
 
 CMD ["/usr/sbin/sshd", "-D", "-e"]
+
+# ── Real-swap deferred-update arming (#4083) ────────────────────────────────────
+# Build target `update-swap` (the `remote-agent-update-swap` compose service; build
+# it together with PENDING_UPDATE_VERSION). On top of the armed image above it
+# stages a REAL update the agent can apply: a copy of the deployed agent with a
+# trailer appended (so its bytes, and SHA-256, differ while it stays a launchable
+# agent of the same version), signed exactly the way release CI signs
+# (`openssl pkeyutl -sign -rawin` over "termihub-agent-update-v1\0" || SHA-256) —
+# but with the committed TEST-ONLY key (agent/keys/test-only/, bind-mounted from
+# the `update-test-key` build context so it never lands in an image layer). Only
+# a `test-hooks` agent trusts that key; the apply runs the unchanged production
+# digest (AGT-004) and signature (AGT-005) checks. The hook learns the staged
+# path and digest from sshd's per-user environment file; it reads the signature
+# from the `.sig` sidecar. See agent/src/update/test_hook.rs.
+FROM agent AS update-swap
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends openssl && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN --mount=type=bind,from=update-test-key,target=/run/update-test-key \
+    set -eu; \
+    [ -f /home/testuser/.ssh/environment ] || { \
+        echo "update-swap needs PENDING_UPDATE_VERSION (the armed hook)" >&2; exit 1; }; \
+    updates=/home/testuser/.config/termihub-agent/updates; \
+    staged="$updates/termihub-agent-swap-test"; \
+    mkdir -p "$updates"; \
+    cp /home/testuser/.local/bin/termihub-agent "$staged"; \
+    printf '\nTERMIHUB-TEST-SWAPPED-AGENT-BUILD (#4083)\n' >> "$staged"; \
+    chmod 755 "$staged"; \
+    digest="$(sha256sum "$staged" | cut -c1-64)"; \
+    { printf 'termihub-agent-update-v1\0'; openssl dgst -sha256 -binary "$staged"; } > /tmp/msg; \
+    openssl pkeyutl -sign -rawin \
+        -inkey /run/update-test-key/update-signing-TEST-ONLY.key.pem -in /tmp/msg \
+        | openssl base64 -A > "$staged.sig"; \
+    openssl base64 -d -A -in "$staged.sig" -out /tmp/sig.bin; \
+    openssl pkeyutl -verify -rawin -pubin \
+        -inkey /run/update-test-key/update-signing-TEST-ONLY.pub.pem \
+        -in /tmp/msg -sigfile /tmp/sig.bin; \
+    rm -f /tmp/msg /tmp/sig.bin; \
+    printf '%s  %s\n' "$digest" termihub-agent-swap-test > "$staged.sha256"; \
+    printf 'TERMIHUB_AGENT_TEST_PENDING_UPDATE_BINARY=%s\nTERMIHUB_AGENT_TEST_PENDING_UPDATE_SHA256=%s\n' \
+        "$staged" "$digest" >> /home/testuser/.ssh/environment; \
+    chown -R testuser:testuser /home/testuser/.config; \
+    /usr/sbin/sshd -t
+
+# Default target: the plain (or PENDING_UPDATE_VERSION-armed) image above.
+FROM agent

@@ -173,6 +173,19 @@ REMOTE_AGENT_KBDINT_SERVICE = "remote-agent-kbdint"
 REMOTE_AGENT_KBDINT_PORT = dev_local.service_port(
     "TERMIHUB_TEST_REMOTE_AGENT_KBDINT_PORT", 2217
 )
+#: Service + host port for the deployed-agent container that can REALLY apply its
+#: staged update (compose profile ``agent``, #4083): the ``update-swap`` build
+#: target stages a distinguishable copy of the agent, signed with the committed
+#: TEST-ONLY key that only a ``test-hooks`` agent trusts, and arms the hook with
+#: its path and digest. A run swaps the container's installed agent, so the
+#: fixture force-recreates it for a pristine image.
+REMOTE_AGENT_UPDATE_SWAP_SERVICE = "remote-agent-update-swap"
+REMOTE_AGENT_UPDATE_SWAP_PORT = dev_local.service_port(
+    "TERMIHUB_TEST_REMOTE_AGENT_UPDATE_SWAP_PORT", 2218
+)
+#: ``container_name`` suffix of that service (``<project>-<suffix>``), for
+#: :class:`ContainerControl`.
+REMOTE_AGENT_UPDATE_SWAP_CONTAINER_SUFFIX = "remote-agent-update-swap"
 #: Version the armed image advertises (mirrors the compose build arg), so the test
 #: can assert the banner names it.
 REMOTE_AGENT_PENDING_VERSION = "9.9.9"
@@ -412,6 +425,7 @@ class ComposeFixture:
         *services: str,
         ports: Sequence[tuple[str, int]] = (),
         build: bool = False,
+        force_recreate: bool = False,
         up_timeout: float = 300.0,
         ready_timeout: float = 90.0,
     ) -> None:
@@ -430,6 +444,10 @@ class ComposeFixture:
         freshly-staged agent binary that ``up -d`` alone would not pick up if the
         image already exists (Docker rebuilds only the changed layer, so this is
         cheap when the binary is unchanged).
+
+        ``force_recreate`` replaces running containers with fresh ones from the
+        image — for a fixture a test *mutates* (the real-swap agent container,
+        #4083), so every session starts from the pristine image.
         """
         runtime = container_runtime()
         if runtime is None:
@@ -453,9 +471,8 @@ class ComposeFixture:
             self._run_compose(
                 [*base, "build", *services], services, env=env, timeout=up_timeout, action="build"
             )
-        self._run_compose(
-            [*base, "up", "-d", *services], services, env=env, timeout=up_timeout, action="up"
-        )
+        up = [*base, "up", "-d", *(["--force-recreate"] if force_recreate else []), *services]
+        self._run_compose(up, services, env=env, timeout=up_timeout, action="up")
         for host, port in ports:
             wait_for_port(host, port, timeout=ready_timeout)
 
@@ -767,6 +784,14 @@ class ContainerControl:
         """
         result = self._run(["logs", self.container])
         return (result.stdout or "") + (result.stderr or "")
+
+    def exec(self, *argv: str, timeout: float = 60.0) -> str:
+        """Run ``argv`` inside the container and return its stdout.
+
+        For server-side evidence a UI cannot show — e.g. the SHA-256 of the
+        agent binary installed in the container (#4083).
+        """
+        return self._run(["exec", self.container, *argv], timeout=timeout).stdout or ""
 
     def _run(
         self, args: Sequence[str], *, timeout: float = 60.0

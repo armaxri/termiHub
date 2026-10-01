@@ -25,6 +25,9 @@ from termihub_harness import (
     REMOTE_AGENT_PENDING_SERVICE,
     REMOTE_AGENT_PORT,
     REMOTE_AGENT_SERVICE,
+    REMOTE_AGENT_UPDATE_SWAP_CONTAINER_SUFFIX,
+    REMOTE_AGENT_UPDATE_SWAP_PORT,
+    REMOTE_AGENT_UPDATE_SWAP_SERVICE,
     SSH_BANNER_PORT,
     SSH_BANNER_SERVICE,
     SSH_BASTION_PORT,
@@ -57,6 +60,7 @@ from termihub_harness import (
     AppInstance,
     Bridge,
     ComposeFixture,
+    ContainerControl,
     ContainerRuntimeUnavailable,
     SerialEchoPair,
     SerialEchoUnavailable,
@@ -470,6 +474,32 @@ def remote_agent_pending_fixtures():
     except ContainerRuntimeUnavailable as exc:
         pytest.skip(f"armed deployed-agent container fixture unavailable: {exc}")
     return fixture
+
+
+@pytest.fixture(scope="session")
+def remote_agent_update_swap_fixtures():
+    """Armed agent container that can REALLY apply its staged update (port 2218).
+
+    The ``update-swap`` build target of the ``remote-agent`` image (#4083): the
+    hook stages a distinguishable copy of the agent signed with the committed
+    TEST-ONLY key, with its digest, so the apply passes the production AGT-004 /
+    AGT-005 gates and swaps the installed binary for real. A run mutates the
+    container, so it is force-recreated from the image. Returns a
+    :class:`ContainerControl` for server-side evidence (installed binary digest,
+    ``state.json``). Skips cleanly on the same contract as
+    :func:`remote_agent_fixtures`.
+    """
+    try:
+        stage_remote_agent_binary()
+        ComposeFixture().ensure(
+            REMOTE_AGENT_UPDATE_SWAP_SERVICE,
+            ports=[(SSH_HOST, REMOTE_AGENT_UPDATE_SWAP_PORT)],
+            build=True,
+            force_recreate=True,
+        )
+    except ContainerRuntimeUnavailable as exc:
+        pytest.skip(f"real-swap deployed-agent container fixture unavailable: {exc}")
+    return ContainerControl(REMOTE_AGENT_UPDATE_SWAP_CONTAINER_SUFFIX)
 
 
 @pytest.fixture(scope="session")
