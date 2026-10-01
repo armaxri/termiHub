@@ -397,4 +397,51 @@ mod tests {
             XServerError::ServerUnreachable { .. }
         ));
     }
+
+    // ----- detect: the real environment (#4005) -----------------------------
+
+    /// Env var that opts into [`detect_in_a_headless_container`]. It is set only
+    /// where the test runs inside a throwaway headless container, because the
+    /// test asserts facts about the machine it runs on and writes under `/tmp`.
+    #[cfg(target_os = "linux")]
+    const HEADLESS_PROBE_ENV: &str = "TERMIHUB_HEADLESS_X_PROBE";
+
+    /// [`LinuxXEnv::detect`] against a real headless Linux box (#1055, #4005):
+    /// no `DISPLAY`, no Wayland, no X socket, no X server binary. Every probe
+    /// must read that correctly and the gap must classify as headless, which is
+    /// what the user is told. Then an X socket appears in `/tmp/.X11-unix` and
+    /// the real socket scan must pick it up.
+    ///
+    /// Skips unless [`HEADLESS_PROBE_ENV`] is set. The integration-fixtures
+    /// workflow runs it in a fresh `ubuntu` container (the "headless X
+    /// detection" step); see docs/testing.md.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn detect_in_a_headless_container() {
+        if std::env::var_os(HEADLESS_PROBE_ENV).is_none() {
+            eprintln!("SKIPPED: set {HEADLESS_PROBE_ENV}=1 inside a headless container");
+            return;
+        }
+
+        let env = LinuxXEnv::detect();
+        assert_eq!(env.display, None, "{env:?}");
+        assert_eq!(env.wayland_display, None, "{env:?}");
+        assert_eq!(env.xdg_session_type, None, "{env:?}");
+        assert!(!env.x11_socket_present, "no X socket expected: {env:?}");
+        assert!(!env.xorg_on_path, "no Xorg expected: {env:?}");
+        assert!(!env.xwayland_on_path, "no Xwayland expected: {env:?}");
+        assert_eq!(env.sandbox, SandboxKind::None, "{env:?}");
+        assert_eq!(classify(&env), LinuxXGap::Headless, "{env:?}");
+
+        // A live X socket (what Xvfb/Xorg create) flips the real scan, and a
+        // present-but-unreachable server is classified as such.
+        let dir = std::path::Path::new("/tmp/.X11-unix");
+        std::fs::create_dir_all(dir).expect("create /tmp/.X11-unix");
+        let socket = dir.join("X7");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket).expect("bind X7");
+        let env = LinuxXEnv::detect();
+        assert!(env.x11_socket_present, "X7 socket not detected: {env:?}");
+        assert_eq!(classify(&env), LinuxXGap::ServerUnreachable, "{env:?}");
+        let _ = std::fs::remove_file(&socket);
+    }
 }
