@@ -233,6 +233,7 @@ unmount.
 | `getComputedStyle`    | Read a _computed_ CSS property — incl. theme custom properties |
 | `readTerminal`        | Read a terminal's reconstructed logical-line text              |
 | `getTerminalViewport` | Read a terminal's `{ viewportY, baseY }` scroll position       |
+| `inspectTerminal`     | Read a terminal's OSC 133 marks and inline-image store         |
 | `sampleCanvas`        | Read RGBA pixels of a `<canvas>` (remote-desktop frames)       |
 | `getState`            | Read app store state, optionally by dot-path                   |
 | `screenshot`          | Capture a PNG of the rendered app as a data URL (see below)    |
@@ -321,6 +322,31 @@ await driver.scrollTerminal({ toBottom: true }); // re-arm auto-scroll
 
 The scenario runner (#800) exposes these as the `scrollTerminal` step and the
 `terminalAtBottom` check (`{ assert: "terminalAtBottom", atBottom?, tolerance? }`).
+
+### Command marks and inline images (`inspectTerminal`)
+
+Two pieces of terminal state never reach the reconstructed text: the **OSC 133
+command marks** (#3415) a shell with termiHub's shell integration emits around
+every command, and the **inline images** (SIXEL / iTerm2, PROD-057) the image
+addon stores beside the text buffer. `{ action: "inspectTerminal", tabId? }`
+returns both (#4013):
+
+```jsonc
+{
+  "commandMarks": {
+    "commands": [{ "state": "finished", "exitCode": 0 }], // oldest first
+    "lastCommandOutput": "1\n2\n3", // what "Copy Last Command Output" copies
+  },
+  "inlineImages": { "active": true, "storageUsage": 0.0001 }, // MB stored
+}
+```
+
+`commands` is empty when the shell emits no marks (e.g. `sh`); `exitCode` is
+`null` when unknown or still running. `inlineImages.active` is `false` with the
+Inline Images setting off, and `storageUsage` is above `0` once an image was
+stored. Either part is `null` when the tab has no tracker / image controller.
+It defaults to the active terminal tab and fails when no terminal is registered
+for the tab. Python: `driver.inspect_terminal(tab_id=None)`.
 
 ### Canvas pixels (`sampleCanvas`)
 

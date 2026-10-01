@@ -65,8 +65,12 @@ export const INLINE_IMAGE_ADDON_OPTIONS: IImageAddonOptions = {
 
 /** Loads the addon constructor. Injectable for tests. */
 export type ImageAddonLoader = () => Promise<
-  new (options?: IImageAddonOptions) => Pick<ImageAddon, "activate" | "dispose">
+  new (options?: IImageAddonOptions) => LoadedImageAddon
 >;
+
+/** The part of a loaded addon the controller uses (`storageUsage` may be absent in fakes). */
+type LoadedImageAddon = Pick<ImageAddon, "activate" | "dispose"> &
+  Partial<Pick<ImageAddon, "storageUsage">>;
 
 const defaultLoader: ImageAddonLoader = async () => (await import("@xterm/addon-image")).ImageAddon;
 
@@ -76,6 +80,11 @@ export interface InlineImagesController {
   setEnabled(enabled: boolean): void;
   /** Whether the addon is currently loaded into the terminal. */
   isActive(): boolean;
+  /**
+   * MB of decoded image data the addon currently holds — above 0 once an image
+   * was stored; 0 when the addon is not loaded (test-bridge introspection).
+   */
+  storageUsage(): number;
   /** Dispose the addon (if loaded) and ignore any in-flight lazy load. */
   dispose(): void;
 }
@@ -96,7 +105,7 @@ export function createInlineImagesController(
   }
 ): InlineImagesController {
   const loader = opts.loader ?? defaultLoader;
-  let addon: Pick<ImageAddon, "dispose"> | null = null;
+  let addon: LoadedImageAddon | null = null;
   let wanted = false;
   let disposed = false;
   // At most one lazy load in flight; its result is re-checked against `wanted`
@@ -137,6 +146,7 @@ export function createInlineImagesController(
       }
     },
     isActive: () => addon !== null,
+    storageUsage: () => Math.max(0, addon?.storageUsage ?? 0),
     dispose() {
       if (disposed) return;
       disposed = true;
@@ -155,4 +165,30 @@ export function createInlineImagesController(
 
   controller.setEnabled(opts.enabled);
   return controller;
+}
+
+// -----------------------------------------------------------------------------
+// Per-tab registry — lets the test bridge read a tab's image store (#4013).
+// -----------------------------------------------------------------------------
+
+const controllers = new Map<string, InlineImagesController>();
+
+/**
+ * Register the inline-images controller of a terminal tab. Returns an
+ * unregister function that only removes the entry if it still points at this
+ * controller (a remount may have replaced it already).
+ */
+export function registerInlineImagesController(
+  tabId: string,
+  controller: InlineImagesController
+): () => void {
+  controllers.set(tabId, controller);
+  return () => {
+    if (controllers.get(tabId) === controller) controllers.delete(tabId);
+  };
+}
+
+/** The inline-images controller of a terminal tab, if one is mounted. */
+export function getInlineImagesController(tabId: string): InlineImagesController | undefined {
+  return controllers.get(tabId);
 }

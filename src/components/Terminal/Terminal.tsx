@@ -6,7 +6,11 @@ import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { createInlineImagesController, type InlineImagesController } from "./inlineImages";
+import {
+  createInlineImagesController,
+  registerInlineImagesController,
+  type InlineImagesController,
+} from "./inlineImages";
 import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
 import { ConnectionConfig } from "@/types/terminal";
@@ -1543,6 +1547,7 @@ export function Terminal({
         frontendLog("terminal", `inline images unavailable tab=${tabId}: ${String(err)}`),
     });
     inlineImagesRef.current = inlineImages;
+    const unregisterInlineImages = registerInlineImagesController(tabId, inlineImages);
 
     // Instantiate the syntax-highlighting engine for this xterm and apply the
     // effective config. Created before the scrollback replay below so its
@@ -1889,6 +1894,7 @@ export function Terminal({
       webglAddon = null;
       // Dispose the inline-image addon (and cancel any in-flight lazy load) on
       // the same boundary as the terminal (PROD-057).
+      unregisterInlineImages();
       inlineImages.dispose();
       if (inlineImagesRef.current === inlineImages) inlineImagesRef.current = null;
       // Reset the renderer flag so a reconnect starts on the DOM-safe path

@@ -331,6 +331,18 @@ export interface GetTerminalViewportCommand {
 }
 
 /**
+ * Read a terminal's non-text state that the canvas hides (#4013): its OSC 133
+ * command marks (#3415) and its inline-image store (PROD-057). Returns a
+ * {@link TerminalInspection}. `commandMarks` / `inlineImages` are `null` when
+ * the tab has no tracker / image controller mounted. When `tabId` is omitted
+ * the active tab is used.
+ */
+export interface InspectTerminalCommand {
+  action: "inspectTerminal";
+  tabId?: string;
+}
+
+/**
  * Read a slice of the app store. `path` is an optional dot-path into the state
  * (e.g. `"activePanelId"` or `"rootPanel.activeTabId"`). When omitted, a curated
  * snapshot of serializable state is returned.
@@ -560,6 +572,30 @@ export interface TerminalViewport {
   baseY: number;
 }
 
+/** One OSC 133 command as {@link InspectTerminalCommand} reports it. */
+export interface InspectedCommand {
+  /** `prompt` / `input` / `running` / `finished`. */
+  state: string;
+  /** Exit code from the `D` mark; `null` when unknown or unfinished. */
+  exitCode: number | null;
+}
+
+/** A terminal's hidden state, returned by `inspectTerminal`. */
+export interface TerminalInspection {
+  commandMarks: {
+    /** Tracked commands, oldest first. Empty when the shell emits no OSC 133. */
+    commands: InspectedCommand[];
+    /** What "Copy Last Command Output" would copy; `null` when nothing. */
+    lastCommandOutput: string | null;
+  } | null;
+  inlineImages: {
+    /** Whether the image addon is loaded (the Inline Images setting is on). */
+    active: boolean;
+    /** MB of decoded image data stored — above 0 once an image was stored. */
+    storageUsage: number;
+  } | null;
+}
+
 /** The full set of commands the bridge understands. */
 export type BridgeCommand =
   | ClickCommand
@@ -582,6 +618,7 @@ export type BridgeCommand =
   | ReadTerminalCommand
   | ScrollTerminalCommand
   | GetTerminalViewportCommand
+  | InspectTerminalCommand
   | GetStateCommand
   | ScreenshotCommand
   | EmitEventCommand
