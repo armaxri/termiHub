@@ -23,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 
 use termihub_core::backends::ssh::jump_host::{probe_connection_path, HopProgress, HopStatus};
+use termihub_core::backends::ssh::parse_ssh_settings;
 use termihub_core::config::SshConfig;
 
 use crate::connection::manager::ConnectionManager;
@@ -154,9 +155,10 @@ pub async fn probe_connection_path_cmd(
         .resolve_jump_host_refs(&mut settings, None)
         .map_err(|e| TerminalError::ConnectionFailed(e.to_string()))?;
 
-    let target: SshConfig = serde_json::from_value(settings)
-        .map_err(|e| TerminalError::ConnectionFailed(format!("Invalid SSH config: {e}")))?;
-    let target = target.expand();
+    // The SSH backend's lenient settings parser, not a strict `SshConfig`
+    // decode: the editor's settings bag carries `env` as a key/value list, which
+    // a strict decode rejects (#4017) — so the probe parses it as a session does.
+    let target: SshConfig = parse_ssh_settings(&settings).expand();
 
     let token = registry.register(&probe_id);
     // A cheap clone (Arc inside) the spawned task can keep to clear its entry.

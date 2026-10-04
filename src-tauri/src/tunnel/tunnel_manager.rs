@@ -8,6 +8,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 use termihub_core::backends::ssh::auth::connect_and_authenticate_cancellable_with_liveness as core_connect_cancellable_with_liveness;
 use termihub_core::backends::ssh::handler::{ForwardedChannelRegistry, LivenessWatch, SshSession};
 use termihub_core::backends::ssh::jump_host::connect_target_through_pooled_gateway_with_liveness;
+use termihub_core::backends::ssh::parse_ssh_settings;
 use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool, SshGateway};
 use termihub_core::connection::ConnectionTypeInfo;
 use termihub_core::protocol::methods::{
@@ -1657,12 +1658,7 @@ impl TunnelManager {
             .resolve_jump_host_refs(&mut settings, Some(connection_id))
             .map_err(|e| TerminalError::TunnelError(e.to_string()))?;
 
-        serde_json::from_value(settings).map_err(|e| {
-            TerminalError::TunnelError(format!(
-                "Failed to parse SSH config for connection {}: {}",
-                connection_id, e
-            ))
-        })
+        tunnel_host_ssh_config(connection_id, &settings)
     }
 
     /// Emit a tunnel status change event to the frontend.
@@ -1685,6 +1681,29 @@ impl TunnelControl for TunnelManager {
             tracing::warn!("Failed to stop tunnel {tunnel_id} of a deleted connection: {e}");
         }
     }
+}
+
+/// Build the [`SshConfig`] a tunnel connects with from a saved SSH connection's
+/// settings bag.
+///
+/// Parsed with the SSH backend's own lenient settings parser
+/// ([`parse_ssh_settings`]) — the same one a terminal session uses — rather than
+/// a strict `serde` decode of [`SshConfig`]: the saved bag is the *form* shape,
+/// whose `env` is a key/value list (`[]` by default), and a strict decode
+/// rejected it ("invalid type: sequence, expected a map"), so no tunnel on a
+/// form-created SSH connection could ever start (#4017). `~`/`${VAR}` are
+/// expanded as for a terminal session, so a `~/.ssh/...` key path works too.
+fn tunnel_host_ssh_config(
+    connection_id: &str,
+    settings: &serde_json::Value,
+) -> Result<SshConfig, TerminalError> {
+    let config = parse_ssh_settings(settings).expand();
+    if config.host.is_empty() {
+        return Err(TerminalError::TunnelError(format!(
+            "SSH connection {connection_id} has no host configured"
+        )));
+    }
+    Ok(config)
 }
 
 /// Whether the connection type identified by `type_id` advertises the
@@ -2063,8 +2082,9 @@ mod tests {
         clear_last_error, companion_action, connection_bound_tunnel_ids, find_companion,
         last_error_for, record_last_error, resolve_managed_arc, resolve_tunnel_host,
         resting_status, run_reconnect_loop, snapshot_active_stats, stats_from_status_reply,
-        type_supports_tunneling, wait_forwarder_death, wait_session_death, ActiveTunnel,
-        CompanionAction, ReconnectOutcome, TunnelStatsUpdate, TUNNEL_RECONNECT_POLICY,
+        tunnel_host_ssh_config, type_supports_tunneling, wait_forwarder_death, wait_session_death,
+        ActiveTunnel, CompanionAction, ReconnectOutcome, TunnelStatsUpdate,
+        TUNNEL_RECONNECT_POLICY,
     };
     use crate::run_location::{ResolvedLocation, RunLocation};
     use crate::tunnel::config::{LocalForwardConfig, TunnelConfig, TunnelStatus, TunnelType};
@@ -3407,5 +3427,54 @@ mod tests {
 
         let with = vec![type_info("agent-ssh", true)];
         assert!(type_supports_tunneling(&with, "agent-ssh"));
+    }
+
+    /// #4017: a saved SSH connection made in the editor carries the form shape —
+    /// `env` as a key/value list (`[]` by default) — which the old strict
+    /// `SshConfig` decode rejected ("invalid type: sequence, expected a map"), so
+    /// every tunnel on such a connection failed to start.
+    #[test]
+    fn tunnel_host_config_accepts_the_saved_form_shape() {
+        let settings = serde_json::json!({
+            "host": "127.0.0.1",
+            "port": 2207,
+            "username": "testuser",
+            "authMethod": "key",
+            "keyPath": "/keys/id_ed25519",
+            "password": null,
+            "env": [],
+            "enableX11Forwarding": false,
+            "shell": null,
+            "proxyJump": [],
+        });
+        let cfg = tunnel_host_ssh_config("conn-1", &settings).expect("form shape parses");
+        assert_eq!(cfg.host, "127.0.0.1");
+        assert_eq!(cfg.port, 2207);
+        assert_eq!(cfg.username, "testuser");
+        assert_eq!(cfg.auth_method, "key");
+        assert_eq!(cfg.key_path.as_deref(), Some("/keys/id_ed25519"));
+        assert!(cfg.env.is_empty());
+        assert!(cfg.proxy_jump.is_empty());
+
+        let with_env = serde_json::json!({
+            "host": "h", "username": "u", "authMethod": "key",
+            "env": [{"key": "LANG", "value": "C.UTF-8"}],
+        });
+        let cfg = tunnel_host_ssh_config("conn-2", &with_env).unwrap();
+        assert_eq!(cfg.env.get("LANG").map(String::as_str), Some("C.UTF-8"));
+    }
+
+    #[test]
+    fn tunnel_host_config_expands_the_key_path_and_rejects_a_missing_host() {
+        let settings = serde_json::json!({
+            "host": "h", "username": "u", "authMethod": "key", "keyPath": "~/.ssh/id",
+        });
+        let cfg = tunnel_host_ssh_config("conn-3", &settings).unwrap();
+        assert!(!cfg.key_path.unwrap().starts_with('~'));
+
+        let err = tunnel_host_ssh_config("conn-4", &serde_json::json!({"username": "u"}))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("conn-4") && err.contains("no host"), "{err}");
     }
 }
