@@ -685,10 +685,11 @@ pub struct FtpConfig {
     #[serde(default)]
     pub tls_mode: FtpTlsMode,
     /// Whether to log in anonymously (username `anonymous`).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_null_as_default")]
     pub anonymous: bool,
     /// Login username (ignored when [`anonymous`](Self::anonymous) is set).
-    #[serde(default)]
+    /// A `null` (the form's value while the field is hidden) reads as empty.
+    #[serde(default, deserialize_with = "de_null_as_default")]
     pub username: String,
     /// Login password (ignored when [`anonymous`](Self::anonymous) is set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -903,6 +904,20 @@ impl NumOrStr {
                 .map_err(|_| E::custom(format!("expected a number, got string {s:?}"))),
         }
     }
+}
+
+/// Deserialize a JSON `null` as `T::default()`.
+///
+/// `#[serde(default)]` only covers a *missing* key; the settings form writes
+/// `null` for a field it hides (e.g. FTP `username` while "anonymous login" is
+/// ticked), which a plain `String` field rejects ("invalid type: null"). Pair
+/// with `#[serde(default)]` so both shapes fall back to the default (#4017).
+fn de_null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 /// Deserialize a [`u32`] from a JSON number or a numeric string (see [`NumOrStr`]).
@@ -2155,6 +2170,27 @@ mod tests {
         assert_eq!(cfg.mode, FtpDataMode::Passive);
         assert_eq!(cfg.transfer_type, FtpTransferType::Binary);
         assert_eq!(cfg.connect_timeout_secs, 30);
+    }
+
+    #[test]
+    fn ftp_config_accepts_the_anonymous_form_shape_with_null_username() {
+        // #4017: exactly what the editor saves for an anonymous connection —
+        // the hidden username field is `null`. A plain `String` rejected it
+        // ("invalid type: null, expected a string"), so no anonymous FTP
+        // connection made in the UI could connect.
+        let json = r#"{"anonymous": true, "connectTimeoutSecs": 30, "host": "127.0.0.1",
+            "initialDirectory": null, "keepAliveSecs": 60, "mode": "passive", "port": 2401,
+            "tlsMode": "none", "tlsWarning": null, "transferType": "binary", "username": null}"#;
+        let cfg: FtpConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.anonymous);
+        assert_eq!(cfg.username, "");
+        assert_eq!(cfg.port, 2401);
+        assert_eq!(cfg.initial_directory, None);
+
+        let cfg: FtpConfig =
+            serde_json::from_str(r#"{"host": "h", "anonymous": null, "username": "bob"}"#).unwrap();
+        assert!(!cfg.anonymous);
+        assert_eq!(cfg.username, "bob");
     }
 
     #[test]
