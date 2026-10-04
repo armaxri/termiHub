@@ -38,7 +38,8 @@
 //! The relay inspects plaintext. FTPS is not enabled today; enabling it later
 //! means terminating TLS in the relay (and re-originating plaintext, or TLS, to
 //! libunftp), because `AUTH TLS` would otherwise hide the `227` replies and the
-//! line boundaries the cap needs. See `docs/security.md`.
+//! line boundaries the cap needs. See `docs/architecture.md`, "Embedded FTP Server
+//! Front Relay".
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};

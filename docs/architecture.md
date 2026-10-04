@@ -2400,6 +2400,87 @@ STREAM` and `MDTM` are supported, and `SIZE` + `MDTM` fingerprint the remote
   session's `file_browser()` (`src-tauri/src/session/file_ops.rs`). SSH converged on the same
   path (#2421). Uploads and downloads run through the Transfer Queue.
 
+### Embedded FTP Server Front Relay
+
+The embedded FTP server (`core/src/embedded_servers/ftp_server.rs`) is built on
+[`libunftp`](https://crates.io/crates/libunftp), but libunftp does not face the network.
+libunftp 0.23 buffers a control-channel line without any bound, and it has no hook to cap it:
+`Server::service` takes a concrete `TcpStream`, and its `FtpCodec` has no length limit. A
+pre-auth client could grow that buffer until memory ran out (#3996). So termiHub's **front relay**
+(`core/src/embedded_servers/ftp_relay.rs`) owns the public sockets, and libunftp runs on loopback
+in its **PROXY protocol mode**, the HAProxy deployment it is designed for.
+
+```mermaid
+flowchart LR
+    C[FTP client]
+    subgraph termiHub [FTP server thread]
+        R[Relay: public control port]
+        D[Relay: passive listener<br/>bound on demand]
+        U[libunftp per session<br/>127.0.0.1, PROXY mode]
+    end
+    C -- control --> R
+    R -- PROXY v1 header + complete lines --> U
+    C -- data --> D
+    D -- PROXY v1 header + bytes --> U
+```
+
+- **Control-line cap.** The relay forwards only complete lines. A line with more than 8 KiB
+  (`MAX_CONTROL_LINE`) before its `\n` gets `500 Command line too long.` and the connection is
+  closed. libunftp never sees the line, and the relay holds at most the cap plus one 4 KiB read.
+  After the `500`, the relay discards (never buffers) up to 64 KiB of client bytes for up to
+  500 ms. This keeps the client's in-flight data from turning the close into a reset that would
+  drop the reply. The rejection is recorded in the access log (`CONTROL` / `rejected`).
+- **One libunftp server per session.** For each accepted control connection, the relay starts a
+  libunftp server in proxy mode on a free loopback port. It connects to that server and sends a
+  PROXY v1 header carrying the real client address before any client byte. The per-session
+  server keeps the session's real client IP in its authenticator and user-detail provider, so
+  the access log names the client (PROD-034). Behind the relay, libunftp's own view of the peer,
+  and so `Credentials::source_ip`, is the relay's loopback address, so the log does not rely on
+  it. A per-session server also needs no shared state between sessions.
+- **Passive ports.** In proxy mode, libunftp binds no passive ports. It reserves a port number,
+  announces it in `227`, and expects the proxy to accept on that port and forward the
+  connection with a PROXY header whose destination port is the reserved one. Its switchboard
+  hands the connection to the session keyed by (PROXY source IP, reserved port). There were two
+  options: pre-bind the whole 49152–65534 range, as HAProxy would, or parse the plaintext `227`
+  replies and open listeners on demand. The relay does the latter. It binds one listener per
+  pending `PASV`, trying the reserved port first and then the following ports in the range. It
+  rewrites the reply to announce the port it actually holds, so a collision with a port another
+  process holds never surfaces. Pre-binding 16k ports per server was not viable on a desktop.
+  The libunftp-side range leaves out the public control port, because libunftp tells control
+  from data connections by the PROXY destination port.
+- **EPSV.** libunftp answers `EPSV` with `502` in proxy mode. So the relay sends libunftp `PASV`
+  for a bare `EPSV` (or `EPSV 1`/`EPSV 2`) and turns the resulting `227` into a `229`. IPv6 clients
+  need EPSV, as RFC 2428 requires. `EPSV ALL` is passed through unchanged. PROXY v1 headers
+  carry only `TCP4` in libunftp, so an IPv6 client's header carries `0.0.0.0`.
+- **Data source check.** A passive listener forwards only a connection whose source IP matches
+  the control connection's. Any other connection is closed, and the listener keeps waiting for
+  the right client until its 15 s timeout. libunftp's switchboard checks the PROXY source IP
+  again (for IPv4 clients), which gives the same guarantee as libunftp's own data-channel IP
+  check outside proxy mode.
+- **Startup and shutdown.** The relay binds the configured host/port once and confirms that
+  socket's real address, so port reporting is unchanged (#3549). libunftp binds its loopback
+  address itself. The relay picks a free port by binding and releasing it, and only uses a
+  connection while the libunftp task is still running: a lost race makes libunftp's `listen`
+  fail at once, and the start is retried on a fresh port. On shutdown, the relay stops accepting,
+  and every per-session libunftp server sees the same `ShutdownSignal` through its
+  `shutdown_indicator` (2 s grace). The relay waits up to 3 s for the sessions to close, then
+  aborts the rest. A session that ends on its own cancels its libunftp server the same way.
+
+**FTPS.** FTPS is not enabled. The relay inspects plaintext: it needs the line boundaries for the
+cap and the `227` replies for the passive ports. After `AUTH TLS`, both would be encrypted. So
+enabling FTPS later means terminating TLS in the relay. The relay would decrypt the control and
+data channels, apply the cap and the passive rewrite to the plaintext, and talk plaintext (or
+fresh TLS) to libunftp on loopback. Passing TLS through to libunftp would lose the cap.
+
+**Residual risks.**
+
+- libunftp's loopback listener accepts a PROXY header from any local process. A process on the
+  same host can claim any client IP for its own control connection (access log, switchboard
+  key). This needs local code execution. Remote clients can only reach the relay.
+- libunftp 0.23.1's PROXY header reader spins on a connection that closes before a newline. The
+  relay always writes the full header first, so only a local process connecting to the loopback
+  port directly can trigger it.
+
 ---
 
 ## 9. Architecture Decisions
