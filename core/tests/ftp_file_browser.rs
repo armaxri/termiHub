@@ -371,6 +371,37 @@ async fn ftp_05_anonymous_read_only() {
     ftp.disconnect().await.expect("disconnect should succeed");
 }
 
+// ── FTP-05b: the anonymous connection exactly as the editor saves it (#4017) ──
+//
+// The settings form writes `null` for the username field it hides while
+// "Use anonymous login" is ticked (plus `null` for other unset fields). That
+// bag must connect: before #4017 the `null` username failed the settings parse,
+// so no anonymous FTP connection created in the UI could connect.
+
+#[tokio::test]
+async fn ftp_05b_anonymous_editor_shape_connects() {
+    require_docker!(port_ftp());
+
+    let mut ftp = connect(serde_json::json!({
+        "anonymous": true,
+        "connectTimeoutSecs": 30,
+        "host": "127.0.0.1",
+        "initialDirectory": null,
+        "keepAliveSecs": 60,
+        "mode": "passive",
+        "port": port_ftp(),
+        "tlsMode": "none",
+        "tlsWarning": null,
+        "transferType": "binary",
+        "username": null,
+    }))
+    .await;
+    let browser = ftp.file_browser().expect("FTP exposes a file browser");
+    let top = list_by_name(browser, "/pub").await;
+    assert_entry(&top, "/pub", "readme.txt", false, 61);
+    ftp.disconnect().await.expect("disconnect should succeed");
+}
+
 // ── FTP-06: MLSD flags the seeded symlinks (#1513, #4006) ────────────────────
 //
 // ProFTPD reports a symlink as `type=OS.unix=symlink`. Before #4006 the MLSD

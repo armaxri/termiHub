@@ -333,7 +333,17 @@ jobs:
         # fixture-backed suites self-skip instead (see the header note).
         # Bounded retry (#2768): a transient apt-mirror outage during the image
         # build is retried up to 3 times (cached layers make a retry cheap).
+        #
+        # COMPOSE_PROJECT_NAME (#4017): run under the SAME compose project the
+        # harness uses (`dev_local.compose_project()` → `termihub` on CI). Without
+        # it compose names the project after the directory (`docker`), so these
+        # containers (container_name `termihub-<svc>`) belong to project `docker`,
+        # and the harness' `compose -p termihub up` then fails on every
+        # `container name ... already in use` conflict — which silently SKIPPED
+        # ~100 SSH/telnet/tunnel suites on ubuntu as "fixtures unavailable".
         if: runner.os == 'Linux'
+        env:
+          COMPOSE_PROJECT_NAME: termihub
         run: |
           for attempt in 1 2 3; do
             docker compose -f tests/docker/docker-compose.yml build && break
@@ -487,6 +497,8 @@ jobs:
       - name: Dump container logs on failure
         # Linux only — the other legs bring up no containers.
         if: failure() && runner.os == 'Linux'
+        env:
+          COMPOSE_PROJECT_NAME: termihub
         run: docker compose -f tests/docker/docker-compose.yml --profile all logs --tail=200
 
       - name: Upload failure artifacts
@@ -501,6 +513,8 @@ jobs:
       - name: Tear down the fixtures
         # Linux only — nothing was brought up on the other legs.
         if: always() && runner.os == 'Linux'
+        env:
+          COMPOSE_PROJECT_NAME: termihub
         run: docker compose -f tests/docker/docker-compose.yml --profile all down -v
 
   # Fast display-critical grades, split into their own job (#2639) so they ALWAYS

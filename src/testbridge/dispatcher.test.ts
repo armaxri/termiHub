@@ -526,6 +526,26 @@ describe("dispatchCommand", () => {
       expect(seq.filter((s) => s === "move").length).toBeGreaterThan(0);
     });
 
+    it("presses and moves as a mouse, so no touch long-press menu arms (#4017)", async () => {
+      // Radix's ContextMenu trigger arms a 700ms long-press timer for any
+      // pointerdown whose pointerType is not "mouse". A drag dispatched with an
+      // empty pointerType therefore popped the context menus mid-drag whenever
+      // it took longer than 700ms (slow Windows runner).
+      const { deps, container } = setup(`<div data-testid="a"></div><div data-testid="b"></div>`);
+      const a = container.querySelectorAll("div")[0];
+      const types: string[] = [];
+      const record = (e: Event) => types.push((e as PointerEvent).pointerType);
+      a.addEventListener("pointerdown", record);
+      document.addEventListener("pointermove", record);
+      document.addEventListener("pointerup", record);
+
+      await dispatchCommand({ action: "dragTo", fromTestId: "a", toTestId: "b" }, deps);
+      document.removeEventListener("pointermove", record);
+      document.removeEventListener("pointerup", record);
+      expect(types.length).toBeGreaterThan(2);
+      expect(new Set(types)).toEqual(new Set(["mouse"]));
+    });
+
     it("yields to the event loop between press and release so @dnd-kit can measure", async () => {
       // Regression for #832: @dnd-kit measures droppable rects in a render/effect
       // cycle after activation, so the drag must yield a task between pointerdown

@@ -57,8 +57,11 @@ FIT_SLACK_PX = 48
 #: xterm waits ~3 s for a context restore before firing ``onContextLoss``.
 CONTEXT_LOSS_TIMEOUT = 30.0
 #: Window sizes for the resize check; both comfortably above a degenerate fit.
+#: SMALL is the app's minimum window (tauri.conf ``minWidth``/``minHeight``): a
+#: hosted macOS runner's screen clamps LARGE's height to roughly 680 px, so a
+#: 680-px "small" window was no shorter at all and the rows never changed.
 LARGE_WINDOW = (1280, 900)
-SMALL_WINDOW = (960, 680)
+SMALL_WINDOW = (800, 600)
 
 _pty_probe_ids = itertools.count(1)
 
@@ -100,7 +103,15 @@ class TestTerminalRenderPaths(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, Syst
         return m if m["grid"] == proposed else None
 
     def _wait_settled(self, tab_id: str, what: str = "the terminal fit to settle") -> dict:
-        return self.wait(lambda: self._settled(tab_id), what=what)
+        """Wait for :meth:`_settled`; on timeout, name the last measurement.
+
+        A bare "timed out" hides *why* the fit never settled (degenerate cell,
+        grid != proposed, …), so the failure carries the final reading.
+        """
+        try:
+            return self.wait(lambda: self._settled(tab_id), what=what)
+        except AssertionError as exc:
+            raise AssertionError(f"{exc}; last measurement: {self._measure(tab_id)!r}") from exc
 
     def _pty_size(self, tab_id: str) -> tuple[int, int]:
         """Ask the shell for its PTY size (``stty size``) → ``(rows, cols)``.
@@ -150,8 +161,15 @@ class TestTerminalRenderPaths(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, Syst
                 ),
                 what="the terminal to re-fit to the smaller window",
             )
-            assert small["grid"]["rows"] < large["grid"]["rows"], (large, small)
             assert small["container"]["width"] < large["container"]["width"], (large, small)
+            # Rows follow the container height. The OS may clamp the large
+            # window to the screen, so only demand fewer rows when the container
+            # really lost at least one cell of height.
+            lost_px = large["container"]["height"] - small["container"]["height"]
+            if lost_px >= large["cell"]["height"]:
+                assert small["grid"]["rows"] < large["grid"]["rows"], (large, small)
+            else:
+                assert small["grid"]["rows"] <= large["grid"]["rows"], (large, small)
             self._wait_pty_matches(tab_id, small["grid"])
         finally:
             self.driver.resize_window(*LARGE_WINDOW)

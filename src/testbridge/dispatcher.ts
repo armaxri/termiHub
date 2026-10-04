@@ -208,7 +208,12 @@ function dispatchPointer(
       ...(buttons !== undefined ? { buttons } : {}),
       clientX,
       clientY,
-      ...(Ctor === PointerEvent ? { pointerId: 1, isPrimary: true } : {}),
+      // `pointerType: "mouse"`: a real mouse gesture. Left empty, Radix's
+      // ContextMenu trigger treats the press as touch/pen and arms its 700ms
+      // long-press timer — cleared only by moves on the trigger itself, not the
+      // document moves a drag dispatches — so a drag slower than 700ms (a busy
+      // Windows runner) popped the row AND pane context menus mid-drag (#4017).
+      ...(Ctor === PointerEvent ? { pointerId: 1, isPrimary: true, pointerType: "mouse" } : {}),
     } as PointerEventInit)
   );
 }

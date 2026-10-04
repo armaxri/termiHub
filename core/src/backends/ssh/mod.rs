@@ -236,19 +236,23 @@ pub fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
 
     let port: u16 = parse_port_setting(settings.get("port"));
 
-    let env = settings
-        .get("env")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|item| {
-                    let k = item.get("key").and_then(|v| v.as_str())?;
-                    let v = item.get("value").and_then(|v| v.as_str())?;
-                    Some((k.to_string(), v.to_string()))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    // `env` is the form's key/value list (`[{key, value}]`); a plain
+    // `{name: value}` map (the serialized `SshConfig` shape) is accepted too.
+    let env = match settings.get("env") {
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|item| {
+                let k = item.get("key").and_then(|v| v.as_str())?;
+                let v = item.get("value").and_then(|v| v.as_str())?;
+                Some((k.to_string(), v.to_string()))
+            })
+            .collect(),
+        Some(serde_json::Value::Object(map)) => map
+            .iter()
+            .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string())))
+            .collect(),
+        _ => std::collections::HashMap::new(),
+    };
 
     // Jump host (ProxyJump) chain, stored inline as an array of hop objects.
     // Accepts the legacy `jumpHosts` key as well as `proxyJump`.
@@ -1458,6 +1462,27 @@ mod tests {
         });
         let config = parse_ssh_settings(&settings);
         assert_eq!(config.connect_timeout_secs, None);
+    }
+
+    #[test]
+    fn parse_ssh_settings_reads_env_as_list_or_map() {
+        // The form's key/value list — an empty one is what a saved SSH
+        // connection carries by default (schema_defaults), and must parse.
+        let list = serde_json::json!({
+            "host": "h", "username": "u", "authMethod": "key",
+            "env": [{"key": "FOO", "value": "bar"}, {"value": "no-key"}],
+        });
+        let config = parse_ssh_settings(&list);
+        assert_eq!(config.env.len(), 1);
+        assert_eq!(config.env.get("FOO").map(String::as_str), Some("bar"));
+        let empty = serde_json::json!({"host": "h", "username": "u", "env": []});
+        assert!(parse_ssh_settings(&empty).env.is_empty());
+        // The serialized SshConfig map shape.
+        let map = serde_json::json!({"host": "h", "username": "u", "env": {"A": "1"}});
+        assert_eq!(
+            parse_ssh_settings(&map).env.get("A").map(String::as_str),
+            Some("1")
+        );
     }
 
     #[test]

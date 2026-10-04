@@ -23,6 +23,8 @@ import { TerminalPortalProvider } from "./TerminalRegistry";
 
 // Capture the onResize callback so tests can simulate terminal resize events.
 let capturedOnResize: ((dims: { cols: number; rows: number }) => void) | null = null;
+// The grid the mock xterm starts with — i.e. what the pre-create fit produced.
+let initialDims = { cols: 80, rows: 24 };
 
 // Extends the shared MockXTerm, overriding only what this suite drives: onResize
 // captures the fit callback, and resize() mutates cols/rows so the dedup logic
@@ -31,6 +33,8 @@ let capturedOnResize: ((dims: { cols: number; rows: number }) => void) | null = 
 vi.mock("@xterm/xterm", async () => {
   const { MockXTerm } = await import("@/test/mockXterm");
   class ResizeDedupXTerm extends MockXTerm {
+    cols = initialDims.cols;
+    rows = initialDims.rows;
     onResize = vi.fn((cb: (dims: { cols: number; rows: number }) => void) => {
       capturedOnResize = cb;
       return { dispose: vi.fn() };
@@ -115,6 +119,7 @@ let root: Root;
 
 beforeEach(() => {
   capturedOnResize = null;
+  initialDims = { cols: 80, rows: 24 };
   mockResizeTerminal.mockClear();
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -203,5 +208,30 @@ describe("Terminal — resize deduplication", () => {
     );
     // At most once — not the two-or-more that the old code produced.
     expect(callsWithCreationDims.length).toBeLessThanOrEqual(1);
+  });
+
+  it("syncs the PTY to a grid fitted before session creation (#4017)", async () => {
+    // The container was laid out before createTerminal, so xterm is already
+    // fitted to 117x36 — but the backend spawns its PTY at its own 80x24
+    // default (it ignores the config's cols/rows). The post-setup sync must
+    // push the fitted grid; before the fix the dedup tracker assumed the PTY
+    // already matched xterm and the shell stayed at 80x24.
+    initialDims = { cols: 117, rows: 36 };
+    act(() => {
+      root.render(
+        <TerminalPortalProvider>
+          <Terminal tabId="tab-resize-4" config={LOCAL_CONFIG} isVisible={true} />
+        </TerminalPortalProvider>
+      );
+    });
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    const syncs = mockResizeTerminal.mock.calls.filter(
+      ([, cols, rows]) => cols === 117 && rows === 36
+    );
+    expect(syncs).toEqual([["session-resize-test", 117, 36]]);
   });
 });

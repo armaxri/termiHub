@@ -6,6 +6,7 @@ import { activeTreeTabs } from "@/store/layoutSelectors";
 import { Button } from "@/components/ui";
 import { createTerminal, closeTerminal } from "@/services/api";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 import "./FileBrowserTab.css";
 
 interface FileBrowserTabProps {
@@ -92,7 +93,9 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
         toast.success("Connected", { description: tab.title });
       } catch (err) {
         if (canceled) return;
-        setError(String(err));
+        // The backend rejects with a structured `{ code, message }` envelope,
+        // not an Error — String() rendered it as "[object Object]" (#4017).
+        setError(errorMessage(err));
         setPhase("error");
       }
     };

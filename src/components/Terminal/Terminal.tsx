@@ -508,10 +508,6 @@ export function Terminal({
 
         // ── Connection loop ────────────────────────────────────────────────
         // For workspace-restore the session already exists — skip the loop.
-        // ptyCols/ptyRows capture the dimensions passed to createTerminal so
-        // we can initialize the resize-deduplication tracking below.
-        let ptyCols = 0;
-        let ptyRows = 0;
         let sessionId: string;
 
         // Decide whether to reattach to an existing session or start fresh.
@@ -730,11 +726,14 @@ export function Terminal({
             useAppStore.getState().setTerminalConnecting(tabId, true);
 
             try {
-              // Capture dims immediately before creating the PTY so we know
-              // what size it was created with (xterm.cols may change while
-              // createTerminal is awaiting if a container resize fires).
-              ptyCols = xterm.cols;
-              ptyRows = xterm.rows;
+              // Do NOT assume the PTY was created at xterm's size: the
+              // backends spawn at their own default (80x24) and ignore the
+              // cols/rows carried in the config. The resize tracking below
+              // therefore starts unknown (0x0), so the post-setup sync always
+              // pushes the fitted size once. Otherwise a terminal fitted before
+              // createTerminal (say 117x36) believed its PTY matched and never
+              // resized it, leaving the shell at 80x24 until some later layout
+              // change (#4017).
               // Pass a UNIQUE per-attempt connect id so closing the tab while
               // connecting can abort the in-flight handshake (#952) — and so an
               // overlapping retry/reconnect never shares the previous attempt's
@@ -865,12 +864,13 @@ export function Terminal({
         // to avoid spurious SIGWINCH signals.  Multiple rapid fit() calls
         // (slot adoption sync+RAF, ResizeObserver, visibility effect) all
         // fire xterm.onResize, but only a genuine dimension change should
-        // trigger a PTY resize.  Initialized to the dims used to create the
-        // PTY (ptyCols/ptyRows) so the post-setup explicit resize is skipped
-        // when nothing changed; stays at 0 for workspace-restore so the
-        // first resize always fires to re-sync with the existing PTY.
-        let lastSentCols = ptyCols;
-        let lastSentRows = ptyRows;
+        // trigger a PTY resize.  Starts at 0x0 on every path (fresh create and
+        // workspace-restore alike) because the PTY's real size is unknown here,
+        // so the first post-setup resize always fires once to sync the PTY with
+        // the fitted grid. A same-size TIOCSWINSZ raises no SIGWINCH, so this
+        // one sync is not a duplicate.
+        let lastSentCols = 0;
+        let lastSentRows = 0;
 
         // Output batching: buffer chunks and flush in a single RAF callback.
         const outputBuffer: Uint8Array[] = [];
@@ -1163,9 +1163,9 @@ export function Terminal({
         // already fitted xterm to the correct dimensions while the async
         // createTerminal() was in-flight — but at that point sessionIdRef
         // was still null, so the resize was never sent to the backend PTY.
-        // Send explicitly only when the current dims differ from what the
-        // PTY was created with (or for workspace-restore where we don't
-        // know the PTY's current state and must always sync).
+        // The PTY's size is unknown at this point (backends spawn at their
+        // own default), so lastSent starts at 0x0 and this sync fires once
+        // unless an onResize above already pushed the current dims.
         try {
           fitAddon.fit();
         } catch {
@@ -1460,6 +1460,19 @@ export function Terminal({
         webglAddon = null;
         webglRendererActiveRef.current = false;
         el.dataset.terminalRenderer = "dom";
+        // The DOM renderer measures its own cell, which need not match the
+        // WebGL one — so the grid fitted under WebGL no longer fills the
+        // container and nothing else re-fits it until the next resize (#4017).
+        // Re-fit once the swapped-in renderer has measured (next frame); a
+        // changed grid flows to the PTY through onResize as usual.
+        requestAnimationFrame(() => {
+          if (connectAbort.signal.aborted || horizontalScrollingRef.current) return;
+          try {
+            if (isProposedFitSafe(fitAddon)) fitAddon.fit();
+          } catch {
+            // Container not sized (parked); the next ResizeObserver fit re-fits.
+          }
+        });
       });
       xterm.loadAddon(addon);
       webglAddon = addon;
