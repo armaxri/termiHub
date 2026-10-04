@@ -231,17 +231,15 @@ pub(super) struct Backend {
 
 /// The future libunftp awaits to shut down: the server-wide signal or the end
 /// of this session, whichever comes first.
-fn shutdown_indicator(
+async fn shutdown_indicator(
     global: ShutdownSignal,
     session: CancellationToken,
-) -> impl std::future::Future<Output = libunftp::options::Shutdown> + Send + Sync + 'static {
-    async move {
-        tokio::select! {
-            _ = global.wait() => {}
-            _ = session.cancelled() => {}
-        }
-        libunftp::options::Shutdown::new().grace_period(BACKEND_GRACE)
+) -> libunftp::options::Shutdown {
+    tokio::select! {
+        _ = global.wait() => {}
+        _ = session.cancelled() => {}
     }
+    libunftp::options::Shutdown::new().grace_period(BACKEND_GRACE)
 }
 
 /// Start a libunftp server in PROXY protocol mode on a free loopback port for
