@@ -313,3 +313,152 @@ fn shutdown_with_an_open_session_closes_it_promptly() {
         "the public control port must be released after shutdown"
     );
 }
+
+// ── Client identity and the data-channel source check ─────────────────────────
+
+/// Run `fut` on its own current-thread runtime in a background thread.
+fn spawn_runtime<F>(fut: F) -> JoinHandle<()>
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(fut)
+    })
+}
+
+/// A relay session whose client presents a non-loopback address. The access
+/// log carries that address, and a data connection from any other IP (here:
+/// the real loopback socket) is refused instead of reaching the session.
+#[test]
+fn relay_attributes_the_client_ip_and_refuses_data_from_another_ip() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let config = Arc::new(super::tests::ftp_test_config(dir.path()));
+    let stats = AtomicServerStats::new();
+    let shutdown = ShutdownSignal::new();
+    let claimed: SocketAddr = "198.51.100.4:51000".parse().expect("addr");
+
+    let (addr_tx, addr_rx) = std::sync::mpsc::channel();
+    let (session_stats, session_shutdown) = (Arc::clone(&stats), shutdown.clone());
+    let server = spawn_runtime(async move {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        addr_tx.send(addr).expect("send addr");
+        let (stream, _) = listener.accept().await.expect("accept");
+        serve_session(
+            config,
+            session_stats,
+            stream,
+            claimed,
+            addr.port(),
+            session_shutdown,
+        )
+        .await;
+    });
+    let addr = addr_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("relay addr");
+
+    let mut control = Control::connect(addr);
+    control.login("anonymous", "x");
+    let log = wait_for_log(&stats, |log| log.iter().any(|e| e.method == "LOGIN"));
+    let login = log.iter().find(|e| e.method == "LOGIN").expect("LOGIN");
+    assert_eq!(login.client.as_deref(), Some("198.51.100.4"));
+
+    // The data connection comes from 127.0.0.1, not the session's client IP.
+    let mut data = connect_data(control.pasv());
+    let mut buf = [0u8; 16];
+    let refused = match data.read(&mut buf) {
+        Ok(n) => n == 0,
+        Err(e) => matches!(
+            e.kind(),
+            std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+        ),
+    };
+    assert!(refused, "a data connection from another IP must be closed");
+
+    drop(control);
+    server.join().expect("session thread");
+}
+
+/// libunftp's own check behind the relay: its passive switchboard only hands
+/// a data connection to the session whose control connection's PROXY source
+/// IP matches. Driven directly over the loopback listener with crafted
+/// headers, which also exercises a non-loopback client end to end.
+#[test]
+fn backend_switchboard_rejects_a_mismatched_data_source() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    std::fs::write(dir.path().join("seen.txt"), b"x").expect("seed");
+    let config = super::tests::ftp_test_config(dir.path());
+    let stats = AtomicServerStats::new();
+    let shutdown = ShutdownSignal::new();
+    let client: SocketAddr = "198.51.100.4:51000".parse().expect("addr");
+    let public_port = 2121;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let backend_shutdown = shutdown.clone();
+    let server = spawn_runtime(async move {
+        let backend = start_backend(&config, &stats, client.ip(), public_port, &backend_shutdown)
+            .await
+            .expect("backend");
+        let upstream = backend.upstream.into_std().expect("std stream");
+        upstream.set_nonblocking(false).expect("blocking");
+        tx.send((backend.addr, upstream)).expect("send");
+        backend_shutdown.wait().await;
+        let _ = backend.task.await;
+    });
+    let (backend_addr, upstream) = rx.recv_timeout(Duration::from_secs(5)).expect("backend");
+
+    let mut upstream_w = upstream.try_clone().expect("clone");
+    upstream_w
+        .write_all(format!("PROXY TCP4 198.51.100.4 192.0.2.1 51000 {public_port}\r\n").as_bytes())
+        .expect("proxy header");
+    upstream
+        .set_read_timeout(Some(IO_TIMEOUT))
+        .expect("timeout");
+    let mut control = Control {
+        writer: upstream_w,
+        reader: BufReader::new(upstream),
+    };
+    assert!(control.reply().starts_with("220"));
+    control.login("anonymous", "x");
+    let announced = control.pasv();
+    assert_eq!(announced.ip().to_string(), "192.0.2.1", "PROXY destination");
+    let reserved = announced.port();
+
+    let data_from = |source: &str| {
+        let mut data = connect_data(backend_addr);
+        data.write_all(format!("PROXY TCP4 {source} 192.0.2.1 40000 {reserved}\r\n").as_bytes())
+            .expect("data header");
+        data
+    };
+
+    // Wrong source IP: libunftp closes the connection without serving it.
+    let mut wrong = data_from("203.0.113.9");
+    let mut buf = [0u8; 16];
+    assert_eq!(
+        wrong.read(&mut buf).unwrap_or(0),
+        0,
+        "mismatched source served"
+    );
+
+    // Matching source IP: the listing is served.
+    let mut right = data_from("198.51.100.4");
+    let reply = control.cmd("LIST");
+    assert!(
+        reply.starts_with("150") || reply.starts_with("125"),
+        "{reply}"
+    );
+    let mut listing = String::new();
+    right.read_to_string(&mut listing).expect("listing");
+    assert!(listing.contains("seen.txt"), "{listing}");
+    assert!(control.reply().starts_with("226"));
+
+    shutdown.trigger();
+    server.join().expect("backend thread");
+}
