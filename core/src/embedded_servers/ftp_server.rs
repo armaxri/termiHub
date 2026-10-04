@@ -647,13 +647,16 @@ impl PresenceListener for StatsTracker {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+mod relay_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::embedded_servers::config::AtomicServerStats;
 
     // ── Event-driven shutdown (WA-RS-001 / #2782) ─────────────────────────────
 
-    fn ftp_test_config(root: &Path) -> EmbeddedServerConfig {
+    pub(super) fn ftp_test_config(root: &Path) -> EmbeddedServerConfig {
         use crate::embedded_servers::config::ServerType;
         EmbeddedServerConfig {
             id: "test-ftp-shutdown".to_string(),
@@ -1026,7 +1029,7 @@ mod tests {
     }
 
     /// Read one (possibly multi-line) FTP reply from the control channel.
-    fn read_reply(reader: &mut impl std::io::BufRead) -> String {
+    pub(super) fn read_reply(reader: &mut impl std::io::BufRead) -> String {
         let mut first = String::new();
         reader.read_line(&mut first).expect("reply line");
         if first.as_bytes().get(3) == Some(&b'-') {
@@ -1157,7 +1160,7 @@ mod tests {
         }
     }
 
-    fn entries(
+    pub(super) fn entries(
         activity: &ServerActivity,
     ) -> Vec<crate::embedded_servers::activity::AccessLogEntry> {
         activity
