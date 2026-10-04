@@ -19,8 +19,9 @@ const h = vi.hoisted(() => {
     dispose: ReturnType<typeof vi.fn>;
     triggerContextLoss: () => void;
   }> = [];
+  const fitInstances: Array<{ fit: ReturnType<typeof vi.fn> }> = [];
   const state = { webglConstructThrows: false };
-  return { loadedAddons, webglInstances, state };
+  return { loadedAddons, webglInstances, fitInstances, state };
 });
 
 const mockRefresh = vi.fn();
@@ -69,6 +70,9 @@ vi.mock("@xterm/addon-fit", () => {
     fit = vi.fn();
     proposeDimensions = vi.fn(() => ({ cols: 80, rows: 24 }));
     dispose = vi.fn();
+    constructor() {
+      h.fitInstances.push(this);
+    }
   }
   return { FitAddon: MockFitAddon };
 });
@@ -155,6 +159,7 @@ beforeEach(() => {
 
   h.loadedAddons.length = 0;
   h.webglInstances.length = 0;
+  h.fitInstances.length = 0;
   h.state.webglConstructThrows = false;
   mockRefresh.mockClear();
   capturedWriteCallback = null;
@@ -228,6 +233,23 @@ describe("Terminal WebGL renderer (#2078)", () => {
     expect(webgl.dispose).toHaveBeenCalledTimes(1);
     const container = document.querySelector('[data-testid="terminal-renderer-tab-1"]');
     expect(container?.getAttribute("data-terminal-renderer")).toBe("dom");
+  });
+
+  it("re-fits the terminal once the DOM renderer has taken over (#4017)", async () => {
+    renderTerminal();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    act(() => flushRaf());
+
+    const fit = h.fitInstances[0].fit;
+    const webgl = h.webglInstances[0];
+    act(() => webgl.triggerContextLoss());
+    // The DOM renderer measures its own cell, so the WebGL-era grid is stale:
+    // a re-fit is scheduled for the next frame, after the swap has measured.
+    const fitsBeforeFrame = fit.mock.calls.length;
+    act(() => flushRaf());
+    expect(fit.mock.calls.length).toBe(fitsBeforeFrame + 1);
   });
 
   it("still mounts and renders via the DOM path when WebGL init fails", async () => {

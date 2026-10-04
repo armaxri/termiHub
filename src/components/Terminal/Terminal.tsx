@@ -1460,6 +1460,19 @@ export function Terminal({
         webglAddon = null;
         webglRendererActiveRef.current = false;
         el.dataset.terminalRenderer = "dom";
+        // The DOM renderer measures its own cell, which need not match the
+        // WebGL one — so the grid fitted under WebGL no longer fills the
+        // container and nothing else re-fits it until the next resize (#4017).
+        // Re-fit once the swapped-in renderer has measured (next frame); a
+        // changed grid flows to the PTY through onResize as usual.
+        requestAnimationFrame(() => {
+          if (connectAbort.signal.aborted || horizontalScrollingRef.current) return;
+          try {
+            if (isProposedFitSafe(fitAddon)) fitAddon.fit();
+          } catch {
+            // Container not sized (parked); the next ResizeObserver fit re-fits.
+          }
+        });
       });
       xterm.loadAddon(addon);
       webglAddon = addon;
