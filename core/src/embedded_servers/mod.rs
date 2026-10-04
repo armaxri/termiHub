@@ -21,6 +21,7 @@ pub mod config;
 pub mod service;
 pub mod shutdown;
 
+mod ftp_relay;
 mod ftp_server;
 mod http_server;
 mod tftp_server;

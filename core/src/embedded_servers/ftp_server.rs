@@ -6,6 +6,11 @@
 //!
 //! Every login attempt and file operation is recorded in the server's access
 //! log (PROD-034) with the client IP and username — never the password.
+//!
+//! libunftp does not face the network directly: termiHub's front relay
+//! ([`super::ftp_relay`]) owns the public control port and the passive ports,
+//! caps the control line, and forwards to one libunftp server per session that
+//! listens on loopback in PROXY protocol mode (#3996).
 
 use std::fmt::{self, Debug, Display};
 use std::io;
@@ -15,13 +20,14 @@ use std::pin::Pin;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use libunftp::notification::{DataEvent, DataListener, EventMeta, PresenceEvent, PresenceListener};
 use libunftp::ServerBuilder;
 use tokio::io::{AsyncRead, ReadBuf};
+use tokio_util::sync::CancellationToken;
 use unftp_core::auth::{
     AuthenticationError, Authenticator, Credentials, Principal, UserDetail, UserDetailError,
     UserDetailProvider,
@@ -31,6 +37,7 @@ use unftp_sbe_fs::Filesystem;
 
 use super::activity::{AccessRecord, ServerActivity, TransferGuard};
 use super::config::{AtomicServerStats, EmbeddedServerConfig, FtpAuth};
+use super::ftp_relay::RelaySession;
 use super::service::BindSignal;
 use super::shutdown::ShutdownSignal;
 
@@ -65,22 +72,36 @@ pub fn start_ftp_server(
     rt.block_on(run_ftp_server(config, shutdown, stats, ready))
 }
 
-/// The concrete libunftp server type this module builds.
-type FtpServer = libunftp::Server<MaybeReadOnlyFilesystem, FtpUser>;
+/// The libunftp builder type this module configures.
+type FtpServerBuilder = ServerBuilder<MaybeReadOnlyFilesystem, FtpUser>;
 
 /// Passive data-connection port range. libunftp 0.21 made the range inclusive;
 /// this is the same 49152–65534 span the former exclusive `49152..65535` gave.
+/// The relay binds its passive listeners in this range (#3996).
 const PASSIVE_PORTS: std::ops::RangeInclusive<u16> = 49152..=65534;
 
-/// Build a libunftp server for `config`. `Server::service` consumes the server,
-/// so the accept loop builds one per control connection (cheap: every field is
-/// an `Arc` or small value). `client` is that connection's peer address, which
-/// the session user carries for the access log (PROD-034).
-fn build_server(
+/// Grace period a per-session libunftp server gets to close its control loop
+/// once its session ends or the server shuts down.
+const BACKEND_GRACE: Duration = Duration::from_secs(2);
+
+/// How long shutdown waits for open sessions to wind down before the runtime
+/// drops whatever is left.
+const SESSION_DRAIN: Duration = Duration::from_secs(3);
+
+/// Attempts to start a session's loopback libunftp listener (a fresh port each
+/// time), and connection attempts per start while it comes up.
+const BACKEND_START_ATTEMPTS: usize = 3;
+const BACKEND_CONNECT_ATTEMPTS: usize = 200;
+
+/// Configure a libunftp server for `config`. `client` is the session's real
+/// client address, which the authenticator and the session user carry for the
+/// access log (PROD-034): behind the relay, libunftp's own view of the peer
+/// (and so `Credentials::source_ip`) is the relay's loopback address.
+fn server_builder(
     config: &EmbeddedServerConfig,
     stats: &Arc<AtomicServerStats>,
     client: IpAddr,
-) -> Result<FtpServer> {
+) -> FtpServerBuilder {
     let root: PathBuf = config.root_directory.clone().into();
     let read_only = config.read_only;
     let activity = Arc::clone(&stats.activity);
@@ -96,8 +117,8 @@ fn build_server(
     .authenticator(Arc::new(FtpAuthenticator::new(
         config.ftp_auth.clone(),
         activity,
+        client,
     )))
-    .passive_ports(PASSIVE_PORTS)
     .greeting("termiHub FTP Server ready.")
     .notify_data(StatsTracker {
         stats: Arc::clone(stats),
@@ -105,8 +126,21 @@ fn build_server(
     .notify_presence(StatsTracker {
         stats: Arc::clone(stats),
     })
-    .build()
-    .context("Failed to build libunftp server")
+}
+
+/// The passive range libunftp reserves port numbers from. Behind the relay
+/// these are only keys (the relay binds the real listeners), but libunftp
+/// tells data from control connections by the PROXY destination port, so the
+/// range must not contain the public control port.
+fn reserved_passive_range(public_port: u16) -> std::ops::RangeInclusive<u16> {
+    let (start, end) = (*PASSIVE_PORTS.start(), *PASSIVE_PORTS.end());
+    if !PASSIVE_PORTS.contains(&public_port) {
+        PASSIVE_PORTS
+    } else if public_port - start >= end - public_port {
+        start..=public_port - 1
+    } else {
+        public_port + 1..=end
+    }
 }
 
 async fn run_ftp_server(
@@ -119,17 +153,18 @@ async fn run_ftp_server(
 
     // Validate the server configuration before binding, so a bad config fails
     // the start instead of every later connection.
-    if let Err(e) = build_server(config, &stats, IpAddr::from([0, 0, 0, 0])) {
+    if let Err(e) = server_builder(config, &stats, IpAddr::from([0, 0, 0, 0]))
+        .build()
+        .context("Failed to build libunftp server")
+    {
         ready.fail(&e.to_string());
         return Err(e);
     }
 
-    // Bind the control port once and keep the listener: the socket confirmed
-    // here is the one the server serves on, so there is no probe-then-rebind
-    // window another process could win, and a port-0 config reports the port
-    // it actually got (GAP G3 #1145, #3549). libunftp's `listen` can only bind
-    // an address itself, so we run the accept loop and hand each connection to
-    // `Server::service`.
+    // The relay owns the public control port (#3996). Bind it once and keep
+    // the listener: the socket confirmed here is the one the server serves on,
+    // so there is no probe-then-rebind window another process could win, and a
+    // port-0 config reports the port it actually got (GAP G3 #1145, #3549).
     let listener = match tokio::net::TcpListener::bind(&addr).await {
         Ok(listener) => listener,
         Err(e) => {
@@ -140,15 +175,28 @@ async fn run_ftp_server(
     };
     let local_addr = listener.local_addr().ok();
     ready.confirm(local_addr);
+    let public_port = local_addr.map_or(config.port, |a| a.port());
 
-    tracing::info!(?local_addr, "FTP server listening (libunftp)");
+    tracing::info!(?local_addr, "FTP server listening (relay + libunftp)");
 
+    let config = Arc::new(config.clone());
+    let mut sessions = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
             accepted = listener.accept() => match accepted {
-                Ok((stream, peer)) => serve_connection(config, &stats, stream, peer),
+                Ok((stream, peer)) => {
+                    sessions.spawn(serve_session(
+                        Arc::clone(&config),
+                        Arc::clone(&stats),
+                        stream,
+                        peer,
+                        public_port,
+                        shutdown.clone(),
+                    ));
+                }
                 Err(e) => tracing::warn!(error = %e, "FTP accept failed"),
             },
+            Some(_) = sessions.join_next(), if !sessions.is_empty() => {}
             // Event-driven: park until the signal fires, then drop the listener
             // at once — no fixed-interval poll (WA-RS-001 / CORE-001).
             _ = shutdown.wait() => {
@@ -157,29 +205,150 @@ async fn run_ftp_server(
             }
         }
     }
+    drop(listener);
 
+    // Every session's libunftp server watches the same signal and closes its
+    // control loop, which ends the relay. Give them a bounded moment, then
+    // abort the rest (dropping the `JoinSet` aborts its tasks).
+    let drained = tokio::time::timeout(SESSION_DRAIN, async {
+        while sessions.join_next().await.is_some() {}
+    })
+    .await;
+    if drained.is_err() {
+        tracing::warn!("FTP sessions did not close in time; aborting them");
+    }
     Ok(())
 }
 
-/// Spawn a control-channel task for one accepted FTP connection.
-fn serve_connection(
+/// A session's loopback libunftp server and the relay's connection to it.
+pub(super) struct Backend {
+    pub addr: std::net::SocketAddr,
+    pub upstream: tokio::net::TcpStream,
+    pub task: tokio::task::JoinHandle<std::result::Result<(), libunftp::ServerError>>,
+    /// Cancelled when the session ends, which shuts this server down.
+    pub stop: CancellationToken,
+}
+
+/// The future libunftp awaits to shut down: the server-wide signal or the end
+/// of this session, whichever comes first.
+async fn shutdown_indicator(
+    global: ShutdownSignal,
+    session: CancellationToken,
+) -> libunftp::options::Shutdown {
+    tokio::select! {
+        _ = global.wait() => {}
+        _ = session.cancelled() => {}
+    }
+    libunftp::options::Shutdown::new().grace_period(BACKEND_GRACE)
+}
+
+/// Start a libunftp server in PROXY protocol mode on a free loopback port for
+/// one session, and connect the relay to it.
+///
+/// libunftp binds the address itself, so the port is picked by binding and
+/// releasing it first. If another process wins it in between, libunftp's
+/// `listen` fails at once; the task is then finished by the time a connection
+/// succeeds, and the start is retried on a fresh port.
+pub(super) async fn start_backend(
     config: &EmbeddedServerConfig,
     stats: &Arc<AtomicServerStats>,
-    stream: tokio::net::TcpStream,
+    client: IpAddr,
+    public_port: u16,
+    shutdown: &ShutdownSignal,
+) -> Result<Backend> {
+    for _ in 0..BACKEND_START_ATTEMPTS {
+        let addr = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .and_then(|l| l.local_addr())
+            .context("Failed to pick a loopback port for libunftp")?;
+        let stop = CancellationToken::new();
+        let server = server_builder(config, stats, client)
+            .passive_ports(reserved_passive_range(public_port))
+            .proxy_protocol_mode(public_port)
+            .shutdown_indicator(shutdown_indicator(shutdown.clone(), stop.clone()))
+            .build()
+            .context("Failed to build libunftp server")?;
+        let task = tokio::spawn(server.listen(addr.to_string()));
+        match connect_to_spawned(addr, &task).await {
+            Some(upstream) => {
+                return Ok(Backend {
+                    addr,
+                    upstream,
+                    task,
+                    stop,
+                })
+            }
+            None => {
+                stop.cancel();
+                task.abort();
+            }
+        }
+    }
+    Err(anyhow::anyhow!("libunftp did not start on loopback"))
+}
+
+/// Connect to the libunftp listener `task` is bringing up at `addr`. Yields
+/// between attempts so the task gets to bind; gives up when the task has
+/// finished (its bind failed) — never handing back a connection to whatever
+/// else might hold the port.
+async fn connect_to_spawned<T>(
+    addr: std::net::SocketAddr,
+    task: &tokio::task::JoinHandle<T>,
+) -> Option<tokio::net::TcpStream> {
+    for _ in 0..BACKEND_CONNECT_ATTEMPTS {
+        tokio::task::yield_now().await;
+        if task.is_finished() {
+            return None;
+        }
+        if let Ok(stream) = tokio::net::TcpStream::connect(addr).await {
+            tokio::task::yield_now().await;
+            return (!task.is_finished()).then_some(stream);
+        }
+    }
+    None
+}
+
+/// Serve one accepted control connection: start its libunftp backend and relay
+/// to it until the connection ends, then shut the backend down.
+pub(super) async fn serve_session(
+    config: Arc<EmbeddedServerConfig>,
+    stats: Arc<AtomicServerStats>,
+    client: tokio::net::TcpStream,
     peer: std::net::SocketAddr,
+    public_port: u16,
+    shutdown: ShutdownSignal,
 ) {
-    let server = match build_server(config, stats, peer.ip()) {
-        Ok(server) => server,
+    let backend = match start_backend(&config, &stats, peer.ip(), public_port, &shutdown).await {
+        Ok(backend) => backend,
         Err(e) => {
-            tracing::warn!(%peer, error = %e, "FTP server build failed; dropping connection");
+            tracing::warn!(%peer, error = %e, "FTP session backend failed; dropping connection");
             return;
         }
     };
-    tokio::spawn(async move {
-        if let Err(e) = server.service(stream).await {
-            tracing::warn!(%peer, error = ?e, "FTP control connection failed");
-        }
-    });
+    let Backend {
+        addr,
+        upstream,
+        task,
+        stop,
+    } = backend;
+    let session = RelaySession {
+        client,
+        peer,
+        upstream,
+        backend: addr,
+        public_port,
+        passive_ports: PASSIVE_PORTS,
+        activity: Arc::clone(&stats.activity),
+    };
+    if let Err(e) = session.run().await {
+        tracing::debug!(%peer, error = %e, "FTP control relay ended with an error");
+    }
+    stop.cancel();
+    match tokio::time::timeout(BACKEND_GRACE * 2, task).await {
+        Ok(Ok(Ok(()))) => {}
+        Ok(Ok(Err(e))) => tracing::debug!(%peer, error = ?e, "FTP session backend stopped"),
+        Ok(Err(e)) => tracing::debug!(%peer, error = %e, "FTP session backend task failed"),
+        Err(_) => tracing::warn!(%peer, "FTP session backend did not stop in time"),
+    }
 }
 
 // ─── Session user ─────────────────────────────────────────────────────────────
@@ -537,11 +706,19 @@ struct FtpAuthenticator {
     /// Every login attempt is recorded (client IP + username, never the
     /// password) in the server's access log (PROD-034).
     activity: Arc<ServerActivity>,
+    /// The session's real client address. One authenticator is built per
+    /// session: behind the relay, `Credentials::source_ip` is the relay's
+    /// loopback address, not the client's (#3996).
+    client: IpAddr,
 }
 
 impl FtpAuthenticator {
-    fn new(auth: Option<FtpAuth>, activity: Arc<ServerActivity>) -> Self {
-        Self { auth, activity }
+    fn new(auth: Option<FtpAuth>, activity: Arc<ServerActivity>, client: IpAddr) -> Self {
+        Self {
+            auth,
+            activity,
+            client,
+        }
     }
 
     /// Decide whether `username` / `creds` may log in.
@@ -579,7 +756,7 @@ impl Authenticator for FtpAuthenticator {
             ("denied", Some("bad username or password"))
         };
         let mut record = AccessRecord::new("LOGIN", status, ok)
-            .client(creds.source_ip)
+            .client(self.client)
             .user(username);
         if let Some(detail) = detail {
             record = record.detail(detail);
@@ -647,13 +824,16 @@ impl PresenceListener for StatsTracker {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+mod relay_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::embedded_servers::config::AtomicServerStats;
 
     // ── Event-driven shutdown (WA-RS-001 / #2782) ─────────────────────────────
 
-    fn ftp_test_config(root: &Path) -> EmbeddedServerConfig {
+    pub(super) fn ftp_test_config(root: &Path) -> EmbeddedServerConfig {
         use crate::embedded_servers::config::ServerType;
         EmbeddedServerConfig {
             id: "test-ftp-shutdown".to_string(),
@@ -895,7 +1075,11 @@ mod tests {
 
     /// An authenticator recording into a fresh, throwaway activity log.
     fn authn(auth: Option<FtpAuth>) -> FtpAuthenticator {
-        FtpAuthenticator::new(auth, ServerActivity::new())
+        FtpAuthenticator::new(
+            auth,
+            ServerActivity::new(),
+            "127.0.0.1".parse().expect("ip"),
+        )
     }
 
     fn creds(password: Option<&str>) -> Credentials {
@@ -1026,7 +1210,7 @@ mod tests {
     }
 
     /// Read one (possibly multi-line) FTP reply from the control channel.
-    fn read_reply(reader: &mut impl std::io::BufRead) -> String {
+    pub(super) fn read_reply(reader: &mut impl std::io::BufRead) -> String {
         let mut first = String::new();
         reader.read_line(&mut first).expect("reply line");
         if first.as_bytes().get(3) == Some(&b'-') {
@@ -1157,7 +1341,7 @@ mod tests {
         }
     }
 
-    fn entries(
+    pub(super) fn entries(
         activity: &ServerActivity,
     ) -> Vec<crate::embedded_servers::activity::AccessLogEntry> {
         activity
@@ -1177,6 +1361,7 @@ mod tests {
                 password: "hunter2-secret".to_string(),
             }),
             Arc::clone(&activity),
+            "127.0.0.1".parse().expect("ip"),
         );
         assert!(auth
             .authenticate("alice", &creds(Some("hunter2-secret")))
