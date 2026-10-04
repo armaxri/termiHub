@@ -157,13 +157,16 @@ fn overlong_preauth_control_line_gets_500_and_close() {
     let server = RunningServer::start(dir.path(), None);
     let mut control = Control::connect(server.addr);
 
-    // Stream 1 MiB with no line terminator from a separate thread, so the
-    // reply can be read while the client is still sending.
+    // Stream up to 64 MiB with no line terminator from a separate thread, so
+    // the reply can be read while the client is still sending. Far more than
+    // any kernel socket buffer, so the writes can only stop early if the
+    // server closes the connection.
+    const FLOOD_BYTES: usize = 64 * 1024 * 1024;
     let mut writer = control.writer.try_clone().expect("clone writer");
     let flood = std::thread::spawn(move || {
         let chunk = vec![b'A'; 16 * 1024];
         let mut sent = 0usize;
-        while sent < 1024 * 1024 {
+        while sent < FLOOD_BYTES {
             match writer.write(&chunk) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => sent += n,
@@ -189,7 +192,7 @@ fn overlong_preauth_control_line_gets_500_and_close() {
 
     let sent = flood.join().expect("flood thread");
     assert!(
-        sent < 1024 * 1024,
+        sent < FLOOD_BYTES,
         "the server must stop reading instead of buffering the whole line ({sent} bytes accepted)"
     );
     server.stop();
