@@ -144,4 +144,25 @@ describe("FileBrowserTab", () => {
     });
     expect(mockedCloseTerminal).toHaveBeenCalledWith("ftp-session-1");
   });
+
+  it("shows the backend error's message, not [object Object], on a failed connect (#4017)", async () => {
+    // Tauri rejects a command error as a structured envelope, not an Error.
+    mockedCreateTerminal.mockRejectedValueOnce({
+      code: "invalid_config",
+      message: "Invalid FTP settings: invalid type: null, expected a string",
+    });
+    const tabId = addFileBrowserTab();
+
+    await act(async () => {
+      root.render(React.createElement(FileBrowserTab, { tabId, isVisible: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Could not open connection");
+    expect(container.textContent).toContain("Invalid FTP settings: invalid type: null");
+    expect(container.textContent).not.toContain("[object Object]");
+    expect(container.querySelector('[data-testid="file-browser-tab-retry"]')).not.toBeNull();
+  });
 });
