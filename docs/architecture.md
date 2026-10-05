@@ -2335,6 +2335,20 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
   as a rehydrated paused row — cancels the folder's rest. The rows stay
   individual queue rows; the folder-level result the paste awaited does not
   survive the restart, so each row reports its own outcome afterwards.
+  An **agent-hosted session** (local, SSH, Docker or WSL on a remote agent)
+  uses the queue too (#3587), through `core/src/files/transfer/ranged.rs`. Its
+  backend lives on the agent host, so the desktop moves the file in
+  offset-addressed slices over `connection.files.read_range` /
+  `write_range` (protocol 0.26.0), one 256 KiB request per chunk. A slice write
+  names the offset it expects and the far side refuses it unless the file holds
+  exactly that many bytes, so a retried or resumed upload can never splice at
+  the wrong place. This was chosen over running the core executors on the agent:
+  the local end of the copy is on the desktop, so the bytes cross the RPC
+  either way, and stateless slices need no long-lived stream to pause, resume
+  or abandon. `session_supports_transfer_queue` reports an agent session as
+  queue-capable only when the agent advertises `fileRanges` and a zero-length
+  probe read succeeds; a backend without ranged access (FTP), or a session
+  started by an older session daemon, stays on the byte-based path.
   A **session folder paste** (local → session, session → session, session →
   local (#3912), or a byte-based backend) is still copied file by file from
   the frontend (`src/hooks/sessionFolderPaste.ts`), so it records a
