@@ -1,6 +1,7 @@
 //! End-to-end tests for the FTP front relay (#3996): the control-line cap,
 //! normal passive-mode traffic through the relay, client-IP attribution, the
-//! data-channel source check, and shutdown.
+//! data-channel source check, shutdown, and the backend PROXY header reader on
+//! early close (#4099).
 
 use std::io::{BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -461,4 +462,95 @@ fn backend_switchboard_rejects_a_mismatched_data_source() {
 
     shutdown.trigger();
     server.join().expect("backend thread");
+}
+
+// ── PROXY header reader on early close (#4099) ────────────────────────────────
+
+/// A data connection to a port libunftp has not reserved: it reads the PROXY
+/// header, then shuts the stream down. Seeing EOF proves the listener has
+/// accepted every connection made before this one (accept order is FIFO).
+fn unreserved_port_barrier(backend: SocketAddr) {
+    let mut probe = connect_data(backend);
+    probe
+        .write_all(b"PROXY TCP4 127.0.0.1 127.0.0.1 40000 1\r\n")
+        .expect("barrier header");
+    let mut rest = Vec::new();
+    probe.read_to_end(&mut rest).expect("barrier closed by libunftp");
+}
+
+/// Wait until the runtime's live task count has not changed for 100 ms and
+/// return it.
+fn settled_task_count(rt: &tokio::runtime::Handle) -> usize {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let (mut last, mut stable) = (rt.metrics().num_alive_tasks(), 0);
+    while stable < 10 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+        let now = rt.metrics().num_alive_tasks();
+        stable = if now == last { stable + 1 } else { 0 };
+        last = now;
+    }
+    last
+}
+
+/// A local process that connects to a session's loopback libunftp port and
+/// closes before sending a PROXY header must not leave a task behind:
+/// libunftp 0.23.1's header reader looped forever on `peek` returning `Ok(0)`
+/// at EOF, burning CPU until the server stopped (#4099, fixed in the vendored
+/// fork). The header task has to end, and the backend still stops promptly.
+#[test]
+fn backend_header_reader_ends_when_a_connection_closes_without_a_header() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let config = super::tests::ftp_test_config(dir.path());
+    let stats = AtomicServerStats::new();
+    let shutdown = ShutdownSignal::new();
+    let client: SocketAddr = "127.0.0.1:51000".parse().expect("addr");
+    let public_port = 2121;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let backend_shutdown = shutdown.clone();
+    let server = spawn_runtime(async move {
+        let backend = start_backend(&config, &stats, client.ip(), public_port, &backend_shutdown)
+            .await
+            .expect("backend");
+        tx.send((backend.addr, tokio::runtime::Handle::current()))
+            .expect("send");
+        // Keep the relay's (header-less) connection open, as a live session would.
+        let _upstream = backend.upstream;
+        backend_shutdown.wait().await;
+        let stopped = tokio::time::timeout(BACKEND_GRACE * 2, backend.task).await;
+        done_tx.send(stopped.is_ok()).expect("send");
+    });
+    let (backend_addr, rt) = rx.recv_timeout(Duration::from_secs(5)).expect("backend");
+
+    unreserved_port_barrier(backend_addr);
+    let baseline = settled_task_count(&rt);
+
+    // Connect and close at once, without a single byte of PROXY header.
+    for _ in 0..3 {
+        drop(TcpStream::connect(backend_addr).expect("probe connect"));
+    }
+    unreserved_port_barrier(backend_addr);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while rt.metrics().num_alive_tasks() > baseline && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let alive = rt.metrics().num_alive_tasks();
+    assert!(
+        alive <= baseline,
+        "{alive} tasks alive (baseline {baseline}): a header reader is still \
+         spinning on a connection closed before its header"
+    );
+
+    let start = Instant::now();
+    shutdown.trigger();
+    let stopped = done_rx.recv_timeout(Duration::from_secs(10)).expect("done");
+    server.join().expect("backend thread");
+    assert!(stopped, "the libunftp backend did not stop in time");
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "backend shutdown took {:?}",
+        start.elapsed()
+    );
 }
