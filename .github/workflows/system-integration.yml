@@ -293,6 +293,22 @@ jobs:
         # target/release/termihub-agent; build it so they run instead of skipping.
         run: cargo build --release -p termihub-agent
 
+      - name: Build the deployed-agent test binary (Linux, static musl)
+        # The deployed-agent suites (remote-agent*, incl. the real-swap update
+        # e2e, #4083) bake a static-musl `--features test-hooks` agent into their
+        # containers. Before #4092 the runner had no cross-rs, so the harness'
+        # build failed and every one of those suites SKIPPED on every night.
+        # The recipe lives in the checked-out tree (#3664): it installs the
+        # pinned cross-rs and builds with its stock image, like agent.yml. The
+        # harness runs the same script itself on CI (a no-op once this step has
+        # built), so the develop leg is covered even before this step reaches
+        # main's workflow copy; doing it here keeps the slow build out of a
+        # test's fixture timeout and visible as its own step. Linux only: the
+        # macOS/Windows runners cannot host the Linux containers at all, so the
+        # harness skips those suites there up front with that reason.
+        if: runner.os == 'Linux'
+        run: scripts/internal/build-system-test-agent.sh --install-cross
+
       - name: Enable harness coverage (Linux, advisory)
         # After the agent build, so only the desktop app is instrumented. Writes
         # the coverage env (TERMIHUB_FRONTEND_COVERAGE, TERMIHUB_HARNESS_COVERAGE_DIR

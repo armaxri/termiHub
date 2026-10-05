@@ -1,0 +1,120 @@
+name: Plugin Index Signature
+
+# Keeps the detached signature of the curated plugin index current (#3716).
+# Desktops only accept the default index (plugins/index.json on main) when
+# plugins/index.json.sig verifies against the compiled-in key in
+# plugins/keys/index-signing.pub.pem (see ADR-17 in docs/architecture.md).
+#
+# - While that key file is still the committed PLACEHOLDER (the maintainer has
+#   not run scripts/internal/setup-plugin-index-signing-key.sh yet) this
+#   workflow is a no-op that reports a notice — never a failure.
+# - Once a key is configured, every PR / push touching plugins/** must carry a
+#   signature that verifies over the exact index bytes. When it does not (the
+#   index changed), the job signs the index with the PLUGIN_INDEX_SIGNING_KEY
+#   secret, uploads the fresh index.json.sig as the `plugin-index-signature`
+#   artifact (and prints it in the job summary — a signature is public data),
+#   and fails so the signature gets committed with the change. Without the
+#   secret (a fork PR) it only fails with instructions.
+#
+# Why not commit the signature from CI: main and develop are protected (PRs
+# required, enforce_admins), and a commit pushed with GITHUB_TOKEN triggers no
+# required checks. The signature therefore lands through the same reviewed PR
+# as the index change. `workflow_dispatch` (run on a branch) produces a fresh
+# signature on demand.
+#
+# The private key exists only as the secret: it is written to a 0600 file in
+# RUNNER_TEMP for the signing call and removed right after; it is never echoed.
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'plugins/**'
+      - 'scripts/internal/plugin-index-signing.sh'
+      - '.github/workflows/plugin-index-signature.yml'
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'plugins/**'
+      - 'scripts/internal/plugin-index-signing.sh'
+      - '.github/workflows/plugin-index-signature.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: plugin-index-signature-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Least privilege (CI-010): checkout and the artifact API only.
+permissions:
+  contents: read
+
+jobs:
+  signature:
+    name: Plugin Index Signature
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Check the committed signature
+        id: verify
+        run: |
+          status="$(scripts/internal/plugin-index-signing.sh status)"
+          if [ "$status" = "placeholder" ]; then
+            echo "::notice title=Plugin index signing not configured::plugins/keys/index-signing.pub.pem is still the placeholder, so desktops show the index as 'signature not checked'. Maintainer: run scripts/internal/setup-plugin-index-signing-key.sh (docs/contributing.md -> 'Plugin index signing key')."
+            echo "result=placeholder" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if scripts/internal/plugin-index-signing.sh verify plugins/index.json; then
+            echo "result=ok" >>"$GITHUB_OUTPUT"
+          else
+            echo "result=stale" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Produce a fresh signature
+        id: sign
+        if: steps.verify.outputs.result == 'stale'
+        env:
+          PLUGIN_INDEX_SIGNING_KEY: ${{ secrets.PLUGIN_INDEX_SIGNING_KEY }}
+        run: |
+          if [ -z "${PLUGIN_INDEX_SIGNING_KEY}" ]; then
+            echo "::notice::PLUGIN_INDEX_SIGNING_KEY is not available to this run (fork PR or secret unset); no fresh signature produced."
+            echo "signed=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          key="$RUNNER_TEMP/plugin-index-signing-key.pem"
+          trap 'rm -f "$key"' EXIT
+          (umask 077 && printf '%s\n' "$PLUGIN_INDEX_SIGNING_KEY" >"$key")
+          mkdir -p "$RUNNER_TEMP/signed"
+          cp plugins/index.json "$RUNNER_TEMP/signed/index.json"
+          scripts/internal/plugin-index-signing.sh sign --key "$key" "$RUNNER_TEMP/signed/index.json"
+          {
+            echo "### Fresh plugin index signature"
+            echo ""
+            echo "Commit this as \`plugins/index.json.sig\` (one line):"
+            echo ""
+            echo '```'
+            cat "$RUNNER_TEMP/signed/index.json.sig"
+            echo '```'
+            echo ""
+            echo "Or: \`gh run download ${GITHUB_RUN_ID} -n plugin-index-signature -D plugins/\`"
+          } >>"$GITHUB_STEP_SUMMARY"
+          echo "signed=true" >>"$GITHUB_OUTPUT"
+
+      - name: Upload the fresh signature
+        if: steps.sign.outputs.signed == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: plugin-index-signature
+          path: ${{ runner.temp }}/signed/index.json.sig
+          retention-days: 14
+
+      - name: Fail on a stale signature
+        if: steps.verify.outputs.result == 'stale'
+        run: |
+          echo "::error title=Stale plugin index signature::plugins/index.json.sig does not verify over plugins/index.json, so release desktops would reject the default index. Commit a fresh signature: see this run's summary / the 'plugin-index-signature' artifact (gh run download ${GITHUB_RUN_ID} -n plugin-index-signature -D plugins/), or re-run this workflow on the branch via workflow_dispatch. Details: docs/contributing.md -> 'Plugin index signing key'."
+          exit 1

@@ -158,7 +158,12 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
   vi.clearAllMocks();
-  fetchIndexMock.mockResolvedValue({ url: "https://idx", isDefault: true, entries: [] });
+  fetchIndexMock.mockResolvedValue({
+    url: "https://idx",
+    isDefault: true,
+    signature: "verified",
+    entries: [],
+  });
 });
 
 afterEach(() => {

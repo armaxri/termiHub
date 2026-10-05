@@ -13,6 +13,28 @@
   color: var(--color-error);
 }
 
+.plugin-catalog__signature {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-xs);
+  margin: var(--spacing-sm) 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.plugin-catalog__signature svg {
+  flex-shrink: 0;
+  margin-top: var(--spacing-xxs);
+}
+
+.plugin-catalog__signature--verified svg {
+  color: var(--color-success);
+}
+
+.plugin-catalog__signature--unsigned {
+  color: var(--color-warning);
+}
+
 .plugin-catalog__list {
   display: flex;
   flex-direction: column;

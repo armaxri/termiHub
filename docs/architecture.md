@@ -3133,22 +3133,51 @@ forbids it from fetching remote content, so any network access has to happen in 
   trust acknowledgement (#3296), ABI / toolchain / platform checks (#3508, #3582) and the
   downgrade / signer-change confirmations (#3383, #3490). Discovery never installs, enables or
   trusts anything by itself.
-- **v0.1 trust level: HTTPS plus a checksum in the index; the index itself is not signed.**
-  Considered: a detached Ed25519 signature over the index with a compiled-in key (the agent-update
-  scheme, #3213 / #3331). Deferred because (1) the index is a discovery aid, not a trust anchor —
-  what a package may do is still decided by its own signature and the user's explicit
-  acknowledgement, and an index cannot bypass either; (2) the default index is served over TLS
-  from the maintainer's own repository, where changes need a reviewed PR; (3) a signing key
-  needs a maintainer key ceremony first (the agent-update key is still a placeholder), and a
-  fail-closed check against a placeholder key would disable the feature. Signing the index is
-  tracked as a follow-up.
+- **The index is signed (#3716).** A detached Ed25519 signature, `index.json.sig` next to the
+  index, covers `b"termihub-plugin-index-v1\0" || SHA-256(index bytes)` — the agent-update
+  scheme (#3213) and PEM key format with a **separate key**, compiled into the desktop from
+  `plugins/keys/index-signing.pub.pem` (`core/src/plugin/index_signature.rs`). The backend
+  fetches `<url>.sig` (1 KiB cap, same HTTPS client) and checks it over the exact bytes
+  **before** parsing the index, for Browse and again for every download:
+
+  | Index                                      | Missing `.sig`        | Present, verifies | Present, does not verify |
+  | ------------------------------------------ | --------------------- | ----------------- | ------------------------ |
+  | Default, release build                     | rejected              | **Verified**      | rejected                 |
+  | Default, dev/branch build                  | accepted as Unsigned  | **Verified**      | rejected                 |
+  | Custom `pluginIndexUrl`                    | accepted as Unsigned  | **Verified**      | rejected                 |
+  | Any, while the key file is the placeholder | Signature not checked | not checked       | not checked              |
+
+  Browse shows the outcome: "Signature verified", an "Unsigned index" warning, or "Signature not
+  checked". A custom index is the user's choice of trust, so it may be unsigned — but a
+  signature that is present must come from the termiHub key (a bad signature is never
+  downgraded to "unsigned"). Dev builds mirror the agent-update rule (#3213): they tolerate a
+  missing signature, because the default index on `main` may not yet carry a signature for a
+  key that only just landed on `develop`.
+
+- **Placeholder behaviour deliberately differs from the agent key.** The agent-update key fails
+  closed while it is a placeholder; the index key degrades to "Signature not checked" instead,
+  so Browse keeps working before the maintainer runs
+  `scripts/internal/setup-plugin-index-signing-key.sh`. That trade-off is acceptable because the
+  index is a discovery aid, not a trust anchor: what a package may do is still decided by its
+  own signature and the user's explicit acknowledgement, which no index can bypass.
+- **Signing.** The setup script generates the keypair, signs the current index, writes the public
+  key and stores the private key only as the `PLUGIN_INDEX_SIGNING_KEY` secret. The **Plugin
+  Index Signature** workflow then verifies the committed signature on every change under
+  `plugins/`, and on a stale signature produces a fresh one with the secret (job summary and
+  artifact) and fails until it is committed in the same PR. It is a no-op while the key is the
+  placeholder. CI does not commit the signature itself: `main` and `develop` require PRs.
 
 **Consequences:**
 
-- Someone who can change the served index (a compromised repository or hosting) could list a
-  malicious package with a matching checksum. It still reaches the user as an unsigned or
-  unknown-publisher package behind the trust banner and, for native code, the per-plugin trust
-  acknowledgement, with native plugins off by default. A signed index would close this gap.
+- Once the signing key is configured, someone who can change the served default index (a
+  compromised hosting or CDN) cannot list a package without also holding the signing key; the
+  desktop rejects the index. Changing the index still goes through a reviewed PR that carries
+  the CI-produced signature. Before the key is
+  configured the v0.1 gap remains (a changed index could list a malicious package with a
+  matching checksum, which would still reach the user as an unsigned or unknown-publisher
+  package behind the trust banner and the native-trust acknowledgement).
+- Every change to `plugins/index.json` needs a fresh `plugins/index.json.sig` in the same PR;
+  the workflow produces it, but someone has to commit it.
 - An index entry's `author` is display text; the package signature, not the index, identifies
   the publisher.
 - A custom index URL is the user's choice of trust. Because the client runs on the user's own

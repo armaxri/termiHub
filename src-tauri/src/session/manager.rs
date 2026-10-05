@@ -1578,8 +1578,15 @@ impl SessionManager {
             // that agent's retained transport config (#3661).
             self.clear_retained_request_with_agent_scrub(&binding.tab_id);
         }
-        let mut sessions = self.sessions.lock().await;
-        if let Some(mut entry) = sessions.remove(session_id) {
+        // Take the entry out under the map lock, then release the lock BEFORE
+        // `disconnect()` (#4092). An agent session's disconnect awaits its
+        // `connection.close` RPC, which can stay unanswered for the whole agent
+        // request timeout (60 s) — e.g. when that close is the one that lets a
+        // deferred update apply, the agent swaps and re-execs before replying.
+        // Holding the map lock across that wait froze every other session
+        // operation (create, list, input routing) for the same span.
+        let removed = self.sessions.lock().await.remove(session_id);
+        if let Some(mut entry) = removed {
             // Deterministically stop the detached output-reader task (CONC-011)
             // instead of relying on `disconnect()` to close the output channel
             // and drive the reader to EOF. The reader observes the cancel, breaks

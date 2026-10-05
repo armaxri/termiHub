@@ -97,7 +97,7 @@ function view(
 }
 
 function result(entries: PluginIndexEntryView[]): PluginIndexResult {
-  return { url: "https://e.com/index.json", isDefault: true, entries };
+  return { url: "https://e.com/index.json", isDefault: true, signature: "verified", entries };
 }
 
 let container: HTMLDivElement;
@@ -214,6 +214,38 @@ describe("PluginCatalogSettings", () => {
     fetchIndexMock.mockRejectedValueOnce("could not fetch the plugin index: HTTP 404");
     await click("plugin-catalog-load");
     expect(q("plugin-catalog-error")!.textContent).toContain("HTTP 404");
+  });
+
+  it("shows whether the loaded index signature was verified (#3716)", async () => {
+    const cases: Array<[PluginIndexResult["signature"], string]> = [
+      ["verified", "Signature verified"],
+      ["unsigned", "Unsigned index"],
+      ["notConfigured", "Signature not checked"],
+    ];
+    render();
+    for (const [signature, text] of cases) {
+      fetchIndexMock.mockResolvedValueOnce({ ...result([view("alpha")]), signature });
+      await click("plugin-catalog-load");
+      const notice = q("plugin-catalog-signature")!;
+      expect(notice.dataset.status).toBe(signature);
+      expect(notice.textContent).toContain(text);
+    }
+    // The unsigned notice is announced; the others are quiet.
+    expect(q("plugin-catalog-signature")!.getAttribute("role")).toBeNull();
+    fetchIndexMock.mockResolvedValueOnce({ ...result([]), signature: "unsigned" });
+    await click("plugin-catalog-load");
+    expect(q("plugin-catalog-signature")!.getAttribute("role")).toBe("status");
+  });
+
+  it("shows no signature notice while nothing is loaded or loading failed", async () => {
+    render();
+    expect(q("plugin-catalog-signature")).toBeNull();
+    fetchIndexMock.mockRejectedValueOnce(
+      "the plugin index signature does not verify against the termiHub plugin-index key"
+    );
+    await click("plugin-catalog-load");
+    expect(q("plugin-catalog-signature")).toBeNull();
+    expect(q("plugin-catalog-error")!.textContent).toContain("does not verify");
   });
 
   it("shows update and installed states against the live plugin list", async () => {

@@ -67,10 +67,18 @@ def app_bundle_of(binary: Path) -> Optional[Path]:
 def _link_or_copy(src: str, dst: str) -> str:
     """Hard-link ``src`` to ``dst`` (instant), falling back to a real copy.
 
-    A hard link keeps ``dst`` as the process's ``current_exe`` path, which is
-    all portable detection needs. Cross-device or unsupported links fall back
-    to :func:`shutil.copy2`.
+    On Linux and Windows a hard link keeps ``dst`` as the process's
+    ``current_exe`` path, which is all portable detection needs. Cross-device or
+    unsupported links fall back to :func:`shutil.copy2`.
+
+    macOS always copies: it resolves ``current_exe`` of a hard-linked binary
+    through the shared vnode, so the process can report a *sibling* link's path
+    (e.g. the original build) and portable detection looks in the wrong place.
+    A copy is its own file, so its path is reliable.
     """
+    if platform.system() == "Darwin":
+        shutil.copy2(src, dst)
+        return dst
     try:
         os.link(src, dst)
     except OSError:

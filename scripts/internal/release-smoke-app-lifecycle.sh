@@ -10,7 +10,7 @@
 #   run 1  launch; the frontend reaches the backend (IPC marker in the log);
 #          the startup banner carries this release's version and the pid of the
 #          launched process; the log holds no ANSI escape; a real close (window
-#          close / Quit AppleEvent) ends with "termiHub exited cleanly".
+#          close / macOS Quit) ends with "termiHub exited cleanly".
 #   run 2  relaunch; the log was APPENDED (run 1's bytes are untouched, a second
 #          banner follows); a second launch with `--workspace <name>` and one
 #          with `--workspace-file <file>` each exit while the first instance
@@ -40,10 +40,20 @@
 #                  x11        WM_DELETE_WINDOW to the app's X11 windows (Linux;
 #                             needs python3 + python3-xlib); the frontend then
 #                             closes the empty window and the app quits
-#                  applevent  a Quit AppleEvent via osascript (macOS; needs
-#                             --bundle-id). If the runner refuses to send it, the
-#                             app is stopped with SIGTERM and the clean-exit check
-#                             is reported as skipped, not passed
+#                  applevent  a real Quit on macOS (needs --bundle-id), sent two
+#                             ways: first the app's own "Quit <app>" menu item is
+#                             clicked through System Events, then (if that is
+#                             refused) a Quit AppleEvent goes straight to the
+#                             bundle id. Both end in -[NSApp terminate:], like
+#                             Cmd+Q. GitHub's hosted macOS images pre-grant
+#                             osascript Accessibility and Apple Events to System
+#                             Events (runner-images configure-tccdb-macos.sh),
+#                             but not Apple Events to an arbitrary app, so the
+#                             menu path is the one that works there; the direct
+#                             event needs an Automation consent nobody can give
+#                             on a runner. If both are refused, the app is
+#                             stopped with SIGTERM and the clean-exit check is
+#                             reported as skipped, not passed
 #                  sigterm    SIGTERM (only meaningful for an app that handles it,
 #                             e.g. the stub app check-script-headless.sh drives)
 #   --bundle-id  the macOS bundle identifier (applevent only)
@@ -235,6 +245,38 @@ check_banner() {
   fi
 }
 
+# perl's alarm is the portable timeout on macOS (no coreutils `timeout`). An
+# Apple event that waits on a consent prompt would otherwise block for minutes.
+with_timeout() { perl -e 'alarm shift; exec @ARGV' "$@"; }
+
+# quit_via_menu <pid>: click the "Quit <app>" item of the app menu (menu bar
+# item 2; item 1 is the Apple menu) of the process with that pid, through
+# System Events UI scripting. Prints the clicked item's name to
+# osascript-menu.log.
+quit_via_menu() {
+  with_timeout 30 osascript -e '
+on run argv
+  set targetPid to (item 1 of argv) as integer
+  tell application "System Events"
+    set targetProc to first application process whose unix id is targetPid
+    set frontmost of targetProc to true
+    tell targetProc
+      set appMenu to menu 1 of menu bar item 2 of menu bar 1
+      set quitItem to first menu item of appMenu whose name starts with "Quit"
+      set itemName to name of quitItem
+      click quitItem
+    end tell
+  end tell
+  return itemName
+end run' "$1" >"$OUT/osascript-menu.log" 2>&1
+}
+
+# quit_via_appleevent: a Quit AppleEvent addressed to the bundle id.
+quit_via_appleevent() {
+  with_timeout 30 osascript -e "tell application id \"$BUNDLE_ID\" to quit" \
+    >"$OUT/osascript-quit.log" 2>&1
+}
+
 # close_for_real <app pid>: ask the app to quit the way a user does. Returns 0
 # when the request was delivered, 2 when the platform refused to deliver it.
 close_for_real() {
@@ -244,12 +286,19 @@ close_for_real() {
       kill -TERM "$pid"
       ;;
     applevent)
-      # perl's alarm is the portable timeout on macOS (no coreutils `timeout`).
-      if ! perl -e 'alarm shift; exec @ARGV' 30 \
-        osascript -e "tell application id \"$BUNDLE_ID\" to quit" >"$OUT/osascript.log" 2>&1; then
-        cat "$OUT/osascript.log"
-        return 2
+      if quit_via_menu "$pid"; then
+        echo "  Quit delivered: clicked '$(cat "$OUT/osascript-menu.log")' through System Events"
+        return 0
       fi
+      echo "  System Events could not click the Quit menu item:"
+      sed 's/^/    | /' "$OUT/osascript-menu.log"
+      if quit_via_appleevent; then
+        echo "  Quit delivered: Quit AppleEvent to $BUNDLE_ID"
+        return 0
+      fi
+      echo "  the Quit AppleEvent to $BUNDLE_ID was refused:"
+      sed 's/^/    | /' "$OUT/osascript-quit.log"
+      return 2
       ;;
     x11)
       # Send WM_DELETE_WINDOW to every top-level window of the process — what a
@@ -328,7 +377,7 @@ section "Run 1: close for real ($CLOSE)"
 rc=0
 close_for_real "$APP1" || rc=$?
 if [ "$rc" -eq 2 ]; then
-  skip "the runner could not deliver a Quit AppleEvent; stopping with SIGTERM instead"
+  skip "neither the Quit menu item nor a Quit AppleEvent could be delivered; stopping with SIGTERM instead"
   kill -TERM "$APP1" 2>/dev/null || true
   wait_exit "$APP1" "$EXIT_TIMEOUT" || kill -KILL "$APP1" 2>/dev/null || true
   skip "'$CLEAN_EXIT' after a real quit (no quit could be delivered)"
