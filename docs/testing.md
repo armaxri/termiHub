@@ -862,9 +862,14 @@ the Rust tool once with `cargo install cargo-llvm-cov` (it needs the
   `src/**/*.ts`, which silently excluded every React component from the
   percentage; it is now `src/**/*.{ts,tsx}`.
 - CI runs the unified report in the [`coverage.yml`](../.github/workflows/coverage.yml)
-  workflow on every push to `develop`/`main` (post-merge only since #3325) and uploads
-  the merged lcov + summary as an artifact. The job is **blocking**: a ratchet failure
-  reds the `develop`/`main` run (not the PR that caused it — the job does not run per PR).
+  workflow **nightly on `develop`**, on every push to `main` (release commits) and on
+  demand (`gh workflow run coverage.yml --ref <ref>`), and uploads the merged lcov +
+  summary as an artifact. It is not per PR (#3325) and, since #4119, not per merge to
+  `develop` either: GitHub fires a `schedule` only on the default branch (`main`), so
+  the 07:23 UTC scheduled run dispatches the workflow on `develop`. The job is
+  **blocking**: a ratchet failure reds the nightly `develop` (or `main`) run, which
+  covers every merge since the previous night — bisect the day's merges, not just the
+  newest PR.
 - The nightly integration lanes contribute too — see
   [Integration coverage](#integration-coverage-nightly-fixtures-lane) and
   [Harness coverage](#harness-coverage-nightly-bridge-harness-lane) below.
@@ -905,7 +910,7 @@ the **unit-test** line coverage of five components against
   and commit the updated `scripts/coverage-baseline.json`. It raises each value to the
   measured one (rounded down to 2 decimals) and **never lowers** one, so a bump on a worse
   tree cannot loosen the gate. For the CI (`linux`) values, take the numbers from the
-  `develop` Coverage run's job summary. An intentional decrease is a deliberate, reviewed
+  nightly `develop` Coverage run's job summary. An intentional decrease is a deliberate, reviewed
   edit of the JSON (or `node scripts/internal/coverage-ratchet.mjs --update --allow-decrease`).
 
 - **Truncated profiles:** the Rust tests run with `--no-report` and the report is produced by

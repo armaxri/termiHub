@@ -1,7 +1,23 @@
 name: Agent Branch Release Cleanup
 
+# Deletes a short-lived `agent-branch-<sanitized-branch>` pre-release (#666).
+#
+# Manual only (#4119). This used to run on EVERY branch `delete` event (~80
+# runs/week), but nothing publishes per-branch agent releases any more:
+# b1861abb8 removed the publisher from agent.yml, and no `agent-branch-*`
+# release or tag exists. Those releases were cut for arbitrary PR branch names,
+# so no branch-name prefix identifies them, and a `delete` trigger cannot be
+# path/branch-filtered (a job-level `if` still records a run per delete). If a
+# stray branch release ever needs removing, dispatch this with the branch name:
+#
+#   gh workflow run agent-cleanup.yml -f branch=<branch-name>
 on:
-  delete:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch whose agent-branch-* pre-release should be deleted
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -10,14 +26,14 @@ jobs:
   cleanup:
     name: Delete Branch Release
     runs-on: ubuntu-latest
-    # Only act on branch deletions (not tag deletions).
-    if: github.event.ref_type == 'branch'
+    timeout-minutes: 5
 
     steps:
       - name: Compute release tag
         id: tag
+        env:
+          BRANCH: ${{ inputs.branch }}
         run: |
-          BRANCH="${{ github.event.ref }}"
           SANITIZED=$(echo "$BRANCH" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | sed 's/-\+/-/g' | sed 's/^-\|-$//g')
           echo "value=agent-branch-${SANITIZED}" >> "$GITHUB_OUTPUT"
 

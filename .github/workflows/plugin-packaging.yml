@@ -27,15 +27,20 @@ on:
   push:
     branches: [ main, develop ]
 
-# Cancel an in-flight run when a newer commit lands on the same PR.
-# Only PR runs cancel in-progress (#3588): a push to develop/main is a post-merge
-# correctness gate the slim PR lane (#3326) relies on. Cancelling on push left
-# develop's gate dark under frequent merges (no run ever finished). A push run now
-# always completes; GitHub still keeps only the newest *queued* run per group, so
-# merges landing mid-run are covered by the next completed run.
+# Cancel superseded runs (#4119). A newer commit on the same PR, or a newer push
+# to develop, cancels the in-flight run for the older commit, so a merge burst
+# fully tests only its newest develop commit (develop's tip includes every
+# earlier merge). A develop failure may therefore point at a batch of merges —
+# see docs/contributing.md → "What a green PR proves". Never cancelled: pushes
+# to main, tag/release pushes, schedules and workflow_dispatch. The event name
+# is part of the group, so a push can never cancel a scheduled or dispatched run.
+# (#3588 had made every push run complete; under constant merges that ran each
+# superseded commit to completion — ~440 develop push runs/week.)
 concurrency:
-  group: plugin-packaging-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: plugin-packaging-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: >-
+    ${{ github.event_name == 'pull_request' ||
+    (github.event_name == 'push' && github.ref == 'refs/heads/develop') }}
 
 # Least-privilege token (CI-010): checkout, build, test and the artifact API
 # (which does not use the GITHUB_TOKEN's contents scope).
