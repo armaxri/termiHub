@@ -14,23 +14,34 @@ name: Coverage (unified, ratchet)
 # with `./scripts/coverage.sh --update-baseline` (raise-only) and commit it;
 # lowering a value is a deliberate, reviewed edit of the JSON.
 #
-# POST-MERGE LANE (#3325): this runs on every push to develop/main and on
-# demand, not per PR (a ~21-minute Ubuntu runner). A drop therefore reds the
-# develop/main run, not the PR that caused it. The blocking vitest coverage
-# floors (#2066) still gate every frontend PR via the Ubuntu "Run Tests" leg.
+# NIGHTLY LANE (#4119; post-merge since #3325): this no longer runs on every
+# push to develop (a ~21-minute Ubuntu runner per merge). It grades:
+#   * develop — once a night: the `schedule` trigger fires on the DEFAULT branch
+#     (main) only, so the scheduled run just dispatches this workflow on
+#     develop (the `nightly-dispatch` job), like integration-coverage-nightly.yml.
+#     Timed after develop's integration-fixtures (03:47 dispatch) and
+#     system-integration (05:05) nightlies so their lcov overlays are fresh.
+#   * main — on every push (release commits): the release coverage summary
+#     (scripts/internal/release-coverage-summary.mjs) reads the Coverage push or
+#     dispatch run on the exact release commit.
+#   * any ref on demand: `gh workflow run coverage.yml --ref <ref>`.
+# A drop therefore reds the next nightly develop run (a batch of a day's merges),
+# not the PR that caused it. The blocking vitest coverage floors (#2066) still
+# gate every frontend PR via the Ubuntu "Run Tests" leg.
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
+  schedule:
+    # 07:23 UTC daily (off the hour to dodge scheduler congestion).
+    - cron: '23 7 * * *'
   workflow_dispatch:
 
-# Now a correctness gate, so it follows the #3588 rule for post-merge gates: a
-# push to develop/main runs to completion (GitHub keeps only the newest QUEUED
-# run per group, so merges landing mid-run are graded by the next run). With
-# cancel-in-progress on push, frequent merges cancelled most runs and the gate
-# would almost never finish.
+# A blocking gate on a low-volume trigger set (main pushes, the nightly, manual
+# dispatch): every run completes, so none cancels in progress. The event name is
+# part of the group so the nightly dispatch never queues behind a main push.
 concurrency:
-  group: coverage-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: coverage-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
 
 # Least-privilege token (CI-010). The job checks out, runs coverage, and uploads
 # the coverage artifact via the artifact API (no contents-write needed) — it does
@@ -42,8 +53,26 @@ permissions:
   actions: read
 
 jobs:
+  # The scheduled run (on main, the default branch) only re-dispatches this
+  # workflow on develop. A GITHUB_TOKEN-created workflow_dispatch is allowed to
+  # start a new workflow run, so no PAT is needed.
+  nightly-dispatch:
+    name: Dispatch nightly coverage on develop
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch coverage.yml on develop
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run coverage.yml --ref develop
+
   coverage:
     name: Unified Coverage (ratchet)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
 
     steps:

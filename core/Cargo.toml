@@ -298,6 +298,10 @@ agent-update-signing = [
 # for the agent's and desktop's own tests. Enabled only from `[dev-dependencies]`
 # — never in a shipping build.
 agent-update-signing-test-support = ["agent-update-signing"]
+# Deterministic test signing helpers for the curated plugin-index signature
+# (`plugin::index_signature::test_support`, #3716). Enabled only from
+# `[dev-dependencies]` — never in a shipping build.
+plugin-index-signing-test-support = ["plugin"]
 # In-process keyboard-interactive SSH server (`backends::ssh::ki_test_server`)
 # for other crates' tests — the agent's relayed OTP end-to-end suite (#3436).
 # Enabled only from `[dev-dependencies]` — never in a shipping build.

@@ -544,7 +544,7 @@ where
 /// version suffix. Release downloads are the negation, and only they are gated
 /// on a mandatory checksum and release signature (see
 /// [`download_binary_with_checksum`]).
-fn is_dev_build(version: &str) -> bool {
+pub(crate) fn is_dev_build(version: &str) -> bool {
     cfg!(debug_assertions) || env!("TERMIHUB_IS_DEV_BUILD") == "1" || version.ends_with("-dev")
 }
 

@@ -14,6 +14,11 @@ url: string,
  */
 isDefault: boolean, 
 /**
+ * How the index was authenticated (#3716): verified against the
+ * termiHub plugin-index key, unsigned, or not checked (placeholder key).
+ */
+signature: import("./PluginIndexSignatureStatus").PluginIndexSignatureStatus, 
+/**
  * The listed plugins, in index order.
  */
 entries: Array<import("./PluginIndexEntryView").PluginIndexEntryView>, };
