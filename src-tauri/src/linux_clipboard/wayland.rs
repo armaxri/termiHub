@@ -70,8 +70,23 @@ struct WaylandOwner {
 /// `wlr-data-control`. On success, ownership + serving continue on a detached
 /// thread for as long as this source stays the selection.
 pub(super) fn bind(ctx: FetchContext) -> anyhow::Result<()> {
-    let conn = Connection::connect_to_env()
-        .map_err(|e| anyhow::anyhow!("failed to connect to the Wayland display: {e}"))?;
+    bind_on(None, ctx)
+}
+
+/// [`bind`] against an explicit compositor `socket` (`None` = the session's
+/// `WAYLAND_DISPLAY`), so tests can target a private headless compositor
+/// without mutating the process environment.
+fn bind_on(socket: Option<&std::path::Path>, ctx: FetchContext) -> anyhow::Result<()> {
+    let conn = match socket {
+        None => Connection::connect_to_env()
+            .map_err(|e| anyhow::anyhow!("failed to connect to the Wayland display: {e}"))?,
+        Some(path) => {
+            let stream = std::os::unix::net::UnixStream::connect(path)
+                .map_err(|e| anyhow::anyhow!("failed to connect to {}: {e}", path.display()))?;
+            Connection::from_socket(stream)
+                .map_err(|e| anyhow::anyhow!("failed to connect to the Wayland display: {e}"))?
+        }
+    };
 
     let (globals, mut queue) = registry_queue_init::<WaylandOwner>(&conn)
         .map_err(|e| anyhow::anyhow!("failed to initialise the Wayland registry: {e}"))?;
@@ -202,3 +217,208 @@ impl Dispatch<WlRegistry, GlobalListContents> for WaylandOwner {
 delegate_noop!(WaylandOwner: ZwlrDataControlManagerV1);
 delegate_noop!(WaylandOwner: ignore WlSeat);
 delegate_noop!(WaylandOwner: ignore ZwlrDataControlOfferV1);
+
+#[cfg(test)]
+mod tests {
+    //! Live native-Wayland delayed-render paste (#1847, #4004): a private headless
+    //! `sway` (wlroots, implements `wlr-data-control`) stands in for the desktop
+    //! compositor and `wl-paste` for a native Wayland file manager. Skips when
+    //! either is missing unless `TERMIHUB_REQUIRE_WAYLAND_CLIPBOARD_TEST` is set
+    //! (the ubuntu CI leg installs both and sets it).
+
+    use super::*;
+    use crate::linux_clipboard::Fetcher;
+    use std::path::{Path, PathBuf};
+    use std::process::{Child, Command, Output, Stdio};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    fn on_path(bin: &str) -> bool {
+        std::env::var_os("PATH")
+            .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(bin).is_file()))
+    }
+
+    /// A headless sway on a private `XDG_RUNTIME_DIR`; killed on drop.
+    struct Sway {
+        child: Child,
+        runtime_dir: tempfile::TempDir,
+        socket_name: String,
+    }
+
+    impl Sway {
+        fn socket(&self) -> PathBuf {
+            self.runtime_dir.path().join(&self.socket_name)
+        }
+    }
+
+    impl Drop for Sway {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    /// Start sway with the headless wlroots backend (no GPU, no input devices)
+    /// and wait for its Wayland socket to appear in the private runtime dir.
+    fn start_sway() -> Sway {
+        let runtime_dir = tempfile::tempdir().expect("create XDG_RUNTIME_DIR");
+        let config = runtime_dir.path().join("sway.conf");
+        std::fs::write(&config, "").expect("write empty sway config");
+        let mut child = Command::new("sway")
+            .arg("--config")
+            .arg(&config)
+            .env("XDG_RUNTIME_DIR", runtime_dir.path())
+            .env("WLR_BACKENDS", "headless")
+            .env("WLR_RENDERER", "pixman")
+            .env("WLR_LIBINPUT_NO_DEVICES", "1")
+            .env_remove("WAYLAND_DISPLAY")
+            .env_remove("DISPLAY")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn sway");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let socket = std::fs::read_dir(runtime_dir.path())
+                .expect("read XDG_RUNTIME_DIR")
+                .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+                .find(|name| name.starts_with("wayland-") && !name.ends_with(".lock"));
+            if let Some(socket_name) = socket {
+                return Sway {
+                    child,
+                    runtime_dir,
+                    socket_name,
+                };
+            }
+            if let Some(status) = child.try_wait().expect("poll sway") {
+                panic!("headless sway exited before creating its socket: {status}");
+            }
+            assert!(
+                Instant::now() < deadline,
+                "headless sway created no Wayland socket within 20s"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// Run `wl-paste <args>` against `sway`, bounded so a broken source fails
+    /// the test instead of hanging it.
+    fn wl_paste(sway: &Sway, args: &[&str]) -> Output {
+        let mut child = Command::new("wl-paste")
+            .args(args)
+            .env("XDG_RUNTIME_DIR", sway.runtime_dir.path())
+            .env("WAYLAND_DISPLAY", &sway.socket_name)
+            .env_remove("DISPLAY")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn wl-paste");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while child.try_wait().expect("poll wl-paste").is_none() {
+            if Instant::now() > deadline {
+                let _ = child.kill();
+                panic!("wl-paste {args:?} did not finish within 20s");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        child.wait_with_output().expect("collect wl-paste output")
+    }
+
+    #[test]
+    fn headless_sway_paste_fetches_on_demand_and_serves_file_uris() {
+        let missing: Vec<&str> = ["sway", "wl-paste"]
+            .into_iter()
+            .filter(|bin| !on_path(bin))
+            .collect();
+        if !missing.is_empty() {
+            let reason = format!(
+                "skipping the Wayland delayed-render paste test: {} not on PATH \
+                 (install sway + wl-clipboard to run it)",
+                missing.join(" and ")
+            );
+            assert!(
+                std::env::var_os("TERMIHUB_REQUIRE_WAYLAND_CLIPBOARD_TEST").is_none(),
+                "{reason}, but TERMIHUB_REQUIRE_WAYLAND_CLIPBOARD_TEST is set"
+            );
+            eprintln!("{reason}");
+            return;
+        }
+
+        let sway = start_sway();
+
+        // Staged "remote" files, one with a non-ASCII name and a space.
+        let tmp = tempfile::tempdir().expect("create staging dir");
+        let plain = tmp.path().join("plain.txt");
+        let unicode = tmp.path().join("café ü.txt");
+        std::fs::write(&plain, b"plain").expect("stage plain");
+        std::fs::write(&unicode, b"unicode").expect("stage unicode");
+        let staged = [plain.clone(), unicode.clone()];
+        let calls = Arc::new(Mutex::new(Vec::<u32>::new()));
+        let recorded = Arc::clone(&calls);
+        let ctx = FetchContext {
+            fetcher: Fetcher::Fake(Arc::new(move |index| {
+                recorded.lock().unwrap().push(index);
+                staged
+                    .get(index as usize)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("no fake file at index {index}"))
+            })),
+            indices: vec![0, 1],
+        };
+        let calls_now = || calls.lock().unwrap().clone();
+
+        bind_on(Some(&sway.socket()), ctx).expect("own the selection on headless sway");
+        assert!(calls_now().is_empty(), "the bind itself must not fetch");
+
+        // Listing the offered types (what a file manager does on focus) does
+        // not fetch either.
+        let types = wl_paste(&sway, &["--list-types"]);
+        assert!(types.status.success(), "--list-types failed: {types:?}");
+        let types = String::from_utf8_lossy(&types.stdout);
+        for mime in OFFERED_MIMES {
+            assert!(
+                types.lines().any(|l| l == mime),
+                "{mime} missing from the offer: {types}"
+            );
+        }
+        assert!(calls_now().is_empty(), "listing types must not fetch");
+
+        let uri = |p: &Path| crate::utils::file_uri::path_to_file_uri(p);
+        assert!(
+            uri(&unicode).ends_with("caf%C3%A9%20%C3%BC.txt"),
+            "{}",
+            uri(&unicode)
+        );
+
+        // Paste text/uri-list: the fetch runs now, once per file.
+        let out = wl_paste(&sway, &["--no-newline", "--type", "text/uri-list"]);
+        assert!(out.status.success(), "uri-list paste failed: {out:?}");
+        assert_eq!(
+            String::from_utf8(out.stdout).expect("uri-list is UTF-8"),
+            format!("{}\r\n{}\r\n", uri(&plain), uri(&unicode))
+        );
+        assert_eq!(calls_now(), vec![0, 1], "paste fetches each file once");
+
+        // Each paste is a fresh delayed render.
+        let out = wl_paste(
+            &sway,
+            &["--no-newline", "--type", "x-special/gnome-copied-files"],
+        );
+        assert!(out.status.success(), "gnome paste failed: {out:?}");
+        assert_eq!(
+            String::from_utf8(out.stdout).unwrap(),
+            format!("copy\n{}\n{}", uri(&plain), uri(&unicode))
+        );
+        assert_eq!(calls_now(), vec![0, 1, 0, 1]);
+
+        // A type the source never offered is not served and fetches nothing.
+        let refused = wl_paste(&sway, &["--no-newline", "--type", "text/plain"]);
+        assert!(
+            !refused.status.success() || refused.stdout.is_empty(),
+            "text/plain must not be served: {refused:?}"
+        );
+        assert_eq!(calls_now().len(), 4, "an unoffered type must not fetch");
+    }
+}
