@@ -1690,6 +1690,60 @@ still embed only the leaked key can no longer be updated automatically — redep
 a desktop built with the new key (the immediate-deploy path installs over SSH and does not
 depend on the old agent's check; the desktop verifies against its own compiled-in key).
 
+### Plugin Index Signing Key
+
+Release desktops only accept the default plugin index
+([`plugins/index.json`](../plugins/index.json) on `main`) when
+`plugins/index.json.sig` is a valid Ed25519 signature from the termiHub plugin-index key
+([#3716](https://github.com/armaxri/termiHub/issues/3716), ADR-17 in
+[architecture.md](architecture.md)). It reuses the agent update signing scheme and PEM format,
+with a **separate** key: the public half is compiled into the desktop from
+[`plugins/keys/index-signing.pub.pem`](../plugins/keys/index-signing.pub.pem); the private half
+exists **only** as the `PLUGIN_INDEX_SIGNING_KEY` GitHub Actions secret.
+
+```mermaid
+flowchart LR
+    K["setup-plugin-index-signing-key.sh<br/>(maintainer, once)"] -->|public key| P[plugins/keys/index-signing.pub.pem]
+    K -->|signs current index| G[plugins/index.json.sig]
+    K -->|private key, stdin| S[(secret PLUGIN_INDEX_SIGNING_KEY)]
+    S --> W[Plugin Index Signature workflow]
+    W -->|fresh .sig on index change| G
+    P -->|include_str! via termihub-core| D[desktop verifies before parsing]
+    G --> D
+```
+
+- **What is signed:** `Ed25519(b"termihub-plugin-index-v1\0" || SHA-256(index bytes))`, base64,
+  one line. See `core/src/plugin/index_signature.rs` and
+  `scripts/internal/plugin-index-signing.sh` (`status`, `check-key`, `sign`, `verify`).
+- **Placeholder:** until the key is generated, the committed key file is a marked placeholder.
+  Desktops then load the index without checking and Browse says "Signature not checked"
+  (deliberately not fail-closed, unlike the agent key: the index is a discovery aid and every
+  package still passes its own trust gates). The workflow reports a notice and passes.
+- **Activation (maintainer, once):** run
+
+  ```bash
+  ./scripts/internal/setup-plugin-index-signing-key.sh
+  ```
+
+  It generates the keypair with OpenSSL 3, writes the public key, signs the current
+  `plugins/index.json` into `plugins/index.json.sig`, and pipes the private key to
+  `gh secret set PLUGIN_INDEX_SIGNING_KEY` (never echoed; shredded on exit; no backup). Then commit
+  both files in one PR into `develop`, as the script prints. Release desktops built after that
+  require the signature; dev/branch builds tolerate a missing one until it reaches `main`.
+  `--dry-run` does everything except the `gh` call, on temp copies (the `Shell Script Quality`
+  job runs it via `scripts/internal/check-script-headless.sh`).
+
+- **Changing the index:** every PR that touches `plugins/index.json` must also carry a fresh
+  `plugins/index.json.sig`. The `Plugin Index Signature` check fails on a stale one and, when
+  the secret is available (not on fork PRs), puts the fresh signature in its job summary and in
+  the `plugin-index-signature` artifact
+  (`gh run download <run-id> -n plugin-index-signature -D plugins/`). Commit it to the PR. For a
+  fork PR, run the workflow on a maintainer branch via `workflow_dispatch`. CI never commits the
+  signature itself because `main` and `develop` require PRs.
+- **Loss or compromise:** re-run the setup script with `--force` and commit the new key and
+  signature. Desktops built with the old key reject the newly signed default index until they
+  update, so prefer a rotation (two public-key blocks are accepted; the verifier trusts any).
+
 ### Hotfix Process
 
 For urgent bug fixes on a released version:
