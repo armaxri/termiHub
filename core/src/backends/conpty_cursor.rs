@@ -315,6 +315,104 @@ mod tests {
         assert!(written.is_empty());
     }
 
+    // -- The sideloaded OpenConsole host (#4121) ------------------------------
+    //
+    // The packaged ConPTY host sends a DA1 query right after the cursor query
+    // (`ESC [ 6 n ESC [ c ESC [ ? 1004 h ESC [ ? 9001 h`) and holds the child's
+    // output up to 3 s for the reply.
+
+    /// What the answerer must reply to the opening DA1 query: xterm.js's own
+    /// answer, so conhost sees the same terminal either way.
+    const XTERM_DA1_REPLY: &[u8] = b"\x1b[?1;2c";
+
+    fn cpr_then_da1_reply() -> Vec<u8> {
+        [CURSOR_REPLY, XTERM_DA1_REPLY].concat()
+    }
+
+    #[test]
+    fn answers_and_strips_openconsole_da1_after_cursor_query() {
+        let (out, written) = run(&[b"\x1b[6n\x1b[c\x1b[?1004h\x1b[?9001hPS> "], 4096);
+        assert_eq!(out, b"\x1b[?1004h\x1b[?9001hPS> ");
+        assert_eq!(written, cpr_then_da1_reply());
+    }
+
+    #[test]
+    fn answers_openconsole_da1_split_across_reads() {
+        let (out, written) = run(&[b"\x1b[6n\x1b", b"[", b"c\x1b[?9001hPS> "], 4096);
+        assert_eq!(out, b"\x1b[?9001hPS> ");
+        assert_eq!(written, cpr_then_da1_reply());
+    }
+
+    #[test]
+    fn answers_openconsole_da1_with_a_tiny_caller_buffer() {
+        let (out, written) = run(&[b"\x1b[6n\x1b[c\x1b[?9001hPS C:\\> "], 2);
+        assert_eq!(out, b"\x1b[?9001hPS C:\\> ");
+        assert_eq!(written, cpr_then_da1_reply());
+    }
+
+    #[test]
+    fn da1_not_right_after_the_cursor_query_passes_through() {
+        let (out, written) = run(&[b"\x1b[6nPS> \x1b[c"], 4096);
+        assert_eq!(out, b"PS> \x1b[c");
+        assert_eq!(written, CURSOR_REPLY);
+    }
+
+    #[test]
+    fn da1_without_a_cursor_query_passes_through() {
+        let (out, written) = run(&[b"\x1b[cPS> "], 4096);
+        assert_eq!(out, b"\x1b[cPS> ");
+        assert!(written.is_empty());
+    }
+
+    #[test]
+    fn eof_inside_a_partial_da1_releases_it() {
+        let (out, written) = run(&[b"\x1b[6n\x1b["], 4096);
+        assert_eq!(out, b"\x1b[");
+        assert_eq!(written, CURSOR_REPLY);
+    }
+
+    /// The inbox host sends the cursor query alone and releases nothing until
+    /// it is answered, so the reply must go out before the answerer reads on
+    /// (waiting for a possible DA1 first would deadlock the session).
+    #[test]
+    fn answers_the_cursor_query_before_reading_on() {
+        struct GatedReader {
+            log: Arc<Mutex<Vec<u8>>>,
+            step: usize,
+        }
+        impl Read for GatedReader {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.step += 1;
+                let chunk: &[u8] = match self.step {
+                    1 => b"\x1b[6n",
+                    2 => {
+                        assert_eq!(
+                            *self.log.lock().unwrap(),
+                            CURSOR_REPLY,
+                            "cursor query must be answered before the next read"
+                        );
+                        b"PS> "
+                    }
+                    _ => b"",
+                };
+                buf[..chunk.len()].copy_from_slice(chunk);
+                Ok(chunk.len())
+            }
+        }
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let writer: SharedPtyWriter = Arc::new(Mutex::new(Box::new(LogWriter(log.clone()))));
+        let mut answerer = CursorQueryAnswerer::new(
+            GatedReader {
+                log: log.clone(),
+                step: 0,
+            },
+            writer,
+        );
+        let mut out = Vec::new();
+        answerer.read_to_end(&mut out).unwrap();
+        assert_eq!(out, b"PS> ");
+    }
+
     #[test]
     fn shared_writer_writes_through() {
         let log = Arc::new(Mutex::new(Vec::new()));
