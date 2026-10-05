@@ -75,6 +75,10 @@ pub const CONNECTION_FILES_SET_PERMISSIONS: &str = "connection.files.set_permiss
 pub const CONNECTION_FILES_SET_OWNER: &str = "connection.files.set_owner";
 pub const CONNECTION_FILES_CREATE_SYMLINK: &str = "connection.files.create_symlink";
 pub const CONNECTION_FILES_COPY: &str = "connection.files.copy";
+/// Read a bounded slice of a file at an offset (protocol 0.26.0, #3587).
+pub const CONNECTION_FILES_READ_RANGE: &str = "connection.files.read_range";
+/// Write a slice of a file at an offset (protocol 0.26.0, #3587).
+pub const CONNECTION_FILES_WRITE_RANGE: &str = "connection.files.write_range";
 
 // Connection-scoped system monitoring.
 pub const CONNECTION_MONITORING_SUBSCRIBE: &str = "connection.monitoring.subscribe";
@@ -317,6 +321,12 @@ pub struct Capabilities {
     /// kind instead (protocol 0.23.0, #3877). Absent (read as `false`) on
     /// older agents, which the desktop never asks to connect unattended.
     pub unattended_connect: bool,
+    /// Whether the agent serves [`CONNECTION_FILES_READ_RANGE`] /
+    /// [`CONNECTION_FILES_WRITE_RANGE`] — offset-addressed slices that let the
+    /// desktop run a queued, resumable transfer against an agent-hosted
+    /// session (protocol 0.26.0, #3587). Absent (read as `false`) on older
+    /// agents, whose sessions keep whole-file transfers.
+    pub file_ranges: bool,
 }
 
 /// One prompt of a [`KbdInteractivePromptNotification`] round.
@@ -1192,6 +1202,45 @@ pub struct FilesCopyParams {
 /// Type alias for backward compatibility — stat results use the same shape
 /// as [`FileEntry`] from the core crate.
 pub type FilesStatResult = FileEntry;
+
+/// Params for [`CONNECTION_FILES_READ_RANGE`] (#3587).
+///
+/// A `length` of `0` reads nothing and only answers whether the target
+/// supports ranged access — the desktop's per-session capability probe.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilesReadRangeParams {
+    pub connection_id: Option<String>,
+    pub path: String,
+    /// Byte offset to start reading at.
+    pub offset: u64,
+    /// Bytes to read, at most [`MAX_RANGE_BYTES`](crate::files::MAX_RANGE_BYTES).
+    pub length: u32,
+}
+
+/// Result of [`CONNECTION_FILES_READ_RANGE`] (#3587).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilesReadRangeResult {
+    /// Base64-encoded bytes read.
+    pub data: String,
+    /// `true` when fewer than `length` bytes were available: the end of the
+    /// file was reached.
+    pub eof: bool,
+}
+
+/// Params for [`CONNECTION_FILES_WRITE_RANGE`] (#3587).
+///
+/// `offset == 0` creates or truncates the file; a larger `offset` appends and
+/// requires the file to hold exactly `offset` bytes already.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilesWriteRangeParams {
+    pub connection_id: Option<String>,
+    pub path: String,
+    /// Byte offset the slice starts at.
+    pub offset: u64,
+    /// Base64-encoded bytes, at most
+    /// [`MAX_RANGE_BYTES`](crate::files::MAX_RANGE_BYTES) once decoded.
+    pub data: String,
+}
 
 // ── connection.processes.* (PROD-0028) ──────────────────────────────
 
@@ -2532,6 +2581,7 @@ mod tests {
                 session_monitoring: true,
                 session_files: true,
                 unattended_connect: true,
+                file_ranges: true,
                 available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
                 available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
                 docker_available: false,
@@ -2554,6 +2604,8 @@ mod tests {
         assert_eq!(v["capabilities"]["sessionFiles"], true);
         // #3877: unattended `connection.create`.
         assert_eq!(v["capabilities"]["unattendedConnect"], true);
+        // #3587: offset-addressed file slices.
+        assert_eq!(v["capabilities"]["fileRanges"], true);
         assert!(v["capabilities"]["availableDockerImages"]
             .as_array()
             .unwrap()
@@ -3363,6 +3415,26 @@ mod tests {
     }
 
     #[test]
+    fn files_range_params_use_snake_case_like_their_neighbours() {
+        let json = json!({"connection_id": "s1", "path": "/a", "offset": 7, "length": 3});
+        let p: FilesReadRangeParams = serde_json::from_value(json).unwrap();
+        assert_eq!(p.connection_id.as_deref(), Some("s1"));
+        assert_eq!((p.offset, p.length), (7, 3));
+
+        let json = json!({"path": "/a", "offset": 0, "data": "aGk="});
+        let p: FilesWriteRangeParams = serde_json::from_value(json).unwrap();
+        assert!(p.connection_id.is_none());
+        assert_eq!(p.data, "aGk=");
+
+        let v = serde_json::to_value(FilesReadRangeResult {
+            data: "aGk=".into(),
+            eof: true,
+        })
+        .unwrap();
+        assert_eq!(v, json!({"data": "aGk=", "eof": true}));
+    }
+
+    #[test]
     fn files_read_result_serializes() {
         let result = FilesReadResult {
             data: "aGVsbG8=".to_string(),
@@ -3732,6 +3804,8 @@ mod tests {
             "connection.files.create_symlink"
         );
         assert_eq!(CONNECTION_FILES_COPY, "connection.files.copy");
+        assert_eq!(CONNECTION_FILES_READ_RANGE, "connection.files.read_range");
+        assert_eq!(CONNECTION_FILES_WRITE_RANGE, "connection.files.write_range");
         assert_eq!(
             CONNECTION_MONITORING_SUBSCRIBE,
             "connection.monitoring.subscribe"
