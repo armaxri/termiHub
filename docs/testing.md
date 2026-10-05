@@ -2247,7 +2247,6 @@ This is the **single** manual gate for a release. Run it on each target OS (macO
 
 Folded in from the per-feature walkthroughs (#3695):
 
-- [ ] MT-APP-01 — Backup and restore through native file dialogs with restart
 - [ ] MT-APP-02 (macOS) — macOS production build has no CSP violations
 - [ ] MT-APP-03 (macOS) — Plugin index and URL install over real HTTPS
 - [ ] MT-APP-04 — Second launch raises the running window; portable double-launch refused
@@ -2256,7 +2255,6 @@ Folded in from the per-feature walkthroughs (#3695):
 - [ ] MT-CRED-12 (macOS) — macOS Touch ID unlock of the master-password store
 - [ ] MT-CRED-13 (Windows) — Windows Hello export and unlock
 - [ ] MT-CRED-14 (Linux) — Linux polkit dialog for keychain export (GNOME and KDE)
-- [ ] MT-EDIT-01 — Download a read-only SFTP file via the native save dialog
 - [ ] MT-FB-30 — Large directory scrolls smoothly and accepts OS drops
 - [ ] MT-FB-31 — Drag files out to the OS file manager
 - [ ] MT-LOCAL-30 (Windows) — Windows CMD output paints in order
