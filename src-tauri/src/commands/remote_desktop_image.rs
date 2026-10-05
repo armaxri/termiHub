@@ -107,13 +107,11 @@ pub(crate) async fn send_host_clipboard_image(
     let Some(host_image) = host_image else {
         return Ok(None);
     };
-    let image =
-        host_image_to_clipboard_image(host_image.width, host_image.height, host_image.rgba)
-            .inspect_err(|e| warn!(error = %e, "refusing to send the local clipboard image"))?;
+    let image = host_image_to_clipboard_image(host_image.width, host_image.height, host_image.rgba)
+        .inspect_err(|e| warn!(error = %e, "refusing to send the local clipboard image"))?;
     let info = image.info();
-    let sent =
-        gated_send_clipboard_image(manager, window_manager, window_label, session_id, image)
-            .await?;
+    let sent = gated_send_clipboard_image(manager, window_manager, window_label, session_id, image)
+        .await?;
     Ok(sent.then_some(info))
 }
 
