@@ -3787,8 +3787,6 @@ dependencies = [
 [[package]]
 name = "libunftp"
 version = "0.23.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3dc54288ecbf8beefa5cab3a9921ab03bf1f18a3a0872cbcdb5313fc0baebaeb"
 dependencies = [
  "async-trait",
  "bitflags 2.13.2",

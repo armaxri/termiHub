@@ -190,6 +190,12 @@ features = ["v4"]
 [dev-dependencies.pretty_assertions]
 version = "1.4.1"
 
+# Upstream's dev-dependency is a path into its own workspace, which the crates.io
+# normalisation strips; the src/ unit tests need it, so it is restored here from
+# crates.io (0.4 builds on unftp-core, not on libunftp).
+[dev-dependencies.unftp-sbe-fs]
+version = "0.4.0"
+
 [dev-dependencies.tokio]
 version = "1.53.1"
 features = [
