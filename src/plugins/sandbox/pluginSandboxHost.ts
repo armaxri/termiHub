@@ -49,6 +49,7 @@ import {
   removeStatusBarWidget,
   upsertStatusBarWidget,
 } from "./statusBarWidgetStore";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** Emit a chunk to the terminal, in order. */
 type OutputSink = (bytes: Uint8Array) => void;
@@ -338,10 +339,7 @@ function rebuildWorker(): void {
     syncWorkerPlugins();
   } catch (err) {
     // Building the worker itself failed — stay on the fast path, never throw.
-    frontendLog(
-      "plugin_sandbox",
-      `Failed to rebuild the sandbox worker: ${err instanceof Error ? err.message : String(err)}`
-    );
+    frontendLog("plugin_sandbox", `Failed to rebuild the sandbox worker: ${errorMessage(err)}`);
   }
 }
 

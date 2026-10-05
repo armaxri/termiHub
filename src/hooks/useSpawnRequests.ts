@@ -10,6 +10,7 @@ import {
 } from "@/services/api";
 import type { ContainerRuntime, SpawnChoice } from "@/types/spawn";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** Auto-dismiss duration (ms) for the spawn confirmation toast (#1365). */
 const SPAWN_TOAST_DURATION_MS = 3000;
@@ -123,8 +124,8 @@ async function handleSpawnRequest(
         testId: "spawn-toast-success",
       });
     } catch (err) {
-      frontendLog("spawn", `Failed to resolve container spawn: ${err}`);
-      toast.error(`Failed to open spawned container: ${err}`, {
+      frontendLog("spawn", `Failed to resolve container spawn: ${errorMessage(err)}`);
+      toast.error(`Failed to open spawned container: ${errorMessage(err)}`, {
         testId: "spawn-toast-error",
       });
     }
@@ -153,8 +154,8 @@ async function handleSpawnRequest(
       });
     }
   } catch (err) {
-    frontendLog("spawn", `Failed to resolve shell spawn: ${err}`);
-    toast.error(`Failed to open spawned shell: ${err}`, {
+    frontendLog("spawn", `Failed to resolve shell spawn: ${errorMessage(err)}`);
+    toast.error(`Failed to open spawned shell: ${errorMessage(err)}`, {
       testId: "spawn-toast-error",
     });
   }
@@ -221,7 +222,7 @@ export function useSpawnRequests(): void {
           route(pending);
         }
       } catch (err) {
-        frontendLog("spawn", `Failed to drain pending spawn: ${err}`);
+        frontendLog("spawn", `Failed to drain pending spawn: ${errorMessage(err)}`);
       }
     };
 
@@ -255,8 +256,8 @@ async function persistRememberedChoice(
   try {
     await rememberSpawnChoice(req.entry_id, choice.target);
   } catch (err) {
-    frontendLog("spawn", `Failed to remember spawn choice: ${err}`);
-    toast.error(`Opened the session, but could not remember the choice: ${err}`);
+    frontendLog("spawn", `Failed to remember spawn choice: ${errorMessage(err)}`);
+    toast.error(`Opened the session, but could not remember the choice: ${errorMessage(err)}`);
   }
 }
 

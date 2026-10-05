@@ -97,7 +97,7 @@ describe("windowManagementSlice — branch coverage (#2979)", () => {
 
       expect(m.frontendLog).toHaveBeenCalledWith(
         "multi_window",
-        "claimSession failed: Error: owned elsewhere"
+        "claimSession failed: owned elsewhere"
       );
       const tabs = getAllLeaves(layoutState().rootPanel).flatMap((l) => l.tabs);
       expect(tabs.map((t) => t.sessionId)).toEqual(["s1"]);
@@ -124,7 +124,7 @@ describe("windowManagementSlice — branch coverage (#2979)", () => {
 
       expect(m.frontendLog).toHaveBeenCalledWith(
         "multi_window",
-        "reportWindowLayout failed: Error: main window gone"
+        "reportWindowLayout failed: main window gone"
       );
     });
   });

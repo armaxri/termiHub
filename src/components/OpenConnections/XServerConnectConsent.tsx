@@ -6,7 +6,6 @@ import { xServerConnectConsentReply, xServerInstallDependency } from "@/services
 import { onXServerConsentNeeded, onXServerProgress } from "@/services/events";
 import { frontendLog } from "@/utils/frontendLog";
 import {
-  isXServerError,
   type XServerConsentRequest,
   type XServerError,
   type XServerProgress,
@@ -14,6 +13,7 @@ import {
 import { XServerSetupContent, type XServerSetupPhase } from "./XServerSetupContent";
 import { driveXServerEnsure } from "./xServerProvisioning";
 import { guideTerminalInstall } from "./guideTerminalInstall";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** Progress steps that end the backend-driven connect provisioning. */
 const TERMINAL_STEPS = new Set(["ready", "failed", "skipped"]);
@@ -90,7 +90,7 @@ export function XServerConnectConsent() {
           close();
         },
         onFailure: (typed, raw) => {
-          frontendLog("x_server_connect_consent", `retry failed: ${String(raw)}`);
+          frontendLog("x_server_connect_consent", `retry failed: ${errorMessage(raw)}`);
           setRawError(raw);
           setError(typed);
           setPhase("error");
@@ -157,7 +157,7 @@ export function XServerConnectConsent() {
       driverRef.current = "ensure";
       setPhase("provisioning");
     } catch (e) {
-      const msg = isXServerError(e) ? e.message : String(e);
+      const msg = errorMessage(e);
       frontendLog("x_server_connect_consent", `dependency install failed: ${msg}`);
       toast.error(msg);
       throw e; // return the Button to idle without a success flash

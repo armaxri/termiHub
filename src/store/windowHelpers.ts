@@ -18,6 +18,7 @@ import type { CapturedWindowLayout, WindowRestorePlanEntry } from "@/utils/windo
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 import type { AppState } from "./appStore";
 import { collectLiveTabs, type LayoutViewState } from "./layoutHelpers";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * The runtime label of the window this store belongs to (multi-window
@@ -56,7 +57,7 @@ export async function captureAllWindows(
   } catch (err) {
     frontendLog(
       "multi_window",
-      `window layout aggregation unavailable, saving own window only: ${String(err)}`
+      `window layout aggregation unavailable, saving own window only: ${errorMessage(err)}`
     );
   }
   return assembleWindowedGroups(layouts);
@@ -81,7 +82,10 @@ async function spawnPlanSecondaryWindows(plan: WindowRestorePlanEntry[]): Promis
         await openWindow();
       }
     } catch (err) {
-      frontendLog("multi_window", `spawn restore window ${entry.windowId} failed: ${String(err)}`);
+      frontendLog(
+        "multi_window",
+        `spawn restore window ${entry.windowId} failed: ${errorMessage(err)}`
+      );
     }
   }
 }

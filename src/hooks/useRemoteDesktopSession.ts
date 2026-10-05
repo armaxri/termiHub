@@ -38,6 +38,7 @@ import { useMonitorLayoutRefresh } from "./useMonitorLayoutRefresh";
 import { toast } from "@/components/ui";
 import { backendErrorMessage, isAuthFailure } from "@/utils/backendErrorCode";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** Everything a RemoteDesktopTab needs to drive one graphical session. */
 export interface RemoteDesktopSession {
@@ -295,7 +296,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
       setAwaitingFirstFrame(true);
       frontendLog("remote_desktop", `adopting moved session ${adoptId} for tab ${tabId}`);
       void remoteDesktopRequestFullFrame(adoptId).catch((err) =>
-        frontendLog("remote_desktop", `request_full_frame failed: ${err}`)
+        frontendLog("remote_desktop", `request_full_frame failed: ${errorMessage(err)}`)
       );
       // Consume the one-shot move marker so nothing else acts on it.
       useAppStore.getState().clearPendingScrollbackReplay(tabId);
@@ -383,7 +384,9 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
           setCertPrompt((current) => current ?? pending);
           frontendLog("remote_desktop", `pending cert prompt for ${pending.host} picked up`);
         })
-        .catch((err) => frontendLog("remote_desktop", `pending cert prompt fetch failed: ${err}`));
+        .catch((err) =>
+          frontendLog("remote_desktop", `pending cert prompt fetch failed: ${errorMessage(err)}`)
+        );
     });
 
     return () => {
@@ -410,11 +413,14 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
       const size = desiredSizeRef.current;
       if (size) {
         void remoteDesktopResize(sessionId, size.width, size.height).catch((err) =>
-          frontendLog("remote_desktop", `resize after reclaim failed: ${err}`)
+          frontendLog("remote_desktop", `resize after reclaim failed: ${errorMessage(err)}`)
         );
       }
       void remoteDesktopRequestFullFrame(sessionId).catch((err) =>
-        frontendLog("remote_desktop", `request_full_frame after reclaim failed: ${err}`)
+        frontendLog(
+          "remote_desktop",
+          `request_full_frame after reclaim failed: ${errorMessage(err)}`
+        )
       );
     });
   }, [sessionId]);
@@ -425,7 +431,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     setCertPrompt(null);
     if (!id) return;
     void remoteDesktopCertDecision(id, accept, remember).catch((err) =>
-      frontendLog("remote_desktop", `cert_decision failed: ${err}`)
+      frontendLog("remote_desktop", `cert_decision failed: ${errorMessage(err)}`)
     );
   }, []);
 
@@ -434,7 +440,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
       const id = sessionIdRef.current;
       if (!id || viewOnly || isWindowEvicted(id)) return;
       void remoteDesktopSendInput(id, event).catch((err) =>
-        frontendLog("remote_desktop", `send_input failed: ${err}`)
+        frontendLog("remote_desktop", `send_input failed: ${errorMessage(err)}`)
       );
     },
     [viewOnly]
@@ -444,7 +450,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     const id = sessionIdRef.current;
     if (!id || viewOnly || isWindowEvicted(id)) return;
     void remoteDesktopReleaseInput(id).catch((err) =>
-      frontendLog("remote_desktop", `release_input failed: ${err}`)
+      frontendLog("remote_desktop", `release_input failed: ${errorMessage(err)}`)
     );
   }, [viewOnly]);
 
@@ -476,7 +482,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     const id = sessionIdRef.current;
     if (!id || isWindowEvicted(id)) return;
     void remoteDesktopSendClipboard(id, text).catch((err) =>
-      frontendLog("remote_desktop", `send_clipboard failed: ${err}`)
+      frontendLog("remote_desktop", `send_clipboard failed: ${errorMessage(err)}`)
     );
   }, []);
 
@@ -486,7 +492,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     try {
       return await remoteDesktopRemoteClipboardFiles(id);
     } catch (err) {
-      frontendLog("remote_desktop", `remote_clipboard_files failed: ${err}`);
+      frontendLog("remote_desktop", `remote_clipboard_files failed: ${errorMessage(err)}`);
       return [];
     }
   }, []);

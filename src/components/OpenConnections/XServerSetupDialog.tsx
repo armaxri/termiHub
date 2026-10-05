@@ -3,15 +3,11 @@ import { AppWindow } from "lucide-react";
 import { toast } from "@/components/ui";
 import { xServerInstallDependency } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
-import {
-  isXServerError,
-  type XServerError,
-  type XServerProgress,
-  type XServerStatusReport,
-} from "@/types/xserver";
+import { type XServerError, type XServerProgress, type XServerStatusReport } from "@/types/xserver";
 import { XServerSetupContent, type XServerSetupPhase } from "./XServerSetupContent";
 import { driveXServerEnsure } from "./xServerProvisioning";
 import { guideTerminalInstall } from "./guideTerminalInstall";
+import { errorMessage } from "@/utils/errorMessage";
 
 interface XServerSetupDialogProps {
   /** Whether the dialog is open (controlled). */
@@ -61,10 +57,7 @@ export function XServerSetupDialog({ open, onOpenChange, onProvisioned }: XServe
         onOpenChange(false);
       },
       onFailure: (typed, raw) => {
-        frontendLog(
-          "x_server_setup",
-          `provisioning failed: ${isXServerError(raw) ? raw.message : String(raw)}`
-        );
+        frontendLog("x_server_setup", `provisioning failed: ${errorMessage(raw)}`);
         setRawError(raw);
         setError(typed);
         setPhase("error");
@@ -86,7 +79,7 @@ export function XServerSetupDialog({ open, onOpenChange, onProvisioned }: XServe
       toast.success(`${dep} installed`);
       setPhase("provisioning");
     } catch (e) {
-      const msg = isXServerError(e) ? e.message : String(e);
+      const msg = errorMessage(e);
       frontendLog("x_server_setup", `dependency install failed: ${msg}`);
       toast.error(msg);
       throw e; // return the Button to idle without a success flash

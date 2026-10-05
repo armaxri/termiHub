@@ -72,7 +72,10 @@ export const createEmbeddedServersSlice: StateCreator<AppState, [], [], Embedded
       }
       set({ embeddedServerStates });
     } catch (err) {
-      frontendLog("embedded_server", `Failed to refresh embedded server states: ${err}`);
+      frontendLog(
+        "embedded_server",
+        `Failed to refresh embedded server states: ${errorMessage(err)}`
+      );
     }
   },
 
@@ -106,7 +109,10 @@ export const createEmbeddedServersSlice: StateCreator<AppState, [], [], Embedded
       // an error toast — #1427. The server is only removed from the store on
       // success above, so state stays correct on failure. Mirrors
       // saveEmbeddedServer / deleteTunnel.
-      frontendLog("embedded_server", `Failed to delete embedded server ${serverId}: ${err}`);
+      frontendLog(
+        "embedded_server",
+        `Failed to delete embedded server ${serverId}: ${errorMessage(err)}`
+      );
       throw err;
     }
   },
@@ -115,7 +121,10 @@ export const createEmbeddedServersSlice: StateCreator<AppState, [], [], Embedded
     try {
       await apiStartEmbeddedServer(serverId);
     } catch (err) {
-      frontendLog("embedded_server", `Failed to start embedded server ${serverId}: ${err}`);
+      frontendLog(
+        "embedded_server",
+        `Failed to start embedded server ${serverId}: ${errorMessage(err)}`
+      );
       throw err;
     }
   },
@@ -124,7 +133,10 @@ export const createEmbeddedServersSlice: StateCreator<AppState, [], [], Embedded
     try {
       await apiStopEmbeddedServer(serverId);
     } catch (err) {
-      frontendLog("embedded_server", `Failed to stop embedded server ${serverId}: ${err}`);
+      frontendLog(
+        "embedded_server",
+        `Failed to stop embedded server ${serverId}: ${errorMessage(err)}`
+      );
       throw err;
     }
   },

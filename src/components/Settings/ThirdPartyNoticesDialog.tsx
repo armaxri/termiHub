@@ -44,7 +44,7 @@ export function ThirdPartyNoticesDialog({ open, onOpenChange }: ThirdPartyNotice
         if (active) setState(text ? { kind: "loaded", text } : { kind: "unavailable" });
       })
       .catch((err: unknown) => {
-        frontendLog("about", `Failed to load third-party notices: ${err}`);
+        frontendLog("about", `Failed to load third-party notices: ${errorMessage(err)}`);
         if (active) setState({ kind: "error", message: errorMessage(err) });
       });
     return () => {
@@ -56,7 +56,7 @@ export function ThirdPartyNoticesDialog({ open, onOpenChange }: ThirdPartyNotice
     try {
       await openUrl(THIRD_PARTY_LICENSES_URL);
     } catch (err) {
-      frontendLog("about", `Failed to open third-party licenses URL: ${err}`);
+      frontendLog("about", `Failed to open third-party licenses URL: ${errorMessage(err)}`);
       throw err;
     }
   };

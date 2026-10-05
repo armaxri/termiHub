@@ -22,6 +22,7 @@ import { getAllLeaves } from "@/utils/panelTree";
 import type { AppState } from "./appStore";
 import { collectWindowTabs, type LayoutViewState } from "./layoutHelpers";
 import { bestEffortOwnership } from "./windowHelpers";
+import { errorMessage } from "@/utils/errorMessage";
 
 export const LAST_SESSION_SAVE_DEBOUNCE_MS = 500;
 /**
@@ -83,7 +84,7 @@ export async function probeRestorePromptReachability(
     });
   } catch (err) {
     // A probe failure leaves reachability unknown — never blocks restore.
-    frontendLog("workspace", `restore reachability probe failed: ${String(err)}`);
+    frontendLog("workspace", `restore reachability probe failed: ${errorMessage(err)}`);
   }
 }
 

@@ -83,7 +83,7 @@ export function PluginManagerView() {
         filters: [{ name: "termiHub plugin", extensions: ["termihub-plugin"] }],
       })) as string | null;
     } catch (err) {
-      frontendLog("plugin_manager", `File picker failed: ${err}`);
+      frontendLog("plugin_manager", `File picker failed: ${errorMessage(err)}`);
       toast.error(`Could not open file picker: ${errorMessage(err)}`);
       return;
     }

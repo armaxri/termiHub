@@ -151,4 +151,28 @@ describe("PortableModeSettings", () => {
 
     expect(mockListConfigFiles).not.toHaveBeenCalled();
   });
+
+  it("renders a structured IPC error's message when export fails (#4104)", async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const { exportConfigToPortable } = await import("@/services/api");
+    vi.mocked(open).mockResolvedValueOnce("/target");
+    vi.mocked(exportConfigToPortable).mockRejectedValueOnce({
+      code: "io_error",
+      message: "target directory is read-only",
+    });
+
+    await act(async () => {
+      root.render(<PortableModeSettings />);
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="export-config-btn"]')!.click();
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="migration-confirm"]')!.click();
+    });
+
+    const result = container.querySelector('[data-testid="migration-result"]');
+    expect(result?.textContent).toContain("target directory is read-only");
+    expect(result?.textContent).not.toContain("[object Object]");
+  });
 });

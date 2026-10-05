@@ -265,7 +265,7 @@ export function seedSettingsRegion(settings: AppSettings): Promise<void> {
   } catch (err) {
     // A synchronous transport-construction failure (non-Tauri, no socket).
     lastSeededSignature = null;
-    return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    return Promise.reject(err instanceof Error ? err : new Error(errorMessage(err)));
   }
 }
 

@@ -371,7 +371,7 @@ export const createLayoutPersistenceSlice: StateCreator<
       } catch (err) {
         // GAP G3 (#1146): a failed load used to be a silent console.error, so a
         // launch that could not open anything looked like nothing happened.
-        frontendLog("workspace", `Failed to launch workspace ${workspaceId}: ${String(err)}`);
+        frontendLog("workspace", `Failed to launch workspace ${workspaceId}: ${errorMessage(err)}`);
         toast.error("Could not launch workspace");
       } finally {
         set({ launchingWorkspaceId: null });
@@ -595,7 +595,7 @@ export const createLayoutPersistenceSlice: StateCreator<
         // GAP G3 (#1146): a corrupt/failed last-session load used to be a silent
         // console.error, so a user who had a populated session opened to a blank
         // window with no explanation. Surface a recoverable error toast.
-        frontendLog("workspace", `Failed to restore last session: ${String(err)}`);
+        frontendLog("workspace", `Failed to restore last session: ${errorMessage(err)}`);
         toast.error("Could not restore last session");
         return false;
       }
@@ -633,7 +633,7 @@ export const createLayoutPersistenceSlice: StateCreator<
       } catch (err) {
         // A corrupt/failed load must not wedge startup — surface it like a
         // failed restore and start fresh.
-        frontendLog("workspace", `Failed to load last session for prompt: ${String(err)}`);
+        frontendLog("workspace", `Failed to load last session for prompt: ${errorMessage(err)}`);
         toast.error("Could not load previous session");
       }
     },

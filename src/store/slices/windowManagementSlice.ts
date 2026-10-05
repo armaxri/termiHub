@@ -236,7 +236,7 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
     try {
       records = await takePendingHandoffs();
     } catch (err) {
-      frontendLog("multi_window", `takePendingHandoffs failed: ${String(err)}`);
+      frontendLog("multi_window", `takePendingHandoffs failed: ${errorMessage(err)}`);
       return;
     }
     for (const record of records) {
@@ -246,7 +246,7 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
         try {
           await claimSession(record.tab.sessionId);
         } catch (err) {
-          frontendLog("multi_window", `claimSession failed: ${String(err)}`);
+          frontendLog("multi_window", `claimSession failed: ${errorMessage(err)}`);
         }
       }
       get().hydrateHandoffTab(record);
@@ -268,7 +268,7 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
     try {
       await reportWindowLayout(tabGroups, activeGroupIndex);
     } catch (err) {
-      frontendLog("multi_window", `reportWindowLayout failed: ${String(err)}`);
+      frontendLog("multi_window", `reportWindowLayout failed: ${errorMessage(err)}`);
     }
   },
 
@@ -291,7 +291,7 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
     try {
       await openWindow();
     } catch (err) {
-      frontendLog("multi_window", `openNewWindow failed: ${String(err)}`);
+      frontendLog("multi_window", `openNewWindow failed: ${errorMessage(err)}`);
       toast.error("Could not open a new window");
     }
   },
@@ -335,7 +335,7 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
         return teardown.catch((err: unknown) => {
           frontendError(
             "workspace",
-            `Failed to tear down session ${sessionId} on window close: ${String(err)}`
+            `Failed to tear down session ${sessionId} on window close: ${errorMessage(err)}`
           );
         });
       })
@@ -376,7 +376,7 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
       // Hand-off failed: clear the moving flags so a later close still tears
       // the sessions down rather than leaking them.
       for (const sessionId of sessionIds) get().clearMovingSession(sessionId);
-      frontendLog("multi_window", `move window sessions failed: ${String(err)}`);
+      frontendLog("multi_window", `move window sessions failed: ${errorMessage(err)}`);
       throw err;
     }
   },

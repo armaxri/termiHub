@@ -6,6 +6,7 @@ import type { CursorShape, RemoteDesktopInput, ScaleMode } from "@/types/remoteD
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { isCursorShapeValid, isDirtyRectValid, isFramebufferSizeValid } from "./frameBounds";
 import type { Viewport } from "./monitorLayout";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** The part of a `width x height` framebuffer to show: `viewport`, clamped. */
 function sourceRegion(viewport: Viewport | null | undefined, width: number, height: number) {
@@ -270,7 +271,10 @@ export function RemoteDesktopCanvas({
       // this listener existed, and a static desktop never resends them: ask for
       // a full frame now that nothing can be missed (#4017).
       void remoteDesktopRequestFullFrame(sessionId).catch((err) =>
-        frontendLog("remote_desktop", `request_full_frame on subscribe failed: ${err}`)
+        frontendLog(
+          "remote_desktop",
+          `request_full_frame on subscribe failed: ${errorMessage(err)}`
+        )
       );
     });
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getAppInfo, type AppInfo } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Module-level cache so build-time app info is fetched at most once per session
@@ -39,7 +40,7 @@ export function useAppInfo(): AppInfo | null {
         if (active) setInfo(loaded);
       } catch (err) {
         inflight = null;
-        frontendLog("use_app_info", `Failed to fetch app info: ${err}`);
+        frontendLog("use_app_info", `Failed to fetch app info: ${errorMessage(err)}`);
       }
     };
     void load();
