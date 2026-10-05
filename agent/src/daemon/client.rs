@@ -230,6 +230,7 @@ impl FeatureChannels {
         self.monitoring.set_supported(false);
         self.monitoring.fail_all();
         self.files.set_supported(false);
+        self.files.set_ranges_supported(false);
         self.files.fail_all();
     }
 
@@ -238,6 +239,8 @@ impl FeatureChannels {
         self.processes.set_supported(flags & CAP_PROCESSES != 0);
         self.monitoring.set_supported(flags & CAP_MONITORING != 0);
         self.files.set_supported(flags & CAP_FILES != 0);
+        self.files
+            .set_ranges_supported(flags & CAP_FILES != 0 && flags & CAP_FILE_RANGES != 0);
     }
 
     /// The connection ended: nothing sent over it will be answered.

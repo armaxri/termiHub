@@ -180,6 +180,12 @@ pub const CAP_FILES: u8 = 0x04;
 /// is never mistaken for a wedged one.
 pub const CAP_HEARTBEAT: u8 = 0x08;
 
+/// [`MSG_CAPABILITIES`] flag: the daemon also serves the ranged file requests
+/// (`read_range` / `write_range` in [`MSG_FILE_REQUEST`]) through its session
+/// backend's ranged file access (#3587). A daemon from before it does not set
+/// it, so the worker never sends it a request it would drop.
+pub const CAP_FILE_RANGES: u8 = 0x10;
+
 /// Maximum allowed frame payload size (16 MiB).
 const MAX_PAYLOAD_SIZE: u32 = 16 * 1024 * 1024;
 
