@@ -57,6 +57,7 @@ ALLOWLIST=(
   "scripts/internal/check-script-headless.sh" # headless-exec checker (CI-only bash gate)
   "scripts/internal/ci-rust-tests.sh"         # CI test runner (bash on every runner, CI-013)
   "scripts/internal/build-system-test-app.sh" # test-app build recipe (bash on every runner; Windows via test-system-py.cmd -> Git Bash, #3664)
+  "scripts/internal/build-system-test-agent.sh" # musl test agent for the Linux deployed-agent fixtures (harness/nightly, #4092)
   "scripts/internal/harness-coverage.sh"      # harness coverage env/report (nightly Linux leg, #3657)
   # Agent update signing (AGT-005, #3213): OpenSSL-3 pipelines run by release CI
   # on Ubuntu, and a one-time maintainer tool (Git Bash works on Windows).

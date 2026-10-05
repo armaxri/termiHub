@@ -4931,3 +4931,109 @@ async fn direct_auth_rejection_on_a_retry_uses_the_guarded_retry_fold() {
     assert_eq!(retries.len(), 1, "{retries:?}");
     assert_eq!(retries[0].0, "tab-d");
 }
+
+// ── Regression test: close_session must not hold the map lock (#4092) ────────
+
+/// A connection whose `disconnect()` blocks until released — standing in for an
+/// agent session whose `connection.close` RPC is never answered (the agent
+/// applies a deferred update and re-execs before replying).
+struct StalledDisconnect {
+    entered: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait::async_trait]
+impl ConnectionType for StalledDisconnect {
+    fn type_id(&self) -> &str {
+        "stalled"
+    }
+    fn display_name(&self) -> &str {
+        "Stalled"
+    }
+    fn settings_schema(&self) -> SettingsSchema {
+        SettingsSchema { groups: vec![] }
+    }
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            monitoring: false,
+            file_browser: false,
+            graphical: false,
+            resize: false,
+            persistent: false,
+            terminal: true,
+            tunneling: false,
+        }
+    }
+    async fn connect(&mut self, _: serde_json::Value) -> Result<(), SessionError> {
+        Ok(())
+    }
+    async fn disconnect(&mut self) -> Result<(), SessionError> {
+        self.entered.notify_one();
+        self.release.notified().await;
+        Ok(())
+    }
+    fn is_connected(&self) -> bool {
+        true
+    }
+    fn write(&self, _: &[u8]) -> Result<(), SessionError> {
+        Ok(())
+    }
+    fn resize(&self, _: u16, _: u16) -> Result<(), SessionError> {
+        Ok(())
+    }
+    fn subscribe_output(&self) -> OutputReceiver {
+        let (_tx, rx) = tokio::sync::mpsc::channel(1);
+        rx
+    }
+    fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
+        None
+    }
+    fn file_browser(&self) -> Option<&dyn FileBrowser> {
+        None
+    }
+}
+
+/// A tab close whose backend disconnect stalls must not freeze every other
+/// session operation: `close_session` drops the session-map lock before it
+/// awaits `disconnect()` (#4092).
+#[tokio::test]
+async fn close_session_does_not_hold_the_session_map_during_a_stalled_disconnect() {
+    let manager = Arc::new(SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        Arc::new(NullAgent),
+    ));
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    manager
+        .insert_test_session(
+            "stalled-1",
+            Box::new(StalledDisconnect {
+                entered: entered.clone(),
+                release: release.clone(),
+            }),
+        )
+        .await;
+    manager
+        .insert_test_session("other-1", Box::new(DisconnectSpy::new(Arc::default())))
+        .await;
+
+    let closer = {
+        let manager = manager.clone();
+        tokio::spawn(async move { manager.close_session("stalled-1").await })
+    };
+    entered.notified().await;
+
+    // The close is parked inside disconnect(); the map must still be usable.
+    let listed = tokio::time::timeout(std::time::Duration::from_secs(5), manager.list_sessions())
+        .await
+        .expect("list_sessions must not block behind a stalled disconnect");
+    let ids: Vec<_> = listed.iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["other-1"],
+        "the closing session is already removed"
+    );
+
+    release.notify_one();
+    closer.await.unwrap().unwrap();
+}

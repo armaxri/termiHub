@@ -60,6 +60,7 @@ SCRIPTS=(
   "scripts/build-agents.sh"
   "scripts/internal/agent-update-signing.sh"
   "scripts/internal/apply-branch-protection.sh"
+  "scripts/internal/build-system-test-agent.sh"
   "scripts/internal/build-system-test-app.sh"
   "scripts/internal/ci-rust-tests.sh"
   "scripts/internal/harness-coverage.sh"
