@@ -1398,8 +1398,12 @@ Notes worth knowing before you use it:
   `test-hooks` cargo feature is enabled — a default `cargo build --release` ships
   neither the hook nor the env lookup. A **release** agent for the system tests
   therefore has to be built with the feature: `stage_remote_agent_binary` (the
-  harness) passes `scripts/build-agents.sh --features test-hooks`. Building a
-  release agent by hand for the armed container needs the same flag.
+  harness) builds it with `scripts/internal/build-system-test-agent.sh`, which
+  passes `--features test-hooks` and fails unless the TEST-ONLY key ended up in
+  the binary. Building a release agent by hand for the armed container needs the
+  same flag. A previously built musl agent is reused only if it embeds that key,
+  so a stale non-`test-hooks` build is rebuilt instead of failing the real swap
+  at AGT-005 (#4092).
 - **It does not swap the binary.** The default staged path points at a file the
   agent never writes. A `pending_update` is live — closing the last session fires
   a real deferred apply — so this matters: the apply fails, logs, and keeps the
@@ -1451,6 +1455,24 @@ tab closes → the agent really swaps its binary and re-execs → reconnect show
 version badge and re-attaches a persistent session that a second agent connection
 held across the swap. A run swaps the container's installed agent, so the fixture
 force-recreates it.
+
+**Where the deployed-agent suites run (#4092).** They need a runtime that hosts
+Linux containers and a cross-built static-musl agent. On the nightly integration
+lane that is the **ubuntu** leg only: it builds the agent with
+`build-system-test-agent.sh --install-cross` (pinned cross-rs, stock image, as in
+`agent.yml`), and with `CI` set a failed build **errors** rather than skipping —
+before #4092 a missing `cross` silently skipped every one of these suites there.
+The macOS and Windows legs skip them up front with "no container runtime" /
+"daemon runs windows containers": the hosted macOS runner has no Docker and the
+Windows runner's daemon runs Windows containers. Locally, any host with Docker or
+Podman and `cross` (`scripts/setup-agent-cross.sh`) runs them.
+
+The applier's tab close in the real-swap test is the `connection.close` that lets
+the deferred update apply, so the agent re-execs before it answers: the desktop's
+close RPC goes unanswered until its 60 s request timeout. The tab still closes at
+once (the frontend closes it before the backend call, and the remote proxy ignores
+the close result), and `close_session` no longer holds the session map while it
+waits, so other session operations are not blocked behind it.
 
 #### Projection-assertion harness (#2164)
 
