@@ -263,31 +263,45 @@ dependencies; unified coverage; bundle size; the rustdoc intra-doc link gate
 
 **Post-merge lane.** Every push to `develop` or `main` runs **every** job above
 on **every** platform — Code Quality with the full three-OS test matrix, Security
-Audit (also daily on both branches), Coverage, Bundle Size, Rustdoc, the full Agent
-matrix and Dev Build. The newest commit's run is the
-one to read (it covers all earlier merges). **Watch `develop`'s own runs after
-merging**: a failure there is a real regression (or a new advisory) and needs a follow-up fix, since the PR
-that caused it was not gated on it. The nightly system-integration and Docker
+Audit (also daily on both branches), Bundle Size, Rustdoc, the full Agent matrix
+and Dev Build. **Coverage** (the blocking unit-coverage ratchet) runs nightly on
+`develop`, on every push to `main` and on demand — not per merge (#4119; see
+[Coverage Goals](testing.md#coverage-goals)). On `develop` a newer push cancels the
+in-progress run of an older one (see the concurrency rule below), so **a develop
+run grades a batch of merges**: the newest commit's run is the one to read (it
+covers all earlier merges), and when it fails, the culprit is any PR merged since
+the last green run on `develop` — read the commit range, not just the head PR.
+**Watch `develop`'s own runs after merging**: a failure there is a real
+regression (or a new advisory) and needs a follow-up fix, since the PR that
+caused it was not gated on it. The nightly system-integration and Docker
 fixture lanes are unchanged, and a release additionally requires them green on the exact
 release commit (see [Release integration gate](#release-integration-gate)). The nightly **WSL Live (Windows)** lane ([`wsl-live.yml`](../.github/workflows/wsl-live.yml), #4008) runs the live WSL tests against a real distribution; PRs touching the WSL code paths run it too. The weekly **Vendored Forks** upstream-drift job keeps one
 `supply-chain` tracking issue current (see [Vendored forks](supply-chain.md#vendored-forks)).
 
-**Concurrency rule (#3588).** Every workflow sets a per-ref `concurrency` group,
-but whether a newer run cancels an in-progress one depends on what the run is for:
+**Concurrency rule (#3588, #4119).** Every workflow sets a per-ref `concurrency`
+group, but whether a newer run cancels an in-progress one depends on what the run
+is for:
 
-- **Correctness gates** — Code Quality, Security Audit, Agent, Plugin Packaging,
-  Vendored Forks, Coverage (a blocking ratchet since #3740) — use `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`.
-  A superseded **PR** run is cancelled, but a push to `develop`/`main` always
-  runs to completion. The post-merge lane is the only place these checks run on
-  every platform, so cancelling on push would leave `develop` ungated: under
-  frequent merges, no Code Quality run ever finished. GitHub still keeps only
-  the newest _queued_ run per group, so merges that land mid-run are covered by
-  the next completed run.
+- **Correctness gates** — Code Quality, Security Audit, Agent, Plugin Packaging
+  and Vendored Forks — use the group `<name>-${{ github.event_name }}-${{ github.ref }}`
+  with `cancel-in-progress` true only for a `pull_request` or a `push` to
+  `develop`. A superseded PR run, or the run of an older `develop` commit, is
+  cancelled, so a merge burst fully tests only its newest commit (which contains
+  every earlier merge) instead of running each superseded commit to completion.
+  Pushes to `main`, tag/release pushes, schedules and `workflow_dispatch` are
+  **never** cancelled, and because the event name is part of the group a push
+  can never cancel a scheduled or dispatched run. Trade-off: a develop failure
+  may point at a batch of merges, and under a non-stop merge stream a develop
+  run finishes only once merges pause (#3588 had made every push run complete
+  for that reason; it cost ~440 develop push runs a week).
+- **Coverage** (a blocking ratchet since #3740) runs only on `main` pushes, the
+  nightly develop dispatch and manual dispatch, so it never cancels in progress.
 - **Advisory, heavy or publish-only workflows** — Dev Build,
   Build (PR-only), and the scheduled/manual lanes — keep
   `cancel-in-progress: true`. Only the newest commit's result matters for them.
 
-A new workflow that gates correctness post-merge must use the PR-only form.
+A new workflow that gates correctness post-merge must use the correctness-gate
+form above (never cancel on `main`, tags, schedules or dispatch).
 
 ### Required checks per branch
 
