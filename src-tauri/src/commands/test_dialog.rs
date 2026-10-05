@@ -36,7 +36,9 @@ impl ScopeGrant for FsScope {
     fn allow_directory(&self, path: &Path) -> Result<(), String> {
         // A picked folder is granted recursively, like a dialog pick with
         // `recursive: true` (portable export/import read and write inside it).
-        self.0.allow_directory(path, true).map_err(|e| e.to_string())
+        self.0
+            .allow_directory(path, true)
+            .map_err(|e| e.to_string())
     }
 }
 
