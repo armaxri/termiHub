@@ -441,6 +441,16 @@ services:
     ports:
       - "127.0.0.1:${TERMIHUB_TEST_RDP_PORT:-2601}:3389"
       - "127.0.0.1:${TERMIHUB_TEST_RDP_NLA_PORT:-2602}:3390"
+    # xrdp chansrv's FUSE mount (~testuser/thinclient_drives) serves RDPDR
+    # drive redirection and CLIPRDR file serve (#4086, rdp.rs RDP-15/16): it
+    # needs the FUSE device, CAP_SYS_ADMIN for the setuid fusermount's
+    # mount(2), and no AppArmor profile (docker-default denies mount).
+    devices:
+      - /dev/fuse
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
     networks:
       - test-net
     profiles:
