@@ -681,7 +681,7 @@ export function Terminal({
                 // subscribeOutput, duplicating every byte of scrollback.
               }
             } catch (err) {
-              frontendLog("terminal", `Failed to fetch reattach buffer: ${err}`);
+              frontendLog("terminal", `Failed to fetch reattach buffer: ${errorMessage(err)}`);
             } finally {
               // Idempotent: clears the flag in the empty-buffer + error paths
               // where the early clear above did not run.
@@ -711,7 +711,10 @@ export function Terminal({
                 await new Promise<void>((resolve) => xterm.write(buffer, resolve));
               }
             } catch (err) {
-              frontendLog("terminal", `Failed to replay moved-session scrollback: ${err}`);
+              frontendLog(
+                "terminal",
+                `Failed to replay moved-session scrollback: ${errorMessage(err)}`
+              );
             } finally {
               if (!isCanceled()) {
                 useAppStore.getState().setTerminalReattaching(tabId, false);
@@ -1159,7 +1162,10 @@ export function Terminal({
               xterm.write(buffer);
             })
             .catch((err) =>
-              frontendLog("multi_window", `Failed to repaint reclaimed session ${sid}: ${err}`)
+              frontendLog(
+                "multi_window",
+                `Failed to repaint reclaimed session ${sid}: ${errorMessage(err)}`
+              )
             );
         });
 

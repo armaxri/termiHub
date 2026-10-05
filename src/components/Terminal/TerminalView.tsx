@@ -164,7 +164,7 @@ export function TerminalView() {
             recoveredSessionIds = new Set();
             frontendLog(
               "disconnect",
-              `agent connected: failed to list sessions (${err}), assuming all gone`
+              `agent connected: failed to list sessions (${errorMessage(err)}), assuming all gone`
             );
           }
 

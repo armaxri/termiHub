@@ -39,7 +39,7 @@ export default tseslint.config(
   {
     // Caught-error rendering policy (#4104). Tauri rejects a command error as a
     // structured `{ code, message }` envelope, not an `Error`, so `String(err)`
-    // renders it as "[object Object]" and hides the real failure. Use
+    // (or a bare `${err}` interpolation) renders it as "[object Object]" and hides the real failure. Use
     // `errorMessage()` from `@/utils/errorMessage` instead, which surfaces the
     // envelope's `message`. The helper itself is the one legitimate fallback.
     files: ["src/**/*.{ts,tsx}"],
@@ -52,6 +52,12 @@ export default tseslint.config(
             "CallExpression[callee.name='String'][arguments.length=1][arguments.0.name=/^(e|err|error|ex|exc)$/]",
           message:
             'Use errorMessage(err) from @/utils/errorMessage — String() of a structured IPC error renders "[object Object]" (#4104).',
+        },
+        {
+          // `${err}` has the same "[object Object]" failure as String(err).
+          selector: "TemplateLiteral > Identifier[name=/^(e|err|error|ex|exc)$/]",
+          message:
+            'Interpolate errorMessage(err) from @/utils/errorMessage — "${err}" of a structured IPC error renders "[object Object]" (#4104).',
         },
       ],
     },

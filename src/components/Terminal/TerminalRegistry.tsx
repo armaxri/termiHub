@@ -34,6 +34,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { bufferToLogicalLines } from "@/utils/terminalBuffer";
 import { getXtermTheme } from "@/themes";
 import { isFitReady, isProposedFitSafe } from "./safeFit";
+import { errorMessage } from "@/utils/errorMessage";
 
 const LARGE_PASTE_THRESHOLD = 5000;
 
@@ -314,7 +315,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
         `fitTerminal after fit tab=${tabId} xterm=${xterm?.cols}×${xterm?.rows}`
       );
     } catch (err) {
-      frontendLog("terminal_registry", `fitTerminal fit error tab=${tabId}: ${err}`);
+      frontendLog("terminal_registry", `fitTerminal fit error tab=${tabId}: ${errorMessage(err)}`);
     }
     if (xterm) {
       requestAnimationFrame(() => {

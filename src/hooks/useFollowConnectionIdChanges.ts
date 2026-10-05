@@ -3,6 +3,7 @@ import { onConnectionIdsChanged } from "@/services/events";
 import type { ConnectionIdChange } from "@/types/connection";
 import { connectionIdRemapper, type ConnectionIdRemap } from "@/utils/connectionIdChanges";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Run `onChanges` for every `connection-ids-changed` batch while the calling
@@ -38,7 +39,10 @@ export function useConnectionIdChanges(
         else unlisten = fn;
       })
       .catch((err: unknown) => {
-        frontendLog("connection_id_changes", `Failed to follow connection id changes: ${err}`);
+        frontendLog(
+          "connection_id_changes",
+          `Failed to follow connection id changes: ${errorMessage(err)}`
+        );
       });
     return () => {
       disposed = true;

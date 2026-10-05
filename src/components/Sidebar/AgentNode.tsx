@@ -80,6 +80,7 @@ import { ConnectionErrorDialog } from "./ConnectionErrorDialog";
 import { InlineFolderInput } from "./InlineFolderInput";
 import { PersistentStateDot } from "./PersistentStateDot";
 import { TreeFolderRow, TreeItemRow, treeRowPaddingLeft } from "./TreeRow";
+import { errorMessage } from "@/utils/errorMessage";
 
 const EMPTY_SESSIONS: AgentSessionInfo[] = [];
 const EMPTY_DEFINITIONS: AgentDefinitionInfo[] = [];
@@ -883,7 +884,7 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
           useAppStore.getState().passwordPromptShouldSave
         ) {
           await storeCredential(agent.id, "password", promptedPassword).catch((err) => {
-            frontendLog("agent_node", `Failed to store credential: ${err}`);
+            frontendLog("agent_node", `Failed to store credential: ${errorMessage(err)}`);
           });
         }
       } catch (err) {
@@ -900,7 +901,7 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
             await removeCredential(agent.id, resolution.credentialType).catch((err) => {
               frontendError(
                 "agent_node",
-                `Failed to remove stale credential for agent ${agent.id}: ${err}`
+                `Failed to remove stale credential for agent ${agent.id}: ${errorMessage(err)}`
               );
             });
           }
@@ -921,7 +922,7 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
           // Persist the retry password if the user opted in
           if (!sharedCredential && useAppStore.getState().passwordPromptShouldSave) {
             await storeCredential(agent.id, "password", retryPassword).catch((err) => {
-              frontendLog("agent_node", `Failed to store credential: ${err}`);
+              frontendLog("agent_node", `Failed to store credential: ${errorMessage(err)}`);
             });
           }
           return;
@@ -996,8 +997,8 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
       const otherHosts = await listAgentHosts(agent.id);
       setUpdateDialog({ config, otherHosts });
     } catch (err) {
-      frontendLog("agent_node", `Failed to prepare agent update: ${err}`);
-      toast.error(`Could not check who is connected to ${agent.name}: ${err}`);
+      frontendLog("agent_node", `Failed to prepare agent update: ${errorMessage(err)}`);
+      toast.error(`Could not check who is connected to ${agent.name}: ${errorMessage(err)}`);
     }
   }, [agent.id, agent.name, agent.config, requestPassword]);
 
@@ -1011,8 +1012,8 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
       await cancelConnectAgent(agent.id);
       toast.success("Connect cancelled");
     } catch (err) {
-      frontendLog("agent_node", `Failed to cancel agent connect: ${err}`);
-      toast.error(`Failed to cancel: ${err}`);
+      frontendLog("agent_node", `Failed to cancel agent connect: ${errorMessage(err)}`);
+      toast.error(`Failed to cancel: ${errorMessage(err)}`);
     }
   }, [agent.id]);
 

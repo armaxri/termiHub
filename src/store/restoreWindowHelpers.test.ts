@@ -124,7 +124,7 @@ describe("probeRestorePromptReachability", () => {
     await expect(probeRestorePromptReachability(p, s.get, s.set)).resolves.toBeUndefined();
 
     expect(logs.map((l) => l.message)).toContainEqual(
-      expect.stringContaining("restore reachability probe failed: Error: store torn down")
+      expect.stringContaining("restore reachability probe failed: store torn down")
     );
   });
 });

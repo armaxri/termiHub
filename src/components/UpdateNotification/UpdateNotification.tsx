@@ -6,6 +6,7 @@ import { Button, StatusDot } from "@/components/ui";
 import { useDesktopVersion } from "@/hooks/useAppInfo";
 import { frontendLog } from "@/utils/frontendLog";
 import { safeOpenExternal } from "@/utils/safeOpenExternal";
+import { errorMessage } from "@/utils/errorMessage";
 import "./UpdateNotification.css";
 
 /**
@@ -46,7 +47,7 @@ export function UpdateNotification() {
     try {
       opened = await safeOpenExternal(updateInfo.releaseUrl);
     } catch (err) {
-      frontendLog("update", `Failed to open release URL: ${err}`);
+      frontendLog("update", `Failed to open release URL: ${errorMessage(err)}`);
       throw new Error("Could not open the downloads page in your browser.");
     }
     if (!opened) {

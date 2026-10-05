@@ -105,8 +105,8 @@ export function HttpMonitorPanel() {
       const list = await networkHttpMonitorList();
       setMonitors(list);
     } catch (err) {
-      frontendLog("http_monitor", `Failed to list monitors: ${err}`);
-      toast.error(`Failed to refresh monitors: ${err}`);
+      frontendLog("http_monitor", `Failed to list monitors: ${errorMessage(err)}`);
+      toast.error(`Failed to refresh monitors: ${errorMessage(err)}`);
     }
   }, []);
 
@@ -159,7 +159,7 @@ export function HttpMonitorPanel() {
           setHistory((prev) => mergeChecks(stored, prev, MAX_HISTORY));
         }
       } catch (err) {
-        frontendLog("http_monitor", `Failed to load check history: ${err}`);
+        frontendLog("http_monitor", `Failed to load check history: ${errorMessage(err)}`);
       }
     },
     [stopListening, appendCheck]
@@ -173,7 +173,7 @@ export function HttpMonitorPanel() {
     try {
       checks = mergeChecks(await listHttpMonitorChecks(id), history, Number.MAX_SAFE_INTEGER);
     } catch (err) {
-      frontendLog("http_monitor", `Failed to load full check history: ${err}`);
+      frontendLog("http_monitor", `Failed to load full check history: ${errorMessage(err)}`);
     }
     const url = monitors.find((m) => m.config.id === id)?.config.url ?? id;
     await exportNetworkResults(
@@ -252,7 +252,7 @@ export function HttpMonitorPanel() {
     } catch (err) {
       stopListening();
       setError(errorMessage(err));
-      frontendLog("http_monitor", `Start failed: ${err}`);
+      frontendLog("http_monitor", `Start failed: ${errorMessage(err)}`);
     } finally {
       startInFlightRef.current = false;
     }
@@ -280,7 +280,7 @@ export function HttpMonitorPanel() {
       toast.success("Monitor stopped");
     } catch (err) {
       setError(errorMessage(err));
-      toast.error(`Failed to stop monitor: ${err}`);
+      toast.error(`Failed to stop monitor: ${errorMessage(err)}`);
     }
   }, [loadMonitors]);
 
@@ -292,7 +292,7 @@ export function HttpMonitorPanel() {
         toast.success("Monitor stopped");
       } catch (err) {
         setError(errorMessage(err));
-        toast.error(`Failed to stop monitor: ${err}`);
+        toast.error(`Failed to stop monitor: ${errorMessage(err)}`);
       }
     },
     [loadMonitors]
@@ -306,7 +306,7 @@ export function HttpMonitorPanel() {
         toast.success("Monitor paused");
       } catch (err) {
         setError(errorMessage(err));
-        toast.error(`Failed to pause monitor: ${err}`);
+        toast.error(`Failed to pause monitor: ${errorMessage(err)}`);
       }
     },
     [loadMonitors]
@@ -322,7 +322,7 @@ export function HttpMonitorPanel() {
         if (id !== activeMonitorIdRef.current) await showMonitor(id);
       } catch (err) {
         setError(errorMessage(err));
-        toast.error(`Failed to resume monitor: ${err}`);
+        toast.error(`Failed to resume monitor: ${errorMessage(err)}`);
       }
     },
     [loadMonitors, showMonitor]
@@ -337,7 +337,7 @@ export function HttpMonitorPanel() {
         toast.success("Monitor removed");
       } catch (err) {
         setError(errorMessage(err));
-        toast.error(`Failed to remove monitor: ${err}`);
+        toast.error(`Failed to remove monitor: ${errorMessage(err)}`);
       }
     },
     [loadMonitors, clearActiveMonitor]

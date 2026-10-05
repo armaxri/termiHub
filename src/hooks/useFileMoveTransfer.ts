@@ -13,6 +13,7 @@ import {
   type FileTransferOperation,
   type PasteOptions,
 } from "@/utils/fileDragMove";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** A move/copy waiting on the user's overwrite confirmation. */
 export interface PendingFileMoveConflict {
@@ -115,7 +116,10 @@ export function useFileMoveTransfer({
             : await localListDir(destDir);
         return listing.map((e) => e.name);
       } catch (err) {
-        frontendLog("file_browser", `Could not list ${destDir} for conflicts: ${err}`);
+        frontendLog(
+          "file_browser",
+          `Could not list ${destDir} for conflicts: ${errorMessage(err)}`
+        );
         return null;
       }
     },

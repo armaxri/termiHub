@@ -92,6 +92,7 @@ import { useFileBookmarkScope } from "@/hooks/useFileBookmarkScope";
 import "./FileBrowser.css";
 import { isImeComposing } from "@/utils/imeComposition";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Fixed row height in px, matching `.file-browser__row` in FileBrowser.css. Rows
@@ -1183,15 +1184,18 @@ export function FileBrowser() {
         toast.success(`Saved "${name}" from VS Code`);
         refresh();
       } else {
-        frontendLog("file_browser", `VS Code edit failed for ${remotePath}: ${err}`);
-        toast.error(`Failed to save "${name}" from VS Code: ${err}`);
+        frontendLog("file_browser", `VS Code edit failed for ${remotePath}: ${errorMessage(err)}`);
+        toast.error(`Failed to save "${name}" from VS Code: ${errorMessage(err)}`);
       }
     })
       .then((fn) => {
         cleanup = fn;
       })
       .catch((err: unknown) => {
-        frontendLog("file_browser", `VS Code edit listener failed to register: ${err}`);
+        frontendLog(
+          "file_browser",
+          `VS Code edit listener failed to register: ${errorMessage(err)}`
+        );
       });
     return () => {
       if (cleanup) cleanup();
@@ -1309,22 +1313,22 @@ export function FileBrowser() {
           break;
         case "vscode":
           openInVscode(entry.path).catch((err: unknown) => {
-            frontendLog("file_browser", `Open in VS Code failed: ${err}`);
-            toast.error(`Failed to open "${entry.name}" in VS Code: ${err}`);
+            frontendLog("file_browser", `Open in VS Code failed: ${errorMessage(err)}`);
+            toast.error(`Failed to open "${entry.name}" in VS Code: ${errorMessage(err)}`);
           });
           break;
         case "openInExplorer":
           // Local-only: open the OS-native file manager at this folder.
           openPath(entry.path).catch((err: unknown) => {
-            frontendLog("file_browser", `Open in file manager failed: ${err}`);
-            toast.error(`Failed to open "${entry.name}" in the file manager: ${err}`);
+            frontendLog("file_browser", `Open in file manager failed: ${errorMessage(err)}`);
+            toast.error(`Failed to open "${entry.name}" in the file manager: ${errorMessage(err)}`);
           });
           break;
         case "openFolderVscode":
           // Local-only: open this folder as a VS Code workspace (`code <dir>`).
           openInVscode(entry.path).catch((err: unknown) => {
-            frontendLog("file_browser", `Open folder in VS Code failed: ${err}`);
-            toast.error(`Failed to open "${entry.name}" in VS Code: ${err}`);
+            frontendLog("file_browser", `Open folder in VS Code failed: ${errorMessage(err)}`);
+            toast.error(`Failed to open "${entry.name}" in VS Code: ${errorMessage(err)}`);
           });
           break;
         case "copy":
@@ -1344,16 +1348,16 @@ export function FileBrowser() {
           writeClipboard(entry.name)
             .then(() => toast.success("Copied name"))
             .catch((err: unknown) => {
-              frontendLog("file_browser", `Copy name failed: ${err}`);
-              toast.error(`Failed to copy name: ${err}`);
+              frontendLog("file_browser", `Copy name failed: ${errorMessage(err)}`);
+              toast.error(`Failed to copy name: ${errorMessage(err)}`);
             });
           break;
         case "copyPath":
           writeClipboard(entry.path)
             .then(() => toast.success("Copied path"))
             .catch((err: unknown) => {
-              frontendLog("file_browser", `Copy path failed: ${err}`);
-              toast.error(`Failed to copy path: ${err}`);
+              frontendLog("file_browser", `Copy path failed: ${errorMessage(err)}`);
+              toast.error(`Failed to copy path: ${errorMessage(err)}`);
             });
           break;
         case "rename": {
@@ -1382,7 +1386,9 @@ export function FileBrowser() {
             onConfirm: () => {
               deleteEntry(entry.path, entry.isDirectory)
                 .then(() => toast.success(`Deleted "${entry.name}"`))
-                .catch((err: unknown) => toast.error(`Failed to delete "${entry.name}": ${err}`));
+                .catch((err: unknown) =>
+                  toast.error(`Failed to delete "${entry.name}": ${errorMessage(err)}`)
+                );
             },
           });
           break;
@@ -1409,8 +1415,8 @@ export function FileBrowser() {
       renameEntry(entry.path, newName)
         .then(() => toast.success(`Renamed to "${newName}"`))
         .catch((err: unknown) => {
-          frontendLog("file_browser", `Rename failed: ${err}`);
-          toast.error(`Rename failed: ${err}`);
+          frontendLog("file_browser", `Rename failed: ${errorMessage(err)}`);
+          toast.error(`Rename failed: ${errorMessage(err)}`);
         });
     },
     [renameEntry]
@@ -1424,8 +1430,8 @@ export function FileBrowser() {
         await setPermissions(entry.path, newMode);
         toast.success(`Permissions updated for "${entry.name}"`);
       } catch (err) {
-        frontendLog("file_browser", `chmod failed for ${entry.path}: ${err}`);
-        toast.error(`Failed to change permissions for "${entry.name}": ${err}`);
+        frontendLog("file_browser", `chmod failed for ${entry.path}: ${errorMessage(err)}`);
+        toast.error(`Failed to change permissions for "${entry.name}": ${errorMessage(err)}`);
         // Re-throw so the dialog stays open and its Apply button resets.
         throw err;
       }
@@ -1439,8 +1445,8 @@ export function FileBrowser() {
         await setOwner(entry.path, uid, gid);
         toast.success(`Owner updated for "${entry.name}"`);
       } catch (err) {
-        frontendLog("file_browser", `chown failed for ${entry.path}: ${err}`);
-        toast.error(`Failed to change owner for "${entry.name}": ${err}`);
+        frontendLog("file_browser", `chown failed for ${entry.path}: ${errorMessage(err)}`);
+        toast.error(`Failed to change owner for "${entry.name}": ${errorMessage(err)}`);
         // Re-throw so the dialog stays open and its Apply button resets.
         throw err;
       }
@@ -1456,8 +1462,11 @@ export function FileBrowser() {
         await createSymlink(entry.path, linkName);
         toast.success(`Created symlink "${linkName}"`);
       } catch (err) {
-        frontendLog("file_browser", `symlink create failed for ${entry.path}: ${err}`);
-        toast.error(`Failed to create symlink "${linkName}": ${err}`);
+        frontendLog(
+          "file_browser",
+          `symlink create failed for ${entry.path}: ${errorMessage(err)}`
+        );
+        toast.error(`Failed to create symlink "${linkName}": ${errorMessage(err)}`);
         // Re-throw so the dialog stays open and its Create button resets.
         throw err;
       }
@@ -1482,16 +1491,16 @@ export function FileBrowser() {
   // Local-only: open the OS-native file manager at the currently-browsed folder.
   const handleOpenInExplorer = useCallback(() => {
     openPath(currentPath).catch((err: unknown) => {
-      frontendLog("file_browser", `Open in file manager failed: ${err}`);
-      toast.error(`Failed to open the file manager: ${err}`);
+      frontendLog("file_browser", `Open in file manager failed: ${errorMessage(err)}`);
+      toast.error(`Failed to open the file manager: ${errorMessage(err)}`);
     });
   }, [currentPath]);
 
   // Local-only: open the current folder as a VS Code workspace (`code <dir>`).
   const handleOpenFolderInVscode = useCallback(() => {
     openInVscode(currentPath).catch((err: unknown) => {
-      frontendLog("file_browser", `Open folder in VS Code failed: ${err}`);
-      toast.error(`Failed to open the folder in VS Code: ${err}`);
+      frontendLog("file_browser", `Open folder in VS Code failed: ${errorMessage(err)}`);
+      toast.error(`Failed to open the folder in VS Code: ${errorMessage(err)}`);
     });
   }, [currentPath, openInVscode]);
 
@@ -1641,8 +1650,8 @@ export function FileBrowser() {
       createDirectory(name)
         .then(() => toast.success(`Created folder "${name}"`))
         .catch((err: unknown) => {
-          frontendLog("file_browser", `Create directory failed: ${err}`);
-          toast.error(`Failed to create folder "${name}": ${err}`);
+          frontendLog("file_browser", `Create directory failed: ${errorMessage(err)}`);
+          toast.error(`Failed to create folder "${name}": ${errorMessage(err)}`);
         });
       setNewDirName(null);
     }
@@ -1654,8 +1663,8 @@ export function FileBrowser() {
       createFile(name)
         .then(() => toast.success(`Created file "${name}"`))
         .catch((err: unknown) => {
-          frontendLog("file_browser", `Create file failed: ${err}`);
-          toast.error(`Failed to create file "${name}": ${err}`);
+          frontendLog("file_browser", `Create file failed: ${errorMessage(err)}`);
+          toast.error(`Failed to create file "${name}": ${errorMessage(err)}`);
         });
       setNewFileName(null);
     }

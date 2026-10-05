@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getPluginHostPlatform } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Module-level cache: this computer's target triple never changes during a
@@ -41,7 +42,10 @@ export function usePluginHostPlatform(): string | null {
         if (active) setPlatform(loaded);
       } catch (err) {
         inflight = null;
-        frontendLog("use_plugin_host_platform", `Failed to fetch host platform: ${err}`);
+        frontendLog(
+          "use_plugin_host_platform",
+          `Failed to fetch host platform: ${errorMessage(err)}`
+        );
       }
     };
     void load();

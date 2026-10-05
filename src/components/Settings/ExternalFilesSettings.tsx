@@ -10,6 +10,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { SettingsField } from "./SettingsField";
 import { isImeComposing } from "@/utils/imeComposition";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * External connection file management, extracted from SettingsPanel.
@@ -53,7 +54,10 @@ export function ExternalFilesSettings() {
         await reloadExternalConnections();
       }
     } catch (err) {
-      frontendLog("external-files", `Failed to create external connection file: ${err}`);
+      frontendLog(
+        "external-files",
+        `Failed to create external connection file: ${errorMessage(err)}`
+      );
       throw err;
     }
   }, [createName, settings, updateSettings, reloadExternalConnections]);

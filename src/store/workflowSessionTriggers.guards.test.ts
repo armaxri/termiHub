@@ -253,7 +253,7 @@ describe("workflowSessionTriggers launch guards", () => {
 
     await vi.waitFor(() =>
       expect(logs.map((l) => l.message)).toContainEqual(
-        expect.stringContaining('on-disconnect run of "Workflow wf-a" failed: Error: injector gone')
+        expect.stringContaining('on-disconnect run of "Workflow wf-a" failed: injector gone')
       )
     );
     // The claim was released: the next end of the session runs again.
@@ -275,8 +275,8 @@ describe("workflowSessionTriggers launch guards", () => {
     expect(() => notifyWorkflowTabClosing(broken, "tab-1")).not.toThrow();
     const failures = logs.map((l) => l.message).filter((m) => m.includes("trigger hook failed"));
     expect(failures).toEqual([
-      expect.stringContaining("session-exit trigger hook failed: Error: store gone"),
-      expect.stringContaining("tab-close trigger hook failed: Error: store gone"),
+      expect.stringContaining("session-exit trigger hook failed: store gone"),
+      expect.stringContaining("tab-close trigger hook failed: store gone"),
     ]);
   });
 });

@@ -1266,7 +1266,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           secret.credentialType,
           secret.secret,
           savedSourceFile
-        ).catch((err) => frontendLog("connection_editor", `Failed to store credential: ${err}`));
+        ).catch((err) =>
+          frontendLog("connection_editor", `Failed to store credential: ${errorMessage(err)}`)
+        );
       }
       config = {
         ...config,
@@ -1408,7 +1410,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     if (!testConnectId) return;
     testCanceledRef.current = true;
     await cancelConnecting(testConnectId).catch((err) =>
-      frontendLog("connection_editor", `Failed to cancel connection test: ${err}`)
+      frontendLog("connection_editor", `Failed to cancel connection test: ${errorMessage(err)}`)
     );
   }, [testConnectId]);
 
