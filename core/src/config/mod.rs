@@ -109,6 +109,31 @@ pub fn expand_config_value(value: &str) -> String {
     expand_config_value_with(value, &env_lookup)
 }
 
+/// Read the initial terminal size `(cols, rows)` from a connection's settings.
+///
+/// The frontend fits the terminal before `createTerminal` and puts the fitted
+/// `cols`/`rows` into the connection settings so a backend can spawn its PTY
+/// (or report its window size) at the right dimensions from the start — the
+/// shell's first prompt and the OSC 7 line-erase depend on the width (#4102).
+///
+/// Each dimension is read independently from a JSON number or a numeric
+/// string; an absent, zero, negative, non-numeric, or out-of-`u16`-range value
+/// falls back to the 80x24 default for that dimension.
+pub fn terminal_size_from_settings(settings: &serde_json::Value) -> (u16, u16) {
+    let dim = |key: &str, default: u16| -> u16 {
+        settings
+            .get(key)
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+            })
+            .and_then(|n| u16::try_from(n).ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(default)
+    };
+    (dim("cols", default_cols()), dim("rows", default_rows()))
+}
+
 /// Pure core of [`expand_config_value`], reading variables (including the home
 /// directory) through `env` rather than the process environment, so tests can
 /// supply values without mutating shared global state (#3419).
@@ -1005,6 +1030,49 @@ fn default_ftp_keep_alive_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- terminal_size_from_settings tests (#4102) ---
+
+    #[test]
+    fn terminal_size_reads_numeric_cols_rows() {
+        let s = serde_json::json!({"cols": 117, "rows": 36});
+        assert_eq!(terminal_size_from_settings(&s), (117, 36));
+    }
+
+    #[test]
+    fn terminal_size_accepts_numeric_strings() {
+        let s = serde_json::json!({"cols": "132", "rows": " 43 "});
+        assert_eq!(terminal_size_from_settings(&s), (132, 43));
+    }
+
+    #[test]
+    fn terminal_size_defaults_when_absent() {
+        assert_eq!(
+            terminal_size_from_settings(&serde_json::json!({})),
+            (80, 24)
+        );
+        assert_eq!(
+            terminal_size_from_settings(&serde_json::Value::Null),
+            (80, 24)
+        );
+    }
+
+    #[test]
+    fn terminal_size_defaults_invalid_values_per_dimension() {
+        for (cols, rows) in [
+            (serde_json::json!(0), serde_json::json!(0)),
+            (serde_json::json!(-5), serde_json::json!(-1)),
+            (serde_json::json!(70000), serde_json::json!(1u64 << 40)),
+            (serde_json::json!("wide"), serde_json::json!(null)),
+            (serde_json::json!(12.5), serde_json::json!(true)),
+        ] {
+            let s = serde_json::json!({"cols": cols, "rows": rows});
+            assert_eq!(terminal_size_from_settings(&s), (80, 24), "settings: {s}");
+        }
+        // One valid, one invalid: only the invalid one falls back.
+        let s = serde_json::json!({"cols": 200, "rows": 0});
+        assert_eq!(terminal_size_from_settings(&s), (200, 24));
+    }
 
     // --- home_directory / expand_tilde_only tests ---
 
