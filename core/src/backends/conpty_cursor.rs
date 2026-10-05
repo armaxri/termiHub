@@ -20,6 +20,23 @@
 //! an application running in the shell) passes through untouched and is
 //! answered by the real terminal as before.
 //!
+//! # The sideloaded OpenConsole host (#4121)
+//!
+//! The Windows bundle ships Microsoft's packaged `conpty.dll` +
+//! `OpenConsole.exe`, which portable-pty prefers over the inbox host. That
+//! newer host sends a DA1 query (`ESC [ c`) **directly after** the cursor
+//! query, in the same write, and then holds the child's output for up to 3 s
+//! waiting for the reply. Left to the frontend, a session with no terminal
+//! attached stalls those 3 s, and the query lands in the scrollback, where
+//! every replay into a fresh xterm.js would answer it again — and the host
+//! types a DA1 reply it no longer expects into the shell as input. So when a
+//! DA1 query immediately follows the consumed cursor query, it is answered
+//! with `ESC [ ? 1 ; 2 c` (exactly what xterm.js answers, so the host sees the
+//! same terminal either way) and dropped too. The cursor reply still goes out
+//! before anything else is read: the inbox host sends the cursor query alone
+//! and releases nothing until it is answered. A DA1 anywhere else passes
+//! through untouched.
+//!
 //! The logic is platform-independent (and unit-tested on every platform); it
 //! is only wired into the PTY readers on Windows.
 
@@ -31,6 +48,24 @@ const CURSOR_QUERY: &[u8] = b"\x1b[6n";
 
 /// The cursor-position report sent back: row 1, column 1 (home).
 const CURSOR_REPLY: &[u8] = b"\x1b[1;1R";
+
+/// The DA1 (primary device attributes) query the sideloaded OpenConsole host
+/// sends right after [`CURSOR_QUERY`] (#4121).
+const DA1_QUERY: &[u8] = b"\x1b[c";
+
+/// The DA1 reply sent back: xterm.js's own answer (VT100 with advanced video).
+const DA1_REPLY: &[u8] = b"\x1b[?1;2c";
+
+/// Where the answerer is in the opening preamble.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    /// Looking for the opening cursor query (within [`SCAN_LIMIT`]).
+    Cursor,
+    /// The cursor query was answered; a DA1 query may follow immediately.
+    Da1,
+    /// Plain pass-through.
+    Done,
+}
 
 /// How many opening output bytes are scanned for the query before the
 /// answerer gives up and becomes a plain pass-through. Conhost's preamble
@@ -69,8 +104,8 @@ impl Write for SharedWriter {
 pub(crate) struct CursorQueryAnswerer<R> {
     inner: R,
     writer: SharedPtyWriter,
-    /// `true` while still looking for the opening query.
-    scanning: bool,
+    /// Progress through the opening preamble.
+    phase: Phase,
     /// Output bytes consumed from `inner` so far while scanning.
     scanned: usize,
     /// Trailing bytes that may be the start of a query split across reads.
@@ -86,7 +121,7 @@ impl<R: Read> CursorQueryAnswerer<R> {
         Self {
             inner,
             writer,
-            scanning: true,
+            phase: Phase::Cursor,
             scanned: 0,
             carry: Vec::new(),
             pending: Vec::new(),
@@ -94,12 +129,12 @@ impl<R: Read> CursorQueryAnswerer<R> {
         }
     }
 
-    fn answer(&self) {
+    fn reply(&self, bytes: &[u8]) {
         // A failed reply is not fatal to reading: the session would behave as
         // if no answerer existed. Log-free by design (this runs on the hot
         // reader thread); the write error resurfaces on the next user input.
         if let Ok(mut w) = self.writer.lock() {
-            let _ = w.write_all(CURSOR_REPLY);
+            let _ = w.write_all(bytes);
             let _ = w.flush();
         }
     }
@@ -109,20 +144,30 @@ impl<R: Read> CursorQueryAnswerer<R> {
     fn process(&mut self, chunk: &[u8]) {
         let mut data = std::mem::take(&mut self.carry);
         data.extend_from_slice(chunk);
-        self.scanned += chunk.len();
+        match self.phase {
+            Phase::Cursor => {
+                self.scanned += chunk.len();
+                self.scan_for_cursor_query(data);
+            }
+            Phase::Da1 => self.check_for_da1(data),
+            Phase::Done => self.pending.extend_from_slice(&data),
+        }
+    }
 
+    fn scan_for_cursor_query(&mut self, data: Vec<u8>) {
         if let Some(pos) = find(&data, CURSOR_QUERY) {
-            self.scanning = false;
-            self.answer();
+            // Answer before reading on: the inbox host releases nothing until
+            // this reply arrives.
+            self.reply(CURSOR_REPLY);
             self.pending.extend_from_slice(&data[..pos]);
-            self.pending
-                .extend_from_slice(&data[pos + CURSOR_QUERY.len()..]);
+            self.phase = Phase::Da1;
+            self.check_for_da1(data[pos + CURSOR_QUERY.len()..].to_vec());
             return;
         }
 
         if self.scanned >= SCAN_LIMIT {
             // Not coming: stop scanning and release everything held.
-            self.scanning = false;
+            self.phase = Phase::Done;
             self.pending.extend_from_slice(&data);
             return;
         }
@@ -132,6 +177,21 @@ impl<R: Read> CursorQueryAnswerer<R> {
         let split = data.len() - hold;
         self.pending.extend_from_slice(&data[..split]);
         self.carry.extend_from_slice(&data[split..]);
+    }
+
+    /// `data` starts right after the answered cursor query.
+    fn check_for_da1(&mut self, data: Vec<u8>) {
+        if data.starts_with(DA1_QUERY) {
+            self.reply(DA1_REPLY);
+            self.phase = Phase::Done;
+            self.pending.extend_from_slice(&data[DA1_QUERY.len()..]);
+        } else if DA1_QUERY.starts_with(&data) {
+            // Nothing yet, or a DA1 query split across reads: wait for more.
+            self.carry = data;
+        } else {
+            self.phase = Phase::Done;
+            self.pending.extend_from_slice(&data);
+        }
     }
 
     fn drain_pending(&mut self, buf: &mut [u8]) -> usize {
@@ -156,7 +216,7 @@ impl<R: Read> Read for CursorQueryAnswerer<R> {
             if self.pending_pos < self.pending.len() {
                 return Ok(self.drain_pending(buf));
             }
-            if !self.scanning {
+            if self.phase == Phase::Done {
                 if !self.carry.is_empty() {
                     self.pending = std::mem::take(&mut self.carry);
                     continue;
@@ -168,7 +228,7 @@ impl<R: Read> Read for CursorQueryAnswerer<R> {
             let n = self.inner.read(&mut chunk)?;
             if n == 0 {
                 // EOF: release any held partial bytes, then report EOF.
-                self.scanning = false;
+                self.phase = Phase::Done;
                 if self.carry.is_empty() {
                     return Ok(0);
                 }

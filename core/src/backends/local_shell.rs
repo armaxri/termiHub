@@ -66,13 +66,21 @@ fn parse_env_vars(settings: &serde_json::Value) -> HashMap<String, String> {
 ///   so the master sees EOF when the child exits.
 /// - **Windows** — ConPTY (`CreatePseudoConsole`/`ResizePseudoConsole`) on
 ///   Windows 10 1809+; portable-pty falls back to WinPTY only when ConPTY is
-///   unavailable. ConPTY differs from Unix PTYs in three ways the rest of
+///   unavailable. portable-pty prefers a `conpty.dll` next to the executable
+///   over the inbox `kernel32` one: the Windows bundle ships Microsoft's
+///   packaged `conpty.dll` + `OpenConsole.exe` there (#4121), because the
+///   inbox host strips SIXEL/inline-image sequences. Without those files
+///   (dev builds, tests) the inbox host is used; the notes below hold for
+///   both hosts. ConPTY differs from Unix PTYs in three ways the rest of
 ///   this module relies on:
 ///
 ///   1. **Output is VT-processed by ConPTY itself.** The child writes legacy
 ///      console APIs (`WriteConsole`) which ConPTY translates into VT
 ///      sequences before they reach `reader`. The reader thread sees the
-///      same byte stream as on Unix; no extra parsing is needed.
+///      same byte stream as on Unix; no extra parsing is needed. VT the
+///      child writes itself is re-rendered by the inbox host (which drops
+///      DCS strings such as SIXEL) but forwarded verbatim by the sideloaded
+///      OpenConsole host (#4121).
 ///   2. **Resize triggers a buffer re-flow.** `ResizePseudoConsole` fires a
 ///      synthetic `WINDOW_BUFFER_SIZE_EVENT` in the child, which most shells
 ///      (cmd, PowerShell) respond to by redrawing the prompt. This is louder
@@ -142,7 +150,9 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
         // Windows: portable-pty 0.9 creates the ConPTY with
         // PSUEDOCONSOLE_INHERIT_CURSOR, so conhost withholds all output until
         // its opening cursor-position query is answered. Answer it at the
-        // reader seam, sharing the writer for the reply (#3974).
+        // reader seam, sharing the writer for the reply (#3974). The same
+        // seam answers the DA1 query the sideloaded OpenConsole host sends
+        // right after it (#4121), so both hosts start without a stall.
         #[cfg(windows)]
         let (writer, reader) = {
             use super::conpty_cursor::{CursorQueryAnswerer, SharedPtyWriter, SharedWriter};
