@@ -26,6 +26,8 @@ and the operator performs **only** the native file pick / save.
 Covered (#4011): the encrypted credential-vault export + import round-trip
 (PROD-063, #3432) and Export Diagnostics (OBS-010, #3571) with the zip's
 contents verified automatically. Again the operator only saves / picks the file.
+The vault test also walks the overwrite path (#4076, MT-CRED-10): a saved
+secret is changed after the export and the import's Replace restores it.
 
 Marked ``manual`` + ``integration``, so they **skip** on CI / normal runs and
 run only under ``./pytest.sh --manual -k native_dialog -s`` with an operator.
@@ -68,6 +70,10 @@ _MASTER_PASSWORD = "harness-master-pw-1004"
 _STORED_SSH_PASSWORD = "harness-ssh-secret-1004"
 #: Password protecting the encrypted export blob (the operator never types this).
 _EXPORT_PASSWORD = "harness-export-pw-1004"
+#: The shared credential in the vault round-trip: its secret at export time, and
+#: the value it is changed to before the file is imported back with Replace.
+_SHARED_SECRET = "harness-shared-secret-4076"
+_SHARED_SECRET_CHANGED = "harness-shared-secret-4076-changed"
 
 
 class TestNativeDialogs(
@@ -604,24 +610,131 @@ class TestNativeDialogs(
         )
 
     # ── Credential vault export + import (PROD-063, #3432) ────────────────────
+    def _create_shared_credential(self, name: str, secret: str) -> str:
+        """Create a shared password credential in Settings → Security; its id.
+
+        The Security settings must be open. The id (``nc-<uuid>``) is read from
+        ``named_credentials.json`` in the config dir, since the row's test ids
+        carry it.
+        """
+        self.wait(
+            lambda: self.driver.exists("shared-credentials-create"),
+            what="the New shared credential button",
+        )
+        self.driver.click("shared-credentials-create")
+        self.wait(
+            lambda: self.driver.exists("shared-credential-name"),
+            what="the shared credential dialog",
+        )
+        self.driver.type("shared-credential-name", name)
+        self.driver.type("shared-credential-secret", secret)
+        self.driver.type("shared-credential-confirm", secret)
+        self.driver.click("shared-credential-submit")
+        self.wait(
+            lambda: not self.driver.exists("shared-credential-name"),
+            what="the shared credential to be created",
+        )
+
+        def saved_id() -> str | None:
+            try:
+                doc = json.loads(
+                    (self.config_dir / "named_credentials.json").read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                return None
+            for cred in doc.get("credentials", []):
+                if cred.get("name") == name:
+                    return cred.get("id")
+            return None
+
+        cred_id = self.wait(saved_id, what=f"the shared credential {name!r} on disk")
+        self.wait(
+            lambda: self.driver.exists(f"shared-credential-{cred_id}"),
+            what="the shared credential row",
+        )
+        return cred_id
+
+    def _rotate_shared_credential(self, cred_id: str, secret: str) -> None:
+        """Change a shared credential's secret through its Change secret dialog."""
+        self.driver.click(f"shared-credential-rotate-{cred_id}")
+        self.wait(
+            lambda: self.driver.exists("shared-credential-secret"),
+            what="the Change secret dialog",
+        )
+        self.driver.type("shared-credential-secret", secret)
+        self.driver.type("shared-credential-confirm", secret)
+        self.driver.click("shared-credential-submit")
+        self.wait(
+            lambda: not self.driver.exists("shared-credential-secret"),
+            what="the shared credential secret to be changed",
+        )
+
+    def _pick_vault_and_preview(self, target: Path, why: str) -> None:
+        """Open Import vault, have the operator pick ``target``, and preview it."""
+        self.driver.click("credential-vault-import-btn")
+        self.wait(
+            lambda: self.driver.exists("vault-import-choose-file"),
+            what="the vault import dialog",
+        )
+        self.driver.click("vault-import-choose-file")
+        self.manual_step(
+            f"A native Open dialog is open ({why}). Select this file:\n      {target}",
+            f"The Import dialog shows {target.name} as the chosen file.",
+        )
+        self.wait(
+            lambda: self.driver.get_text("vault-import-file-name") == target.name,
+            what="the picked vault file to be loaded",
+        )
+        self.driver.type("vault-import-passphrase", _EXPORT_PASSWORD)
+        self.driver.click("vault-import-preview")
+        self.wait(
+            lambda: self.driver.exists("vault-import-preview-panel"), what="the import preview"
+        )
+
+    def _preview_counts(self) -> tuple[str, str, str]:
+        """The preview's total / new / differing counts (leading number of each)."""
+        def count(which: str) -> str:
+            return self.driver.get_text(f"vault-import-count-{which}").split(" ", 1)[0]
+
+        return count("total"), count("new"), count("conflicts")
+
+    def _apply_vault_import(self) -> None:
+        self.driver.click("vault-import-submit")
+        self.wait(
+            lambda: not self.driver.exists("vault-import-title"),
+            what="the import to apply and the dialog to close",
+        )
+        assert not self.driver.exists("vault-import-error")
+
     def test_credential_vault_export_import_round_trip(self):
         """The encrypted vault survives a native-dialog export and import.
 
-        The harness sets up a master-password store with one saved SSH password,
-        opens Settings → Security → Export vault, re-authenticates with the master
-        password and types the export passphrase twice; the operator only saves
-        the file. The harness checks the file is sealed (neither the saved
-        password nor the passphrase appears in it), then opens Import vault; the
-        operator only picks the file. The harness proves a wrong passphrase is
-        refused, previews with the right one (the saved credential is in the file
-        and matches the store) and applies the import.
+        The harness sets up a master-password store with one saved SSH password
+        and one shared credential, opens Settings → Security → Export vault,
+        re-authenticates with the master password and types the export
+        passphrase twice; the operator only saves the file. The harness checks
+        the file is sealed (no saved secret nor the passphrase appears in it),
+        then opens Import vault; the operator only picks the file. The harness
+        proves a wrong passphrase is refused, previews with the right one (both
+        credentials are in the file and match the store) and applies the import.
+
+        Then the overwrite path (#4076, MT-CRED-10): the harness changes the
+        shared credential's secret, and the operator picks the same file again.
+        The preview flags exactly that credential as differing; the harness
+        chooses Replace and imports. A third pick previews the file once more:
+        nothing differs any more, so the store holds the exported secret again.
+        (The shared credential is the secret that changes because it can be
+        changed in the UI; an SSH connection's saved password is only replaced
+        after a real server rejects it.)
         """
         self.close_all_tabs()
         self._store_one_ssh_password("vault")
+        shared_name = unique_name("vault-shared")
+        self.open_settings_category("security")
+        shared_id = self._create_shared_credential(shared_name, _SHARED_SECRET)
 
         # Export: everything up to the native Save dialog.
         target = self._scratch("vault-export", "credential-vault.json")
-        self.open_settings_category("security")
         self.wait(
             lambda: self.driver.exists("credential-vault-export-btn"),
             what="the Export vault button",
@@ -643,7 +756,7 @@ class TestNativeDialogs(
             what="the vault export file to be written",
         )
         json.loads(blob)  # a well-formed JSON envelope
-        for secret in (_STORED_SSH_PASSWORD, _EXPORT_PASSWORD, _MASTER_PASSWORD):
+        for secret in (_STORED_SSH_PASSWORD, _SHARED_SECRET, _EXPORT_PASSWORD, _MASTER_PASSWORD):
             assert secret not in blob, "a secret reached the vault export file in plaintext"
         self.wait(
             lambda: not self.driver.exists("vault-export-passphrase"),
@@ -672,23 +785,45 @@ class TestNativeDialogs(
         self.wait(lambda: self.driver.exists("vault-import-error"), what="the wrong-passphrase error")
         assert not self.driver.exists("vault-import-preview-panel")
 
-        # The right passphrase decrypts it: one credential, identical to the store.
+        # The right passphrase decrypts it: two credentials, identical to the store.
         self.driver.type("vault-import-passphrase", _EXPORT_PASSWORD)
         self.driver.click("vault-import-preview")
         self.wait(
             lambda: self.driver.exists("vault-import-preview-panel"), what="the import preview"
         )
-        total = self.driver.get_text("vault-import-count-total")
-        assert total.startswith("1 "), f"expected one credential in the file, preview: {total!r}"
-        assert self.driver.get_text("vault-import-count-new").startswith("0 ")
-        assert self.driver.get_text("vault-import-count-conflicts").startswith("0 ")
+        assert self._preview_counts() == ("2", "0", "0"), (
+            "expected the SSH password and the shared credential, both unchanged; preview: "
+            f"{self._preview_counts()}"
+        )
+        self._apply_vault_import()
 
-        self.driver.click("vault-import-submit")
+        # Overwrite: change the shared secret, then import the file with Replace.
+        self._rotate_shared_credential(shared_id, _SHARED_SECRET_CHANGED)
+        self._pick_vault_and_preview(target, "import with Replace")
+        assert self._preview_counts() == ("2", "0", "1"), (
+            f"expected only the changed shared credential to differ; preview: "
+            f"{self._preview_counts()}"
+        )
+        conflicts = self.driver.get_text("vault-import-conflicts")
+        assert shared_name in conflicts, f"the differing entry is not {shared_name!r}: {conflicts!r}"
+        self.driver.click("vault-import-strategy-overwrite")
+        self.wait(
+            lambda: self.driver.exists("vault-import-overwrite-warning"),
+            what="the Replace warning",
+        )
+        self._apply_vault_import()
+
+        # The exported secret is back: the same file now matches the store.
+        self._pick_vault_and_preview(target, "check the import")
+        assert self._preview_counts() == ("2", "0", "0"), (
+            "Replace did not restore the exported secret — the file still differs from the "
+            f"store; preview: {self._preview_counts()}"
+        )
+        self.driver.press_key("Escape", "vault-import-passphrase")  # close without importing
         self.wait(
             lambda: not self.driver.exists("vault-import-title"),
-            what="the import to apply and the dialog to close",
+            what="the vault import dialog to close",
         )
-        assert not self.driver.exists("vault-import-error")
 
     # ── Export Diagnostics (OBS-010, #3571) ───────────────────────────────────
     def test_export_diagnostics_writes_the_previewed_redacted_zip(self):
