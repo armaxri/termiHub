@@ -949,6 +949,35 @@ mod tests {
     }
 
     #[test]
+    fn assess_trust_signed_by_compiled_in_first_party_key_is_verified_without_pin() {
+        use base64::Engine as _;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (pkg, key) = write_signed(tmp.path(), "p.termihub-plugin");
+        // The signer's public key as the committed first-party PEM file (#3980).
+        let raw: [u8; 32] = base64::engine::general_purpose::STANDARD
+            .decode(&key.public_key)
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let vk = ed25519_dalek::VerifyingKey::from_bytes(&raw).unwrap();
+        let pem = crate::ed25519_pem::public_key_pem(&vk);
+        let store = TrustStore::load_with_bundled_pem(tmp.path(), &pem).unwrap();
+        let a = assess_trust(&pkg, &store);
+        assert_eq!(
+            a.level,
+            TrustLevel::Verified {
+                publisher: crate::plugin::trust_store::FIRST_PARTY_PUBLISHER_LABEL.into()
+            }
+        );
+        assert!(!a.requires_acceptance());
+        // Nothing was pinned: no trust-store.json exists.
+        assert!(!tmp
+            .path()
+            .join(crate::plugin::trust_store::TRUST_STORE_FILE_NAME)
+            .exists());
+    }
+
+    #[test]
     fn assess_trust_tampered_is_blocked() {
         let tmp = tempfile::TempDir::new().unwrap();
         // Sign one content, then swap the manifest bytes so the digest no longer
