@@ -74,13 +74,14 @@ SERIAL_FILTERS=(
   "live_agent_tcp_"
 )
 # How many tests the serial set holds today: 17 on unix (16 in
-# local_agent_integration.rs + 1 in tcp_listener_readiness.rs), 13 on Windows
-# (six of those are `#[cfg(unix)]` daemon-recovery tests; two `#[cfg(windows)]`
-# ConPTY shell-session tests, #3685, run only there). Raise the count when
-# adding one; a rename that drops a test out of the prefix then fails the serial
-# phase instead of going unseen.
+# local_agent_integration.rs + 1 in tcp_listener_readiness.rs), 18 on Windows
+# (one of the unix ones, the exactly-once replay count, is `#[cfg(unix)]`; the
+# other daemon-recovery tests run over named pipes there too, #3684; two
+# `#[cfg(windows)]` ConPTY shell-session tests, #3685, run only there). Raise
+# the count when adding one; a rename that drops a test out of the prefix then
+# fails the serial phase instead of going unseen.
 if [ "${OS:-}" = "Windows_NT" ]; then
-  SERIAL_MIN_TESTS_DEFAULT=13
+  SERIAL_MIN_TESTS_DEFAULT=18
 else
   SERIAL_MIN_TESTS_DEFAULT=17
 fi
