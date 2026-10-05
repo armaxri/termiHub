@@ -9,7 +9,7 @@
 use std::any::Any;
 
 use crate::errors::FileError;
-use crate::files::FileEntry;
+use crate::files::{FileEntry, RangedFileAccess};
 
 /// Async file browsing capability exposed by connection types.
 ///
@@ -128,6 +128,18 @@ pub trait FileBrowser: Send {
     /// caller `downcast_ref` to the concrete type; the default returns `None`, so
     /// no other backend is affected (#2312).
     fn as_any(&self) -> Option<&dyn Any> {
+        None
+    }
+
+    /// Offset-addressed reads and writes on this backend, when it supports
+    /// them (#3587).
+    ///
+    /// The chunked, resumable transfer of an agent-hosted session moves a file
+    /// one bounded slice at a time through this capability (see
+    /// [`RangedFileAccess`]). The default returns `None`: such a backend keeps
+    /// whole-file [`read_file`](Self::read_file) / [`write_file`](Self::write_file)
+    /// only, and its agent-hosted sessions stay on the byte-based path.
+    fn ranged(&self) -> Option<&dyn RangedFileAccess> {
         None
     }
 }

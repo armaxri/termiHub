@@ -512,6 +512,70 @@ impl DockerTransferTarget {
     }
 }
 
+// ── Offset-addressed access (#3587) ────────────────────────────────
+
+impl DockerTransferTarget {
+    /// Read at most `len` bytes of `path` from `offset` through one streaming
+    /// exec (`cat`, or `tail -c +N` past byte zero). A short read reached the
+    /// end of the file, so the exec must also have exited `0` — a killed `tail`
+    /// or a missing file fails instead of looking like the end of the file.
+    pub async fn read_range(
+        &self,
+        path: &str,
+        offset: u64,
+        len: u32,
+    ) -> Result<Vec<u8>, FileError> {
+        use tokio::io::AsyncReadExt;
+        let reader = self.open_read(path, offset).await?;
+        let mut data = Vec::with_capacity(len as usize);
+        let mut limited = reader.take(u64::from(len));
+        limited
+            .read_to_end(&mut data)
+            .await
+            .map_err(|e| op_err("Failed to read container file", e))?;
+        if data.len() < len as usize {
+            limited.into_inner().finish().await?;
+        }
+        // A full slice drops the reader, closing the exec stream; the next
+        // slice starts a fresh exec at its own offset.
+        Ok(data)
+    }
+
+    /// Write `data` to `path` at `offset`: create/truncate at zero, otherwise
+    /// append once `wc -c` confirms the file holds exactly `offset` bytes.
+    pub async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError> {
+        if offset > 0 {
+            let present = self.file_size(path).await.ok_or_else(|| {
+                FileError::OperationFailed(format!(
+                    "{path}: cannot measure the destination to append at {offset}"
+                ))
+            })?;
+            if present != offset {
+                return Err(crate::files::ranged::offset_mismatch(path, present, offset));
+            }
+        }
+        let mut writer = self.open_write(path, offset > 0).await?;
+        writer
+            .write_all(data)
+            .await
+            .map_err(|e| op_err("Failed to write container file", e))?;
+        writer.finish().await
+    }
+}
+
+/// The Docker browser's offset-addressed access (#3587): what an agent-hosted
+/// Docker session's queued transfer moves through, one exec per slice.
+#[async_trait::async_trait]
+impl crate::files::RangedFileAccess for DockerFileBrowser {
+    async fn read_range(&self, path: &str, offset: u64, len: u32) -> Result<Vec<u8>, FileError> {
+        self.transfer_target().read_range(path, offset, len).await
+    }
+
+    async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError> {
+        self.transfer_target().write_range(path, offset, data).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

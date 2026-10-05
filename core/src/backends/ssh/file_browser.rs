@@ -19,7 +19,7 @@ use tokio::sync::Mutex;
 use crate::config::SshConfig;
 use crate::errors::FileError;
 use crate::files::transfer::SourceFingerprint;
-use crate::files::{FileBrowser, FileEntry};
+use crate::files::{FileBrowser, FileEntry, RangedFileAccess};
 
 use super::handler::SshSession;
 use super::jump_host::{connect_target, GatewayHold};
@@ -552,6 +552,86 @@ impl FileBrowser for SftpFileBrowser {
     /// trait (#2312).
     fn as_any(&self) -> Option<&dyn Any> {
         Some(self)
+    }
+
+    fn ranged(&self) -> Option<&dyn RangedFileAccess> {
+        Some(self)
+    }
+}
+
+/// Offset-addressed SFTP reads and writes (#3587): what an agent-hosted SSH
+/// session's queued transfer moves through, one bounded slice per call. Each
+/// call holds the browsing session only for that slice, so listing stays live
+/// between chunks.
+#[async_trait::async_trait]
+impl RangedFileAccess for SftpFileBrowser {
+    async fn read_range(&self, path: &str, offset: u64, len: u32) -> Result<Vec<u8>, FileError> {
+        Self::ensure_connected(&self.state, &self.config).await?;
+        let guard = self.state.lock().await;
+        let state = guard
+            .as_ref()
+            .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
+        let mut file = state
+            .sftp
+            .open(path)
+            .await
+            .map_err(|e| FileError::OperationFailed(format!("open failed: {e}")))?;
+        if offset > 0 {
+            file.seek(SeekFrom::Start(offset))
+                .await
+                .map_err(|e| FileError::OperationFailed(format!("seek failed: {e}")))?;
+        }
+        let mut data = Vec::with_capacity(len as usize);
+        file.take(u64::from(len))
+            .read_to_end(&mut data)
+            .await
+            .map_err(|e| FileError::OperationFailed(format!("read failed: {e}")))?;
+        Ok(data)
+    }
+
+    async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError> {
+        use tokio::io::AsyncWriteExt;
+        Self::ensure_connected(&self.state, &self.config).await?;
+        let guard = self.state.lock().await;
+        let state = guard
+            .as_ref()
+            .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
+        let mut file = if offset == 0 {
+            state
+                .sftp
+                .create(path)
+                .await
+                .map_err(|e| FileError::OperationFailed(format!("create failed: {e}")))?
+        } else {
+            let present = state
+                .sftp
+                .metadata(path)
+                .await
+                .map_err(|e| FileError::OperationFailed(format!("stat failed: {e}")))?
+                .size
+                .unwrap_or_default();
+            if present != offset {
+                return Err(crate::files::ranged::offset_mismatch(path, present, offset));
+            }
+            let mut file = state
+                .sftp
+                .open_with_flags(path, OpenFlags::WRITE)
+                .await
+                .map_err(|e| FileError::OperationFailed(format!("open failed: {e}")))?;
+            file.seek(SeekFrom::Start(offset))
+                .await
+                .map_err(|e| FileError::OperationFailed(format!("seek failed: {e}")))?;
+            file
+        };
+        file.write_all(data)
+            .await
+            .map_err(|e| FileError::OperationFailed(format!("write failed: {e}")))?;
+        // Wait for every ack and close the handle, so the slice counts as
+        // written only once the server has it.
+        file.shutdown()
+            .await
+            .map_err(|e| FileError::OperationFailed(format!("write failed: {e}")))?;
+        Ok(())
     }
 }
 
