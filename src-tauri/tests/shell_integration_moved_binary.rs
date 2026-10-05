@@ -64,10 +64,7 @@ impl Sandbox {
         let root = self.tmp.path().join(dir);
         fs::create_dir_all(&root).expect("create binary dir");
         let exe = root.join(built.file_name().expect("binary file name"));
-        // A hard link is instant and keeps the link path as `current_exe`.
-        if fs::hard_link(&built, &exe).is_err() {
-            fs::copy(&built, &exe).expect("copy termihub binary");
-        }
+        stage_exe(&built, &exe);
         exe
     }
 
@@ -152,6 +149,20 @@ impl Sandbox {
         }
         found
     }
+}
+
+/// Put the built binary at `exe`, so that the process reports `exe` as its
+/// `current_exe`.
+///
+/// Linux and Windows use a hard link, which is instant. macOS resolves
+/// `current_exe` of a hard link through the shared vnode and can report a
+/// *sibling* link's path (another test's copy, or the build output), so it
+/// always copies. `fs::copy` makes an instant APFS clone there.
+fn stage_exe(built: &Path, exe: &Path) {
+    if cfg!(not(target_os = "macos")) && fs::hard_link(built, exe).is_ok() {
+        return;
+    }
+    fs::copy(built, exe).expect("copy termihub binary");
 }
 
 fn describe(output: &Output) -> String {

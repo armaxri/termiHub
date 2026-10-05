@@ -37,8 +37,9 @@ def stage_moved_copy(binary: Path, dest_dir: Path) -> Path:
 
     Only the executable is copied, even inside a macOS ``.app`` bundle: the copy
     is only run for the pre-init shell-integration CLI, which exits before any
-    window or bundle resource is needed. A hard link is used where possible, so
-    the copy's own path is its ``current_exe``.
+    window or bundle resource is needed. A hard link is used where its path is
+    reliably the process's ``current_exe`` (not on macOS, see
+    :func:`termihub_harness.portable._link_or_copy`).
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     staged = dest_dir / binary.name
