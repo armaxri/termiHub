@@ -23,6 +23,7 @@ vi.mock("@/services/events", () => ({
 }));
 
 import { XServerSetupDialog } from "./XServerSetupDialog";
+import { toast } from "@/components/ui";
 
 /** Flush pending microtasks (the async subscribe + ensure chain) inside act. */
 async function flush() {
@@ -191,5 +192,41 @@ describe("XServerSetupDialog", () => {
     // No install action for a non-dependency failure, but Retry is offered.
     expect(document.querySelector('[data-testid="x-server-setup-install-dep"]')).toBeNull();
     expect(document.querySelector('[data-testid="x-server-setup-retry"]')).not.toBeNull();
+  });
+
+  it("toasts a structured IPC error's message when the dependency install fails (#4104)", async () => {
+    const errorSpy = vi.spyOn(toast, "error").mockReturnValue("id");
+    const ensure = deferred<XServerStatusReport>();
+    xServerEnsure.mockReturnValue(ensure.promise);
+    // Tauri rejects a command error as a `{ code, message }` envelope, not an Error.
+    xServerInstallDependency.mockRejectedValue({
+      code: "permission_denied",
+      message: "installer needs administrator rights",
+    });
+
+    renderDialog({});
+    await act(async () => {
+      click("x-server-setup-enable");
+      await Promise.resolve();
+    });
+    await flush();
+    await act(async () => {
+      ensure.reject({
+        kind: "dependencyMissing",
+        message: "VcXsrv is not installed",
+        dependency: "VcXsrv",
+      } satisfies XServerError);
+      await Promise.resolve();
+    });
+    await flush();
+
+    await act(async () => {
+      click("x-server-setup-install-dep");
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(errorSpy).toHaveBeenCalledWith("installer needs administrator rights");
+    errorSpy.mockRestore();
   });
 });
