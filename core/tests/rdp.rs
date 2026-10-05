@@ -1613,3 +1613,133 @@ async fn rdp_15_drive_redirection_serves_only_the_shared_folder() {
     assert_helper_gone(pid, label).await;
     end_xrdp_session(label).await;
 }
+
+// ── RDP-16: shared-folder files served to the server over CLIPRDR (#1778/#4086) ─
+
+/// The directory under [`THINCLIENT_DRIVES`] where chansrv exposes the files a
+/// client offers on its clipboard; reading one fetches its bytes from the
+/// client over CLIPRDR file streams.
+const CLIPBOARD_FILES: &str = "/home/testuser/thinclient_drives/.clipboard";
+
+/// What chansrv logs (at WARN) for the offered `sub\nested.txt` entry: xrdp
+/// 0.10 does not paste client directories, so tree entries are skipped.
+const CHANSRV_SKIPPED_NESTED: &str = "skipping directory not supported [sub\\nested.txt]";
+
+/// Paste on the server: ask the session's CLIPBOARD for `text/uri-list` (what a
+/// file manager does), which makes chansrv fetch the client's file list and
+/// expose it under [`CLIPBOARD_FILES`]. Returns the URIs, one per line.
+fn paste_uri_list_on_server(label: &str) -> String {
+    xrdp_session_exec(
+        "timeout 5 xclip -o -selection clipboard -t text/uri-list 2>/dev/null || true",
+        label,
+    )
+}
+
+/// Opted in ("Receive Clipboard Files" with a shared folder, not view-only),
+/// the folder's contents are offered on the client's clipboard at connect: a
+/// paste on the server lists them under chansrv's `.clipboard` directory and
+/// reading each one streams its bytes from the sidecar over CLIPRDR file
+/// contents requests (a multi-range file arrives intact); a subfolder is
+/// offered as a tree, which xrdp skips. View-only and default sessions offer
+/// nothing.
+#[tokio::test]
+async fn rdp_16_shared_folder_files_are_served_to_the_server() {
+    let _serial = SERIAL.lock().await;
+    require_rdp!();
+    assert_no_helpers("RDP-16");
+    let nonce = format!("{}", std::process::id());
+    let big: String = (0..12_000)
+        .map(|i| format!("line {i:05} {nonce}\n"))
+        .collect();
+
+    for (transfer, view_only) in [(true, false), (true, true), (false, false)] {
+        let label = match (transfer, view_only) {
+            (true, false) => "RDP-16 opted in",
+            (true, true) => "RDP-16 view-only",
+            (false, _) => "RDP-16 default",
+        };
+        let share = tempfile::tempdir().expect("temp shared folder");
+        std::fs::write(share.path().join("alpha.txt"), format!("alpha {nonce}")).expect("file");
+        std::fs::write(share.path().join("big.txt"), &big).expect("big file");
+        std::fs::create_dir(share.path().join("sub")).expect("sub dir");
+        std::fs::write(
+            share.path().join("sub").join("nested.txt"),
+            format!("nested {nonce}"),
+        )
+        .expect("nested file");
+
+        // chansrv ANDs every client's CLIPRDR capabilities into the session's,
+        // so each pass needs a session no file-stream-less client has touched.
+        end_xrdp_session(label).await;
+        let since = fixture_now(label);
+        let mut settings = rdp_settings(port_rdp(), RDP_PASSWORD);
+        settings["driveRedirection"] = serde_json::json!(true);
+        settings["sharedFolderPath"] = serde_json::json!(share.path());
+        settings["clipboardFileTransfer"] = serde_json::json!(transfer);
+        settings["viewOnly"] = serde_json::json!(view_only);
+        let mut rdp = SidecarRdp::new();
+        rdp.connect(settings).await.expect("RDP-16: connect");
+        let pid = spawned_helper_pid(label);
+        let graphical = rdp.graphical().expect("RDP-16: graphical backend present");
+        let mut frames = graphical.subscribe_frames();
+        wait_for_xrdp_session(&mut frames, label).await;
+        let drain = tokio::spawn(async move { while frames.recv().await.is_some() {} });
+
+        if transfer && !view_only {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
+            let mut uris = String::new();
+            while tokio::time::Instant::now() < deadline && !uris.contains("alpha.txt") {
+                uris = paste_uri_list_on_server(label);
+                if !uris.contains("alpha.txt") {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            }
+            assert!(
+                uris.contains(&format!("file://{CLIPBOARD_FILES}/alpha.txt")),
+                "{label}: the server's paste lists the shared folder: {uris:?}"
+            );
+            let read = |path: &str| {
+                fixture_user_sh(&format!("cat '{CLIPBOARD_FILES}/{path}'")).unwrap_or_else(|e| {
+                    let tree = fixture_user_sh(&format!("ls -laR '{CLIPBOARD_FILES}'"));
+                    panic!("{label}: read {path}: {e}\nuris: {uris:?}\ntree: {tree:?}")
+                })
+            };
+            assert_eq!(
+                read("alpha.txt"),
+                format!("alpha {nonce}"),
+                "{label}: alpha"
+            );
+            assert!(read("big.txt") == big, "{label}: big.txt arrives intact");
+            // The subfolder is offered as a tree (a directory entry plus a file
+            // carrying its `\`-separated relative path, #1780); xrdp 0.10's
+            // chansrv cannot paste directories and logs that it skips both.
+            assert!(
+                chansrv_lines_since(CHANSRV_SKIPPED_NESTED, &since, label) > 0,
+                "{label}: the nested file was offered with its relative path"
+            );
+        } else {
+            assert!(
+                wait_for_chansrv_line(CHANSRV_ATTACH_MARKER, &since, 15, label).await > 0,
+                "{label}: chansrv never logged this connection"
+            );
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            let uris = paste_uri_list_on_server(label);
+            assert!(
+                uris.trim().is_empty(),
+                "{label}: no local file may be offered: {uris:?}"
+            );
+            let listed = fixture_user_sh(&format!("ls -A '{CLIPBOARD_FILES}' 2>/dev/null || true"))
+                .expect("list .clipboard");
+            assert!(
+                listed.trim().is_empty(),
+                "{label}: nothing is exposed under .clipboard: {listed:?}"
+            );
+        }
+        assert!(rdp.fatal_error().is_none(), "{label}: the session survives");
+
+        rdp.disconnect().await.expect("disconnect should succeed");
+        drain.abort();
+        assert_helper_gone(pid, label).await;
+    }
+    end_xrdp_session("RDP-16").await;
+}
