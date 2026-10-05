@@ -85,6 +85,7 @@ import { useWindowInfo } from "@/hooks/useWindowInfo";
 import { windowDisplayName } from "@/utils/windowPicker";
 import { AgentVersionBadge } from "@/components/AgentVersionBadge/AgentVersionBadge";
 import { XServerSetupDialog } from "./XServerSetupDialog";
+import { errorMessage } from "@/utils/errorMessage";
 import "./OpenConnectionsModal.css";
 
 interface OpenConnectionsModalProps {
@@ -339,8 +340,11 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     try {
       await cancelConnecting(tabId);
     } catch (err) {
-      frontendError("open_connections", `Failed to cancel connecting tab ${tabId}: ${err}`);
-      toast.error(`Failed to cancel connection: ${err}`);
+      frontendError(
+        "open_connections",
+        `Failed to cancel connecting tab ${tabId}: ${errorMessage(err)}`
+      );
+      toast.error(`Failed to cancel connection: ${errorMessage(err)}`);
     }
     closeTab(tabId, panelId);
   };
@@ -379,8 +383,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         toast.success("Reconnect stopped");
       }
     } catch (err) {
-      frontendLog("open_connections", `Failed to cancel agent connect: ${err}`);
-      toast.error(`Failed to cancel: ${err}`);
+      frontendLog("open_connections", `Failed to cancel agent connect: ${errorMessage(err)}`);
+      toast.error(`Failed to cancel: ${errorMessage(err)}`);
     }
   };
 
@@ -421,8 +425,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     try {
       await focusWindow(label);
     } catch (err) {
-      frontendLog("open_connections", `Failed to focus window ${label}: ${err}`);
-      toast.error(`Failed to focus window: ${err}`);
+      frontendLog("open_connections", `Failed to focus window ${label}: ${errorMessage(err)}`);
+      toast.error(`Failed to focus window: ${errorMessage(err)}`);
     }
   };
 
@@ -436,8 +440,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     } catch (err) {
       // The session is still live — surface the failure and keep the row so the
       // user is not misled into believing a leaked session is gone (UX-033).
-      frontendError("open_connections", `Failed to kill local session ${id}: ${err}`);
-      toast.error(`Failed to kill session: ${err}`);
+      frontendError("open_connections", `Failed to kill local session ${id}: ${errorMessage(err)}`);
+      toast.error(`Failed to kill session: ${errorMessage(err)}`);
     }
   };
 
@@ -520,8 +524,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         toast.success(`Pruned ${pruned.length} dead agent${pruned.length === 1 ? "" : "s"}`);
       }
     } catch (err) {
-      frontendLog("open_connections", `Failed to prune dead agents: ${err}`);
-      toast.error(`Failed to prune dead agents: ${err}`);
+      frontendLog("open_connections", `Failed to prune dead agents: ${errorMessage(err)}`);
+      toast.error(`Failed to prune dead agents: ${errorMessage(err)}`);
     }
   };
 
@@ -536,9 +540,9 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     } catch (err) {
       frontendError(
         "open_connections",
-        `Failed to kill session ${id} via agent ${agentId}: ${err}`
+        `Failed to kill session ${id} via agent ${agentId}: ${errorMessage(err)}`
       );
-      toast.error(`Failed to kill session: ${err}`);
+      toast.error(`Failed to kill session: ${errorMessage(err)}`);
     }
   };
 
@@ -576,9 +580,9 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     } catch (err) {
       frontendError(
         "open_connections",
-        `Failed to kill session ${sessionId} on agent ${agentId}: ${err}`
+        `Failed to kill session ${sessionId} on agent ${agentId}: ${errorMessage(err)}`
       );
-      toast.error(`Failed to kill session: ${err}`);
+      toast.error(`Failed to kill session: ${errorMessage(err)}`);
     }
   };
 
@@ -622,8 +626,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
       await cancelTransfer(transferId);
       toast.success("Transfer cancelled");
     } catch (err) {
-      frontendLog("open_connections", `Failed to cancel transfer: ${err}`);
-      toast.error(`Failed to cancel transfer: ${err}`);
+      frontendLog("open_connections", `Failed to cancel transfer: ${errorMessage(err)}`);
+      toast.error(`Failed to cancel transfer: ${errorMessage(err)}`);
     }
   };
 
@@ -632,8 +636,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
       await Promise.all(transferList.map((t) => cancelTransfer(t.transferId)));
       toast.success("All transfers cancelled");
     } catch (err) {
-      frontendLog("open_connections", `Failed to cancel transfers: ${err}`);
-      toast.error(`Failed to cancel transfers: ${err}`);
+      frontendLog("open_connections", `Failed to cancel transfers: ${errorMessage(err)}`);
+      toast.error(`Failed to cancel transfers: ${errorMessage(err)}`);
     }
   };
 
@@ -643,8 +647,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
       setXServer(null);
     } catch (err) {
       // Keep the X server row: a failed stop means it is still running (UX-033).
-      frontendError("open_connections", `Failed to stop X server: ${err}`);
-      toast.error(`Failed to stop X server: ${err}`);
+      frontendError("open_connections", `Failed to stop X server: ${errorMessage(err)}`);
+      toast.error(`Failed to stop X server: ${errorMessage(err)}`);
     }
   };
 
@@ -654,7 +658,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     try {
       setHttpMonitors(await networkHttpMonitorList());
     } catch (err) {
-      frontendLog("open_connections", `Failed to refresh HTTP monitors: ${err}`);
+      frontendLog("open_connections", `Failed to refresh HTTP monitors: ${errorMessage(err)}`);
     }
   };
 
@@ -664,8 +668,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
       await refreshHttpMonitors();
       toast.success("Monitor stopped");
     } catch (err) {
-      frontendLog("open_connections", `Failed to stop HTTP monitor: ${err}`);
-      toast.error(`Failed to stop monitor: ${err}`);
+      frontendLog("open_connections", `Failed to stop HTTP monitor: ${errorMessage(err)}`);
+      toast.error(`Failed to stop monitor: ${errorMessage(err)}`);
     }
   };
 
@@ -675,8 +679,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
       await refreshHttpMonitors();
       toast.success("All monitors stopped");
     } catch (err) {
-      frontendLog("open_connections", `Failed to stop all HTTP monitors: ${err}`);
-      toast.error(`Failed to stop monitors: ${err}`);
+      frontendLog("open_connections", `Failed to stop all HTTP monitors: ${errorMessage(err)}`);
+      toast.error(`Failed to stop monitors: ${errorMessage(err)}`);
     }
   };
 
@@ -688,8 +692,11 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
       await stopEmbeddedServer(serverId);
       toast.success(`Stopped “${name}”`);
     } catch (err) {
-      frontendError("open_connections", `Failed to stop embedded server ${serverId}: ${err}`);
-      toast.error(`Failed to stop server: ${err}`);
+      frontendError(
+        "open_connections",
+        `Failed to stop embedded server ${serverId}: ${errorMessage(err)}`
+      );
+      toast.error(`Failed to stop server: ${errorMessage(err)}`);
     }
   };
 
@@ -720,8 +727,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
       await setMonitoringPaused(key, paused);
       toast.success(paused ? "Monitoring paused" : "Monitoring resumed");
     } catch (err) {
-      frontendLog("open_connections", `Failed to toggle monitoring pause: ${err}`);
-      toast.error(`Failed to ${paused ? "pause" : "resume"} monitoring: ${err}`);
+      frontendLog("open_connections", `Failed to toggle monitoring pause: ${errorMessage(err)}`);
+      toast.error(`Failed to ${paused ? "pause" : "resume"} monitoring: ${errorMessage(err)}`);
     }
   };
 
@@ -730,8 +737,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
       await setMonitoringInterval(key, intervalMs);
       toast.success(`Refresh interval set to ${formatMonitorInterval(intervalMs)}`);
     } catch (err) {
-      frontendLog("open_connections", `Failed to set monitoring interval: ${err}`);
-      toast.error(`Failed to set interval: ${err}`);
+      frontendLog("open_connections", `Failed to set monitoring interval: ${errorMessage(err)}`);
+      toast.error(`Failed to set interval: ${errorMessage(err)}`);
     }
   };
 
@@ -745,8 +752,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
       await connectMonitoring(key, host);
       toast.success("Retrying monitor");
     } catch (err) {
-      frontendLog("open_connections", `Failed to retry monitoring: ${err}`);
-      toast.error(`Failed to retry monitoring: ${err}`);
+      frontendLog("open_connections", `Failed to retry monitoring: ${errorMessage(err)}`);
+      toast.error(`Failed to retry monitoring: ${errorMessage(err)}`);
     }
   };
 

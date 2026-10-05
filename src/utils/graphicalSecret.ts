@@ -16,6 +16,7 @@ import { useAppStore } from "@/store/appStore";
 import type { PasswordPromptKind, PasswordPromptOptions } from "@/store/slices/passwordPromptSlice";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** Outcome of {@link resolveGraphicalSettings}. */
 export type GraphicalSettingsResult =
@@ -87,7 +88,10 @@ export async function resolveGraphicalSettings({
   if (entered === null) return { status: "canceled" };
   if (entered && useAppStore.getState().passwordPromptShouldSave) {
     await storeCredential(credentialId, "password", entered, sourceFile).catch((err) =>
-      frontendLog("graphical_secret", `Failed to store remote-desktop password: ${err}`)
+      frontendLog(
+        "graphical_secret",
+        `Failed to store remote-desktop password: ${errorMessage(err)}`
+      )
     );
   }
   return withPassword(entered);

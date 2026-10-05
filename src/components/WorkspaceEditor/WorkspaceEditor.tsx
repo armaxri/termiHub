@@ -22,6 +22,7 @@ import { useFollowConnectionIdChanges } from "@/hooks/useFollowConnectionIdChang
 import { remapWorkspaceTabGroups } from "@/utils/connectionIdChanges";
 import "./WorkspaceEditor.css";
 import { isImeComposing } from "@/utils/imeComposition";
+import { errorMessage } from "@/utils/errorMessage";
 
 interface WorkspaceEditorProps {
   tabId: string;
@@ -150,7 +151,7 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
       }
     } catch (err) {
       // Save failed — surface it via the async Button's error toast and stay open.
-      frontendLog("workspace_editor", `Failed to save workspace: ${err}`);
+      frontendLog("workspace_editor", `Failed to save workspace: ${errorMessage(err)}`);
       throw err instanceof Error ? err : new Error("Failed to save workspace");
     }
   }, [

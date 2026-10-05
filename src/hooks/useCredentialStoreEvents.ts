@@ -9,6 +9,7 @@ import {
   onCredentialStoreStatusChanged,
   onCredentialStoreUnlockNeeded,
 } from "@/services/events";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Show warnings the backend produced after startup. Unlocking the store scopes
@@ -25,7 +26,7 @@ function showNewRecoveryWarnings(): void {
       }));
     })
     .catch((err: unknown) => {
-      frontendLog("credential_store", `Failed to load recovery warnings: ${String(err)}`);
+      frontendLog("credential_store", `Failed to load recovery warnings: ${errorMessage(err)}`);
     });
 }
 

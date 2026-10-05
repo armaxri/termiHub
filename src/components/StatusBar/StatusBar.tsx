@@ -75,6 +75,7 @@ import { PluginStatusBarWidgets } from "./PluginStatusBarWidgets";
 const AGENT_OUTDATED_CODE: IpcErrorCode = "agent_outdated";
 import { monitorOfflineLabel, monitorOfflineReasonText } from "@/utils/monitorStatusReason";
 import { isFrozenMonitorBadge, monitorStatusBadge } from "@/utils/reconnectStatus";
+import { errorMessage } from "@/utils/errorMessage";
 import "./StatusBar.css";
 
 const INDENT_SIZES = [1, 2, 4, 8] as const;
@@ -644,7 +645,10 @@ function MonitoringStatus() {
         await useAppStore.getState().connectMonitoring(key, hostLabel);
         autoConnectFailedRef.current = null;
       } catch (err) {
-        frontendLog("monitoring", `monitoring auto-connect failed for ${key}: ${err}`);
+        frontendLog(
+          "monitoring",
+          `monitoring auto-connect failed for ${key}: ${errorMessage(err)}`
+        );
       }
     };
 
@@ -681,8 +685,11 @@ function MonitoringStatus() {
         await setMonitoringPaused(activeMonitorKey, paused);
         toast.success(paused ? "Monitoring paused" : "Monitoring resumed");
       } catch (err) {
-        frontendLog("monitoring", `Failed to ${paused ? "pause" : "resume"} monitoring: ${err}`);
-        toast.error(`Failed to ${paused ? "pause" : "resume"} monitoring: ${err}`);
+        frontendLog(
+          "monitoring",
+          `Failed to ${paused ? "pause" : "resume"} monitoring: ${errorMessage(err)}`
+        );
+        toast.error(`Failed to ${paused ? "pause" : "resume"} monitoring: ${errorMessage(err)}`);
       }
     },
     [activeMonitorKey, setMonitoringPaused]
@@ -696,8 +703,8 @@ function MonitoringStatus() {
         await setMonitoringInterval(activeMonitorKey, intervalMs);
         toast.success(`Refresh interval set to ${formatIntervalLabel(intervalMs)}`);
       } catch (err) {
-        frontendLog("monitoring", `Failed to set monitoring interval: ${err}`);
-        toast.error(`Failed to set interval: ${err}`);
+        frontendLog("monitoring", `Failed to set monitoring interval: ${errorMessage(err)}`);
+        toast.error(`Failed to set interval: ${errorMessage(err)}`);
       }
     },
     [activeMonitorKey, setMonitoringInterval]
@@ -710,8 +717,8 @@ function MonitoringStatus() {
       await cancelMonitoring(activeMonitorKey);
       toast.success("Monitoring connect cancelled");
     } catch (err) {
-      frontendLog("monitoring", `Failed to cancel monitoring: ${err}`);
-      toast.error(`Failed to cancel: ${err}`);
+      frontendLog("monitoring", `Failed to cancel monitoring: ${errorMessage(err)}`);
+      toast.error(`Failed to cancel: ${errorMessage(err)}`);
     }
   }, [activeMonitorKey, cancelMonitoring]);
 

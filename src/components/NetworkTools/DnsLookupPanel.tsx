@@ -108,7 +108,7 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
         summary: canceled ? "Lookup canceled" : "Lookup failed",
         error: canceled ? undefined : errorMessage(err),
       });
-      frontendLog("dns_lookup", `DNS lookup failed: ${err}`);
+      frontendLog("dns_lookup", `DNS lookup failed: ${errorMessage(err)}`);
       throw err; // keep the async Button in its error path (no false success flash)
     } finally {
       setRunning(false);

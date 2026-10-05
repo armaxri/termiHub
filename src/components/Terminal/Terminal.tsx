@@ -82,6 +82,7 @@ import {
   resolveBackendRedriveOutcome,
   classifyExitReason,
 } from "./terminalConnectionPlan";
+import { errorMessage } from "@/utils/errorMessage";
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
@@ -279,7 +280,10 @@ async function pushLineEnding(tabId: string, sessionId: string): Promise<void> {
   try {
     await setSessionLineEnding(sessionId, ending);
   } catch (e) {
-    frontendLog("terminal", `failed to set line ending for session ${sessionId}: ${String(e)}`);
+    frontendLog(
+      "terminal",
+      `failed to set line ending for session ${sessionId}: ${errorMessage(e)}`
+    );
   }
 }
 
@@ -297,7 +301,7 @@ async function pushSessionLogging(tabId: string, sessionId: string): Promise<voi
   try {
     await sessionLoggingStart(sessionId, undefined, options.logTimestamps ?? false);
   } catch (e) {
-    frontendLog("terminal", `failed to start session logging for ${sessionId}: ${String(e)}`);
+    frontendLog("terminal", `failed to start session logging for ${sessionId}: ${errorMessage(e)}`);
   }
 }
 
@@ -677,7 +681,7 @@ export function Terminal({
                 // subscribeOutput, duplicating every byte of scrollback.
               }
             } catch (err) {
-              frontendLog("terminal", `Failed to fetch reattach buffer: ${err}`);
+              frontendLog("terminal", `Failed to fetch reattach buffer: ${errorMessage(err)}`);
             } finally {
               // Idempotent: clears the flag in the empty-buffer + error paths
               // where the early clear above did not run.
@@ -707,7 +711,10 @@ export function Terminal({
                 await new Promise<void>((resolve) => xterm.write(buffer, resolve));
               }
             } catch (err) {
-              frontendLog("terminal", `Failed to replay moved-session scrollback: ${err}`);
+              frontendLog(
+                "terminal",
+                `Failed to replay moved-session scrollback: ${errorMessage(err)}`
+              );
             } finally {
               if (!isCanceled()) {
                 useAppStore.getState().setTerminalReattaching(tabId, false);
@@ -1155,7 +1162,10 @@ export function Terminal({
               xterm.write(buffer);
             })
             .catch((err) =>
-              frontendLog("multi_window", `Failed to repaint reclaimed session ${sid}: ${err}`)
+              frontendLog(
+                "multi_window",
+                `Failed to repaint reclaimed session ${sid}: ${errorMessage(err)}`
+              )
             );
         });
 
@@ -1257,7 +1267,7 @@ export function Terminal({
         const store = useAppStore.getState();
         store.setTerminalConnecting(tabId, false);
         store.setTerminalAutoRetrying(tabId, 0);
-        store.setTerminalSpawnError(tabId, String(err));
+        store.setTerminalSpawnError(tabId, errorMessage(err));
       }
     },
     // initialSessionIdRef and initialCommand are intentionally excluded: they are
@@ -1482,7 +1492,7 @@ export function Terminal({
     } catch (err) {
       frontendLog(
         "terminal",
-        `webgl renderer unavailable tab=${tabId}, using DOM renderer: ${String(err)}`
+        `webgl renderer unavailable tab=${tabId}, using DOM renderer: ${errorMessage(err)}`
       );
       webglAddon?.dispose();
       webglAddon = null;
@@ -1499,7 +1509,7 @@ export function Terminal({
     const inlineImages = createInlineImagesController(xterm, {
       enabled: appSettings.terminalInlineImages !== false,
       onError: (err) =>
-        frontendLog("terminal", `inline images unavailable tab=${tabId}: ${String(err)}`),
+        frontendLog("terminal", `inline images unavailable tab=${tabId}: ${errorMessage(err)}`),
     });
     inlineImagesRef.current = inlineImages;
     const unregisterInlineImages = registerInlineImagesController(tabId, inlineImages);
@@ -1835,7 +1845,7 @@ export function Terminal({
         const snapshot = serializeAddon.serialize();
         scrollbackSnapshotRef.current = snapshot.length > 0 ? snapshot : null;
       } catch (err) {
-        frontendLog("terminal", `Failed to snapshot scrollback tab=${tabId}: ${String(err)}`);
+        frontendLog("terminal", `Failed to snapshot scrollback tab=${tabId}: ${errorMessage(err)}`);
         scrollbackSnapshotRef.current = null;
       }
       // Dispose the highlighting engine on the same boundary as the xterm

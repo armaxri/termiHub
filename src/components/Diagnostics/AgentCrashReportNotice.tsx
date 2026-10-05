@@ -8,6 +8,7 @@ import { onAgentCrashNoticesChanged } from "@/services/events";
 import type { AgentCrashNotice } from "@/types/diagnostics";
 import { frontendLog } from "@/utils/frontendLog";
 import { openDiagnosticsExport, useDiagnosticsDialogStore } from "./diagnosticsDialogStore";
+import { errorMessage } from "@/utils/errorMessage";
 import "./Diagnostics.css";
 
 /** Treat a missing or malformed reply as "no notices" rather than crash. */
@@ -39,13 +40,15 @@ export function AgentCrashReportNotice() {
       .then((list) => {
         if (!cancelled) setNotices(asList(list));
       })
-      .catch((e) => frontendLog("crash_report", `agent notice check failed: ${String(e)}`));
+      .catch((e) => frontendLog("crash_report", `agent notice check failed: ${errorMessage(e)}`));
     onAgentCrashNoticesChanged((list) => setNotices(asList(list)))
       .then((fn) => {
         if (cancelled) fn();
         else unlisten = fn;
       })
-      .catch((e) => frontendLog("crash_report", `agent notice subscribe failed: ${String(e)}`));
+      .catch((e) =>
+        frontendLog("crash_report", `agent notice subscribe failed: ${errorMessage(e)}`)
+      );
     return () => {
       cancelled = true;
       unlisten?.();
@@ -55,7 +58,7 @@ export function AgentCrashReportNotice() {
   const dismiss = useCallback((notice: AgentCrashNotice) => {
     setNotices((prev) => prev.filter((n) => n.agentId !== notice.agentId));
     acknowledgeAgentCrashNotice(notice.agentId, notice.name).catch((e) =>
-      frontendLog("crash_report", `agent acknowledge failed: ${String(e)}`)
+      frontendLog("crash_report", `agent acknowledge failed: ${errorMessage(e)}`)
     );
   }, []);
 

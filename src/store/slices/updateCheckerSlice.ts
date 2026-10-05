@@ -10,6 +10,7 @@ import {
 import { currentSettingsView, mirrorSettingsIntent } from "../settingsBridge";
 import { getSettings } from "@/services/storage";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Update-checker domain slice (ARCH-001/FES-011, appStore god-module split via
@@ -83,7 +84,7 @@ export const createUpdateCheckerSlice: StateCreator<AppState, [], [], UpdateChec
       set({ updateNotificationDismissed: true });
       mirrorSettingsIntent("settings.replace", { settings: updatedSettings });
     } catch (err) {
-      frontendLog("update", `Failed to skip version: ${err}`);
+      frontendLog("update", `Failed to skip version: ${errorMessage(err)}`);
     }
   },
   clearSkippedUpdateVersion: async () => {
@@ -94,7 +95,7 @@ export const createUpdateCheckerSlice: StateCreator<AppState, [], [], UpdateChec
       // (#2404) — no `appStore` slice to set.
       mirrorSettingsIntent("settings.replace", { settings: updatedSettings });
     } catch (err) {
-      frontendLog("update", `Failed to clear skipped version: ${err}`);
+      frontendLog("update", `Failed to clear skipped version: ${errorMessage(err)}`);
     }
   },
 });

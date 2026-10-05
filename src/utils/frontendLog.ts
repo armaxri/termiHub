@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { LogEntry } from "@/types/terminal";
+import { errorMessage } from "@/utils/errorMessage";
 
 type LogCallback = (entry: LogEntry) => void;
 
@@ -160,6 +161,6 @@ export function fireAndForget(
 ): void {
   void Promise.resolve(promise).catch((err: unknown) => {
     const log = level === "error" ? frontendError : frontendWarn;
-    log("fire_and_forget", `${reason}: ${String(err)}`);
+    log("fire_and_forget", `${reason}: ${errorMessage(err)}`);
   });
 }

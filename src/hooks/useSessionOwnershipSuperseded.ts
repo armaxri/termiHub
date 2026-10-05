@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { onSessionOwnershipSuperseded } from "@/services/events";
 import { toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Global hook that explains a silent loss of resize rights (SM-026).
@@ -42,7 +43,10 @@ export function useSessionOwnershipSuperseded(): void {
         }
       })
       .catch((err) =>
-        frontendLog("session_ownership", `Failed to subscribe to superseded events: ${err}`)
+        frontendLog(
+          "session_ownership",
+          `Failed to subscribe to superseded events: ${errorMessage(err)}`
+        )
       );
 
     return () => {

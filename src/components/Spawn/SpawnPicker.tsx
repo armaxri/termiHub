@@ -12,6 +12,7 @@ import {
 import { listSpawnOptions, type SpawnOptions } from "@/services/api";
 import type { ContainerRuntime, SpawnChoice, SpawnTarget } from "@/types/spawn";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 import "./SpawnPicker.css";
 
 /**
@@ -95,7 +96,7 @@ export function SpawnPicker({
         setSelected(next.shells.length > 0 ? localRowId(next.shells[0]) : null);
       } catch (err) {
         if (cancelled) return;
-        frontendLog("spawn", `Failed to enumerate spawn options: ${err}`);
+        frontendLog("spawn", `Failed to enumerate spawn options: ${errorMessage(err)}`);
         setOptions({
           shells: [],
           wslDistros: [],

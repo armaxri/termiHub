@@ -41,7 +41,7 @@ export function WolPanel() {
       const devices = await networkWolDevicesList();
       setSavedDevices(devices);
     } catch (err) {
-      frontendLog("wol_panel", `Failed to load WoL devices: ${err}`);
+      frontendLog("wol_panel", `Failed to load WoL devices: ${errorMessage(err)}`);
     }
   }, []);
 
@@ -61,7 +61,7 @@ export function WolPanel() {
     } catch (err) {
       setError(errorMessage(err));
       recordWol(startedAt, mac, broadcast, Number(port), "error", errorMessage(err));
-      frontendLog("wol_panel", `WoL send failed: ${err}`);
+      frontendLog("wol_panel", `WoL send failed: ${errorMessage(err)}`);
       throw err; // keep the async Button in its error path (no false success flash)
     }
   }, [mac, broadcast, port, canSend]);
@@ -75,8 +75,8 @@ export function WolPanel() {
     } catch (err) {
       setError(errorMessage(err));
       recordWol(startedAt, device.mac, device.broadcast, device.port, "error", errorMessage(err));
-      frontendLog("wol_panel", `WoL wake failed: ${err}`);
-      toast.error(`Wake failed: ${err}`);
+      frontendLog("wol_panel", `WoL wake failed: ${errorMessage(err)}`);
+      toast.error(`Wake failed: ${errorMessage(err)}`);
     }
   }, []);
 
@@ -113,8 +113,8 @@ export function WolPanel() {
       toast.success(`Saved device "${name}"`);
     } catch (err) {
       setError(errorMessage(err));
-      frontendLog("wol_panel", `WoL device save failed: ${err}`);
-      toast.error(`Save failed: ${err}`);
+      frontendLog("wol_panel", `WoL device save failed: ${errorMessage(err)}`);
+      toast.error(`Save failed: ${errorMessage(err)}`);
       throw err; // keep the async Button in its error path (no success flash)
     }
   }, [saveName, macError, mac, broadcast, port, loadDevices]);
@@ -126,8 +126,8 @@ export function WolPanel() {
         await loadDevices();
       } catch (err) {
         setError(errorMessage(err));
-        frontendLog("wol_panel", `WoL device delete failed: ${err}`);
-        toast.error(`Delete failed: ${err}`);
+        frontendLog("wol_panel", `WoL device delete failed: ${errorMessage(err)}`);
+        toast.error(`Delete failed: ${errorMessage(err)}`);
       }
     },
     [loadDevices]

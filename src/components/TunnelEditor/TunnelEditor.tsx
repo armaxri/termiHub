@@ -35,6 +35,7 @@ import { newId } from "@/services/transport/ids";
 import { ambiguousConnectionIds } from "@/utils/jumpHost";
 import { t } from "@/i18n/catalog";
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
+import { errorMessage } from "@/utils/errorMessage";
 import "./TunnelEditor.css";
 
 /** Encode a run-location as a `Select` option value, and decode it back. */
@@ -305,7 +306,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       await saveTunnel(config);
       if (andStart) {
         startTunnel(config.id).catch((err) => {
-          frontendLog("tunnel_editor", `Failed to start tunnel after save: ${err}`);
+          frontendLog("tunnel_editor", `Failed to start tunnel after save: ${errorMessage(err)}`);
           toast.error("Failed to start tunnel");
         });
       } else {
@@ -321,7 +322,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         closeTab(tabId, leaf.id);
       }
     } catch (err) {
-      frontendLog("tunnel_editor", `Failed to save tunnel: ${err}`);
+      frontendLog("tunnel_editor", `Failed to save tunnel: ${errorMessage(err)}`);
       throw err instanceof Error ? err : new Error("Failed to save tunnel");
     }
   };
@@ -421,7 +422,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       toast.success(`Chained ${parent.name} to this computer`);
       if (chainStartNow) {
         startTunnel(parent.id).catch((err) => {
-          frontendLog("tunnel_editor", `Failed to start chained pair: ${err}`);
+          frontendLog("tunnel_editor", `Failed to start chained pair: ${errorMessage(err)}`);
           toast.error("Failed to start chained pair");
         });
       }
@@ -430,7 +431,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       const leaf = findLeafByTab(rootPanel, tabId);
       if (leaf) closeTab(tabId, leaf.id);
     } catch (err) {
-      frontendLog("tunnel_editor", `Failed to chain hop: ${err}`);
+      frontendLog("tunnel_editor", `Failed to chain hop: ${errorMessage(err)}`);
       toast.error("Failed to chain a hop to this computer");
     }
   };

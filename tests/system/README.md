@@ -428,7 +428,11 @@ owns bringing them up: depend on the session-scoped **`ssh_fixtures`** fixture
 `<runtime> compose up -d ssh-password ssh-keys` once per session, then waits for
 each published SSH port to accept a connection. When no container runtime is
 available the suite **skips cleanly** rather than failing, so a plain `pytest`
-still works on a machine without one.
+still works on a machine without one. Only a missing runtime skips, though: when
+`compose` runs against a working daemon and fails (a container-name conflict, a
+bad compose file, a build error) the harness raises `ComposeFixtureFailed` with
+`CI` set, so the test errors instead of silently skipping (#4103). Off CI the
+same failure still degrades to a skip.
 
 **Docker or Podman** — the runtime is detected like `scripts/test-system-linux.sh`:
 a `CONTAINER_CMD` env override wins; otherwise Docker is preferred and Podman is

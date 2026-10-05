@@ -21,6 +21,7 @@
 import type { IBufferCell, IBufferLine, IDisposable, Terminal } from "@xterm/xterm";
 import type { HighlightRule, HighlightStyle } from "../types/syntaxHighlighting";
 import { frontendLog } from "../utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** Lines longer than this (whole logical line) are skipped to avoid ReDoS/backtracking cost. */
 const MAX_LINE_LENGTH = 10_000;
@@ -180,7 +181,7 @@ export function compileRules(rules: readonly HighlightRule[]): CompiledRule[] {
     } catch (err) {
       frontendLog(
         "syntaxHighlighting",
-        `rule "${rule.id}" has an invalid pattern; skipping. ${String(err)}`
+        `rule "${rule.id}" has an invalid pattern; skipping. ${errorMessage(err)}`
       );
       return;
     }

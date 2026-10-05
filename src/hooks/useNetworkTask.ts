@@ -107,7 +107,7 @@ export function useNetworkTask({
       setError(errorMessage(err));
       setStatus("error");
       teardown();
-      frontendLog(logScope, `Task failed: ${err}`);
+      frontendLog(logScope, `Task failed: ${errorMessage(err)}`);
     }
   }, [start, subscribe, onReset, teardown, logScope]);
 
@@ -117,7 +117,7 @@ export function useNetworkTask({
     try {
       await cancel(id);
     } catch (err) {
-      frontendLog(logScope, `Cancel failed: ${err}`);
+      frontendLog(logScope, `Cancel failed: ${errorMessage(err)}`);
     }
     setStatus("canceled");
     teardown();

@@ -545,6 +545,9 @@ fn parse_docker_settings(settings: &serde_json::Value) -> DockerConfig {
         .and_then(|s| serde_json::from_value::<ContainerMode>(serde_json::json!(s)).ok())
         .unwrap_or_default();
 
+    // The TTY size the frontend fitted, not a fixed 80x24 (#4102).
+    let (cols, rows) = crate::config::terminal_size_from_settings(settings);
+
     DockerConfig {
         runtime,
         container_mode,
@@ -552,8 +555,8 @@ fn parse_docker_settings(settings: &serde_json::Value) -> DockerConfig {
         compose_service: opt_str("composeService"),
         image: str_field("image"),
         shell: opt_str("shell"),
-        cols: 80,
-        rows: 24,
+        cols,
+        rows,
         env_vars,
         volumes,
         working_directory: opt_str("workingDirectory"),
@@ -1228,6 +1231,23 @@ impl ConnectionType for Docker {
                 .start_exec(&exec_id, Some(start_config))
                 .await
                 .map_err(|e| SessionError::SpawnFailed(format!("Failed to start exec: {e}")))?;
+
+            // Size the exec TTY to what the frontend fitted (#4102). The exec
+            // API has no create-time console size (bollard 0.18), so — like the
+            // docker CLI — resize right after start, before any output is read.
+            // Non-fatal: the frontend's post-setup resize syncs it again.
+            if let Err(e) = client
+                .resize_exec(
+                    &exec_id,
+                    ResizeExecOptions {
+                        width: config.cols,
+                        height: config.rows,
+                    },
+                )
+                .await
+            {
+                warn!("Docker exec initial resize failed: {e}");
+            }
 
             let alive = Arc::new(AtomicBool::new(true));
 
@@ -2031,6 +2051,21 @@ mod tests {
         assert!(config.remove_on_exit);
         assert!(config.env_vars.is_empty());
         assert!(config.volumes.is_empty());
+    }
+
+    /// #4102: the exec TTY is sized from the `cols`/`rows` the frontend passes.
+    #[test]
+    fn parse_terminal_size() {
+        let settings = serde_json::json!({"image": "alpine", "cols": 117, "rows": 36});
+        let config = parse_docker_settings(&settings);
+        assert_eq!((config.cols, config.rows), (117, 36));
+
+        let config = parse_docker_settings(&serde_json::json!({"image": "alpine"}));
+        assert_eq!((config.cols, config.rows), (80, 24));
+
+        let settings = serde_json::json!({"image": "alpine", "cols": -1, "rows": 0});
+        let config = parse_docker_settings(&settings);
+        assert_eq!((config.cols, config.rows), (80, 24));
     }
 
     #[test]

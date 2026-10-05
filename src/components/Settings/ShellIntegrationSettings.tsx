@@ -31,6 +31,7 @@ import {
 } from "./shellIntegrationEntries";
 import { INSTALL_TOAST, UNINSTALL_TOAST, syncRegistrationFacts } from "./shellIntegrationStore";
 import { ShellIntegrationEntryEditor } from "./ShellIntegrationEntryEditor";
+import { errorMessage } from "@/utils/errorMessage";
 import "./ShellIntegrationSettings.css";
 
 /** The Linux file managers rendered as install toggles, with their detection id. */
@@ -70,7 +71,7 @@ export function ShellIntegrationSettings() {
   useEffect(() => {
     getShellIntegrationStatus()
       .then(setStatus)
-      .catch((e) => frontendLog("shell_integration", `status load failed: ${String(e)}`));
+      .catch((e) => frontendLog("shell_integration", `status load failed: ${errorMessage(e)}`));
   }, []);
 
   /** Persist an edited shell-integration settings value + refresh status. */
@@ -81,8 +82,8 @@ export function ShellIntegrationSettings() {
         // its rollback; it re-throws on failure so we can surface the toast.
         setStatus(await updateShellIntegration(nextSi));
       } catch (e) {
-        frontendLog("shell_integration", `save failed: ${String(e)}`);
-        toast.error("Failed to save shell integration settings", { description: String(e) });
+        frontendLog("shell_integration", `save failed: ${errorMessage(e)}`);
+        toast.error("Failed to save shell integration settings", { description: errorMessage(e) });
       }
     },
     [updateShellIntegration]

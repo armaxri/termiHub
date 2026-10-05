@@ -18,6 +18,7 @@ import { probeConnectionPath, cancelConnectionPathProbe } from "@/services/api";
 import { onJumpHostHopStatus, onJumpHostProbeComplete, HopProbeStatus } from "@/services/events";
 import { frontendLog } from "@/utils/frontendLog";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
+import { errorMessage } from "@/utils/errorMessage";
 import "./ConnectionPathDialog.css";
 
 interface ConnectionPathDialogProps {
@@ -119,7 +120,7 @@ export function ConnectionPathDialog({ open, connection, onClose }: ConnectionPa
       try {
         await probeConnectionPath(probeId, settings);
       } catch (e) {
-        frontendLog("connection_path", `probe ${probeId} failed to start: ${String(e)}`);
+        frontendLog("connection_path", `probe ${probeId} failed to start: ${errorMessage(e)}`);
       }
     })();
 

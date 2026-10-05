@@ -10,6 +10,7 @@ import type { ConnectionConfig } from "@/types/terminal";
 import type { SessionHistoryEntry } from "@/types/sessionHistory";
 import { sessionTypeBadge } from "@/utils/sessionHistoryTitle";
 import { newId } from "@/services/transport/ids";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** Sentinel for the "No folder" option (Radix Select forbids empty-string item values). */
 const NO_FOLDER = "__no_folder__";
@@ -148,7 +149,7 @@ export function SaveAsConnectionDialog({
       try {
         await storeCredential(connection.id, credentialType, password);
       } catch (err) {
-        toast.error(`Failed to save password: ${err}`);
+        toast.error(`Failed to save password: ${errorMessage(err)}`);
         return;
       }
     }

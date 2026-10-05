@@ -152,6 +152,14 @@ impl Negotiator {
         self
     }
 
+    /// Start with window size `cols` x `rows` instead of the 80x24 default
+    /// (builder style) — the size the frontend fitted (#4102).
+    pub(super) fn with_size(mut self, cols: u16, rows: u16) -> Self {
+        self.cols = cols;
+        self.rows = rows;
+        self
+    }
+
     /// The configured input mode.
     #[cfg(test)]
     pub(super) fn input_mode(&self) -> InputMode {

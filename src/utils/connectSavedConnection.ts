@@ -66,6 +66,7 @@ import { frontendError, frontendLog } from "@/utils/frontendLog";
 import { resolveGraphicalSettings } from "@/utils/graphicalSecret";
 import { pluginConnectionIssue } from "@/utils/pluginConnectionTypes";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** Options for {@link connectSavedConnection}. */
 export interface ConnectSavedConnectionOptions {
@@ -412,7 +413,7 @@ export async function connectSavedConnection(
           ).catch((err) => {
             frontendError(
               "connection_list",
-              `Failed to remove stale ${resolution.credentialType} credential for ${connection.id}: ${err}`
+              `Failed to remove stale ${resolution.credentialType} credential for ${connection.id}: ${errorMessage(err)}`
             );
           });
           // Explain the re-prompt: the saved secret was rejected and cleared.
@@ -475,7 +476,7 @@ export async function connectSavedConnection(
       if (!sharedCredential && useAppStore.getState().passwordPromptShouldSave) {
         await storeCredential(connection.id, "password", password, connection.sourceFile).catch(
           (err) => {
-            frontendLog("connection_list", `Failed to store credential: ${err}`);
+            frontendLog("connection_list", `Failed to store credential: ${errorMessage(err)}`);
           }
         );
       }
@@ -507,7 +508,7 @@ export async function connectSavedConnection(
           passphrase,
           connection.sourceFile
         ).catch((err) => {
-          frontendLog("connection_list", `Failed to store key passphrase: ${err}`);
+          frontendLog("connection_list", `Failed to store key passphrase: ${errorMessage(err)}`);
         });
       }
     }

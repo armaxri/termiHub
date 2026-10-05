@@ -258,3 +258,176 @@ def test_reap_deduplicates_a_container_seen_by_both_listings(monkeypatch):
     assert removed == ["termihub-shared"]
     rm = next((c for c in fake.calls if "rm" in c), None)
     assert rm == ["docker", "rm", "-f", "termihub-shared"]
+
+
+# ── Compose-failure classification (#4103) ────────────────────────────────────
+# A failed ``compose`` run used to map to ContainerRuntimeUnavailable (→ skip)
+# unconditionally, so a container-name conflict silently skipped ~100 Linux
+# suites for days. Now only "no usable runtime" output skips; a real compose
+# failure raises ComposeFixtureFailed (→ the test errors) whenever CI is set.
+
+#: Mirrors the stderr seen in the nightly runs cited by #4103 (the workflow brought
+#: the fixtures up under compose project ``docker``; the harness used ``-p termihub``).
+_NAME_CONFLICT_STDERR = """\
+ Container termihub-ssh-password  Creating
+ Container termihub-ssh-keys  Creating
+Error response from daemon: Conflict. The container name "/termihub-ssh-keys" is \
+already in use by container "3f1c0a9e7b2d". You have to remove (or rename) that \
+container to be able to reuse that name.
+"""
+
+_NO_DAEMON_STDERR = (
+    "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. "
+    "Is the docker daemon running?\n"
+)
+
+_NO_COMPOSE_PLUGIN_STDERR = "docker: 'compose' is not a docker command.\nSee 'docker --help'\n"
+
+_PODMAN_NO_PROVIDER_STDERR = (
+    "Error: looking up compose provider failed\n"
+    "7 errors occurred:\n\t* exec: \"docker-compose\": executable file not found in $PATH\n"
+)
+
+_BAD_COMPOSE_FILE_STDERR = (
+    "validating tests/docker/docker-compose.yml: services.ssh-keys "
+    "additional properties 'bogus' not allowed\n"
+)
+
+
+def _failing_run(stderr: str, *, stdout: str = "", returncode: int = 1):
+    """A ``subprocess.run`` stand-in that fails like ``check=True`` would."""
+
+    def run(cmd, **_kwargs):
+        raise subprocess.CalledProcessError(returncode, cmd, output=stdout, stderr=stderr)
+
+    return run
+
+
+def _run_compose():
+    fx.ComposeFixture._run_compose(
+        ["docker", "compose", "up", "-d", "ssh-keys"],
+        ["ssh-keys"],
+        env={},
+        timeout=5.0,
+        action="up",
+    )
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        _NO_DAEMON_STDERR,
+        _NO_COMPOSE_PLUGIN_STDERR,
+        _PODMAN_NO_PROVIDER_STDERR,
+        "no matching manifest for windows/amd64 10.0.20348 in the manifest list entries\n",
+    ],
+    ids=["no-daemon", "no-compose-plugin", "podman-no-provider", "windows-daemon"],
+)
+def test_runtime_unavailable_output_is_classified_as_skip(stderr):
+    assert fx.is_runtime_unavailable_output(stderr)
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [_NAME_CONFLICT_STDERR, _BAD_COMPOSE_FILE_STDERR, "", None],
+    ids=["name-conflict", "bad-compose-file", "empty", "none"],
+)
+def test_real_compose_failure_output_is_not_classified_as_skip(stderr):
+    assert not fx.is_runtime_unavailable_output(stderr)
+
+
+def test_name_conflict_on_ci_fails_instead_of_skipping(monkeypatch):
+    """The #4103 regression: a name conflict under CI must error, not skip."""
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setattr(subprocess, "run", _failing_run(_NAME_CONFLICT_STDERR))
+    with pytest.raises(fx.ComposeFixtureFailed, match="is already in use"):
+        _run_compose()
+
+
+def test_compose_fixture_failed_escapes_a_skip_handler():
+    """Not a ContainerRuntimeUnavailable subclass, so the suites' skip handlers
+    (``except ContainerRuntimeUnavailable: pytest.skip``) let it through."""
+    assert not issubclass(fx.ComposeFixtureFailed, ContainerRuntimeUnavailable)
+
+
+def test_bad_compose_file_on_ci_fails(monkeypatch):
+    monkeypatch.setenv("CI", "1")
+    monkeypatch.setattr(subprocess, "run", _failing_run(_BAD_COMPOSE_FILE_STDERR))
+    with pytest.raises(fx.ComposeFixtureFailed):
+        _run_compose()
+
+
+def test_no_daemon_on_ci_still_skips(monkeypatch):
+    """A machine without a reachable runtime skips cleanly even on CI."""
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setattr(subprocess, "run", _failing_run(_NO_DAEMON_STDERR))
+    with pytest.raises(ContainerRuntimeUnavailable, match="Docker daemon"):
+        _run_compose()
+
+
+def test_runtime_marker_on_stdout_is_honored(monkeypatch):
+    """Some providers print the connection error on stdout, not stderr."""
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setattr(subprocess, "run", _failing_run("", stdout=_NO_DAEMON_STDERR))
+    with pytest.raises(ContainerRuntimeUnavailable):
+        _run_compose()
+
+
+@pytest.mark.parametrize("ci_value", [None, "", "0", "false"], ids=["unset", "empty", "0", "false"])
+def test_name_conflict_off_ci_degrades_to_skip(monkeypatch, ci_value):
+    """Off CI a real compose failure keeps the old skip behaviour."""
+    if ci_value is None:
+        monkeypatch.delenv("CI", raising=False)
+    else:
+        monkeypatch.setenv("CI", ci_value)
+    monkeypatch.setattr(subprocess, "run", _failing_run(_NAME_CONFLICT_STDERR))
+    with pytest.raises(ContainerRuntimeUnavailable, match="is already in use"):
+        _run_compose()
+
+
+def test_compose_fixture_failed_is_exported():
+    import termihub_harness
+
+    assert termihub_harness.ComposeFixtureFailed is fx.ComposeFixtureFailed
+
+
+def _info_run(os_type: str, *, returncode: int = 0):
+    def run(cmd, **_kwargs):
+        assert cmd[1:] == ["info", "--format", "{{.OSType}}"]
+        return SimpleNamespace(returncode=returncode, stdout=f"{os_type}\n", stderr="")
+
+    return run
+
+
+def test_docker_os_type_reads_the_daemon_os(monkeypatch):
+    monkeypatch.setattr(subprocess, "run", _info_run("windows"))
+    assert fx._docker_os_type("docker") == "windows"
+
+
+def test_docker_os_type_is_none_for_podman(monkeypatch):
+    def run(*_args, **_kwargs):
+        raise AssertionError("podman must not be queried for OSType")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert fx._docker_os_type("podman") is None
+
+
+def test_docker_os_type_is_none_on_query_error(monkeypatch):
+    monkeypatch.setattr(subprocess, "run", _info_run("", returncode=1))
+    assert fx._docker_os_type("docker") is None
+
+
+def test_ensure_skips_on_a_windows_container_daemon_even_on_ci(monkeypatch):
+    """The hosted Windows runner has a reachable daemon that cannot run the Linux
+    fixtures: that is an environment gap and must still skip under CI."""
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setattr(fx, "container_runtime", lambda: "docker")
+    monkeypatch.setattr(fx, "_docker_os_type", lambda _runtime: "windows")
+
+    def no_compose(*_args, **_kwargs):
+        raise AssertionError("compose must not run against a Windows daemon")
+
+    monkeypatch.setattr(fx, "_reap_stale_fixtures_once", no_compose)
+    monkeypatch.setattr(fx.ComposeFixture, "_run_compose", staticmethod(no_compose))
+    with pytest.raises(ContainerRuntimeUnavailable, match="windows containers"):
+        fx.ComposeFixture().ensure("ssh-keys")

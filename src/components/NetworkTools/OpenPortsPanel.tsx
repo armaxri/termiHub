@@ -53,7 +53,7 @@ export function OpenPortsPanel() {
         summary: "Listing failed",
         error: errorMessage(err),
       });
-      frontendLog("open_ports", `Failed to list open ports: ${err}`);
+      frontendLog("open_ports", `Failed to list open ports: ${errorMessage(err)}`);
       throw err; // keep the async Button in its error path (no false success flash)
     }
   }, []);

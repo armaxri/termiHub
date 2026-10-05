@@ -24,6 +24,7 @@ import type { HttpMonitorState } from "@/types/network";
 import { frontendLog } from "@/utils/frontendLog";
 import { Button, Tooltip, EmptyState, toast } from "@/components/ui";
 import { isMonitorStale, formatCheckedAgo } from "./monitorStaleness";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * How often the sidebar re-evaluates monitor ages/staleness. The backend poller
@@ -202,7 +203,7 @@ export function NetworkToolsSidebar() {
       const monitors = await networkHttpMonitorList();
       setHttpMonitors(monitors);
     } catch (err) {
-      frontendLog("network_sidebar", `Failed to load monitors: ${err}`);
+      frontendLog("network_sidebar", `Failed to load monitors: ${errorMessage(err)}`);
     }
   }, [setHttpMonitors]);
 
@@ -228,7 +229,9 @@ export function NetworkToolsSidebar() {
           unlisten = fn;
         }
       })
-      .catch((err) => frontendLog("network_sidebar", `Failed to subscribe to checks: ${err}`));
+      .catch((err) =>
+        frontendLog("network_sidebar", `Failed to subscribe to checks: ${errorMessage(err)}`)
+      );
 
     return () => {
       disposed = true;
@@ -250,8 +253,8 @@ export function NetworkToolsSidebar() {
         await refreshMonitors();
         toast.success("Monitor stopped");
       } catch (err) {
-        frontendLog("network_sidebar", `Failed to stop monitor: ${err}`);
-        toast.error(`Failed to stop monitor: ${err}`);
+        frontendLog("network_sidebar", `Failed to stop monitor: ${errorMessage(err)}`);
+        toast.error(`Failed to stop monitor: ${errorMessage(err)}`);
       }
     },
     [refreshMonitors]
@@ -264,8 +267,8 @@ export function NetworkToolsSidebar() {
         await refreshMonitors();
         toast.success("Monitor paused");
       } catch (err) {
-        frontendLog("network_sidebar", `Failed to pause monitor: ${err}`);
-        toast.error(`Failed to pause monitor: ${err}`);
+        frontendLog("network_sidebar", `Failed to pause monitor: ${errorMessage(err)}`);
+        toast.error(`Failed to pause monitor: ${errorMessage(err)}`);
       }
     },
     [refreshMonitors]
@@ -278,8 +281,8 @@ export function NetworkToolsSidebar() {
         await refreshMonitors();
         toast.success("Monitor resumed");
       } catch (err) {
-        frontendLog("network_sidebar", `Failed to resume monitor: ${err}`);
-        toast.error(`Failed to resume monitor: ${err}`);
+        frontendLog("network_sidebar", `Failed to resume monitor: ${errorMessage(err)}`);
+        toast.error(`Failed to resume monitor: ${errorMessage(err)}`);
       }
     },
     [refreshMonitors]
@@ -292,8 +295,8 @@ export function NetworkToolsSidebar() {
         await refreshMonitors();
         toast.success("Monitor removed");
       } catch (err) {
-        frontendLog("network_sidebar", `Failed to remove monitor: ${err}`);
-        toast.error(`Failed to remove monitor: ${err}`);
+        frontendLog("network_sidebar", `Failed to remove monitor: ${errorMessage(err)}`);
+        toast.error(`Failed to remove monitor: ${errorMessage(err)}`);
       }
     },
     [refreshMonitors]

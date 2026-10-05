@@ -8,6 +8,7 @@ import { Button, toast } from "@/components/ui";
 import { getShellIntegrationStatus, installShellIntegration } from "@/services/api";
 import { defaultShellIntegrationSettings } from "@/components/Settings/shellIntegrationEntries";
 import { INSTALL_TOAST, syncRegistrationFacts } from "@/components/Settings/shellIntegrationStore";
+import { errorMessage } from "@/utils/errorMessage";
 import "./ShellIntegrationBanner.css";
 
 /**
@@ -32,7 +33,9 @@ export function ShellIntegrationBanner() {
     if (!eligible) return;
     getShellIntegrationStatus()
       .then(setStatus)
-      .catch((e) => frontendLog("shell_integration", `banner status load failed: ${String(e)}`));
+      .catch((e) =>
+        frontendLog("shell_integration", `banner status load failed: ${errorMessage(e)}`)
+      );
   }, [eligible]);
 
   const persistDismissed = useCallback(async () => {
@@ -41,7 +44,7 @@ export function ShellIntegrationBanner() {
       // on failure, which the banner logs (no toast, matching prior behaviour).
       await updateShellIntegration({ ...si, firstLaunchBannerDismissed: true });
     } catch (e) {
-      frontendLog("shell_integration", `banner dismiss persist failed: ${String(e)}`);
+      frontendLog("shell_integration", `banner dismiss persist failed: ${errorMessage(e)}`);
     }
   }, [si, updateShellIntegration]);
 
