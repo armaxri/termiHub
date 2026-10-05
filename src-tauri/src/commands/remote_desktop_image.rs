@@ -80,6 +80,43 @@ pub(crate) fn host_image_to_clipboard_image(
     ClipboardImage::new(width, height, rgba.to_vec()).map_err(reject)
 }
 
+/// A host OS clipboard image as the clipboard plugin hands it over: its
+/// dimensions and its (not yet validated) RGBA buffer.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct HostClipboardImage<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: &'a [u8],
+}
+
+/// Send what the host clipboard read produced to the remote: `None` (no
+/// readable host image) sends nothing and resolves to `None`; an image over the
+/// clipboard-image caps is refused with [`TerminalError::InvalidParams`] before
+/// anything reaches the session; otherwise it is pushed ownership-gated and its
+/// dimensions are returned (`None` when another window controls the session).
+///
+/// Split from the Tauri command so the cap path is testable without a host
+/// clipboard (#4088).
+pub(crate) async fn send_host_clipboard_image(
+    manager: &GraphicalSessionManager,
+    window_manager: &WindowManager,
+    window_label: &str,
+    session_id: &str,
+    host_image: Option<HostClipboardImage<'_>>,
+) -> Result<Option<ClipboardImageInfo>, TerminalError> {
+    let Some(host_image) = host_image else {
+        return Ok(None);
+    };
+    let image =
+        host_image_to_clipboard_image(host_image.width, host_image.height, host_image.rgba)
+            .inspect_err(|e| warn!(error = %e, "refusing to send the local clipboard image"))?;
+    let info = image.info();
+    let sent =
+        gated_send_clipboard_image(manager, window_manager, window_label, session_id, image)
+            .await?;
+    Ok(sent.then_some(info))
+}
+
 /// What the clipboard panel needs to render its image section (PROD-021).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -172,26 +209,23 @@ pub async fn remote_desktop_send_clipboard_image(
     manager: State<'_, GraphicalSessionManager>,
     window_manager: State<'_, WindowManager>,
 ) -> Result<Option<ClipboardImageInfo>, TerminalError> {
-    let host_image = match app_handle.clipboard().read_image() {
-        Ok(image) => image,
-        Err(e) => {
-            debug!(error = %e, "host clipboard holds no readable image");
-            return Ok(None);
-        }
-    };
-    let image =
-        host_image_to_clipboard_image(host_image.width(), host_image.height(), host_image.rgba())
-            .inspect_err(|e| warn!(error = %e, "refusing to send the local clipboard image"))?;
-    let info = image.info();
-    let sent = gated_send_clipboard_image(
+    let host_image = app_handle
+        .clipboard()
+        .read_image()
+        .inspect_err(|e| debug!(error = %e, "host clipboard holds no readable image"))
+        .ok();
+    send_host_clipboard_image(
         &manager,
         &window_manager,
         window.label(),
         &session_id,
-        image,
+        host_image.as_ref().map(|image| HostClipboardImage {
+            width: image.width(),
+            height: image.height(),
+            rgba: image.rgba(),
+        }),
     )
-    .await?;
-    Ok(sent.then_some(info))
+    .await
 }
 
 #[cfg(all(test, feature = "mock-remote-desktop"))]

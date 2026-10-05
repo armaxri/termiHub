@@ -9,6 +9,7 @@ const hoisted = vi.hoisted(() => ({
   send: vi.fn(),
   toastSuccess: vi.fn(),
   toastInfo: vi.fn(),
+  toastError: vi.fn(),
 }));
 
 vi.mock("@/services/api", () => ({
@@ -21,7 +22,7 @@ vi.mock("sonner", () => ({
   toast: {
     success: hoisted.toastSuccess,
     info: hoisted.toastInfo,
-    error: vi.fn(),
+    error: hoisted.toastError,
   },
 }));
 
@@ -108,5 +109,25 @@ describe("RemoteDesktopClipboardImage", () => {
     hoisted.send.mockResolvedValue(null);
     await click("remote-desktop-clipboard-send-image");
     expect(hoisted.toastInfo).toHaveBeenCalledWith("No image on the local clipboard");
+  });
+
+  it("shows an error toast when the local image exceeds the 32 MiB cap (#4088)", async () => {
+    await render({ supported: true, image: null });
+    // The structured IPC envelope `remote_desktop_send_clipboard_image` rejects
+    // with when the host image is over the clipboard-image byte cap.
+    const capMessage =
+      "Invalid params: local clipboard image rejected: clipboard image of 33562624 bytes " +
+      "exceeds the 33554432-byte cap";
+    hoisted.send.mockRejectedValue({ code: "invalid_params", message: capMessage, details: null });
+    await click("remote-desktop-clipboard-send-image");
+    expect(hoisted.send).toHaveBeenCalledWith("rd-1");
+    expect(hoisted.toastError).toHaveBeenCalledTimes(1);
+    expect(hoisted.toastError.mock.calls[0][0]).toBe(capMessage);
+    expect(hoisted.toastSuccess).not.toHaveBeenCalled();
+    expect(hoisted.toastInfo).not.toHaveBeenCalled();
+    // The button returns to idle so the user can retry with a smaller image.
+    const send = query("remote-desktop-clipboard-send-image") as HTMLButtonElement;
+    expect(send.disabled).toBe(false);
+    expect(send.textContent).toContain("Send local image");
   });
 });
