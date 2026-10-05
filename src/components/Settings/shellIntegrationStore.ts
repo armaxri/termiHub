@@ -2,6 +2,7 @@ import { currentSettingsView, mirrorSettingsIntent } from "@/store/settingsBridg
 import type { ShellIntegrationStatus } from "@/types/connection";
 import type { ToastPromiseMessages } from "@/components/ui";
 import { defaultShellIntegrationSettings } from "./shellIntegrationEntries";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Reflect the registration facts from a refreshed status into the authoritative
@@ -26,12 +27,12 @@ export function syncRegistrationFacts(status: ShellIntegrationStatus): void {
 export const INSTALL_TOAST: ToastPromiseMessages<unknown> = {
   loading: "Registering shell integration…",
   success: "Shell integration registered",
-  error: (e) => `Registration failed: ${String(e)}`,
+  error: (e) => `Registration failed: ${errorMessage(e)}`,
 };
 
 /** Toast messages for the unregister (uninstall) lifecycle. */
 export const UNINSTALL_TOAST: ToastPromiseMessages<unknown> = {
   loading: "Removing shell integration…",
   success: "Shell integration removed",
-  error: (e) => `Removal failed: ${String(e)}`,
+  error: (e) => `Removal failed: ${errorMessage(e)}`,
 };

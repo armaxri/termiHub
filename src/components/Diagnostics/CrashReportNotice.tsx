@@ -8,6 +8,7 @@ import { acknowledgeCrashReports, getCrashReportNotice } from "@/services/api";
 import type { CrashReportNotice as Notice } from "@/types/diagnostics";
 import { frontendLog } from "@/utils/frontendLog";
 import { openDiagnosticsExport, useDiagnosticsDialogStore } from "./diagnosticsDialogStore";
+import { errorMessage } from "@/utils/errorMessage";
 import "./Diagnostics.css";
 
 /**
@@ -31,7 +32,7 @@ export function CrashReportNotice() {
       .then((n) => {
         if (!cancelled) setNotice(n);
       })
-      .catch((e) => frontendLog("crash_report", `notice check failed: ${String(e)}`));
+      .catch((e) => frontendLog("crash_report", `notice check failed: ${errorMessage(e)}`));
     return () => {
       cancelled = true;
     };
@@ -40,7 +41,7 @@ export function CrashReportNotice() {
   const dismiss = useCallback(() => {
     setNotice(null);
     acknowledgeCrashReports().catch((e) =>
-      frontendLog("crash_report", `acknowledge failed: ${String(e)}`)
+      frontendLog("crash_report", `acknowledge failed: ${errorMessage(e)}`)
     );
   }, []);
 
@@ -59,7 +60,7 @@ export function CrashReportNotice() {
     try {
       await updateSettings({ ...currentSettingsView(), showCrashReportNotice: false });
     } catch (e) {
-      frontendLog("crash_report", `persisting opt-out failed: ${String(e)}`);
+      frontendLog("crash_report", `persisting opt-out failed: ${errorMessage(e)}`);
     }
   }, [dismiss, updateSettings]);
 

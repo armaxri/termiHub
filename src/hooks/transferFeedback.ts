@@ -3,6 +3,7 @@ import { toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { dispatchTransferIntentBestEffort } from "@/store/transfersBridge";
 import type { TransferDirection } from "@/types/transfer";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Shared transfer-feedback helpers used by both the SFTP (`useFileSystem`) and
@@ -20,9 +21,7 @@ export function baseName(path: string): string {
 
 /** Extract a human-readable message from an unknown transfer error. */
 function transferErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  return String(error);
+  return errorMessage(error);
 }
 
 /**

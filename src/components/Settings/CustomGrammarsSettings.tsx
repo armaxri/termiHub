@@ -77,7 +77,7 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
     try {
       text = await readTextFile(filePath);
     } catch (e) {
-      setImportError(`Could not read file: ${String(e)}`);
+      setImportError(`Could not read file: ${errorMessage(e)}`);
       return;
     }
 

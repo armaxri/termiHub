@@ -4,6 +4,7 @@ import { reportWindowTabCount } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
 import { groupRenderTreesOf } from "@/store/layoutSelectors";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Report this window's live tab count to the backend window registry whenever it
@@ -29,7 +30,7 @@ export function useReportWindowTabCount(): void {
 
   useEffect(() => {
     reportWindowTabCount(tabCount).catch((err) => {
-      frontendLog("multi_window", `reportWindowTabCount failed: ${String(err)}`);
+      frontendLog("multi_window", `reportWindowTabCount failed: ${errorMessage(err)}`);
     });
   }, [tabCount]);
 }

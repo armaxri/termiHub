@@ -13,6 +13,7 @@ import { loseTerminalWebglContext, measureTerminal } from "./terminalRender";
 import { isTestBridgeEnabled, getTestBridgePort } from "./testMode";
 import { runBridgeWebSocketClient, type BridgeWebSocketClient } from "./wsClient";
 import { bridgeRunnerUrl } from "./wsProtocol";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Protocol revision exposed via `window.__termihubTestBridge.version`.
@@ -162,7 +163,7 @@ export function TestBridge() {
           getCurrentWindow()
             .close()
             .catch((err: unknown) =>
-              frontendLog("test_bridge", `closeWindow failed: ${String(err)}`)
+              frontendLog("test_bridge", `closeWindow failed: ${errorMessage(err)}`)
             );
         }, CLOSE_WINDOW_DEFER_MS);
       },
@@ -177,7 +178,7 @@ export function TestBridge() {
         if (!isTestBridgeEnabled()) throw new Error("test bridge is not enabled");
         setTimeout(() => {
           invoke("test_exit_app").catch((err: unknown) =>
-            frontendLog("test_bridge", `exitApp failed: ${String(err)}`)
+            frontendLog("test_bridge", `exitApp failed: ${errorMessage(err)}`)
           );
         }, CLOSE_WINDOW_DEFER_MS);
       },

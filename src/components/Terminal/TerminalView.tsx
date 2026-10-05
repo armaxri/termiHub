@@ -50,6 +50,7 @@ import {
 } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
 import { readConfigString } from "@/utils/connectionConfigFields";
+import { errorMessage } from "@/utils/errorMessage";
 import "./TerminalView.css";
 
 /**
@@ -359,7 +360,7 @@ export function TerminalView() {
         });
         toast.success("Stopped session logging");
       } catch (e) {
-        toast.error(`Failed to stop logging: ${String(e)}`);
+        toast.error(`Failed to stop logging: ${errorMessage(e)}`);
       }
       return;
     }
@@ -368,7 +369,7 @@ export function TerminalView() {
       setLoggingSessions((prev) => new Set(prev).add(sid));
       toast.success(`Logging session output to ${path}`);
     } catch (e) {
-      toast.error(`Failed to start logging: ${String(e)}`);
+      toast.error(`Failed to start logging: ${errorMessage(e)}`);
     }
   };
 

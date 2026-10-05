@@ -30,6 +30,7 @@
  * engine in the first place.
  */
 import { analyse } from "scslre";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** Maximum accepted pattern source length, in characters. */
 export const MAX_PATTERN_LENGTH = 500;
@@ -251,5 +252,5 @@ function describeError(err: unknown): string {
     // Strip the noisy "Invalid regular expression: /…/: " prefix engines add.
     return err.message.replace(/^Invalid regular expression:[^:]*:\s*/, "");
   }
-  return String(err);
+  return errorMessage(err);
 }

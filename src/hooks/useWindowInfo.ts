@@ -5,6 +5,7 @@ import { listWindows } from "@/services/api";
 import { windowDisplayName } from "@/utils/windowPicker";
 import { MAIN_WINDOW_LABEL } from "@/types/window";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** The current window's identity and the live count of open windows (#1902). */
 export interface WindowInfoState {
@@ -46,7 +47,7 @@ export function useWindowInfo(): WindowInfoState {
           setCount(windows.length);
         }
       } catch (err) {
-        frontendLog("multi_window", `useWindowInfo listWindows failed: ${String(err)}`);
+        frontendLog("multi_window", `useWindowInfo listWindows failed: ${errorMessage(err)}`);
       }
     };
 

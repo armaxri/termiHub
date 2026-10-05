@@ -32,6 +32,7 @@ import { exportNetworkResults } from "./exportResults";
 import { httpMonitorChecksToCsv, mergeChecks } from "./httpMonitorHistory";
 import { isValidHttpUrl, validateIntRange } from "@/utils/fieldValidation";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** How many of the newest checks the chart shows (and loads from history). */
 const MAX_HISTORY = 120;
@@ -250,7 +251,7 @@ export function HttpMonitorPanel() {
       await loadMonitors();
     } catch (err) {
       stopListening();
-      setError(String(err));
+      setError(errorMessage(err));
       frontendLog("http_monitor", `Start failed: ${err}`);
     } finally {
       startInFlightRef.current = false;
@@ -278,7 +279,7 @@ export function HttpMonitorPanel() {
       await loadMonitors();
       toast.success("Monitor stopped");
     } catch (err) {
-      setError(String(err));
+      setError(errorMessage(err));
       toast.error(`Failed to stop monitor: ${err}`);
     }
   }, [loadMonitors]);
@@ -290,7 +291,7 @@ export function HttpMonitorPanel() {
         await loadMonitors();
         toast.success("Monitor stopped");
       } catch (err) {
-        setError(String(err));
+        setError(errorMessage(err));
         toast.error(`Failed to stop monitor: ${err}`);
       }
     },
@@ -304,7 +305,7 @@ export function HttpMonitorPanel() {
         await loadMonitors();
         toast.success("Monitor paused");
       } catch (err) {
-        setError(String(err));
+        setError(errorMessage(err));
         toast.error(`Failed to pause monitor: ${err}`);
       }
     },
@@ -320,7 +321,7 @@ export function HttpMonitorPanel() {
         // Show the resumed monitor with its past checks rehydrated (#3462).
         if (id !== activeMonitorIdRef.current) await showMonitor(id);
       } catch (err) {
-        setError(String(err));
+        setError(errorMessage(err));
         toast.error(`Failed to resume monitor: ${err}`);
       }
     },
@@ -335,7 +336,7 @@ export function HttpMonitorPanel() {
         await loadMonitors();
         toast.success("Monitor removed");
       } catch (err) {
-        setError(String(err));
+        setError(errorMessage(err));
         toast.error(`Failed to remove monitor: ${err}`);
       }
     },
