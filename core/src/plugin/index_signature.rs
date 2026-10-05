@@ -75,8 +75,7 @@ pub const MAX_INDEX_SIGNATURE_BYTES: usize = 1024;
 pub const INDEX_KEY_PLACEHOLDER_MARKER: &str = "TERMIHUB-PLUGIN-INDEX-KEY-PLACEHOLDER";
 
 /// The committed trusted-key file, compiled in.
-const EMBEDDED_INDEX_KEYS_PEM: &str =
-    include_str!("../../../plugins/keys/index-signing.pub.pem");
+const EMBEDDED_INDEX_KEYS_PEM: &str = include_str!("../../../plugins/keys/index-signing.pub.pem");
 
 /// How a loaded index was authenticated — shown in the Browse view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

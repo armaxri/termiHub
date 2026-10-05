@@ -66,7 +66,10 @@ fn malformed_signatures_are_rejected() {
         &b"<html>404</html>"[..],
     ] {
         assert!(
-            matches!(p.check(INDEX, Some(raw)), Err(IndexSignatureError::Malformed(_))),
+            matches!(
+                p.check(INDEX, Some(raw)),
+                Err(IndexSignatureError::Malformed(_))
+            ),
             "{raw:?}"
         );
     }
@@ -96,7 +99,10 @@ fn committed_key_file_is_the_placeholder_or_a_real_key() {
         assert!(keys.is_empty(), "the placeholder must carry no key");
         assert!(!IndexSignaturePolicy::embedded(true).has_trusted_keys());
     } else {
-        assert!(!keys.is_empty(), "a non-placeholder key file must hold a key");
+        assert!(
+            !keys.is_empty(),
+            "a non-placeholder key file must hold a key"
+        );
     }
     assert!(IndexSignaturePolicy::embedded(true).requires_signature());
     assert!(!IndexSignaturePolicy::embedded(false).requires_signature());

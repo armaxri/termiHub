@@ -1,9 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { PackageSearch, RefreshCw, RotateCcw } from "lucide-react";
+import {
+  PackageSearch,
+  RefreshCw,
+  RotateCcw,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldQuestion,
+} from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { downloadPluginFromIndex, fetchPluginIndex } from "@/services/api";
-import type { PluginIndexEntryView, PluginIndexResult } from "@/types/plugin";
+import type {
+  PluginIndexEntryView,
+  PluginIndexResult,
+  PluginIndexSignatureStatus,
+} from "@/types/plugin";
 import { Button, EmptyState, Input, SearchInput, toast } from "@/components/ui";
 import { PluginInstallDialog } from "@/components/Plugins/PluginInstallDialog";
 import type { DownloadedPackageReview } from "@/components/Plugins/pluginDownloadReview";
@@ -33,6 +44,50 @@ export function entryMatches(view: PluginIndexEntryView, query: string): boolean
   if (!q) return true;
   const { name, id, author, description } = view.entry;
   return [name, id, author, description].some((field) => field.toLowerCase().includes(q));
+}
+
+/**
+ * How the loaded index was authenticated (#3716). The backend has already
+ * refused an index whose signature is present but invalid, and the default
+ * index without one in release builds — this only reports what was accepted.
+ */
+export function IndexSignatureNotice({ status }: { status: PluginIndexSignatureStatus }) {
+  switch (status) {
+    case "verified":
+      return (
+        <p
+          className="plugin-catalog__signature plugin-catalog__signature--verified"
+          data-testid="plugin-catalog-signature"
+          data-status={status}
+        >
+          <ShieldCheck size={14} aria-hidden="true" /> Signature verified — this index is signed by
+          the termiHub plugin-index key.
+        </p>
+      );
+    case "unsigned":
+      return (
+        <p
+          className="plugin-catalog__signature plugin-catalog__signature--unsigned"
+          role="status"
+          data-testid="plugin-catalog-signature"
+          data-status={status}
+        >
+          <ShieldAlert size={14} aria-hidden="true" /> Unsigned index — its contents are not
+          verified. Only use indexes you trust; every package is still reviewed before install.
+        </p>
+      );
+    case "notConfigured":
+      return (
+        <p
+          className="plugin-catalog__signature plugin-catalog__signature--unchecked"
+          data-testid="plugin-catalog-signature"
+          data-status={status}
+        >
+          <ShieldQuestion size={14} aria-hidden="true" /> Signature not checked — this termiHub
+          build has no plugin-index signing key yet. Every package is still reviewed before install.
+        </p>
+      );
+  }
 }
 
 /**
@@ -173,6 +228,7 @@ export function PluginCatalogSettings() {
         )}
         {load.phase === "loaded" && (
           <>
+            <IndexSignatureNotice status={load.result.signature} />
             {entries.length > 0 && (
               <SearchInput
                 size="sm"

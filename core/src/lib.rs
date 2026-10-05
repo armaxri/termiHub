@@ -8,8 +8,6 @@
 
 #[cfg(feature = "agent-update-signing")]
 pub mod agent_update_signature;
-#[cfg(any(feature = "agent-update-signing", feature = "plugin"))]
-pub mod ed25519_pem;
 #[cfg(any(
     feature = "local-shell",
     feature = "serial",
@@ -27,6 +25,8 @@ pub mod buffer;
 pub mod config;
 pub mod connection;
 pub mod diagnostics;
+#[cfg(any(feature = "agent-update-signing", feature = "plugin"))]
+pub mod ed25519_pem;
 #[cfg(feature = "embedded-servers")]
 pub mod embedded_servers;
 pub mod errors;
