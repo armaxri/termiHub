@@ -105,9 +105,36 @@ def detect_os_version() -> str:
 # YAML loading
 # ---------------------------------------------------------------------------
 
+# Keys every item must carry (mirrors ``REQUIRED_KEYS`` in
+# ``scripts/manual-inventory.py``, which CI runs with ``--check``). Without the
+# check a malformed item crashed ``--list`` with a bare ``KeyError: 'name'``
+# (#4131).
+REQUIRED_KEYS = ("id", "name", "instructions", "expected")
+
+
+class ManualSchemaError(ValueError):
+    """Raised when a ``tests/manual/*.yaml`` item lacks a required key."""
+
+
+def validate_test(test: Any, source: str) -> list[str]:
+    """Return one message per required key missing from *test* (from *source*)."""
+    if not isinstance(test, dict):
+        return [f"{source}: item is not a mapping: {test!r}"]
+    item_id = test.get("id", "<no id>")
+    return [
+        f"{source}: {item_id}: missing required key '{key}'"
+        for key in REQUIRED_KEYS
+        if key not in test
+    ]
+
+
 def load_tests(tests_dir: Path) -> list[dict[str, Any]]:
-    """Load all YAML test files and return a flat list of tests."""
+    """Load all YAML test files and return a flat list of tests.
+
+    Raises ``ManualSchemaError`` naming every item that lacks a required key.
+    """
     all_tests: list[dict[str, Any]] = []
+    errors: list[str] = []
     for yaml_file in sorted(tests_dir.glob("*.yaml")):
         with open(yaml_file, encoding="utf-8") as f:
             data = yaml.safe_load(f)
@@ -116,9 +143,17 @@ def load_tests(tests_dir: Path) -> list[dict[str, Any]]:
         category = data.get("category", yaml_file.stem)
         display_name = data.get("display_name", category)
         for test in data["tests"]:
+            problems = validate_test(test, yaml_file.name)
+            if problems:
+                errors.extend(problems)
+                continue
             test["_category"] = category
             test["_display_name"] = display_name
             all_tests.append(test)
+    if errors:
+        raise ManualSchemaError(
+            "malformed manual test definitions:\n  " + "\n  ".join(errors)
+        )
     return all_tests
 
 
@@ -842,7 +877,11 @@ def main() -> int:
         print(f"ERROR: Test definitions not found at {TESTS_DIR}")
         return 1
 
-    all_tests = load_tests(TESTS_DIR)
+    try:
+        all_tests = load_tests(TESTS_DIR)
+    except ManualSchemaError as e:
+        print(f"ERROR: {e}")
+        return 1
     if not all_tests:
         print("ERROR: No test definitions found")
         return 1
