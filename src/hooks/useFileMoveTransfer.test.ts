@@ -12,7 +12,11 @@ vi.mock("@/components/ui", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), loading: vi.fn(), dismiss: vi.fn() },
 }));
 
-vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
+const durableInfo = vi.fn();
+vi.mock("@/utils/frontendLog", () => ({
+  frontendLog: vi.fn(),
+  frontendDurableInfo: (...args: unknown[]) => durableInfo(...args),
+}));
 
 let mockClipboard: FileClipboard | null = null;
 vi.mock("@/store/fileBrowsersBridge", () => ({
@@ -191,6 +195,11 @@ describe("useFileMoveTransfer", () => {
     expect(localListDir).not.toHaveBeenCalled();
     expect(pasteEntry).not.toHaveBeenCalled();
     expect(toast.error).not.toHaveBeenCalled();
+    // Silent in the UI, but never silent in termihub.log (#4110).
+    expect(durableInfo).toHaveBeenCalledWith(
+      "file_browser",
+      "move into /home/u skipped: every entry already lives there"
+    );
   });
 
   describe("requestPaste — the plain Paste (#3458)", () => {
