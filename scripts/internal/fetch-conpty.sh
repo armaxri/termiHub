@@ -22,7 +22,7 @@
 #   --dest   Where to stage conpty.dll + OpenConsole.exe
 #            (default: src-tauri/binaries/conpty, gitignored).
 #
-# Runs anywhere bash, curl and unzip (or Python) exist. CI runs it on the
+# Runs anywhere bash, curl and unzip (or bsdtar, or Python) exist. CI runs it on the
 # Windows runner through Git Bash; scripts/internal/fetch-conpty.cmd is the
 # native Windows twin (PowerShell).
 set -euo pipefail
@@ -120,23 +120,37 @@ curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
     --retry 3 --retry-delay 5 -o "$WORK/conpty.nupkg" "$URL"
 verify "$WORK/conpty.nupkg" "$CONPTY_NUPKG_SHA256" "Microsoft.Windows.Console.ConPTY ${CONPTY_VERSION}.nupkg"
 
-# extract ENTRY OUT: one file out of the package (a zip).
+# extract ENTRY OUT: one file out of the package (a zip). Tries unzip, then a
+# bsdtar (on Windows: %SystemRoot%\System32\tar.exe reads zips; Git Bash's
+# GNU tar does not), then Python's zipfile.
 extract() {
     if command -v unzip >/dev/null 2>&1; then
         unzip -p "$WORK/conpty.nupkg" "$1" >"$2"
         return
     fi
-    local py
-    py="$(command -v python3 || command -v python || true)"
-    if [ -z "$py" ]; then
-        echo "::error::need unzip or Python to extract the .nupkg" >&2
-        return 1
+    local bsdtar=""
+    if command -v bsdtar >/dev/null 2>&1; then
+        bsdtar="bsdtar"
+    elif [ -n "${SYSTEMROOT:-}" ] && [ -x "$SYSTEMROOT/System32/tar.exe" ]; then
+        bsdtar="$SYSTEMROOT/System32/tar.exe"
     fi
-    "$py" - "$WORK/conpty.nupkg" "$1" "$2" <<'PY'
+    if [ -n "$bsdtar" ]; then
+        "$bsdtar" -xOf "$WORK/conpty.nupkg" "$1" >"$2"
+        return
+    fi
+    local py
+    for py in python3 python; do
+        if command -v "$py" >/dev/null 2>&1 && "$py" -c "import zipfile" >/dev/null 2>&1; then
+            "$py" - "$WORK/conpty.nupkg" "$1" "$2" <<'PY'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1]) as z, open(sys.argv[3], "wb") as out:
     out.write(z.read(sys.argv[2]))
 PY
+            return
+        fi
+    done
+    echo "::error::need unzip, bsdtar or Python to extract the .nupkg" >&2
+    return 1
 }
 
 extract "$DLL_ENTRY" "$WORK/conpty.dll"
