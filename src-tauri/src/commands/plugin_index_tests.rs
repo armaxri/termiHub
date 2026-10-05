@@ -1,12 +1,24 @@
 //! Tests for plugin discovery against a local fixture server (PROD-048).
 
 use sha2::{Digest, Sha256};
+use termihub_core::plugin::index_signature_test_support::{sign_index, test_index_key};
 use termihub_core::plugin::{InstallOptions, InstallStatus};
 
 use super::*;
 use crate::commands::test_http_server::{Route, TestServer};
 
 const P: FetchPolicy = FetchPolicy::TEST_ALLOW_HTTP;
+
+/// A build without an index key (the committed placeholder): no signature is
+/// fetched or checked.
+fn no_key() -> IndexSignaturePolicy {
+    IndexSignaturePolicy::new(Vec::new(), true)
+}
+
+/// Trusting test key 1; `require` as for the default index in a release build.
+fn trust_key1(require: bool) -> IndexSignaturePolicy {
+    IndexSignaturePolicy::new(vec![test_index_key(1).verifying_key()], require)
+}
 
 struct Fixture {
     tmp: tempfile::TempDir,
@@ -84,10 +96,11 @@ async fn browse_evaluates_entries_against_installed_plugins() {
     )])
     .await;
     let host = HostFacts::current();
-    let result = browse(&server.url("/index.json"), P, &fx.manager, &host)
+    let result = browse(&server.url("/index.json"), P, &no_key(), &fx.manager, &host)
         .await
         .unwrap();
     assert!(!result.is_default);
+    assert_eq!(result.signature, IndexSignatureStatus::NotConfigured);
     assert_eq!(result.entries.len(), 1);
     let entry = &result.entries[0];
     assert_eq!(entry.install_status, InstallStatus::NotInstalled);
@@ -109,7 +122,7 @@ async fn browse_rejects_bad_indexes() {
         ("/huge", "limit"),
         ("/missing", "404"),
     ] {
-        let err = browse(&server.url(path), P, &fx.manager, &host)
+        let err = browse(&server.url(path), P, &no_key(), &fx.manager, &host)
             .await
             .unwrap_err();
         assert!(err.contains(needle), "{path}: {err}");
@@ -118,6 +131,7 @@ async fn browse_rejects_bad_indexes() {
     let err = browse(
         &server.url("/garbage"),
         FetchPolicy::STRICT,
+        &no_key(),
         &fx.manager,
         &host,
     )
@@ -136,15 +150,15 @@ async fn index_download_refuses_unlisted_and_blocked_entries_before_downloading(
     .await;
     let host = HostFacts::current();
     let url = server.url("/index.json");
-    let err = download_index_entry(&url, "other", P, &fx.dir(), &fx.manager, &host)
+    let err = download_index_entry(&url, "other", P, &no_key(), &fx.dir(), &fx.manager, &host)
         .await
         .unwrap_err();
     assert!(err.contains("no longer lists"), "{err}");
-    let err = download_index_entry(&url, "demo", P, &fx.dir(), &fx.manager, &host)
+    let err = download_index_entry(&url, "demo", P, &no_key(), &fx.dir(), &fx.manager, &host)
         .await
         .unwrap_err();
     assert!(err.contains("ABI 9.0"), "{err}");
-    let err = download_index_entry(&url, "../evil", P, &fx.dir(), &fx.manager, &host)
+    let err = download_index_entry(&url, "../evil", P, &no_key(), &fx.dir(), &fx.manager, &host)
         .await
         .unwrap_err();
     assert!(err.contains("not a valid plugin id"), "{err}");
@@ -258,4 +272,202 @@ async fn url_install_requires_https_and_a_checksum() {
         .await
         .unwrap();
     assert_eq!(fx.manager.validate(&path).unwrap().id, "demo");
+}
+
+// --- Index signature (#3716) ---
+
+#[test]
+fn signature_url_appends_sig_to_the_path() {
+    assert_eq!(
+        signature_url(DEFAULT_PLUGIN_INDEX_URL).unwrap(),
+        format!("{DEFAULT_PLUGIN_INDEX_URL}.sig")
+    );
+    assert_eq!(
+        signature_url("https://corp.example/i.json?token=1").unwrap(),
+        "https://corp.example/i.json.sig?token=1"
+    );
+}
+
+#[test]
+fn only_the_default_index_in_a_release_build_requires_a_signature() {
+    assert!(!index_signature_policy("https://corp.example/i.json").requires_signature());
+    // Unit tests are a debug (dev) build, so the default index tolerates a
+    // missing signature here; release builds require it.
+    assert_eq!(
+        index_signature_policy(DEFAULT_PLUGIN_INDEX_URL).requires_signature(),
+        !crate::terminal::agent_binary::is_dev_build(env!("CARGO_PKG_VERSION"))
+    );
+}
+
+/// Serves `index` at `/index.json` and, when given, `sig` at `/index.json.sig`.
+async fn signed_server(index: Vec<u8>, sig: Option<Route>) -> TestServer {
+    let mut routes = vec![("/index.json", Route::Body(index))];
+    if let Some(sig) = sig {
+        routes.push(("/index.json.sig", sig));
+    }
+    TestServer::start(routes).await
+}
+
+#[tokio::test]
+async fn default_index_with_a_valid_signature_is_verified() {
+    let fx = Fixture::new("1.0.0");
+    let index = index_with("1.0.0", "1.0", &fx.sha());
+    let sig = sign_index(&test_index_key(1), &index);
+    let server = signed_server(index, Some(Route::Body(sig.into_bytes()))).await;
+    let result = browse(
+        &server.url("/index.json"),
+        P,
+        &trust_key1(true),
+        &fx.manager,
+        &HostFacts::current(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.signature, IndexSignatureStatus::Verified);
+    assert_eq!(result.entries.len(), 1);
+}
+
+#[tokio::test]
+async fn default_index_rejects_tampered_wrong_key_and_missing_signatures() {
+    let fx = Fixture::new("1.0.0");
+    let host = HostFacts::current();
+    let index = index_with("1.0.0", "1.0", &fx.sha());
+    // The served index differs from the signed one by a single byte.
+    let mut tampered = index.clone();
+    tampered.push(b' ');
+    let cases: [(Vec<u8>, Option<Route>, &str); 4] = [
+        (
+            tampered,
+            Some(Route::Body(
+                sign_index(&test_index_key(1), &index).into_bytes(),
+            )),
+            "does not verify",
+        ),
+        (
+            index.clone(),
+            Some(Route::Body(
+                sign_index(&test_index_key(2), &index).into_bytes(),
+            )),
+            "does not verify",
+        ),
+        (index.clone(), None, "signature"),
+        (
+            index.clone(),
+            Some(Route::Body(b"<html>not found</html>".to_vec())),
+            "malformed",
+        ),
+    ];
+    for (served, sig, needle) in cases {
+        let server = signed_server(served, sig).await;
+        let url = server.url("/index.json");
+        let err = browse(&url, P, &trust_key1(true), &fx.manager, &host)
+            .await
+            .unwrap_err();
+        assert!(err.contains(needle), "{needle}: {err}");
+        // A download re-verifies the index and refuses before fetching anything.
+        let err = download_index_entry(
+            &url,
+            "demo",
+            P,
+            &trust_key1(true),
+            &fx.dir(),
+            &fx.manager,
+            &host,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains(needle), "{needle}: {err}");
+        assert!(!fx.dir().exists(), "nothing may be written");
+    }
+}
+
+#[tokio::test]
+async fn oversized_signature_is_refused() {
+    let fx = Fixture::new("1.0.0");
+    let index = index_with("1.0.0", "1.0", &fx.sha());
+    let server = signed_server(
+        index,
+        Some(Route::UnsizedBody(vec![
+            b'A';
+            MAX_INDEX_SIGNATURE_BYTES + 1
+        ])),
+    )
+    .await;
+    let err = browse(
+        &server.url("/index.json"),
+        P,
+        &trust_key1(true),
+        &fx.manager,
+        &HostFacts::current(),
+    )
+    .await
+    .unwrap_err();
+    assert!(err.contains("limit"), "{err}");
+}
+
+#[tokio::test]
+async fn custom_index_may_be_unsigned_but_never_badly_signed() {
+    let fx = Fixture::new("1.0.0");
+    let host = HostFacts::current();
+    let index = index_with("1.0.0", "1.0", &fx.sha());
+
+    // Missing signature: loads, marked unsigned (the UI shows a notice).
+    let server = signed_server(index.clone(), None).await;
+    let result = browse(
+        &server.url("/index.json"),
+        P,
+        &trust_key1(false),
+        &fx.manager,
+        &host,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.signature, IndexSignatureStatus::Unsigned);
+    assert_eq!(result.entries.len(), 1);
+
+    // Signed by the termiHub key: verified, even though optional.
+    let sig = sign_index(&test_index_key(1), &index);
+    let server = signed_server(index.clone(), Some(Route::Body(sig.into_bytes()))).await;
+    let result = browse(
+        &server.url("/index.json"),
+        P,
+        &trust_key1(false),
+        &fx.manager,
+        &host,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.signature, IndexSignatureStatus::Verified);
+
+    // A signature that is present but foreign is refused, not downgraded.
+    let foreign = sign_index(&test_index_key(2), &index);
+    let server = signed_server(index, Some(Route::Body(foreign.into_bytes()))).await;
+    let err = browse(
+        &server.url("/index.json"),
+        P,
+        &trust_key1(false),
+        &fx.manager,
+        &host,
+    )
+    .await
+    .unwrap_err();
+    assert!(err.contains("does not verify"), "{err}");
+}
+
+#[tokio::test]
+async fn placeholder_key_loads_the_index_without_checking() {
+    let fx = Fixture::new("1.0.0");
+    let index = index_with("1.0.0", "1.0", &fx.sha());
+    // Even a garbage signature does not matter: it is never fetched.
+    let server = signed_server(index, Some(Route::Body(b"garbage".to_vec()))).await;
+    let result = browse(
+        &server.url("/index.json"),
+        P,
+        &no_key(),
+        &fx.manager,
+        &HostFacts::current(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.signature, IndexSignatureStatus::NotConfigured);
 }

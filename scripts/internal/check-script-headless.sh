@@ -27,6 +27,9 @@
 # `--dry-run` / temp-file mode (#3329): initial setup, --rotate, --switch-over and
 # `agent-update-signing.sh select-key`, all with THROWAWAY keys in a mktemp dir.
 # It needs only OpenSSL 3, uploads nothing and never touches the repo key file.
+# The same section runs the plugin-index signing key setup (#3716) in --dry-run
+# and proves a signed index verifies, a tampered one and a foreign key do not,
+# and that the repo key file and plugins/index.json are left untouched.
 #
 # A third section runs build-agents.sh's REAL checksum sidecar writer
 # (`write_checksum`) and its post-build gate (`verify_checksum_sidecars`) on a
@@ -65,9 +68,11 @@ SCRIPTS=(
   "scripts/internal/ci-rust-tests.sh"
   "scripts/internal/harness-coverage.sh"
   "scripts/internal/native-sshd-fixture.sh"
+  "scripts/internal/plugin-index-signing.sh"
   "scripts/internal/release-smoke-app-lifecycle.sh"
   "scripts/internal/run-native-sshd-suites.sh"
   "scripts/internal/setup-agent-signing-key.sh"
+  "scripts/internal/setup-plugin-index-signing-key.sh"
   "scripts/internal/shell-integration-cli-smoke.sh"
   "scripts/build-rdp-sidecar.sh"
   "scripts/ci-local.sh"
@@ -199,6 +204,41 @@ lc_refuse "select-key during the overlap without the old key" \
   env -u AGENT_UPDATE_SIGNING_KEY "AGENT_UPDATE_SIGNING_KEY_NEXT=$NEW" \
   bash "$SIGNING" --pub "$LC/overlap.pem" select-key \
   AGENT_UPDATE_SIGNING_KEY AGENT_UPDATE_SIGNING_KEY_NEXT
+
+# --- Plugin-index signing key setup, dry-run (#3716) ---
+PI_SETUP="scripts/internal/setup-plugin-index-signing-key.sh"
+PI_SIGNING="scripts/internal/plugin-index-signing.sh"
+PI_REPO_KEY="plugins/keys/index-signing.pub.pem"
+PI_INDEX="plugins/index.json"
+pi_key_before="$(cat "$PI_REPO_KEY")"
+pi_index_before="$(cat "$PI_INDEX")"
+pi_sig_before="$(cat "$PI_INDEX.sig" 2>/dev/null || true)"
+mkdir -p "$LC/pi"
+printf '{"schemaVersion":1,"plugins":[]}\n' >"$LC/pi/index.json"
+lc_step "plugin index: setup --dry-run on the repo index (temp copies)" bash "$PI_SETUP" --dry-run
+lc_step "plugin index: setup --dry-run signs a given index" \
+  bash "$PI_SETUP" --dry-run --pub-file "$LC/pi/pub.pem" --index "$LC/pi/index.json"
+lc_refuse "plugin index: setup over a real key without --force" \
+  bash "$PI_SETUP" --dry-run --pub-file "$LC/pi/pub.pem" --index "$LC/pi/index.json"
+# The dry run signed a temp COPY of the given index; sign the original for real
+# with a throwaway key to exercise sign/verify end to end.
+openssl genpkey -algorithm ed25519 -out "$LC/pi/k.pem" 2>/dev/null
+openssl pkey -in "$LC/pi/k.pem" -pubout -out "$LC/pi/k.pub"
+lc_step "plugin index: sign + verify" \
+  bash "$PI_SIGNING" --pub "$LC/pi/k.pub" sign --key "$LC/pi/k.pem" "$LC/pi/index.json"
+printf ' ' >>"$LC/pi/index.json"
+lc_refuse "plugin index: verify a tampered index" \
+  bash "$PI_SIGNING" --pub "$LC/pi/k.pub" verify "$LC/pi/index.json"
+lc_refuse "plugin index: sign with a key that is not trusted" \
+  bash "$PI_SIGNING" --pub "$LC/pi/pub.pem" sign --key "$LC/pi/k.pem" "$LC/pi/index.json"
+if [ "$(cat "$PI_REPO_KEY")" = "$pi_key_before" ] &&
+  [ "$(cat "$PI_INDEX")" = "$pi_index_before" ] &&
+  [ "$(cat "$PI_INDEX.sig" 2>/dev/null || true)" = "$pi_sig_before" ]; then
+  echo "ok    signing lifecycle: $PI_REPO_KEY and $PI_INDEX left untouched"
+else
+  echo "::error::signing lifecycle: a plugin-index dry run modified the repo tree"
+  failures=$((failures + 1))
+fi
 
 lifecycle_failures=$((failures - help_failures))
 
