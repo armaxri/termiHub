@@ -1082,7 +1082,7 @@ async fn start_session_transfer(
                 pm.record_docker_target(&transfer_id, docker.container_id());
             }
             // An agent-hosted transfer is not relaunched after a restart yet:
-            // its row comes back as "session unavailable" (#3587 follow-up).
+            // its row comes back as "session unavailable" (#4114).
             SessionTransferTarget::Ranged(_) => {}
             _ => {
                 // An SFTP/FTP transfer records the saved connection behind its
