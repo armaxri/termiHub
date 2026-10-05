@@ -1417,7 +1417,12 @@ describe("api pass-through wrappers (#2975)", () => {
     });
 
     it("fetchPluginIndex invokes the backend index fetch with no arguments (PROD-048)", async () => {
-      const result = { url: "https://e.com/i.json", isDefault: false, entries: [] };
+      const result = {
+        url: "https://e.com/i.json",
+        isDefault: false,
+        signature: "verified",
+        entries: [],
+      };
       mockedInvoke.mockResolvedValue(result);
 
       await expect(fetchPluginIndex()).resolves.toEqual(result);

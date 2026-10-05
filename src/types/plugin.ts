@@ -65,6 +65,7 @@ export type { PluginUpdateCheckOutcome } from "./generated/PluginUpdateCheckOutc
 export type { PluginUpdateCheckResult } from "./generated/PluginUpdateCheckResult";
 export type { PluginIndexEntryView } from "./generated/PluginIndexEntryView";
 export type { PluginIndexResult } from "./generated/PluginIndexResult";
+export type { PluginIndexSignatureStatus } from "./generated/PluginIndexSignatureStatus";
 export type { PluginSignerChange, PluginTrustInfo, PluginVersionChange };
 
 /**
