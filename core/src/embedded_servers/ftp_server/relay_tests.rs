@@ -475,7 +475,9 @@ fn unreserved_port_barrier(backend: SocketAddr) {
         .write_all(b"PROXY TCP4 127.0.0.1 127.0.0.1 40000 1\r\n")
         .expect("barrier header");
     let mut rest = Vec::new();
-    probe.read_to_end(&mut rest).expect("barrier closed by libunftp");
+    probe
+        .read_to_end(&mut rest)
+        .expect("barrier closed by libunftp");
 }
 
 /// Wait until the runtime's live task count has not changed for 100 ms and
