@@ -46,6 +46,7 @@ from http.server import BaseHTTPRequestHandler
 import pytest
 
 from termihub_harness import (
+    BridgeError,
     ConnectionsUi,
     LocalThreadingHTTPServer,
     SSH_KEY_PATH,
@@ -71,6 +72,9 @@ HOST = "127.0.0.1"
 #: What the forwarded HTTP service answers (the ssh-tunnel-target container's
 #: :8080 server, or :class:`_TunnelOkHandler` on the native-sshd path).
 TUNNEL_OK = "TUNNEL_TEST_OK"
+#: The confirm prompt Stop raises on a connected tunnel (UX-021).
+TUNNEL_STOP_DIALOG = "confirm-tunnel-lifecycle-dialog"
+TUNNEL_STOP_CONFIRM = "confirm-tunnel-lifecycle-confirm"
 #: macOS runs the live tests against the native loopback sshd, not Docker (#933).
 USE_NATIVE_SSHD = sys.platform == "darwin"
 
@@ -154,6 +158,10 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
     @pytest.fixture(autouse=True)
     def _cleanup_between_tests(self):
         yield
+        # Stop any tunnel a test left running: the app is shared by the class, so
+        # a live listener would otherwise hold its port into the next test — and
+        # into a rerun of the same test ("Address already in use").
+        self._stop_active_tunnels()
         self.close_all_tabs()
         self.switch_to_connections_sidebar()
 
@@ -314,8 +322,7 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
         # Stop must take effect: the status returns to "disconnected", the start
         # control comes back and the listen port is closed. Previously a Stop
         # click while the tunnel was still in "connecting" was silently lost (#829).
-        self.wait(lambda: self.driver.exists(f"tunnel-stop-{tid}"), what="the stop control")
-        self.driver.click(f"tunnel-stop-{tid}")
+        self._stop_tunnel(tid)
         self._assert_disconnected(tid)
         self.wait(
             lambda: self.driver.exists(f"tunnel-start-{tid}"),
@@ -382,8 +389,7 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
 
         # Stop it and turn "start with connection" off → a new terminal leaves it down.
         self._ensure_sidebar("tunnels", "activity-bar-ssh-tunnels")
-        self.wait(lambda: self.driver.exists(f"tunnel-stop-{tid}"), what="the stop control")
-        self.driver.click(f"tunnel-stop-{tid}")
+        self._stop_tunnel(tid)
         self._assert_disconnected(tid)
         self._set_start_with_connection(tid, False)
         self._open_terminal_to(conn)
@@ -508,6 +514,44 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
 
         self.wait(echoed, what="the SSH shell to accept input")
         self.wait_for_output(marker)
+
+    def _stop_tunnel(self, tunnel_id: str) -> None:
+        """Click a tunnel's Stop control and confirm the live-tunnel prompt.
+
+        Stopping a *connected* tunnel asks for confirmation first, since it drops
+        every forwarded connection (UX-021, 9ce781584); a still-connecting one
+        stops without a prompt. Either way the stop has been requested on return.
+        """
+        stop = f"tunnel-stop-{tunnel_id}"
+        self.wait(lambda: self.driver.exists(stop), what="the stop control")
+        self.driver.click(stop)
+
+        def stop_requested() -> bool:
+            if self.driver.exists(TUNNEL_STOP_CONFIRM):
+                self.driver.click(TUNNEL_STOP_CONFIRM)
+                return False  # re-check: the dialog closes once confirmed
+            return not self.driver.exists(TUNNEL_STOP_DIALOG)
+
+        self.wait(stop_requested, what="the stop confirmation to be accepted")
+
+    def _stop_active_tunnels(self) -> None:
+        """Stop every tunnel that is connected or connecting (test teardown)."""
+        try:
+            states = self.driver.get_state("tunnelStates") or {}
+        except BridgeError:
+            return
+        live = [
+            tid
+            for tid, st in states.items()
+            if (st or {}).get("status") in ("connected", "connecting")
+        ]
+        if not live:
+            return
+        self._ensure_sidebar("tunnels", "activity-bar-ssh-tunnels")
+        for tid in live:
+            if self.driver.exists(f"tunnel-stop-{tid}"):
+                self._stop_tunnel(tid)
+                self._assert_disconnected(tid)
 
     def _accept_host_key_if_prompted(self) -> None:
         if self.driver.exists("ssh-hostkey-prompt"):
