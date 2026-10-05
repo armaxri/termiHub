@@ -15,7 +15,12 @@ each:
   Shiki's TextMate engine (Oniguruma WASM, needs ``'wasm-unsafe-eval'``) and whose
   language services run in bundled Monaco workers (``worker-src``);
 - a **SIXEL** inline image printed in a terminal (decoded to a canvas through
-  ``createImageBitmap``); POSIX shells only, since the bytes are ``cat``-ed;
+  ``createImageBitmap``). On Linux the local shell ``cat``-s the bytes from a
+  file. On Windows a local shell cannot carry them: the inbox ConPTY
+  (``CreatePseudoConsole``) drops a SIXEL DCS string before it reaches the app,
+  so no PowerShell command could ever deliver the image. A loopback TCP server
+  in this test sends the bytes over a **Telnet** session instead, which
+  bypasses ConPTY and still feeds the same xterm image addon (#4076);
 - the **clock-widget** example JavaScript plugin (``examples/plugins``), whose
   code the frontend-plugin sandbox worker loads from the ``plugin://`` origin.
 
@@ -29,13 +34,18 @@ production, so a broken shipped CSP still fails here.
 
 import json
 import shutil
+import socket
 import sys
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 
 from termihub_harness import (
+    ConnectionsUi,
     EditorUi,
     FilesUi,
     PluginsUi,
@@ -68,9 +78,67 @@ CLOCK_PLUGIN_ID = "clock-widget"
 #: ``PluginStatusBarWidgets.tsx`` mounts a widget as ``plugin-widget-<widget id>``.
 CLOCK_WIDGET_TESTID = "plugin-widget-clock-widget"
 
+#: The SIXEL test's frame: text before and after the image, so the test can wait
+#: for the whole payload to have been written to the terminal.
+SIXEL_BEFORE = b"TH_CSP_SIXEL_BEFORE"
+SIXEL_AFTER = b"TH_CSP_SIXEL_AFTER"
+
+
+@contextmanager
+def _sixel_telnet_server() -> Iterator[int]:
+    """A loopback TCP server that writes the SIXEL frame to its first client.
+
+    Yields the port. The connection stays open (and inbound bytes, e.g. the
+    client's Telnet option negotiation, are read and dropped) until the block
+    exits, so the session does not end while the test inspects it. The frame
+    holds no ``0xFF`` byte, so the client's Telnet filter passes it unchanged.
+    """
+    server = socket.create_server(("127.0.0.1", 0))
+    server.settimeout(0.5)
+    stop = threading.Event()
+    payload = SIXEL_BEFORE + b"\r\n" + SIXEL + SIXEL_AFTER + b"\r\n"
+
+    def serve() -> None:
+        while not stop.is_set():
+            try:
+                conn, _ = server.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            with conn:
+                conn.sendall(payload)
+                conn.settimeout(0.5)
+                while not stop.is_set():
+                    try:
+                        if not conn.recv(4096):
+                            break
+                    except socket.timeout:
+                        continue
+                    except OSError:
+                        break
+            return
+
+    thread = threading.Thread(target=serve, name="csp-sixel-telnet", daemon=True)
+    thread.start()
+    try:
+        yield server.getsockname()[1]
+    finally:
+        stop.set()
+        server.close()
+        thread.join(timeout=5)
+
 
 class TestContentSecurityPolicy(
-    TerminalUi, TabsUi, SidebarUi, FilesUi, EditorUi, ShellFsUi, PluginsUi, SystemTest
+    TerminalUi,
+    TabsUi,
+    SidebarUi,
+    ConnectionsUi,
+    FilesUi,
+    EditorUi,
+    ShellFsUi,
+    PluginsUi,
+    SystemTest,
 ):
     # -- helpers ---------------------------------------------------------------
     def _violations(self) -> tuple[str, str]:
@@ -147,24 +215,39 @@ class TestContentSecurityPolicy(
         finally:
             self.remove_home(name)
 
-    @pytest.mark.skipif(sys.platform.startswith("win"), reason="drives `cat` in a POSIX shell")
+    def _wait_for_stored_sixel(self) -> None:
+        """Wait until the SIXEL frame was printed and the image decoded."""
+        self.wait_for_output(SIXEL_AFTER.decode())
+        self.wait(
+            lambda: (self.driver.inspect_terminal()["inlineImages"] or {}).get(
+                "storageUsage", 0
+            )
+            > 0,
+            what="the SIXEL image to be decoded and stored",
+        )
+
     def test_sixel_inline_image_reports_no_violations(self):
+        # A restart gives the image a fresh, empty terminal to be stored in.
+        self.restart_app()
+        if sys.platform.startswith("win"):
+            # The inbox ConPTY drops the DCS string, so a local PowerShell can
+            # never deliver it; a Telnet session to a loopback server can.
+            with _sixel_telnet_server() as port:
+                self.create_telnet_connection(
+                    unique_name("csp-sixel"), host="127.0.0.1", port=port, connect=True
+                )
+                self.wait(self.has_terminal, what="the Telnet terminal session")
+                self._wait_for_stored_sixel()
+                self._assert_no_violations("a SIXEL image in the terminal")
+            return
         # The image bytes are a file on disk that `cat` prints, so no escape
         # sequence is typed into the shell (#4025).
         image = f"th_csp_sixel_{unique_name('i')}.txt"
-        self.write_home_bytes(image, b"TH_CSP_SIXEL_BEFORE\n" + SIXEL + b"TH_CSP_SIXEL_AFTER\n")
+        self.write_home_bytes(image, SIXEL_BEFORE + b"\n" + SIXEL + SIXEL_AFTER + b"\n")
         try:
-            self.restart_app()
             self.ensure_terminal()
             self.run_command(f"cat ~/{image}")
-            self.wait_for_output("TH_CSP_SIXEL_AFTER")
-            self.wait(
-                lambda: (self.driver.inspect_terminal()["inlineImages"] or {}).get(
-                    "storageUsage", 0
-                )
-                > 0,
-                what="the SIXEL image to be decoded and stored",
-            )
+            self._wait_for_stored_sixel()
             self._assert_no_violations("a SIXEL image in the terminal")
         finally:
             self.remove_home(image)

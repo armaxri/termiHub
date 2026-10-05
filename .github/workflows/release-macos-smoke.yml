@@ -18,7 +18,7 @@ name: Release macOS Smoke
 #      terminates it and asserts it exits,
 #   7. runs scripts/internal/release-smoke-app-lifecycle.sh (#4011): the app
 #      log's banner (version + pid), no ANSI, "termiHub exited cleanly" after a
-#      Quit AppleEvent, append across relaunch, single-instance forwarding of
+#      real Quit, append across relaunch, single-instance forwarding of
 #      --workspace / --workspace-file, and no clean-exit line after kill -9,
 #   8. downloads the matching standalone agent binary, checks its .sha256 sidecar
 #      and attestation, and runs `termihub-agent --version`.
@@ -336,9 +336,12 @@ jobs:
           VERSION: ${{ steps.tag.outputs.version }}
         run: |
           set -euo pipefail
-          # The Quit is sent as an AppleEvent. If the runner refuses to deliver it
-          # (Automation consent), the script stops the app with SIGTERM and reports
-          # the clean-exit check as skipped (a ::warning::), never as passed.
+          # The Quit clicks the app's "Quit termiHub" menu item through System
+          # Events: the hosted image pre-grants osascript Accessibility + Apple
+          # Events to System Events, but not Apple Events to termiHub itself, so
+          # a direct Quit AppleEvent is only the fallback (#4076). If neither is
+          # delivered, the script stops the app with SIGTERM and reports the
+          # clean-exit check as skipped (a ::warning::), never as passed.
           ./scripts/internal/release-smoke-app-lifecycle.sh \
             --exe "$EXE" --log "$HOME/Library/Logs/com.termihub.app/termihub.log" \
             --version "$VERSION" --close applevent --bundle-id com.termihub.app \
