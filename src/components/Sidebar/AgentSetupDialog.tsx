@@ -8,7 +8,7 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open } from "@/services/nativeDialog";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { RemoteAgentDefinition } from "@/types/connection";
 import { RemoteAgentConfig } from "@/types/terminal";

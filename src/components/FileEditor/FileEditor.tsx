@@ -18,7 +18,7 @@ import {
   Info,
 } from "lucide-react";
 import { Button, Spinner, toast } from "@/components/ui";
-import { save } from "@tauri-apps/plugin-dialog";
+import { save } from "@/services/nativeDialog";
 import { EditorTabMeta, EditorStatus } from "@/types/terminal";
 import { useAppStore, deriveEditorHostLabel } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";

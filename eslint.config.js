@@ -63,6 +63,29 @@ export default tseslint.config(
     },
   },
   {
+    // Native file dialogs go through `@/services/nativeDialog` (#4122), the seam
+    // where the test-bridge harness pre-programs a dialog's result. A direct
+    // plugin import would bypass it and bring back an operator-only dialog in
+    // the system tests. The wrapper itself is the one legitimate importer.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/services/nativeDialog.ts", "src/**/*.test.{ts,tsx}", "src/test/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@tauri-apps/plugin-dialog",
+              importNames: ["open", "save"],
+              message:
+                "Import open/save from @/services/nativeDialog so the test bridge can stub the dialog (#4122).",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // Import-cycle detection (audit TOOL-014). A cycle makes module init order
     // depend on which file is imported first, which surfaces as `undefined`
     // bindings at startup. Only `no-cycle` is enabled — the rest of the

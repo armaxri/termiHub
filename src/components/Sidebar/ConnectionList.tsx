@@ -31,7 +31,7 @@ import {
   Square,
   Puzzle,
 } from "lucide-react";
-import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import { open as openFileDialog } from "@/services/nativeDialog";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
