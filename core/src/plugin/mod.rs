@@ -65,6 +65,7 @@ mod connection;
 mod fat_pack;
 mod host;
 mod host_context;
+mod index_signature;
 mod library_pin;
 mod log_rate_limit;
 mod manager;
@@ -129,6 +130,13 @@ pub use package::{
 pub use platform::{
     host_target_triple, is_valid_library_path, is_valid_target_triple,
     library_file_name_for_triple, BACKEND_DIR, HOST_TARGET_TRIPLE,
+};
+#[cfg(feature = "plugin-index-signing-test-support")]
+pub use index_signature::test_support as index_signature_test_support;
+pub use index_signature::{
+    embedded_index_keys, index_signed_message, IndexSignatureError, IndexSignaturePolicy,
+    IndexSignatureStatus, INDEX_KEY_PLACEHOLDER_MARKER, INDEX_SIGNATURE_EXT, INDEX_SIGNING_DOMAIN,
+    MAX_INDEX_SIGNATURE_BYTES,
 };
 pub use plugin_index::{
     evaluate_index_entry, is_valid_sha256_hex, parse_plugin_index, HostFacts, IndexToolchain,

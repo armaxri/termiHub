@@ -308,7 +308,7 @@ zbus = "5"
 [dev-dependencies]
 # Deterministic test signing helpers for the agent-binary signature tests (#3330),
 # and the in-process SSH test server for the app-log secrecy test (#4011).
-termihub-core = { path = "../core", features = ["agent-update-signing-test-support", "ssh-test-support"] }
+termihub-core = { path = "../core", features = ["agent-update-signing-test-support", "plugin-index-signing-test-support", "ssh-test-support"] }
 # Paused-clock time control (`tokio::test(start_paused)`) for deterministic
 # timeout tests — the owned-task shutdown bounded-timeout path (ARCH-007) is
 # verified without a wall-clock sleep. Dev-only: absent from the release binary.
