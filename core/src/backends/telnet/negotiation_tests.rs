@@ -29,6 +29,16 @@ fn do_naws_after_offer_enables_and_sends_size_without_reply_will() {
     assert_eq!(out, vec![IAC, SB, OPT_NAWS, 0, 80, 0, 24, IAC, SE]);
 }
 
+/// #4102: the first NAWS report carries the size the frontend fitted.
+#[test]
+fn with_size_reports_configured_size_on_do_naws() {
+    let mut n = neg().with_size(117, 36);
+    n.initial_offer();
+    let mut out = Vec::new();
+    n.on_command(DO, OPT_NAWS, &mut out);
+    assert_eq!(out, vec![IAC, SB, OPT_NAWS, 0, 117, 0, 36, IAC, SE]);
+}
+
 #[test]
 fn unsolicited_do_naws_answers_will_then_size() {
     let mut n = neg();
