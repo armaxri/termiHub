@@ -540,7 +540,11 @@ Linux-only:
 
 The fixture-backed suites `pytest.skip()` cleanly when no Docker runtime is
 present (`conftest.py` → `docker_compose`), so a macOS/Windows leg is green on
-the coverage it _can_ run rather than failing on fixtures it cannot reach. This
+the coverage it _can_ run rather than failing on fixtures it cannot reach. A
+reachable daemon that runs Windows containers counts as "no runtime" too. What
+does **not** skip on CI is `compose` running and failing — a container-name
+conflict, a bad compose file, a build error raises `ComposeFixtureFailed` and
+reds the lane (#4103: a name conflict once skipped ~100 Linux suites unnoticed). This
 Docker-daemon boundary is the same one behind the [SSH-tunnel macOS
 carve-out](#per-feature-walkthrough-triage-3695) (the live tunnel UI tests run
 on macOS against the native loopback sshd instead, #4005) and ADR-5.

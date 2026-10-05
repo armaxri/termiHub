@@ -299,6 +299,75 @@ class ContainerRuntimeUnavailable(RuntimeError):
     up. Callers turn this into ``pytest.skip(...)``."""
 
 
+class ComposeFixtureFailed(RuntimeError):
+    """Raised when ``compose`` *ran* against a working runtime and failed —
+    a container-name conflict, a bad compose file, an image build error.
+
+    Deliberately **not** a :class:`ContainerRuntimeUnavailable` subclass: the
+    suites' ``except ContainerRuntimeUnavailable: pytest.skip(...)`` handlers do
+    not catch it, so the test *errors* instead of skipping. Only raised in strict
+    mode (``CI`` set, see :func:`_strict_fixtures`); a misconfiguration that once
+    skipped ~100 Linux suites for days without turning anything red (#4103) must
+    red the lane. Off CI the same failure still degrades to a skip.
+    """
+
+
+#: Substrings (lower-cased) of ``compose`` output that mean the runtime itself is
+#: unreachable or lacks compose support — an *environment* gap that legitimately
+#: skips. Anything else from a failed ``compose`` run is a real fixture failure.
+_RUNTIME_UNAVAILABLE_MARKERS = (
+    "cannot connect to the docker daemon",
+    "is the docker daemon running",
+    "error during connect",
+    "permission denied while trying to connect to the docker daemon",
+    "is not a docker command",
+    "unknown command \"compose\"",
+    "unable to connect to podman",
+    "cannot connect to podman",
+    "looking up compose provider failed",
+    "no compose provider",
+    # A daemon that runs Windows, not Linux, containers (the hosted Windows
+    # runner): reachable, but it cannot host these Linux fixtures at all.
+    "image operating system",
+    "no matching manifest for windows",
+    "cannot be used on this platform",
+)
+
+
+def is_runtime_unavailable_output(output: Optional[str]) -> bool:
+    """Whether failed ``compose`` output means "no usable runtime" (→ skip)
+    rather than "compose ran and failed" (→ error in strict mode)."""
+    text = (output or "").lower()
+    return any(marker in text for marker in _RUNTIME_UNAVAILABLE_MARKERS)
+
+
+def _docker_os_type(runtime: str) -> Optional[str]:
+    """The Docker daemon's ``OSType`` (``"linux"`` / ``"windows"``), or None
+    when it cannot be determined (Podman, an old CLI, a query error)."""
+    if os.path.basename(runtime).lower().split(".")[0] != "docker":
+        return None
+    try:
+        result = subprocess.run(
+            [runtime, "info", "--format", "{{.OSType}}"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    value = (result.stdout or "").strip().lower()
+    return value if result.returncode == 0 and value else None
+
+
+def _strict_fixtures() -> bool:
+    """Strict mode: a real ``compose`` failure errors instead of skipping.
+
+    On whenever ``CI`` is set to a truthy value (GitHub Actions sets
+    ``CI=true``), so a misconfigured fixture can never silently skip a lane.
+    """
+    return os.environ.get("CI", "").strip().lower() not in ("", "0", "false", "no")
+
+
 def container_runtime() -> Optional[str]:
     """Return the container CLI to use (``"docker"`` / ``"podman"``), or None.
 
@@ -545,6 +614,15 @@ class ComposeFixture:
         # overlay, so parallel checkouts bring up isolated containers on distinct
         # host ports (see ``dev_local`` / docs "Parallel test isolation"). The
         # ``ports`` we then probe are computed from the same offset, so they match.
+        os_type = _docker_os_type(runtime)
+        if os_type is not None and os_type != "linux":
+            # The hosted Windows runner's daemon answers ``docker info`` but runs
+            # Windows containers only — an environment gap (skip), not a fixture
+            # failure, even in strict mode (#4103).
+            raise ContainerRuntimeUnavailable(
+                f"the {runtime} daemon runs {os_type} containers; "
+                "the compose fixtures need a Linux container daemon"
+            )
         project = dev_local.compose_project()
         # Self-heal from a prior crash/kill (or --keep-infra) that left this
         # checkout's containers behind: reap them once, before the first
@@ -566,15 +644,30 @@ class ComposeFixture:
     def _run_compose(
         cmd: list[str], services: list[str], *, env: dict, timeout: float, action: str
     ) -> None:
-        """Run a compose subcommand, mapping any failure to a clean skip signal."""
+        """Run a compose subcommand, classifying a failure (#4103).
+
+        * Output saying the runtime is unreachable / lacks compose → raise
+          :class:`ContainerRuntimeUnavailable` (a clean skip).
+        * Any other non-zero exit (name conflict, bad compose file, build error)
+          → raise :class:`ComposeFixtureFailed` in strict mode (``CI`` set) so
+          the test errors; off CI it still degrades to a skip.
+        """
         try:
             subprocess.run(
                 cmd, check=True, timeout=timeout, capture_output=True, text=True, env=env
             )
         except subprocess.CalledProcessError as exc:
-            raise ContainerRuntimeUnavailable(
+            output = "\n".join(part for part in (exc.stdout, exc.stderr) if part)
+            detail = (
                 f"`compose {action}` failed for {services} "
                 f"(exit {exc.returncode}):\n{_tail(exc.stderr or exc.stdout)}"
+            )
+            if is_runtime_unavailable_output(output) or not _strict_fixtures():
+                raise ContainerRuntimeUnavailable(detail) from exc
+            raise ComposeFixtureFailed(
+                f"{detail}\n(compose ran against a working runtime and failed — "
+                "a fixture misconfiguration, not a missing runtime; failing instead "
+                "of skipping because CI is set, see #4103)"
             ) from exc
         except subprocess.TimeoutExpired as exc:
             raise ContainerRuntimeUnavailable(
