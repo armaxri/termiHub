@@ -15,6 +15,7 @@
 //! biometric unlock falls back to the app-enforced login-keychain path.
 
 use std::ptr;
+use std::sync::OnceLock;
 
 use core_foundation::base::{CFType, CFTypeRef, TCFType};
 use core_foundation::boolean::CFBoolean;
@@ -155,32 +156,39 @@ fn context_for(reason: &str) -> Retained<LAContext> {
     }
 }
 
+/// Write and remove a throwaway data-protection item (never prompts).
+fn probe_entitlement() -> Result<(), HwKeyError> {
+    // A lookup is not enough: an unsigned binary can *query* the
+    // data-protection keychain (it just finds nothing). Writing needs the
+    // entitlement, so add and remove a throwaway item without any access
+    // control (no prompt). Missing entitlement fails with -34018.
+    let mut pairs = item_query(PROBE_ACCOUNT);
+    // SAFETY: immutable framework constant; the value is an owned CFData.
+    pairs.push(unsafe {
+        (
+            CFString::wrap_under_get_rule(kSecValueData),
+            CFData::from_buffer(b"probe").into_CFType(),
+        )
+    });
+    let attributes = dictionary(&pairs);
+    // SAFETY: valid dictionary; no result requested.
+    let status = unsafe { SecItemAdd(attributes.as_concrete_TypeRef(), ptr::null_mut()) };
+    let _ = delete_account(PROBE_ACCOUNT);
+    match status {
+        ERR_SEC_SUCCESS | ERR_SEC_DUPLICATE_ITEM => Ok(()),
+        status => match map_status(status) {
+            unavailable @ HwKeyError::Unavailable(_) => Err(unavailable),
+            // Anything else would also break create/release: fall back.
+            other => Err(HwKeyError::Unavailable(other.to_string())),
+        },
+    }
+}
+
 impl HardwareKeyProtector for MacKeychainKey {
     fn probe(&self) -> Result<(), HwKeyError> {
-        // A lookup is not enough: an unsigned binary can *query* the
-        // data-protection keychain (it just finds nothing). Writing needs the
-        // entitlement, so add and remove a throwaway item without any access
-        // control (no prompt). Missing entitlement fails with -34018.
-        let mut pairs = item_query(PROBE_ACCOUNT);
-        // SAFETY: immutable framework constant; the value is an owned CFData.
-        pairs.push(unsafe {
-            (
-                CFString::wrap_under_get_rule(kSecValueData),
-                CFData::from_buffer(b"probe").into_CFType(),
-            )
-        });
-        let attributes = dictionary(&pairs);
-        // SAFETY: valid dictionary; no result requested.
-        let status = unsafe { SecItemAdd(attributes.as_concrete_TypeRef(), ptr::null_mut()) };
-        let _ = delete_account(PROBE_ACCOUNT);
-        match status {
-            ERR_SEC_SUCCESS | ERR_SEC_DUPLICATE_ITEM => Ok(()),
-            status => match map_status(status) {
-                unavailable @ HwKeyError::Unavailable(_) => Err(unavailable),
-                // Anything else would also break create/release: fall back.
-                other => Err(HwKeyError::Unavailable(other.to_string())),
-            },
-        }
+        // The entitlement cannot change while the process runs: probe once.
+        static PROBE: OnceLock<Result<(), HwKeyError>> = OnceLock::new();
+        PROBE.get_or_init(probe_entitlement).clone()
     }
 
     fn create_prompts(&self) -> bool {
