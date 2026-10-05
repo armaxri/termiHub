@@ -7,7 +7,10 @@ import {
   useSensor,
   useSensors,
   type Announcements,
+  type DragAbortEvent,
   type DragEndEvent,
+  type DragOverEvent,
+  type DragPendingEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { Copy, MoveRight } from "lucide-react";
@@ -15,6 +18,13 @@ import type { FileEntry } from "@/types/connection";
 import { describeEntries, type FileTransferOperation } from "@/utils/fileDragMove";
 import { isOutsideViewport } from "@/utils/fileDragOut";
 import { asFileDragData, asFileDropData } from "./fileBrowserDnd";
+import {
+  CancelSignalRecorder,
+  LOST_DRAG_CHECK_MS,
+  describeDndId,
+  describePointerEvent,
+  logFileDrag,
+} from "./fileDragDiagnostics";
 
 interface FileBrowserDndProviderProps {
   /**
@@ -103,12 +113,46 @@ export function FileBrowserDndProvider({
   const draggedOutRef = useRef(false);
   const onDragOutRef = useRef(onDragOut);
   onDragOutRef.current = onDragOut;
+  // Durable drag diagnostics (#4110): what cancelled a drag, and whether the
+  // current press already logged its pending phase.
+  const cancelSignalsRef = useRef<CancelSignalRecorder | null>(null);
+  if (!cancelSignalsRef.current) cancelSignalsRef.current = new CancelSignalRecorder();
+  const pendingLoggedRef = useRef(false);
 
   const setActiveDrag = useCallback((entries: FileEntry[] | null) => {
     draggingRef.current = entries;
     draggedOutRef.current = false;
     setDragging(entries);
   }, []);
+
+  // dnd-kit only calls onDragEnd/onDragCancel once it has committed the drag's
+  // start render; an end or cancel that arrives before that commit tears the
+  // sensor down with no callback at all — the drop is silently lost and the chip
+  // would stick. Detect that after every drag-ending signal, log it, and reset.
+  useEffect(() => {
+    const recorder = cancelSignalsRef.current;
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+    recorder?.attach(window, (kind) => {
+      const entries = draggingRef.current;
+      if (!entries) return;
+      const timer = setTimeout(() => {
+        timers.delete(timer);
+        if (draggingRef.current !== entries) return;
+        logFileDrag(
+          () =>
+            `lost: the drag of ${entries.length} entr${entries.length === 1 ? "y" : "ies"} ended ` +
+            `(${kind}) but dnd-kit fired neither onDragEnd nor onDragCancel — it had not ` +
+            `committed the drag start yet, so nothing was dropped`
+        );
+        setActiveDrag(null);
+      }, LOST_DRAG_CHECK_MS);
+      timers.add(timer);
+    });
+    return () => {
+      recorder?.detach();
+      for (const timer of timers) clearTimeout(timer);
+    };
+  }, [setActiveDrag]);
 
   const updateCopy = useCallback((next: boolean) => {
     copyRef.current = next;
@@ -140,10 +184,17 @@ export function FileBrowserDndProvider({
       if (!entries || !handler || draggedOutRef.current) return;
       if (!isOutsideViewport(e.clientX, e.clientY, window.innerWidth, window.innerHeight)) return;
       draggedOutRef.current = true;
+      logFileDrag(
+        () =>
+          `drag-out: pointer left the viewport at (${Math.round(e.clientX)},${Math.round(e.clientY)}) ` +
+          `viewport=${window.innerWidth}x${window.innerHeight}, handing ${entries.length} entr${entries.length === 1 ? "y" : "ies"} to the native drag`
+      );
       handler(entries, {
         isStillDragging: () => draggingRef.current === entries,
         cancelInAppDrag: () => {
-          if (draggingRef.current === entries) cancelActivePointerDrag();
+          if (draggingRef.current !== entries) return;
+          cancelSignalsRef.current?.note("drag-out", "native OS drag took over");
+          cancelActivePointerDrag();
         },
       });
     };
@@ -151,9 +202,42 @@ export function FileBrowserDndProvider({
     return () => window.removeEventListener("pointermove", onMove);
   }, [dragging]);
 
+  const handleDragPending = useCallback((event: DragPendingEvent) => {
+    // Fired on the press and again on every move until activation: log once.
+    if (pendingLoggedRef.current) return;
+    pendingLoggedRef.current = true;
+    logFileDrag(
+      () =>
+        `pending: id=${describeDndId(event.id)} at=(${Math.round(event.initialCoordinates.x)},` +
+        `${Math.round(event.initialCoordinates.y)}) constraint=${JSON.stringify(event.constraint)}`
+    );
+  }, []);
+
+  const handleDragAbort = useCallback((event: DragAbortEvent) => {
+    // Released (or cancelled) before the activation distance was crossed.
+    pendingLoggedRef.current = false;
+    logFileDrag(
+      () =>
+        `abort before activation: id=${describeDndId(event.id)} ` +
+        `reason=${cancelSignalsRef.current?.takeReason() ?? "unknown"}`
+    );
+  }, []);
+
+  const handleDragOver = useCallback((event: DragOverEvent) => {
+    logFileDrag(
+      () => `over: active=${describeDndId(event.active.id)} over=${describeDndId(event.over?.id)}`
+    );
+  }, []);
+
   const handleDragStart = useCallback(
     (event: DragStartEvent) => {
+      pendingLoggedRef.current = false;
       const drag = asFileDragData(event.active.data.current);
+      logFileDrag(
+        () =>
+          `start: active=${describeDndId(event.active.id)} entries=${drag?.entries.length ?? 0} ` +
+          `${describePointerEvent(event.activatorEvent)}`
+      );
       if (!drag) return;
       updateCopy(hasCopyModifier(event.activatorEvent));
       setActiveDrag(drag.entries);
@@ -166,6 +250,15 @@ export function FileBrowserDndProvider({
       setActiveDrag(null);
       const drag = asFileDragData(event.active.data.current);
       const drop = asFileDropData(event.over?.data.current);
+      logFileDrag(
+        () =>
+          `end: active=${describeDndId(event.active.id)} over=${describeDndId(event.over?.id)} ` +
+          `dest=${drop?.destDir ?? "none"} delta=(${Math.round(event.delta.x)},${Math.round(event.delta.y)}) ` +
+          `collisions=${event.collisions?.length ?? 0} ` +
+          (drag && drop
+            ? `→ ${copyRef.current ? "copy" : "move"}`
+            : "→ no drop (not over a folder)")
+      );
       if (!drag || !drop) return;
       onDrop(drag.entries, drop.destDir, copyRef.current ? "copy" : "move", drop.destEntry);
     },
@@ -176,9 +269,19 @@ export function FileBrowserDndProvider({
     <DndContext
       sensors={sensors}
       collisionDetection={pointerWithin}
+      onDragPending={handleDragPending}
+      onDragAbort={handleDragAbort}
       onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
-      onDragCancel={() => setActiveDrag(null)}
+      onDragCancel={(event) => {
+        logFileDrag(
+          () =>
+            `cancel: active=${describeDndId(event.active.id)} over=${describeDndId(event.over?.id)} ` +
+            `reason=${cancelSignalsRef.current?.takeReason() ?? "unknown"}`
+        );
+        setActiveDrag(null);
+      }}
       accessibility={{ announcements: announcements(() => copyRef.current) }}
     >
       {children}

@@ -309,6 +309,19 @@ describe("durable-log forwarding (OBS-001)", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
+  it("forwards frontendDurableInfo entries at INFO (#4110)", async () => {
+    vi.resetModules();
+    const { frontendDurableInfo } = await import("./frontendLog");
+
+    frontendDurableInfo("file_drag", "drag start");
+
+    expect(invokeMock).toHaveBeenCalledWith("record_frontend_log", {
+      level: "INFO",
+      target: "file_drag",
+      message: "drag start",
+    });
+  });
+
   it("does not throw when the backend invoke rejects", async () => {
     vi.resetModules();
     invokeMock.mockRejectedValueOnce(new Error("ipc down"));

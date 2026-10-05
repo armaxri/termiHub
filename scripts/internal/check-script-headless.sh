@@ -64,6 +64,7 @@ SCRIPTS=(
   "scripts/internal/agent-update-signing.sh"
   "scripts/internal/apply-branch-protection.sh"
   "scripts/internal/assert-no-test-bridge.sh"
+  "scripts/internal/build-system-test-agent.sh"
   "scripts/internal/build-system-test-app.sh"
   "scripts/internal/ci-rust-tests.sh"
   "scripts/internal/harness-coverage.sh"
@@ -303,7 +304,9 @@ primary=true
 if [ -z "${STUB_NO_SINGLE:-}" ] && ! mkdir "$STUB_LOCK" 2>/dev/null; then
   primary=false
 fi
-if [ "$primary" != true ]; then
+if [ "$primary" = true ]; then
+  mkdir -p "$STUB_LOCK" && echo "$$" >"$STUB_LOCK/pid"
+else
   printf '%s\n' "$@" >"$STUB_LOCK/req.$$.tmp"
   mv "$STUB_LOCK/req.$$.tmp" "$STUB_LOCK/req.$$"
   exit 0
@@ -333,18 +336,62 @@ done
 STUB
 chmod +x "$LS/stub-app"
 
+# The macOS close path (#4076) needs osascript; this fake stands in for it. A
+# click on the Quit menu item through System Events, and a Quit AppleEvent,
+# each SIGTERM the stub (its breadcrumb then follows). FAKE_NO_MENU /
+# FAKE_NO_APPLEEVENT make one refuse the way macOS does without the grant.
+mkdir -p "$LS/fakebin"
+cat >"$LS/fakebin/osascript" <<'FAKE'
+#!/usr/bin/env bash
+set -u
+pid="$(cat "$STUB_LOCK/pid" 2>/dev/null || true)"
+case "$*" in
+  *'"System Events"'*)
+    if [ -n "${FAKE_NO_MENU:-}" ]; then
+      echo "execution error: osascript is not allowed assistive access. (-1719)" >&2
+      exit 1
+    fi
+    if [ "${!#}" != "$pid" ]; then
+      echo "menu click aimed at pid ${!#}, the app is pid $pid" >&2
+      exit 1
+    fi
+    kill -TERM "$pid"
+    echo "Quit termiHub"
+    ;;
+  *' to quit'*)
+    if [ -n "${FAKE_NO_APPLEEVENT:-}" ]; then
+      echo "execution error: Not authorized to send Apple events to termiHub. (-1743)" >&2
+      exit 1
+    fi
+    kill -TERM "$pid"
+    ;;
+  *)
+    echo "fake osascript: unexpected script: $*" >&2
+    exit 1
+    ;;
+esac
+FAKE
+chmod +x "$LS/fakebin/osascript"
+
 # The bash smoke and its PowerShell twin (the Windows release smoke), the latter
-# only where pwsh is installed (GitHub's ubuntu runners have it).
-lifecycle_cmd() { # <sh|ps1>: the smoke command line for the stub
+# only where pwsh is installed (GitHub's ubuntu runners have it). `applevent` is
+# the bash smoke with the macOS close path, against the fake osascript.
+lifecycle_cmd() { # <sh|applevent|ps1>: the smoke command line for the stub
   if [ "$1" = sh ]; then
     echo bash scripts/internal/release-smoke-app-lifecycle.sh --exe "$LS/stub-app" \
       --log "$LS/termihub.log" --version 9.8.7 --close sigterm --out "$LS/out"
+  elif [ "$1" = applevent ]; then
+    echo bash scripts/internal/release-smoke-app-lifecycle.sh --exe "$LS/stub-app" \
+      --log "$LS/termihub.log" --version 9.8.7 --close applevent \
+      --bundle-id com.termihub.app --out "$LS/out"
   else
     echo pwsh -NoProfile -File scripts/internal/release-smoke-app-lifecycle.ps1 -Exe "$LS/stub-app" \
       -Log "$LS/termihub.log" -Version 9.8.7 -Close signal -OutDir "$LS/out"
   fi
 }
-# lifecycle_run <sh|ps1> <label> <expect: pass|fail> [VAR=value...]: run the smoke on the stub.
+# lifecycle_run <kind> <label> <expect: pass|skip|fail> [VAR=value...]: run the
+# smoke on the stub. `pass` is exit 0 with no skipped check, `skip` is exit 0
+# with one reported as skipped, `fail` is exit 1.
 lifecycle_run() {
   local kind="$1" label="$2" expect="$3" out rc=0
   local -a cmd
@@ -352,9 +399,14 @@ lifecycle_run() {
   read -r -a cmd <<<"$(lifecycle_cmd "$kind")"
   label="(${kind}) ${label}"
   rm -rf "$LS/lock" "$LS/termihub.log"
-  out="$(env STUB_LOG="$LS/termihub.log" STUB_LOCK="$LS/lock" STUB_VERSION=9.8.7 \
-    SMOKE_IPC_TIMEOUT=20 SMOKE_EXIT_TIMEOUT=5 SMOKE_LOG_TIMEOUT=5 "$@" "${cmd[@]}" 2>&1)" || rc=$?
-  if { [ "$expect" = pass ] && [ "$rc" -eq 0 ]; } || { [ "$expect" = fail ] && [ "$rc" -eq 1 ]; }; then
+  out="$(env PATH="$LS/fakebin:$PATH" STUB_LOG="$LS/termihub.log" STUB_LOCK="$LS/lock" \
+    STUB_VERSION=9.8.7 SMOKE_IPC_TIMEOUT=20 SMOKE_EXIT_TIMEOUT=5 SMOKE_LOG_TIMEOUT=5 \
+    "$@" "${cmd[@]}" 2>&1)" || rc=$?
+  local skipped=false
+  if grep -qF 'skipped a check' <<<"$out"; then skipped=true; fi
+  if { [ "$expect" = pass ] && [ "$rc" -eq 0 ] && [ "$skipped" = false ]; } ||
+    { [ "$expect" = skip ] && [ "$rc" -eq 0 ] && [ "$skipped" = true ]; } ||
+    { [ "$expect" = fail ] && [ "$rc" -eq 1 ]; }; then
     echo "ok    app lifecycle smoke: ${label} (exit ${rc})"
   else
     echo "::error file=scripts/internal/release-smoke-app-lifecycle.sh::app lifecycle smoke:" \
@@ -374,6 +426,13 @@ for kind in "${lifecycle_kinds[@]}"; do
   lifecycle_run "$kind" "fails when the clean-exit line is missing" fail STUB_NO_CLEAN_EXIT=1
   lifecycle_run "$kind" "fails when a second instance keeps running" fail STUB_NO_SINGLE=1
 done
+lifecycle_run applevent "macOS Quit through the app's menu item" pass
+lifecycle_run applevent "falls back to a Quit AppleEvent when System Events refuses" pass \
+  FAKE_NO_MENU=1
+lifecycle_run applevent "reports the clean exit as skipped when no Quit is deliverable" skip \
+  FAKE_NO_MENU=1 FAKE_NO_APPLEEVENT=1
+lifecycle_run applevent "fails when a delivered Quit leaves no clean-exit line" fail \
+  STUB_NO_CLEAN_EXIT=1
 rm -rf "$LS/lock"
 app_lifecycle_and_earlier_failures="$failures"
 
