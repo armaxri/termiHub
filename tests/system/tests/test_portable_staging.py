@@ -195,3 +195,20 @@ def test_normal_launch_still_pins_the_config_dir(tmp_path, monkeypatch):
     assert instance.portable_root is None
     assert instance.launch_env()["TERMIHUB_CONFIG_DIR"] == str(tmp_path / "cfg")
     assert instance.log_path == tmp_path / "cfg" / "app.log"
+
+
+# ── link vs. copy (macOS current_exe of a hard link is unreliable) ───────────
+def test_macos_staging_copies_instead_of_hard_linking(tmp_path, monkeypatch):
+    monkeypatch.setattr(portable.platform, "system", lambda: "Darwin")
+    binary = _fake_binary(tmp_path)
+    staged = portable.stage_portable_app(binary, tmp_path / "root", portable.MARKER)
+    assert staged.read_bytes() == binary.read_bytes()
+    # A distinct inode: macOS would otherwise report a sibling link's path.
+    assert staged.stat().st_ino != binary.stat().st_ino
+
+
+def test_linux_staging_hard_links_when_possible(tmp_path, monkeypatch):
+    monkeypatch.setattr(portable.platform, "system", lambda: "Linux")
+    binary = _fake_binary(tmp_path)
+    staged = portable.stage_portable_app(binary, tmp_path / "root", portable.MARKER)
+    assert staged.stat().st_ino == binary.stat().st_ino
