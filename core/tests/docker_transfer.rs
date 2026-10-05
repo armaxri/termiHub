@@ -688,3 +688,62 @@ async fn relaunch_refuses_a_stopped_or_recreated_container() {
     })
     .await;
 }
+
+/// Ranged slices (#3587) — what an agent-hosted Docker session's queued
+/// transfer moves through: a file read slice by slice and written back slice
+/// by slice is byte-exact, a short slice is the real end, a misplaced write and
+/// a missing file fail, and a hostile path is never evaluated.
+#[tokio::test]
+async fn ranged_slices_round_trip_byte_exact() {
+    with_container("ranges", |fx| async move {
+        make_remote(&fx, "/tmp/src.bin", 3).await;
+        let slice = 256 * 1024u32;
+        let mut data = Vec::new();
+        loop {
+            let chunk = fx
+                .target
+                .read_range("/tmp/src.bin", data.len() as u64, slice)
+                .await
+                .expect("read slice");
+            let short = chunk.len() < slice as usize;
+            data.extend_from_slice(&chunk);
+            if short {
+                break;
+            }
+        }
+        assert_eq!(data.len() as u64, 3 * MIB);
+        let local = fx.local("slices.bin");
+        std::fs::write(&local, &data).expect("write local");
+        assert_eq!(local_sha(&local), fx.remote_sha("/tmp/src.bin").await);
+
+        // Write it back in uneven slices to a hostile path.
+        let hostile = "/tmp/a 'b' $(touch pwned) `touch pwned2`;.bin";
+        let mut offset = 0usize;
+        for piece in data.chunks(200_000) {
+            fx.target
+                .write_range(hostile, offset as u64, piece)
+                .await
+                .expect("write slice");
+            offset += piece.len();
+        }
+        assert_eq!(fx.target.file_size(hostile).await, Some(3 * MIB));
+        let evaluated = fx
+            .sh("for f in /pwned /pwned2 /tmp/pwned /tmp/pwned2; do [ -e $f ] && echo $f; done")
+            .await;
+        assert!(evaluated.trim().is_empty(), "evaluated: {evaluated}");
+
+        // A write that would not land at the end is refused and changes nothing.
+        let err = fx
+            .target
+            .write_range(hostile, 5, b"X")
+            .await
+            .expect_err("misplaced write");
+        assert!(err.to_string().contains("expected 5"), "{err}");
+        assert_eq!(fx.target.file_size(hostile).await, Some(3 * MIB));
+
+        // A missing file is an error, not an empty end of file.
+        assert!(fx.target.read_range("/tmp/missing", 0, 16).await.is_err());
+        assert!(fx.target.read_range("/tmp/missing", 9, 16).await.is_err());
+    })
+    .await;
+}
