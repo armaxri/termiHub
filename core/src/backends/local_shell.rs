@@ -523,6 +523,8 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
         let env = parse_env_vars(&settings);
+        // Spawn at the size the frontend fitted, not a fixed 80x24 (#4102).
+        let (cols, rows) = crate::config::terminal_size_from_settings(&settings);
 
         // Resolve effective shell name for OSC 7 injection below.
         let effective_shell = shell
@@ -534,8 +536,9 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             shell: Some(effective_shell.clone()),
             starting_directory,
             initial_command,
+            cols,
+            rows,
             env,
-            ..ShellConfig::default()
         }
         .expand();
 
@@ -973,6 +976,8 @@ mod tests {
         captured_env: Arc<Mutex<Option<HashMap<String, String>>>>,
         /// Captures the working directory of the last spawned command.
         captured_cwd: Arc<Mutex<Option<Option<std::path::PathBuf>>>>,
+        /// Captures the PTY size `(cols, rows)` of the last spawned command.
+        captured_size: Arc<Mutex<Option<(u16, u16)>>>,
         /// Unblocks `wait_for_exit`. Sending on it (or dropping it) simulates
         /// the child process exiting — mirroring a real `exit` or `kill()`.
         child_exit: Arc<Mutex<Option<std::sync::mpsc::Sender<()>>>>,
@@ -989,6 +994,7 @@ mod tests {
                 reader_tx: Arc::new(Mutex::new(None)),
                 captured_env: Arc::new(Mutex::new(None)),
                 captured_cwd: Arc::new(Mutex::new(None)),
+                captured_size: Arc::new(Mutex::new(None)),
                 child_exit: Arc::new(Mutex::new(None)),
             }
         }
@@ -1008,6 +1014,7 @@ mod tests {
             }
             *self.captured_env.lock().unwrap() = Some(command.env.clone());
             *self.captured_cwd.lock().unwrap() = Some(command.cwd.clone());
+            *self.captured_size.lock().unwrap() = Some((command.cols, command.rows));
             let write_log = self.write_log.clone();
             let resize_log = self.resize_log.clone();
             let killed = self.killed.clone();
@@ -1387,6 +1394,53 @@ mod tests {
             .find(|f| f.key == "envVars")
             .expect("envVars field present in schema");
         assert!(matches!(field.field_type, FieldType::KeyValueList));
+    }
+
+    /// #4102: the frontend puts the fitted `cols`/`rows` into the settings;
+    /// the PTY must be spawned at exactly that size, not a fixed 80x24.
+    #[tokio::test]
+    async fn connect_spawns_pty_at_settings_size() {
+        let mock = MockLocalShellSpawner::new();
+        let captured_size = mock.captured_size.clone();
+        let resize_log = mock.resize_log.clone();
+
+        let mut shell = LocalShell::with_spawner(mock);
+        let mut settings = valid_settings();
+        settings["cols"] = serde_json::json!(117);
+        settings["rows"] = serde_json::json!(36);
+        shell.connect(settings).await.expect("connect");
+
+        assert_eq!(*captured_size.lock().unwrap(), Some((117, 36)));
+        assert!(
+            resize_log.lock().unwrap().is_empty(),
+            "the initial size must come from the spawn, not a follow-up resize"
+        );
+        shell.disconnect().await.ok();
+    }
+
+    /// #4102: absent or invalid `cols`/`rows` fall back to 80x24.
+    #[tokio::test]
+    async fn connect_spawns_pty_at_default_size_when_absent_or_invalid() {
+        for extra in [
+            serde_json::json!({}),
+            serde_json::json!({"cols": 0, "rows": -3}),
+            serde_json::json!({"cols": "wide", "rows": 99999}),
+        ] {
+            let mock = MockLocalShellSpawner::new();
+            let captured_size = mock.captured_size.clone();
+            let mut shell = LocalShell::with_spawner(mock);
+            let mut settings = valid_settings();
+            for (k, v) in extra.as_object().unwrap() {
+                settings[k] = v.clone();
+            }
+            shell.connect(settings).await.expect("connect");
+            assert_eq!(
+                *captured_size.lock().unwrap(),
+                Some((80, 24)),
+                "settings extra: {extra}"
+            );
+            shell.disconnect().await.ok();
+        }
     }
 
     /// PROD-052: the desktop merges a workspace's session defaults into a new

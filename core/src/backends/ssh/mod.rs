@@ -235,6 +235,8 @@ pub fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
     };
 
     let port: u16 = parse_port_setting(settings.get("port"));
+    // Request the PTY at the size the frontend fitted, not a fixed 80x24 (#4102).
+    let (cols, rows) = crate::config::terminal_size_from_settings(settings);
 
     // `env` is the form's key/value list (`[{key, value}]`); a plain
     // `{name: value}` map (the serialized `SshConfig` shape) is accepted too.
@@ -270,8 +272,8 @@ pub fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
         password: opt_str("password"),
         key_path: opt_str("keyPath"),
         shell: opt_str("shell"),
-        cols: 80,
-        rows: 24,
+        cols,
+        rows,
         env,
         enable_x11_forwarding: bool_field("enableX11Forwarding", false),
         enable_monitoring: opt_bool("enableMonitoring"),
@@ -1023,6 +1025,8 @@ mod tests {
         refuse: bool,
         write_log: Arc<Mutex<Vec<Vec<u8>>>>,
         resize_log: Arc<Mutex<Vec<(u16, u16)>>>,
+        /// PTY size `(cols, rows)` of the config the last `open_shell` got.
+        opened_size: Arc<Mutex<Option<(u16, u16)>>>,
     }
 
     impl MockSshConnector {
@@ -1033,6 +1037,7 @@ mod tests {
                 refuse: false,
                 write_log: Arc::new(Mutex::new(Vec::new())),
                 resize_log: Arc::new(Mutex::new(Vec::new())),
+                opened_size: Arc::new(Mutex::new(None)),
             }
         }
 
@@ -1043,6 +1048,7 @@ mod tests {
                 refuse: false,
                 write_log: Arc::new(Mutex::new(Vec::new())),
                 resize_log: Arc::new(Mutex::new(Vec::new())),
+                opened_size: Arc::new(Mutex::new(None)),
             }
         }
 
@@ -1054,6 +1060,7 @@ mod tests {
                 refuse: false,
                 write_log: Arc::new(Mutex::new(Vec::new())),
                 resize_log: Arc::new(Mutex::new(Vec::new())),
+                opened_size: Arc::new(Mutex::new(None)),
             }
         }
 
@@ -1071,10 +1078,11 @@ mod tests {
     impl SshConnector for MockSshConnector {
         async fn open_shell(
             &self,
-            _config: &SshConfig,
+            config: &SshConfig,
             alive: Arc<AtomicBool>,
             cancel: Option<&CancellationToken>,
         ) -> Result<SshShellHandle, SessionError> {
+            *self.opened_size.lock().unwrap() = Some((config.cols, config.rows));
             // Honour a token that is already cancelled so the cancellation wiring
             // (connect_cancellable → open_shell) can be unit-tested without a server.
             if cancel.is_some_and(|t| t.is_cancelled()) {
@@ -2001,6 +2009,45 @@ mod tests {
         ssh.connect(mock_settings()).await.unwrap();
         assert!(ssh.is_connected());
         ssh.disconnect().await.unwrap();
+    }
+
+    /// #4102: the PTY is requested at the `cols`/`rows` the frontend passes.
+    #[tokio::test]
+    async fn connect_requests_pty_at_settings_size() {
+        let mock = MockSshConnector::new();
+        let opened_size = mock.opened_size.clone();
+        let mut ssh = Ssh::with_connector(Box::new(mock));
+        let mut settings = mock_settings();
+        settings["cols"] = serde_json::json!(117);
+        settings["rows"] = serde_json::json!(36);
+        ssh.connect(settings).await.unwrap();
+        assert_eq!(*opened_size.lock().unwrap(), Some((117, 36)));
+        ssh.disconnect().await.unwrap();
+    }
+
+    /// #4102: absent `cols`/`rows` request the 80x24 default.
+    #[tokio::test]
+    async fn connect_requests_pty_at_default_size_when_absent() {
+        let mock = MockSshConnector::new();
+        let opened_size = mock.opened_size.clone();
+        let mut ssh = Ssh::with_connector(Box::new(mock));
+        ssh.connect(mock_settings()).await.unwrap();
+        assert_eq!(*opened_size.lock().unwrap(), Some((80, 24)));
+        ssh.disconnect().await.unwrap();
+    }
+
+    #[test]
+    fn parse_ssh_settings_reads_terminal_size() {
+        let mut settings = mock_settings();
+        settings["cols"] = serde_json::json!(117);
+        settings["rows"] = serde_json::json!(36);
+        let config = parse_ssh_settings(&settings);
+        assert_eq!((config.cols, config.rows), (117, 36));
+
+        settings["cols"] = serde_json::json!(0);
+        settings["rows"] = serde_json::json!("x");
+        let config = parse_ssh_settings(&settings);
+        assert_eq!((config.cols, config.rows), (80, 24));
     }
 
     // ── Files-only on a refused shell (#4078) ────────────────────────

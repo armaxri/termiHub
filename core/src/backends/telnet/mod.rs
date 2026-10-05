@@ -309,6 +309,8 @@ struct SessionOptions {
     terminal_type: String,
     input_mode: InputMode,
     auto_login: Option<AutoLoginConfig>,
+    /// Initial window size `(cols, rows)` reported via NAWS (#4102).
+    size: (u16, u16),
 }
 
 /// Read an optional string setting.
@@ -352,6 +354,7 @@ fn parse_session_options(settings: &serde_json::Value) -> SessionOptions {
         terminal_type,
         input_mode: InputMode::from_setting(str_setting(settings, "inputMode")),
         auto_login,
+        size: crate::config::terminal_size_from_settings(settings),
     }
 }
 
@@ -528,7 +531,9 @@ impl ConnectionType for Telnet {
         let alive = Arc::new(AtomicBool::new(true));
         let writer = Arc::new(Mutex::new(stream));
         let negotiator = Arc::new(Mutex::new(
-            Negotiator::new(&options.terminal_type).with_input_mode(options.input_mode),
+            Negotiator::new(&options.terminal_type)
+                .with_input_mode(options.input_mode)
+                .with_size(options.size.0, options.size.1),
         ));
         debug!(input_mode = ?options.input_mode, "Telnet input mode");
 
