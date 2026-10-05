@@ -4,7 +4,7 @@ import { localListDir, sessionListFiles } from "@/services/api";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
 import type { FileClipboard } from "@/store/appStore";
 import type { FileEntry } from "@/types/connection";
-import { frontendLog } from "@/utils/frontendLog";
+import { frontendDurableInfo, frontendLog } from "@/utils/frontendLog";
 import {
   describeEntries,
   findNameConflicts,
@@ -95,7 +95,10 @@ export function useFileMoveTransfer({
       };
       const verb = operation === "move" ? "Move" : "Copy";
       const options: PasteOptions = { clipboard, destDir, verb };
-      frontendLog(
+      // Durable (#4110): a drag that reaches the engine must leave a trace in
+      // termihub.log, so a "nothing moved" failure tells drop-never-arrived apart
+      // from transfer-ran.
+      frontendDurableInfo(
         "file_browser",
         `${verb} ${entries.length} entr${entries.length === 1 ? "y" : "ies"} → ${destDir}`
       );
@@ -136,13 +139,28 @@ export function useFileMoveTransfer({
       if (mode === "none" || (mode === "session" && !sessionId)) return;
       const plan = planFileDrop(entries, destDir, operation, destEntry);
       if (plan.kind === "refuse") {
+        frontendDurableInfo(
+          "file_browser",
+          `${operation} into ${destDir} refused: ${plan.message}`
+        );
         toast.error(plan.message);
         return;
       }
-      if (plan.kind === "noop") return;
+      if (plan.kind === "noop") {
+        frontendDurableInfo(
+          "file_browser",
+          `${operation} into ${destDir} skipped: every entry already lives there`
+        );
+        return;
+      }
       const names = await listDestinationNames(destDir);
       const conflicts = names === null ? null : findNameConflicts(plan.entries, names);
       if (conflicts === null || conflicts.length > 0) {
+        frontendDurableInfo(
+          "file_browser",
+          `${operation} into ${destDir} awaits overwrite confirmation ` +
+            `(conflicts: ${conflicts === null ? "destination not listable" : conflicts.join(", ")})`
+        );
         // Never replace (or blindly write into an unverifiable destination)
         // without the user's say-so.
         setPendingConflict({ entries: plan.entries, destDir, operation, conflicts });

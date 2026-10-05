@@ -287,6 +287,7 @@ class AppInstance:
         *,
         echo_logs: bool = True,
         portable: Optional[str] = None,
+        sandbox_profile: bool = False,
     ) -> None:
         """Create an unstarted instance.
 
@@ -297,6 +298,13 @@ class AppInstance:
         config to ``<root>/data/``. :attr:`config_dir` is then that ``data/``
         dir. The captured log and the WebView2 folder live in a separate
         scratch dir, so they never pollute the portable data.
+
+        ``sandbox_profile`` redirects the installed-mode profile of a *normal*
+        launch the same way a portable launch does (see
+        :func:`termihub_harness.portable.profile_env`), for both the app and
+        :meth:`run_cli`. On Linux that keeps per-user OS writes such as the
+        shell-integration XDG launchers out of the real ``~/.local/share``
+        (#3691, SI-5/6/7). It is a no-op on macOS and Windows.
         """
         binary = app_binary_path()
         self._portable = portable
@@ -320,6 +328,8 @@ class AppInstance:
                 tempfile.mkdtemp(prefix="termihub-app-config-")
             )
             self._scratch_dir = self._config_dir
+            if sandbox_profile:
+                self._profile_home = self._scratch_dir / "profile-home"
         #: Per-instance WebView2 user-data folder (Windows), pinned via env so
         #: teardown can reap only this instance's msedgewebview2.exe children.
         self._webview2_data_dir = self._scratch_dir / "webview2-user-data"
@@ -357,9 +367,14 @@ class AppInstance:
             # Portable mode must resolve its own `<data>/logs` (#4066), which is
             # also where :attr:`log_dir` points.
             env.pop("TERMIHUB_LOG_DIR", None)
-            if self._profile_home is not None:
-                env.update(portable_staging.profile_env(self._profile_home))
+        env.update(self._profile_overrides())
         return env
+
+    def _profile_overrides(self) -> dict[str, str]:
+        """Profile-redirect variables for a portable or ``sandbox_profile`` launch."""
+        if self._profile_home is None:
+            return {}
+        return portable_staging.profile_env(self._profile_home)
 
     def profile_config_dir(self) -> Optional[Path]:
         """The installed-mode config dir this launch would use if not portable."""
@@ -411,10 +426,15 @@ class AppInstance:
         env["TERMIHUB_CONFIG_DIR"] = str(self._config_dir)
         env["TERMIHUB_LOG_DIR"] = str(self.log_dir)
         env["TERMIHUB_SPAWN_ENDPOINT"] = self.spawn_endpoint
+        env.update(self._profile_overrides())
         return env
 
     def run_cli(
-        self, args: Sequence[str], *, timeout: float = 30.0
+        self,
+        args: Sequence[str],
+        *,
+        timeout: float = 30.0,
+        binary: Optional[Path] = None,
     ) -> subprocess.CompletedProcess:
         """Run ``<app binary> <args>`` as a short-lived CLI process and wait.
 
@@ -424,9 +444,12 @@ class AppInstance:
         running instance launches a whole app instead of exiting, so the
         ``timeout`` is the "forward failed" signal: the process tree is killed
         and :class:`subprocess.TimeoutExpired` propagates to fail the test.
+
+        ``binary`` runs a different copy of the app against this instance's
+        config dir, e.g. a moved copy for the shell-integration staleness test.
         """
         process = subprocess.Popen(
-            [str(self._binary), *args],
+            [str(binary or self._binary), *args],
             env=self.cli_env(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

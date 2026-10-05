@@ -129,6 +129,12 @@ class SystemTest:
     #: a staged copy of the app that must find its own ``data/`` dir.
     portable_mode: ClassVar[Optional[str]] = None
 
+    #: Redirect the installed-mode profile of a normal launch into the
+    #: instance's scratch dir (Linux XDG only; see ``AppInstance``). Suites that
+    #: make the app write per-user OS state, such as shell-integration
+    #: registration (#3691, SI-5/6/7), set it so a local run stays sandboxed.
+    sandbox_profile: ClassVar[bool] = False
+
     @pytest.fixture(scope="class", autouse=True)
     @classmethod
     def _system_test_app(cls, request: pytest.FixtureRequest):
@@ -149,7 +155,11 @@ class SystemTest:
         echo_logs = force_echo or not manual
         try:
             # fresh isolated config dir per suite
-            app = AppInstance(echo_logs=echo_logs, portable=request.cls.portable_mode)
+            app = AppInstance(
+                echo_logs=echo_logs,
+                portable=request.cls.portable_mode,
+                sandbox_profile=request.cls.sandbox_profile,
+            )
         except FileNotFoundError as exc:
             pytest.skip(str(exc))
         # A bridgeless build must fail loudly here, not time out 30s later (#3664).

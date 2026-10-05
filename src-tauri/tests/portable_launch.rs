@@ -24,7 +24,7 @@
 //! these variables, and uninstalling also edits the real HKCU registry.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use tempfile::TempDir;
@@ -63,11 +63,7 @@ impl PortableLaunch {
 
         let built = PathBuf::from(env!("CARGO_BIN_EXE_termihub"));
         let exe = root.join(built.file_name().expect("binary file name"));
-        // A hard link is instant and keeps the link path as the process's
-        // `current_exe`. Fall back to a copy across filesystems.
-        if fs::hard_link(&built, &exe).is_err() {
-            fs::copy(&built, &exe).expect("copy termihub binary into the portable root");
-        }
+        stage_exe(&built, &exe);
 
         match flavor {
             PortableFlavor::Marker => {
@@ -147,6 +143,20 @@ fn termihub_entries_under(dir: &std::path::Path) -> Vec<PathBuf> {
         }
     }
     found
+}
+
+/// Put the built binary at `exe`, so that the process reports `exe` as its
+/// `current_exe`.
+///
+/// Linux and Windows use a hard link, which is instant. macOS resolves
+/// `current_exe` of a hard link through the shared vnode and can report a
+/// *sibling* link's path (another test's copy, or the build output), so it
+/// always copies. `fs::copy` makes an instant APFS clone there.
+fn stage_exe(built: &Path, exe: &Path) {
+    if cfg!(not(target_os = "macos")) && fs::hard_link(built, exe).is_ok() {
+        return;
+    }
+    fs::copy(built, exe).expect("copy termihub binary");
 }
 
 fn describe(output: &Output) -> String {

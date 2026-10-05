@@ -26,11 +26,11 @@ let isForwarding = false;
 /**
  * Forward an ERROR/WARN entry to the backend so it lands in the durable
  * `termihub.log` (OBS-001). Fire-and-forget and fully guarded: DEBUG/INFO stay
- * client-only, non-Tauri environments are skipped, and any failure is swallowed
+ * client-only (unless `force`d by {@link frontendDurableInfo}), non-Tauri environments are skipped, and any failure is swallowed
  * so logging can never disrupt the UI or loop.
  */
-function forwardToDurableLog(entry: LogEntry): void {
-  if (entry.level !== "ERROR" && entry.level !== "WARN") return;
+function forwardToDurableLog(entry: LogEntry, force = false): void {
+  if (!force && entry.level !== "ERROR" && entry.level !== "WARN") return;
   if (isForwarding || !isTauriRuntime()) return;
   isForwarding = true;
   try {
@@ -87,7 +87,12 @@ export function onFrontendLog(cb: LogCallback): () => void {
  * Entries are delivered to live listeners (the LogViewer) or, before any
  * listener has mounted, held in the bounded startup buffer.
  */
-function emitFrontendLog(level: FrontendLogLevel, target: string, message: string): void {
+function emitFrontendLog(
+  level: FrontendLogLevel,
+  target: string,
+  message: string,
+  durable = false
+): void {
   const entry: LogEntry = {
     timestamp: new Date().toISOString(),
     level,
@@ -105,7 +110,7 @@ function emitFrontendLog(level: FrontendLogLevel, target: string, message: strin
   }
   // Durability path (OBS-001): mirror ERROR/WARN to the backend so they reach
   // `termihub.log`. Independent of the LogViewer listeners above.
-  forwardToDurableLog(entry);
+  forwardToDurableLog(entry, durable);
 }
 
 /** Emit a DEBUG log entry visible in the LogViewer. */
@@ -116,6 +121,17 @@ export function frontendLog(target: string, message: string): void {
 /** Emit an INFO log entry visible in the LogViewer. */
 export function frontendInfo(target: string, message: string): void {
   emitFrontendLog("INFO", target, message);
+}
+
+/**
+ * Emit an INFO log entry that is ALSO mirrored to the durable `termihub.log`
+ * (which plain {@link frontendInfo} is not). For low-volume, gesture-level
+ * diagnostics that must survive into CI failure artifacts — the captured app log
+ * is the only frontend evidence a nightly run leaves behind (#4110). Never use it
+ * on a hot path (per pointer move, per render).
+ */
+export function frontendDurableInfo(target: string, message: string): void {
+  emitFrontendLog("INFO", target, message, true);
 }
 
 /** Emit a WARN log entry visible in the LogViewer. */
