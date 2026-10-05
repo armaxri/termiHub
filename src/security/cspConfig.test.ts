@@ -47,10 +47,16 @@ const ALLOW_LIST: Record<string, Record<string, AllowedSource>> = {
     },
   },
   "style-src": {
+    // Runtime <style> elements (xterm, Monaco, sonner, react-remove-scroll) are
+    // allowed by the per-load nonce Tauri appends here, not by 'unsafe-inline'
+    // (#3115, src/security/styleNonce.ts).
     "'self'": { reason: "bundled stylesheets" },
+  },
+  "style-src-attr": {
     "'unsafe-inline'": {
       reason:
-        "runtime <style> elements (xterm, Monaco, sonner, react-remove-scroll) and React style props",
+        "inline style attributes in Monaco's and xterm's generated markup; nonces cannot cover " +
+        "attributes (#3115)",
     },
   },
   "img-src": {
@@ -159,6 +165,17 @@ describe.each(CSP_PLATFORMS)("production CSP on %s", (platform) => {
   it("keeps object-src / frame-src locked down", () => {
     expect(csp["object-src"]).toEqual(["'none'"]);
     expect(csp["frame-src"]).toEqual(["'none'"]);
+  });
+
+  it("has no 'unsafe-inline' for <style> elements — only style-src-attr carries it (#3115)", () => {
+    expect(csp["style-src"]).not.toContain("'unsafe-inline'");
+    expect(csp["style-src-elem"]).toBeUndefined();
+    for (const [directive, sources] of Object.entries(csp)) {
+      if (directive === "style-src-attr") continue;
+      expect(sources, `${directive} must not allow 'unsafe-inline'`).not.toContain(
+        "'unsafe-inline'"
+      );
+    }
   });
 
   it("allows workers only from 'self' — no blob: workers (#3639)", () => {
