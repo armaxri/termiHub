@@ -890,6 +890,75 @@ jobs:
             exit 1
           fi
 
+      # fetch-conpty.cmd (#4121): the flag parser, then REAL fetches of the
+      # pinned Microsoft.Windows.Console.ConPTY package through the PowerShell
+      # twin, from cmd AND from pwsh (#4029), each checked against the pins in
+      # src-tauri/packaging/windows/conpty.env. A run with a tampered package
+      # pin must fail and stage nothing.
+      - name: fetch-conpty.cmd --help and fail-fast paths
+        shell: cmd
+        run: |
+          call scripts\internal\fetch-conpty.cmd --help
+          if errorlevel 1 exit /b 1
+          call scripts\internal\fetch-conpty.cmd --no-such-flag
+          if not errorlevel 1 (echo expected failure: unknown option& exit /b 1)
+          call scripts\internal\fetch-conpty.cmd --arch
+          if not errorlevel 1 (echo expected failure: --arch without a value& exit /b 1)
+          call scripts\internal\fetch-conpty.cmd --arch riscv
+          if not errorlevel 1 (echo expected failure: unsupported arch& exit /b 1)
+          echo fetch-conpty.cmd fail-fast smoke OK
+          exit /b 0
+
+      - name: fetch-conpty.cmd fetches and verifies the pinned package (cmd)
+        shell: cmd
+        run: |
+          call scripts\internal\fetch-conpty.cmd --dest "%RUNNER_TEMP%\conpty-cmd"
+          if errorlevel 1 exit /b 1
+          call scripts\internal\fetch-conpty.cmd --arch arm64 --dest "%RUNNER_TEMP%\conpty-arm64"
+          if errorlevel 1 exit /b 1
+
+      - name: fetch-conpty.cmd fetches and verifies the pinned package (pwsh)
+        shell: pwsh
+        run: |
+          & scripts\internal\fetch-conpty.cmd --dest "$env:RUNNER_TEMP\conpty-pwsh"
+          if ($LASTEXITCODE -ne 0) { Write-Error "fetch-conpty.cmd exited $LASTEXITCODE"; exit 1 }
+
+      - name: Staged ConPTY files match the pins; a tampered pin fails
+        shell: bash
+        run: |
+          set -euo pipefail
+          pins=src-tauri/packaging/windows/conpty.env
+          pin() { sed -n "s/^$1=//p" "$pins" | tr -d '\r'; }
+          tmp="$(cygpath -u "$RUNNER_TEMP")"
+          check() { echo "$(pin "$2")  $1" | sha256sum -c -; }
+          for d in conpty-cmd conpty-pwsh; do
+            check "$tmp/$d/conpty.dll" CONPTY_DLL_X64_SHA256
+            check "$tmp/$d/OpenConsole.exe" OPENCONSOLE_X64_SHA256
+          done
+          check "$tmp/conpty-arm64/conpty.dll" CONPTY_DLL_ARM64_SHA256
+          check "$tmp/conpty-arm64/OpenConsole.exe" OPENCONSOLE_ARM64_SHA256
+          # The bash twin must stage the same bytes as the PowerShell one.
+          scripts/internal/fetch-conpty.sh --dest "$tmp/conpty-bash"
+          cmp "$tmp/conpty-bash/conpty.dll" "$tmp/conpty-cmd/conpty.dll"
+          cmp "$tmp/conpty-bash/OpenConsole.exe" "$tmp/conpty-cmd/OpenConsole.exe"
+          # Tampered package pin: both twins must refuse and stage nothing.
+          cp "$pins" "$tmp/conpty.env.orig"
+          sed -i 's/^CONPTY_NUPKG_SHA256=./CONPTY_NUPKG_SHA256=x/' "$pins"
+          sh_rc=0
+          ps_rc=0
+          scripts/internal/fetch-conpty.sh --dest "$tmp/conpty-bad-sh" || sh_rc=$?
+          powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+            -File scripts/internal/fetch-conpty.ps1 -Dest "$(cygpath -w "$tmp/conpty-bad-ps")" ||
+            ps_rc=$?
+          cp "$tmp/conpty.env.orig" "$pins"
+          [ "$sh_rc" -ne 0 ] || { echo "::error::fetch-conpty.sh accepted a tampered pin"; exit 1; }
+          [ "$ps_rc" -ne 0 ] || { echo "::error::fetch-conpty.ps1 accepted a tampered pin"; exit 1; }
+          if [ -e "$tmp/conpty-bad-sh" ] || [ -e "$tmp/conpty-bad-ps" ]; then
+            echo "::error::a tampered package left files staged"
+            exit 1
+          fi
+          echo "fetch-conpty smoke OK"
+
 
   # Run tests
   #
