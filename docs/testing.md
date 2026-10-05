@@ -2286,7 +2286,7 @@ Folded in from the per-feature walkthroughs (#3695):
 - [ ] MT-UI-41 — Scrollbar thumb visible at rest in every theme
 - [ ] MT-UI-42 (macOS) — Zoomed terminal repaints without scrolling
 - [ ] MT-UI-43 (macOS) — OSC 133 gutter bars and jump highlight look right
-- [ ] MT-UI-44 (macOS) — Inline SIXEL/iTerm2 images draw correctly
+- [ ] MT-UI-44 (macOS, Windows) — Inline SIXEL/iTerm2 images draw correctly
 - [ ] MT-UI-45 (macOS) — Sidebar paints fully on cold launch
 
 **3. Pending automation (interim)** — until its issue lands, each `automation_issue` item in the YAML is still walked by `scripts/test-manual.py` for a release. The issue removes it from the YAML when it automates it.
