@@ -75,6 +75,7 @@ import { PanelDropZone } from "./PanelDropZone";
 import { EmptyWindowState } from "./EmptyWindowState";
 import { PanelErrorBoundary } from "./PanelErrorBoundary";
 import { useTerminalRightClickRouting } from "./terminalRightClick";
+import { errorMessage } from "@/utils/errorMessage";
 import "./SplitView.css";
 
 /**
@@ -140,7 +141,7 @@ export async function copyTerminalSelection(
     await deps.writeClipboard(selection);
     deps.clearSelection();
   } catch (err) {
-    deps.reportError(`Failed to copy selection: ${String(err)}`);
+    deps.reportError(`Failed to copy selection: ${errorMessage(err)}`);
   }
 }
 

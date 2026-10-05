@@ -29,6 +29,7 @@ import { mirrorLayoutIntent, mirrorLayoutMove } from "@/store/layoutBridge";
 import { currentAgentsView } from "@/store/agentsBridge";
 import { currentConnectionsView } from "@/store/connectionsBridge";
 import { createLayoutCommit } from "./layoutCommit";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Tab-groups slice (ARCH-001/FES-011, appStore god-module split via #2881): the
@@ -442,7 +443,7 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
         // Hand-off failed: clear the moving flag so a later close still tears the
         // session down rather than leaking it.
         if (sessionId) get().clearMovingSession(sessionId);
-        frontendLog("multi_window", `move tab to window failed: ${String(err)}`);
+        frontendLog("multi_window", `move tab to window failed: ${errorMessage(err)}`);
         return;
       }
 
@@ -539,7 +540,7 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
       try {
         payload = await takePendingWindowRestore();
       } catch (err) {
-        frontendLog("multi_window", `takePendingWindowRestore failed: ${String(err)}`);
+        frontendLog("multi_window", `takePendingWindowRestore failed: ${errorMessage(err)}`);
         return;
       }
       if (!payload || payload.tabGroups.length === 0) return;

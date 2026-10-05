@@ -9,6 +9,7 @@ import {
 } from "@/services/api";
 import type { ClipboardImageInfo, ClipboardImageStatus } from "@/types/remoteDesktop";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 interface RemoteDesktopClipboardImageProps {
   /** The graphical session whose clipboard image this section drives. */
@@ -43,7 +44,9 @@ export function RemoteDesktopClipboardImage({
       .then((next) => {
         if (!cancelled) setStatus(next);
       })
-      .catch((err) => frontendLog("remote_desktop", `clipboard_image_info failed: ${err}`));
+      .catch((err) =>
+        frontendLog("remote_desktop", `clipboard_image_info failed: ${errorMessage(err)}`)
+      );
     return () => {
       cancelled = true;
     };

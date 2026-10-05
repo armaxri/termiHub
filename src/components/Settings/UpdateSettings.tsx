@@ -8,6 +8,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { safeOpenExternal } from "@/utils/safeOpenExternal";
 import { resolveUiLocale } from "@/utils/locale";
 import { Button, Spinner, StatusDot } from "@/components/ui";
+import { errorMessage } from "@/utils/errorMessage";
 import "./UpdateSettings.css";
 
 interface UpdateSettingsProps {
@@ -53,7 +54,7 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
       };
       await updateSettings(newSettings);
     } catch (err) {
-      frontendLog("update", `Failed to save auto-check preference: ${err}`);
+      frontendLog("update", `Failed to save auto-check preference: ${errorMessage(err)}`);
     } finally {
       setSavingAutoCheck(false);
     }
@@ -67,7 +68,7 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
         throw new Error("Could not open the downloads page in your browser.");
       }
     } catch (err) {
-      frontendLog("update", `Failed to open release URL: ${err}`);
+      frontendLog("update", `Failed to open release URL: ${errorMessage(err)}`);
       throw err;
     }
   };

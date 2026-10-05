@@ -44,7 +44,7 @@ use tracing::{debug, info};
 use crate::config::{FtpConfig, FtpDataMode, FtpTlsMode, FtpTransferType};
 use crate::connection::{
     Capabilities, Condition, ConnectionType, FieldType, NoticeSeverity, OutputReceiver,
-    SelectOption, SettingsField, SettingsGroup, SettingsSchema,
+    OutputSender, SelectOption, SettingsField, SettingsGroup, SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
@@ -88,6 +88,14 @@ pub struct Ftp {
     /// connection; aborted on [`disconnect`](ConnectionType::disconnect) and on
     /// drop so no task outlives the session.
     keep_alive: Option<JoinHandle<()>>,
+    /// Sender half of the (silent) output stream handed out by
+    /// [`subscribe_output`](ConnectionType::subscribe_output). FTP never writes
+    /// to it; holding it keeps the stream open for the session's lifetime. The
+    /// session manager reads the end of that stream as "the session ended" and
+    /// drops the session, so an immediately-closed stream tore the FTP session
+    /// down right after connect and the file browser lost it (#4017). Dropped on
+    /// [`disconnect`](ConnectionType::disconnect).
+    output_tx: std::sync::Mutex<Option<OutputSender>>,
 }
 
 impl Ftp {
@@ -97,6 +105,7 @@ impl Ftp {
             client: None,
             browser: None,
             keep_alive: None,
+            output_tx: std::sync::Mutex::new(None),
         }
     }
 
@@ -598,6 +607,11 @@ impl ConnectionType for Ftp {
         }
         // Drop the browser (closing its own control connection, if opened).
         self.browser = None;
+        // End the silent output stream: the session manager sees EOF and settles.
+        self.output_tx
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
         if let Some(mut client) = self.client.take() {
             if let Err(e) = client.quit().await {
                 debug!("FTP QUIT failed during disconnect: {e}");
@@ -622,8 +636,13 @@ impl ConnectionType for Ftp {
     }
 
     fn subscribe_output(&self) -> OutputReceiver {
-        // No terminal output stream — hand back an immediately-closed receiver.
-        let (_tx, rx) = tokio::sync::mpsc::channel(1);
+        // No terminal output, but the stream must stay open until disconnect:
+        // its end is what tells the session manager the session is over (#4017).
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        *self
+            .output_tx
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(tx);
         rx
     }
 
@@ -920,6 +939,25 @@ mod tests {
         let cancellable = Ftp::new().connect_cancellable(settings, None).await;
         assert!(matches!(plain, Err(SessionError::InvalidConfig(_))));
         assert!(matches!(cancellable, Err(SessionError::InvalidConfig(_))));
+    }
+
+    /// Regression (#4017): the output stream used to be closed on return, so the
+    /// session manager ended every FTP session right after connect and the
+    /// sidebar file browser could no longer list it. It must stay open until
+    /// disconnect.
+    #[tokio::test]
+    async fn output_stream_stays_open_until_disconnect() {
+        use tokio::sync::mpsc::error::TryRecvError;
+
+        let mut ftp = Ftp::new();
+        let mut rx = ftp.subscribe_output();
+        assert_eq!(
+            rx.try_recv(),
+            Err(TryRecvError::Empty),
+            "closed before disconnect"
+        );
+        ftp.disconnect().await.expect("disconnect");
+        assert_eq!(rx.recv().await, None, "the stream ends on disconnect");
     }
 
     #[tokio::test]

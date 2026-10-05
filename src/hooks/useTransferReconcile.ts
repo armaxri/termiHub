@@ -4,6 +4,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { isTerminalTransferState } from "@/types/transfer";
 import { dispatchTransferIntentBestEffort } from "@/store/transfersBridge";
 import { useProjectedTransfers } from "@/store/useProjectedTransfers";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * How often to poll `transfer_list` while the queue holds a non-terminal row.
@@ -50,7 +51,7 @@ export function useTransferReconcile(): void {
         // hiccup is swallowed and logged, never disrupting the poll loop.
         dispatchTransferIntentBestEffort("transfer.reconcile", { snapshots });
       } catch (err) {
-        frontendLog("transfer_reconcile", `transfer_list reconcile failed: ${String(err)}`);
+        frontendLog("transfer_reconcile", `transfer_list reconcile failed: ${errorMessage(err)}`);
       }
     };
 

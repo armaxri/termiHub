@@ -5,6 +5,7 @@ import { useAppInfo } from "@/hooks/useAppInfo";
 import { frontendLog } from "@/utils/frontendLog";
 import { Button } from "@/components/ui";
 import { ThirdPartyNoticesDialog } from "./ThirdPartyNoticesDialog";
+import { errorMessage } from "@/utils/errorMessage";
 import "./AboutSettings.css";
 
 const GITHUB_URL = "https://github.com/armaxri/termiHub";
@@ -19,7 +20,7 @@ export function AboutSettings() {
     try {
       await openUrl(GITHUB_URL);
     } catch (err) {
-      frontendLog("about", `Failed to open GitHub URL: ${err}`);
+      frontendLog("about", `Failed to open GitHub URL: ${errorMessage(err)}`);
       throw err;
     }
   };
@@ -28,7 +29,7 @@ export function AboutSettings() {
     try {
       await openUrl(LICENSE_URL);
     } catch (err) {
-      frontendLog("about", `Failed to open license URL: ${err}`);
+      frontendLog("about", `Failed to open license URL: ${errorMessage(err)}`);
       throw err;
     }
   };

@@ -33,6 +33,7 @@ import { unattendedParamValues } from "./scheduledRuns";
 import { currentSessionView, regionExited } from "./sessionBridge";
 import { resolveConnectedTargets } from "./slices/workflowFanout";
 import { activeWorkflowRunCount, runWorkflowOnTarget } from "./slices/workflowRunOnTarget";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** The store access the trigger glue needs. */
 export interface WorkflowTriggerStore {
@@ -105,7 +106,10 @@ function launchTriggeredRun(
     sessionless: target.sessionless,
   })
     .catch((err) => {
-      frontendLog("workflow", `${triggeredBy} run of "${workflow.name}" failed: ${String(err)}`);
+      frontendLog(
+        "workflow",
+        `${triggeredBy} run of "${workflow.name}" failed: ${errorMessage(err)}`
+      );
     })
     .finally(() => {
       triggeredInFlight--;
@@ -122,7 +126,7 @@ function guarded(what: string, hook: () => void): void {
   try {
     hook();
   } catch (err) {
-    frontendLog("workflow", `${what} trigger hook failed: ${String(err)}`);
+    frontendLog("workflow", `${what} trigger hook failed: ${errorMessage(err)}`);
   }
 }
 

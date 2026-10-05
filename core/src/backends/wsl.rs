@@ -478,6 +478,38 @@ pub(crate) fn windows_path_to_wsl_path(win_path: &str) -> Option<String> {
     }
 }
 
+/// Parse the connection settings into a [`WslConfig`].
+///
+/// `distribution` is required. The PTY size is read from the `cols`/`rows` the
+/// frontend fitted (80x24 when absent or invalid) so the shell starts at the
+/// right width (#4102).
+fn parse_wsl_config(settings: &serde_json::Value) -> Result<WslConfig, SessionError> {
+    let distribution = settings
+        .get("distribution")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            SessionError::InvalidConfig("Missing required field: distribution".to_string())
+        })?
+        .to_string();
+    let opt_str = |key: &str| -> Option<String> {
+        settings
+            .get(key)
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+    };
+    let (cols, rows) = crate::config::terminal_size_from_settings(settings);
+    Ok(WslConfig {
+        distribution,
+        starting_directory: opt_str("startingDirectory"),
+        initial_command: opt_str("initialCommand"),
+        cols,
+        rows,
+        env: parse_wsl_env(settings),
+    })
+}
+
 /// Parse the `env` key/value list from connection settings into a map of
 /// environment variables to apply to the WSL distribution.
 ///
@@ -1020,38 +1052,12 @@ impl ConnectionType for Wsl {
         }
 
         // Parse settings into WslConfig.
-        let distribution = settings
-            .get("distribution")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                SessionError::InvalidConfig("Missing required field: distribution".to_string())
-            })?
-            .to_string();
-
-        let starting_directory = settings
-            .get("startingDirectory")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(String::from);
-
-        let _initial_command = settings
-            .get("initialCommand")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(String::from);
+        let config = parse_wsl_config(&settings)?;
+        let distribution = config.distribution.clone();
         let shell_integration = settings
             .get("shellIntegration")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
-
-        let config = WslConfig {
-            distribution: distribution.clone(),
-            starting_directory,
-            initial_command: _initial_command,
-            env: parse_wsl_env(&settings),
-            ..WslConfig::default()
-        };
 
         // Resolve the WSL command via the shared shell helper.
         let shell_key = format!("wsl:{}", config.distribution);
@@ -1377,6 +1383,36 @@ mod tests {
 
     use super::{init_script_linux_path, wait_for_bytes, *};
     use crate::connection::validate_settings;
+
+    /// #4102: the PTY is spawned at the `cols`/`rows` the frontend passes.
+    #[test]
+    fn parse_wsl_config_reads_terminal_size() {
+        let settings = serde_json::json!({
+            "distribution": "Ubuntu",
+            "cols": 117,
+            "rows": 36,
+        });
+        let config = parse_wsl_config(&settings).unwrap();
+        assert_eq!((config.cols, config.rows), (117, 36));
+    }
+
+    /// #4102: absent or invalid `cols`/`rows` fall back to 80x24.
+    #[test]
+    fn parse_wsl_config_defaults_terminal_size() {
+        for settings in [
+            serde_json::json!({"distribution": "Ubuntu"}),
+            serde_json::json!({"distribution": "Ubuntu", "cols": 0, "rows": "x"}),
+        ] {
+            let config = parse_wsl_config(&settings).unwrap();
+            assert_eq!((config.cols, config.rows), (80, 24), "settings: {settings}");
+        }
+    }
+
+    #[test]
+    fn parse_wsl_config_requires_distribution() {
+        let err = parse_wsl_config(&serde_json::json!({"cols": 100})).unwrap_err();
+        assert!(matches!(err, SessionError::InvalidConfig(_)));
+    }
 
     #[test]
     fn type_id() {

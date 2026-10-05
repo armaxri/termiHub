@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
-import { TooltipProvider } from "@/components/ui";
+import { TooltipProvider, toast } from "@/components/ui";
 import type { ShellIntegrationStatus } from "@/types/connection";
 import * as api from "@/services/api";
 import { ShellIntegrationSettings } from "./ShellIntegrationSettings";
@@ -122,6 +122,26 @@ describe("ShellIntegrationSettings", () => {
     const savedArg = mockedApi.saveShellIntegrationSettings.mock.calls[0][0];
     expect(savedArg.entries).toHaveLength(1);
     expect(savedArg.entries[0].name).toBe("Open in termiHub");
+  });
+
+  it("toasts a structured IPC error's message when saving fails (#4104)", async () => {
+    const errorSpy = vi.spyOn(toast, "error").mockReturnValue("id");
+    // Tauri rejects a command error as a `{ code, message }` envelope, not an Error.
+    mockedApi.saveShellIntegrationSettings.mockRejectedValue({
+      code: "io_error",
+      message: "registry key is locked",
+    });
+    await render();
+    await act(async () => {
+      byTestId("shell-integration-add-entry")?.click();
+    });
+    await act(async () => {
+      byTestId("shell-integration-entry-save")?.click();
+    });
+    expect(errorSpy).toHaveBeenCalledWith("Failed to save shell integration settings", {
+      description: "registry key is locked",
+    });
+    errorSpy.mockRestore();
   });
 
   it("persists deletion of an existing entry", async () => {

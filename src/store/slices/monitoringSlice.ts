@@ -18,6 +18,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
 
 import type { AppState } from "../appStore";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * System-monitoring domain slice — a cut of the appStore god-module split
@@ -206,7 +207,7 @@ export const createMonitoringSlice: StateCreator<AppState, [], [], MonitoringSli
     try {
       await sessionMonitoringCancel(key);
     } catch (err) {
-      frontendLog("monitoring", `cancel failed for ${key}: ${err}`);
+      frontendLog("monitoring", `cancel failed for ${key}: ${errorMessage(err)}`);
     }
     // Belt-and-suspenders: drop any lingering entry (e.g. one that never
     // established a session) from the region so the picker / Retry is reachable.

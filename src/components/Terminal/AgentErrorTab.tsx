@@ -6,6 +6,7 @@ import { Button, ContentOverlay } from "@/components/ui";
 import { AgentErrorMeta } from "@/types/terminal";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
+import { errorMessage } from "@/utils/errorMessage";
 import "./AgentErrorTab.css";
 
 interface AgentErrorTabProps {
@@ -60,7 +61,7 @@ export function AgentErrorTab({ tabId: _tabId, meta, isVisible }: AgentErrorTabP
       await connectRemoteAgent(meta.agentId, password);
       resolveAgentErrorTabs(meta.agentId);
     } catch (err) {
-      setReconnectError(String(err));
+      setReconnectError(errorMessage(err));
       setIsReconnecting(false);
     }
   }, [meta.agentId, connectRemoteAgent, resolveAgentErrorTabs]);

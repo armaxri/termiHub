@@ -5,6 +5,7 @@ import { useAppStore } from "@/store/appStore";
 import { listConfigFiles, exportConfigToPortable, importConfigFromPortable } from "@/services/api";
 import type { ConfigFileStatus } from "@/types/connection";
 import { Button, Checkbox } from "@/components/ui";
+import { errorMessage } from "@/utils/errorMessage";
 import "./PortableModeSettings.css";
 
 const PORTABLE_FILES = [
@@ -164,7 +165,7 @@ export function PortableModeSettings() {
           message: `Copied ${result.filesCopied.length} file(s) to ${migrationTarget}${warns}`,
         });
       } catch (err) {
-        setMigrationResult({ success: false, message: String(err) });
+        setMigrationResult({ success: false, message: errorMessage(err) });
       } finally {
         setMigrating(false);
       }
@@ -184,7 +185,7 @@ export function PortableModeSettings() {
           message: `Copied ${result.filesCopied.length} file(s) from ${migrationTarget}${warns}`,
         });
       } catch (err) {
-        setMigrationResult({ success: false, message: String(err) });
+        setMigrationResult({ success: false, message: errorMessage(err) });
       } finally {
         setMigrating(false);
       }

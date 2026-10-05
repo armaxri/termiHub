@@ -658,6 +658,18 @@ fn parse_options_defaults() {
     assert!(opts.auto_login.is_none(), "auto-login must be opt-in");
 }
 
+/// #4102: the NAWS window size comes from the `cols`/`rows` the frontend
+/// passes, with the 80x24 default when absent or invalid.
+#[test]
+fn parse_options_terminal_size() {
+    let opts = parse_session_options(&serde_json::json!({"host": "h", "cols": 117, "rows": 36}));
+    assert_eq!(opts.size, (117, 36));
+    let opts = parse_session_options(&serde_json::json!({"host": "h"}));
+    assert_eq!(opts.size, (80, 24));
+    let opts = parse_session_options(&serde_json::json!({"host": "h", "cols": 0, "rows": "x"}));
+    assert_eq!(opts.size, (80, 24));
+}
+
 #[test]
 fn parse_options_manual_ignores_credentials() {
     let opts = parse_session_options(&serde_json::json!({

@@ -3,6 +3,7 @@ import { onHttpMonitorCheck } from "@/services/networkApi";
 import { toast } from "@/components/ui";
 import type { HttpCheckResult } from "@/types/network";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Global hook that surfaces HTTP monitor up/down transitions as toasts.
@@ -59,7 +60,9 @@ export function useHttpMonitorNotifications(): void {
           unlisten = fn;
         }
       })
-      .catch((err) => frontendLog("http_monitor_notify", `Failed to subscribe to checks: ${err}`));
+      .catch((err) =>
+        frontendLog("http_monitor_notify", `Failed to subscribe to checks: ${errorMessage(err)}`)
+      );
 
     return () => {
       disposed = true;

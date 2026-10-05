@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { listNamedCredentials, NAMED_CREDENTIALS_CHANGED_EVENT } from "@/services/namedCredentials";
 import type { NamedCredentialEntry } from "@/types/generated/NamedCredentialEntry";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** Result of {@link useNamedCredentials}. */
 export interface UseNamedCredentialsResult {
@@ -26,7 +27,7 @@ export function useNamedCredentials(): UseNamedCredentialsResult {
       const list = await listNamedCredentials();
       setEntries(Array.isArray(list) ? list : []);
     } catch (err) {
-      frontendLog("named_credentials", `Failed to list shared credentials: ${String(err)}`);
+      frontendLog("named_credentials", `Failed to list shared credentials: ${errorMessage(err)}`);
     } finally {
       setLoaded(true);
     }

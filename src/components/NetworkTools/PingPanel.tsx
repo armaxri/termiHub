@@ -136,7 +136,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
       setError(errorMessage(err));
       setStatus("error");
       endSession();
-      frontendLog("ping_panel", `Ping failed: ${err}`);
+      frontendLog("ping_panel", `Ping failed: ${errorMessage(err)}`);
     }
   }, [host, intervalMs, count, canStart, endSession]);
 
@@ -145,7 +145,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
     try {
       await networkPingStop(taskIdRef.current);
     } catch (err) {
-      frontendLog("ping_panel", `Stop failed: ${err}`);
+      frontendLog("ping_panel", `Stop failed: ${errorMessage(err)}`);
     }
     taskIdRef.current = null;
   }, []);

@@ -24,6 +24,7 @@ import { useTerminalRegistry } from "./TerminalRegistry";
 import { Tab } from "./Tab";
 import { ColorPickerDialog } from "./ColorPickerDialog";
 import { RenameDialog } from "./RenameDialog";
+import { errorMessage } from "@/utils/errorMessage";
 import "./TabBar.css";
 
 interface TabBarProps {
@@ -82,7 +83,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const multiWindow = windowCount > 1;
   const handleFocusOwningWindow = (label: string) => {
     focusWindow(label).catch((err) =>
-      frontendLog("multi_window", `Failed to focus owning window ${label}: ${String(err)}`)
+      frontendLog("multi_window", `Failed to focus owning window ${label}: ${errorMessage(err)}`)
     );
   };
   const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard, openTerminalInEditor } =
@@ -108,7 +109,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
     if (!open) return;
     listWindows()
       .then(setWindows)
-      .catch((err) => frontendLog("multi_window", `listWindows failed: ${String(err)}`));
+      .catch((err) => frontendLog("multi_window", `listWindows failed: ${errorMessage(err)}`));
   };
 
   // Move a tab to a new or existing window through the #1900 handoff seam.

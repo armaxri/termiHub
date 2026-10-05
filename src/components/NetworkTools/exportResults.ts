@@ -9,6 +9,7 @@ import type {
   PingSweepResult,
   TracerouteHop,
 } from "@/types/network";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** A single scanned host/port result, as rendered by the Port Scanner panel. */
 export interface PortScanExportRow {
@@ -145,7 +146,7 @@ export async function exportNetworkResults(
     await writeTextFile(filePath, content);
     toast.success("Results exported");
   } catch (err) {
-    frontendLog("network_export", `Export failed: ${err}`);
+    frontendLog("network_export", `Export failed: ${errorMessage(err)}`);
     toast.error("Failed to export results");
   }
 }

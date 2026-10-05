@@ -25,6 +25,7 @@ import type { PasswordPromptKind } from "@/store/slices/passwordPromptSlice";
 import type { ConnectionConfig } from "@/types/terminal";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { frontendError } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** The auth methods whose secret the user can re-enter. */
 type ReentryAuthMethod = "password" | "key";
@@ -120,7 +121,10 @@ async function saveReenteredSecret(
     );
     return true;
   } catch (err) {
-    frontendError("credential_reentry", `Failed to store re-entered credential: ${err}`);
+    frontendError(
+      "credential_reentry",
+      `Failed to store re-entered credential: ${errorMessage(err)}`
+    );
     return false;
   }
 }

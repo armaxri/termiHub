@@ -3,6 +3,7 @@ import { useCallback, useMemo } from "react";
 import { toast } from "@/components/ui";
 import { transferCancel, transferPause, transferResume, transferRetry } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * The transfer-control action handlers shared by every surface that offers
@@ -47,7 +48,7 @@ export function useTransferControls(): TransferControlHandlers {
           toast.info(messages.noop);
         }
       } catch (err) {
-        frontendLog("transfer_queue", `${messages.error}: ${String(err)}`);
+        frontendLog("transfer_queue", `${messages.error}: ${errorMessage(err)}`);
         toast.error(messages.error);
       }
     },

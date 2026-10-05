@@ -1372,7 +1372,7 @@ export function FileEditor({
       // Also record it in the LogViewer so the failure is diagnosable later.
       frontendError(
         "file_editor",
-        `save failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`
+        `save failed: ${err instanceof Error ? (err.stack ?? err.message) : errorMessage(err)}`
       );
       setSaveError(formatSaveError(err));
       return "failed";

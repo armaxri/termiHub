@@ -134,7 +134,7 @@ export function PluginCatalogSettings() {
       setLoad({ phase: "loaded", result });
     } catch (err) {
       const error = errorMessage(err);
-      frontendLog("plugin_catalog", `Loading the plugin index failed: ${error}`);
+      frontendLog("plugin_catalog", `Loading the plugin index failed: ${errorMessage(error)}`);
       setLoad({ phase: "error", error });
     }
   }, []);

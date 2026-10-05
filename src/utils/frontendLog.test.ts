@@ -225,7 +225,7 @@ describe("fireAndForget", () => {
     expect(received).toHaveLength(1);
     expect(received[0].level).toBe("WARN");
     expect(received[0].target).toBe("frontend::fire_and_forget");
-    expect(received[0].message).toBe("cleanup temp file: Error: boom");
+    expect(received[0].message).toBe("cleanup temp file: boom");
     unsub();
   });
 
@@ -242,7 +242,7 @@ describe("fireAndForget", () => {
 
     expect(received).toHaveLength(1);
     expect(received[0].level).toBe("ERROR");
-    expect(received[0].message).toBe("close session on teardown: Error: still live");
+    expect(received[0].message).toBe("close session on teardown: still live");
     unsub();
   });
 
