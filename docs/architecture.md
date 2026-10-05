@@ -1114,6 +1114,25 @@ graph TB
 No AppImage is built for Linux ARM64: `linuxdeploy`, the AppImage tool, is
 x86_64-only, so the native ARM64 release runner produces `.deb` and `.rpm` only.
 
+**Windows ConPTY host (#4121).** The Windows installers ship Microsoft's
+`conpty.dll` + `OpenConsole.exe` (from the `Microsoft.Windows.Console.ConPTY`
+NuGet package, MIT) next to `termihub.exe`. `portable-pty` loads a `conpty.dll`
+from the executable's directory in preference to the inbox `kernel32` ConPTY,
+and that DLL starts the `OpenConsole.exe` beside it as the console host. The
+inbox host re-renders the child's output and drops DCS strings such as SIXEL;
+the packaged host forwards the child's VT verbatim, so inline images work in
+local terminals. The files are never committed: `scripts/internal/fetch-conpty.sh`
+(`.cmd`/`.ps1` twin) downloads the version pinned in
+`src-tauri/packaging/windows/conpty.env`, refuses it unless the package and both
+files match their SHA-256 pins, and stages them for the bundle-only config
+fragment `src-tauri/tauri.conpty.conf.json`, which maps them to the install root.
+`release.yml` / `dev-build.yml` then fail unless the built MSI (and dev NSIS)
+carries both files next to `termihub.exe`, pinned and Microsoft-signed
+(`scripts/internal/verify-conpty-bundle.ps1`). Builds without the fragment — `cargo`
+test binaries, `scripts/dev.cmd` before a fetch, a portable copy that leaves the
+files behind — fall back to the inbox host, so the PTY code
+(`core/src/backends/local_shell.rs`, `conpty_cursor.rs`) supports both.
+
 ### CI/CD Pipeline
 
 Three GitHub Actions workflows handle the build and release pipeline. See `.github/workflows/` for details.
