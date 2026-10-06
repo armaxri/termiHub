@@ -168,7 +168,7 @@ impl SandboxedPluginHandle {
     }
 
     /// Stop for good (disable / revoke / uninstall / quit): bounded close of
-    /// every session, `Shutdown`, kill. Later [`acquire`](Self::acquire)s fail.
+    /// every session, `Shutdown`, kill. Later `acquire`s fail.
     pub fn stop(&self) {
         self.stopped.store(true, Ordering::SeqCst);
         let plugin = self

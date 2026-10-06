@@ -172,7 +172,7 @@ pub enum HostError {
     MissingSymbol(String),
 
     /// The library reported an ABI version this host cannot load: a different
-    /// major, or a newer minor than this host's ([`CURRENT_PLUGIN_ABI_VERSION`]).
+    /// major, or a newer minor than this host's ([`CURRENT_PLUGIN_ABI_VERSION`](termihub_plugin_api::CURRENT_PLUGIN_ABI_VERSION)).
     /// The message names both versions and the fix.
     #[error("{0}")]
     IncompatibleAbi(AbiIncompatibility),
@@ -594,8 +594,8 @@ pub fn select_backend_library(
 /// 1. `dlopen` the library.
 /// 2. Resolve and call `termihub_plugin_abi_version`; refuse a version this host
 ///    cannot load ([`HostError::IncompatibleAbi`] — different major, or newer
-///    minor than [`CURRENT_PLUGIN_ABI_VERSION`]).
-/// 3. Resolve and call `termihub_plugin_init` to read [`PluginInfo`]; refuse a
+///    minor than [`CURRENT_PLUGIN_ABI_VERSION`](termihub_plugin_api::CURRENT_PLUGIN_ABI_VERSION)).
+/// 3. Resolve and call `termihub_plugin_init` to read [`PluginInfo`](termihub_plugin_api::PluginInfo); refuse a
 ///    plugin whose info reports a different ABI than step 2
 ///    ([`HostError::InconsistentAbi`]).
 /// 4. Resolve `create_backend` and `shutdown` for later use.

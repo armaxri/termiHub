@@ -4,7 +4,7 @@
 //!
 //! It owns everything between "a path to a plugin's backend library" and "a
 //! library whose entry points may be called": the verify-then-load digest pin
-//! (CORE-034, [`pin`]), `dlopen`, the ABI version gate, the manifest mirror check
+//! (CORE-034, [`PinnedLibrary`]), `dlopen`, the ABI version gate, the manifest mirror check
 //! (PLG-002), `termihub_plugin_init`, and the toolchain rule (PLG-013, ADR-15).
 //! Keeping it in one place means the runner enforces exactly the gates the host
 //! always has — there is no second, drifting copy.

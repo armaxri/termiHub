@@ -125,7 +125,7 @@ impl SandboxedSession {
     }
 
     /// Cancel and close the session: the plugin's `close` + `destroy` run in
-    /// the runner. Waits at most [`REQUEST_TIMEOUT`]; idempotent.
+    /// the runner. Waits at most 2 s; idempotent.
     pub fn close(&mut self) -> Result<(), PluginError> {
         if self.closed {
             return Ok(());
