@@ -533,6 +533,7 @@ mod auto_resume {
             remote_source: None,
             saved_connection_id: Some(connection_id.to_string()),
             agent: None,
+            graphical: None,
         }
     }
 

@@ -38,6 +38,7 @@ pub(crate) mod relaunch_agent;
 pub(crate) mod relaunch_auto;
 pub(crate) mod relaunch_credentials;
 pub(crate) mod relaunch_docker;
+pub(crate) mod relaunch_graphical;
 pub(crate) mod relaunch_session;
 
 // The FTP/SFTP transfer executors moved to `termihub-core` (DUP-026 slice 2b):

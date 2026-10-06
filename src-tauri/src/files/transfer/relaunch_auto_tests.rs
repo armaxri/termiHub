@@ -30,6 +30,7 @@ fn record(id: &str, connection: Option<&str>) -> PersistedTransfer {
         remote_source: None,
         saved_connection_id: connection.map(str::to_string),
         agent: None,
+        graphical: None,
     }
 }
 
@@ -510,4 +511,71 @@ fn a_cancelled_transfer_is_never_resumed() {
         &registry
     )
     .is_empty());
+}
+
+// --- graphical side-channel transfers waiting for their VNC session (#4205) ---
+
+fn graphical_record(id: &str, connection: &str) -> PersistedTransfer {
+    PersistedTransfer {
+        direction: TransferDirection::Upload,
+        graphical: Some(crate::files::transfer::persist::PersistedGraphicalTarget {
+            connection_id: connection.to_string(),
+            route: termihub_core::connection::FileSideChannelKind::Ssh,
+            host: "lab-pi".to_string(),
+            user: "pi".to_string(),
+            agent_id: None,
+        }),
+        ..record(id, None)
+    }
+}
+
+fn vnc_active(connection: &str) -> WaitTrigger {
+    WaitTrigger::GraphicalSessionActive(connection.to_string())
+}
+
+/// A side-channel upload whose VNC session is not open waits for a session
+/// of its saved VNC connection, and resumes once one is active — not on any
+/// other trigger.
+#[test]
+fn a_side_channel_transfer_resumes_when_its_vnc_session_is_active() {
+    let waits = CredentialWaits::default();
+    let registry = TransferRegistry::new();
+    note_blocked(
+        &waits,
+        &graphical_record("up-1", "Lab/pi-desktop"),
+        &RelaunchBlocked::GraphicalSessionUnavailable,
+    );
+    assert!(waits.contains("up-1"));
+
+    assert!(due(&waits, &vnc_active("Lab/other-desktop"), &registry).is_empty());
+    assert!(due(&waits, &opened("Lab/pi-desktop"), &registry).is_empty());
+    assert!(due(&waits, &WaitTrigger::StoreUnlocked, &registry).is_empty());
+    assert!(due(&waits, &agent_opened("agent-1", None), &registry).is_empty());
+
+    assert_eq!(
+        due(&waits, &vnc_active("Lab/pi-desktop"), &registry),
+        vec!["up-1"]
+    );
+    assert!(!waits.contains("up-1"));
+}
+
+/// A credentials or agent wait never resumes on a VNC session, and a record
+/// without a graphical identity does not wait for one.
+#[test]
+fn a_vnc_session_resumes_only_side_channel_transfers() {
+    let waits = CredentialWaits::default();
+    let registry = TransferRegistry::new();
+    waiting(&waits, &record("creds", Some("Lab/pi-desktop")));
+    note_blocked(
+        &waits,
+        &agent_record("agent", None),
+        &RelaunchBlocked::AgentSessionUnavailable,
+    );
+    note_blocked(
+        &waits,
+        &record("bare", None),
+        &RelaunchBlocked::GraphicalSessionUnavailable,
+    );
+    assert!(!waits.contains("bare"));
+    assert!(due(&waits, &vnc_active("Lab/pi-desktop"), &registry).is_empty());
 }

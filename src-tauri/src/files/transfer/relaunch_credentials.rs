@@ -58,6 +58,12 @@ pub(crate) enum RelaunchBlocked {
     /// paused with [`AGENT_SESSION_UNAVAILABLE`](super::relaunch_agent::AGENT_SESSION_UNAVAILABLE)
     /// and resumes by itself once a matching agent session opens.
     AgentSessionUnavailable,
+    /// A graphical side-channel transfer's VNC session is not open (or its
+    /// file channel is not ready) yet — typically after a restart, before the
+    /// user reopens the connection (#4205): the row stays paused with
+    /// [`GRAPHICAL_SESSION_UNAVAILABLE`](super::relaunch_graphical::GRAPHICAL_SESSION_UNAVAILABLE)
+    /// and resumes by itself once a session of that connection is active.
+    GraphicalSessionUnavailable,
     /// Anything else (the connection is gone, unreachable, …): the row fails
     /// with this message, and **Retry** runs the relaunch again.
     Failed(String),
@@ -70,6 +76,9 @@ impl RelaunchBlocked {
             Self::NeedsCredentials => NEEDS_CREDENTIALS.to_string(),
             Self::AgentSessionUnavailable => {
                 super::relaunch_agent::AGENT_SESSION_UNAVAILABLE.to_string()
+            }
+            Self::GraphicalSessionUnavailable => {
+                super::relaunch_graphical::GRAPHICAL_SESSION_UNAVAILABLE.to_string()
             }
             Self::Failed(message) => message.clone(),
         }
