@@ -28,6 +28,7 @@
 
 mod client;
 mod handle;
+mod peer;
 mod session;
 mod spawn;
 

@@ -20,7 +20,8 @@ use termihub_plugin_runner::ipc::{
 
 use crate::connection::OutputSender;
 
-use super::client::{Reply, SandboxedPlugin, REQUEST_TIMEOUT};
+use super::client::{SandboxedPlugin, CREATE_TIMEOUT, REQUEST_TIMEOUT};
+use super::peer::Reply;
 
 /// Largest input chunk carried in one `Input` frame.
 const MAX_INPUT_CHUNK: usize = MAX_PAYLOAD_LEN - SESSION_ID_LEN;
@@ -64,7 +65,7 @@ impl SandboxedSession {
         let outcome =
             plugin
                 .send(&request)
-                .and_then(|()| match reply.recv_timeout(REQUEST_TIMEOUT) {
+                .and_then(|()| match reply.recv_timeout(CREATE_TIMEOUT) {
                     Ok(Reply::Created) => Ok(()),
                     Ok(Reply::Failed(error)) => Err(error),
                     Ok(Reply::Closed) => Err(PluginError::NotAlive),
@@ -80,6 +81,9 @@ impl SandboxedSession {
                 closed: false,
             }),
             Err(error) => {
+                // A late success would leave an orphan session in the runner:
+                // ask it to close whatever it may still create (best effort).
+                let _ = plugin.send(&Message::Close(SessionRef { session_id: id }));
                 plugin.retire_session(id);
                 Err(error)
             }
