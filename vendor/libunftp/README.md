@@ -43,7 +43,9 @@ Packaging differences from the crates.io release (not code deltas):
 `Cargo.toml` is the crates.io-normalised manifest with a fork note, without the
 `[[test]]` targets of the upstream integration tests (`tests/` is not vendored)
 and with the `unftp-sbe-fs` dev-dependency restored from crates.io (the
-normalisation strips upstream's path dependency). Upstream's `CHANGELOG.md`,
+normalisation strips upstream's path dependency), plus a
+`[package.metadata.cargo-machete]` ignore for `tracing` (used only through the
+`#[tracing_attributes::instrument]` expansion). Upstream's `CHANGELOG.md`,
 `AGENTS.md`, `examples/`, `logo.png`, `Makefile` and CI files are not vendored.
 
 Tests: the unit tests above; termiHub's

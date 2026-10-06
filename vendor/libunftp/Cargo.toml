@@ -48,6 +48,14 @@ categories = ["network-programming"]
 license = "Apache-2.0"
 repository = "https://github.com/bolcom/libunftp"
 
+# termiHub fork: cargo-machete (run over the whole tree in CI, TOOL-008) cannot
+# see `tracing` used, because no source names it: the 67
+# `#[tracing_attributes::instrument]` attributes expand to `::tracing::...`
+# paths, so the crate is required at compile time. Ignore-list it rather than
+# drop it.
+[package.metadata.cargo-machete]
+ignored = ["tracing"]
+
 [features]
 all = [
     "aws_lc_rs",
