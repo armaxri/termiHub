@@ -2588,7 +2588,7 @@ flowchart LR
   500 ms. This keeps the client's in-flight data from turning the close into a reset that would
   drop the reply. The rejection is recorded in the access log (`CONTROL` / `rejected`).
 - **One libunftp server per session.** For each accepted control connection, the relay starts a
-  libunftp server in proxy mode on a free loopback port. It connects to that server and sends a
+  libunftp server in proxy mode on a loopback listener it binds. It connects to that server and sends a
   PROXY v1 header carrying the real client address before any client byte. The per-session
   server keeps the session's real client IP in its authenticator and user-detail provider, so
   the access log names the client (PROD-034). Behind the relay, libunftp's own view of the peer,
@@ -2614,11 +2614,21 @@ flowchart LR
   the right client until its 15 s timeout. libunftp's switchboard checks the PROXY source IP
   again (for IPv4 clients), which gives the same guarantee as libunftp's own data-channel IP
   check outside proxy mode.
+- **Relay-only loopback hop.** libunftp trusts the PROXY header of every connection it accepts,
+  and its loopback port is reachable by every local process. Two additions in the vendored
+  libunftp fork close this (#4100). The relay binds each session's loopback listener itself and
+  hands it to libunftp (`Server::listen_with_listener`), so no other process can take the port
+  between picking and binding it. And libunftp only serves connections whose peer address the
+  relay recorded (`ServerBuilder::proxy_protocol_peer_filter`). The relay's `BackendDialer`
+  binds each outbound socket (control and data) to an ephemeral loopback port, records that
+  address, and only then connects. The filter allows each recorded address once. Any other
+  connection is closed before libunftp reads a byte, and is logged (`CONTROL` / `rejected`,
+  "loopback backend connection not opened by the relay"). So a local process cannot spoof a
+  client IP or a passive-data switchboard key, or skip the control-line cap.
 - **Startup and shutdown.** The relay binds the configured host/port once and confirms that
-  socket's real address, so port reporting is unchanged (#3549). libunftp binds its loopback
-  address itself. The relay picks a free port by binding and releasing it, and only uses a
-  connection while the libunftp task is still running: a lost race makes libunftp's `listen`
-  fail at once, and the start is retried on a fresh port. On shutdown, the relay stops accepting,
+  socket's real address, so port reporting is unchanged (#3549). Each session's loopback
+  listener is bound by the relay too (see above), and the relay's first connection waits in its
+  backlog until libunftp accepts it, so the start needs no retry. On shutdown, the relay stops accepting,
   and every per-session libunftp server sees the same `ShutdownSignal` through its
   `shutdown_indicator` (2 s grace). The relay waits up to 3 s for the sessions to close, then
   aborts the rest. A session that ends on its own cancels its libunftp server the same way.
@@ -2631,12 +2641,15 @@ fresh TLS) to libunftp on loopback. Passing TLS through to libunftp would lose t
 
 **Residual risks.**
 
-- libunftp's loopback listener accepts a PROXY header from any local process. A process on the
-  same host can claim any client IP for its own control connection (access log, switchboard
-  key). This needs local code execution. Remote clients can only reach the relay.
+- The loopback peer filter (#4100) trusts that no other process can bind the relay's outbound
+  address while the relay's socket holds it. That holds on Linux and macOS, because the relay
+  binds without `SO_REUSEADDR`/`SO_REUSEPORT`. On Windows, a socket that sets `SO_REUSEADDR`
+  could in principle bind the same address in the microseconds between the relay's bind and its
+  connect. It would also have to connect first, and it needs code execution on the host (as the
+  same user, under Windows' default socket security). Each recorded address is allowed once.
 - libunftp 0.23.1's PROXY header reader spins on a connection that closes before a newline. The
-  relay always writes the full header first, so only a local process connecting to the loopback
-  port directly can trigger it.
+  vendored fork ends it at EOF (#4099). Since #4100, only relay-opened connections reach the
+  header reader at all.
 
 ---
 

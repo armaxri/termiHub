@@ -30,14 +30,34 @@ connects to a session's loopback port and closes can.
 
 See [armaxri/termiHub#4099](https://github.com/armaxri/termiHub/issues/4099).
 
+The same listener trusts the PROXY header of any connection, so a local
+process could connect to it directly and claim any client IP (access log,
+passive-data switchboard key) and skip the relay's control-line cap. 0.23.1 has
+no way to restrict who the listener serves, and it always binds the address
+itself. The fork adds both, so the relay binds the listener and libunftp only
+serves connections the relay opened. See
+[armaxri/termiHub#4100](https://github.com/armaxri/termiHub/issues/4100).
+
 ## What this fork changes
 
 - `src/server/proxy_protocol.rs` `read_proxy_header`: when `peek` returns
   `Ok(0)` (EOF), return `ProxyError::ReadError` with
   `io::ErrorKind::UnexpectedEof`, so the header task logs the error and ends.
-  The change is marked `termiHub fork delta (armaxri/termiHub#4099)`.
 - `src/server/proxy_protocol.rs` tests: EOF before any header byte, and EOF
   after a partial header, both return that error within a timeout.
+- `Server::listen_with_listener(tokio::net::TcpListener)` (#4100): runs the
+  server like `listen`, on a listener the caller already bound. `listen` and it
+  share one body (`listen_on`); every listener mode (legacy, pooled, proxy)
+  takes its control listener from `bind_control_listener`, which uses the
+  prebound listener if there is one and binds the address otherwise.
+- `ServerBuilder::proxy_protocol_peer_filter(Fn(SocketAddr) -> bool)` (#4100):
+  in PROXY protocol mode, each accepted connection's peer address is passed to
+  the filter before anything is read; a refused connection is logged and
+  closed, so its header is never parsed.
+- `src/server/ftpserver.rs` tests: a prebound proxy-mode server answers a
+  peer the filter allows and closes one it refuses without a byte.
+
+All fork changes are marked `termiHub fork delta (armaxri/termiHub#…)`.
 
 Packaging differences from the crates.io release (not code deltas):
 `Cargo.toml` is the crates.io-normalised manifest with a fork note, without the
@@ -49,14 +69,19 @@ normalisation strips upstream's path dependency), plus a
 `AGENTS.md`, `examples/`, `logo.png`, `Makefile` and CI files are not vendored.
 
 Tests: the unit tests above; termiHub's
-`core/src/embedded_servers/ftp_server/relay_tests.rs`
-(`backend_header_reader_ends_when_a_connection_closes_without_a_header`)
+`core/src/embedded_servers/ftp_server/relay_tests.rs`:
+`backend_header_reader_ends_when_a_connection_closes_without_a_header`
 connects to a real session backend, closes without a header and checks that no
-task is left behind. Run the fork's own tests with `cargo test --lib` inside
+task is left behind, and
+`direct_loopback_connection_with_a_forged_proxy_header_is_refused` checks that
+direct loopback connections with forged headers are refused and logged while
+relay-opened control and data connections work. Run the fork's own tests with `cargo test --lib` inside
 this directory.
 
-The delta is a few lines and upstream-compatible. The ready-to-submit bug report,
-patch and retirement steps are in [`UPSTREAM.md`](UPSTREAM.md).
+Both deltas are small and upstream-compatible (additive API, no behaviour
+change for existing callers). The ready-to-submit bug report and patch (#4099),
+the API proposal and patch (#4100), and the retirement steps are in
+[`UPSTREAM.md`](UPSTREAM.md).
 
 Everything else is upstream `0.23.1`, under the original Apache-2.0 license
 (`LICENSE`, `COPYRIGHT`).

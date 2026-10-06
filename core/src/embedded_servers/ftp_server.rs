@@ -37,7 +37,7 @@ use unftp_sbe_fs::Filesystem;
 
 use super::activity::{AccessRecord, ServerActivity, TransferGuard};
 use super::config::{AtomicServerStats, EmbeddedServerConfig, FtpAuth};
-use super::ftp_relay::RelaySession;
+use super::ftp_relay::{BackendDialer, RelaySession};
 use super::service::BindSignal;
 use super::shutdown::ShutdownSignal;
 
@@ -87,11 +87,6 @@ const BACKEND_GRACE: Duration = Duration::from_secs(2);
 /// How long shutdown waits for open sessions to wind down before the runtime
 /// drops whatever is left.
 const SESSION_DRAIN: Duration = Duration::from_secs(3);
-
-/// Attempts to start a session's loopback libunftp listener (a fresh port each
-/// time), and connection attempts per start while it comes up.
-const BACKEND_START_ATTEMPTS: usize = 3;
-const BACKEND_CONNECT_ATTEMPTS: usize = 200;
 
 /// Configure a libunftp server for `config`. `client` is the session's real
 /// client address, which the authenticator and the session user carry for the
@@ -222,8 +217,9 @@ async fn run_ftp_server(
 
 /// A session's loopback libunftp server and the relay's connection to it.
 pub(super) struct Backend {
-    pub addr: std::net::SocketAddr,
     pub upstream: tokio::net::TcpStream,
+    /// Opens (and is the only opener of) connections to the libunftp listener.
+    pub dialer: BackendDialer,
     pub task: tokio::task::JoinHandle<std::result::Result<(), libunftp::ServerError>>,
     /// Cancelled when the session ends, which shuts this server down.
     pub stop: CancellationToken,
@@ -245,10 +241,10 @@ async fn shutdown_indicator(
 /// Start a libunftp server in PROXY protocol mode on a free loopback port for
 /// one session, and connect the relay to it.
 ///
-/// libunftp binds the address itself, so the port is picked by binding and
-/// releasing it first. If another process wins it in between, libunftp's
-/// `listen` fails at once; the task is then finished by the time a connection
-/// succeeds, and the start is retried on a fresh port.
+/// The relay binds the loopback listener and hands it to libunftp (a fork
+/// delta, #4100), so no other process can take the port in between, and the
+/// relay's first connection waits in the listen backlog until libunftp
+/// accepts it. libunftp serves only connections the [`BackendDialer`] opened.
 pub(super) async fn start_backend(
     config: &EmbeddedServerConfig,
     stats: &Arc<AtomicServerStats>,
@@ -256,55 +252,35 @@ pub(super) async fn start_backend(
     public_port: u16,
     shutdown: &ShutdownSignal,
 ) -> Result<Backend> {
-    for _ in 0..BACKEND_START_ATTEMPTS {
-        let addr = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
-            .and_then(|l| l.local_addr())
-            .context("Failed to pick a loopback port for libunftp")?;
-        let stop = CancellationToken::new();
-        let server = server_builder(config, stats, client)
-            .passive_ports(reserved_passive_range(public_port))
-            .proxy_protocol_mode(public_port)
-            .shutdown_indicator(shutdown_indicator(shutdown.clone(), stop.clone()))
-            .build()
-            .context("Failed to build libunftp server")?;
-        let task = tokio::spawn(server.listen(addr.to_string()));
-        match connect_to_spawned(addr, &task).await {
-            Some(upstream) => {
-                return Ok(Backend {
-                    addr,
-                    upstream,
-                    task,
-                    stop,
-                })
-            }
-            None => {
-                stop.cancel();
-                task.abort();
-            }
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .context("Failed to bind a loopback listener for libunftp")?;
+    let addr = listener
+        .local_addr()
+        .context("Failed to read the libunftp listener address")?;
+    let dialer = BackendDialer::new(addr, Arc::clone(&stats.activity));
+    let stop = CancellationToken::new();
+    let server = server_builder(config, stats, client)
+        .passive_ports(reserved_passive_range(public_port))
+        .proxy_protocol_mode(public_port)
+        .proxy_protocol_peer_filter(dialer.peer_filter())
+        .shutdown_indicator(shutdown_indicator(shutdown.clone(), stop.clone()))
+        .build()
+        .context("Failed to build libunftp server")?;
+    let task = tokio::spawn(server.listen_with_listener(listener));
+    match dialer.connect().await {
+        Ok(upstream) => Ok(Backend {
+            upstream,
+            dialer,
+            task,
+            stop,
+        }),
+        Err(e) => {
+            stop.cancel();
+            task.abort();
+            Err(anyhow::Error::new(e).context("Failed to connect the relay to libunftp"))
         }
     }
-    Err(anyhow::anyhow!("libunftp did not start on loopback"))
-}
-
-/// Connect to the libunftp listener `task` is bringing up at `addr`. Yields
-/// between attempts so the task gets to bind; gives up when the task has
-/// finished (its bind failed) — never handing back a connection to whatever
-/// else might hold the port.
-async fn connect_to_spawned<T>(
-    addr: std::net::SocketAddr,
-    task: &tokio::task::JoinHandle<T>,
-) -> Option<tokio::net::TcpStream> {
-    for _ in 0..BACKEND_CONNECT_ATTEMPTS {
-        tokio::task::yield_now().await;
-        if task.is_finished() {
-            return None;
-        }
-        if let Ok(stream) = tokio::net::TcpStream::connect(addr).await {
-            tokio::task::yield_now().await;
-            return (!task.is_finished()).then_some(stream);
-        }
-    }
-    None
 }
 
 /// Serve one accepted control connection: start its libunftp backend and relay
@@ -325,8 +301,8 @@ pub(super) async fn serve_session(
         }
     };
     let Backend {
-        addr,
         upstream,
+        dialer,
         task,
         stop,
     } = backend;
@@ -334,7 +310,7 @@ pub(super) async fn serve_session(
         client,
         peer,
         upstream,
-        backend: addr,
+        dialer,
         public_port,
         passive_ports: PASSIVE_PORTS,
         activity: Arc::clone(&stats.activity),

@@ -19,6 +19,9 @@ where
     User: UserDetail,
 {
     pub bind_address: SocketAddr,
+    // termiHub fork delta (armaxri/termiHub#4100).
+    // Set by `Server::listen_with_listener`.
+    pub prebound: Option<TcpListener>,
     pub logger: slog::Logger,
     pub options: OptionsHolder<Storage, User>,
     pub shutdown_topic: Arc<shutdown::Notifier>,
@@ -37,13 +40,14 @@ where
         let Listener {
             logger,
             bind_address,
+            prebound,
             options,
             shutdown_topic,
             failed_logins,
             connection_helper,
             connection_helper_args,
         } = self;
-        let listener = TcpListener::bind(bind_address).await?;
+        let listener = super::bind_control_listener(prebound, bind_address).await?;
         loop {
             let shutdown_listener = shutdown_topic.subscribe().await;
             match listener.accept().await {

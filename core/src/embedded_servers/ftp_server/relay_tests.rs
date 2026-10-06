@@ -1,7 +1,7 @@
 //! End-to-end tests for the FTP front relay (#3996): the control-line cap,
 //! normal passive-mode traffic through the relay, client-IP attribution, the
-//! data-channel source check, shutdown, and the backend PROXY header reader on
-//! early close (#4099).
+//! data-channel source check, shutdown, the backend PROXY header reader on
+//! early close (#4099), and the relay-only loopback hop (#4100).
 
 use std::io::{BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -387,53 +387,156 @@ fn relay_attributes_the_client_ip_and_refuses_data_from_another_ip() {
     server.join().expect("session thread");
 }
 
+// ── Session backend, driven directly (#3996, #4099, #4100) ───────────────────
+
+/// A session's libunftp backend on its own runtime thread, as `serve_session`
+/// starts it, with the relay's control connection handed to the test.
+struct DirectBackend {
+    /// The relay's (header-less) control connection.
+    upstream: TcpStream,
+    dialer: BackendDialer,
+    rt: tokio::runtime::Handle,
+    stats: Arc<AtomicServerStats>,
+    shutdown: ShutdownSignal,
+    /// Whether the backend task stopped within its grace period.
+    done: std::sync::mpsc::Receiver<bool>,
+    thread: JoinHandle<()>,
+}
+
+impl DirectBackend {
+    fn start(root: &Path, client: SocketAddr, public_port: u16) -> Self {
+        let config = super::tests::ftp_test_config(root);
+        let stats = AtomicServerStats::new();
+        let shutdown = ShutdownSignal::new();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (done_tx, done) = std::sync::mpsc::channel();
+        let (backend_stats, backend_shutdown) = (Arc::clone(&stats), shutdown.clone());
+        let thread = spawn_runtime(async move {
+            let backend = start_backend(
+                &config,
+                &backend_stats,
+                client.ip(),
+                public_port,
+                &backend_shutdown,
+            )
+            .await
+            .expect("backend");
+            let upstream = backend.upstream.into_std().expect("std stream");
+            upstream.set_nonblocking(false).expect("blocking");
+            upstream
+                .set_read_timeout(Some(IO_TIMEOUT))
+                .expect("timeout");
+            tx.send((upstream, backend.dialer, tokio::runtime::Handle::current()))
+                .expect("send");
+            backend_shutdown.wait().await;
+            let stopped = tokio::time::timeout(BACKEND_GRACE * 2, backend.task).await;
+            done_tx.send(stopped.is_ok()).expect("send");
+        });
+        let (upstream, dialer, rt) = rx.recv_timeout(Duration::from_secs(5)).expect("backend");
+        Self {
+            upstream,
+            dialer,
+            rt,
+            stats,
+            shutdown,
+            done,
+            thread,
+        }
+    }
+
+    /// A connection to the backend opened the way the relay opens one.
+    fn dial(&self) -> TcpStream {
+        let stream = self
+            .rt
+            .block_on(self.dialer.connect())
+            .expect("relay connect")
+            .into_std()
+            .expect("std stream");
+        stream.set_nonblocking(false).expect("blocking");
+        stream.set_read_timeout(Some(IO_TIMEOUT)).expect("timeout");
+        stream
+    }
+
+    /// The relay's control connection after sending `header`, as a client.
+    fn control(&self, header: &str) -> Control {
+        let mut writer = self.upstream.try_clone().expect("clone");
+        writer.write_all(header.as_bytes()).expect("proxy header");
+        let reader = BufReader::new(self.upstream.try_clone().expect("clone"));
+        let mut control = Control { writer, reader };
+        assert!(control.reply().starts_with("220"));
+        control
+    }
+
+    /// A data connection to a port libunftp has not reserved: it reads the
+    /// PROXY header, then shuts the stream down. Seeing EOF proves the listener
+    /// has accepted every connection made before this one (accept order is
+    /// FIFO).
+    fn barrier(&self) {
+        let mut probe = self.dial();
+        probe
+            .write_all(b"PROXY TCP4 127.0.0.1 127.0.0.1 40000 1\r\n")
+            .expect("barrier header");
+        let mut rest = Vec::new();
+        probe
+            .read_to_end(&mut rest)
+            .expect("barrier closed by libunftp");
+    }
+
+    /// Shut the backend down; asserts it stopped promptly.
+    fn stop(self) {
+        let start = Instant::now();
+        self.shutdown.trigger();
+        let stopped = self
+            .done
+            .recv_timeout(Duration::from_secs(10))
+            .expect("done");
+        self.thread.join().expect("backend thread");
+        assert!(stopped, "the libunftp backend did not stop in time");
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "backend shutdown took {:?}",
+            start.elapsed()
+        );
+    }
+}
+
+/// Whether the peer closed `stream` without sending a byte.
+fn closed_unserved(stream: &mut TcpStream) -> bool {
+    let mut buf = [0u8; 16];
+    match stream.read(&mut buf) {
+        Ok(n) => n == 0,
+        Err(e) => matches!(
+            e.kind(),
+            std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+        ),
+    }
+}
+
 /// libunftp's own check behind the relay: its passive switchboard only hands
 /// a data connection to the session whose control connection's PROXY source
-/// IP matches. Driven directly over the loopback listener with crafted
-/// headers, which also exercises a non-loopback client end to end.
+/// IP matches. Driven over relay-opened connections with crafted headers,
+/// which also exercises a non-loopback client end to end.
 #[test]
 fn backend_switchboard_rejects_a_mismatched_data_source() {
     let dir = tempfile::tempdir().expect("temp dir");
     std::fs::write(dir.path().join("seen.txt"), b"x").expect("seed");
-    let config = super::tests::ftp_test_config(dir.path());
-    let stats = AtomicServerStats::new();
-    let shutdown = ShutdownSignal::new();
-    let client: SocketAddr = "198.51.100.4:51000".parse().expect("addr");
     let public_port = 2121;
+    let backend = DirectBackend::start(
+        dir.path(),
+        "198.51.100.4:51000".parse().expect("addr"),
+        public_port,
+    );
 
-    let (tx, rx) = std::sync::mpsc::channel();
-    let backend_shutdown = shutdown.clone();
-    let server = spawn_runtime(async move {
-        let backend = start_backend(&config, &stats, client.ip(), public_port, &backend_shutdown)
-            .await
-            .expect("backend");
-        let upstream = backend.upstream.into_std().expect("std stream");
-        upstream.set_nonblocking(false).expect("blocking");
-        tx.send((backend.addr, upstream)).expect("send");
-        backend_shutdown.wait().await;
-        let _ = backend.task.await;
-    });
-    let (backend_addr, upstream) = rx.recv_timeout(Duration::from_secs(5)).expect("backend");
-
-    let mut upstream_w = upstream.try_clone().expect("clone");
-    upstream_w
-        .write_all(format!("PROXY TCP4 198.51.100.4 192.0.2.1 51000 {public_port}\r\n").as_bytes())
-        .expect("proxy header");
-    upstream
-        .set_read_timeout(Some(IO_TIMEOUT))
-        .expect("timeout");
-    let mut control = Control {
-        writer: upstream_w,
-        reader: BufReader::new(upstream),
-    };
-    assert!(control.reply().starts_with("220"));
+    let mut control = backend.control(&format!(
+        "PROXY TCP4 198.51.100.4 192.0.2.1 51000 {public_port}\r\n"
+    ));
     control.login("anonymous", "x");
     let announced = control.pasv();
     assert_eq!(announced.ip().to_string(), "192.0.2.1", "PROXY destination");
     let reserved = announced.port();
 
     let data_from = |source: &str| {
-        let mut data = connect_data(backend_addr);
+        let mut data = backend.dial();
         data.write_all(format!("PROXY TCP4 {source} 192.0.2.1 40000 {reserved}\r\n").as_bytes())
             .expect("data header");
         data
@@ -441,12 +544,7 @@ fn backend_switchboard_rejects_a_mismatched_data_source() {
 
     // Wrong source IP: libunftp closes the connection without serving it.
     let mut wrong = data_from("203.0.113.9");
-    let mut buf = [0u8; 16];
-    assert_eq!(
-        wrong.read(&mut buf).unwrap_or(0),
-        0,
-        "mismatched source served"
-    );
+    assert!(closed_unserved(&mut wrong), "mismatched source served");
 
     // Matching source IP: the listing is served.
     let mut right = data_from("198.51.100.4");
@@ -460,25 +558,105 @@ fn backend_switchboard_rejects_a_mismatched_data_source() {
     assert!(listing.contains("seen.txt"), "{listing}");
     assert!(control.reply().starts_with("226"));
 
-    shutdown.trigger();
-    server.join().expect("backend thread");
+    drop(control);
+    backend.stop();
+}
+
+// ── Relay-only loopback hop (#4100) ───────────────────────────────────────────
+
+/// Regression for #4100: a local process that connects to a session's
+/// loopback libunftp port directly, with a forged PROXY header, is refused
+/// before libunftp reads the header and is logged. That covers a forged
+/// control connection (spoofed client IP, no control-line cap) and a forged
+/// data connection carrying the session's own switchboard key, which must
+/// neither be served nor use up the reservation. Relay-opened control and
+/// data connections keep working, and refused connections leave no task.
+#[test]
+fn direct_loopback_connection_with_a_forged_proxy_header_is_refused() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    std::fs::write(dir.path().join("seen.txt"), b"x").expect("seed");
+    let public_port = 2121;
+    let backend = DirectBackend::start(
+        dir.path(),
+        "198.51.100.4:51000".parse().expect("addr"),
+        public_port,
+    );
+    let backend_addr = backend.dialer.backend();
+
+    let mut control = backend.control(&format!(
+        "PROXY TCP4 198.51.100.4 192.0.2.1 51000 {public_port}\r\n"
+    ));
+    control.login("anonymous", "x");
+    let reserved = control.pasv().port();
+    backend.barrier();
+    let baseline = settled_task_count(&backend.rt);
+
+    // A forged control connection claiming another client IP.
+    let mut forged_control = connect_data(backend_addr);
+    let _ = forged_control.write_all(
+        format!("PROXY TCP4 203.0.113.66 192.0.2.1 51001 {public_port}\r\nUSER x\r\n").as_bytes(),
+    );
+    assert!(
+        closed_unserved(&mut forged_control),
+        "a forged control connection was served"
+    );
+
+    // A forged data connection with the session's exact switchboard key.
+    let mut forged_data = connect_data(backend_addr);
+    let _ = forged_data
+        .write_all(format!("PROXY TCP4 198.51.100.4 192.0.2.1 40000 {reserved}\r\n").as_bytes());
+    assert!(
+        closed_unserved(&mut forged_data),
+        "a forged data connection was served"
+    );
+
+    // Refused connections spawn nothing (not even a header reader).
+    backend.barrier();
+    let alive = settled_task_count(&backend.rt);
+    assert!(
+        alive <= baseline,
+        "{alive} tasks alive (baseline {baseline}) after refused connections"
+    );
+
+    let log = wait_for_log(&backend.stats, |log| {
+        log.iter()
+            .filter(|e| e.status == "rejected" && !e.success)
+            .count()
+            >= 2
+    });
+    let rejected: Vec<_> = log
+        .iter()
+        .filter(|e| e.status == "rejected" && !e.success)
+        .collect();
+    assert_eq!(rejected.len(), 2, "{log:?}");
+    for entry in rejected {
+        assert_eq!(entry.method, "CONTROL");
+        assert_eq!(entry.client.as_deref(), Some("127.0.0.1"));
+        assert_eq!(
+            entry.detail.as_deref(),
+            Some("loopback backend connection not opened by the relay")
+        );
+    }
+
+    // The reservation is intact: the relay's data connection gets the listing.
+    let mut data = backend.dial();
+    data.write_all(format!("PROXY TCP4 198.51.100.4 192.0.2.1 40000 {reserved}\r\n").as_bytes())
+        .expect("data header");
+    let reply = control.cmd("LIST");
+    assert!(
+        reply.starts_with("150") || reply.starts_with("125"),
+        "{reply}"
+    );
+    let mut listing = String::new();
+    data.read_to_string(&mut listing).expect("listing");
+    assert!(listing.contains("seen.txt"), "{listing}");
+    assert!(control.reply().starts_with("226"));
+
+    drop(control);
+    backend.stop();
 }
 
 // ── PROXY header reader on early close (#4099) ────────────────────────────────
-
-/// A data connection to a port libunftp has not reserved: it reads the PROXY
-/// header, then shuts the stream down. Seeing EOF proves the listener has
-/// accepted every connection made before this one (accept order is FIFO).
-fn unreserved_port_barrier(backend: SocketAddr) {
-    let mut probe = connect_data(backend);
-    probe
-        .write_all(b"PROXY TCP4 127.0.0.1 127.0.0.1 40000 1\r\n")
-        .expect("barrier header");
-    let mut rest = Vec::new();
-    probe
-        .read_to_end(&mut rest)
-        .expect("barrier closed by libunftp");
-}
 
 /// Wait until the runtime's live task count has not changed for 100 ms and
 /// return it.
@@ -494,65 +672,37 @@ fn settled_task_count(rt: &tokio::runtime::Handle) -> usize {
     last
 }
 
-/// A local process that connects to a session's loopback libunftp port and
-/// closes before sending a PROXY header must not leave a task behind:
-/// libunftp 0.23.1's header reader looped forever on `peek` returning `Ok(0)`
-/// at EOF, burning CPU until the server stopped (#4099, fixed in the vendored
-/// fork). The header task has to end, and the backend still stops promptly.
+/// A connection to a session's loopback libunftp port that closes before
+/// sending a PROXY header must not leave a task behind: libunftp 0.23.1's
+/// header reader looped forever on `peek` returning `Ok(0)` at EOF, burning
+/// CPU until the server stopped (#4099, fixed in the vendored fork). Since
+/// #4100 only relay-opened connections reach the header reader, so the probes
+/// are opened the relay's way. The header task has to end, and the backend
+/// still stops promptly.
 #[test]
 fn backend_header_reader_ends_when_a_connection_closes_without_a_header() {
     let dir = tempfile::tempdir().expect("temp dir");
-    let config = super::tests::ftp_test_config(dir.path());
-    let stats = AtomicServerStats::new();
-    let shutdown = ShutdownSignal::new();
-    let client: SocketAddr = "127.0.0.1:51000".parse().expect("addr");
-    let public_port = 2121;
+    let backend = DirectBackend::start(dir.path(), "127.0.0.1:51000".parse().expect("addr"), 2121);
 
-    let (tx, rx) = std::sync::mpsc::channel();
-    let (done_tx, done_rx) = std::sync::mpsc::channel();
-    let backend_shutdown = shutdown.clone();
-    let server = spawn_runtime(async move {
-        let backend = start_backend(&config, &stats, client.ip(), public_port, &backend_shutdown)
-            .await
-            .expect("backend");
-        tx.send((backend.addr, tokio::runtime::Handle::current()))
-            .expect("send");
-        // Keep the relay's (header-less) connection open, as a live session would.
-        let _upstream = backend.upstream;
-        backend_shutdown.wait().await;
-        let stopped = tokio::time::timeout(BACKEND_GRACE * 2, backend.task).await;
-        done_tx.send(stopped.is_ok()).expect("send");
-    });
-    let (backend_addr, rt) = rx.recv_timeout(Duration::from_secs(5)).expect("backend");
-
-    unreserved_port_barrier(backend_addr);
-    let baseline = settled_task_count(&rt);
+    backend.barrier();
+    let baseline = settled_task_count(&backend.rt);
 
     // Connect and close at once, without a single byte of PROXY header.
     for _ in 0..3 {
-        drop(TcpStream::connect(backend_addr).expect("probe connect"));
+        drop(backend.dial());
     }
-    unreserved_port_barrier(backend_addr);
+    backend.barrier();
 
     let deadline = Instant::now() + Duration::from_secs(5);
-    while rt.metrics().num_alive_tasks() > baseline && Instant::now() < deadline {
+    while backend.rt.metrics().num_alive_tasks() > baseline && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
     }
-    let alive = rt.metrics().num_alive_tasks();
+    let alive = backend.rt.metrics().num_alive_tasks();
     assert!(
         alive <= baseline,
         "{alive} tasks alive (baseline {baseline}): a header reader is still \
          spinning on a connection closed before its header"
     );
 
-    let start = Instant::now();
-    shutdown.trigger();
-    let stopped = done_rx.recv_timeout(Duration::from_secs(10)).expect("done");
-    server.join().expect("backend thread");
-    assert!(stopped, "the libunftp backend did not stop in time");
-    assert!(
-        start.elapsed() < Duration::from_secs(5),
-        "backend shutdown took {:?}",
-        start.elapsed()
-    );
+    backend.stop();
 }
