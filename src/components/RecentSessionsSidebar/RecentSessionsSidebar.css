@@ -27,7 +27,9 @@
 }
 
 .recent-sessions__quick-connect-row .ui-input {
-  padding-left: 26px;
+  /* Geometry, not spacing: clears the absolutely-positioned leading icon (#3170). */
+  --quick-connect-icon-space: 26px;
+  padding-left: var(--quick-connect-icon-space);
 }
 
 .recent-sessions__autocomplete {

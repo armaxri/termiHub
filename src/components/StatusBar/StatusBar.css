@@ -445,8 +445,10 @@
 
 /* Radio-style interval items: reserve space for the leading tick indicator. */
 .monitoring-menu__radio {
+  /* Geometry, not spacing: the tick indicator's footprint (#3170). */
+  --monitoring-radio-tick-space: 20px;
   position: relative;
-  padding-left: calc(var(--spacing-sm) + 20px);
+  padding-left: calc(var(--spacing-sm) + var(--monitoring-radio-tick-space));
 }
 
 .monitoring-menu__radio-indicator {
