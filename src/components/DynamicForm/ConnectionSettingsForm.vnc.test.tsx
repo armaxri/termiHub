@@ -51,12 +51,12 @@ const VNC_SCHEMA: SettingsSchema = {
 
 let lastSettings: Record<string, unknown> = {};
 
-function renderForm(settings: Record<string, unknown>) {
+function renderForm(settings: Record<string, unknown>, schema: SettingsSchema = VNC_SCHEMA) {
   lastSettings = { ...settings };
   act(() => {
     root.render(
       <ConnectionSettingsForm
-        schema={VNC_SCHEMA}
+        schema={schema}
         settings={settings}
         onChange={(s) => {
           lastSettings = s;
@@ -130,5 +130,138 @@ describe("ConnectionSettingsForm — VNC display↔port interplay", () => {
     // NumberInput accepts the raw digits; the derivation guards the TCP range.
     await typeInto("field-display", "60000");
     expect((query("field-port") as HTMLInputElement).value).toBe("5900");
+  });
+});
+
+/**
+ * #4198: the File Transfer group's notice is computed from two fields. The
+ * schema (mirroring `vnc_settings_schema`) shows the info notice, or — exactly
+ * when the VNC host is neither loopback nor the SSH tunnel host — a warning
+ * that names where files will land.
+ */
+const FILE_TRANSFER_SCHEMA: SettingsSchema = {
+  groups: [
+    {
+      key: "connection",
+      label: "Connection",
+      fields: [{ key: "host", label: "Host", fieldType: { type: "text" }, required: true }],
+    },
+    {
+      key: "sshTunnel",
+      label: "SSH Tunnel",
+      fields: [
+        {
+          key: "useSshTunnel",
+          label: "Use SSH Tunnel",
+          fieldType: { type: "boolean" },
+          required: false,
+          default: false,
+        },
+        {
+          key: "sshHost",
+          label: "SSH Host",
+          fieldType: { type: "text" },
+          required: false,
+          visibleWhen: { field: "useSshTunnel", equals: true },
+        },
+      ],
+    },
+    {
+      key: "fileTransfer",
+      label: "File Transfer",
+      fields: [
+        {
+          key: "fileTransfer",
+          label: "Allow file transfer",
+          fieldType: { type: "boolean" },
+          required: false,
+          default: false,
+        },
+        {
+          key: "fileTransferRouteNotice",
+          label: "",
+          description: "Files go to the SSH tunnel host (or the agent host).",
+          fieldType: { type: "notice", severity: "info" },
+          required: false,
+          visibleWhen: {
+            field: "fileTransfer",
+            equals: true,
+            anyOf: [
+              { field: "useSshTunnel", equals: false },
+              { field: "host", sameHostAs: "sshHost", equals: true },
+            ],
+          },
+        },
+        {
+          key: "fileTransferHostWarning",
+          label: "",
+          description: "Files would go to {{sshHost}}, not to the desktop host {{host}}.",
+          fieldType: { type: "notice", severity: "warning" },
+          required: false,
+          visibleWhen: {
+            field: "fileTransfer",
+            equals: true,
+            allOf: [
+              { field: "useSshTunnel", equals: true },
+              { field: "host", sameHostAs: "sshHost", equals: false },
+            ],
+          },
+        },
+      ],
+    },
+  ],
+};
+
+describe("ConnectionSettingsForm — VNC file-transfer host notice (#4198)", () => {
+  const info = () => query("field-fileTransferRouteNotice");
+  const warning = () => query("field-fileTransferHostWarning");
+  const gateway = {
+    host: "10.0.4.17",
+    useSshTunnel: true,
+    sshHost: "bastion.corp",
+    fileTransfer: true,
+  };
+
+  it("warns where files land when the SSH host is a gateway", () => {
+    renderForm(gateway, FILE_TRANSFER_SCHEMA);
+    expect(info()).toBeNull();
+    expect(warning()?.textContent).toBe(
+      "Files would go to bastion.corp, not to the desktop host 10.0.4.17."
+    );
+    expect(warning()?.className).toContain("settings-form__notice--warning");
+  });
+
+  it("shows the info notice when the VNC host is loopback on the SSH host", () => {
+    renderForm({ ...gateway, host: "localhost" }, FILE_TRANSFER_SCHEMA);
+    expect(info()).not.toBeNull();
+    expect(warning()).toBeNull();
+  });
+
+  it("shows the info notice when the VNC host is the SSH host itself", () => {
+    renderForm({ ...gateway, host: "Bastion.Corp." }, FILE_TRANSFER_SCHEMA);
+    expect(info()).not.toBeNull();
+    expect(warning()).toBeNull();
+  });
+
+  it("shows the info notice without an SSH tunnel", () => {
+    renderForm({ ...gateway, useSshTunnel: false }, FILE_TRANSFER_SCHEMA);
+    expect(info()).not.toBeNull();
+    expect(warning()).toBeNull();
+  });
+
+  it("shows neither notice while file transfer is off", () => {
+    renderForm({ ...gateway, fileTransfer: false }, FILE_TRANSFER_SCHEMA);
+    expect(info()).toBeNull();
+    expect(warning()).toBeNull();
+  });
+
+  it("switches live as the host is edited", async () => {
+    renderForm({ ...gateway, host: "127.0.0.1" }, FILE_TRANSFER_SCHEMA);
+    expect(info()).not.toBeNull();
+    await typeInto("field-host", "desk.corp");
+    expect(info()).toBeNull();
+    expect(warning()?.textContent).toBe(
+      "Files would go to bastion.corp, not to the desktop host desk.corp."
+    );
   });
 });
