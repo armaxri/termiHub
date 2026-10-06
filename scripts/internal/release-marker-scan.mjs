@@ -31,13 +31,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isMainModule } from "./is-main-module.mjs";
 
-/** Source trees that ship in a release artifact (desktop app, core, agent, plugin API, RDP sidecar). */
+/** Source trees that ship in a release artifact (desktop app, core, agent, plugin API, plugin runner, RDP sidecar). */
 export const SCAN_ROOTS = [
   "src",
   "src-tauri/src",
   "core/src",
   "agent/src",
   "plugin-api/src",
+  "plugin-runner/src",
   "rdp-sidecar/src",
 ];
 

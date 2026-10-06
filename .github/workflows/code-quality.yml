@@ -1162,7 +1162,7 @@ jobs:
   # was green on 29/29 non-cancelled runs before this was made blocking.
   #
   # Runs on any PR that touches what the agent builds from (the `agent` area:
-  # agent/, core/, plugin-api/, vendor/, workspace manifests/toolchain, the test
+  # agent/, core/, plugin-api/, plugin-runner/, vendor/, workspace manifests/toolchain, the test
   # driver script) and on every push to develop/main. A skipped job reports
   # success, so requiring this check does not block unrelated PRs. The script's
   # `serial` phase fails if fewer than the expected count ran (10 on Windows)

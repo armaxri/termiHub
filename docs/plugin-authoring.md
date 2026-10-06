@@ -994,3 +994,14 @@ plugin-side migration callback in 0.1.
   see [`core/tests/plugin_package_load.rs`](../core/tests/plugin_package_load.rs).
   Mirror it for your own plugin to catch packaging and trust-gate problems before
   your users do.
+- **Out of process (preview):** termiHub is moving native backends into a
+  separate `termihub-plugin-runner` process (the plugin OS-sandbox rollout,
+  [#3769](https://github.com/armaxri/termiHub/issues/3769)); your library and
+  the ABI stay exactly the same. A **debug** build of termiHub runs plugins that
+  way when started with `TERMIHUB_PLUGIN_OUT_OF_PROCESS=1` (build the runner
+  first with `cargo build -p termihub-plugin-runner`; it lands next to the app
+  binary, or point `TERMIHUB_PLUGIN_RUNNER` at it). Until the bridge moves over
+  the process boundary, every capability-bridge request is refused there with
+  `PermissionDenied`, and Windows is not supported yet.
+  [`core/tests/plugin_runner_e2e.rs`](../core/tests/plugin_runner_e2e.rs) drives
+  the echo example this way.

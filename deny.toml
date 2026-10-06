@@ -91,9 +91,10 @@ allow = [
 ]
 
 # The workspace's own crates (termihub, termihub-core, termihub-agent,
-# termihub-plugin-api, and the example plugins) carry no `license` field and so
-# read as "Unlicensed". They are first-party, never published to crates.io, and
-# covered by the repository's MIT LICENSE — not a third-party licensing concern.
+# termihub-plugin-api, termihub-plugin-runner, and the example plugins) carry no
+# `license` field and so read as "Unlicensed". They are first-party, never
+# published to crates.io, and covered by the repository's MIT LICENSE — not a
+# third-party licensing concern.
 # `ignore = true` skips these private (publish = false) workspace members so the
 # gate applies only to external dependencies.
 private = { ignore = true }

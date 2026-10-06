@@ -47,6 +47,9 @@ use crate::monitoring::MonitoringProvider;
 use super::capabilities::ConnectionPolicy;
 use super::host::LoadedLibrary;
 use super::host_context::ServicesState;
+use super::runtime::ActiveBackend;
+pub(crate) use super::runtime::PluginRuntime;
+use super::sandbox::{SandboxedPluginHandle, SandboxedSession};
 use super::security::{PermissionError, PermissionSet};
 use super::PluginPermission;
 
@@ -64,10 +67,12 @@ pub struct SessionHostContext {
     pub data_dir: String,
 }
 
-/// A [`ConnectionType`] backed by a dynamically-loaded plugin library.
+/// A [`ConnectionType`] backed by a native plugin backend — a library loaded
+/// in process, or a plugin runner serving it out of process (#4182).
 ///
-/// Holds an [`Arc<LoadedLibrary>`] so the plugin's code stays mapped for as long
-/// as this session (and hence any [`LoadedBackend`] it created) is alive.
+/// Holds the plugin's runtime (an [`Arc<LoadedLibrary>`] keeps the plugin's
+/// code mapped; a runner handle keeps the runner reachable) for as long as this
+/// session is alive.
 pub struct PluginConnectionType {
     /// The active session backend, `None` until [`connect`](ConnectionType::connect).
     ///
@@ -77,7 +82,7 @@ pub struct PluginConnectionType {
     /// regardless of field order (CORE-029): the backend's `destroy` vtable and
     /// state live *inside* the loaded library, so the library must stay mapped
     /// until after the backend is gone.
-    backend: Option<LoadedBackend>,
+    backend: Option<ActiveBackend>,
     connection_type: String,
     display_name: String,
     /// The form schema the frontend renders for this type, derived from the
@@ -110,12 +115,12 @@ pub struct PluginConnectionType {
     /// [`subscribe_output`](ConnectionType::subscribe_output). The forwarding
     /// thread reads the latest value each iteration.
     output_tx: Arc<Mutex<Option<OutputSender>>>,
-    /// The loaded plugin library. Keeps the plugin's code mapped for as long as
-    /// this session (and hence any [`LoadedBackend`] it created) is alive.
-    /// Declared **last** and dropped after `backend` (see the `backend` field and
-    /// the explicit [`Drop`] impl) so the backend's FFI destructor never runs
-    /// against unmapped code (CORE-029).
-    library: Arc<LoadedLibrary>,
+    /// The plugin runtime. In process it keeps the plugin's code mapped for as
+    /// long as this session (and hence any [`LoadedBackend`] it created) is
+    /// alive. Declared **last** and dropped after `backend` (see the `backend`
+    /// field and the explicit [`Drop`] impl) so the backend's FFI destructor
+    /// never runs against unmapped code (CORE-029).
+    runtime: PluginRuntime,
 }
 
 impl Drop for PluginConnectionType {
@@ -148,8 +153,44 @@ impl PluginConnectionType {
         settings_schema: SettingsSchema,
         permissions: PermissionSet,
     ) -> Self {
+        Self::from_runtime(
+            PluginRuntime::InProcess(library),
+            connection_type,
+            display_name,
+            settings_schema,
+            permissions,
+        )
+    }
+
+    /// Build a fresh, unconnected connection whose sessions are served by a
+    /// plugin runner out of process (#4182).
+    #[must_use]
+    pub fn new_sandboxed(
+        handle: Arc<SandboxedPluginHandle>,
+        connection_type: String,
+        display_name: String,
+        settings_schema: SettingsSchema,
+        permissions: PermissionSet,
+    ) -> Self {
+        Self::from_runtime(
+            PluginRuntime::Sandboxed(handle),
+            connection_type,
+            display_name,
+            settings_schema,
+            permissions,
+        )
+    }
+
+    /// Build a fresh, unconnected connection on an existing plugin runtime.
+    pub(crate) fn from_runtime(
+        runtime: PluginRuntime,
+        connection_type: String,
+        display_name: String,
+        settings_schema: SettingsSchema,
+        permissions: PermissionSet,
+    ) -> Self {
         Self {
-            library,
+            runtime,
             connection_type,
             display_name,
             settings_schema,
@@ -225,6 +266,82 @@ impl PluginConnectionType {
     /// the guard a host-mediated filesystem bridge routes plugin paths through.
     pub fn resolve_scoped_path(&self, requested: &Path) -> Result<PathBuf, PermissionError> {
         self.permissions.check_path(requested)
+    }
+
+    /// Create an in-process session on `library`: build the host bridge,
+    /// output sender and (ABI 1.1) services, call `create_backend`, and start
+    /// the output forwarding thread.
+    fn connect_in_process(
+        &mut self,
+        library: &Arc<LoadedLibrary>,
+        config_json: &str,
+    ) -> Result<LoadedBackend, SessionError> {
+        // Bridge the plugin's synchronous output channel onto the async terminal
+        // channel. The plugin sends `Vec<u8>` on `std_tx`; the forwarding thread
+        // relays each chunk to whichever `OutputSender` is currently subscribed.
+        let (std_tx, std_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let output = PluginOutputSender::from_sender(std_tx);
+
+        // Hand the plugin a host capability bridge scoped to this session's granted
+        // permissions and connection policy, so any network/filesystem access it
+        // performs through the bridge is enforced by the host at runtime — including
+        // the per-session connection ceiling and connect timeout (concept §13,
+        // #2018, #2028). Every status the bridge returns is downgraded for the ABI
+        // the plugin was built against, so an older-minor plugin is never handed a
+        // status variant it cannot decode (#3373).
+        let bridge = super::capabilities::build_host_bridge_with_policy(
+            self.permissions.clone(),
+            self.connection_policy,
+            library.info().abi_version,
+        );
+
+        // ABI 1.1 host context (PLG-014) — built only for a plugin that reads it.
+        let (backend, services) = if library.supports(ABI_1_1) {
+            let (plugin_id, host_version, data_dir) = match &self.host_context {
+                Some(ctx) => (
+                    ctx.plugin_id.clone(),
+                    ctx.host_version.as_str(),
+                    ctx.data_dir.as_str(),
+                ),
+                None => (library.info().id.clone(), env!("CARGO_PKG_VERSION"), ""),
+            };
+            let state =
+                ServicesState::new(plugin_id, library.shutdown_signal(), library.log_limiter());
+            // The host's own reference, borrowed by the context for the call.
+            let handle = ServicesState::handle(&state);
+            let context = PluginHostContext::new(host_version, data_dir, &handle);
+            let backend = library.create_backend_with_context(
+                config_json,
+                &self.plugin_settings_json,
+                output,
+                bridge,
+                Some(&context),
+            );
+            drop(handle);
+            (backend, Some(state))
+        } else {
+            let backend =
+                library.create_backend(config_json, &self.plugin_settings_json, output, bridge);
+            (backend, None)
+        };
+        let backend = backend.map_err(map_plugin_error)?;
+        self.services = services;
+
+        let output_tx = Arc::clone(&self.output_tx);
+        std::thread::spawn(move || {
+            while let Ok(chunk) = std_rx.recv() {
+                let guard = output_tx.lock().unwrap_or_else(|e| e.into_inner());
+                // Deliver to the current subscriber if any; a dropped receiver or
+                // no active subscription (output before the first
+                // `subscribe_output`) simply drops the chunk, matching the other
+                // backends. Keep draining so the plugin's sender never blocks.
+                if let Some(sender) = guard.as_ref() {
+                    let _ = sender.blocking_send(chunk);
+                }
+            }
+        });
+
+        Ok(backend)
     }
 }
 
@@ -406,82 +523,26 @@ impl ConnectionType for PluginConnectionType {
         let config_json = serde_json::to_string(&settings)
             .map_err(|e| SessionError::InvalidConfig(format!("settings not serializable: {e}")))?;
 
-        // Bridge the plugin's synchronous output channel onto the async terminal
-        // channel. The plugin sends `Vec<u8>` on `std_tx`; the forwarding thread
-        // relays each chunk to whichever `OutputSender` is currently subscribed.
-        let (std_tx, std_rx) = std::sync::mpsc::channel::<Vec<u8>>();
-        let output = PluginOutputSender::from_sender(std_tx);
-
-        // Hand the plugin a host capability bridge scoped to this session's granted
-        // permissions and connection policy, so any network/filesystem access it
-        // performs through the bridge is enforced by the host at runtime — including
-        // the per-session connection ceiling and connect timeout (concept §13,
-        // #2018, #2028). Every status the bridge returns is downgraded for the ABI
-        // the plugin was built against, so an older-minor plugin is never handed a
-        // status variant it cannot decode (#3373).
-        let bridge = super::capabilities::build_host_bridge_with_policy(
-            self.permissions.clone(),
-            self.connection_policy,
-            self.library.info().abi_version,
-        );
-
-        // ABI 1.1 host context (PLG-014) — built only for a plugin that reads it.
-        let (backend, services) = if self.library.supports(ABI_1_1) {
-            let (plugin_id, host_version, data_dir) = match &self.host_context {
-                Some(ctx) => (
-                    ctx.plugin_id.clone(),
-                    ctx.host_version.as_str(),
-                    ctx.data_dir.as_str(),
-                ),
-                None => (
-                    self.library.info().id.clone(),
-                    env!("CARGO_PKG_VERSION"),
-                    "",
-                ),
-            };
-            let state = ServicesState::new(
-                plugin_id,
-                self.library.shutdown_signal(),
-                self.library.log_limiter(),
-            );
-            // The host's own reference, borrowed by the context for the call.
-            let handle = ServicesState::handle(&state);
-            let context = PluginHostContext::new(host_version, data_dir, &handle);
-            let backend = self.library.create_backend_with_context(
-                &config_json,
-                &self.plugin_settings_json,
-                output,
-                bridge,
-                Some(&context),
-            );
-            drop(handle);
-            (backend, Some(state))
-        } else {
-            let backend = self.library.create_backend(
-                &config_json,
-                &self.plugin_settings_json,
-                output,
-                bridge,
-            );
-            (backend, None)
-        };
-        let backend = backend.map_err(map_plugin_error)?;
-        self.services = services;
-
-        let output_tx = Arc::clone(&self.output_tx);
-        std::thread::spawn(move || {
-            while let Ok(chunk) = std_rx.recv() {
-                let guard = output_tx.lock().unwrap_or_else(|e| e.into_inner());
-                // Deliver to the current subscriber if any; a dropped receiver or
-                // no active subscription (output before the first
-                // `subscribe_output`) simply drops the chunk, matching the other
-                // backends. Keep draining so the plugin's sender never blocks.
-                if let Some(sender) = guard.as_ref() {
-                    let _ = sender.blocking_send(chunk);
-                }
+        let backend = match self.runtime.clone() {
+            PluginRuntime::InProcess(library) => {
+                ActiveBackend::InProcess(self.connect_in_process(&library, &config_json)?)
             }
-        });
-
+            PluginRuntime::Sandboxed(handle) => {
+                // The runner holds the session's services and bridge; output
+                // arrives on the runner's reader thread, straight into
+                // `output_tx` — no forwarding thread.
+                let plugin = handle.acquire().map_err(map_plugin_error)?;
+                let session = SandboxedSession::create(
+                    plugin,
+                    &config_json,
+                    &self.plugin_settings_json,
+                    &handle.data_dir(),
+                    Arc::clone(&self.output_tx),
+                )
+                .map_err(map_plugin_error)?;
+                ActiveBackend::Sandboxed(session)
+            }
+        };
         self.backend = Some(backend);
         Ok(())
     }
@@ -489,9 +550,10 @@ impl ConnectionType for PluginConnectionType {
     async fn disconnect(&mut self) -> Result<(), SessionError> {
         // Signal cancellation before closing, so plugin workers wind down.
         self.cancel_session();
-        if let Some(backend) = self.backend.take() {
+        if let Some(mut backend) = self.backend.take() {
             // Best-effort graceful close; the backend drops (running its FFI
-            // destructor) at the end of this scope regardless.
+            // destructor, or retiring the runner session) at the end of this
+            // scope regardless.
             let _ = backend.close();
         }
         // Dropping the sender lets the forwarding thread's `recv` end once the
@@ -501,7 +563,7 @@ impl ConnectionType for PluginConnectionType {
     }
 
     fn is_connected(&self) -> bool {
-        self.backend.as_ref().is_some_and(LoadedBackend::is_alive)
+        self.backend.as_ref().is_some_and(ActiveBackend::is_alive)
     }
 
     fn write(&self, data: &[u8]) -> Result<(), SessionError> {
@@ -684,7 +746,7 @@ mod tests {
             SettingsSchema { groups: vec![] },
             PermissionSet::from_parts([PluginPermission::Terminal], &[]),
         );
-        conn.backend = Some(backend);
+        conn.backend = Some(ActiveBackend::InProcess(backend));
 
         drop(conn);
 

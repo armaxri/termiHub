@@ -1,0 +1,54 @@
+[package]
+name = "termihub-plugin-runner"
+version = "0.1.0"
+description = "Out-of-process host for termiHub native plugin backends (plugin OS-sandbox phase 1)"
+edition = "2021"
+rust-version.workspace = true
+# Internal: shipped only as a sidecar next to the termiHub binary, never
+# published. `publish = false` lets cargo-deny's `[licenses] private.ignore` skip
+# its missing per-crate license field (the repo is MIT, see /LICENSE).
+publish = false
+
+# One crate, two targets (#4182):
+#
+# * the **library** is the part shared by the host and the runner: the IPC frame
+#   protocol (`ipc`) and the native-library loader (`loader`: digest pinning, ABI
+#   gate, toolchain rule, `plugin_init`). `termihub-core` depends on it, so the
+#   host and the runner run the exact same gates. It must stay small: it pulls
+#   no tokio, no Tauri, no rest-of-core.
+# * the **binary** `termihub-plugin-runner` is the sidecar process that loads one
+#   plugin library and proxies the frozen 1.x C ABI over the IPC channel.
+[lib]
+name = "termihub_plugin_runner"
+path = "src/lib.rs"
+
+[[bin]]
+name = "termihub-plugin-runner"
+path = "src/main.rs"
+
+[dependencies]
+# The stable ABI contract shared by the host and every plugin (#1990).
+termihub-plugin-api = { path = "../plugin-api" }
+# Cross-platform `dlopen` / `LoadLibrary` wrapper (moved here from core's host
+# loader so the runner reuses it unchanged).
+libloading = "0.8"
+# MessagePack for the control frames (the concept's choice: compact,
+# self-describing, already in the tree for the RDP sidecar IPC).
+rmp-serde = "1"
+serde = { workspace = true }
+thiserror = { workspace = true }
+# SHA-256 of the pinned library handle (CORE-034), rendered as `sha256:<hex>`.
+sha2 = "0.10"
+hex = "0.4"
+
+[target.'cfg(unix)'.dependencies]
+# `prctl(PR_SET_PDEATHSIG)` on Linux so the runner never outlives the host.
+libc = "0.2"
+
+[dev-dependencies]
+proptest = "1"
+tempfile = "3"
+
+[target.'cfg(unix)'.dev-dependencies]
+# `dup2` / `fcntl` to hand the runner its channel as fd 3 in the process tests.
+libc = "0.2"

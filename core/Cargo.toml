@@ -149,6 +149,11 @@ libloading = { version = "0.8", optional = true }
 # loader resolves the plugin's exported symbols to the type aliases this crate
 # defines and drives the backend through its safe wrappers. Behind `plugin`.
 termihub-plugin-api = { path = "../plugin-api", optional = true }
+# The library half of the out-of-process plugin runner (#4182): the native-library
+# loader (digest pin, ABI gate, toolchain rule — shared so the in-process host and
+# the runner enforce the identical sequence) and the host<->runner IPC protocol.
+# Pulls no tokio/Tauri; only the binary target is the sidecar. Behind `plugin`.
+termihub-plugin-runner = { path = "../plugin-runner", optional = true }
 # Embedded HTTP/FTP/TFTP file servers (#2192), so the same server implementations
 # run on the desktop or a remote agent. Behind the optional `embedded-servers`
 # feature so non-hosting core consumers do not pull the web-server stack.
@@ -346,6 +351,7 @@ plugin = [
     "dep:zip",
     "dep:libloading",
     "dep:termihub-plugin-api",
+    "dep:termihub-plugin-runner",
     # Package code-signing substrate (#2036): Ed25519 signatures over a per-entry
     # SHA-256 digest map, base64-encoded in `signature.json`, hex for the key
     # fingerprint / digest rendering.

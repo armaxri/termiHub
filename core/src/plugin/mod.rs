@@ -66,7 +66,6 @@ mod fat_pack;
 mod host;
 mod host_context;
 mod index_signature;
-mod library_pin;
 mod log_rate_limit;
 mod manager;
 mod manifest;
@@ -76,6 +75,14 @@ mod package;
 mod platform;
 mod plugin_index;
 mod plugin_state;
+mod runtime;
+// Windows has no runner transport yet (next slice of #4182): the runner is
+// never spawned there, so its session machinery is unreachable until it lands.
+#[cfg_attr(
+    not(unix),
+    allow(dead_code, unused_imports, reason = "no Windows runner transport yet")
+)]
+pub mod sandbox;
 mod security;
 mod settings_migration;
 mod signature;
