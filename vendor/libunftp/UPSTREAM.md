@@ -1,18 +1,27 @@
 # Upstreaming the fork deltas
 
-Prepared upstream submissions for [bolcom/libunftp](https://github.com/bolcom/libunftp), so the
-fork can be retired. Nothing has been submitted yet: a maintainer opens the upstream issues and
-pull requests. The two deltas are independent and can be submitted in either order.
+Upstream submissions for [bolcom/libunftp](https://github.com/bolcom/libunftp), so the fork can
+be retired. Both deltas were submitted on 2026-10-06 (maintainer-approved). The two deltas are
+independent.
 
-1. [PROXY header EOF fix](#1-proxy-header-eof-fix-4099) (#4099): a bug fix.
+1. [PROXY header EOF fix](#1-proxy-header-eof-fix-4099) (#4099): a bug fix. **Submitted
+   2026-10-06:** issue [libunftp#580](https://github.com/bolcom/libunftp/issues/580), pull request
+   [libunftp#582](https://github.com/bolcom/libunftp/pull/582).
 2. [Prebound listener and PROXY peer filter](#2-prebound-listener-and-proxy-peer-filter-4100)
-   (#4100): an API proposal.
+   (#4100): an API proposal. **Submitted 2026-10-06:** issue
+   [libunftp#581](https://github.com/bolcom/libunftp/issues/581); the pull request waits for the
+   maintainers to welcome the direction.
 
 ## 1. PROXY header EOF fix (#4099)
 
-Prepared bug report and patch for [bolcom/libunftp](https://github.com/bolcom/libunftp), so
-the fork can be retired (#4099). Nothing has been submitted yet: a maintainer opens the upstream
-issue and pull request (see [How to submit](#how-to-submit)).
+Bug report and patch for [bolcom/libunftp](https://github.com/bolcom/libunftp), so the fork can
+be retired (#4099).
+
+- **Status: submitted 2026-10-06.** Issue
+  [libunftp#580](https://github.com/bolcom/libunftp/issues/580) (the text below) and pull request
+  [libunftp#582](https://github.com/bolcom/libunftp/pull/582) (the patch below, applied to
+  `master` at `8d3f28c`). Next: follow up on review comments; once a release contains the fix,
+  [retire the fork](#retiring-the-fork).
 
 - **Base:** upstream `0.23.1`, tag `libunftp-0.23.1`, commit
   `8d3f28c20c53acdd3c9a939957e4727e18e18af0` (also the tip of upstream `master` when this was
@@ -192,6 +201,11 @@ differences from upstream are packaging only and are **not** part of the submiss
 
 An additive API proposal: no behaviour change for existing callers. termiHub uses it so that
 each session's loopback libunftp server only serves connections termiHub's relay opened.
+
+- **Status: issue submitted 2026-10-06** as
+  [libunftp#581](https://github.com/bolcom/libunftp/issues/581) (the text below). The pull
+  request is not opened yet: it waits for a maintainer to welcome the direction (step 1 of
+  [How to submit](#how-to-submit-1)).
 
 - **Base:** upstream `0.23.1`, commit `8d3f28c20c53acdd3c9a939957e4727e18e18af0` (tip of
   `master` on 2026-10-06).

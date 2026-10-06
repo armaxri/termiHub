@@ -1,8 +1,13 @@
 # Upstreaming the drive PreferredDosName fix
 
-Prepared upstream text for [Devolutions/IronRDP](https://github.com/Devolutions/IronRDP), so the
-fork can be retired (termiHub #4125). Nothing has been submitted yet: a maintainer posts it (see
-[How to submit](#how-to-submit)).
+Upstream text for [Devolutions/IronRDP](https://github.com/Devolutions/IronRDP), so the fork can
+be retired (termiHub #4125).
+
+- **Status: submitted 2026-10-06.** The [comment below](#suggested-comment-on-ironrdp2075) is
+  posted on IronRDP#2075:
+  <https://github.com/Devolutions/IronRDP/issues/2075#issuecomment-6011424177>. The fallback issue
+  is not opened (only needed if #2075 is closed or the comment gets no answer); no backport pull
+  request yet (only if maintainers ask for one).
 
 - **Base:** upstream `ironrdp-rdpdr` `0.7.0`, tag `ironrdp-rdpdr-v0.7.0`, commit
   `11a0810cfbbabd8b8023875a05e3041216d4b01b`.
