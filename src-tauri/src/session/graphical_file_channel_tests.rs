@@ -294,3 +294,88 @@ fn contract_serializes_with_a_status_tag() {
         json!({ "status": "unavailable", "reason": "noRoute" })
     );
 }
+
+/// The SSH route end to end (#4191): a live VNC session through the
+/// `ssh-password` fixture's tunnel resolves to `Ready` with the default folder
+/// read over SFTP on the tunnel's own session. Gated on the Docker fixtures
+/// (`docker compose --profile vnc up -d ssh-password vnc-server`); hard-fails
+/// under `TERMIHUB_REQUIRE_DOCKER=1`.
+#[cfg(feature = "vnc")]
+mod live {
+    use termihub_core::backends::vnc::Vnc;
+    use termihub_core::connection::ConnectionType;
+
+    use super::*;
+    use crate::utils::docker_fixture_gate::fixture_ready;
+
+    fn env_port(var: &str, default: u16) -> u16 {
+        std::env::var(var)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
+    }
+
+    /// Trust the loopback fixtures' host keys (first registration wins).
+    fn trust_fixture_host_keys() {
+        use termihub_core::backends::ssh::host_key::{
+            set_host_key_verifier, HostKeyInfo, HostKeyVerifier,
+        };
+        struct TrustLocalFixtures;
+        #[async_trait::async_trait]
+        impl HostKeyVerifier for TrustLocalFixtures {
+            async fn verify(&self, _info: &HostKeyInfo) -> bool {
+                true
+            }
+        }
+        let _ = set_host_key_verifier(Arc::new(TrustLocalFixtures));
+    }
+
+    #[tokio::test]
+    async fn ssh_tunnel_route_resolves_ready_with_the_default_folder() {
+        let ssh_port = env_port("TERMIHUB_TEST_SSH_PASSWORD_PORT", 2201);
+        let vnc_port = env_port("TERMIHUB_TEST_VNC_PORT", 2501);
+        if !fixture_ready("ssh-password", ssh_port) || !fixture_ready("vnc-server", vnc_port) {
+            return;
+        }
+        trust_fixture_host_keys();
+        let settings = json!({
+            "host": "vnc-server",
+            "port": 5900,
+            "password": "testpass",
+            "useSshTunnel": true,
+            "sshHost": "127.0.0.1",
+            "sshPort": ssh_port,
+            "sshUsername": "testuser",
+            "sshPassword": "testpass",
+            "fileTransfer": true,
+        });
+        let mut vnc = Vnc::new();
+        vnc.connect(settings.clone())
+            .await
+            .expect("VNC through the SSH tunnel");
+        let g = vnc.graphical().expect("graphical");
+        let backend = BackendSideChannel {
+            channel: g.file_side_channel(),
+            session: g.file_side_channel_ssh_session(),
+        };
+
+        let result = resolve_file_channel(&ctx(settings, None), backend, None).await;
+        let RemoteDesktopFileChannel::Ready {
+            channel,
+            agent_id,
+            default_dir,
+        } = result
+        else {
+            panic!("expected ready, got {result:?}");
+        };
+        assert_eq!(channel.kind, FileSideChannelKind::Ssh);
+        assert_eq!(channel.user, "testuser");
+        assert!(!channel.same_host, "vnc-server is not the SSH host");
+        assert_eq!(agent_id, None);
+        assert!(
+            default_dir == "/home/testuser" || default_dir == "/home/testuser/Desktop",
+            "{default_dir}"
+        );
+        vnc.disconnect().await.expect("disconnect");
+    }
+}
