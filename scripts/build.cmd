@@ -25,6 +25,16 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM The plugin runner (#4182) is the second externalBin in the same fragment
+REM (#4202): build and stage it too. core\build.rs embeds its SHA-256, which the
+REM app checks before spawning the bundled runner.
+echo === Building plugin runner for bundling ===
+call "%~dp0build-plugin-runner.cmd" --release --tauri-externalbin
+if errorlevel 1 (
+    echo ERROR: plugin runner build failed; not building the installer without it.
+    exit /b 1
+)
+
 REM Third-party license notices (PKG-009): bundled via tauri.notices.conf.json
 REM when the pinned cargo-about is installed (release.yml always generates them).
 set "NOTICES_CONFIG="
