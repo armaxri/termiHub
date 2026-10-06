@@ -28,6 +28,7 @@ pub mod projection;
 #[cfg(feature = "test-bridge")]
 pub mod projection_diag;
 pub mod remote_desktop;
+pub mod remote_desktop_browse;
 pub mod remote_desktop_image;
 pub mod remote_desktop_monitors;
 pub mod restore_mode;

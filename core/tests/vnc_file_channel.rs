@@ -201,3 +201,132 @@ async fn vnc_ft_03_queued_upload_runs_over_the_tunnel_sftp_channel() {
     sftp.delete(&remote).await.expect("cleanup");
     vnc.disconnect().await.expect("disconnect");
 }
+
+// ── VNC-FT-04: browse and a queued download over the tunnel (#4193) ──
+
+#[tokio::test]
+async fn vnc_ft_04_browse_and_queued_download_over_the_tunnel_sftp_channel() {
+    use std::sync::{Arc, Mutex};
+    use termihub_core::files::transfer::sftp::{run_sftp_transfer, DEFAULT_RESUME_MODE};
+    use termihub_core::files::transfer::{
+        ProgressSink, TransferDirection, TransferProgress, TransferRegistry, TransferStateTag,
+    };
+
+    require_docker!(port_ssh_password());
+    require_docker!(port_vnc());
+
+    let mut vnc = Vnc::new();
+    vnc.connect(tunnelled_settings(true, false))
+        .await
+        .expect("VNC-FT-04: VNC through the SSH tunnel should connect");
+    let graphical = vnc.graphical().expect("graphical");
+    let session = graphical
+        .file_side_channel_ssh_session()
+        .expect("VNC-FT-04: the tunnel's SSH session is reachable");
+    let sftp = Arc::new(
+        SftpFileBrowser::from_session(session)
+            .await
+            .expect("VNC-FT-04: SFTP opens on the tunnel's own session"),
+    );
+
+    // A remote file to find by browsing, then download.
+    let name = format!("vnc-ft-04-{}.bin", std::process::id());
+    let remote = format!("/home/testuser/{name}");
+    let payload: Vec<u8> = (0..(400 * 1024)).map(|i| (i % 251) as u8).collect();
+    sftp.write_file(&remote, &payload)
+        .await
+        .expect("seed the remote file");
+
+    // Browse: the File Browser lists the side-channel host's folder.
+    let listing = sftp
+        .list_dir("/home/testuser")
+        .await
+        .expect("VNC-FT-04: list the home folder over the side channel");
+    let entry = listing
+        .iter()
+        .find(|e| e.name == name)
+        .expect("VNC-FT-04: the seeded file is listed");
+    assert_eq!(entry.size, payload.len() as u64);
+
+    // Download: one Transfers-queue row keyed by the graphical session.
+    let local_dir = tempfile::tempdir().expect("tempdir");
+    let local = local_dir.path().join(&name);
+    let registry = TransferRegistry::new();
+    let handle = registry.enqueue(
+        "vnc-ft-04",
+        "rd-session",
+        TransferDirection::Download,
+        &name,
+        &remote,
+        0,
+    );
+    let progress = Arc::new(Mutex::new(Vec::new()));
+    let seen = progress.clone();
+    let sink: ProgressSink = Arc::new(move |p: &TransferProgress| {
+        seen.lock().expect("progress lock").push(p.transferred);
+    });
+    run_sftp_transfer(
+        sftp.clone(),
+        TransferDirection::Download,
+        remote.clone(),
+        local.to_string_lossy().into_owned(),
+        handle,
+        registry.clone(),
+        sink,
+        DEFAULT_RESUME_MODE,
+        0,
+    )
+    .await;
+
+    let state = registry
+        .list(Some("rd-session"))
+        .into_iter()
+        .find(|s| s.transfer_id == "vnc-ft-04")
+        .map(|s| s.state);
+    assert_eq!(state, Some(TransferStateTag::Completed));
+    assert_eq!(
+        std::fs::read(&local).expect("read the download"),
+        payload,
+        "VNC-FT-04: the bytes arrive locally unchanged"
+    );
+    assert!(
+        !progress.lock().expect("progress lock").is_empty(),
+        "VNC-FT-04: the queue row reports progress"
+    );
+
+    // Cancel: a download cancelled before it runs ends Cancelled.
+    let cancelled = registry.enqueue(
+        "vnc-ft-04-cancel",
+        "rd-session",
+        TransferDirection::Download,
+        &name,
+        &remote,
+        0,
+    );
+    assert!(registry.cancel("vnc-ft-04-cancel"));
+    run_sftp_transfer(
+        sftp.clone(),
+        TransferDirection::Download,
+        remote.clone(),
+        local_dir
+            .path()
+            .join("cancelled.bin")
+            .to_string_lossy()
+            .into_owned(),
+        cancelled,
+        registry.clone(),
+        Arc::new(|_: &TransferProgress| {}),
+        DEFAULT_RESUME_MODE,
+        0,
+    )
+    .await;
+    let state = registry
+        .list(Some("rd-session"))
+        .into_iter()
+        .find(|s| s.transfer_id == "vnc-ft-04-cancel")
+        .map(|s| s.state);
+    assert_eq!(state, Some(TransferStateTag::Cancelled));
+
+    sftp.delete(&remote).await.expect("cleanup");
+    vnc.disconnect().await.expect("disconnect");
+}

@@ -7,11 +7,21 @@ import type { RemoteDesktopFilesStatus } from "@/hooks/useRemoteDesktopFiles";
 import type { TransferEntry } from "@/types/generated/TransferEntry";
 import { RemoteDesktopFiles } from "./RemoteDesktopFiles";
 
-const hoisted = vi.hoisted(() => ({ queue: {} as Record<string, unknown> }));
+const hoisted = vi.hoisted(() => ({
+  queue: {} as Record<string, unknown>,
+  list: vi.fn(),
+}));
 
 vi.mock("@/store/useProjectedTransfers", () => ({
   useProjectedTransfers: () => ({ queue: hoisted.queue, minimized: false }),
 }));
+
+vi.mock("./browseRemoteFiles", () => ({ listRemoteFolders: hoisted.list }));
+
+/** A side-channel listing of `path` with the given sub-folders. */
+function listing(path: string, names: string[]) {
+  return { path, folders: names.map((name) => ({ name, path: `${path}/${name}` })) };
+}
 
 let container: HTMLDivElement;
 let root: Root;
@@ -47,6 +57,7 @@ function entry(id: string, sessionId: string): TransferEntry {
 function render(files: RemoteDesktopFilesStatus, destDir: string | null = null) {
   const props = {
     onUpload: vi.fn(() => Promise.resolve()),
+    onBrowse: vi.fn(),
     onRetry: vi.fn(),
     onClose: vi.fn(),
   };
@@ -60,9 +71,13 @@ function render(files: RemoteDesktopFilesStatus, destDir: string | null = null) 
   return props;
 }
 
-describe("RemoteDesktopFiles popover (#4192)", () => {
+describe("RemoteDesktopFiles popover (#4192, #4193)", () => {
   beforeEach(() => {
     hoisted.queue = {};
+    hoisted.list.mockReset();
+    hoisted.list.mockImplementation((_sessionId: string, dir: string) =>
+      Promise.resolve(listing(dir.replace(/^~/, "/home/arne"), ["inbox", "photos"]))
+    );
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -89,9 +104,10 @@ describe("RemoteDesktopFiles popover (#4192)", () => {
     expect(props.onUpload).toHaveBeenCalledWith();
   });
 
-  it("uploads into a chosen folder via Upload to folder…", async () => {
+  it("uploads into a typed folder via Upload to folder…", async () => {
     const props = render(READY);
     act(() => query("remote-desktop-files-upload-folder")?.click());
+    await flushAsync();
     const input = query("remote-desktop-upload-folder-input") as HTMLInputElement;
     expect(input.value).toBe("/home/arne/Desktop");
     act(() => {
@@ -105,8 +121,68 @@ describe("RemoteDesktopFiles popover (#4192)", () => {
     expect(query("remote-desktop-upload-folder-dialog")).toBeNull();
   });
 
-  it("keeps Browse remote files for remote browsing (#4193)", () => {
+  it("picks the folder by browsing the side-channel host (#4204)", async () => {
+    const props = render(READY);
+    act(() => query("remote-desktop-files-upload-folder")?.click());
+    await flushAsync();
+    expect(hoisted.list).toHaveBeenCalledWith("rd-1", "/home/arne/Desktop");
+    const entries = () =>
+      [...document.querySelectorAll('[data-testid="remote-desktop-folder-picker-entry"]')].map(
+        (e) => e.textContent
+      );
+    expect(entries()).toEqual(["inbox", "photos"]);
+
+    // Into a sub-folder, then up again, then into the other one.
+    act(() =>
+      (
+        document.querySelector(
+          '[data-testid="remote-desktop-folder-picker-entry"]'
+        ) as HTMLButtonElement
+      ).click()
+    );
+    await flushAsync();
+    expect(hoisted.list).toHaveBeenLastCalledWith("rd-1", "/home/arne/Desktop/inbox");
+    expect((query("remote-desktop-upload-folder-input") as HTMLInputElement).value).toBe(
+      "/home/arne/Desktop/inbox"
+    );
+    act(() => query("remote-desktop-folder-picker-up")?.click());
+    await flushAsync();
+    expect(hoisted.list).toHaveBeenLastCalledWith("rd-1", "/home/arne/Desktop");
+
+    act(() => query("remote-desktop-upload-folder-submit")?.click());
+    await flushAsync();
+    expect(props.onUpload).toHaveBeenCalledWith("/home/arne/Desktop");
+  });
+
+  it("opens a typed folder on Enter and shows a listing error", async () => {
     render(READY);
+    act(() => query("remote-desktop-files-upload-folder")?.click());
+    await flushAsync();
+    hoisted.list.mockRejectedValueOnce("the folder /nope does not exist");
+    const input = query("remote-desktop-upload-folder-input") as HTMLInputElement;
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "/nope");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await flushAsync();
+    expect(hoisted.list).toHaveBeenLastCalledWith("rd-1", "/nope");
+    expect(query("remote-desktop-folder-picker")?.textContent).toContain("does not exist");
+  });
+
+  it("opens Browse remote files on a ready route (#4193)", () => {
+    const props = render(READY);
+    const browse = query("remote-desktop-files-browse") as HTMLButtonElement;
+    expect(browse.disabled).toBe(false);
+    act(() => browse.click());
+    expect(props.onBrowse).toHaveBeenCalledOnce();
+  });
+
+  it("offers no browsing without a ready route", () => {
+    render({ status: "unavailable", reason: "disabled" });
     expect((query("remote-desktop-files-browse") as HTMLButtonElement).disabled).toBe(true);
   });
 
