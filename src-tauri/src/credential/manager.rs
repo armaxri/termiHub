@@ -3,13 +3,14 @@ use std::sync::{Arc, RwLock};
 
 use anyhow::Result;
 use tauri::{AppHandle, Emitter};
-use tracing::warn;
+use tracing::{info, warn};
 
 use super::auto_lock::AutoLockTimer;
 use super::biometric_unlock::{
-    BiometricUnlock, BiometricUnlockError, BiometricUnlockStatus, SecretSlot, ENABLE_REASON,
-    UNLOCK_REASON,
+    BiometricUnlock, BiometricUnlockError, BiometricUnlockStatus, KeyProtection, NewKey, Released,
+    SecretSlot, ENABLE_REASON, UNLOCK_REASON,
 };
+use super::hw_key::platform_hw_key;
 use super::os_auth::{
     platform_verifier, OsAuthCapability, OsAuthError, OsAuthPurpose, OsAuthSuccess, OsUserVerifier,
 };
@@ -88,7 +89,8 @@ impl CredentialManager {
     /// for [`MasterPasswordStore`].
     pub fn new(mode: StorageMode, config_dir: PathBuf) -> Self {
         let backend = Self::create_backend(&mode, &config_dir);
-        let biometric = BiometricUnlock::new(&config_dir, default_biometric_slot());
+        let biometric =
+            BiometricUnlock::new(&config_dir, default_biometric_slot(), platform_hw_key());
         Self {
             inner: RwLock::new(backend),
             config_dir,
@@ -110,7 +112,23 @@ impl CredentialManager {
     /// an in-memory slot).
     #[cfg(test)]
     pub fn with_biometric_slot(mut self, slot: Box<dyn SecretSlot>) -> Self {
-        self.biometric = BiometricUnlock::new(&self.config_dir, slot);
+        self.biometric = BiometricUnlock::new(
+            &self.config_dir,
+            slot,
+            Box::new(super::hw_key::NoHardwareKey::new("tests")),
+        );
+        self
+    }
+
+    /// Replace both biometric-unlock key stores (tests: in-memory slot +
+    /// scripted OS-enforced protector).
+    #[cfg(test)]
+    pub fn with_biometric_keys(
+        mut self,
+        slot: Box<dyn SecretSlot>,
+        hw: Box<dyn super::hw_key::HardwareKeyProtector>,
+    ) -> Self {
+        self.biometric = BiometricUnlock::new(&self.config_dir, slot, hw);
         self
     }
 
@@ -324,11 +342,18 @@ impl CredentialManager {
     /// Biometric-unlock state for the UI.
     pub fn biometric_unlock_status(&self) -> BiometricUnlockStatus {
         let capability = self.os_auth.capability(OsAuthPurpose::BiometricUnlock);
+        let enabled = self.get_mode() == StorageMode::MasterPassword && self.biometric.is_enabled();
         BiometricUnlockStatus {
             supported: capability.available,
-            enabled: self.get_mode() == StorageMode::MasterPassword && self.biometric.is_enabled(),
+            enabled,
             method_label: capability.method_label,
             reason: capability.reason,
+            protection: if enabled {
+                self.biometric.protection()
+            } else {
+                None
+            },
+            os_enforced_available: capability.available && self.biometric.os_enforced_available(),
         }
     }
 
@@ -367,10 +392,15 @@ impl CredentialManager {
                     .unwrap_or_else(|| "Biometric unlock is not available.".to_string()),
             });
         }
-        // Prompt without holding the backend lock.
-        let verified = self.verify_user(OsAuthPurpose::EnableBiometricUnlock, ENABLE_REASON)?;
+        // Prompt without holding the backend lock. Prefers an OS-enforced key
+        // and falls back to app-enforced (#3534).
+        let new_key =
+            self.biometric
+                .prepare_enrollment(ENABLE_REASON, self.owner_window(), || {
+                    self.verify_user(OsAuthPurpose::EnableBiometricUnlock, ENABLE_REASON)
+                })?;
 
-        self.with_master_password_store(|store| self.biometric.enable(store, &verified))
+        self.with_master_password_store(|store| self.biometric.enable(store, new_key))
             .unwrap_or_else(|| Err(not_master_password_mode()))
     }
 
@@ -378,29 +408,72 @@ impl CredentialManager {
     /// the auto-lock gate and notifies the timer, exactly as for a password
     /// unlock. An already-unlocked store is a no-op (no prompt).
     pub fn unlock_with_biometrics(&self) -> Result<(), BiometricUnlockError> {
-        let already_unlocked = self
+        let protection = self
             .with_master_password_store(|store| {
                 if store.is_unlocked() {
-                    return Ok(true);
+                    return Ok(None);
                 }
-                self.biometric.precheck(store).map(|()| false)
+                self.biometric.precheck(store).map(Some)
             })
             .unwrap_or_else(|| Err(not_master_password_mode()))?;
-        if already_unlocked {
+        let Some(protection) = protection else {
             return Ok(());
-        }
+        };
 
         // Prompt without holding the backend lock (a prompt can stay open for
         // minutes); the enrollment is re-checked under the lock afterwards.
-        let verified = self.verify_user(OsAuthPurpose::BiometricUnlock, UNLOCK_REASON)?;
+        // An OS-enforced key is released by the OS's own prompt, so
+        // termiHub's verification is not shown in addition.
+        let released = match protection {
+            KeyProtection::OsEnforced => self
+                .biometric
+                .release_os_enforced(UNLOCK_REASON, self.owner_window())?,
+            KeyProtection::App => {
+                Released::App(self.verify_user(OsAuthPurpose::BiometricUnlock, UNLOCK_REASON)?)
+            }
+        };
 
         self.with_master_password_store(|store| {
             if store.is_unlocked() {
                 return Ok(());
             }
-            self.biometric.unlock(store, &verified)
+            self.biometric.unlock(store, released)
         })
-        .unwrap_or_else(|| Err(not_master_password_mode()))
+        .unwrap_or_else(|| Err(not_master_password_mode()))?;
+
+        if protection == KeyProtection::App {
+            self.upgrade_biometric_key();
+        }
+        Ok(())
+    }
+
+    /// Transparently re-wrap an app-enforced enrollment under an OS-enforced
+    /// key after a successful unlock, when the OS supports it (#3534). Never
+    /// fails the unlock: on error or cancel the old enrollment stays and the
+    /// upgrade is not retried until the next app run.
+    fn upgrade_biometric_key(&self) {
+        if !self.biometric.take_upgrade_opportunity() {
+            return;
+        }
+        let key = match self
+            .biometric
+            .create_os_enforced_key(ENABLE_REASON, self.owner_window())
+        {
+            Ok(key) => key,
+            Err(e) => {
+                info!(reason = %e, "biometric unlock key upgrade skipped");
+                return;
+            }
+        };
+        let result = self
+            .with_master_password_store(|store| {
+                self.biometric.enable(store, NewKey::OsEnforced(key))
+            })
+            .unwrap_or_else(|| Err(not_master_password_mode()));
+        match result {
+            Ok(()) => info!("biometric unlock key upgraded to OS-enforced protection"),
+            Err(e) => warn!(error = %e, "biometric unlock key upgrade failed; keeping the old key"),
+        }
     }
 
     /// Opt out of biometric unlock (deletes the enrollment). Idempotent.
@@ -464,11 +537,11 @@ fn not_master_password_mode() -> BiometricUnlockError {
 fn default_biometric_slot() -> Box<dyn SecretSlot> {
     #[cfg(test)]
     {
-        Box::new(super::biometric_unlock::MemorySlot::default())
+        Box::new(super::biometric_slot::MemorySlot::default())
     }
     #[cfg(not(test))]
     {
-        Box::new(super::biometric_unlock::KeyringSlot::default())
+        Box::new(super::biometric_slot::KeyringSlot::default())
     }
 }
 
