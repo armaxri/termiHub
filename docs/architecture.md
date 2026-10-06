@@ -2433,8 +2433,16 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
   either way, and stateless slices need no long-lived stream to pause, resume
   or abandon. `session_supports_transfer_queue` reports an agent session as
   queue-capable only when the agent advertises `fileRanges` and a zero-length
-  probe read succeeds; a backend without ranged access (FTP), or a session
+  probe read succeeds; a backend without ranged access, or a session
   started by an older session daemon, stays on the byte-based path.
+  FTP serves slices too (#4113, `core/src/backends/ftp/file_browser.rs`):
+  a read is `REST <offset>` + `RETR` with the data connection closed once the
+  slice is in (not `ABOR`, whose extra reply varies by server and would
+  desynchronise the control connection), a write is `STOR` at offset 0 and a
+  `SIZE` that must equal the offset followed by `APPE` beyond it. It is offered
+  only for binary transfers on a server that advertises `REST STREAM` (learned
+  from `FEAT` on every connect); before the first connect the server is unknown,
+  so the probe succeeds and a slice call on a server without it is refused.
   A **session folder paste** (local → session, session → session, session →
   local (#3912), or a byte-based backend) is still copied file by file from
   the frontend (`src/hooks/sessionFolderPaste.ts`), so it records a
