@@ -1,11 +1,13 @@
 pub mod browser;
 pub mod copy;
 pub mod local;
+pub mod ranged;
 pub mod transfer;
 pub mod utils;
 
 pub use browser::FileBrowser;
 pub use local::LocalFileBrowser;
+pub use ranged::{RangedFileAccess, MAX_RANGE_BYTES};
 
 use serde::{Deserialize, Serialize};
 

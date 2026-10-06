@@ -403,9 +403,13 @@ async fn daemon_loop(
     // blocking on the worker) and queued once complete.
     let (file_event_tx, mut file_event_rx) =
         mpsc::channel::<(u64, FileFrame)>(files_rpc::EVENT_CAPACITY);
-    let file_job_tx = connection
-        .file_browser_handle()
-        .map(|browser| files_rpc::spawn_file_worker(browser, file_event_tx.clone()));
+    let file_browser = connection.file_browser_handle();
+    // Ranged slices (#3587) are advertised only when the backend offers them.
+    let file_ranges = file_browser
+        .as_ref()
+        .is_some_and(|browser| browser.ranged().is_some());
+    let file_job_tx =
+        file_browser.map(|browser| files_rpc::spawn_file_worker(browser, file_event_tx.clone()));
     let mut uploads = Uploads::default();
 
     // Whether the backend reported the session files-only (#4081): its SSH host
@@ -419,6 +423,7 @@ async fn daemon_loop(
         process_manager.is_some(),
         monitor_cmd_tx.is_some(),
         file_job_tx.is_some(),
+        file_ranges,
     );
 
     // When the current unattached stretch began (`None` while a worker is
@@ -836,8 +841,9 @@ async fn wait_files_only(watch: Option<tokio::sync::watch::Receiver<bool>>) {
 }
 
 /// The [`MSG_CAPABILITIES`] flags for a backend with / without a process
-/// manager (#3210), a monitoring provider (#3871) and a file browser (#3242).
-fn capability_flags(processes: bool, monitoring: bool, files: bool) -> u8 {
+/// manager (#3210), a monitoring provider (#3871), a file browser (#3242) and
+/// ranged file access on that browser (#3587).
+fn capability_flags(processes: bool, monitoring: bool, files: bool, file_ranges: bool) -> u8 {
     let mut flags = 0;
     if processes {
         flags |= CAP_PROCESSES;
@@ -847,6 +853,9 @@ fn capability_flags(processes: bool, monitoring: bool, files: bool) -> u8 {
     }
     if files {
         flags |= CAP_FILES;
+        if file_ranges {
+            flags |= CAP_FILE_RANGES;
+        }
     }
     // Every daemon answers heartbeat probes, whatever its backend (#3140).
     flags | CAP_HEARTBEAT
