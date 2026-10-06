@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from termihub_harness import timing
+from termihub_harness import hang_guard, timing
 from termihub_harness.artifacts import (
     ARTIFACT_ROOT,
     sanitize_nodeid,
@@ -157,6 +157,38 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.skip(reason=reason))
 
 
+# ── Hang guard (#4017) ───────────────────────────────────────────────────────
+# A blocking call with no timeout froze the macOS lane on 2026-10-06 until the
+# job ceiling cancelled it. On xdist workers each test phase now runs under a
+# faulthandler watchdog: an overrun dumps all stacks into the artifacts dir and
+# exits the worker, so xdist reports the hung test and the lane carries on.
+# See termihub_harness/hang_guard.py.
+def _guarded_phase(phase):
+    if not hang_guard.enabled():
+        yield
+        return
+    hang_guard.arm(phase, ARTIFACT_ROOT)
+    try:
+        yield
+    finally:
+        hang_guard.disarm()
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_setup(item):
+    yield from _guarded_phase("setup")
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item):
+    yield from _guarded_phase("call")
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_teardown(item, nextitem):
+    yield from _guarded_phase("teardown")
+
+
 # ── Per-operation timing summary (#3660) ─────────────────────────────────────
 _TIMING_KEY = "termihub_timing"
 
@@ -187,6 +219,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 
 def pytest_sessionfinish(session, exitstatus):
     """Hand timing samples to the xdist controller; flush the guided-manual report."""
+    hang_guard.close()
     config = session.config
     if hasattr(config, "workeroutput"):
         config.workeroutput[_TIMING_KEY] = timing.snapshot()

@@ -433,6 +433,181 @@ def test_ensure_skips_on_a_windows_container_daemon_even_on_ci(monkeypatch):
         fx.ComposeFixture().ensure("ssh-keys")
 
 
+# ── Adopting fixtures brought up under another compose project (#4017) ──────────
+# The 2026-10-06 nightly: the workflow (main's copy) bulk-started the fixtures
+# with a bare ``docker compose up`` (project ``docker``, from the directory), and
+# every harness ``compose -p termihub up`` then failed on the fixed container
+# names. The harness now detects that shape and adopts the other project.
+
+
+def _write_compose(tmp_path):
+    compose = tmp_path / "tests" / "docker" / "docker-compose.yml"
+    compose.parent.mkdir(parents=True)
+    compose.write_text(
+        "services:\n"
+        "  ssh-password:\n"
+        "    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-ssh-password\n"
+        "  telnet-server:\n"
+        "    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-telnet  # trailing\n"
+        "networks:\n"
+        "  test-net:\n"
+        "    name: ${TERMIHUB_TEST_PROJECT:-termihub}-test-net\n"
+        "  # name: ${TERMIHUB_TEST_PROJECT:-termihub}-commented-out\n",
+        encoding="utf-8",
+    )
+    return compose
+
+
+def test_fixed_resource_names_reads_containers_and_networks(tmp_path):
+    compose = _write_compose(tmp_path)
+    containers, networks = fx.fixed_resource_names(compose, "termihub-test-3")
+    assert containers == {"termihub-test-3-ssh-password", "termihub-test-3-telnet"}
+    assert networks == {"termihub-test-3-test-net"}
+
+
+def test_fixed_resource_names_covers_the_real_compose_file():
+    containers, networks = fx.fixed_resource_names(fx.COMPOSE_FILE, "termihub")
+    assert "termihub-ssh-password" in containers
+    assert "termihub-remote-agent" in containers
+    assert networks == {"termihub-test-net", "termihub-jumphost-net"}
+
+
+def test_fixed_resource_names_of_a_missing_file_is_empty(tmp_path):
+    assert fx.fixed_resource_names(tmp_path / "nope.yml", "termihub") == (set(), set())
+
+
+def test_foreign_owner_is_adopted_when_one_project_owns_everything(tmp_path):
+    compose = _write_compose(tmp_path)
+    containers = {
+        "termihub-ssh-password": ("docker", str(compose)),
+        "termihub-telnet": ("docker", str(compose)),
+    }
+    networks = {"termihub-test-net": "docker"}
+    assert fx.foreign_compose_owner("termihub", containers, networks, compose) == "docker"
+
+
+def test_foreign_owner_of_only_the_network_is_adopted(tmp_path):
+    """A leftover network alone also blocks a clean bring-up under our name."""
+    compose = _write_compose(tmp_path)
+    assert fx.foreign_compose_owner("termihub", {}, {"termihub-test-net": "docker"}, compose) == (
+        "docker"
+    )
+
+
+@pytest.mark.parametrize(
+    "containers, networks",
+    [
+        ({}, {}),
+        ({"termihub-ssh-password": ("termihub", "")}, {"termihub-test-net": "termihub"}),
+    ],
+    ids=["nothing-present", "already-ours"],
+)
+def test_no_adoption_when_nothing_foreign(tmp_path, containers, networks):
+    compose = _write_compose(tmp_path)
+    assert fx.foreign_compose_owner("termihub", containers, networks, compose) is None
+
+
+@pytest.mark.parametrize(
+    "containers, networks",
+    [
+        # A hand-made (non-compose) container squatting a fixed name.
+        ({"termihub-ssh-password": ("", "")}, {}),
+        # Two different owners.
+        ({"termihub-ssh-password": ("docker", "")}, {"termihub-test-net": "other"}),
+        # A mix with our own project: adopting would just move the conflict.
+        ({"termihub-ssh-password": ("docker", "")}, {"termihub-test-net": "termihub"}),
+    ],
+    ids=["non-compose-container", "two-owners", "mixed-with-ours"],
+)
+def test_no_adoption_when_ambiguous(tmp_path, containers, networks):
+    compose = _write_compose(tmp_path)
+    assert fx.foreign_compose_owner("termihub", containers, networks, compose) is None
+
+
+def test_no_adoption_from_a_different_compose_file(tmp_path):
+    compose = _write_compose(tmp_path)
+    other = tmp_path / "elsewhere" / "docker-compose.yml"
+    containers = {"termihub-ssh-password": ("docker", str(other))}
+    assert fx.foreign_compose_owner("termihub", containers, {}, compose) is None
+
+
+def test_adoption_matches_a_config_file_among_several(tmp_path):
+    compose = _write_compose(tmp_path)
+    labels = f"/x/override.yml,{compose}"
+    containers = {"termihub-ssh-password": ("docker", labels)}
+    assert fx.foreign_compose_owner("termihub", containers, {}, compose) == "docker"
+
+
+def _docker_listing(ps_stdout: str, network_stdout: str, *, returncode: int = 0):
+    calls: list[list[str]] = []
+
+    def run(cmd, **_kwargs):
+        calls.append(list(cmd))
+        out = ps_stdout if cmd[1] == "ps" else network_stdout
+        return SimpleNamespace(returncode=returncode, stdout=out, stderr="")
+
+    return run, calls
+
+
+def test_compose_run_project_adopts_the_workflow_bring_up(tmp_path, monkeypatch, capsys):
+    """The exact nightly shape: fixtures up under ``docker``, a sibling checkout's
+    under its own name, an unrelated container — only ours are considered."""
+    compose = _write_compose(tmp_path)
+    monkeypatch.setattr(fx, "_compose_run_projects", {})
+    ps = (
+        f"termihub-ssh-password\tdocker\t{compose}\n"
+        f"termihub-telnet\tdocker\t{compose}\n"
+        f"termihub-test-6-ssh-password\ttermihub-test-6\t/other/docker-compose.yml\n"
+        "unrelated\t\t\n"
+    )
+    networks = "bridge\t\ntermihub-test-net\tdocker\ntermihub-test-6-test-net\ttermihub-test-6\n"
+    run, calls = _docker_listing(ps, networks)
+    monkeypatch.setattr(subprocess, "run", run)
+
+    assert fx.compose_run_project("docker", "termihub", compose) == "docker"
+    assert "adopting compose project 'docker'" in capsys.readouterr().err
+    # Cached: a second ensure() in the same process does not re-query.
+    assert fx.compose_run_project("docker", "termihub", compose) == "docker"
+    assert len(calls) == 2
+    ps_call = next(c for c in calls if c[1] == "ps")
+    assert ps_call[:3] == ["docker", "ps", "-a"]
+    assert '{{.Label "com.docker.compose.project"}}' in ps_call[-1]
+
+
+def test_compose_run_project_keeps_our_project_by_default(tmp_path, monkeypatch):
+    compose = _write_compose(tmp_path)
+    monkeypatch.setattr(fx, "_compose_run_projects", {})
+    run, _ = _docker_listing("termihub-test-6-ssh-password\ttermihub-test-6\t\n", "")
+    monkeypatch.setattr(subprocess, "run", run)
+    assert fx.compose_run_project("docker", "termihub", compose) == "termihub"
+
+
+def test_compose_run_project_keeps_our_project_when_the_query_fails(tmp_path, monkeypatch):
+    """E.g. a Podman CLI without ``.Label`` template support: adopt nothing."""
+    compose = _write_compose(tmp_path)
+    monkeypatch.setattr(fx, "_compose_run_projects", {})
+    run, _ = _docker_listing("garbage", "garbage", returncode=125)
+    monkeypatch.setattr(subprocess, "run", run)
+    assert fx.compose_run_project("podman", "termihub", compose) == "termihub"
+
+
+def test_ensure_runs_compose_under_the_adopted_project(monkeypatch):
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setattr(fx, "container_runtime", lambda: "docker")
+    monkeypatch.setattr(fx, "_docker_os_type", lambda _runtime: "linux")
+    monkeypatch.setattr(fx, "_reap_stale_fixtures_once", lambda *_a: None)
+    monkeypatch.setattr(fx, "compose_run_project", lambda *_a: "docker")
+    seen: list[list[str]] = []
+
+    def record(cmd, *_args, **_kwargs):
+        seen.append(cmd)
+
+    monkeypatch.setattr(fx.ComposeFixture, "_run_compose", staticmethod(record))
+    fx.ComposeFixture().ensure("ssh-password")
+    assert seen and seen[0][:4] == ["docker", "compose", "-p", "docker"]
+    assert seen[0][-3:] == ["up", "-d", "ssh-password"]
+
+
 # ── Deployed-agent binary staging (#4092) ──────────────────────────────────────
 
 

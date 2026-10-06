@@ -37,7 +37,6 @@ This is a dedicated single-method suite because it quits the suite's app mid-tes
 
 from __future__ import annotations
 
-import os
 import subprocess
 
 import pytest
@@ -55,7 +54,6 @@ from termihub_harness import (
     dev_local,
     unique_name,
 )
-from termihub_harness.fixtures import COMPOSE_FILE
 
 pytestmark = pytest.mark.integration
 
@@ -67,7 +65,7 @@ def _count_established_ssh(service: str = SSH_PASSWORD_SERVICE) -> int:
     procfs — no ``ps``/``ss``/``pgrep`` needed in the minimal image. Matches rows
     whose **local** address ends in ``:0016`` (port 22) with state ``01``
     (ESTABLISHED): every inbound SSH connection (terminal *and* SFTP) is one such
-    row. Raises on a failed ``compose exec`` so a broken probe fails loudly rather
+    row. Raises on a failed ``exec`` so a broken probe fails loudly rather
     than silently reporting 0.
     """
     runtime = container_runtime()
@@ -80,17 +78,11 @@ def _count_established_ssh(service: str = SSH_PASSWORD_SERVICE) -> int:
         "grep -E ':0016 [0-9A-Fa-f]{8,32}:[0-9A-Fa-f]{4} 01' "
         "/proc/net/tcp /proc/net/tcp6 2>/dev/null | wc -l"
     )
-    cmd = [
-        runtime, "compose", "-p", project, "-f", str(COMPOSE_FILE),
-        "exec", "-T", service, "sh", "-c", script,
-    ]
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        env={**os.environ, **dev_local.compose_env()},
-    )
+    # Exec by the fixed container name (``<project>-<service>``), not through
+    # ``compose -p <project> exec``: the fixtures may run under another compose
+    # project the harness adopted (#4017), and the name is the same either way.
+    cmd = [runtime, "exec", f"{project}-{service}", "sh", "-c", script]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise RuntimeError(
             f"server-side SSH-connection probe failed (exit {result.returncode}): "

@@ -20,12 +20,14 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import Iterable, Mapping, Optional, Sequence
 
 from . import dev_local
 
@@ -562,6 +564,179 @@ def _reap_stale_fixtures_once(runtime: str, project: str) -> None:
     reap_stale_fixtures(project, runtime=runtime)
 
 
+# ── Adopting a fixture project brought up under another compose name (#4017) ──
+# The compose file pins every container and network to a FIXED name
+# (``${TERMIHUB_TEST_PROJECT:-termihub}-ssh-password``, ``…-test-net``), but the
+# compose *project* that owns them is whatever ``-p`` / ``COMPOSE_PROJECT_NAME``
+# the bring-up used. When a ``docker compose up`` runs without a project name —
+# a workflow's bulk fixture step, or a developer in ``tests/docker`` — compose
+# names the project after the directory (``docker``), and the harness' later
+# ``compose -p termihub up`` then trips over the very containers it wants:
+# "Conflict. The container name "/termihub-ssh-password" is already in use",
+# erroring every Docker suite (the 2026-10-06 nightly).
+#
+# Nightly runs use ``main``'s copy of the workflow, so a workflow-side pin of
+# ``COMPOSE_PROJECT_NAME`` only takes effect after the next develop→main sync.
+# The harness therefore resolves it itself: when the fixed-name containers /
+# networks of THIS checkout are all owned by a single other compose project
+# brought up from this same compose file, it runs its compose commands under
+# that project — adopting the (already built, healthy) fixtures — instead of
+# fighting over the names. Container names do not change (they come from
+# ``TERMIHUB_TEST_PROJECT``), so every ``<project>-<service>`` lookup keeps
+# working. Anything ambiguous (two owners, a hand-made container, a different
+# compose file, a mix with our own project) adopts nothing, and compose fails
+# with its usual message.
+
+#: Compose label naming the config file(s) a project was brought up from.
+_COMPOSE_CONFIG_FILES_LABEL = "com.docker.compose.project.config_files"
+
+#: ``${TERMIHUB_TEST_PROJECT:-…}-<suffix>`` — a fixed resource name in the file.
+_FIXED_NAME_RE = re.compile(r"\$\{TERMIHUB_TEST_PROJECT(?::-[^}]*)?\}-([A-Za-z0-9_.-]+)")
+
+#: Per-process cache of the adoption decision, keyed by
+#: ``(runtime, project, compose_file)``; the value is the project to run under.
+_compose_run_projects: dict[tuple[str, str, str], str] = {}
+
+
+def fixed_resource_names(compose_file: Path, project: str) -> tuple[set[str], set[str]]:
+    """The fixed container and network names ``compose_file`` gives ``project``.
+
+    Reads the ``container_name:`` lines and the network ``name:`` lines that
+    interpolate ``TERMIHUB_TEST_PROJECT`` and substitutes ``project`` for it.
+    Returns ``(containers, networks)``; both empty if the file is unreadable.
+    """
+    containers: set[str] = set()
+    networks: set[str] = set()
+    try:
+        text = compose_file.read_text(encoding="utf-8")
+    except OSError:
+        return containers, networks
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        match = _FIXED_NAME_RE.search(line)
+        if not match:
+            continue
+        name = f"{project}-{match.group(1)}"
+        if line.startswith("container_name:"):
+            containers.add(name)
+        elif line.startswith("name:"):
+            networks.add(name)
+    return containers, networks
+
+
+def _same_compose_file(config_files: str, compose_file: Path) -> bool:
+    """Whether the comma-separated ``config_files`` label names ``compose_file``."""
+    try:
+        wanted = os.path.realpath(compose_file)
+        return any(
+            os.path.realpath(part.strip()) == wanted
+            for part in config_files.split(",")
+            if part.strip()
+        )
+    except OSError:
+        return False
+
+
+def foreign_compose_owner(
+    project: str,
+    containers: Mapping[str, tuple[str, str]],
+    networks: Mapping[str, str],
+    compose_file: Path,
+) -> Optional[str]:
+    """The other compose project to adopt the fixed-name fixtures from, or None.
+
+    ``containers`` maps each present fixed-name container to its
+    ``(compose project label, config_files label)``; ``networks`` maps each
+    present fixed-name network to its compose project label (callers pass only
+    the names :func:`fixed_resource_names` expects). Adopts — returns the owner —
+    only when every one of them belongs to the SAME project, that project is
+    not ``project``, and each container was brought up from ``compose_file``.
+    Returns ``None`` (run under ``project`` as usual) for nothing present, all
+    already ours, a non-compose container squatting a name, several owners, a
+    mix with ``project``, or a different compose file.
+    """
+    owners = {owner for owner, _ in containers.values()} | set(networks.values())
+    if not owners or owners == {project}:
+        return None
+    if "" in owners or project in owners or len(owners) != 1:
+        return None
+    for _owner, config_files in containers.values():
+        if config_files and not _same_compose_file(config_files, compose_file):
+            return None
+    return owners.pop()
+
+
+def _list_labelled(runtime: str, kind: str, label: str) -> dict[str, tuple[str, str]]:
+    """``{name: (compose project, config_files)}`` for every container/network.
+
+    ``kind`` is ``"container"`` (``ps -a``) or ``"network"`` (``network ls``;
+    networks carry no config-files label, so its second field is ``""``).
+    Returns ``{}`` (never raises) when the query fails — e.g. a Podman CLI
+    without Go-template ``.Label`` support — which adopts nothing.
+    """
+    if kind == "container":
+        fmt = f'{{{{.Names}}}}\t{{{{.Label "{label}"}}}}\t{{{{.Label "{_COMPOSE_CONFIG_FILES_LABEL}"}}}}'
+        cmd = [runtime, "ps", "-a", "--format", fmt]
+    else:
+        fmt = f'{{{{.Name}}}}\t{{{{.Label "{label}"}}}}'
+        cmd = [runtime, "network", "ls", "--format", fmt]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if result.returncode != 0:
+        return {}
+    listed: dict[str, tuple[str, str]] = {}
+    for line in result.stdout.splitlines():
+        fields = line.split("\t")
+        if not fields or not fields[0].strip():
+            continue
+        owner = fields[1].strip() if len(fields) > 1 else ""
+        config_files = fields[2].strip() if len(fields) > 2 else ""
+        # ``docker ps`` may list a container under several comma-joined names.
+        for name in fields[0].split(","):
+            listed[name.strip().lstrip("/")] = (owner, config_files)
+    return listed
+
+
+def compose_run_project(runtime: str, project: str, compose_file: Path = COMPOSE_FILE) -> str:
+    """The compose project to run this checkout's fixture commands under.
+
+    ``project`` (this checkout's own) unless its fixed-name fixtures are already
+    up under another compose project from the same file — then that project, so
+    the harness adopts them instead of failing on a name conflict (see the
+    module note above). Decided once per process and cached.
+    """
+    key = (runtime, project, str(compose_file))
+    cached = _compose_run_projects.get(key)
+    if cached is not None:
+        return cached
+    want_containers, want_networks = fixed_resource_names(compose_file, project)
+    present_containers = {
+        name: info
+        for name, info in _list_labelled(runtime, "container", _COMPOSE_PROJECT_LABEL).items()
+        if name in want_containers
+    }
+    present_networks = {
+        name: owner
+        for name, (owner, _) in _list_labelled(
+            runtime, "network", _COMPOSE_PROJECT_LABEL
+        ).items()
+        if name in want_networks
+    }
+    owner = foreign_compose_owner(project, present_containers, present_networks, compose_file)
+    run_project = owner or project
+    if owner is not None:
+        print(
+            f"[termihub-fixtures] adopting compose project {owner!r}: this checkout's "
+            f"fixed-name fixtures are already up under it, so compose runs with "
+            f"-p {owner} instead of -p {project} (#4017)",
+            file=sys.stderr,
+        )
+    _compose_run_projects[key] = run_project
+    return run_project
+
+
 class ComposeFixture:
     """On-demand access to the ``tests/docker`` compose services via Docker/Podman.
 
@@ -630,7 +805,10 @@ class ComposeFixture:
         # checkout's containers behind: reap them once, before the first
         # bring-up, so ``compose up -d`` starts clean (finding TIN-011).
         _reap_stale_fixtures_once(runtime, project)
-        base = [runtime, "compose", "-p", project, "-f", str(self._compose_file)]
+        # Run under the project that already owns this checkout's fixed-name
+        # fixtures when another compose bring-up created them (#4017).
+        run_project = compose_run_project(runtime, project, self._compose_file)
+        base = [runtime, "compose", "-p", run_project, "-f", str(self._compose_file)]
         env = {**os.environ, **dev_local.compose_env()}
         services = list(services)
         if build:
