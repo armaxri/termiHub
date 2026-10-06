@@ -5,6 +5,8 @@ import {
   registerInlineImagesController,
   INLINE_IMAGE_ADDON_OPTIONS,
   INLINE_IMAGE_LIMITS,
+  INLINE_IMAGE_LOAD_HOLD_MS,
+  shouldHoldOutputForInlineImages,
   type ImageAddonLoader,
 } from "./inlineImages";
 
@@ -162,6 +164,53 @@ describe("createInlineImagesController", () => {
     expect(controller.storageUsage()).toBe(0);
     controller.setEnabled(false);
     expect(controller.storageUsage()).toBe(0);
+  });
+});
+
+describe("holding output for the lazy image addon (#4017)", () => {
+  it("reports loading only while a wanted load is in flight", async () => {
+    const { controller, release } = setup({ enabled: true, deferred: true });
+    expect(controller.isLoading()).toBe(true);
+    release();
+    await flush();
+    expect(controller.isLoading()).toBe(false);
+    expect(controller.isActive()).toBe(true);
+  });
+
+  it("is not loading when disabled, turned off mid-load, disposed or failed", async () => {
+    expect(setup({ enabled: false }).controller.isLoading()).toBe(false);
+
+    const off = setup({ enabled: true, deferred: true });
+    off.controller.setEnabled(false);
+    expect(off.controller.isLoading()).toBe(false);
+
+    const gone = setup({ enabled: true, deferred: true });
+    gone.controller.dispose();
+    expect(gone.controller.isLoading()).toBe(false);
+
+    const failed = setup({ enabled: true, fail: true });
+    await flush();
+    expect(failed.controller.isLoading()).toBe(false);
+  });
+
+  it("holds output while the addon loads, bounded by the hold window", async () => {
+    const { controller, release } = setup({ enabled: true, deferred: true });
+    // Regression: output arriving before the addon attached (an image a host
+    // sends right after connecting) was written at once and lost its image.
+    expect(shouldHoldOutputForInlineImages(controller, null, 1000)).toBe(true);
+    expect(shouldHoldOutputForInlineImages(controller, 1000, 1000 + 50)).toBe(true);
+    // A stalled import never blocks output past the window.
+    expect(
+      shouldHoldOutputForInlineImages(controller, 1000, 1000 + INLINE_IMAGE_LOAD_HOLD_MS)
+    ).toBe(false);
+    release();
+    await flush();
+    expect(shouldHoldOutputForInlineImages(controller, null, 5000)).toBe(false);
+  });
+
+  it("never holds without a controller", () => {
+    expect(shouldHoldOutputForInlineImages(null, null, 0)).toBe(false);
+    expect(shouldHoldOutputForInlineImages(undefined, null, 0)).toBe(false);
   });
 });
 
