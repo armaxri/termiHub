@@ -368,6 +368,15 @@ echo --- %BT% ---
 REM Ensure the Rust std for the target is installed
 rustup target add %BT% >nul 2>&1
 
+REM Windows MSVC: link the Visual C++ runtime statically (#4175), so the agent the
+REM desktop deploys over SSH starts on a minimal host without the VC++
+REM redistributable -- the same flag release.yml uses (twin of set_agent_build_env
+REM in build-agents.sh). Appended to any RUSTFLAGS already set, for this target's
+REM build only: the previous value is restored below. With the explicit --target,
+REM RUSTFLAGS reach only the target's crates, never build scripts or proc macros,
+REM and `cc`-built C code follows the crt-static feature to /MT.
+set "SAVED_RUSTFLAGS=!RUSTFLAGS!"
+if not "%BT:-pc-windows-msvc=%"=="%BT%" set "RUSTFLAGS=!RUSTFLAGS! -C target-feature=+crt-static"
 set "BUILD_RC=0"
 if "%~2"=="native" (
     echo   Building with cargo, native...
@@ -378,6 +387,8 @@ if "%~2"=="native" (
     cross build %PROFILE_FLAG% %FEATURES_FLAG% --target %BT% -p termihub-agent
     set "BUILD_RC=!errorlevel!"
 )
+set "RUSTFLAGS=!SAVED_RUSTFLAGS!"
+set "SAVED_RUSTFLAGS="
 if not "%BUILD_RC%"=="0" (
     if "%~3"=="besteffort" (
         echo   WARNING: %BT% build failed, best effort - skipping. Install the ARM64 MSVC build tools to enable it.

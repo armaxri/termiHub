@@ -206,8 +206,15 @@ die() {
 }
 
 PREVIOUS_SHELL="$(show_default_shell)" || die "could not read the OpenSSH DefaultShell (HKLM)"
-cargo build -p termihub-agent || die "could not build termihub-agent"
-AGENT_BIN="${CARGO_TARGET_DIR:-$REPO_ROOT/target}/debug/termihub-agent.exe"
+# The deployed agent links the VC runtime statically, like the released one
+# (#4175, release.yml / build-agents.*). The explicit --target keeps those
+# RUSTFLAGS off build scripts and proc macros and gives the build its own
+# target dir, so the `cargo test` builds below stay dynamic and are not rebuilt.
+HOST_TRIPLE="$(rustc -vV | awk '/^host:/ { print $2 }')"
+[ -n "$HOST_TRIPLE" ] || die "could not determine the Rust host triple"
+RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C target-feature=+crt-static" \
+  cargo build --target "$HOST_TRIPLE" -p termihub-agent || die "could not build termihub-agent"
+AGENT_BIN="${CARGO_TARGET_DIR:-$REPO_ROOT/target}/$HOST_TRIPLE/debug/termihub-agent.exe"
 [ -f "$AGENT_BIN" ] || die "built agent not found at $AGENT_BIN"
 
 # Armed before `up`, so a half-started fixture is torn down too.
