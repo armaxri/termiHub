@@ -1359,6 +1359,38 @@ mod tests {
     use super::*;
     use ironrdp::pdu::rdp::headers::{ShareControlHeader, ShareControlPdu, ShareDataPdu};
 
+    // ── Drive announce PreferredDosName (#4125) ─────────────────────────
+
+    /// The PreferredDosName bytes of the Device List Announce the sidecar sends
+    /// for a drive named `name` (DeviceCount 4 | DeviceType 4 | DeviceId 4 | name 8).
+    fn announced_dos_name(name: &str) -> [u8; 8] {
+        let mut rdpdr = Rdpdr::new(
+            Box::new(ironrdp::rdpdr::NoopRdpdrBackend),
+            CLIENT_NAME.to_string(),
+        );
+        let announce = rdpdr.add_drive(DRIVE_DEVICE_ID, name.to_string());
+        let mut buf = vec![0u8; announce.size()];
+        announce
+            .encode(&mut ironrdp::core::WriteCursor::new(&mut buf))
+            .expect("encode the device list announce");
+        buf[12..20].try_into().expect("8-byte PreferredDosName")
+    }
+
+    /// xrdp names a redirected drive only from the announce's PreferredDosName;
+    /// the vendored ironrdp-rdpdr fork fills it with the (truncated) drive name
+    /// instead of upstream 0.7.0's literal "ignored".
+    #[test]
+    fn drive_announce_carries_the_drive_name_in_preferred_dos_name() {
+        assert_eq!(&announced_dos_name("share"), b"share\0\0\0");
+        assert_eq!(&announced_dos_name("termiHub"), b"termiHu\0");
+        assert_eq!(&announced_dos_name("Donn\u{e9}es"), b"Donn\0\0\0\0");
+        assert_eq!(
+            &announced_dos_name("\u{424}\u{430}\u{439}\u{43b}"),
+            b"DRIVE\0\0\0"
+        );
+        assert_ne!(&announced_dos_name("termiHub"), b"ignored\0");
+    }
+
     /// The exact frame xrdp 0.10 sends after `require_credentials` rejects a
     /// wrong password (captured against the `rdp-server` fixture, #3612).
     #[test]

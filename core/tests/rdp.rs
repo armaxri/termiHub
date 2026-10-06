@@ -1500,11 +1500,14 @@ async fn rdp_15_drive_redirection_serves_only_the_shared_folder() {
     wait_for_xrdp_session(&mut frames, label).await;
     let drain = tokio::spawn(async move { while frames.recv().await.is_some() {} });
 
-    // The announced drive is mounted as one directory. xrdp names it from the
-    // announce's 8-byte PreferredDosName, which IronRDP fills with the literal
-    // "ignored" (the real name travels in DeviceData, which xrdp does not read).
+    // The announced drive is mounted as one directory, named after the drive.
+    // xrdp reads only the announce's 8-byte, null-terminated PreferredDosName,
+    // so the name is the drive name cut to its first 7 characters (all valid
+    // ASCII here). Upstream IronRDP 0.7.0 sent the literal "ignored" there; the
+    // vendored ironrdp-rdpdr fork sends the real name (#4125).
+    let dos_name: String = drive.chars().take(7).collect();
     let mounted = wait_for_user_sh(
-        &format!("ls '{THINCLIENT_DRIVES}' | grep -x -e '{drive}' -e ignored"),
+        &format!("ls '{THINCLIENT_DRIVES}' | grep -x '{dos_name}'"),
         30,
     )
     .await
@@ -1515,7 +1518,12 @@ async fn rdp_15_drive_redirection_serves_only_the_shared_folder() {
             chansrv_lines_since(CHANSRV_DRIVE_MARKER, &since, label)
         )
     });
-    let mount = format!("{THINCLIENT_DRIVES}/{}", mounted.trim());
+    assert_eq!(
+        mounted.trim(),
+        dos_name,
+        "{label}: the drive is mounted under its configured name, not \"ignored\""
+    );
+    let mount = format!("{THINCLIENT_DRIVES}/{dos_name}");
 
     // List + read.
     let listing = fixture_user_sh(&format!("ls -A '{mount}'")).expect("list the drive");
