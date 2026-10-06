@@ -4,7 +4,8 @@
 
 .DESCRIPTION
     Release builds link the Visual C++ runtime statically (src-tauri/build.rs for
-    termihub.exe, scripts/build-rdp-sidecar.* for termihub-rdp-helper.exe), so a
+    termihub.exe, scripts/build-rdp-sidecar.* for termihub-rdp-helper.exe,
+    scripts/build-plugin-runner.* for termihub-plugin-runner.exe), so a
     user installs termiHub without first installing the VC++ redistributable.
     The Windows agent binaries are built the same way (#4175: release.yml and
     scripts/build-agents.* add -C target-feature=+crt-static), so the agent the
@@ -28,8 +29,10 @@
       * -Exe: checks the given standalone PE files, e.g. the agent binaries
         (target/<triple>/release/termihub-agent.exe). Every path must exist.
 
-    With -Msi, -Nsis and -Dir, termihub.exe must be among the checked files, so a
-    wrong path cannot pass by checking nothing; with -Exe a missing file fails.
+    With -Msi, -Nsis and -Dir, termihub.exe and the bundled plugin runner
+    termihub-plugin-runner.exe (#4202) must be among the checked files, so a
+    wrong path cannot pass by checking nothing and an installer that dropped the
+    runner fails; with -Exe a missing file fails.
     The PE parsing is plain .NET, so -Dir and -Exe also run on macOS and Linux
     with pwsh; -Msi and -Nsis need Windows (msiexec) or 7-Zip.
 
@@ -188,9 +191,13 @@ try {
             Where-Object { $_.Extension -in '.exe', '.dll' })
     }
 
-    if ($Exe.Count -eq 0 -and -not ($files | Where-Object { $_.Name -eq 'termihub.exe' })) {
-        Write-Output "::error::termihub.exe is not among the checked files ($($Msi + $Nsis + $Dir))"
-        exit 1
+    if ($Exe.Count -eq 0) {
+        foreach ($required in 'termihub.exe', 'termihub-plugin-runner.exe') {
+            if (-not ($files | Where-Object { $_.Name -eq $required })) {
+                Write-Output "::error::$required is not among the checked files ($($Msi + $Nsis + $Dir))"
+                exit 1
+            }
+        }
     }
 
     Write-Output "Checking $($files.Count) PE file(s) for a Visual C++ runtime dependency"
