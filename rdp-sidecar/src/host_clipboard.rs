@@ -13,8 +13,8 @@
 //!
 //! ## Platform coverage
 //!
-//! This module reads the **macOS** pasteboard (via the `clipboard-files` crate,
-//! which asks `NSPasteboard` for file URLs), the **Windows** clipboard's
+//! This module reads the **macOS** pasteboard (asking `NSPasteboard` for file
+//! URLs through the objc2 bindings), the **Windows** clipboard's
 //! `CF_HDROP` file list (via `clipboard-win`, #1791), and the **Linux**
 //! clipboard's `text/uri-list` selection on both **X11** and **Wayland** (#1792).
 //! On any platform whose reader is not wired the reader returns an empty list, so
@@ -23,9 +23,9 @@
 //! behind this one function means adding a platform is a single-function change.
 //!
 //! Each platform crate is intentionally target-gated (see the sidecar
-//! `Cargo.toml`): `clipboard-files` is **macOS only** (its Linux path links `gtk`,
-//! its Windows path links `clipboard-win`), `clipboard-win` is **Windows only**,
-//! and the Linux readers (`x11-clipboard`, `wl-clipboard-rs`) are **Linux only**.
+//! `Cargo.toml`): the objc2 AppKit bindings are **macOS only**, `clipboard-win` is
+//! **Windows only**, and the Linux readers (`x11-clipboard`, `wl-clipboard-rs`)
+//! are **Linux only**.
 //! Dragging any of them into a platform whose reader is not wired would be pure
 //! cost. All live in the workspace-**excluded** sidecar graph, so they add zero
 //! conflict risk to the main app (#1747).
@@ -37,9 +37,12 @@
 //! clipboard bytes, so the decode is unit-testable on any CI runner, where a live
 //! OS clipboard cannot be read.
 //!
-//! The Linux reader deliberately avoids `gtk` (which `clipboard-files` would pull
-//! in): GTK clipboard reads require the process's main thread and a running GTK
-//! main loop, which a headless sidecar called from a tokio worker cannot promise.
+//! No reader uses `gtk`. The sidecar once read the macOS pasteboard through the
+//! `clipboard-files` crate, whose Linux path is GTK-based; even target-gated to
+//! macOS it put the unmaintained GTK3 stack into the lockfile, so it was replaced
+//! by direct AppKit calls (#3054). GTK clipboard reads would also require the
+//! process's main thread and a running GTK main loop, which a headless sidecar
+//! called from a tokio worker cannot promise.
 //! `x11-clipboard` (pure Rust over `x11rb`, no `libxcb`) and `wl-clipboard-rs`
 //! (with `dlopen`, no link-time `libwayland`) are window-less, thread-agnostic,
 //! blocking clients that fit the sidecar and add no system-library build
@@ -57,9 +60,9 @@ use std::path::PathBuf;
     allow(unused_imports)
 )]
 use tracing::debug;
-// `warn` is only emitted by the macOS and Windows readers (the Linux path treats
-// every failure as an expected "no files" case and logs at debug).
-#[cfg(any(target_os = "macos", windows))]
+// `warn` is only emitted by the Windows reader (the macOS and Linux paths treat
+// every failure as an expected "no files" case and log at debug).
+#[cfg(windows)]
 use tracing::warn;
 
 /// Absolute paths of the files currently on the host OS clipboard's native file
@@ -72,19 +75,61 @@ use tracing::warn;
 /// rather than surfaced: a broken clipboard read must never tear down the session.
 #[cfg(target_os = "macos")]
 pub fn read_host_clipboard_files() -> Vec<PathBuf> {
-    match clipboard_files::read() {
-        Ok(paths) => {
-            debug!(count = paths.len(), "read host clipboard file list");
-            paths
-        }
-        // The clipboard simply holds no files (text / image / empty) — expected,
-        // not an error.
-        Err(clipboard_files::Error::NoFiles) => Vec::new(),
-        Err(clipboard_files::Error::SystemError(e)) => {
-            warn!(error = %e, "failed to read host clipboard file list; offering none");
-            Vec::new()
-        }
-    }
+    let paths = objc2::rc::autoreleasepool(|_| read_pasteboard_file_paths());
+    debug!(count = paths.len(), "read host clipboard file list");
+    paths
+}
+
+/// Asks the general `NSPasteboard` for the **file** URLs on it — what Finder
+/// places there when the user copies files — and returns their POSIX paths in
+/// pasteboard order (#1779, #3054).
+///
+/// `readObjectsForClasses:options:` with `NSURL` and
+/// `NSPasteboardURLReadingFileURLsOnlyKey = YES` is the documented AppKit way to
+/// read copied files; non-file URLs are filtered by AppKit and, defensively, by
+/// `isFileURL` again here. A pasteboard holding no files (text, an image,
+/// nothing) yields `nil` or an empty array, which maps to an empty list — the
+/// expected common case, not an error.
+///
+/// Must run inside an autorelease pool: the sidecar calls this from a tokio
+/// worker thread, which has no pool of its own, so the autoreleased pasteboard
+/// objects would otherwise leak.
+#[cfg(target_os = "macos")]
+fn read_pasteboard_file_paths() -> Vec<PathBuf> {
+    use objc2::runtime::{AnyClass, AnyObject};
+    use objc2::ClassType;
+    use objc2_app_kit::{NSPasteboard, NSPasteboardURLReadingFileURLsOnlyKey};
+    use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSURL};
+
+    let pasteboard = NSPasteboard::generalPasteboard();
+    let classes: objc2::rc::Retained<NSArray<AnyClass>> = NSArray::from_slice(&[NSURL::class()]);
+    let file_urls_only = NSNumber::new_bool(true);
+    // SAFETY: an AppKit-provided `NSString` constant, valid for the process's
+    // lifetime once AppKit is linked (it is, by `objc2-app-kit`).
+    let key: &NSString = unsafe { NSPasteboardURLReadingFileURLsOnlyKey };
+    let value: &AnyObject = file_urls_only.as_ref();
+    let options = NSDictionary::from_slices(&[key], &[value]);
+
+    // SAFETY: `classes` holds only `NSURL`, a class conforming to
+    // `NSPasteboardReading`, and `options` maps a documented reading-option key
+    // to an `NSNumber`, as `readObjectsForClasses:options:` requires.
+    let objects =
+        match unsafe { pasteboard.readObjectsForClasses_options(&classes, Some(&options)) } {
+            Some(objects) => objects,
+            None => return Vec::new(),
+        };
+
+    objects
+        .iter()
+        .filter_map(|object| {
+            let url = object.downcast_ref::<NSURL>()?;
+            if !url.isFileURL() {
+                return None;
+            }
+            let path = url.path()?;
+            Some(PathBuf::from(path.to_string()))
+        })
+        .collect()
 }
 
 /// Reads the Windows clipboard's `CF_HDROP` file list — the files the user copied

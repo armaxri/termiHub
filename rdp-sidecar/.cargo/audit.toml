@@ -3,14 +3,32 @@
 #
 # Mirrors the accepted sign-offs in rdp-sidecar/deny.toml so a local
 # `cargo audit` agrees with the CI cargo-deny gate. Revisit per ID when
-# upstream resolves — see #3054. Last revisited 2026-09-30.
+# upstream resolves — see #3054. Last revisited 2026-10-06.
+#
+# Cleared 2026-10-06 (#3054): the glib unsoundness notice (RUSTSEC-2024-0429)
+# and the proc-macro-error unmaintained notice (RUSTSEC-2024-0370). Both came
+# only from `clipboard-files`, whose Linux target table named gtk 0.18; the
+# macOS pasteboard reader now calls AppKit through objc2 and the GTK3 stack is
+# gone from rdp-sidecar/Cargo.lock.
+#
+# Deliberately NOT ignored, so it stays visible as a cargo-audit warning:
+# RUSTSEC-2023-0089 (atomic-polyfill unmaintained). It is a lockfile-only
+# entry: heapless 0.7 (via iso7816 <- winscard <- sspi's `scard` feature)
+# names it only for avr/riscv32/thumbv6m/xtensa targets, so it is compiled
+# into no shipped sidecar (`cargo tree --target <ship target> -i
+# atomic-polyfill` prints nothing for the macOS, Windows and Linux targets).
+# It cannot be dropped here: ironrdp-connector 0.10 hard-enables sspi's
+# `scard` feature, though termiHub never builds smart-card credentials. A
+# vendored iso7816 fork onto heapless 0.9 would trade an inert notice for an
+# owned smart-card APDU parser. It clears when winscard moves to iso7816 0.2
+# (heapless 0.9, portable-atomic). Not a vulnerability; cargo-deny does not
+# gate unmaintained crates (`unmaintained = "none"`).
 
 [advisories]
 ignore = [
     # rsa: Marvin timing sidechannel, pre-release 0.10.0-rc via IronRDP/sspi
-    # CredSSP; no private-key decryption path. Rationale in deny.toml.
+    # CredSSP. Not exploitable here: the sidecar is an RDP *client*; CredSSP
+    # encrypts to the server's public key and never performs an
+    # attacker-timeable private-key RSA decryption. Rationale in deny.toml.
     "RUSTSEC-2023-0071",
-    # glib: unsound VariantStrIter impls, glib 0.18 pinned by gtk 0.18 via
-    # clipboard-files; unsoundness notice, fix is glib 0.20+.
-    "RUSTSEC-2024-0429",
 ]
