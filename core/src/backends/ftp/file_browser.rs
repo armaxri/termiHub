@@ -20,7 +20,7 @@
 
 use std::any::Any;
 use std::future::Future;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use std::io::Cursor;
@@ -30,12 +30,21 @@ use suppaftp::{FtpError, Mode};
 use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 
-use crate::config::FtpConfig;
+use crate::config::{FtpConfig, FtpTransferType};
 use crate::errors::FileError;
-use crate::files::{FileBrowser, FileEntry};
+use crate::files::{FileBrowser, FileEntry, RangedFileAccess};
 
 use super::listing_parser::{parse_list, parse_mlsd, parse_mlsd_line};
 use super::reconnect;
+use super::transfer::FtpServerCaps;
+
+/// [`FtpFileBrowser::rest_stream`]: no connection has answered `FEAT` yet.
+const REST_UNKNOWN: u8 = 0;
+/// [`FtpFileBrowser::rest_stream`]: the server advertised `REST STREAM`.
+const REST_SUPPORTED: u8 = 1;
+/// [`FtpFileBrowser::rest_stream`]: the server did not advertise `REST STREAM`
+/// (or did not answer `FEAT` at all).
+const REST_UNSUPPORTED: u8 = 2;
 
 /// FTP-backed file browser for a single FTP/FTPS connection.
 ///
@@ -50,6 +59,10 @@ pub(crate) struct FtpFileBrowser {
     data_modes: Vec<Mode>,
     /// Current index into [`data_modes`](Self::data_modes).
     mode_index: AtomicUsize,
+    /// Whether the server restarts transfers at an offset (`REST STREAM` in its
+    /// `FEAT` reply), learned on every (re)connect: one of [`REST_UNKNOWN`],
+    /// [`REST_SUPPORTED`], [`REST_UNSUPPORTED`]. Gates ranged access (#4113).
+    rest_stream: AtomicU8,
 }
 
 /// Map a [`suppaftp`] error to a [`FileError`], tagging it with the operation.
@@ -66,6 +79,7 @@ impl FtpFileBrowser {
             client: Arc::new(Mutex::new(None)),
             data_modes,
             mode_index: AtomicUsize::new(0),
+            rest_stream: AtomicU8::new(REST_UNKNOWN),
         }
     }
 
@@ -116,8 +130,42 @@ impl FtpFileBrowser {
         let stream = super::establish_with_mode(&self.config, self.current_mode())
             .await
             .map_err(|e| FileError::OperationFailed(format!("FTP connection failed: {e}")))?;
-        *guard = Some(stream);
+        *guard = Some(self.learn_caps(stream).await);
         Ok(())
+    }
+
+    /// Record whether the freshly established `stream`'s server advertises
+    /// `REST STREAM` (#4113), then hand the stream back. A server that does not
+    /// answer `FEAT` counts as not supporting it: ranged access is refused
+    /// rather than guessed.
+    async fn learn_caps(&self, mut stream: AsyncRustlsFtpStream) -> AsyncRustlsFtpStream {
+        let rest = match stream.feat().await {
+            Ok(features) if FtpServerCaps::from_features(&features).rest_stream => REST_SUPPORTED,
+            _ => REST_UNSUPPORTED,
+        };
+        self.rest_stream.store(rest, Ordering::Relaxed);
+        stream
+    }
+
+    /// Whether ranged access is possible on this connection: binary transfers
+    /// (an ASCII transfer rewrites line endings, so byte offsets would not
+    /// match the file), and a server not known to lack `REST STREAM`. Before
+    /// the first connection the server is unknown and ranged access is offered;
+    /// each ranged call connects first and refuses if the server lacks it.
+    fn ranged_possible(&self) -> bool {
+        self.config.transfer_type == FtpTransferType::Binary
+            && self.rest_stream.load(Ordering::Relaxed) != REST_UNSUPPORTED
+    }
+
+    /// Connect if needed, then refuse with [`FileError::NotSupported`] unless
+    /// ranged access is possible on the live connection.
+    async fn ensure_ranged(&self) -> Result<(), FileError> {
+        self.ensure_connected().await?;
+        if self.ranged_possible() {
+            Ok(())
+        } else {
+            Err(FileError::NotSupported)
+        }
     }
 
     /// Re-establish the control connection after a drop, advancing the
@@ -138,7 +186,7 @@ impl FtpFileBrowser {
                     "FTP reconnect failed: {e}"
                 )))
             })?;
-        *guard = Some(stream);
+        *guard = Some(self.learn_caps(stream).await);
         Ok(())
     }
 
@@ -343,6 +391,180 @@ impl FileBrowser for FtpFileBrowser {
     fn as_any(&self) -> Option<&dyn Any> {
         Some(self)
     }
+
+    /// Offset-addressed slices (#4113) — what an agent-hosted FTP session's
+    /// queued transfer moves through. Withheld for ASCII transfers and for a
+    /// server known not to restart at an offset (no `REST STREAM`).
+    fn ranged(&self) -> Option<&dyn RangedFileAccess> {
+        self.ranged_possible()
+            .then_some(self as &dyn RangedFileAccess)
+    }
+}
+
+/// `REST <offset>` takes a `usize` in `suppaftp`; an offset beyond this
+/// platform's range is a hard error rather than a silently truncated position.
+fn rest_offset(path: &str, offset: u64) -> Result<usize, FileError> {
+    usize::try_from(offset).map_err(|_| {
+        FileError::OperationFailed(format!(
+            "{path}: offset {offset} exceeds this platform's addressable range"
+        ))
+    })
+}
+
+/// Map a refused `SIZE` to a typed error: a `550` reply means the file is not
+/// there (the trait's "an offset write needs an existing file").
+fn size_error(path: &str, err: FtpError) -> FileError {
+    match &err {
+        FtpError::UnexpectedResponse(r) if r.status == suppaftp::Status::FileUnavailable => {
+            FileError::NotFound(path.to_string())
+        }
+        _ => map_err("SIZE", err),
+    }
+}
+
+/// Offset-addressed FTP reads and writes (#4113).
+///
+/// - **Read**: `REST <offset>` + `RETR`, reading at most `len` bytes. A slice
+///   that ends before the end of the file closes the data connection early and
+///   consumes the server's one completion reply (`226`, or `426`/`451` for the
+///   aborted transfer), so the control connection stays in step. `ABOR` is not
+///   used: when the server has already finished sending, `ABOR` draws a second
+///   reply whose count varies by server, which would desynchronise the control
+///   connection.
+/// - **Write**: `STOR` at offset 0 (create or truncate); for `offset > 0` a
+///   `SIZE` that must equal `offset`, then `APPE`. The file can therefore never
+///   be overwritten or left with a gap by a retried or resumed slice.
+///
+/// Each call holds the browsing connection only for its slice and runs under
+/// the same auto-reconnect policy as every other operation. A retried write is
+/// safe: the retry re-checks `SIZE` and refuses if the first attempt landed.
+#[async_trait::async_trait]
+impl RangedFileAccess for FtpFileBrowser {
+    async fn read_range(&self, path: &str, offset: u64, len: u32) -> Result<Vec<u8>, FileError> {
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+        self.ensure_ranged().await?;
+        let rest = rest_offset(path, offset)?;
+        let result = self
+            .with_reconnect("ranged RETR", || async {
+                let mut guard = self.locked_stream().await;
+                let stream = guard.as_mut().ok_or_else(reconnect::not_connected_err)?;
+                read_slice(stream, path, offset, rest, len).await
+            })
+            .await?;
+        result
+    }
+
+    async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError> {
+        self.ensure_ranged().await?;
+        let result = self
+            .with_reconnect("ranged STOR/APPE", || async {
+                let mut guard = self.locked_stream().await;
+                let stream = guard.as_mut().ok_or_else(reconnect::not_connected_err)?;
+                if offset > 0 {
+                    match stream.size(path).await {
+                        Ok(present) if present as u64 == offset => {}
+                        Ok(present) => {
+                            return Ok(Err(crate::files::ranged::offset_mismatch(
+                                path,
+                                present as u64,
+                                offset,
+                            )));
+                        }
+                        Err(FtpError::ConnectionError(e)) => {
+                            return Err(FtpError::ConnectionError(e))
+                        }
+                        Err(e) => return Ok(Err(size_error(path, e))),
+                    }
+                    let mut cursor = Cursor::new(data);
+                    stream.append_file(path, &mut cursor).await?;
+                } else {
+                    let mut cursor = Cursor::new(data);
+                    stream.put_file(path, &mut cursor).await?;
+                }
+                Ok(Ok(()))
+            })
+            .await?;
+        result
+    }
+}
+
+/// One ranged read on a live control connection (see [`RangedFileAccess`] for
+/// [`FtpFileBrowser`]). The outer error is a transport failure the reconnect
+/// driver retries (a re-read is harmless); the inner one is final.
+async fn read_slice(
+    stream: &mut AsyncRustlsFtpStream,
+    path: &str,
+    offset: u64,
+    rest: usize,
+    len: u32,
+) -> Result<Result<Vec<u8>, FileError>, FtpError> {
+    match read_slice_inner(stream, path, rest, len).await {
+        Ok(data) => Ok(Ok(data)),
+        Err(FtpError::ConnectionError(e)) => Err(FtpError::ConnectionError(e)),
+        Err(e) => {
+            if rest > 0 {
+                // A refused transfer may leave the restart marker armed on some
+                // servers; clear it so a later `STOR` cannot inherit it.
+                let _ = stream.resume_transfer(0).await;
+            }
+            // `RETR` after `REST` past the end of the file is refused by some
+            // servers instead of answered with no bytes. Past the end is an
+            // empty read by the trait's contract, so check before failing.
+            if offset > 0 && matches!(stream.size(path).await, Ok(size) if size as u64 <= offset)
+            {
+                return Ok(Ok(Vec::new()));
+            }
+            Ok(Err(match &e {
+                FtpError::UnexpectedResponse(r)
+                    if r.status == suppaftp::Status::FileUnavailable =>
+                {
+                    FileError::NotFound(path.to_string())
+                }
+                _ => map_err("ranged RETR", e),
+            }))
+        }
+    }
+}
+
+/// `REST` + `RETR` + the bounded read; see [`read_slice`].
+async fn read_slice_inner(
+    stream: &mut AsyncRustlsFtpStream,
+    path: &str,
+    rest: usize,
+    len: u32,
+) -> Result<Vec<u8>, FtpError> {
+    if rest > 0 {
+        stream.resume_transfer(rest).await?;
+    }
+    let mut data_stream = stream.retr_as_stream(path).await?;
+    let mut buf = Vec::with_capacity(len as usize);
+    let read = (&mut data_stream)
+        .take(u64::from(len))
+        .read_to_end(&mut buf)
+        .await;
+    if let Err(e) = read {
+        // Drop the data connection and consume whatever the server replies;
+        // the transport error then makes the driver reconnect and retry.
+        let _ = stream.close_data_connection(data_stream).await;
+        return Err(FtpError::ConnectionError(e));
+    }
+    if buf.len() < len as usize {
+        // The whole rest of the file arrived: a normal completion.
+        stream.finalize_retr_stream(data_stream).await?;
+    } else {
+        // The slice ended (possibly before the end of the file): close the
+        // data connection early. The server answers `226` when it had already
+        // sent everything, or `426`/`451` for the transfer cut short; either
+        // way exactly one reply is consumed and the control connection is in
+        // step. Only a transport failure is an error.
+        match stream.close_data_connection(data_stream).await {
+            Ok(()) | Err(FtpError::UnexpectedResponse(_)) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(buf)
 }
 
 #[cfg(test)]
