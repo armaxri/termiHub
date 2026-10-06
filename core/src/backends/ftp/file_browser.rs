@@ -512,8 +512,7 @@ async fn read_slice(
             // `RETR` after `REST` past the end of the file is refused by some
             // servers instead of answered with no bytes. Past the end is an
             // empty read by the trait's contract, so check before failing.
-            if offset > 0 && matches!(stream.size(path).await, Ok(size) if size as u64 <= offset)
-            {
+            if offset > 0 && matches!(stream.size(path).await, Ok(size) if size as u64 <= offset) {
                 return Ok(Ok(Vec::new()));
             }
             Ok(Err(match &e {
@@ -641,5 +640,213 @@ mod tests {
         // No fallback exists; the mode is stable even if the index is bumped.
         browser.mode_index.store(5, Ordering::Relaxed);
         assert_eq!(browser.current_mode(), Mode::Active);
+    }
+
+    // ── Ranged access (#4113) against the in-process mock server ───────────
+
+    use super::super::mock_server::{MockFtpOptions, MockFtpServer, MockTransfer};
+
+    /// Deterministic, non-repeating-ish content so a misplaced slice shows.
+    fn pattern(len: usize) -> Vec<u8> {
+        (0..len).map(|i| (i * 7 % 251) as u8).collect()
+    }
+
+    async fn mock(options: MockFtpOptions) -> (MockFtpServer, FtpFileBrowser) {
+        let server = MockFtpServer::start(options).await;
+        let browser = FtpFileBrowser::new(server.config());
+        (server, browser)
+    }
+
+    #[tokio::test]
+    async fn ranged_reads_slices_mid_file_and_at_eof() {
+        let (server, browser) = mock(MockFtpOptions::default()).await;
+        let content = pattern(1000);
+        server.put("/f.bin", &content, "20240101000000");
+        let ranged = browser.ranged().expect("ranged before first connect");
+
+        assert_eq!(
+            ranged.read_range("/f.bin", 0, 10).await.unwrap(),
+            &content[..10]
+        );
+        assert_eq!(
+            ranged.read_range("/f.bin", 500, 100).await.unwrap(),
+            &content[500..600]
+        );
+        // A short read at the end of the file.
+        assert_eq!(
+            ranged.read_range("/f.bin", 990, 100).await.unwrap(),
+            &content[990..]
+        );
+        // Exactly at, and past, the end: no bytes.
+        assert!(ranged
+            .read_range("/f.bin", 1000, 10)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(ranged
+            .read_range("/f.bin", 5000, 10)
+            .await
+            .unwrap()
+            .is_empty());
+        // A zero-length read does no I/O.
+        let before = server.transfers().len();
+        assert!(ranged.read_range("/f.bin", 3, 0).await.unwrap().is_empty());
+        assert_eq!(server.transfers().len(), before);
+
+        // Offsets travel as REST; offset 0 sends none.
+        let offsets: Vec<u64> = server
+            .transfers()
+            .iter()
+            .filter(|t| t.command == "RETR")
+            .map(|t| t.offset)
+            .collect();
+        assert_eq!(offsets, vec![0, 500, 990, 1000, 5000]);
+    }
+
+    #[tokio::test]
+    async fn ranged_read_cut_short_leaves_the_control_connection_usable() {
+        let (server, browser) = mock(MockFtpOptions::default()).await;
+        // Large enough that the server is still writing when the client closes
+        // the data connection, so it answers `426` for the cut-short transfer.
+        let content = pattern(8 * 1024 * 1024);
+        server.put("/big.bin", &content, "20240101000000");
+        let ranged = browser.ranged().unwrap();
+
+        for offset in [0u64, 4096, 1_000_000] {
+            let at = offset as usize;
+            assert_eq!(
+                ranged.read_range("/big.bin", offset, 16).await.unwrap(),
+                &content[at..at + 16]
+            );
+        }
+        // The same control connection still answers commands in step.
+        let client = browser.shared_client();
+        let mut guard = client.lock().await;
+        let stream = guard.as_mut().expect("connection kept");
+        stream.noop().await.expect("NOOP after the cut-short reads");
+        assert_eq!(stream.size("/big.bin").await.unwrap(), content.len());
+    }
+
+    #[tokio::test]
+    async fn ranged_read_of_a_missing_file_is_not_found() {
+        let (_server, browser) = mock(MockFtpOptions::default()).await;
+        let ranged = browser.ranged().unwrap();
+        assert!(matches!(
+            ranged.read_range("/missing", 0, 10).await,
+            Err(FileError::NotFound(_))
+        ));
+        // A refused read at an offset clears the restart marker, so a later
+        // `STOR` starts at zero.
+        assert!(ranged.read_range("/missing", 7, 10).await.is_err());
+        ranged.write_range("/new.bin", 0, b"abc").await.unwrap();
+        assert_eq!(_server.get("/new.bin").unwrap(), b"abc");
+        let stor = _server
+            .transfers()
+            .into_iter()
+            .find(|t| t.command == "STOR");
+        assert_eq!(
+            stor,
+            Some(MockTransfer {
+                command: "STOR",
+                path: "/new.bin".into(),
+                offset: 0
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn ranged_write_truncates_at_zero_then_appends_at_the_exact_size() {
+        let (server, browser) = mock(MockFtpOptions::default()).await;
+        server.put("/up.bin", b"old contents here", "20240101000000");
+        let ranged = browser.ranged().unwrap();
+
+        ranged.write_range("/up.bin", 0, b"abc").await.unwrap();
+        assert_eq!(server.get("/up.bin").unwrap(), b"abc");
+        ranged.write_range("/up.bin", 3, b"def").await.unwrap();
+        ranged.write_range("/up.bin", 6, b"gh").await.unwrap();
+        assert_eq!(server.get("/up.bin").unwrap(), b"abcdefgh");
+        let commands: Vec<&str> = server.transfers().iter().map(|t| t.command).collect();
+        assert_eq!(commands, vec!["STOR", "APPE", "APPE"]);
+
+        // An empty first slice still creates (truncates) the file.
+        ranged.write_range("/empty.bin", 0, b"").await.unwrap();
+        assert_eq!(server.get("/empty.bin").unwrap(), b"");
+    }
+
+    #[tokio::test]
+    async fn ranged_write_refuses_a_wrong_offset_without_writing() {
+        let (server, browser) = mock(MockFtpOptions::default()).await;
+        server.put("/up.bin", b"abcdef", "20240101000000");
+        let ranged = browser.ranged().unwrap();
+
+        // Behind the end: would overwrite bytes already there.
+        let err = ranged.write_range("/up.bin", 4, b"X").await.unwrap_err();
+        assert!(
+            err.to_string().contains("holds 6 bytes, expected 4"),
+            "{err}"
+        );
+        // Past the end: would leave a gap.
+        assert!(ranged.write_range("/up.bin", 9, b"X").await.is_err());
+        // At an offset the file must exist.
+        assert!(matches!(
+            ranged.write_range("/missing.bin", 3, b"X").await,
+            Err(FileError::NotFound(_))
+        ));
+        assert_eq!(server.get("/up.bin").unwrap(), b"abcdef");
+        assert!(server.transfers().is_empty(), "nothing was written");
+    }
+
+    #[tokio::test]
+    async fn ranged_access_is_withheld_without_rest_stream() {
+        for options in [
+            MockFtpOptions {
+                rest: false,
+                ..MockFtpOptions::default()
+            },
+            // A legacy server that does not answer FEAT: refused, not guessed.
+            MockFtpOptions {
+                feat: false,
+                ..MockFtpOptions::default()
+            },
+        ] {
+            let (server, browser) = mock(options).await;
+            server.put("/f.bin", b"0123456789", "20240101000000");
+            // Unknown before the first connection, so offered...
+            let ranged = browser.ranged().expect("offered while unknown");
+            // ...but the first call learns the server and refuses.
+            assert!(matches!(
+                ranged.read_range("/f.bin", 2, 3).await,
+                Err(FileError::NotSupported)
+            ));
+            assert!(matches!(
+                ranged.write_range("/g.bin", 0, b"x").await,
+                Err(FileError::NotSupported)
+            ));
+            assert!(browser.ranged().is_none(), "withheld once known");
+            assert_eq!(server.rest_commands(), 0, "never guessed with REST");
+            assert!(server.transfers().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn ranged_access_is_learned_on_a_browsing_connect() {
+        let (_server, browser) = mock(MockFtpOptions {
+            rest: false,
+            ..MockFtpOptions::default()
+        })
+        .await;
+        browser.ensure_connected().await.unwrap();
+        assert!(browser.ranged().is_none());
+    }
+
+    #[test]
+    fn ranged_access_is_withheld_for_ascii_transfers() {
+        let browser = FtpFileBrowser::new(FtpConfig {
+            transfer_type: FtpTransferType::Ascii,
+            ..FtpConfig::default()
+        });
+        assert!(browser.ranged().is_none());
+        let binary = FtpFileBrowser::new(FtpConfig::default());
+        assert!(binary.ranged().is_some());
     }
 }
