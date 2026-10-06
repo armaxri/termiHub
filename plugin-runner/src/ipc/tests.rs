@@ -23,7 +23,6 @@ fn sample_messages() -> Vec<Message> {
             accept_unverified_toolchain: false,
             plugin_id: "x".into(),
             host_version: "1.2.3".into(),
-            data_dir: None,
         }),
         Message::SandboxReport(SandboxReport::default()),
         Message::Loaded(Loaded {
@@ -44,6 +43,7 @@ fn sample_messages() -> Vec<Message> {
             session_id: 7,
             config_json: "{}".into(),
             settings_json: "{\"a\":1}".into(),
+            data_dir: String::new(),
         }),
         Message::SessionCreated(SessionRef { session_id: 7 }),
         Message::SessionFailed(SessionFailed {
@@ -305,11 +305,12 @@ fn arb_message() -> impl Strategy<Value = Message> {
             proptest::collection::vec(any::<u8>(), 0..2048)
         )
             .prop_map(|(session_id, data)| Message::Output { session_id, data }),
-        (any::<u32>(), ".{0,64}", ".{0,64}").prop_map(|(session_id, c, s)| {
+        (any::<u32>(), ".{0,64}", ".{0,64}", ".{0,32}").prop_map(|(session_id, c, s, d)| {
             Message::CreateSession(CreateSession {
                 session_id,
                 config_json: c,
                 settings_json: s,
+                data_dir: d,
             })
         }),
         (any::<u32>(), any::<u16>(), any::<u16>()).prop_map(|(session_id, cols, rows)| {
@@ -365,11 +366,8 @@ proptest! {
     #[test]
     fn arbitrary_bytes_never_panic(bytes in proptest::collection::vec(any::<u8>(), 0..4096)) {
         let mut reader = FrameReader::new(Cursor::new(bytes));
-        loop {
-            match reader.read_frame() {
-                Ok(Some(frame)) => { let _ = Message::decode(frame); }
-                Ok(None) | Err(_) => break,
-            }
+        while let Ok(Some(frame)) = reader.read_frame() {
+            let _ = Message::decode(frame);
         }
     }
 

@@ -178,8 +178,6 @@ fn sha256_of_handle(file: &File) -> std::io::Result<String> {
     ))
 }
 
-#[cfg(test)]
-
 /// The `sha256:`-prefixed digest of `bytes` (test helper; core's
 /// `signature::sha256_digest` produces the same value).
 #[cfg(test)]
