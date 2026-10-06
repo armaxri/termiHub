@@ -515,6 +515,16 @@ pub(crate) enum UploadCarrier {
 }
 
 impl UploadCarrier {
+    /// An error worded by this carrier: `SFTP error: …` or `Remote agent
+    /// error: …`.
+    pub(crate) fn error(&self, message: String) -> crate::utils::errors::TerminalError {
+        use crate::utils::errors::TerminalError;
+        match self {
+            Self::Sftp(_) => TerminalError::SftpError(message),
+            Self::Agent(_) => TerminalError::RemoteError(message),
+        }
+    }
+
     /// The metadata side of this carrier.
     pub(crate) fn destination(&self) -> Box<dyn UploadDestination> {
         match self {

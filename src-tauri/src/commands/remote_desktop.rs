@@ -292,7 +292,7 @@ pub async fn remote_desktop_upload(
     let destination = carrier.destination();
     let dest_dir = resolve_dest_dir(destination.as_ref(), dest.as_deref(), &default_dir)
         .await
-        .map_err(|e| TerminalError::RemoteError(format!("Cannot upload to {host}: {e}")))?;
+        .map_err(|e| carrier.error(format!("Cannot upload to {host}: {e}")))?;
     let placement = place(destination.as_ref(), &dest_dir, plan).await;
     let sink = crate::files::transfer::app_progress_sink(app_handle);
     let transfers = start_uploads(&carrier, &session_id, placement.files, &registry, &sink);
@@ -318,9 +318,9 @@ async fn upload_carrier(
             agent_id,
             default_dir,
         } => (channel, agent_id, default_dir),
-        RemoteDesktopFileChannel::Degraded { message, .. } => {
-            return Err(TerminalError::RemoteError(message))
-        }
+        RemoteDesktopFileChannel::Degraded {
+            message, channel, ..
+        } => return Err(carrier_error(channel.kind, message)),
         RemoteDesktopFileChannel::Unavailable { reason } => {
             return Err(TerminalError::RemoteError(unavailable_message(reason)))
         }
@@ -348,6 +348,20 @@ async fn upload_carrier(
         }
     };
     Ok((carrier, channel.host, default_dir))
+}
+
+/// An upload error worded by its carrier: `SFTP error: …` for the SSH route,
+/// `Remote agent error: …` for the agent route.
+fn carrier_error(
+    kind: termihub_core::connection::FileSideChannelKind,
+    message: String,
+) -> TerminalError {
+    match kind {
+        termihub_core::connection::FileSideChannelKind::Ssh => TerminalError::SftpError(message),
+        termihub_core::connection::FileSideChannelKind::Agent => {
+            TerminalError::RemoteError(message)
+        }
+    }
 }
 
 /// Why uploads are refused for an `unavailable` channel.
