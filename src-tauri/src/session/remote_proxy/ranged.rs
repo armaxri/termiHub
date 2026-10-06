@@ -18,6 +18,7 @@ use termihub_core::protocol::methods::{
 };
 
 use super::{base64_decode, RemoteFileBrowserProxy};
+use crate::files::transfer::relaunch_agent::AgentSessionIdentity;
 
 impl RemoteFileBrowserProxy {
     /// Ask the agent whether this session serves ranged slices: a zero-length
@@ -26,6 +27,18 @@ impl RemoteFileBrowserProxy {
     /// daemon, refuses it.
     pub async fn probe_ranges(&self) -> Result<(), FileError> {
         self.read_range("", 0, 0).await.map(|_| ())
+    }
+
+    /// Who serves this session (#4114): the agent, the agent-side session id
+    /// and the saved definition it was opened from. Identities only — what a
+    /// queued transfer records so a relaunch after a restart re-attaches to
+    /// the same remote file system and never to another agent's.
+    pub(crate) fn agent_session_identity(&self) -> AgentSessionIdentity {
+        AgentSessionIdentity {
+            agent_id: self.agent_id.clone(),
+            remote_session_id: self.remote_session_id.clone(),
+            definition_id: self.definition_id.clone(),
+        }
     }
 }
 

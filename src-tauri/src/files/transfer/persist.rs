@@ -155,6 +155,32 @@ pub struct PersistedTransfer {
     /// connection's existing store key. The id only — never a secret.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub saved_connection_id: Option<String>,
+    /// The agent-hosted session a ranged transfer runs over (#4114) — absent
+    /// for every other backend and for records written before it existed.
+    /// Identities only, never a secret: the owning desktop session id does
+    /// not survive a restart, so a relaunch finds the reconnected session by
+    /// these.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<PersistedAgentTarget>,
+}
+
+/// The persisted identity of an agent-hosted transfer's session (#4114).
+///
+/// A relaunch re-attaches only to a live session on the **same agent** that is
+/// either the same agent-side session (it survived on the agent) or one opened
+/// from the same saved agent definition — the same remote file system. Ids
+/// only; the session's credentials stay with the agent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedAgentTarget {
+    /// The agent the session runs on.
+    pub agent_id: String,
+    /// The agent-side session id the transfer streamed through.
+    pub remote_session_id: String,
+    /// The saved agent connection definition the session was opened from;
+    /// absent for an ad-hoc agent session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition_id: Option<String>,
 }
 
 /// Where a remote-to-remote copy reads from (#3206): a session **reference**
@@ -447,6 +473,7 @@ mod tests {
             source_mtime: None,
             remote_source: None,
             saved_connection_id: None,
+            agent: None,
         }
     }
 

@@ -83,7 +83,7 @@ use tauri::{AppHandle, Manager};
 
 use std::sync::Arc;
 
-use super::persist::PersistedTransfer;
+use super::persist::{PersistedAgentTarget, PersistedTransfer};
 use super::persist_manager::TransferPersistenceManager;
 use super::registry::TransferRegistry;
 use super::relaunch_credentials::RelaunchBlocked;
@@ -114,6 +114,19 @@ pub(crate) enum RelaunchPlan {
     Docker {
         session_id: String,
         container_id: String,
+        direction: TransferDirection,
+        remote_path: String,
+        local_path: String,
+        offset: u64,
+        total: u64,
+    },
+    /// An agent-hosted session download/upload (#4114): relaunchable over the
+    /// live agent session matching the persisted identity — the same
+    /// agent-side session, or one reopened from the same saved definition on
+    /// the same agent. Carries ids, paths and progress only.
+    Agent {
+        session_id: String,
+        agent: PersistedAgentTarget,
         direction: TransferDirection,
         remote_path: String,
         local_path: String,
@@ -173,6 +186,21 @@ pub(crate) enum ResumeDecision {
 /// endpoint (#3206), and one persisted before that (no source) cannot be
 /// relaunched after a restart.
 pub(crate) fn plan_from_record(record: &PersistedTransfer) -> RelaunchPlan {
+    // An agent-hosted download/upload (#4114) re-attaches by its session
+    // identity, not through the SFTP/FTP session path.
+    if let (Some(local_path), None, Some(agent)) =
+        (&record.local_path, &record.docker, &record.agent)
+    {
+        return RelaunchPlan::Agent {
+            session_id: record.session_id.clone(),
+            agent: agent.clone(),
+            direction: record.direction,
+            remote_path: record.remote_path.clone(),
+            local_path: local_path.clone(),
+            offset: record.resume_offset,
+            total: record.total,
+        };
+    }
     match (&record.local_path, &record.docker) {
         (Some(dest_path), None) if record.session_id == super::local::LOCAL_TRANSFER_SESSION => {
             RelaunchPlan::Local {
@@ -427,6 +455,50 @@ async fn relaunch_record(
                 }
                 Err(message) => {
                     fail_row(app_handle, &record, message);
+                    true
+                }
+            }
+        }
+        RelaunchPlan::Agent {
+            session_id: _,
+            agent,
+            direction,
+            remote_path,
+            local_path,
+            offset,
+            total,
+        } => {
+            // Find the live agent session by the persisted identity (the
+            // desktop session id did not survive the restart). None yet keeps
+            // the row paused until the agent is reconnected (#4114).
+            match super::relaunch_agent::resolve_live_agent_target(manager, &agent).await {
+                Ok(proxy) => {
+                    let (spawn_remote, spawn_local) = (remote_path.clone(), local_path);
+                    spawn_relaunch(
+                        &record,
+                        direction,
+                        &remote_path,
+                        total,
+                        registry,
+                        app_handle,
+                        move |handle, registry, sink| async move {
+                            termihub_core::files::transfer::ranged::run_ranged_transfer(
+                                proxy,
+                                direction,
+                                spawn_remote,
+                                spawn_local,
+                                handle,
+                                registry,
+                                sink,
+                                offset,
+                            )
+                            .await;
+                        },
+                    );
+                    true
+                }
+                Err(blocked) => {
+                    block_row(app_handle, &record, blocked);
                     true
                 }
             }
@@ -721,9 +793,10 @@ fn sources<'a>(
 /// with the message. The persisted record is left intact either way.
 fn block_row(app_handle: &AppHandle, record: &PersistedTransfer, blocked: RelaunchBlocked) {
     match blocked {
-        RelaunchBlocked::NeedsCredentials => {
+        RelaunchBlocked::NeedsCredentials | RelaunchBlocked::AgentSessionUnavailable => {
             // Resume by itself once the connection opens or the store unlocks
-            // (#3883).
+            // (#3883) — or, for an agent-hosted transfer, once a matching
+            // agent session opens (#4114).
             if let Some(persist) = app_handle.try_state::<TransferPersistenceManager>() {
                 super::relaunch_auto::note_blocked(persist.credential_waits(), record, &blocked);
             }
@@ -776,6 +849,7 @@ mod tests {
             source_mtime: None,
             remote_source: None,
             saved_connection_id: None,
+            agent: None,
         }
     }
 

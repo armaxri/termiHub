@@ -17,8 +17,9 @@ use anyhow::{Context, Result};
 use tauri::AppHandle;
 
 use super::persist::{
-    FolderPasteEndpoint, FolderPasteOperation, PersistedDockerTarget, PersistedFolderPaste,
-    PersistedRemoteSource, PersistedTransfer, PersistedTransferStatus, PersistedTransferStore,
+    FolderPasteEndpoint, FolderPasteOperation, PersistedAgentTarget, PersistedDockerTarget,
+    PersistedFolderPaste, PersistedRemoteSource, PersistedTransfer, PersistedTransferStatus,
+    PersistedTransferStore,
 };
 use super::persist_storage::TransferPersistenceStorage;
 use super::relaunch_auto::CredentialWaits;
@@ -195,6 +196,7 @@ impl TransferPersistenceManager {
             source_mtime: None,
             remote_source: None,
             saved_connection_id: None,
+            agent: None,
         };
         let mut store = self.lock();
         store.upsert(entry);
@@ -269,6 +271,20 @@ impl TransferPersistenceManager {
             return;
         };
         entry.saved_connection_id = Some(connection_id.to_string());
+        store.upsert(entry);
+        self.schedule_write(&store);
+    }
+
+    /// Attach the agent-hosted session identity to a registered ranged
+    /// transfer (#4114), so a relaunch after a restart can find the session
+    /// once the user reconnects the agent. Ids only — never a secret. A no-op
+    /// for an unknown id (never fabricates a record).
+    pub fn record_agent_target(&self, transfer_id: &str, agent: PersistedAgentTarget) {
+        let mut store = self.lock();
+        let Some(mut entry) = store.get(transfer_id).cloned() else {
+            return;
+        };
+        entry.agent = Some(agent);
         store.upsert(entry);
         self.schedule_write(&store);
     }

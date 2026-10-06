@@ -720,6 +720,7 @@ impl RemoteProxy {
                         agent_manager: self.agent_manager.clone(),
                         agent_outdated,
                         file_ranges,
+                        definition_id: definition_id.clone(),
                     });
                 }
                 // Set up monitoring proxy if supported.
@@ -802,6 +803,10 @@ pub struct RemoteFileBrowserProxy {
     /// 0.26.0, #3587), so the session can run queued transfers (see
     /// [`ranged`]).
     file_ranges: bool,
+    /// The agent-side saved connection definition the session was opened
+    /// from, if any — with `agent_id`, the identity a queued transfer records
+    /// so a relaunch after a restart can find the reopened session (#4114).
+    definition_id: Option<String>,
 }
 
 mod ranged;

@@ -29,6 +29,7 @@ fn record(id: &str, connection: Option<&str>) -> PersistedTransfer {
         source_mtime: None,
         remote_source: None,
         saved_connection_id: connection.map(str::to_string),
+        agent: None,
     }
 }
 

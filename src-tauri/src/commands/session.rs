@@ -125,6 +125,11 @@ pub async fn create_connection(
     if let Some(tab_id) = &initial_tab_id {
         fold_session_transition(&app_handle, |store| store.connect(tab_id));
     }
+    // The saved agent definition an agent-hosted session is opened from: once
+    // it connects, transfers waiting for that session resume (#4114).
+    let agent_definition_id = agent_id
+        .as_ref()
+        .and_then(|_| agent_definition_id(&settings));
 
     let connect = manager.create_connection(
         &type_id,
@@ -170,7 +175,34 @@ pub async fn create_connection(
             ),
         );
     }
+    // An agent-hosted session's file browser is ready now: resume the
+    // agent-hosted transfers that were waiting for it after a restart (#4114).
+    if let (Some(agent_id), Ok(_)) = (&agent_id, &result) {
+        crate::files::transfer::relaunch_auto::spawn_resume_waiting(
+            &app_handle,
+            crate::files::transfer::relaunch_auto::WaitTrigger::AgentSessionOpened {
+                agent_id: agent_id.clone(),
+                definition_id: agent_definition_id,
+            },
+        );
+    }
     result
+}
+
+/// The saved agent definition id the frontend placed in an agent-hosted
+/// session's settings (top level or under `config`), as the agent proxy reads
+/// it.
+fn agent_definition_id(settings: &Value) -> Option<String> {
+    let config = settings.get("config");
+    ["definitionId", "definition_id"]
+        .iter()
+        .find_map(|key| {
+            config
+                .and_then(|c| c.get(*key))
+                .or_else(|| settings.get(*key))
+        })
+        .and_then(Value::as_str)
+        .map(String::from)
 }
 
 /// The frontend `tab_id` to fold an *initial*-connect lifecycle edge for, parsed
@@ -1081,9 +1113,13 @@ async fn start_session_transfer(
             SessionTransferTarget::Docker(docker) => {
                 pm.record_docker_target(&transfer_id, docker.container_id());
             }
-            // An agent-hosted transfer is not relaunched after a restart yet:
-            // its row comes back as "session unavailable" (#4114).
-            SessionTransferTarget::Ranged(_) => {}
+            // An agent-hosted transfer records its session's identity (agent,
+            // agent-side session, saved definition — never a secret), so a
+            // relaunch after a restart finds the session once the agent is
+            // reconnected (#4114).
+            SessionTransferTarget::Ranged(proxy) => {
+                pm.record_agent_target(&transfer_id, proxy.agent_session_identity().to_persisted());
+            }
             _ => {
                 // An SFTP/FTP transfer records the saved connection behind its
                 // session, so a relaunch after a restart can re-source its secret
