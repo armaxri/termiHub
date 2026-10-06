@@ -553,7 +553,7 @@ def remote_agent_pending_fixtures():
     return fixture
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def remote_agent_update_swap_fixtures():
     """Armed agent container that can REALLY apply its staged update (port 2218).
 
@@ -561,7 +561,12 @@ def remote_agent_update_swap_fixtures():
     hook stages a distinguishable copy of the agent signed with the committed
     TEST-ONLY key, with its digest, so the apply passes the production AGT-004 /
     AGT-005 gates and swaps the installed binary for real. A run mutates the
-    container, so it is force-recreated from the image. Returns a
+    container, so it is force-recreated from the image — per *test attempt*, not
+    per session (#4092): the lane re-runs a failed test (``--reruns``), and a
+    session-scoped container stays swapped after the first attempt, so every
+    rerun failed up front on "the staged update must differ from the installed
+    agent" and masked the first attempt's real failure. The image build is
+    cached, so the recreate costs only a container restart. Returns a
     :class:`ContainerControl` for server-side evidence (installed binary digest,
     ``state.json``). Skips cleanly on the same contract as
     :func:`remote_agent_fixtures`.

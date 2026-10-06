@@ -145,13 +145,25 @@ class TestAgentUpdateRealSwapLive(
         container = remote_agent_update_swap_fixtures
         installed_before = _sha256(container, INSTALLED_AGENT)
         staged = _sha256(container, STAGED_AGENT)
-        assert staged != installed_before, "the staged update must differ from the installed agent"
+        assert staged != installed_before, (
+            "the staged update must differ from the installed agent — the image stages "
+            "a trailer-appended copy, so equal digests mean the container was already "
+            "swapped (it must be recreated per test attempt, #4092)"
+        )
 
         # The applier connects first (see the module docstring), then the holder
         # starts the persistent session that must survive the swap.
         applier = self._create_and_connect("swap-applier")
         holder = self._create_and_connect("swap-holder")
         version_before = self._agent_version(holder["name"])
+        # The armed hook announces its staged update on every attach, and the
+        # desktop replays that handshake-window notice (#1660) — so the holder's
+        # banner is up before the swap. Dismiss it now: a *fresh* announcement
+        # re-arms a dismissed banner, so after the swap a still-dismissed holder
+        # proves the reconnected agent announced nothing (#4092 — the pre-swap
+        # record otherwise lingers in the store and reads as a stale banner).
+        self.wait_agent_update_banner(holder["id"])
+        self.dismiss_agent_update_banner(holder["id"])
         definition = self.create_agent_definition(
             holder["name"], unique_name("swap-persist"), persistent=True
         )
@@ -164,9 +176,9 @@ class TestAgentUpdateRealSwapLive(
         self.wait(lambda: self.tab_count() > before, what="the applier's shell tab")
         self.wait(self.has_terminal, what="the applier's shell session to go live")
 
-        # Banner → Apply Now → deferred (the hook's on-attach announcement is
-        # dropped by the desktop handshake, so the banner is surfaced through the
-        # real listener — see test_agent_update_apply_now_live.py).
+        # Banner → Apply Now → deferred. The hook's on-attach announcement already
+        # raised it; it is re-announced through the real listener (as in
+        # test_agent_update_apply_now_live.py) so this step does not hinge on it.
         self.announce_agent_update(applier["id"], available_version=REMOTE_AGENT_PENDING_VERSION)
         self.wait_agent_update_banner(applier["id"])
         self.apply_agent_update_now(applier["id"])
@@ -202,8 +214,13 @@ class TestAgentUpdateRealSwapLive(
         assert self._agent_version(holder["name"]) == version_before
         assert f"v{version_before}" in self.driver.get_text(badge)
         # The applied update is consumed: nothing pending, no banner, and the
-        # armed hook stands down instead of re-staging the installed binary.
+        # armed hook stands down instead of re-staging the installed binary — it
+        # announced nothing on the reconnect, or the dismissed banner would be
+        # re-armed (see the dismissal after the holder's first connect).
         assert _pending_update(container) is None
+        assert self.agent_update_dismissed(holder["id"]), (
+            "the swapped agent must not re-announce the applied update on attach"
+        )
         assert not self.agent_update_banner_present(holder["id"])
 
         # The persistent session survived the swap and is re-attached.
