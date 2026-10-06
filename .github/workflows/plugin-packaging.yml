@@ -16,6 +16,8 @@ on:
     branches: [ main, develop ]
     paths:
       - 'plugin-api/**'
+      - 'plugin-runner/**'
+      - 'core/tests/plugin_runner*'
       - 'core/src/plugin/**'
       - 'core/src/bin/plugin_*.rs'
       - 'core/tests/plugin_package_load.rs'

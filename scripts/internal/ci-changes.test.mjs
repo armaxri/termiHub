@@ -57,6 +57,7 @@ describe("classify", () => {
     ]);
     expect(on(classify(["vendor/vnc-rs/src/lib.rs"]))).toEqual(["rust", "agent", "rustdoc"]);
     expect(on(classify(["plugin-api/src/lib.rs"]))).toEqual(["rust", "agent", "rustdoc"]);
+    expect(on(classify(["plugin-runner/src/lib.rs"]))).toEqual(["rust", "agent", "rustdoc"]);
     expect(on(classify(["rust-toolchain.toml"]))).toEqual(["rust", "agent", "rustdoc"]);
     expect(classify(["Cargo.lock"])).toMatchObject({ rust: true, deps: true, agent: true });
   });

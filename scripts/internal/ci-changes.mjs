@@ -91,6 +91,7 @@ const RUST_ROOTS = [
   "core/",
   "agent/",
   "plugin-api/",
+  "plugin-runner/",
   "vendor/",
   "examples/",
   ".cargo/",
@@ -101,7 +102,7 @@ const RUST_FILES = new Set(["Cargo.toml", "Cargo.lock", "deny.toml", "Cross.toml
 // agent itself, core (a path dependency) and core's own path dependencies, plus
 // the workspace-wide manifests/toolchain. src-tauri/ and examples/ are NOT here —
 // the agent does not build from them.
-const AGENT_ROOTS = ["agent/", "core/", "plugin-api/", "vendor/", ".cargo/"];
+const AGENT_ROOTS = ["agent/", "core/", "plugin-api/", "plugin-runner/", "vendor/", ".cargo/"];
 const AGENT_FILES = new Set(["Cargo.toml", "Cargo.lock"]);
 
 const FRONTEND_ROOTS = ["src/", "public/"];
