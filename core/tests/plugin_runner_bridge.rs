@@ -8,7 +8,8 @@
 //! Covers an allowed connection to a local TCP echo server (the connected
 //! socket passed to the runner with `SCM_RIGHTS`, and the `StreamData` proxy
 //! fallback), a denied one, the connection ceiling, filesystem allow/deny for
-//! read / write / stat / list, and the host's denial events.
+//! read / write / stat / list, a directory listing paged over several frames,
+//! and the host's denial events.
 #![cfg(all(feature = "plugin", unix))]
 
 use std::io::{Read, Write};
@@ -326,4 +327,37 @@ async fn a_file_larger_than_one_frame_round_trips_through_the_bridge() {
         )
         .await;
     assert!(read == expected, "read back {} bytes", read.len());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_directory_larger_than_one_frame_lists_every_entry() {
+    let work = tempfile::TempDir::new().unwrap();
+    let scoped = work.path().join("scoped");
+    std::fs::create_dir_all(&scoped).unwrap();
+    // 50k names of 24 bytes: ~1.5 MiB charged, several `list_dir` pages
+    // (#4220).
+    let mut names: Vec<String> = (0..50_000).map(|i| format!("entry-{i:018}")).collect();
+    for name in &names {
+        std::fs::File::create(scoped.join(name)).unwrap();
+    }
+    let plugin = load(
+        work.path(),
+        &["terminal", "filesystem"],
+        std::slice::from_ref(&scoped),
+        None,
+    );
+    names.sort();
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in names.iter().flat_map(|e| e.bytes().chain([b'\n'])) {
+        hash = (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+    }
+    let summary = plugin
+        .probe(serde_json::json!({
+            "probe": "listdirsummary",
+            "probePath": scoped.to_str().unwrap(),
+        }))
+        .await;
+    assert_eq!(summary, format!("LIST_SUMMARY:50000:{hash:016x}"));
+    // Paging is not a refusal.
+    assert!(plugin.runner().bridge_denials().is_empty());
 }
