@@ -21,8 +21,14 @@ for the painted rows to carry each sample, then saves a screenshot artifact
 (``glyphs.png`` under the test's artifacts dir) for visual diffing — the DOM
 rasterizer cannot capture the WebGL canvas, the DOM renderer it can.
 
+With the experimental **Combine emoji** setting on (#4177) the terminal uses
+``@xterm/addon-unicode-graphemes`` instead: a ZWJ family, a skin-tone modifier
+and a flag pair each become **one double-width glyph**; the setting is flipped
+through the Settings UI like a user does and restored afterwards.
+
 The same cell model is pinned per PR against the real xterm under jsdom by
-``src/testbridge/terminalCells.test.ts``. POSIX shell only (Git Bash on
+``src/testbridge/terminalCells.test.ts`` (setting off) and
+``src/components/Terminal/unicodeWidth.real-xterm.test.ts`` (both). POSIX shell only (Git Bash on
 Windows, skipped without it). Integration lane (nightly), not per-PR CI.
 """
 
@@ -33,7 +39,9 @@ from typing import Any, Optional
 import pytest
 
 from termihub_harness import (
+    SETTINGS_REGION,
     ConnectionsUi,
+    SettingsUi,
     SidebarUi,
     SystemTest,
     TabsUi,
@@ -73,12 +81,28 @@ SAMPLES: list[tuple[str, str, list[list[Any]]]] = [
 ]
 
 
+#: Samples whose layout the Combine emoji setting changes, laid out clustered.
+CLUSTERED_SAMPLES: list[tuple[str, str, list[list[Any]]]] = [
+    (
+        "G4177ZWJ:",
+        f"👨{ZWJ}👩{ZWJ}👧|",
+        [[f"👨{ZWJ}👩{ZWJ}👧", 2], ["", 0], ["|", 1]],
+    ),
+    ("G4177SKN:", "👍🏽|", [["👍🏽", 2], ["", 0], ["|", 1]]),
+    ("G4177FLG:", "🇩🇪|", [["🇩🇪", 2], ["", 0], ["|", 1]]),
+]
+
+COMBINE_EMOJI_TOGGLE = "settings-terminal-combine-emoji"
+
+
 def octal_escaped(text: str) -> str:
     """``text`` as POSIX ``printf`` octal escapes of its UTF-8 bytes."""
     return "".join(f"\\{byte:03o}" for byte in text.encode("utf-8"))
 
 
-class TestTerminalGlyphShaping(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SystemTest):
+class TestTerminalGlyphShaping(
+    TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, SystemTest
+):
     def _open_shell(self) -> str:
         """Open a fresh POSIX local shell and return its tab id."""
         self.close_all_tabs()
@@ -91,11 +115,13 @@ class TestTerminalGlyphShaping(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, Sys
         self.wait(lambda: self.driver.read_terminal(tab_id).strip(), what="the shell prompt")
         return tab_id
 
-    def _print_samples(self, tab_id: str) -> None:
+    def _print_samples(
+        self, tab_id: str, samples: list[tuple[str, str, list[list[Any]]]] = SAMPLES
+    ) -> None:
         """Print every sample on its own line and wait for the last to land."""
-        lines = "".join(octal_escaped(marker + sample) + "\\n" for marker, sample, _ in SAMPLES)
+        lines = "".join(octal_escaped(marker + sample) + "\\n" for marker, sample, _ in samples)
         self.run_command(f"printf '{lines}'")
-        last = SAMPLES[-1][0]
+        last = samples[-1][0]
         self.wait(
             lambda: self.driver.read_terminal_cells(last, tab_id=tab_id),
             what=f"the {last!r} row in the terminal buffer",
@@ -113,6 +139,35 @@ class TestTerminalGlyphShaping(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, Sys
         self._print_samples(tab_id)
         for marker, _sample, expected in SAMPLES:
             assert self._row_cells(tab_id, marker) == expected, marker
+
+    def _combine_emoji_on(self) -> bool:
+        # Absent from the settings region until first set; the default is off.
+        return self.projection_region_cache(SETTINGS_REGION).get("combineEmoji") is True
+
+    def _set_combine_emoji(self, enabled: bool) -> None:
+        """Flip the Combine emoji toggle in Settings like a user does."""
+        if self._combine_emoji_on() == enabled:
+            return
+        self.open_settings_category("terminal")
+        self.wait(
+            lambda: self.driver.exists(COMBINE_EMOJI_TOGGLE), what="the Combine emoji toggle"
+        )
+        self.driver.click(COMBINE_EMOJI_TOGGLE)
+        self.wait(
+            lambda: self._combine_emoji_on() == enabled,
+            what=f"Combine emoji to be {'on' if enabled else 'off'}",
+        )
+
+    def test_combine_emoji_setting_clusters_emoji_into_one_wide_glyph(self):
+        """With Combine emoji on, ZWJ/skin-tone/flag sequences are one wide glyph (#4177)."""
+        self._set_combine_emoji(True)
+        try:
+            tab_id = self._open_shell()
+            self._print_samples(tab_id, CLUSTERED_SAMPLES)
+            for marker, _sample, expected in CLUSTERED_SAMPLES:
+                assert self._row_cells(tab_id, marker) == expected, marker
+        finally:
+            self._set_combine_emoji(False)
 
     def _dom_rows(self, tab_id: str) -> Optional[list[str]]:
         m = self.driver.measure_terminal(tab_id)

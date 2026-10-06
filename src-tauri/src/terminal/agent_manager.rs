@@ -431,6 +431,13 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     /// Get the capabilities of a connected agent.
     fn get_capabilities(&self, agent_id: &str) -> Option<AgentCapabilities>;
 
+    /// `(host, username)` a **connected** agent's SSH transport runs to — the
+    /// agent host and account an agent-routed VNC session's files land on
+    /// (#4191). Default `None` so mock clients need not implement it.
+    fn agent_endpoint(&self, _agent_id: &str) -> Option<(String, String)> {
+        None
+    }
+
     /// Retain a **connected** agent's SSH transport config for backend-driven
     /// reconnect reattach (#2472), so it survives a transport reap. Called when a
     /// resilient agent tab connects (#3661); returns whether a live connection's
@@ -2590,6 +2597,17 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
 
     fn get_capabilities(&self, agent_id: &str) -> Option<AgentCapabilities> {
         AgentConnectionManager::get_capabilities(self, agent_id)
+    }
+
+    fn agent_endpoint(&self, agent_id: &str) -> Option<(String, String)> {
+        let agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
+        agents
+            .get(agent_id)
+            .filter(|c| c.alive.load(Ordering::SeqCst))
+            .map(|c| {
+                let config = &c.reattach_config.config;
+                (config.host.clone(), config.username.clone())
+            })
     }
 
     fn retain_agent_config(&self, agent_id: &str) -> bool {

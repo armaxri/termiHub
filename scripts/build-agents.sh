@@ -41,6 +41,22 @@ agent_binary_name() {
     fi
 }
 
+# Set AGENT_BUILD_ENV to the extra environment (NAME=VALUE words for `env`) of a
+# target's native cargo build.
+# Windows MSVC: link the Visual C++ runtime statically (#4175), so the agent the
+# desktop deploys over SSH starts on a minimal host without the VC++
+# redistributable -- the same flag release.yml uses. Appended to any RUSTFLAGS
+# already set. With the explicit --target, RUSTFLAGS reach only the target's
+# crates, never build scripts or proc macros, and `cc`-built C code follows the
+# crt-static feature to /MT. Other targets get nothing, so an unset RUSTFLAGS
+# stays unset (an empty one would override .cargo/config rustflags).
+set_agent_build_env() {
+    AGENT_BUILD_ENV=()
+    if is_windows_target "$1"; then
+        AGENT_BUILD_ENV=("RUSTFLAGS=${RUSTFLAGS:+$RUSTFLAGS }-C target-feature=+crt-static")
+    fi
+}
+
 # Write a "<binary>.sha256" sidecar next to a built binary, matching the format
 # published by release.yml so the desktop can verify integrity before install
 # (#1350). Uses sha256sum where available (Linux, Git Bash) and falls back to
@@ -365,8 +381,9 @@ if [ "$SEQUENTIAL" = true ] || [ "${#SELECTED_TARGETS[@]}" -le 1 ]; then
         build_exit=0
         if [ "$NATIVE" = true ]; then
             echo "  Building with cargo (native)..."
+            set_agent_build_env "$target"
             # shellcheck disable=SC2086
-            cargo build $PROFILE_FLAG $FEATURES_FLAG --target "$target" -p termihub-agent 2>&1 \
+            env ${AGENT_BUILD_ENV[@]+"${AGENT_BUILD_ENV[@]}"} cargo build $PROFILE_FLAG $FEATURES_FLAG --target "$target" -p termihub-agent 2>&1 \
                 | { grep -v "<jemalloc>:" || true; } \
                 || build_exit=$?
         else
@@ -441,8 +458,9 @@ else
         # through the awk stage to the background job's exit status.
         {
             if [ "$NATIVE" = true ]; then
+                set_agent_build_env "$target"
                 # shellcheck disable=SC2086
-                CARGO_TARGET_DIR="$cross_dir" \
+                env ${AGENT_BUILD_ENV[@]+"${AGENT_BUILD_ENV[@]}"} CARGO_TARGET_DIR="$cross_dir" \
                     cargo build $PROFILE_FLAG $FEATURES_FLAG --target "$target" -p termihub-agent 2>&1
             else
                 # shellcheck disable=SC2086

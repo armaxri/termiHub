@@ -6,9 +6,12 @@
     Release builds link the Visual C++ runtime statically (src-tauri/build.rs for
     termihub.exe, scripts/build-rdp-sidecar.* for termihub-rdp-helper.exe), so a
     user installs termiHub without first installing the VC++ redistributable.
+    The Windows agent binaries are built the same way (#4175: release.yml and
+    scripts/build-agents.* add -C target-feature=+crt-static), so the agent the
+    desktop deploys over SSH starts on a minimal host (Server Core, a fresh VM).
     If a toolchain or dependency change silently brings back the dynamic runtime,
-    the app would fail to start on a clean machine with "VCRUNTIME140.dll was not
-    found". This check makes that a build failure instead.
+    the binary would fail to start on a clean machine with "VCRUNTIME140.dll was
+    not found". This check makes that a build failure instead.
 
     It reads the PE import table and the delay-load import table of every .exe and
     .dll it is pointed at, and fails if any of them names a Visual C++ runtime DLL:
@@ -21,11 +24,14 @@
       * -Nsis: extracts the NSIS setup.exe with 7-Zip (no install) and checks
         every .exe/.dll in it except the NSIS uninstaller stub;
       * -Dir: checks the .exe/.dll files directly in a directory (not its
-        subdirectories), e.g. the target/<triple>/release dir of `tauri build`.
+        subdirectories), e.g. the target/<triple>/release dir of `tauri build`;
+      * -Exe: checks the given standalone PE files, e.g. the agent binaries
+        (target/<triple>/release/termihub-agent.exe). Every path must exist.
 
-    termihub.exe must be among the checked files, so a wrong path cannot pass by
-    checking nothing. The PE parsing is plain .NET, so -Dir also runs on macOS and
-    Linux with pwsh; -Msi and -Nsis need Windows (msiexec) or 7-Zip.
+    With -Msi, -Nsis and -Dir, termihub.exe must be among the checked files, so a
+    wrong path cannot pass by checking nothing; with -Exe a missing file fails.
+    The PE parsing is plain .NET, so -Dir and -Exe also run on macOS and Linux
+    with pwsh; -Msi and -Nsis need Windows (msiexec) or 7-Zip.
 
 .PARAMETER Msi
     MSI to check.
@@ -35,18 +41,24 @@
 
 .PARAMETER Dir
     Directory whose .exe/.dll files to check (instead of -Msi / -Nsis).
+
+.PARAMETER Exe
+    One or more standalone PE files to check (instead of -Msi / -Nsis / -Dir).
 #>
 param(
     [string]$Msi = '',
     [string]$Nsis = '',
-    [string]$Dir = ''
+    [string]$Dir = '',
+    [string[]]$Exe = @()
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
-if (@($Msi, $Nsis, $Dir | Where-Object { $_ }).Count -ne 1) {
-    Write-Output '::error::pass exactly one of -Msi, -Nsis or -Dir'
+$Exe = @($Exe | Where-Object { $_ })
+$modes = @($Msi, $Nsis, $Dir | Where-Object { $_ }).Count + [int]($Exe.Count -gt 0)
+if ($modes -ne 1) {
+    Write-Output '::error::pass exactly one of -Msi, -Nsis, -Dir or -Exe'
     exit 1
 }
 
@@ -146,12 +158,20 @@ try {
         # skip 7-Zip's $PLUGINSDIR (NSIS's own installer plugins, not installed).
         $files = @(Get-ChildItem -LiteralPath $extract -Recurse -File |
             Where-Object { $_.Extension -in '.exe', '.dll' -and $_.FullName -notmatch '[\\/]\$PLUGINSDIR[\\/]' })
+    } elseif ($Exe.Count -gt 0) {
+        foreach ($path in $Exe) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+                Write-Output "::error::$path does not exist"
+                exit 1
+            }
+        }
+        $files = @($Exe | ForEach-Object { Get-Item -LiteralPath $_ })
     } else {
         $files = @(Get-ChildItem -LiteralPath $Dir -File |
             Where-Object { $_.Extension -in '.exe', '.dll' })
     }
 
-    if (-not ($files | Where-Object { $_.Name -eq 'termihub.exe' })) {
+    if ($Exe.Count -eq 0 -and -not ($files | Where-Object { $_.Name -eq 'termihub.exe' })) {
         Write-Output "::error::termihub.exe is not among the checked files ($($Msi + $Nsis + $Dir))"
         exit 1
     }

@@ -55,6 +55,18 @@ pub struct AgentRoute {
     pub target_port: u16,
 }
 
+impl AgentRoute {
+    /// The file-transfer view of this route (#4191): the agent to address and
+    /// the target as seen from it (a loopback target makes the agent host the
+    /// desktop host — see `graphical_files::is_same_host`).
+    pub(crate) fn file_route(&self) -> super::graphical_file_channel::AgentFileRoute {
+        super::graphical_file_channel::AgentFileRoute {
+            agent_id: self.agent_id.clone(),
+            target_host: self.target_host.clone(),
+        }
+    }
+}
+
 /// Read a port-ish settings value (a JSON number or a numeric string).
 fn read_u16(settings: &Value, key: &str) -> Option<u16> {
     match settings.get(key)? {

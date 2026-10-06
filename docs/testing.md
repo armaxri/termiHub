@@ -871,6 +871,7 @@ The remote agent (`agent/`) is built and tested on Windows via dedicated CI jobs
 
 - **Build + test** ([`agent.yml`](../.github/workflows/agent.yml)): the `build-windows` job (post-merge only, on push to `develop`/`main` — #3325) runs on `windows-latest`, builds the agent for `x86_64-pc-windows-msvc` (native MSVC — cross-rs cannot build the MSVC ABI), and runs `cargo test -p termihub-agent -p termihub-core --all-features`. The full workspace test suite (a superset of those tests) also runs on `windows-latest` via the [`code-quality.yml`](../.github/workflows/code-quality.yml) `tests` matrix — on every PR that changes Rust, and post-merge.
 - **Release artifact** ([`release.yml`](../.github/workflows/release.yml)): the `agent-binaries-windows` job ships `termihub-agent-windows-x64.exe` and `termihub-agent-windows-arm64.exe` (cross-compiled from the x64 runner) alongside the Linux and macOS agent binaries on every tagged release.
+- **No VC++ runtime dependency** (#4175): both jobs build the agent with the Visual C++ runtime linked statically and fail if the `.exe` imports `VCRUNTIME*.dll` / `MSVCP*.dll` ([`verify-no-vcruntime.ps1`](../scripts/internal/verify-no-vcruntime.ps1) `-Exe`).
 
 #### Live-agent-TCP tests run serially on Windows (#2495, #3615)
 

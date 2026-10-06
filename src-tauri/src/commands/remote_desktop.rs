@@ -35,6 +35,7 @@ use termihub_core::connection::{InputEvent, RemoteClipboardFile};
 
 use std::sync::Arc;
 
+use crate::session::graphical_file_channel::{AgentFiles, RemoteDesktopFileChannel};
 use crate::session::graphical_manager::{
     GraphicalEventSink, GraphicalSessionManager, RemoteDesktopCertPromptEvent,
 };
@@ -230,6 +231,22 @@ pub async fn remote_desktop_connect(
     manager
         .connect_routed(&type_id, settings, agents, app_handle)
         .await
+}
+
+/// Resolve a graphical session's file-transfer side channel (#4191, concept
+/// `vnc-clipboard-file-transfer`): the route (SFTP on the VNC SSH tunnel, or
+/// the hosting agent's `connection.files.*`), `user@host`, and the default
+/// folder — or a typed reason there is none. Backend-enforced: an opted-out
+/// connection answers `unavailable`/`disabled`, a view-only one
+/// `unavailable`/`viewOnly`, a direct one `unavailable`/`noRoute`.
+#[tauri::command]
+pub async fn remote_desktop_file_channel(
+    session_id: String,
+    manager: State<'_, GraphicalSessionManager>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+) -> Result<RemoteDesktopFileChannel, TerminalError> {
+    let agents: Arc<dyn AgentFiles> = Arc::new(agent_manager.inner().clone());
+    manager.file_channel(&session_id, Some(agents)).await
 }
 
 /// Request a new session resolution in pixels (Match Window / dynamic resize).

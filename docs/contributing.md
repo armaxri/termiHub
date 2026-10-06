@@ -936,6 +936,10 @@ halves of a `.sh`/`.cmd` pair accept drift apart.
 scripts\build-agents.cmd --targets aarch64-unknown-linux-musl
 ```
 
+Windows (`*-pc-windows-msvc`) targets link the Visual C++ runtime statically
+(`-C target-feature=+crt-static`, appended to any `RUSTFLAGS` you set), like the released agent,
+so the agent runs on a remote host without the VC++ Redistributable (#4175).
+
 On Windows, `--sign-key` runs the same `scripts/internal/agent-update-signing.sh` pipeline as
 release CI, so it needs Git Bash with OpenSSL 3 (both ship with Git for Windows).
 

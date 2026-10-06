@@ -292,4 +292,11 @@ terminalCommandDecorations?: boolean,
  * Render inline images (SIXEL / iTerm2) in the terminal (PROD-057).
  * `None` → the frontend default (on).
  */
-terminalInlineImages?: boolean, };
+terminalInlineImages?: boolean, 
+/**
+ * Combine emoji grapheme clusters (ZWJ sequences, skin-tone modifiers,
+ * flags) into one double-width cell via `@xterm/addon-unicode-graphemes`
+ * (#4177). Experimental and opt-in: `None`/`Some(false)` keeps the
+ * Unicode 11 width tables (the frontend default).
+ */
+combineEmoji?: boolean, };

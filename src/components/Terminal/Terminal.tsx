@@ -13,6 +13,7 @@ import {
 } from "./inlineImages";
 import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
+import { applyCombineEmoji } from "./unicodeWidth";
 import { ConnectionConfig } from "@/types/terminal";
 import {
   createTerminal,
@@ -1387,7 +1388,9 @@ export function Terminal({
 
     const unicode11Addon = new Unicode11Addon();
     xterm.loadAddon(unicode11Addon);
-    xterm.unicode.activeVersion = "11";
+    // Unicode 11 widths by default; the experimental "Combine emoji" setting
+    // switches to grapheme-cluster widths instead (#4177, unicodeWidth.ts).
+    applyCombineEmoji(xterm, appSettings.combineEmoji === true);
 
     const searchAddon = new SearchAddon();
     xterm.loadAddon(searchAddon);
@@ -2057,6 +2060,14 @@ export function Terminal({
   useEffect(() => {
     commandMarksRef.current?.setDecorationsEnabled(commandDecorations !== false);
   }, [commandDecorations]);
+
+  // Switch emoji grapheme clustering live (#4177). Affects output written after
+  // the switch; lines already in the buffer keep their layout.
+  const combineEmoji = projectedSettings.combineEmoji === true;
+  useEffect(() => {
+    const xterm = xtermRef.current;
+    if (xterm) applyCombineEmoji(xterm, combineEmoji);
+  }, [combineEmoji]);
 
   // Toggle inline images live (PROD-057).
   const inlineImagesEnabled = projectedSettings.terminalInlineImages !== false;

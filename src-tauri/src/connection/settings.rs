@@ -651,6 +651,13 @@ pub struct AppSettings {
     #[serde(default, with = "lenient", skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub terminal_inline_images: Option<bool>,
+    /// Combine emoji grapheme clusters (ZWJ sequences, skin-tone modifiers,
+    /// flags) into one double-width cell via `@xterm/addon-unicode-graphemes`
+    /// (#4177). Experimental and opt-in: `None`/`Some(false)` keeps the
+    /// Unicode 11 width tables (the frontend default).
+    #[serde(default, with = "lenient", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub combine_emoji: Option<bool>,
     /// Forward-compatibility catch-all (#2311).
     ///
     /// Preserves any field the frontend `AppSettings` interface
@@ -745,6 +752,7 @@ impl Default for AppSettings {
             broadcast_groups: None,
             terminal_command_decorations: None,
             terminal_inline_images: None,
+            combine_emoji: None,
             extra: serde_json::Map::new(),
         }
     }
@@ -2118,6 +2126,33 @@ mod tests {
         assert!(!reloaded.warn_large_port_scan);
         assert!(!reloaded.warn_large_ping_sweep);
         assert_eq!(reloaded.screen_reader_mode, Some(true));
+    }
+
+    #[test]
+    fn combine_emoji_defaults_off_and_survives_save_load() {
+        // #4177: the experimental "Combine emoji" toggle is opt-in. Absent means
+        // off (the frontend keeps Unicode 11 widths); an opt-in must persist.
+        assert!(AppSettings::default().combine_emoji.is_none());
+        let legacy: AppSettings =
+            serde_json::from_str(r#"{"version":"1","externalConnectionFiles":[]}"#).unwrap();
+        assert!(legacy.combine_emoji.is_none());
+
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let incoming = r#"{
+            "version": "1",
+            "externalConnectionFiles": [],
+            "combineEmoji": true
+        }"#;
+        let settings: AppSettings = serde_json::from_str(incoming).unwrap();
+        assert!(settings.extra.is_empty(), "{:?}", settings.extra);
+        storage.save(&settings).unwrap();
+
+        let persisted = std::fs::read_to_string(&storage.file_path).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&persisted).unwrap();
+        assert_eq!(value["combineEmoji"], serde_json::json!(true));
+        let reloaded = storage.load_with_recovery().unwrap().data;
+        assert_eq!(reloaded.combine_emoji, Some(true));
     }
 
     #[test]
