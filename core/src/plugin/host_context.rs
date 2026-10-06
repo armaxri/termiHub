@@ -195,6 +195,10 @@ unsafe extern "C" fn services_log(ctx: *mut c_void, level: u32, message: FfiStr)
 /// sanitisation (control characters, invalid UTF-8, truncation marker) and the
 /// host-trusted `[<id>]` tag. `bytes` must already be bounded to
 /// [`MAX_LOG_MESSAGE_BYTES`]; an invalid `level` is dropped.
+#[cfg_attr(
+    not(unix),
+    allow(dead_code, reason = "only the Unix runner transport forwards logs yet")
+)]
 pub(crate) fn emit_runner_log(
     limiter: &PluginLogLimiter,
     plugin_id: &str,

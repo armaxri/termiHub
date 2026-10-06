@@ -17,6 +17,12 @@
 //! landlock + seccomp, LPAC) lands in later phases between the handshake and
 //! the `dlopen`. See `docs/concepts/backlog/plugin-os-sandbox.html`.
 
+// Windows has no runner transport yet (next slice of #4182), so the session
+// server is unreachable there until it lands.
+#[cfg_attr(
+    not(unix),
+    allow(dead_code, unused_imports, reason = "no Windows transport yet")
+)]
 mod runner;
 
 use termihub_plugin_runner::ipc::{PROTOCOL_ARG, PROTOCOL_VERSION};
