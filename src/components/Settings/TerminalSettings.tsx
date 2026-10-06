@@ -158,6 +158,18 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
             />
           </SettingsField>
         )}
+        {show("combineEmoji") && (
+          <SettingsField
+            label="Combine emoji (experimental)"
+            hint="Show emoji sequences (families, skin tones, flags) as one double-width glyph. Some shells count the parts separately, which can make the cursor drift on lines with such emoji. Applies to new output."
+          >
+            <Toggle
+              data-testid="settings-terminal-combine-emoji"
+              checked={settings.combineEmoji ?? false}
+              onCheckedChange={(checked) => onChange({ ...settings, combineEmoji: checked })}
+            />
+          </SettingsField>
+        )}
         {show("askOpenSavedFileInTab") && (
           <SettingsField
             label="Open Saved File in Tab"

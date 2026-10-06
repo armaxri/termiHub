@@ -246,6 +246,14 @@ jobs:
           & $exe --version
           if ($LASTEXITCODE -ne 0) { Write-Error "$exe --version exited $LASTEXITCODE"; exit 1 }
 
+      # build-agents.cmd links the VC runtime statically for Windows targets
+      # (#4175), like release.yml; fail if the agent still imports a VC++ DLL.
+      - name: Verify no Visual C++ runtime dependency in the agent
+        shell: pwsh
+        run: |
+          ./scripts/internal/verify-no-vcruntime.ps1 -Exe "target/${{ matrix.target }}/release/termihub-agent.exe"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       - name: Assert no test-only signing key (#4083)
         shell: bash
         run: scripts/internal/assert-no-test-signing-key.sh target/${{ matrix.target }}/release/termihub-agent.exe
