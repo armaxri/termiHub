@@ -228,6 +228,32 @@ describe("TerminalSettings", () => {
     expect(toggle.getAttribute("aria-checked")).toBe("false");
   });
 
+  it("renders the combine emoji toggle, off by default, and flips onChange (#4177)", () => {
+    const onChange = renderWith(defaultSettings);
+    const toggle = container.querySelector(
+      '[data-testid="settings-terminal-combine-emoji"]'
+    ) as HTMLElement | null;
+    expect(toggle).not.toBeNull();
+    expect(toggle!.getAttribute("aria-checked")).toBe("false");
+    act(() => toggle!.click());
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ combineEmoji: true }));
+  });
+
+  it("labels combine emoji as experimental and warns about cursor drift", () => {
+    renderWith({ ...defaultSettings, combineEmoji: true });
+    const toggle = container.querySelector(
+      '[data-testid="settings-terminal-combine-emoji"]'
+    ) as HTMLElement;
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    const field = toggle.closest(".settings-form__field");
+    expect(field?.querySelector(".settings-form__label")?.textContent).toBe(
+      "Combine emoji (experimental)"
+    );
+    expect(field?.querySelector(".settings-form__hint")?.textContent?.toLowerCase()).toContain(
+      "cursor"
+    );
+  });
+
   it("hint text mentions memory", () => {
     renderWith(defaultSettings);
     const labels = Array.from(container.querySelectorAll(".settings-form__label"));

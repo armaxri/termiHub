@@ -233,6 +233,23 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "combineEmoji",
+    label: "Combine emoji (experimental)",
+    description: "Show emoji sequences (families, skin tones, flags) as one double-width glyph",
+    category: "terminal",
+    keywords: [
+      "emoji",
+      "grapheme",
+      "zwj",
+      "skin tone",
+      "flag",
+      "unicode",
+      "width",
+      "cluster",
+      "experimental",
+    ],
+  },
+  {
     id: "askOpenSavedFileInTab",
     label: "Open Saved File in Tab",
     description: "Offer to open terminal content in an editor tab after saving it to a file",
