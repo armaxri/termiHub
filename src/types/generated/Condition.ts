@@ -3,8 +3,22 @@
 /**
  * Conditional visibility rule for a settings field.
  *
- * The field is shown only when the field identified by [`field`](Condition::field)
- * equals [`equals`](Condition::equals).
+ * The basic rule shows the field only when the field identified by
+ * [`field`](Condition::field) equals [`equals`](Condition::equals). Three
+ * optional extensions make the grammar expressive enough for computed notices
+ * (#4198) without hardcoding any connection UI:
+ *
+ * - [`same_host_as`](Condition::same_host_as) compares two fields instead of
+ *   one field to a constant: the value checked against `equals` (a boolean)
+ *   is whether `field` names the same host as the field `same_host_as`, by
+ *   [`is_same_host`](crate::connection::graphical_files::is_same_host).
+ * - [`all_of`](Condition::all_of) adds conditions that must all hold too.
+ * - [`any_of`](Condition::any_of) adds conditions of which at least one must
+ *   hold (ignored when empty).
+ *
+ * Every condition is evaluated by `schema_defaults::is_field_visible` in core
+ * and by its TypeScript mirror `isFieldVisible` in `src/utils/schemaDefaults.ts`;
+ * the shared golden vectors keep the two in lockstep.
  */
 export type Condition = { 
 /**
@@ -12,6 +26,24 @@ export type Condition = {
  */
 field: string, 
 /**
- * Value that the field must equal for this field to be visible.
+ * Value that the field must equal for this field to be visible. With
+ * [`same_host_as`](Condition::same_host_as) it is the expected boolean
+ * outcome of the host comparison instead.
  */
-equals: unknown, };
+equals: unknown, 
+/**
+ * Key of a second field whose value is compared with `field`'s value as a
+ * host name: the comparison is `true` when `field`'s host, as seen from
+ * that second host, is loopback or the same name. When either side is
+ * unset or empty the hosts cannot be shown to differ, so the comparison
+ * is `true` (same host).
+ */
+sameHostAs?: string, 
+/**
+ * Further conditions that must all hold as well.
+ */
+allOf?: Array<Condition>, 
+/**
+ * Further conditions of which at least one must hold (when non-empty).
+ */
+anyOf?: Array<Condition>, };

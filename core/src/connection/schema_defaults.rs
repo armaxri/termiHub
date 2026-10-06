@@ -101,11 +101,11 @@ pub fn evaluate_condition(condition: &Condition, settings: &Settings) -> bool {
 /// is unset, not a string, or blank the hosts cannot be shown to differ, so
 /// they compare as the same host.
 fn hosts_compare_same(target: Option<&Value>, file_host: Option<&Value>) -> bool {
-    let text = |v: Option<&Value>| {
+    fn text(v: Option<&Value>) -> Option<&str> {
         v.and_then(Value::as_str)
             .map(str::trim)
             .filter(|s| !s.is_empty())
-    };
+    }
     match (text(target), text(file_host)) {
         (Some(target), Some(file_host)) => is_same_host(target, file_host),
         _ => true,

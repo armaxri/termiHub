@@ -90,6 +90,316 @@
       },
       "args": { "settings": {} },
       "expected": false
+    },
+    {
+      "name": "sameHostAs: differing hosts satisfy equals false",
+      "input": {
+        "key": "n",
+        "label": "",
+        "fieldType": { "type": "notice", "severity": "warning" },
+        "required": false,
+        "visibleWhen": {
+          "field": "host",
+          "sameHostAs": "sshHost",
+          "equals": false
+        }
+      },
+      "args": {
+        "settings": { "host": "10.0.4.17", "sshHost": "bastion.corp" }
+      },
+      "expected": true
+    },
+    {
+      "name": "sameHostAs: loopback target satisfies equals true",
+      "input": {
+        "key": "n",
+        "label": "",
+        "fieldType": { "type": "notice", "severity": "warning" },
+        "required": false,
+        "visibleWhen": {
+          "field": "host",
+          "sameHostAs": "sshHost",
+          "equals": true
+        }
+      },
+      "args": {
+        "settings": { "host": "127.0.0.1", "sshHost": "bastion.corp" }
+      },
+      "expected": true
+    },
+    {
+      "name": "sameHostAs: an empty side compares as the same host",
+      "input": {
+        "key": "n",
+        "label": "",
+        "fieldType": { "type": "notice", "severity": "warning" },
+        "required": false,
+        "visibleWhen": {
+          "field": "host",
+          "sameHostAs": "sshHost",
+          "equals": false
+        }
+      },
+      "args": { "settings": { "host": "10.0.4.17", "sshHost": "  " } },
+      "expected": false
+    },
+    {
+      "name": "sameHostAs: a missing side compares as the same host",
+      "input": {
+        "key": "n",
+        "label": "",
+        "fieldType": { "type": "notice", "severity": "warning" },
+        "required": false,
+        "visibleWhen": {
+          "field": "host",
+          "sameHostAs": "sshHost",
+          "equals": true
+        }
+      },
+      "args": { "settings": { "sshHost": "bastion.corp" } },
+      "expected": true
+    },
+    {
+      "name": "sameHostAs: a non-string side compares as the same host",
+      "input": {
+        "key": "n",
+        "label": "",
+        "fieldType": { "type": "notice", "severity": "warning" },
+        "required": false,
+        "visibleWhen": {
+          "field": "host",
+          "sameHostAs": "sshHost",
+          "equals": true
+        }
+      },
+      "args": { "settings": { "host": 42, "sshHost": "bastion.corp" } },
+      "expected": true
+    },
+    {
+      "name": "allOf: gateway warning shown",
+      "input": {
+        "key": "n",
+        "label": "",
+        "fieldType": { "type": "notice", "severity": "warning" },
+        "required": false,
+        "visibleWhen": {
+          "field": "fileTransfer",
+          "equals": true,
+          "allOf": [
+            { "field": "useSshTunnel", "equals": true },
+            { "field": "host", "sameHostAs": "sshHost", "equals": false }
+          ]
+        }
+      },
+      "args": {
+        "settings": {
+          "fileTransfer": true,
+          "useSshTunnel": true,
+          "host": "10.0.4.17",
+          "sshHost": "bastion.corp"
+        }
+      },
+      "expected": true
+    },
+    {
+      "name": "allOf: warning hidden when one sub-condition fails",
+      "input": {
+        "key": "n",
+        "label": "",
+        "fieldType": { "type": "notice", "severity": "warning" },
+        "required": false,
+        "visibleWhen": {
+          "field": "fileTransfer",
+          "equals": true,
+          "allOf": [
+            { "field": "useSshTunnel", "equals": true },
+            { "field": "host", "sameHostAs": "sshHost", "equals": false }
+          ]
+        }
+      },
+      "args": {
+        "settings": {
+          "fileTransfer": true,
+          "useSshTunnel": false,
+          "host": "10.0.4.17",
+          "sshHost": "bastion.corp"
+        }
+      },
+      "expected": false
+    },
+    {
+      "name": "allOf: warning hidden when the primary fails",
+      "input": {
+        "key": "n",
+        "label": "",
+        "fieldType": { "type": "notice", "severity": "warning" },
+        "required": false,
+        "visibleWhen": {
+          "field": "fileTransfer",
+          "equals": true,
+          "allOf": [
+            { "field": "useSshTunnel", "equals": true },
+            { "field": "host", "sameHostAs": "sshHost", "equals": false }
+          ]
+        }
+      },
+      "args": {
+        "settings": {
+          "fileTransfer": false,
+          "useSshTunnel": true,
+          "host": "10.0.4.17",
+          "sshHost": "bastion.corp"
+        }
+      },
+      "expected": false
+    },
+    {
+      "name": "anyOf: info hidden in the gateway case",
+      "input": {
+        "key": "n",
+        "label": "",
+        "fieldType": { "type": "notice", "severity": "warning" },
+        "required": false,
+        "visibleWhen": {
+          "field": "fileTransfer",
+          "equals": true,
+          "anyOf": [
+            { "field": "useSshTunnel", "equals": false },
+            { "field": "host", "sameHostAs": "sshHost", "equals": true }
+          ]
+        }
+      },
+      "args": {
+        "settings": {
+          "fileTransfer": true,
+          "useSshTunnel": true,
+          "host": "10.0.4.17",
+          "sshHost": "bastion.corp"
+        }
+      },
+      "expected": false
+    },
+    {
+      "name": "anyOf: info shown when the first alternative holds",
+      "input": {
+        "key": "n",
+        "label": "",
+        "fieldType": { "type": "notice", "severity": "warning" },
+        "required": false,
+        "visibleWhen": {
+          "field": "fileTransfer",
+          "equals": true,
+          "anyOf": [
+            { "field": "useSshTunnel", "equals": false },
+            { "field": "host", "sameHostAs": "sshHost", "equals": true }
+          ]
+        }
+      },
+      "args": {
+        "settings": {
+          "fileTransfer": true,
+          "useSshTunnel": false,
+          "host": "10.0.4.17",
+          "sshHost": "bastion.corp"
+        }
+      },
+      "expected": true
+    },
+    {
+      "name": "anyOf: info shown when the second alternative holds",
+      "input": {
+        "key": "n",
+        "label": "",
+        "fieldType": { "type": "notice", "severity": "warning" },
+        "required": false,
+        "visibleWhen": {
+          "field": "fileTransfer",
+          "equals": true,
+          "anyOf": [
+            { "field": "useSshTunnel", "equals": false },
+            { "field": "host", "sameHostAs": "sshHost", "equals": true }
+          ]
+        }
+      },
+      "args": {
+        "settings": {
+          "fileTransfer": true,
+          "useSshTunnel": true,
+          "host": "localhost",
+          "sshHost": "bastion.corp"
+        }
+      },
+      "expected": true
+    },
+    {
+      "name": "anyOf: info hidden when the primary fails",
+      "input": {
+        "key": "n",
+        "label": "",
+        "fieldType": { "type": "notice", "severity": "warning" },
+        "required": false,
+        "visibleWhen": {
+          "field": "fileTransfer",
+          "equals": true,
+          "anyOf": [
+            { "field": "useSshTunnel", "equals": false },
+            { "field": "host", "sameHostAs": "sshHost", "equals": true }
+          ]
+        }
+      },
+      "args": {
+        "settings": {
+          "fileTransfer": false,
+          "useSshTunnel": true,
+          "host": "localhost",
+          "sshHost": "bastion.corp"
+        }
+      },
+      "expected": false
+    },
+    {
+      "name": "nested: allOf inside anyOf",
+      "input": {
+        "key": "n",
+        "label": "",
+        "fieldType": { "type": "notice", "severity": "warning" },
+        "required": false,
+        "visibleWhen": {
+          "field": "a",
+          "equals": 1,
+          "anyOf": [
+            {
+              "field": "b",
+              "equals": 2,
+              "allOf": [{ "field": "c", "equals": 3 }]
+            }
+          ]
+        }
+      },
+      "args": { "settings": { "a": 1, "b": 2, "c": 3 } },
+      "expected": true
+    },
+    {
+      "name": "nested: allOf inside anyOf fails",
+      "input": {
+        "key": "n",
+        "label": "",
+        "fieldType": { "type": "notice", "severity": "warning" },
+        "required": false,
+        "visibleWhen": {
+          "field": "a",
+          "equals": 1,
+          "anyOf": [
+            {
+              "field": "b",
+              "equals": 2,
+              "allOf": [{ "field": "c", "equals": 3 }]
+            }
+          ]
+        }
+      },
+      "args": { "settings": { "a": 1, "b": 2, "c": 4 } },
+      "expected": false
     }
   ]
 }
