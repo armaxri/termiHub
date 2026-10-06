@@ -106,11 +106,12 @@ _No concepts are currently partially implemented._
 
 Not started yet — realistic and planned for the near to medium term.
 
-| Document                                                                                                   | Summary                                                                                                                                                                  |
-| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [app-icons.html](backlog/app-icons.html)                                                                   | Custom application icon design — a custom icon already ships, but not the concept's design; app-icon direction is an open maintainer call (UI-icon family still unbuilt) |
-| [macos-code-signing-notarization.html](backlog/macos-code-signing-notarization.html)                       | Developer-ID signing + notarization for the macOS build (only ad-hoc signing today)                                                                                      |
-| [release-planning-and-dependency-management.html](backlog/release-planning-and-dependency-management.html) | Structured release cadence, Dependabot, hotfix branching                                                                                                                 |
+| Document                                                                                                   | Summary                                                                                                                                                                                   |
+| ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [app-icons.html](backlog/app-icons.html)                                                                   | Custom application icon design — a custom icon already ships, but not the concept's design; app-icon direction is an open maintainer call (UI-icon family still unbuilt)                  |
+| [macos-code-signing-notarization.html](backlog/macos-code-signing-notarization.html)                       | Developer-ID signing + notarization for the macOS build (only ad-hoc signing today)                                                                                                       |
+| [plugin-os-sandbox.html](backlog/plugin-os-sandbox.html)                                                   | Pre-v1.0 OS sandbox for native plugin backends (SEC-002, #3769): one sandboxed helper process per plugin proxying the frozen 1.x ABI over IPC; Seatbelt / landlock+seccomp / AppContainer |
+| [release-planning-and-dependency-management.html](backlog/release-planning-and-dependency-management.html) | Structured release cadence, Dependabot, hotfix branching                                                                                                                                  |
 
 ---
 
