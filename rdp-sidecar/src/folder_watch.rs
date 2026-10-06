@@ -20,11 +20,20 @@
 //! rate stays bounded regardless. The tick channel itself has capacity one and
 //! drops extra ticks (a re-advertise reads the folder's current state, so a
 //! coalesced-away tick loses nothing).
+//!
+//! **Only changes count.** inotify (Linux) also reports *accesses* — an
+//! `IN_OPEN` for every `read_dir` and every file read. The re-advertise itself
+//! enumerates the folder and serving a `FileContentsRequest` reads a file, so
+//! forwarding accesses made the offer re-advertise itself about once a second
+//! for the whole session, and every new format list makes xrdp's chansrv empty
+//! its `thinclient_drives/.clipboard` view until the next paste (#4164).
+//! [`changes_folder`] keeps only events that change what the folder offers.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use notify::{RecursiveMode, Watcher};
+use notify::event::{AccessKind, AccessMode, MetadataKind, ModifyKind};
+use notify::{EventKind, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
@@ -68,8 +77,10 @@ pub fn watch_shared_folder(root: PathBuf) -> Option<FolderWatch> {
     let (raw_tx, raw_rx) = mpsc::unbounded_channel::<()>();
     let mut watcher = match notify::recommended_watcher(
         move |res: notify::Result<notify::Event>| match res {
-            Ok(_event) => {
-                let _ = raw_tx.send(());
+            Ok(event) => {
+                if changes_folder(&event.kind) {
+                    let _ = raw_tx.send(());
+                }
             }
             Err(e) => warn!(error = %e, "shared-folder watcher reported an error"),
         },
@@ -100,6 +111,20 @@ pub fn watch_shared_folder(root: PathBuf) -> Option<FolderWatch> {
         _watcher: watcher,
         ticks,
     })
+}
+
+/// Whether a watcher event can change the folder's offer: a create, remove,
+/// rename, content or metadata change, or a file closed after writing. Plain
+/// accesses — an open (inotify `IN_OPEN`, raised by every `read_dir` and file
+/// read, including the sidecar's own enumeration and file serving), a read-only
+/// close, an access-time update — change nothing and must not re-advertise, or
+/// the offer re-advertises itself in a loop (#4164).
+fn changes_folder(kind: &EventKind) -> bool {
+    match kind {
+        EventKind::Access(access) => matches!(access, AccessKind::Close(AccessMode::Write)),
+        EventKind::Modify(ModifyKind::Metadata(MetadataKind::AccessTime)) => false,
+        _ => true,
+    }
 }
 
 /// The debounce + rate-limit policy, kept as a pure function of instants (no
@@ -247,6 +272,61 @@ mod tests {
         // The burst coalesced: no second tick follows from the same activity.
         let second = tokio::time::timeout(ms(150), ticks.recv()).await;
         assert!(second.is_err(), "a burst must coalesce into a single tick");
+    }
+
+    #[test]
+    fn accesses_do_not_count_as_changes() {
+        use notify::event::{CreateKind, DataChange, RemoveKind, RenameMode};
+        for kind in [
+            EventKind::Access(AccessKind::Open(AccessMode::Any)),
+            EventKind::Access(AccessKind::Read),
+            EventKind::Access(AccessKind::Close(AccessMode::Read)),
+            EventKind::Modify(ModifyKind::Metadata(MetadataKind::AccessTime)),
+        ] {
+            assert!(!changes_folder(&kind), "{kind:?} must not re-advertise");
+        }
+        for kind in [
+            EventKind::Create(CreateKind::File),
+            EventKind::Remove(RemoveKind::Any),
+            EventKind::Modify(ModifyKind::Name(RenameMode::Both)),
+            EventKind::Modify(ModifyKind::Data(DataChange::Any)),
+            EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any)),
+            EventKind::Access(AccessKind::Close(AccessMode::Write)),
+            EventKind::Any,
+        ] {
+            assert!(changes_folder(&kind), "{kind:?} must re-advertise");
+        }
+    }
+
+    /// Against the real OS watcher: enumerating the folder and reading a file —
+    /// what a re-advertise and a file-contents serve do — raise no tick (on
+    /// Linux inotify reports both as opens), while writing a file does (#4164).
+    #[tokio::test]
+    async fn reading_the_folder_does_not_tick_but_writing_does() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        std::fs::write(dir.path().join("alpha.txt"), "alpha").unwrap();
+        let mut watch = watch_shared_folder(dir.path().canonicalize().unwrap()).unwrap();
+        // Let setup-time events (FSEvents may replay the creates above) settle.
+        tokio::time::sleep(ms(1500)).await;
+        while watch.ticks.try_recv().is_ok() {}
+
+        for _ in 0..3 {
+            for entry in std::fs::read_dir(dir.path()).unwrap() {
+                let _ = entry.unwrap().metadata();
+            }
+            assert_eq!(
+                std::fs::read(dir.path().join("alpha.txt")).unwrap(),
+                b"alpha"
+            );
+            tokio::time::sleep(ms(200)).await;
+        }
+        let idle = tokio::time::timeout(ms(1500), watch.ticks.recv()).await;
+        assert!(idle.is_err(), "a read-only access re-advertised the folder");
+
+        std::fs::write(dir.path().join("beta.txt"), "beta").unwrap();
+        let tick = tokio::time::timeout(Duration::from_secs(10), watch.ticks.recv()).await;
+        assert!(matches!(tick, Ok(Some(()))), "a new file must re-advertise");
     }
 
     #[tokio::test]
