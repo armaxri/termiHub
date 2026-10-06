@@ -20,8 +20,10 @@
     the SHA-256 pins in src-tauri/packaging/windows/conpty.env for -Arch, and
     carry a valid Authenticode signature from Microsoft Corporation.
 
-    Windows only (msiexec, 7-Zip, Get-AuthenticodeSignature). Exits 1 on any
-    failure.
+    Windows only (msiexec, 7-Zip, Get-AuthenticodeSignature). Always ends with
+    an explicit exit code: 0 when every check passed, 1 on any failure, so a
+    caller can test $LASTEXITCODE (#4207). msiexec's 3010 (success, reboot
+    required) counts as success.
 
 .PARAMETER Msi
     MSI to check.
@@ -45,6 +47,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
+# Any terminating error is a failed check with an explicit exit code, never a
+# thrown exception that leaves the caller's $LASTEXITCODE as it was (#4207).
+trap {
+    Write-Output "::error::$($_.Exception.Message)"
+    exit 1
+}
 
 if (@($Msi, $Nsis, $Dir | Where-Object { $_ }).Count -ne 1) {
     Write-Output '::error::pass exactly one of -Msi, -Nsis or -Dir'
@@ -62,37 +70,43 @@ $expected = [ordered]@{
     'OpenConsole.exe' = $pins["OPENCONSOLE_${upper}_SHA256"]
 }
 
-$extract = $null
-if ($Msi -or $Nsis) {
-    $extract = Join-Path ([System.IO.Path]::GetTempPath()) ("bundle-" + [System.Guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path $extract | Out-Null
-    if ($Msi) {
-        $source = [System.IO.Path]::GetFullPath($Msi)
-        $log = Join-Path $extract 'admin-extract.log'
-        $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
-            '/a', "`"$source`"", '/qn', "TARGETDIR=`"$extract`"", '/l*v', "`"$log`""
-        )
-        $code = $p.ExitCode
-    } else {
-        $source = [System.IO.Path]::GetFullPath($Nsis)
-        & 7z x -y "-o$extract" $source | Out-Null
-        $code = $LASTEXITCODE
-    }
-    if ($code -ne 0) {
-        Write-Output "::error::extracting $source failed with exit code $code"
-        exit 1
-    }
-    $exe = Get-ChildItem -LiteralPath $extract -Recurse -File -Filter 'termihub.exe' | Select-Object -First 1
-    if (-not $exe) {
-        Write-Output "::error::termihub.exe not found in the extracted $source"
-        exit 1
-    }
-    $Dir = $exe.DirectoryName
-}
+# msiexec exit codes that mean success: 0, and 3010 (ERROR_SUCCESS_REBOOT_REQUIRED).
+$msiexecOk = @(0, 3010)
 
+$extract = $null
+$failed = 0
 try {
+    if ($Msi -or $Nsis) {
+        $extract = Join-Path ([System.IO.Path]::GetTempPath()) ("bundle-" + [System.Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $extract | Out-Null
+        if ($Msi) {
+            $source = [System.IO.Path]::GetFullPath($Msi)
+            $log = Join-Path $extract 'admin-extract.log'
+            # Start-Process does not set $LASTEXITCODE; read the code off the process.
+            $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+                '/a', "`"$source`"", '/qn', "TARGETDIR=`"$extract`"", '/l*v', "`"$log`""
+            )
+            $code = $p.ExitCode
+            $ok = $null -ne $code -and $msiexecOk -contains $code
+        } else {
+            $source = [System.IO.Path]::GetFullPath($Nsis)
+            & 7z x -y "-o$extract" $source | Out-Null
+            $code = $LASTEXITCODE
+            $ok = $code -eq 0
+        }
+        if (-not $ok) {
+            Write-Output "::error::extracting $source failed with exit code $code"
+            exit 1
+        }
+        $exe = Get-ChildItem -LiteralPath $extract -Recurse -File -Filter 'termihub.exe' | Select-Object -First 1
+        if (-not $exe) {
+            Write-Output "::error::termihub.exe not found in the extracted $source"
+            exit 1
+        }
+        $Dir = $exe.DirectoryName
+    }
+
     Write-Output "Checking the sideloaded ConPTY host in $Dir"
-    $failed = 0
     foreach ($name in $expected.Keys) {
         $path = Join-Path $Dir $name
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -118,8 +132,14 @@ try {
         }
         Write-Output "  ok  $name  sha256=$hash  signer=$subject"
     }
-    if ($failed -gt 0) { exit 1 }
-    Write-Output 'Sideloaded ConPTY host present, pinned and Microsoft-signed.'
 } finally {
     if ($extract) { Remove-Item -LiteralPath $extract -Recurse -Force -ErrorAction SilentlyContinue }
 }
+
+if ($failed -gt 0) { exit 1 }
+Write-Output 'Sideloaded ConPTY host present, pinned and Microsoft-signed.'
+# Always end with an explicit exit code (#4207): a script that just falls off the
+# end leaves the caller's $LASTEXITCODE untouched -- $null in a fresh pwsh step
+# (Start-Process sets none), and `$null -ne 0` is true, so the workflow's
+# `if ($LASTEXITCODE -ne 0) { exit 1 }` failed a passing check.
+exit 0

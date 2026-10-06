@@ -50,6 +50,12 @@
 # A fifth section runs assert-no-test-bridge.sh (#4122) on dummy binaries: it
 # must pass one without the test-bridge build marker and fail on one with it.
 #
+# A sixth section runs test-verify-bundle-scripts.ps1 (#4207) where pwsh is
+# installed: the Windows bundle checks verify-conpty-bundle.ps1 and
+# verify-no-vcruntime.ps1, run verbatim behind the workflow's
+# `if ($LASTEXITCODE -ne 0) { exit 1 }` guard in a fresh pwsh, must exit 0 when
+# they pass (also after a native command exited non-zero) and 1 when they fail.
+#
 # Wired into the `Shell Script Quality` CI job. Run it from anywhere:
 #   scripts/internal/check-script-headless.sh
 
@@ -531,6 +537,24 @@ guard_run() { # <label> <expected exit> <binary...>
 guard_run "passes a binary without the marker" 0 "$TB/release-app"
 guard_run "fails a binary built with test-bridge" 1 "$TB/release-app" "$TB/test-bridge-app"
 guard_run "refuses a missing binary" 2 "$TB/missing"
+test_bridge_and_earlier_failures="$failures"
+
+# --- Windows bundle check exit codes (#4207) ---
+# A .ps1 that falls off its end leaves the caller's $LASTEXITCODE untouched
+# ($null in a fresh pwsh step), so the workflow guard failed a passing check.
+# The PowerShell test runs both bundle checks on dummy binaries and asserts
+# their exit codes; it needs pwsh (GitHub's ubuntu runners have it).
+if command -v pwsh >/dev/null 2>&1; then
+  vb_rc=0
+  vb_out="$(pwsh -NoProfile -NonInteractive -File scripts/internal/test-verify-bundle-scripts.ps1 2>&1)" ||
+    vb_rc=$?
+  printf '%s\n' "$vb_out"
+  if [ "$vb_rc" -ne 0 ]; then
+    failures=$((failures + 1))
+  fi
+else
+  echo "skip  Windows bundle check exit codes (pwsh not installed)"
+fi
 
 echo ""
 if [ "$failures" -gt 0 ]; then
@@ -539,10 +563,13 @@ if [ "$failures" -gt 0 ]; then
     "$((sidecar_and_earlier_failures - help_failures - lifecycle_failures)) checksum-sidecar" \
     "check(s) failed," \
     "$((app_lifecycle_and_earlier_failures - sidecar_and_earlier_failures)) app-lifecycle-smoke" \
-    "check(s) failed, $((failures - app_lifecycle_and_earlier_failures)) test-bridge-guard" \
-    "check(s) failed."
+    "check(s) failed," \
+    "$((test_bridge_and_earlier_failures - app_lifecycle_and_earlier_failures)) test-bridge-guard" \
+    "check(s) failed, $((failures - test_bridge_and_earlier_failures)) bundle-check exit-code" \
+    "test(s) failed."
   exit 1
 fi
 echo "Headless script smoke OK: ${#SCRIPTS[@]} script(s) executed their --help path cleanly;" \
   "the signing-key dry-run lifecycle, the checksum sidecar writer, the app lifecycle" \
-  "smoke (on a stub app) and the release test-bridge guard passed."
+  "smoke (on a stub app), the release test-bridge guard and the Windows bundle check" \
+  "exit codes passed."
