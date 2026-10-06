@@ -1000,7 +1000,9 @@ plugin-side migration callback in 0.1.
   the ABI stay exactly the same. A **debug** build of termiHub runs plugins that
   way when started with `TERMIHUB_PLUGIN_OUT_OF_PROCESS=1` (build the runner
   first with `cargo build -p termihub-plugin-runner`; it lands next to the app
-  binary, or point `TERMIHUB_PLUGIN_RUNNER` at it). Until the bridge moves over
+  binary, or point `TERMIHUB_PLUGIN_RUNNER` at it). Installed termiHub builds
+  already ship the runner next to the app and verify it before use, but do not
+  run plugins through it yet. Until the bridge moves over
   the process boundary, every capability-bridge request is refused there with
   `PermissionDenied`, and Windows is not supported yet.
   [`core/tests/plugin_runner_e2e.rs`](../core/tests/plugin_runner_e2e.rs) drives
