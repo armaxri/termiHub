@@ -208,7 +208,10 @@ pub(crate) async fn resolve_file_channel(
             default_dir,
         },
         Err(message) => RemoteDesktopFileChannel::Degraded {
-            message: format!("File transfer to {} is unavailable: {message}", channel.host),
+            message: format!(
+                "File transfer to {} is unavailable: {message}",
+                channel.host
+            ),
             channel,
             agent_id,
         },
