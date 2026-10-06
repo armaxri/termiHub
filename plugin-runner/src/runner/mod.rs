@@ -79,10 +79,10 @@ pub(crate) fn run<R: Read>(reader: R, channel: Arc<Channel>) -> i32 {
         return exit::PROTOCOL;
     }
     let configure = match next_message(&mut frames) {
-        Some(Message::Configure(configure)) => configure,
+        Ok(Some(Message::Configure(configure))) => configure,
         // EOF before configuring: the host gave up on us.
-        None => return exit::OK,
-        Some(_) => return exit::PROTOCOL,
+        Ok(None) => return exit::OK,
+        Ok(Some(_)) | Err(()) => return exit::PROTOCOL,
     };
     // Phase 1: no confinement yet. The per-OS phases apply it here, after the
     // channel is open and before any plugin code is mapped.
@@ -109,11 +109,15 @@ pub(crate) fn run<R: Read>(reader: R, channel: Arc<Channel>) -> i32 {
     server.serve(&mut frames)
 }
 
-/// Read the next valid host frame; `None` on EOF or any violation.
-fn next_message<R: Read>(frames: &mut FrameReader<R>) -> Option<Message> {
+/// Read the next valid host frame: `Ok(None)` on a clean end of stream,
+/// `Err(())` on any violation or transport failure.
+fn next_message<R: Read>(frames: &mut FrameReader<R>) -> Result<Option<Message>, ()> {
     match frames.read_frame() {
-        Ok(Some(frame)) => Message::decode_from_peer(frame, Sender::Runner).ok(),
-        Ok(None) | Err(_) => None,
+        Ok(Some(frame)) => Message::decode_from_peer(frame, Sender::Runner)
+            .map(Some)
+            .map_err(|_| ()),
+        Ok(None) => Ok(None),
+        Err(_) => Err(()),
     }
 }
 
@@ -159,14 +163,11 @@ impl Server {
             Arc::clone(&stop),
         );
         let code = loop {
-            let message = match frames.read_frame() {
-                Ok(Some(frame)) => match Message::decode_from_peer(frame, Sender::Runner) {
-                    Ok(message) => message,
-                    Err(_) => break exit::PROTOCOL,
-                },
+            let message = match next_message(frames) {
+                Ok(Some(message)) => message,
                 // The host closed the channel (or died): wind down.
                 Ok(None) => break exit::OK,
-                Err(_) => break exit::PROTOCOL,
+                Err(()) => break exit::PROTOCOL,
             };
             if !self.handle(message) {
                 break exit::OK;
