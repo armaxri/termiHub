@@ -83,6 +83,14 @@ describe("classify", () => {
     }
   });
 
+  it("runs the frontend suite for capability changes — the capability guard is vitest (#3115)", () => {
+    expect(on(classify(["src-tauri/capabilities/default.json"]))).toEqual([
+      "rust",
+      "frontend",
+      "rustdoc",
+    ]);
+  });
+
   it("flags lockfile and manifest changes as deps", () => {
     expect(classify(["Cargo.lock"])).toMatchObject({ rust: true, deps: true });
     expect(classify(["core/Cargo.toml"])).toMatchObject({ rust: true, deps: true });

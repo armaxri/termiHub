@@ -2018,17 +2018,53 @@ the guard is a vitest suite, the PR change classifier runs the frontend suite fo
    so the residual risk is CSS-based UI redress after an HTML injection, which `script-src` already
    limits.
 
-3. **Unscoped `fs` / `opener` capabilities — because they back user-driven, dialog-picked paths.**
-   `capabilities/default.json` grants `fs:allow-read-text-file` / `fs:allow-write-text-file` and
-   `opener:allow-open-path` without a static `fs:scope`. These back **user-initiated** flows where
-   the user chooses an arbitrary location through the OS **save/open dialog**: exporting and
-   importing config, themes, logs, and connection definitions, and "open / reveal in OS" actions on
-   file-browser entries. A static path scope is a poor fit for locations the user picks at runtime.
-   External **URL** opening is a separate concern and is already **application-level allowlisted** —
-   `src/utils/safeOpenExternal.ts` restricts schemes to `http`/`https`/`mailto` before handing off
-   to the opener. Scoping the **app-owned** (non-dialog) paths — config, logs, and the portable
-   `data/` directory — while keeping user-dialog exports working is a possible future refinement and
-   is deferred.
+#### Capability scoping: `fs` and `opener` (#3115)
+
+The fs and opener plugins were the capability set's one broad grant (`fs:default`, unscoped
+text read/write, `opener:allow-open-path`). They are now cut down to what the frontend actually
+uses, and everything else goes through typed backend commands:
+
+| Permission                                                  | What it allows                                                        |
+| ----------------------------------------------------------- | --------------------------------------------------------------------- |
+| `fs:allow-read-text-file`                                   | `readTextFile` — command only, **no static scope**                    |
+| `fs:allow-write-text-file`                                  | `writeTextFile` — command only, **no static scope**                   |
+| `fs:deny-default`                                           | Denies the webview-data folders even if a pick lands in them          |
+| `opener:allow-open-url` scoped to `http`, `https`, `mailto` | `openUrl` for external links; matches `src/utils/safeOpenExternal.ts` |
+
+- **Dialog-picked paths (imports / exports).** Every native open/save dialog goes through
+  `src/services/nativeDialog.ts`. A real pick makes the dialog plugin add that one path to the fs
+  plugin's **runtime** scope, so the follow-up `readTextFile` / `writeTextFile` is allowed — and
+  nothing else is. This covers all the flows that read or write a user-chosen file from the
+  webview: connection, backup, credential-vault, theme, grammar, macro / workflow / workspace,
+  network-tool result, terminal-output, log and cheat-sheet export / import. In the test-bridge
+  build the dialog is stubbed and the test-bridge-only `test_allow_dialog_path` command makes the
+  same grant (`src-tauri/src/commands/test_dialog.rs`); a release build has no command that widens
+  the fs scope.
+- **App-owned paths (config, logs, data, the portable `data/` directory).** The webview gets
+  **no** fs-plugin access to them at all — no `$APPCONFIG` / `$APPDATA` / `$APPLOG` scope and no
+  portable-directory grant. The backend owns those files and the frontend reaches them only through
+  typed commands, so a static scope would be pure excess (the removed `fs:default` let the webview
+  read the app's config and data folders recursively). Portable mode therefore needs no special
+  case.
+- **Local files in the file browser.** These were never the fs plugin's job: listing, reading,
+  writing, copying and renaming go through the `local_*` commands. The byte-based (remote agent)
+  copy legs of the local ↔ session engine now copy in the backend too
+  (`session_upload_local_file` / `session_download_to_local_file`) instead of reading and writing
+  the local file in the webview.
+- **"Open in File Manager".** The webview no longer has `opener:allow-open-path` (which opens
+  _any_ path with its default handler — an executable, a script, an app bundle) or the unscoped
+  `reveal_item_in_dir`. The file browser calls `local_open_folder`
+  (`src-tauri/src/files/open_folder.rs`), which accepts only an existing, absolute local
+  **directory** (symlinks judged by their target) and reveals a launching bundle such as
+  `Foo.app` or a Windows `name.{CLSID}` shell folder in its parent instead of opening it.
+
+**Guard.** `src/security/capabilityConfig.test.ts` fails on any permission that is not on its
+reviewed allow-list, on any static fs scope, on `opener:allow-open-path` / `default` / reveal, and on
+an `openUrl` scope other than `http` / `https` / `mailto`; it also rejects a dynamic import of
+either plugin. ESLint (`no-restricted-imports` in `eslint.config.js`) allows only `readTextFile` /
+`writeTextFile` from the fs plugin and `openUrl` from the opener. The nightly
+`tests/system/tests/test_native_dialogs.py` exercises the export / import flows end to end under
+this capability.
 
 #### CSP relaxation review (WA-CI-035)
 
