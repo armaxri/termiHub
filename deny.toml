@@ -24,30 +24,32 @@
 # non-yanked release, pulled transitively via russh 0.61 -> RustCrypto).
 yanked = "deny"
 
-# Unmaintained-crate advisories are NOT gated here. The tree carries a large,
-# tauri-bound set of them (gtk3 bindings, async-std, proc-macro-error, unic-*,
-# ...) that no local change can clear — they are tracked
-# for upstream resolution in #3054. cargo-audit (the other tool in the Security
-# Audit job) likewise does not fail on unmaintained advisories, so the two stay
-# in agreement. This keeps cargo-deny focused on yanked crates + real
-# vulnerabilities rather than churn we cannot act on.
+# Unmaintained-crate advisories are NOT gated here. The tree carries a
+# tauri-bound set of them (the Linux GTK3 bindings, proc-macro-error) that no
+# local change can clear. They are accepted risks, listed with their rationale in
+# docs/supply-chain.md -> "Accepted risks (Rust advisories and pre-release
+# crates)". cargo-audit (the other tool in the Security Audit job) likewise does
+# not fail on unmaintained advisories, so the two stay in agreement. This keeps
+# cargo-deny focused on yanked crates + real vulnerabilities.
 unmaintained = "none"
 
 # RUSTSEC advisories accepted as a conscious release sign-off. These mirror the
-# cargo-audit ignore list (.cargo/audit.toml) so the two tools agree; each has a
-# documented rationale there.
+# cargo-audit ignore list (.cargo/audit.toml), which carries the per-ID
+# rationale; the accepted-risk register is docs/supply-chain.md -> "Accepted
+# risks (Rust advisories and pre-release crates)". A stale entry here is
+# reported as `advisory-not-detected`, so remove it when the crate leaves the tree.
 #
-# - RUSTSEC-2023-0071: Marvin timing sidechannel in `rsa` (transitive via
-#   ssh-key). We only extract raw RSA key components and rebuild via OpenSSL;
-#   we never decrypt through this crate, so the sidechannel does not apply.
+# - RUSTSEC-2023-0071: Marvin timing sidechannel in `rsa` (via russh/ssh-key).
+#   termiHub only signs with RSA client keys (one signature per login) and has
+#   no RSA decryption path, so the sidechannel is not exploitable.
 #
-# Transitive `unsound` advisories (glib; #3054) are NOT listed here:
-# cargo-deny's default `unsound = "workspace"` only reports unsoundness in
-# crates a workspace member depends on directly, so it never matches them and
-# an ignore entry would be stale (`advisory-not-detected`). cargo-audit does
-# report them; their sign-off lives in .cargo/audit.toml. Last revisited
-# 2026-09-30. Unmaintained advisories are globally ungated above via
-# `unmaintained = "none"`. Real vulnerabilities and yanked crates still fail CI.
+# Transitive `unsound` advisories (glib) are NOT listed here: cargo-deny's
+# default `unsound = "workspace"` only reports unsoundness in crates a workspace
+# member depends on directly, so it never matches them and an ignore entry would
+# be stale (`advisory-not-detected`). cargo-audit does report them; their
+# sign-off lives in .cargo/audit.toml. Last revisited 2026-10-06. Unmaintained
+# advisories are globally ungated above via `unmaintained = "none"`. Real
+# vulnerabilities and yanked crates still fail CI.
 ignore = [
     "RUSTSEC-2023-0071",
 ]
@@ -122,11 +124,13 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 #     rustcrypto-group 0.14.0-rc, pkcs1 0.8.0-rc
 #   - Dalek edge (ride alongside via the SSH stack): curve25519-dalek 5.0.0-pre,
 #     ed25519-dalek 3.0.0-pre
-# These RC/pre crates are a deliberate, accepted risk for this release: russh has
-# not yet cut a stable release on the final RustCrypto 0.7/0.10 line. Upgrading to
-# a russh release built on stable RustCrypto is tracked in #3734. Until then the
-# yanked gate above guards against the versions silently regressing to a yanked
-# release, which is the concrete failure mode we care about.
+# These RC/pre crates are a deliberate, accepted risk (maintainer decision
+# 2026-10-06, see docs/supply-chain.md -> "Accepted risks (Rust advisories and
+# pre-release crates)"): russh has not yet cut a stable release on the final
+# RustCrypto 0.7/0.10 line. Cargo.lock pins each exact version, cargo-audit and
+# cargo-deny cover them like any other crate, and we move to stable releases when
+# upstream publishes them. The yanked gate above guards against the versions
+# silently regressing to a yanked release, which is the concrete failure mode.
 #
 # The exact pre-release set is also pinned as a reviewed allowlist in
 # .github/prerelease-allowlist.json (SUP-002): scripts/internal/

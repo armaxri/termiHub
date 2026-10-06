@@ -1,5 +1,5 @@
 {
-  "$comment": "Reviewed pre-release crate versions (SUP-002). Checked per-PR by scripts/internal/check-prerelease-crates.mjs against Cargo.lock and rdp-sidecar/Cargo.lock. Add an entry (exact version + reason + tracker) in the same PR that locks a new pre-release; remove entries once they leave the lockfiles.",
+  "$comment": "Reviewed pre-release crate versions (SUP-002), accepted as documented risk: see docs/supply-chain.md -> 'Accepted risks (Rust advisories and pre-release crates)'. Checked per-PR by scripts/internal/check-prerelease-crates.mjs against Cargo.lock and rdp-sidecar/Cargo.lock. Add an entry (exact version + reason + tracker) in the same PR that locks a new pre-release; the check fails on stale entries, so remove them once they leave the lockfiles. tracker = the issue recording the decision.",
   "crates": [
     {
       "name": "aead",

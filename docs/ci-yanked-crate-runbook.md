@@ -26,7 +26,8 @@ an upstream fix (like the ringbuf double-free above) is cleared by upgrading to
 the fixed version — never by adding it to the `ignore` list in
 [`.cargo/audit.toml`](../.cargo/audit.toml) / [`deny.toml`](../deny.toml). That
 ignore list is reserved for non-actionable transitive `unmaintained`/`unsound`
-advisories with no fix available (a conscious release sign-off, #3054); putting a
+advisories with no fix available (the documented
+[accepted risks](supply-chain.md#accepted-risks-rust-advisories-and-pre-release-crates)); putting a
 fixable vulnerability there would silently ship it.
 
 The recurrence is the problem: a yank or advisory is published upstream at an

@@ -1,40 +1,34 @@
 # Cargo audit configuration (workspace level)
 # https://docs.rs/cargo-audit/latest/cargo_audit/
+#
+# Every ID below is an ACCEPTED risk, documented with its rationale in
+# docs/supply-chain.md -> "Accepted risks (Rust advisories and pre-release crates)".
+# Real vulnerabilities and yanked crates that are not listed here still fail the
+# Security Audit gate. Keep this list in sync with that section and with the
+# `[advisories] ignore` list in deny.toml. Last revisited 2026-10-06.
+#
+# Removing an entry: when the crate leaves Cargo.lock (or upstream ships a fix
+# and we take it), delete the ID here and its row in docs/supply-chain.md.
+# cargo-deny reports a stale ignore as `advisory-not-detected`; to confirm by hand
+# that an ID no longer fires, run `cargo audit` from a directory without this
+# config: `cd /tmp && cargo audit -f <repo>/Cargo.lock`.
 
 [advisories]
-# RUSTSEC-2023-0071: Marvin Attack timing sidechannel in the `rsa` crate.
-# The `rsa` crate is a transitive dependency of `ssh-key` (used for OpenSSH
-# key format parsing). We only extract raw RSA key components and rebuild
-# them via OpenSSL — we never perform RSA encryption/decryption through
-# this crate, so the timing sidechannel does not apply.
-#
-# ---------------------------------------------------------------------------
-# Non-actionable TRANSITIVE advisories — conscious release sign-off (#3054).
-# Findings SUP-003 / SUP-004 / SUP-006. Every ID below is `unmaintained` or
-# `unsound` (NOT an exploitable vulnerability) on a crate pinned by upstream
-# (mostly the Tauri/GTK3 binding stack), so no app-side change can clear it.
-# These mirror the `[advisories] ignore` list in deny.toml so cargo-audit and
-# cargo-deny stay in agreement. Real vulnerabilities and yanked crates are NOT
-# listed here and still fail the gate. Revisit + remove per ID when upstream
-# ships a maintained/sound replacement — see #3054. Last revisited 2026-09-30.
-# ---------------------------------------------------------------------------
 ignore = [
+    # rsa (RUSTSEC-2023-0071, Marvin timing sidechannel): pulled by russh 0.61
+    # and ssh-key. termiHub is an SSH client only: the private key is used to
+    # sign the server-chosen session hash once per public-key login, and server
+    # host-key checks are public-key verifications (not affected). There is no
+    # RSA decryption path, and a server sees one signature per connection, far
+    # from the large timed sample the attack needs. No fixed rsa release exists.
     "RUSTSEC-2023-0071",
-    # -- unmaintained (no fix available; crate abandoned upstream) --
-    # proc-macro-error: unmaintained, via glib-macros 0.18 (Tauri GTK3 stack); no fix.
+    # proc-macro-error (RUSTSEC-2024-0370, unmaintained): a build-time proc-macro
+    # helper pulled by glib-macros 0.18 in Tauri's Linux GTK3 stack. It runs only
+    # at compile time on our own sources and ships no runtime code. Leaves the
+    # tree when Tauri/wry move off gtk-rs 0.18.
     "RUSTSEC-2024-0370",
-    # unic-* (next 5 IDs): unmaintained, via urlpattern 0.3 <- tauri-utils; no fix.
-    # unic-char-property.
-    "RUSTSEC-2025-0081",
-    # unic-char-range: unmaintained, via the unic-* unicode stack.
-    "RUSTSEC-2025-0075",
-    # unic-common: unmaintained, via the unic-* unicode stack.
-    "RUSTSEC-2025-0080",
-    # unic-ucd-ident: unmaintained, via the unic-* unicode stack.
-    "RUSTSEC-2025-0100",
-    # unic-ucd-version: unmaintained, via the unic-* unicode stack.
-    "RUSTSEC-2025-0098",
-    # -- unsound (no vulnerability path in our usage; no upstream fix) --
-    # glib: unsound VariantStrIter impls, glib 0.18 pinned by Tauri/wry GTK3; fix is 0.20+.
+    # glib (RUSTSEC-2024-0429, unsound VariantStrIter): glib 0.18 is pinned by
+    # Tauri/wry's Linux GTK3 stack; the fix is glib 0.20+. termiHub never calls
+    # the affected glib::VariantStrIter API, so the unsound path is not reached.
     "RUSTSEC-2024-0429",
 ]
