@@ -118,6 +118,10 @@ export function FileBrowserDndProvider({
   const cancelSignalsRef = useRef<CancelSignalRecorder | null>(null);
   if (!cancelSignalsRef.current) cancelSignalsRef.current = new CancelSignalRecorder();
   const pendingLoggedRef = useRef(false);
+  // Pointer moves dnd-kit saw while the press was still pending, and the
+  // displacement of the farthest of them from the press point: an abort then says whether the
+  // pointer moved at all (#4110: the Windows bridge drag never crossed 8px).
+  const pendingMovesRef = useRef({ moves: 0, maxX: 0, maxY: 0, maxDist: 0 });
 
   const setActiveDrag = useCallback((entries: FileEntry[] | null) => {
     draggingRef.current = entries;
@@ -203,9 +207,22 @@ export function FileBrowserDndProvider({
   }, [dragging]);
 
   const handleDragPending = useCallback((event: DragPendingEvent) => {
-    // Fired on the press and again on every move until activation: log once.
+    // Fired on the press (no offset) and again on every move until activation
+    // (with the offset from the press point): tally the moves, log once.
+    if (event.offset) {
+      const seen = pendingMovesRef.current;
+      seen.moves += 1;
+      const dist = Math.hypot(event.offset.x, event.offset.y);
+      if (dist >= seen.maxDist) {
+        seen.maxDist = dist;
+        // dnd-kit's offset is press-minus-pointer; log the pointer's displacement.
+        seen.maxX = -event.offset.x;
+        seen.maxY = -event.offset.y;
+      }
+    }
     if (pendingLoggedRef.current) return;
     pendingLoggedRef.current = true;
+    pendingMovesRef.current = { moves: 0, maxX: 0, maxY: 0, maxDist: 0 };
     logFileDrag(
       () =>
         `pending: id=${describeDndId(event.id)} at=(${Math.round(event.initialCoordinates.x)},` +
@@ -216,10 +233,13 @@ export function FileBrowserDndProvider({
   const handleDragAbort = useCallback((event: DragAbortEvent) => {
     // Released (or cancelled) before the activation distance was crossed.
     pendingLoggedRef.current = false;
+    const seen = pendingMovesRef.current;
+    pendingMovesRef.current = { moves: 0, maxX: 0, maxY: 0, maxDist: 0 };
     logFileDrag(
       () =>
         `abort before activation: id=${describeDndId(event.id)} ` +
-        `reason=${cancelSignalsRef.current?.takeReason() ?? "unknown"}`
+        `reason=${cancelSignalsRef.current?.takeReason() ?? "unknown"} ` +
+        `moves=${seen.moves} farthest=(${Math.round(seen.maxX)},${Math.round(seen.maxY)})`
     );
   }, []);
 
