@@ -337,6 +337,7 @@ The frontend is built on a shared **design system** (`src/components/ui/`) that 
 - **Primitives** — `Button`, `Input`, `Field`, `Select`, `Modal`, `Toggle`: thin, token-driven skins over installed libraries (Radix for `Modal`/`Select`, `@radix-ui/react-switch` for `Toggle`, `react-hook-form` + `zod` for forms). Dialogs and forms compose from these instead of hand-rolling CSS.
 - **Feedback** — a `Toast` hub (`src/components/ui/Toast/`, over `sonner`) plus an async `Button` lifecycle (idle → pending → success/error). Every mutating/async action gives immediate feedback; nothing resolves silently.
 - **Tokens** — all visual values come from `src/styles/variables.css` (colors, spacing, radii, shadows, control heights, z-index, transitions). No raw hex, per-component overlays, or ad-hoc scrollbars.
+  - **Spacing scale** — `--spacing-xxs` 2 · `xs` 4 · `xs-sm` 6 · `sm` 8 · `sm-md` 10 · `md` 12 · `lg` 16 · `xl` 24 · `2xl` 32 px. Component `padding`/`margin`/`gap` must use these tokens (enforced by `src/styles/tokenDiscipline.test.ts`); true geometry such as icon clearance or indent alignment goes in a named, commented component custom property (e.g. `--password-toggle-space`).
 
 The system is authoritative: its concept lives at [`docs/concepts/implemented/ui-modernization.html`](concepts/implemented/ui-modernization.html), the rules are in `.claude/CLAUDE.md` (UI / Design System), and the `ui-design` subagent (`.claude/agents/ui-design.md`) enforces them. New UI must compose from the primitives and use tokens only.
 
