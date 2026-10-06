@@ -112,6 +112,7 @@ Not started yet — realistic and planned for the near to medium term.
 | [macos-code-signing-notarization.html](backlog/macos-code-signing-notarization.html)                       | Developer-ID signing + notarization for the macOS build (only ad-hoc signing today)                                                                                                       |
 | [plugin-os-sandbox.html](backlog/plugin-os-sandbox.html)                                                   | Pre-v1.0 OS sandbox for native plugin backends (SEC-002, #3769): one sandboxed helper process per plugin proxying the frozen 1.x ABI over IPC; Seatbelt / landlock+seccomp / AppContainer |
 | [release-planning-and-dependency-management.html](backlog/release-planning-and-dependency-management.html) | Structured release cadence, Dependabot, hotfix branching                                                                                                                                  |
+| [vnc-clipboard-file-transfer.html](backlog/vnc-clipboard-file-transfer.html)                               | VNC file transfer over the connection's SSH-tunnel SFTP / agent side channel instead of an RFB extension (#3770)                                                                          |
 
 ---
 
