@@ -13,12 +13,16 @@ import { isOwnDragOut } from "@/utils/fileDragOut";
  *
  * The window's own native drag-out (#3457) is ignored, so a row dragged out and
  * released back over termiHub is not re-uploaded / copied into the browser.
+ *
+ * `dragPaths` holds the dragged OS paths while a drag is in progress (from the
+ * `enter` event), so a drop target can name what it would receive (#4192).
  */
 export function useOsFileDrop(
   containerRef: RefObject<HTMLElement | null>,
   onDrop: (paths: string[]) => void
-): { isDragOver: boolean } {
+): { isDragOver: boolean; dragPaths: string[] } {
   const [isDragOver, setIsDragOver] = useState(false);
+  const [dragPaths, setDragPaths] = useState<string[]>([]);
   const onDropRef = useRef(onDrop);
   onDropRef.current = onDrop;
 
@@ -41,7 +45,10 @@ export function useOsFileDrop(
         const payload = event.payload;
         // A row this window is dragging out to the OS (#3457) passing back over
         // termiHub is not an upload: never highlight it or re-import it here.
-        if (payload.type === "enter") ownDrag = isOwnDragOut(payload.paths);
+        if (payload.type === "enter") {
+          ownDrag = isOwnDragOut(payload.paths);
+          setDragPaths(ownDrag ? [] : payload.paths);
+        }
         if (payload.type === "drop" && isOwnDragOut(payload.paths)) ownDrag = true;
         if (ownDrag) {
           setIsDragOver(false);
@@ -55,6 +62,7 @@ export function useOsFileDrop(
           const over = isOver(payload.position);
           setIsDragOver((prev) => (prev === over ? prev : over));
         } else if (payload.type === "drop") {
+          setDragPaths([]);
           if (isOver(payload.position)) {
             setIsDragOver(false);
             onDropRef.current(payload.paths);
@@ -63,6 +71,7 @@ export function useOsFileDrop(
           }
         } else {
           setIsDragOver(false);
+          setDragPaths([]);
         }
       })
       .then((fn) => {
@@ -72,8 +81,9 @@ export function useOsFileDrop(
     return () => {
       if (unlisten) unlisten();
       setIsDragOver(false);
+      setDragPaths([]);
     };
   }, [containerRef]);
 
-  return { isDragOver };
+  return { isDragOver, dragPaths };
 }

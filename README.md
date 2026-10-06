@@ -256,6 +256,32 @@ A connection you create **on a remote agent** runs on the agent's host, not on y
 - **Why no plugin types on the agent:** the agent does not load plugins.
 - **Survives an agent restart:** most agent sessions run in a separate session process on the server, so they keep running if the agent itself restarts. Telnet and FTP sessions run inside the agent and end when it restarts.
 
+### VNC File Transfer
+
+VNC itself has no portable file transfer (the RFB clipboard's file format was never defined, and
+the vendor extensions only work between one vendor's own viewer and server). termiHub instead
+moves files over the side channel the VNC connection already has:
+
+- **SSH tunnel** — when the connection uses its **SSH Tunnel** group, files travel over SFTP on
+  the tunnel's own SSH session. There is no second login, and the host key was already checked
+  when the tunnel connected. Files land on the **SSH host**.
+- **Agent** — when the connection is hosted under a remote agent, files go through the agent's
+  file service and land on the **agent host**.
+- **Direct connection** — a VNC connection with neither has no file transfer.
+
+Turn it on per connection with **File Transfer → Allow file transfer over the side channel**
+(off by default) and optionally set a **Default folder** (empty means `~/Desktop` when it
+exists, else your home folder). View-only sessions never transfer files.
+
+In a session, drag files or folders from your desktop onto the VNC screen: the overlay names the
+exact folder and host the files go to before you drop. Or use the toolbar's **Files** button
+(**Upload files…**, or **Upload to folder…** to pick another folder for this session). Uploads
+appear in the Transfers queue with progress and can be cancelled; closing the session cancels
+them. Folders upload recursively, symbolic links are skipped, and a name clash keeps both files
+(`notes (1).md`) — nothing is overwritten. If the SSH host is not the desktop host (for example a
+bastion), every label names the SSH host, because that is where the files go. When the SSH server
+refuses SFTP, the Files button shows a warning dot and VNC keeps running.
+
 ### Terminal Tabs
 
 Open terminals appear as tabs with type-specific icons and optional colored borders. Actions:

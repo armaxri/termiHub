@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
-import { RemoteDesktopToolbar } from "./RemoteDesktopToolbar";
+import { RemoteDesktopToolbar, type FilesButtonState } from "./RemoteDesktopToolbar";
 import type { MonitorRect, ScaleMode } from "@/types/remoteDesktop";
 
 let container: HTMLDivElement;
@@ -30,6 +30,9 @@ function render(
     monitors: MonitorRect[];
     viewport: number | null;
     onCycleViewport: () => void;
+    filesButton: FilesButtonState;
+    filesTitle: string;
+    onToggleFiles: () => void;
   }> = {},
   h = handlers()
 ) {
@@ -45,6 +48,9 @@ function render(
         monitors={overrides.monitors}
         viewport={overrides.viewport}
         onCycleViewport={overrides.onCycleViewport}
+        filesButton={overrides.filesButton}
+        filesTitle={overrides.filesTitle}
+        onToggleFiles={overrides.onToggleFiles}
         {...h}
       />
     );
@@ -142,6 +148,47 @@ describe("RemoteDesktopToolbar", () => {
       const btn = query("remote-desktop-monitor") as HTMLButtonElement;
       expect(btn.textContent).toContain("2/2");
       expect(btn.title).toBe("Showing: Monitor 2 (1280×1024)");
+    });
+  });
+
+  describe("Files button (#4192)", () => {
+    it("is hidden by default and in view-only sessions", () => {
+      render({ onToggleFiles: vi.fn() });
+      expect(query("remote-desktop-files-btn")).toBeNull();
+      render({ filesButton: "hidden", onToggleFiles: vi.fn() });
+      expect(query("remote-desktop-files-btn")).toBeNull();
+    });
+
+    it("sits after Clipboard and toggles the popover when active", () => {
+      const onToggleFiles = vi.fn();
+      render({ filesButton: "active", onToggleFiles });
+      const btn = query("remote-desktop-files-btn") as HTMLButtonElement;
+      const clipboard = query("remote-desktop-clipboard-btn") as HTMLElement;
+      expect(
+        clipboard.compareDocumentPosition(btn) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
+      expect(btn.disabled).toBe(false);
+      act(() => btn.click());
+      expect(onToggleFiles).toHaveBeenCalledOnce();
+      expect(query("remote-desktop-files-warning")).toBeNull();
+    });
+
+    it("is disabled with the reason as tooltip when there is no route", () => {
+      const onToggleFiles = vi.fn();
+      render({ filesButton: "disabled", filesTitle: "Enable the SSH Tunnel", onToggleFiles });
+      const btn = query("remote-desktop-files-btn") as HTMLButtonElement;
+      expect(btn.disabled).toBe(true);
+      expect(btn.closest(".rd-toolbar__files")?.getAttribute("title")).toBe(
+        "Enable the SSH Tunnel"
+      );
+      act(() => btn.click());
+      expect(onToggleFiles).not.toHaveBeenCalled();
+    });
+
+    it("carries a warning dot when the route's host refused", () => {
+      render({ filesButton: "warning", filesTitle: "SFTP is not enabled", onToggleFiles: vi.fn() });
+      expect(query("remote-desktop-files-btn")?.getAttribute("data-state")).toBe("warning");
+      expect(query("remote-desktop-files-warning")).not.toBeNull();
     });
   });
 });

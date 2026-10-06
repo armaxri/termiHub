@@ -516,6 +516,25 @@ impl GraphicalSessionManager {
         session_id: &str,
         agents: Option<Arc<dyn AgentFiles>>,
     ) -> Result<RemoteDesktopFileChannel, TerminalError> {
+        self.file_channel_with_session(session_id, agents)
+            .await
+            .map(|(channel, _)| channel)
+    }
+
+    /// [`file_channel`](Self::file_channel) plus the tunnel's authenticated SSH
+    /// session (when the backend has one), for opening the SFTP channel an
+    /// upload runs on (#4192).
+    pub(crate) async fn file_channel_with_session(
+        &self,
+        session_id: &str,
+        agents: Option<Arc<dyn AgentFiles>>,
+    ) -> Result<
+        (
+            RemoteDesktopFileChannel,
+            Option<Arc<termihub_core::backends::ssh::handler::SshSession>>,
+        ),
+        TerminalError,
+    > {
         let (ctx, connection) = {
             let sessions = self.sessions.lock().await;
             let session = sessions
@@ -532,7 +551,8 @@ impl GraphicalSessionManager {
                 })
                 .unwrap_or_default()
         };
-        Ok(resolve_file_channel(&ctx, backend, agents).await)
+        let ssh = backend.session.clone();
+        Ok((resolve_file_channel(&ctx, backend, agents).await, ssh))
     }
 
     /// Deliver the user's verdict for a pending certificate prompt (#1767).

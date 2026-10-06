@@ -24,6 +24,18 @@ vi.mock("@/hooks/useRemoteDesktopSession", () => ({
   useRemoteDesktopSession: () => hoisted.session,
 }));
 
+// File transfer (#4192) is covered by RemoteDesktopTab.files.test.tsx; a static
+// route here keeps this file's async updates (and console budget) unchanged.
+vi.mock("@/hooks/useRemoteDesktopFiles", () => ({
+  useRemoteDesktopFiles: () => ({
+    files: { status: "unavailable", reason: "noRoute" },
+    destDir: null,
+    refresh: vi.fn(),
+    uploadPaths: vi.fn(),
+    pickAndUpload: vi.fn(),
+  }),
+}));
+
 vi.mock("./RemoteDesktopCanvas", () => ({
   RemoteDesktopCanvas: (props: { viewOnly: boolean; onReleaseAll?: () => void }) => {
     hoisted.canvasProps.push({ viewOnly: props.viewOnly, onReleaseAll: props.onReleaseAll });

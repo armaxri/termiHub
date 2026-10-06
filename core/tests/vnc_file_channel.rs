@@ -130,3 +130,74 @@ async fn vnc_ft_02_opted_out_and_view_only_sessions_offer_no_channel() {
         vnc.disconnect().await.expect("disconnect");
     }
 }
+
+// ── VNC-FT-03: a queued upload over the tunnel's SFTP channel (#4192) ──
+
+#[tokio::test]
+async fn vnc_ft_03_queued_upload_runs_over_the_tunnel_sftp_channel() {
+    use std::sync::Arc;
+    use termihub_core::files::transfer::sftp::{run_sftp_transfer, DEFAULT_RESUME_MODE};
+    use termihub_core::files::transfer::{
+        ProgressSink, TransferDirection, TransferProgress, TransferRegistry, TransferStateTag,
+    };
+
+    require_docker!(port_ssh_password());
+    require_docker!(port_vnc());
+
+    let mut vnc = Vnc::new();
+    vnc.connect(tunnelled_settings(true, false))
+        .await
+        .expect("VNC-FT-03: VNC through the SSH tunnel should connect");
+    let graphical = vnc.graphical().expect("graphical");
+    let session = graphical
+        .file_side_channel_ssh_session()
+        .expect("VNC-FT-03: the tunnel's SSH session is reachable");
+    let sftp = Arc::new(
+        SftpFileBrowser::from_session(session)
+            .await
+            .expect("VNC-FT-03: SFTP opens on the tunnel's own session"),
+    );
+
+    let local_dir = tempfile::tempdir().expect("tempdir");
+    let local = local_dir.path().join("drop.bin");
+    let payload: Vec<u8> = (0..(300 * 1024)).map(|i| (i % 253) as u8).collect();
+    std::fs::write(&local, &payload).expect("write local file");
+    let remote = format!("/home/testuser/vnc-ft-03-{}.bin", std::process::id());
+
+    let registry = TransferRegistry::new();
+    let handle = registry.enqueue(
+        "vnc-ft-03",
+        "rd-session",
+        TransferDirection::Upload,
+        "drop.bin",
+        &remote,
+        0,
+    );
+    let sink: ProgressSink = Arc::new(|_: &TransferProgress| {});
+    run_sftp_transfer(
+        sftp.clone(),
+        TransferDirection::Upload,
+        remote.clone(),
+        local.to_string_lossy().into_owned(),
+        handle,
+        registry.clone(),
+        sink,
+        DEFAULT_RESUME_MODE,
+        0,
+    )
+    .await;
+
+    let state = registry
+        .list(Some("rd-session"))
+        .into_iter()
+        .find(|s| s.transfer_id == "vnc-ft-03")
+        .map(|s| s.state);
+    assert_eq!(state, Some(TransferStateTag::Completed));
+    assert_eq!(
+        sftp.read_file(&remote).await.expect("read back"),
+        payload,
+        "VNC-FT-03: the bytes land on the SSH host unchanged"
+    );
+    sftp.delete(&remote).await.expect("cleanup");
+    vnc.disconnect().await.expect("disconnect");
+}

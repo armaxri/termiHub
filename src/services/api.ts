@@ -11,6 +11,8 @@ import {
   LineEnding,
 } from "@/types/terminal";
 import { XServerConsentDecision, XServerStatusReport } from "@/types/xserver";
+import type { RemoteDesktopFileChannel } from "@/types/generated/RemoteDesktopFileChannel";
+import type { RemoteDesktopUploadStarted } from "@/types/generated/RemoteDesktopUploadStarted";
 import type {
   ClipboardImageInfo,
   ClipboardImageStatus,
@@ -931,6 +933,37 @@ export async function sshKeyboardInteractiveRespond(
   responses: string[] | null
 ): Promise<boolean> {
   return await invoke<boolean>("ssh_keyboard_interactive_respond", { promptId, responses });
+}
+
+/**
+ * Resolve a graphical session's file-transfer side channel (#4191): SFTP on the
+ * VNC SSH tunnel or the hosting agent's file service, the file host and the
+ * default folder — or why there is none. Re-query after the session becomes
+ * Active again (a reconnect builds a new tunnel).
+ */
+export async function remoteDesktopFileChannel(
+  sessionId: SessionId
+): Promise<RemoteDesktopFileChannel> {
+  return await invoke<RemoteDesktopFileChannel>("remote_desktop_file_channel", { sessionId });
+}
+
+/**
+ * Upload local files and folders to a graphical session's side channel
+ * (#4192): one Transfers-queue upload per file, keyed by the graphical session
+ * id, into `dest` (default: the session's default folder; a leading `~` is the
+ * account's home). Name clashes keep both. Resolves as soon as the uploads are
+ * queued; progress arrives as `transfer-progress` events.
+ */
+export async function remoteDesktopUpload(
+  sessionId: SessionId,
+  localPaths: string[],
+  dest?: string
+): Promise<RemoteDesktopUploadStarted> {
+  return await invoke<RemoteDesktopUploadStarted>("remote_desktop_upload", {
+    sessionId,
+    localPaths,
+    dest: dest ?? null,
+  });
 }
 
 /** Disconnect a graphical remote-desktop session. */

@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileDown, X } from "lucide-react";
 import { toast } from "sonner";
-import { Button, Spinner, ContentOverlay } from "@/components/ui";
+import { Button, Spinner, ContentOverlay, toast as uiToast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { activeTreeTabs } from "@/store/layoutSelectors";
 import { useRemoteDesktopSession } from "@/hooks/useRemoteDesktopSession";
 import { useWindowEviction } from "@/hooks/useWindowEviction";
+import { useOsFileDrop } from "@/hooks/useOsFileDrop";
+import {
+  useRemoteDesktopFiles,
+  type RemoteDesktopFilesStatus,
+} from "@/hooks/useRemoteDesktopFiles";
 import { TerminalWindowEvictedOverlay } from "@/components/Terminal/TerminalEvictedOverlay";
 import { remoteDesktopGetClipboard, remoteDesktopMonitorLayout } from "@/services/api";
 import { fireAndForget } from "@/utils/frontendLog";
@@ -13,12 +18,34 @@ import { readConfigString } from "@/utils/connectionConfigFields";
 import type { MonitorRect, RemoteClipboardFile, ScaleMode } from "@/types/remoteDesktop";
 import { SCALE_MODE_LABELS, effectiveScaleMode, scaleModesFor } from "@/types/remoteDesktop";
 import { RemoteDesktopCanvas } from "./RemoteDesktopCanvas";
-import { RemoteDesktopToolbar } from "./RemoteDesktopToolbar";
+import { RemoteDesktopToolbar, type FilesButtonState } from "./RemoteDesktopToolbar";
+import { RemoteDesktopDropOverlay } from "./RemoteDesktopDropOverlay";
+import { RemoteDesktopFiles } from "./RemoteDesktopFiles";
+import { dropSubject, unavailableCopy } from "./fileTransfer";
 import { RemoteDesktopOverlay } from "./RemoteDesktopOverlay";
 import { RemoteDesktopCertPrompt } from "./RemoteDesktopCertPrompt";
 import { RemoteDesktopClipboardImage } from "./RemoteDesktopClipboardImage";
 import { monitorLabel, viewportsFor } from "./monitorLayout";
 import "./RemoteDesktopTab.css";
+
+/** The toolbar Files button's state and tooltip for a channel state (#4192). */
+function filesButtonFor(
+  files: RemoteDesktopFilesStatus,
+  viewOnly: boolean
+): { state: FilesButtonState; title: string } {
+  if (viewOnly || (files.status === "unavailable" && files.reason === "viewOnly")) {
+    return { state: "hidden", title: "Files" };
+  }
+  switch (files.status) {
+    case "unavailable":
+      return { state: "disabled", title: unavailableCopy(files.reason).hint };
+    case "degraded":
+    case "error":
+      return { state: "warning", title: files.message };
+    default:
+      return { state: "active", title: "Files" };
+  }
+}
 
 interface RemoteDesktopTabProps {
   tabId: string;
@@ -36,6 +63,7 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const [resolution, setResolution] = useState<{ width: number; height: number } | null>(null);
   const [clipboardOpen, setClipboardOpen] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
   const [clipboardDraft, setClipboardDraft] = useState("");
   // Files the remote copied to its clipboard, surfaced for a local paste (#1804).
   // Empty where the host has no delayed-render binding (non-macOS today).
@@ -71,6 +99,35 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
   // (lifecycle state events are still broadcast to every window).
   const windowEviction = useWindowEviction(tabId);
   const evicted = windowEviction !== null && session.sessionId !== null;
+
+  // File transfer over the connection's side channel (#4192): OS files
+  // dragged over the surface show the drop overlay; a drop uploads only when
+  // the route is ready (the backend enforces the same rules).
+  const remoteFiles = useRemoteDesktopFiles(session.sessionId, session.state);
+  const sessionLive = session.state === "active" || session.state === "resizing";
+  const handleOsDrop = useCallback(
+    (paths: string[]) => {
+      if (!sessionLive || evicted || session.viewOnly) return;
+      const { files } = remoteFiles;
+      if (files.status === "ready") {
+        void remoteFiles.uploadPaths(paths);
+        return;
+      }
+      const why =
+        files.status === "unavailable"
+          ? unavailableCopy(files.reason)
+          : files.status === "resolving"
+            ? {
+                title: "File transfer isn't ready yet",
+                hint: "Checking the file route — try again.",
+              }
+            : { title: "File transfer isn't available right now", hint: files.message };
+      uiToast.info(why.title, { description: why.hint });
+    },
+    [sessionLive, evicted, session.viewOnly, remoteFiles]
+  );
+  const { isDragOver, dragPaths } = useOsFileDrop(surfaceRef, handleOsDrop);
+  const filesButton = filesButtonFor(remoteFiles.files, session.viewOnly);
 
   const setRemoteDesktopResolution = useAppStore((s) => s.setRemoteDesktopResolution);
   const clearRemoteDesktopResolution = useAppStore((s) => s.clearRemoteDesktopResolution);
@@ -170,6 +227,14 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
     });
   }, [session]);
 
+  const handleToggleFiles = useCallback(() => {
+    setFilesOpen((open) => {
+      // Opening re-resolves the route, so a degraded one can recover.
+      if (!open) remoteFiles.refresh();
+      return !open;
+    });
+  }, [remoteFiles]);
+
   const handleCopyFilesToHost = useCallback(async () => {
     const count = await session.bindClipboardFiles();
     if (count > 0) {
@@ -248,6 +313,10 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
           monitors={monitors}
           viewport={shownIndex}
           onCycleViewport={handleCycleViewport}
+          filesButton={filesButton.state}
+          filesTitle={filesButton.title}
+          filesOpen={filesOpen}
+          onToggleFiles={handleToggleFiles}
         />
       )}
 
@@ -261,6 +330,31 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
           onReconnect={session.reconnect}
         />
       )}
+
+      {!evicted && sessionLive && isDragOver && (
+        <RemoteDesktopDropOverlay
+          files={
+            session.viewOnly ? { status: "unavailable", reason: "viewOnly" } : remoteFiles.files
+          }
+          subject={dropSubject(dragPaths)}
+          destDir={remoteFiles.destDir}
+        />
+      )}
+
+      {!evicted &&
+        sessionLive &&
+        filesOpen &&
+        session.sessionId &&
+        filesButton.state !== "hidden" && (
+          <RemoteDesktopFiles
+            sessionId={session.sessionId}
+            files={remoteFiles.files}
+            destDir={remoteFiles.destDir}
+            onUpload={remoteFiles.pickAndUpload}
+            onRetry={remoteFiles.refresh}
+            onClose={() => setFilesOpen(false)}
+          />
+        )}
 
       {!evicted && (
         <RemoteDesktopCertPrompt prompt={session.certPrompt} onDecision={session.respondCert} />
