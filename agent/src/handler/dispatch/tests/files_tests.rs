@@ -21,8 +21,12 @@ struct FakeBrowser {
     files: StdMutex<HashMap<String, Vec<u8>>>,
     /// Whether it offers ranged access (#3587).
     ranges: bool,
-    /// Every ranged read and write reaching the backend, as `(op, offset)`.
+    /// Every ranged read and write reaching the backend, as `(op, offset)`;
+    /// a probe is recorded as `("probe", 0)`.
     range_calls: StdMutex<Vec<(&'static str, u64)>>,
+    /// Offers ranged access up front but learns on connect that it cannot
+    /// serve slices, like FTP without `REST STREAM` (#4146).
+    learns_unsupported: bool,
 }
 
 impl FakeBrowser {
@@ -40,7 +44,15 @@ impl FakeBrowser {
             files: StdMutex::new(HashMap::new()),
             ranges,
             range_calls: StdMutex::new(Vec::new()),
+            learns_unsupported: false,
         }
+    }
+
+    fn learning_unsupported(host: &str) -> Arc<Self> {
+        Arc::new(Self {
+            learns_unsupported: true,
+            ..Self::with_ranges(host, true)
+        })
     }
 
     fn entry(&self, path: &str, size: u64) -> FileEntry {
@@ -134,6 +146,14 @@ impl FileBrowser for FakeBrowser {
 
 #[async_trait::async_trait]
 impl RangedFileAccess for FakeBrowser {
+    async fn probe(&self) -> Result<(), FileError> {
+        self.range_calls.lock().unwrap().push(("probe", 0));
+        if self.learns_unsupported {
+            Err(FileError::NotSupported)
+        } else {
+            Ok(())
+        }
+    }
     async fn read_range(&self, path: &str, offset: u64, len: u32) -> Result<Vec<u8>, FileError> {
         self.range_calls.lock().unwrap().push(("read", offset));
         let files = self.files.lock().unwrap();
@@ -603,7 +623,7 @@ async fn a_misplaced_ranged_write_is_refused() {
 }
 
 /// A zero-length read is the capability probe: it succeeds on a ranged
-/// backend without touching it (the path need not even exist).
+/// backend without reading anything (the path need not even exist).
 #[tokio::test]
 async fn a_zero_length_read_probes_without_io() {
     let sessions = FilesSessionManager::new();
@@ -619,7 +639,29 @@ async fn a_zero_length_read_probes_without_io() {
     )
     .await;
     assert_eq!(r["result"]["data"], "", "{r}");
-    assert!(wsl.range_calls.lock().unwrap().is_empty());
+    assert_eq!(*wsl.range_calls.lock().unwrap(), [("probe", 0)], "no slice read");
+}
+
+/// The probe asks the live backend (#4146): one that offered slices up front
+/// but learns on connect that it cannot serve them (FTP without
+/// `REST STREAM`) answers `-32013`, so the desktop falls back to whole-file
+/// transfers before the first slice.
+#[tokio::test]
+async fn a_backend_that_learns_it_cannot_serve_slices_fails_the_probe() {
+    let sessions = FilesSessionManager::new();
+    let ftp = FakeBrowser::learning_unsupported("ftp");
+    sessions.script("ftp-session", Ok(ftp.clone()));
+    let handler = handler_with(sessions).await;
+
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_FILES_READ_RANGE,
+        json!({"connection_id": "ftp-session", "path": "", "offset": 0, "length": 0}),
+        2,
+    )
+    .await;
+    assert_eq!(r["error"]["code"], errors::FILE_BROWSING_NOT_SUPPORTED, "{r}");
+    assert_eq!(*ftp.range_calls.lock().unwrap(), [("probe", 0)]);
 }
 
 /// A backend without ranged access answers `-32013` for the probe and for

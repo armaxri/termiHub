@@ -456,6 +456,14 @@ impl RangedFileAccess for FtpFileBrowser {
         result
     }
 
+    /// Connect if needed and learn whether the server restarts transfers at
+    /// an offset (#4146): a persistent agent session's daemon forwards the
+    /// desktop's zero-length probe here, so a server without `REST STREAM`
+    /// is refused before the first slice rather than on it.
+    async fn probe(&self) -> Result<(), FileError> {
+        self.ensure_ranged().await
+    }
+
     async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError> {
         self.ensure_ranged().await?;
         let result = self
@@ -813,7 +821,10 @@ mod tests {
             server.put("/f.bin", b"0123456789", "20240101000000");
             // Unknown before the first connection, so offered...
             let ranged = browser.ranged().expect("offered while unknown");
-            // ...but the first call learns the server and refuses.
+            // ...but the probe (#4146) connects, learns the server and refuses,
+            // so a persistent agent session falls back before its first slice.
+            assert!(matches!(ranged.probe().await, Err(FileError::NotSupported)));
+            // Real slices are refused too.
             assert!(matches!(
                 ranged.read_range("/f.bin", 2, 3).await,
                 Err(FileError::NotSupported)
@@ -826,6 +837,16 @@ mod tests {
             assert_eq!(server.rest_commands(), 0, "never guessed with REST");
             assert!(server.transfers().is_empty());
         }
+    }
+
+    #[tokio::test]
+    async fn the_probe_confirms_a_server_with_rest_stream() {
+        let (server, browser) = mock(MockFtpOptions::default()).await;
+        let ranged = browser.ranged().expect("offered while unknown");
+        ranged.probe().await.expect("binary + REST STREAM serves slices");
+        assert!(browser.ranged().is_some(), "still offered once known");
+        assert_eq!(server.rest_commands(), 0, "the probe moves no data");
+        assert!(server.transfers().is_empty());
     }
 
     #[tokio::test]
