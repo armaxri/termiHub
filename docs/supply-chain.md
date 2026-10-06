@@ -116,7 +116,7 @@ crate pinned by an upstream dependency, with no fix we can take today, and the m
 accepted each as a documented risk on 2026-10-06 (#3054, #3734) instead of waiting on upstream.
 The ignore lists carry the same rationale next to each ID.
 
-**Advisories ignored in the root workspace**
+#### Advisories ignored in the root workspace
 
 | Advisory            | Crate (path)                                          | Kind          | Why it is not exploitable in termiHub                                                                                                                                                                                                                                                     | Leaves the tree when                    |
 | ------------------- | ----------------------------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
@@ -134,7 +134,7 @@ Cleared on 2026-10-06: the five `unic-*` advisories (RUSTSEC-2025-0075, -0080, -
 to 0.6, which uses `icu_properties`. The `serial`, `rustls-pemfile` and `git2` ignores went
 earlier, with #3974, #3975 and #3973.
 
-**Pre-release crates (#3734)**
+#### Pre-release crates (#3734)
 
 russh 0.61 (SSH) and the rdp-sidecar IronRDP/picky stack are built on the RustCrypto 0.7/0.10
 line and the Dalek 3/5 line, which upstream has only published as release candidates (`-rc.N`,
@@ -151,7 +151,7 @@ because:
 `bollard-stubs` is also on the allowlist, but it is not a risk: it uses the Docker Engine API
 version as a permanent pre-release tag (#3735).
 
-**How entries leave**
+#### How entries leave
 
 Removal is enforced, so this list cannot outlive the risk it describes:
 
