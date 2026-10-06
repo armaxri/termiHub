@@ -429,6 +429,22 @@ jobs:
           ./scripts/internal/verify-conpty-bundle.ps1 -Dir "target/$env:RUST_TARGET/release"
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      # Release builds link the Visual C++ runtime statically (#4172), so users
+      # install termiHub without the VC++ redistributable. Fail the build if any
+      # .exe/.dll in the installer imports VCRUNTIME*/MSVCP*.dll after all (a
+      # toolchain or dependency change, or a build outside the release profile).
+      - name: Verify no Visual C++ runtime dependency in the Windows bundle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
+        run: |
+          $bundle = "target/$env:RUST_TARGET/release/bundle"
+          $msi = Get-ChildItem "$bundle/msi" -Filter *.msi | Select-Object -First 1
+          if (-not $msi) { Write-Output "::error::no MSI built"; exit 1 }
+          ./scripts/internal/verify-no-vcruntime.ps1 -Msi $msi.FullName
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       # Never ship a build with the test bridge compiled in (SEC-005): it carries
       # test-only commands such as the native-dialog fs grant (#4122). The release
       # build above passes no --features, so this guards a future workflow edit.
