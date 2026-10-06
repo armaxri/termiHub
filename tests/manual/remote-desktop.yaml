@@ -175,3 +175,24 @@ tests:
       - "Files paste the same way on Wayland"
     verification: manual
     tags: [os-native]
+
+  - id: MT-RD-10
+    release_gate: true
+    manual_reason: "a real OS drag-and-drop from Finder/Explorer cannot be synthesised by the harness"
+    name: "Drop files on a tunnelled VNC session to upload them"
+    pr: 4206
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create a VNC connection to a TigerVNC host with the SSH Tunnel and File Transfer enabled; connect"
+      - "Drag two files and a folder from the OS file manager over the VNC screen"
+      - "Drop them; open the toolbar Files popover"
+      - "Drop one of the files again"
+    expected:
+      - "The overlay names the destination folder (~/Desktop) and the SSH host before the drop"
+      - "Uploads appear in the Transfers queue and the popover; a toast reports the result"
+      - "The files and the folder tree land in ~/Desktop on the SSH host"
+      - "The second drop keeps both files (name (1).ext)"
+    verification: manual
+    tags: [os-native]
