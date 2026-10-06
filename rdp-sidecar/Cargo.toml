@@ -147,22 +147,41 @@ symphonia-codec-adpcm = { version = "0.5", default-features = false }
 # Read the host OS clipboard's native file list to bridge it to CLIPRDR (#1779):
 # the sidecar runs on the host, so it can read what the user copied in their file
 # manager and serve those real files to the remote (`host_clipboard.rs`).
-# `clipboard-files` reads `NSPasteboard` file URLs on macOS.
+# On macOS `host_clipboard.rs` asks `NSPasteboard` for file URLs directly through
+# the objc2 bindings — the same objc2 family the desktop app already uses for its
+# own pasteboard code (src-tauri `macos_clipboard.rs` / `macos_services.rs`).
 #
-# Deliberately gated to **macOS only** for now: the crate's Linux path links
-# `gtk` and its Windows path links `clipboard-win`, and pulling either into the
-# Linux/Windows sidecar builds before those platform readers are wired
-# (sequenced follow-ups) would be pure cost. This lives in the workspace-EXCLUDED
-# sidecar graph, so it adds zero dependency-conflict risk to the main app (#1747).
+# This replaced the `clipboard-files` crate (#3054): although it was only ever
+# compiled on macOS, its Linux target table named `gtk 0.18`, which dragged the
+# unmaintained GTK3 stack (`gtk`/`glib`/`proc-macro-error`, RUSTSEC-2024-0429 /
+# RUSTSEC-2024-0370) into this crate's target-independent Cargo.lock and onto the
+# cargo-audit / cargo-deny sign-off list.
+#
+# Gated to **macOS only**: it links AppKit and must never enter the
+# Linux/Windows sidecar graph. This lives in the workspace-EXCLUDED sidecar
+# graph, so it adds zero dependency-conflict risk to the main app (#1747).
 [target.'cfg(target_os = "macos")'.dependencies]
-clipboard-files = "0.1.2"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSArray",
+    "NSDictionary",
+    "NSEnumerator",
+    "NSObject",
+    "NSString",
+    "NSURL",
+    "NSValue",
+] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSPasteboard",
+] }
 
 # Read the Windows clipboard's `CF_HDROP` file list (#1791) — the Windows half of
 # the macOS reader above. `clipboard-win` hands us the raw `CF_HDROP` bytes via
 # its `raw` API and `host_clipboard.rs` parses the `DROPFILES` structure itself,
 # so the decode stays unit-testable off Windows (a live Win32 clipboard cannot be
-# read in headless CI). It is already a transitive dependency of `clipboard-files`
-# (same 4.5 line), so naming it directly adds no new crate to the lock.
+# read in headless CI).
 #
 # Gated to **Windows only**: it links Win32 clipboard APIs and must never enter
 # the macOS/Linux sidecar build graph. This lives in the workspace-EXCLUDED
@@ -176,7 +195,7 @@ clipboard-win = "4.5"
 # unit-testable off Linux (a live X11/Wayland clipboard cannot be read in headless
 # CI).
 #
-# Chosen over the `gtk`-based `clipboard-files` Linux path deliberately: GTK
+# Chosen over a `gtk`-based reader (such as `clipboard-files`) deliberately: GTK
 # clipboard reads require the process main thread and a running GTK main loop,
 # which a headless sidecar called from a tokio worker cannot promise. These two
 # are window-less, thread-agnostic blocking clients and, crucially, add **no
