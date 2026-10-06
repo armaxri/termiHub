@@ -4,8 +4,8 @@
 //! call the opener plugin's `openPath` straight from the webview, which needs the
 //! `opener:allow-open-path` capability. That permission opens **any** path with
 //! its default handler, so a compromised webview could launch an executable,
-//! a script or an app bundle. The capability is gone; the webview reaches only
-//! [`local_open_folder`](crate::commands::files::local_open_folder), which opens
+//! a script or an app bundle. The capability is gone; the webview reaches only the
+//! `local_open_folder` command (`crate::commands::files`), which opens
 //! nothing but an existing local **directory**.
 //!
 //! One catch: some directories are not opened as folders. A macOS bundle such as
