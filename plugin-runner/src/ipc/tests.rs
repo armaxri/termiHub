@@ -44,6 +44,7 @@ fn sample_messages() -> Vec<Message> {
             config_json: "{}".into(),
             settings_json: "{\"a\":1}".into(),
             data_dir: String::new(),
+            connect_deadline_ms: 40_000,
         }),
         Message::SessionCreated(SessionRef { session_id: 7 }),
         Message::SessionFailed(SessionFailed {
@@ -93,6 +94,104 @@ fn sample_messages() -> Vec<Message> {
         Message::Ping(Heartbeat { nonce: 9 }),
         Message::Pong(Heartbeat { nonce: 9 }),
         Message::Shutdown,
+        Message::BridgeRequest(BridgeRequest {
+            request_id: 1,
+            session_id: 7,
+            op: BridgeOp::OpenConnection {
+                host: "127.0.0.1".into(),
+                port: 502,
+            },
+        }),
+        Message::BridgeRequest(BridgeRequest {
+            request_id: 2,
+            session_id: 7,
+            op: BridgeOp::ReadFile {
+                path: "/p/data/a.txt".into(),
+                offset: 512,
+            },
+        }),
+        Message::BridgeRequest(BridgeRequest {
+            request_id: 3,
+            session_id: 7,
+            op: BridgeOp::WriteFile {
+                path: "/p/data/a.txt".into(),
+                data: vec![0, 1, 2, 255],
+                mode: 1,
+            },
+        }),
+        Message::BridgeRequest(BridgeRequest {
+            request_id: 4,
+            session_id: 7,
+            op: BridgeOp::Stat { path: "/p".into() },
+        }),
+        Message::BridgeRequest(BridgeRequest {
+            request_id: 5,
+            session_id: 7,
+            op: BridgeOp::ListDir { path: "/p".into() },
+        }),
+        Message::BridgeReply(BridgeReply {
+            request_id: 1,
+            result: BridgeResult::Connection {
+                conn_id: 9,
+                transport: StreamTransport::HandlePassed,
+            },
+        }),
+        Message::BridgeReply(BridgeReply {
+            request_id: 1,
+            result: BridgeResult::Connection {
+                conn_id: 10,
+                transport: StreamTransport::Proxy,
+            },
+        }),
+        Message::BridgeReply(BridgeReply {
+            request_id: 2,
+            result: BridgeResult::Data {
+                data: b"chunk".to_vec(),
+                eof: true,
+            },
+        }),
+        Message::BridgeReply(BridgeReply {
+            request_id: 3,
+            result: BridgeResult::Written,
+        }),
+        Message::BridgeReply(BridgeReply {
+            request_id: 4,
+            result: BridgeResult::Metadata {
+                exists: true,
+                is_dir: true,
+                len: 0,
+            },
+        }),
+        Message::BridgeReply(BridgeReply {
+            request_id: 5,
+            result: BridgeResult::Entries {
+                names: vec!["a".into(), "b\nc".into()],
+            },
+        }),
+        Message::BridgeReply(BridgeReply {
+            request_id: 6,
+            result: BridgeResult::Status { status: 7 },
+        }),
+        Message::BridgeRelease(ConnRef { conn_id: 9 }),
+        Message::StreamData(StreamChunk {
+            conn_id: 10,
+            data: b"from the socket".to_vec(),
+        }),
+        Message::StreamClosed(ConnRef { conn_id: 10 }),
+        Message::StreamAck(StreamAck {
+            conn_id: 10,
+            bytes: 15,
+            failed: false,
+        }),
+        Message::StreamWrite(StreamChunk {
+            conn_id: 10,
+            data: Vec::new(),
+        }),
+        Message::StreamWriteAck(StreamAck {
+            conn_id: 10,
+            bytes: 0,
+            failed: true,
+        }),
     ]
 }
 
@@ -118,6 +217,35 @@ fn every_kind_round_trips() {
         stream.extend(m.encode().expect("encodes"));
     }
     assert_eq!(read_all(&stream), messages);
+}
+
+#[test]
+fn bridge_data_travels_as_a_byte_string() {
+    // `serde_bytes`: one MessagePack bin, not one integer per byte.
+    let data = vec![0xAB; MAX_BRIDGE_CHUNK];
+    let frame = Message::BridgeRequest(BridgeRequest {
+        request_id: 1,
+        session_id: 1,
+        op: BridgeOp::WriteFile {
+            path: "/p".into(),
+            data,
+            mode: 0,
+        },
+    })
+    .encode()
+    .unwrap();
+    assert!(
+        frame.len() < MAX_BRIDGE_CHUNK + 128,
+        "{} bytes",
+        frame.len()
+    );
+    let reply = Message::StreamData(StreamChunk {
+        conn_id: 1,
+        data: vec![0xFF; MAX_BRIDGE_CHUNK],
+    })
+    .encode()
+    .unwrap();
+    assert!(reply.len() <= MAX_FRAME_LEN);
 }
 
 #[test]
@@ -311,6 +439,7 @@ fn arb_message() -> impl Strategy<Value = Message> {
                 config_json: c,
                 settings_json: s,
                 data_dir: d,
+                connect_deadline_ms: 0,
             })
         }),
         (any::<u32>(), any::<u16>(), any::<u16>()).prop_map(|(session_id, cols, rows)| {
@@ -336,6 +465,41 @@ fn arb_message() -> impl Strategy<Value = Message> {
             .prop_map(|session_id| Message::Cancel(Cancel { session_id })),
         any::<u64>().prop_map(|nonce| Message::Ping(Heartbeat { nonce })),
         Just(Message::Shutdown),
+        (any::<u64>(), any::<u32>(), ".{0,64}", any::<u16>()).prop_map(
+            |(request_id, session_id, host, port)| {
+                Message::BridgeRequest(BridgeRequest {
+                    request_id,
+                    session_id,
+                    op: BridgeOp::OpenConnection { host, port },
+                })
+            }
+        ),
+        (
+            any::<u64>(),
+            ".{0,64}",
+            proptest::collection::vec(any::<u8>(), 0..512),
+            any::<i32>()
+        )
+            .prop_map(|(request_id, path, data, mode)| {
+                Message::BridgeRequest(BridgeRequest {
+                    request_id,
+                    session_id: 1,
+                    op: BridgeOp::WriteFile { path, data, mode },
+                })
+            }),
+        (
+            any::<u64>(),
+            proptest::collection::vec(any::<u8>(), 0..512),
+            any::<bool>()
+        )
+            .prop_map(|(request_id, data, eof)| {
+                Message::BridgeReply(BridgeReply {
+                    request_id,
+                    result: BridgeResult::Data { data, eof },
+                })
+            }),
+        (any::<u64>(), proptest::collection::vec(any::<u8>(), 0..512))
+            .prop_map(|(conn_id, data)| Message::StreamWrite(StreamChunk { conn_id, data })),
     ]
 }
 

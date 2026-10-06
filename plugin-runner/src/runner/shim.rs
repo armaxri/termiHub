@@ -5,10 +5,8 @@
 //!   `Output` frame straight to the channel (no thread hop on the hot path).
 //! * [`SessionServices`] — the ABI 1.1 services: `log` becomes a `Log` frame,
 //!   `is_cancelled` reads atomics the host sets with `Cancel` frames.
-//! * [`deny_all_bridge`] — the capability bridge. Bridge-over-IPC (socket
-//!   handle passing, host-side file operations) is phase 2 of the rollout; until
-//!   then every request is refused with `PermissionDenied`, the status a plugin
-//!   already handles for a missing permission.
+//!
+//! The capability bridge lives in [`super::bridge`] (#4183).
 //!
 //! Every callback is `extern "C"`, tolerates a null context, and contains
 //! panics — nothing unwinds into plugin frames.
@@ -18,9 +16,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use termihub_plugin_api::{
-    FfiByteSlice, FfiOwnedBytes, FfiStr, PluginFileMetadata, PluginHostBridge,
-    PluginHostBridgeVTable, PluginHostServices, PluginHostServicesVTable, PluginOutputSender,
-    PluginStatus, PluginTcpStream, PluginWriteMode, MAX_LOG_MESSAGE_BYTES,
+    FfiByteSlice, FfiStr, PluginHostServices, PluginHostServicesVTable, PluginOutputSender,
+    PluginStatus, MAX_LOG_MESSAGE_BYTES,
 };
 use termihub_plugin_runner::ipc::{encode_data_frame, FrameKind, Log, Message};
 
@@ -217,61 +214,4 @@ unsafe extern "C" fn services_log(ctx: *mut c_void, level: u32, message: FfiStr)
         PluginStatus::Ok
     })
     .unwrap_or(PluginStatus::Panic)
-}
-
-/// The phase-1 capability bridge: every request is refused.
-pub(crate) fn deny_all_bridge() -> PluginHostBridge {
-    // SAFETY: the context is null and every callback ignores it; there is no
-    // destructor because nothing is owned.
-    unsafe { PluginHostBridge::from_raw(std::ptr::null_mut(), &DENY_ALL_BRIDGE, None) }
-}
-
-static DENY_ALL_BRIDGE: PluginHostBridgeVTable = PluginHostBridgeVTable {
-    open_connection: deny_open_connection,
-    read_file: deny_read_file,
-    write_file: deny_write_file,
-    stat_path: deny_stat_path,
-    list_dir: deny_list_dir,
-};
-
-unsafe extern "C" fn deny_open_connection(
-    _ctx: *mut c_void,
-    _host: FfiStr,
-    _port: u16,
-    _out: *mut PluginTcpStream,
-) -> PluginStatus {
-    PluginStatus::PermissionDenied
-}
-
-unsafe extern "C" fn deny_read_file(
-    _ctx: *mut c_void,
-    _path: FfiStr,
-    _out: *mut FfiOwnedBytes,
-) -> PluginStatus {
-    PluginStatus::PermissionDenied
-}
-
-unsafe extern "C" fn deny_write_file(
-    _ctx: *mut c_void,
-    _path: FfiStr,
-    _data: FfiByteSlice,
-    _mode: PluginWriteMode,
-) -> PluginStatus {
-    PluginStatus::PermissionDenied
-}
-
-unsafe extern "C" fn deny_stat_path(
-    _ctx: *mut c_void,
-    _path: FfiStr,
-    _out: *mut PluginFileMetadata,
-) -> PluginStatus {
-    PluginStatus::PermissionDenied
-}
-
-unsafe extern "C" fn deny_list_dir(
-    _ctx: *mut c_void,
-    _path: FfiStr,
-    _out: *mut FfiOwnedBytes,
-) -> PluginStatus {
-    PluginStatus::PermissionDenied
 }

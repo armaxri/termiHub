@@ -49,7 +49,7 @@ use super::host::LoadedLibrary;
 use super::host_context::ServicesState;
 use super::runtime::ActiveBackend;
 pub(crate) use super::runtime::PluginRuntime;
-use super::sandbox::{SandboxedPluginHandle, SandboxedSession};
+use super::sandbox::{BridgeGrant, SandboxedPluginHandle, SandboxedSession};
 use super::security::{PermissionError, PermissionSet};
 use super::PluginPermission;
 
@@ -532,12 +532,16 @@ impl ConnectionType for PluginConnectionType {
                 // arrives on the runner's reader thread, straight into
                 // `output_tx` — no forwarding thread.
                 let plugin = handle.acquire().map_err(map_plugin_error)?;
+                // The session's bridge calls are answered by the host under
+                // this session's permissions and connection policy (#4183).
+                let grant = BridgeGrant::new(self.permissions.clone(), self.connection_policy);
                 let session = SandboxedSession::create(
                     plugin,
                     &config_json,
                     &self.plugin_settings_json,
                     &handle.data_dir(),
                     Arc::clone(&self.output_tx),
+                    grant,
                 )
                 .map_err(map_plugin_error)?;
                 ActiveBackend::Sandboxed(session)
